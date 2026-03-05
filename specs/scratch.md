@@ -65,3 +65,86 @@ I need you to save this plan in `specs/plans`, create a new @specs/SPRINT.md wit
 ---
 
 Are you reimplementing the `hologram-network` crate? We'll have to bring over the orchestration crate and resolver if we do that, for now...
+
+---
+
+Can you add a pre-commit hook that's loosely based on this:
+
+#!/bin/bash
+#
+# Pre-commit hook for agentzero
+# - Checks formatting with cargo fmt --check (fast, no rewrite)
+# - Runs clippy only on crates with staged changes (fast incremental)
+#
+# Full test suite runs in CI and can be triggered locally with:
+#   just test
+#
+# To install this hook, run:
+#   git config core.hooksPath .githooks
+# Or copy this file to .git/hooks/pre-commit
+#
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Check formatting (fast — read-only check, no rewrite)
+echo "Checking code formatting..."
+if ! cargo fmt --all -- --check 2>/dev/null; then
+    echo ""
+    echo "Formatting check failed!"
+    echo "   Run 'cargo fmt --all' to fix formatting"
+    exit 1
+fi
+echo "Formatting OK"
+echo ""
+
+# Determine which crates have staged changes
+CHANGED_CRATES=$(git diff --cached --name-only --diff-filter=ACMR \
+    | sed -n 's|^crates/\([^/]*\)/.*|\1|p' \
+    | sort -u)
+
+# Check if bin/ has changes too
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^bin/'; then
+    CHANGED_CRATES=$(printf '%s\nagentzero' "$CHANGED_CRATES")
+fi
+
+# Check if workspace-level Cargo.toml changed (not just Cargo.lock)
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^Cargo\.toml$'; then
+    # Workspace manifest changed — run clippy on all changed crates
+    # (Cargo.lock-only changes are benign and don't need full workspace clippy)
+    if [ -z "$CHANGED_CRATES" ]; then
+        echo "Only workspace Cargo.toml changed — running full clippy..."
+        if ! cargo clippy --workspace -- -D warnings; then
+            echo "Clippy check failed!"
+            exit 1
+        fi
+        echo "Clippy passed"
+        echo "All pre-commit checks passed!"
+        exit 0
+    fi
+    # else: fall through to per-crate clippy below
+fi
+
+if [ -z "$CHANGED_CRATES" ]; then
+    echo "No crate changes staged — skipping clippy"
+    echo "All pre-commit checks passed!"
+    exit 0
+fi
+
+# Build clippy args: -p <crate> for each changed crate
+CLIPPY_ARGS=""
+for crate in $CHANGED_CRATES; do
+    CLIPPY_ARGS="$CLIPPY_ARGS -p $crate"
+done
+
+CRATE_LIST=$(echo $CHANGED_CRATES | tr '\n' ' ')
+echo "Running clippy on changed crates: $CRATE_LIST..."
+if ! cargo clippy $CLIPPY_ARGS -- -D warnings; then
+    echo "Clippy check failed!"
+    echo "   Run 'cargo clippy --fix --allow-dirty' to auto-fix"
+    exit 1
+fi
+echo "Clippy passed"
+
+echo "All pre-commit checks passed!"
