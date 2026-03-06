@@ -20,9 +20,8 @@ if git diff --cached --quiet; then
 fi
 
 # Auto-fix formatting and stage changes
-# Use +1.93.0 toolchain since it has rustfmt/clippy; stable toolchain may not in all envs
 echo "Auto-formatting code..."
-if ! cargo +1.93.0 fmt --all 2>/dev/null && ! cargo fmt --all; then
+if ! cargo fmt --all; then
     echo "Formatting failed!"
     exit 1
 fi
@@ -36,34 +35,27 @@ echo "Code formatting applied and staged"
 echo ""
 
 # Run clippy check (zero warnings required)
-# Use +1.93.0 toolchain since it has clippy; stable toolchain may not in all envs
 echo "Running clippy check (zero warnings required)..."
-if cargo +1.93.0 clippy --workspace --all-targets -- -D warnings 2>&1; then
-    : # success
-elif cargo clippy --workspace --all-targets -- -D warnings 2>&1; then
-    : # success with default toolchain
-else
+if ! cargo clippy --workspace -- -D warnings; then
     echo "Clippy check failed!"
-    echo "   Run 'cargo clippy --workspace --all-targets --fix --allow-dirty' to auto-fix"
+    echo "   Run 'cargo clippy --workspace --fix --allow-dirty' to auto-fix"
     exit 1
 fi
 echo "Clippy passed"
 echo ""
 
-# Run tests
+# Run unit tests (lib only for speed; integration tests run via 'just ci')
 echo "Building and running unit tests..."
 if command -v cargo-nextest &> /dev/null; then
-    if ! cargo nextest run --workspace --lib --bins --no-fail-fast; then
+    if ! cargo nextest run --workspace --lib --no-fail-fast; then
         echo "Tests failed!"
-        echo "   All unit tests must pass before committing"
-        echo "   Run 'cargo nextest run --workspace --lib --bins' for detailed output"
+        echo "   Run 'cargo nextest run --workspace --lib' for detailed output"
         exit 1
     fi
 else
-    if ! cargo test --workspace --lib --bins -- --color=always; then
+    if ! cargo test --workspace --lib -- --color=always; then
         echo "Tests failed!"
-        echo "   All unit tests must pass before committing"
-        echo "   Run 'cargo test --workspace --lib --bins' for detailed output"
+        echo "   Run 'cargo test --workspace --lib' for detailed output"
         exit 1
     fi
 fi

@@ -1,4 +1,4 @@
-# Hologram Greenfield — build commands
+# Hologram — build commands
 
 set dotenv-load := true
 
@@ -29,21 +29,21 @@ fmt-check:
 clippy:
     cargo clippy --workspace -- -D warnings
 
-# Build for WASM target (std)
+# Build hologram-core for WASM target (std)
 wasm:
-    cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features
+    cargo build --target wasm32-unknown-unknown -p hologram-core --no-default-features
 
-# Build holo-core for WASM with no_std + no rkyv (constrained device validation)
+# Build hologram-core for WASM with no_std + no rkyv (constrained device validation)
 wasm-nostd:
     RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
     ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
-    --target wasm32-unknown-unknown -p holo-core --no-default-features
+    --target wasm32-unknown-unknown -p hologram-core --no-default-features
 
-# Build holo-core for ARM bare-metal (thumbv7em, no_std)
+# Build hologram-core for ARM bare-metal (thumbv7em, no_std)
 embedded:
     RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
     ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
-    --target thumbv7em-none-eabihf -p holo-core --no-default-features
+    --target thumbv7em-none-eabihf -p hologram-core --no-default-features
 
 # Build all
 build:
