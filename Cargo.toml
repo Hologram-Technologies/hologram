@@ -15,6 +15,7 @@ holo-graph = { path = "crates/holo-graph" }
 holo-archive = { path = "crates/holo-archive" }
 holo-exec = { path = "crates/holo-exec" }
 holo-compiler = { path = "crates/holo-compiler" }
+holo-async = { path = "crates/holo-async" }
 holo-cli = { path = "crates/holo-cli" }
 holo-ffi = { path = "crates/holo-ffi" }
 
@@ -58,6 +59,7 @@ holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
 holo-compiler = { workspace = true }
+holo-async = { workspace = true }
 holo-ffi = { workspace = true }
 holo-cli = { workspace = true }
 tokio = { workspace = true }

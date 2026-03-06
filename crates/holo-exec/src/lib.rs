@@ -17,7 +17,7 @@ pub use buffer::BufferArena;
 pub use error::{ExecError, ExecResult};
 pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
 pub use kv::KvStore;
-pub use mmap::{execute_bytes, execute_plan};
+pub use mmap::{execute_bytes, execute_bytes_with_progress, execute_plan};
 
 #[cfg(feature = "std")]
 pub use mmap::execute_file;

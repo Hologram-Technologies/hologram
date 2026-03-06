@@ -359,17 +359,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "holo-async"
+version = "0.1.0"
+dependencies = [
+ "holo-archive",
+ "holo-compiler",
+ "holo-core",
+ "holo-exec",
+ "holo-graph",
+ "tokio",
+]
+
+[[package]]
 name = "holo-bench"
 version = "0.1.0"
 dependencies = [
  "criterion",
  "holo-archive",
+ "holo-async",
  "holo-compiler",
  "holo-core",
  "holo-exec",
  "holo-ffi",
  "holo-graph",
  "rkyv",
+ "tokio",
 ]
 
 [[package]]
@@ -443,6 +457,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "holo-archive",
+ "holo-async",
  "holo-cli",
  "holo-compiler",
  "holo-core",

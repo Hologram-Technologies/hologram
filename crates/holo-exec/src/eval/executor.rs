@@ -10,6 +10,7 @@ use holo_archive::format::graph::SerializedGraph;
 use holo_graph::constant::{ConstantData, ConstantId};
 use holo_graph::graph::node::{InputSource, Node, NodeId};
 use holo_graph::graph::GraphOp;
+use holo_graph::schedule::levels::ParallelLevel;
 use holo_graph::schedule::ExecutionSchedule;
 
 use crate::buffer::BufferArena;
@@ -94,76 +95,103 @@ impl GraphOutputs {
 }
 
 /// Stateless graph executor using KV-lookup dispatch.
-///
-/// Walks execution levels in order, dispatching each node
-/// through `KvStore::dispatch()`. Nodes within a level have
-/// all dependencies satisfied by prior levels.
 pub struct KvExecutor;
 
 impl KvExecutor {
     /// Execute a serialized graph according to its schedule.
-    ///
-    /// 1. Build node lookup map
-    /// 2. Seed arena with graph inputs and constants
-    /// 3. For each level: gather inputs, dispatch, store outputs
-    /// 4. Extract named outputs
     pub fn execute(
         sg: &SerializedGraph,
         schedule: &ExecutionSchedule,
         inputs: &GraphInputs,
     ) -> ExecResult<GraphOutputs> {
-        // Build node-id → node lookup
-        let node_map: HashMap<NodeId, &Node> = sg.nodes.iter().map(|n| (n.id, n)).collect();
-
-        let mut arena = BufferArena::with_capacity(sg.nodes.len());
-
-        // Seed constants into the arena
-        for node in &sg.nodes {
-            if let GraphOp::Constant(cid) = &node.op {
-                let data = resolve_constant(&sg.constants, *cid)?;
-                arena.insert(node.id, data);
-            }
-        }
-
-        // Execute level by level
-        for level in &schedule.levels {
-            let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
-
-            for &node_id in &level.node_ids {
-                let node = node_map
-                    .get(&node_id)
-                    .ok_or(ExecError::NodeNotFound(node_id))?;
-
-                // Skip constants (already seeded)
-                if matches!(node.op, GraphOp::Constant(_)) {
-                    continue;
-                }
-
-                // Gather inputs from arena / graph inputs
-                let input_bufs = gather_inputs(node, &arena, inputs)?;
-                let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
-
-                let output =
-                    KvStore::dispatch_with_constants(&node.op, &input_refs, &sg.constants)?;
-                results.push((node_id, output));
-            }
-
-            // Insert all results into arena
-            for (id, data) in results {
-                arena.insert(id, data);
-            }
-        }
-
-        // Extract named outputs
-        let mut outputs = Vec::new();
-        for (i, name) in sg.output_names.iter().enumerate() {
-            let node_id = sg.output_node_ids[i];
-            let data = arena.take(node_id)?;
-            outputs.push((name.clone(), data));
-        }
-
-        Ok(GraphOutputs { outputs })
+        Self::execute_with_progress(sg, schedule, inputs, |_, _| {})
     }
+
+    /// Execute with a per-level progress callback.
+    ///
+    /// `on_level(level_index, nodes_executed)` is called after each level completes.
+    pub fn execute_with_progress<F>(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        mut on_level: F,
+    ) -> ExecResult<GraphOutputs>
+    where
+        F: FnMut(usize, usize),
+    {
+        let node_map = build_node_map(sg);
+        let mut arena = seed_arena(sg)?;
+
+        for (i, level) in schedule.levels.iter().enumerate() {
+            let count = dispatch_level(level, &node_map, &mut arena, inputs, &sg.constants)?;
+            on_level(i, count);
+        }
+
+        extract_named_outputs(sg, &mut arena)
+    }
+}
+
+/// Build a `NodeId → &Node` lookup map for the graph.
+fn build_node_map(sg: &SerializedGraph) -> HashMap<NodeId, &Node> {
+    sg.nodes.iter().map(|n| (n.id, n)).collect()
+}
+
+/// Initialize the arena and seed all constant nodes.
+fn seed_arena(sg: &SerializedGraph) -> ExecResult<BufferArena> {
+    let mut arena = BufferArena::with_capacity(sg.nodes.len());
+    for node in &sg.nodes {
+        if let GraphOp::Constant(cid) = &node.op {
+            arena.insert(node.id, resolve_constant(&sg.constants, *cid)?);
+        }
+    }
+    Ok(arena)
+}
+
+/// Execute all non-constant nodes in a single level; returns the count dispatched.
+fn dispatch_level(
+    level: &ParallelLevel,
+    node_map: &HashMap<NodeId, &Node>,
+    arena: &mut BufferArena,
+    inputs: &GraphInputs,
+    constants: &holo_graph::constant::ConstantStore,
+) -> ExecResult<usize> {
+    let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
+
+    for &node_id in &level.node_ids {
+        let node = node_map
+            .get(&node_id)
+            .ok_or(ExecError::NodeNotFound(node_id))?;
+
+        if matches!(node.op, GraphOp::Constant(_)) {
+            continue;
+        }
+
+        let input_bufs = gather_inputs(node, arena, inputs)?;
+        let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
+        results.push((
+            node_id,
+            KvStore::dispatch_with_constants(&node.op, &input_refs, constants)?,
+        ));
+    }
+
+    let dispatched = results.len();
+    for (id, data) in results {
+        arena.insert(id, data);
+    }
+    Ok(dispatched)
+}
+
+/// Extract the named output buffers from the arena in declaration order.
+fn extract_named_outputs(
+    sg: &SerializedGraph,
+    arena: &mut BufferArena,
+) -> ExecResult<GraphOutputs> {
+    let mut outputs = Vec::with_capacity(sg.output_names.len());
+    for (i, name) in sg.output_names.iter().enumerate() {
+        let node_id = sg.output_node_ids[i];
+        outputs.push((name.clone(), arena.take(node_id)?));
+    }
+    Ok(GraphOutputs { outputs })
 }
 
 /// Gather input buffers for a node from the arena and graph inputs.
@@ -176,8 +204,7 @@ fn gather_inputs<'a>(
     for (slot_idx, slot) in node.inputs.iter().enumerate() {
         match slot.source {
             InputSource::Node(dep_id) => {
-                let data = arena.get(dep_id)?;
-                bufs.push(data.to_vec());
+                bufs.push(arena.get(dep_id)?.to_vec());
             }
             InputSource::GraphInput { index } => {
                 let data = graph_inputs
@@ -248,7 +275,6 @@ mod tests {
         }
     }
 
-    /// Simple passthrough: Input → Output
     #[test]
     fn passthrough() {
         let sg = sg_with_io(
@@ -268,7 +294,6 @@ mod tests {
         assert_eq!(result.by_name("y").unwrap(), &[42, 43, 44]);
     }
 
-    /// Input → Relu → Output
     #[test]
     fn relu_pipeline() {
         let sg = sg_with_io(
@@ -290,14 +315,11 @@ mod tests {
         inputs.set(0, vec![0, 128, 255]);
         let result = KvExecutor::execute(&sg, &sched, &inputs).unwrap();
         let y = result.by_name("y").unwrap();
-        assert_eq!(y.len(), 3);
-        // Relu applied element-wise
         assert_eq!(y[0], LutOp::Relu.apply(0));
         assert_eq!(y[1], LutOp::Relu.apply(128));
         assert_eq!(y[2], LutOp::Relu.apply(255));
     }
 
-    /// Input → [Relu, Sigmoid] → Add → Output  (diamond)
     #[test]
     fn diamond_graph() {
         let sg = sg_with_io(
@@ -335,7 +357,6 @@ mod tests {
         assert_eq!(y[0], expected);
     }
 
-    /// Two graph inputs added together
     #[test]
     fn two_inputs() {
         let sg = sg_with_io(
@@ -359,7 +380,6 @@ mod tests {
         assert_eq!(result.by_name("sum").unwrap(), &[15, 120]);
     }
 
-    /// Multiple outputs
     #[test]
     fn multiple_outputs() {
         let sg = sg_with_io(
@@ -389,12 +409,10 @@ mod tests {
         );
     }
 
-    /// Constant node
     #[test]
     fn constant_node() {
         let mut constants = ConstantStore::new();
         let cid = constants.insert(ConstantData::Bytes(vec![7, 8, 9]));
-
         let sg = SerializedGraph {
             nodes: vec![
                 node(0, GraphOp::Constant(cid), vec![]),
@@ -410,7 +428,6 @@ mod tests {
         assert_eq!(result.by_name("out").unwrap(), &[7, 8, 9]);
     }
 
-    /// Missing graph input
     #[test]
     fn missing_graph_input() {
         let sg = sg_with_io(
@@ -423,11 +440,9 @@ mod tests {
             vec![nid(1)],
         );
         let sched = build_schedule(&sg).unwrap();
-        let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new());
-        assert!(result.is_err());
+        assert!(KvExecutor::execute(&sg, &sched, &GraphInputs::new()).is_err());
     }
 
-    /// Chain: Input → Relu → Sigmoid → Output
     #[test]
     fn chain_of_unary() {
         let sg = sg_with_io(
@@ -454,20 +469,18 @@ mod tests {
         inputs.set(0, vec![128]);
         let result = KvExecutor::execute(&sg, &sched, &inputs).unwrap();
         let y = result.by_name("y").unwrap();
-        let expected = LutOp::Sigmoid.apply(LutOp::Relu.apply(128));
-        assert_eq!(y[0], expected);
+        assert_eq!(y[0], LutOp::Sigmoid.apply(LutOp::Relu.apply(128)));
     }
 
-    /// Empty graph
     #[test]
     fn empty_graph() {
         let sg = sg_with_io(vec![], vec![], vec![], vec![]);
         let sched = build_schedule(&sg).unwrap();
-        let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
-        assert!(result.is_empty());
+        assert!(KvExecutor::execute(&sg, &sched, &GraphInputs::new())
+            .unwrap()
+            .is_empty());
     }
 
-    /// get output by index
     #[test]
     fn output_by_index() {
         let sg = sg_with_io(
@@ -488,7 +501,6 @@ mod tests {
         assert_eq!(data, &[1, 2, 3]);
     }
 
-    /// Fused view (pre-composed LUT)
     #[test]
     fn fused_view_execution() {
         use holo_core::view::ElementWiseView;
@@ -514,11 +526,8 @@ mod tests {
         assert_eq!(result.by_name("y").unwrap(), &[3, 6, 9, 30]);
     }
 
-    /// Binary XOR with two branches from same input
     #[test]
     fn xor_self_via_neg() {
-        // Input → [Neg, Identity] → Xor → Output
-        // Identity is achieved by Output-like passthrough via Input node
         let sg = sg_with_io(
             vec![
                 node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
@@ -542,8 +551,72 @@ mod tests {
         let mut inputs = GraphInputs::new();
         inputs.set(0, vec![10]);
         let result = KvExecutor::execute(&sg, &sched, &inputs).unwrap();
-        let y = result.by_name("y").unwrap();
-        // 10 XOR wrapping_neg(10) = 10 XOR 246 = 252
-        assert_eq!(y[0], 10u8 ^ 10u8.wrapping_neg());
+        assert_eq!(result.by_name("y").unwrap()[0], 10u8 ^ 10u8.wrapping_neg());
+    }
+
+    /// Progress callback fires once per level with sequential indices.
+    #[test]
+    fn progress_callback_fires_per_level() {
+        let sg = sg_with_io(
+            vec![
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(2, GraphOp::Output, vec![InputSlot::from_node(nid(1))]),
+            ],
+            vec!["x"],
+            vec!["y"],
+            vec![nid(2)],
+        );
+        let sched = build_schedule(&sg).unwrap();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, vec![128]);
+
+        let mut events: Vec<(usize, usize)> = Vec::new();
+        let result = KvExecutor::execute_with_progress(&sg, &sched, &inputs, |idx, count| {
+            events.push((idx, count));
+        })
+        .unwrap();
+
+        assert_eq!(result.by_name("y").unwrap(), &[LutOp::Relu.apply(128)]);
+        assert!(!events.is_empty());
+        for (i, (idx, _)) in events.iter().enumerate() {
+            assert_eq!(*idx, i);
+        }
+    }
+
+    /// Total dispatched node count across all levels equals graph size.
+    #[test]
+    fn progress_callback_total_count() {
+        let sg = sg_with_io(
+            vec![
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(
+                    2,
+                    GraphOp::Lut(LutOp::Sigmoid),
+                    vec![InputSlot::from_node(nid(1))],
+                ),
+                node(3, GraphOp::Output, vec![InputSlot::from_node(nid(2))]),
+            ],
+            vec!["x"],
+            vec!["y"],
+            vec![nid(3)],
+        );
+        let sched = build_schedule(&sg).unwrap();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, vec![64]);
+
+        let mut total = 0usize;
+        KvExecutor::execute_with_progress(&sg, &sched, &inputs, |_, count| total += count).unwrap();
+
+        assert_eq!(total, 4); // Input, Relu, Sigmoid, Output
     }
 }

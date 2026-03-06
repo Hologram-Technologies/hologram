@@ -486,28 +486,30 @@ parallel/
 
 **Target**: ~15 new tests, ~651 total workspace, zero clippy warnings, holo-core no_std < 100KB. ✓
 
-### Sprint 9: Tokio Integration + Async Execution
+### Sprint 9: Tokio Integration + Async Execution — COMPLETED
 
-**Goal**: Add async compilation and execution paths. `holo-async` crate wraps existing `CompilerBuilder` and `KvExecutor` behind Tokio without duplicating logic.
+**Notes**: `holo-async` crate with `AsyncCompiler` (wraps `CompilerBuilder` in `spawn_blocking`), `AsyncExecutor` (wraps `execute_bytes` in `spawn_blocking`), and `execute_stream` (per-level `mpsc` channel). `KvExecutor::execute_with_progress<F>` added to `holo-exec` — `execute` delegates to it (no duplication). `execute_bytes_with_progress` exported from `holo-exec`. `LevelResult { level_index, nodes_executed }` is the per-level progress type. Dropping the receiver does not cancel execution; the task completes and channel sends are silently discarded. 16 new holo-async tests + 2 new holo-exec tests. 669 total workspace tests, zero clippy warnings.
 
-**Step 1: `holo-async` crate (~10 tests)**
-- [ ] `crates/holo-async/Cargo.toml`: deps `holo-compiler`, `holo-exec`, `tokio` (feature-gated)
-- [ ] `src/compiler.rs`: `AsyncCompiler::compile(graph) -> JoinHandle<CompilationOutput>` via `spawn_blocking`
-- [ ] `src/executor.rs`: `AsyncExecutor::execute(archive, inputs) -> JoinHandle<Outputs>` via `spawn_blocking`
+**Step 1: `holo-async` crate**
+- [x] `crates/holo-async/Cargo.toml`: deps `holo-compiler`, `holo-exec`, `holo-graph`, `tokio`
+- [x] `src/compiler.rs`: `AsyncCompiler { graph, enable_fusion }`, `.fuse(bool)`, `.compile() -> JoinHandle<CompileResult<CompilationOutput>>`
+- [x] `src/executor.rs`: `AsyncExecutor::execute(archive, inputs) -> JoinHandle<ExecResult<GraphOutputs>>`
+- [x] `src/lib.rs`: re-exports `AsyncCompiler`, `AsyncExecutor`, `execute_stream`, `LevelResult`
 
-**Step 2: Streaming API (~10 tests)**
-- [ ] `src/stream.rs`: `execute_stream() -> impl Stream<Item = LevelResult>` using `tokio::sync::mpsc`
-- [ ] Level-by-level yield: each scheduler level emits one `LevelResult` to the channel
-- [ ] Cancellation: drop the receiver to cancel remaining levels cleanly
+**Step 2: Streaming API**
+- [x] `src/stream.rs`: `execute_stream(archive, inputs) -> (Receiver<LevelResult>, JoinHandle<ExecResult<GraphOutputs>>)`
+- [x] `LevelResult { level_index: usize, nodes_executed: usize }`
+- [x] `KvExecutor::execute_with_progress<F>` in `holo-exec/src/eval/executor.rs`
+- [x] `execute_bytes_with_progress<F>` in `holo-exec/src/mmap/mod.rs`, exported from `holo-exec/src/lib.rs`
 
-**Step 3: Benchmarks (~10 tests)**
-- [ ] `crates/holo-bench/benches/async_exec.rs`: async vs sync compile (target: < 5% overhead)
-- [ ] `crates/holo-bench/benches/async_stream.rs`: streaming throughput vs batch
+**Step 3: Benchmarks**
+- [x] `crates/holo-bench/benches/async_exec.rs`: sync vs async compile + execute (10-node chain)
+- [x] `crates/holo-bench/benches/async_stream.rs`: batch vs streaming (20-node chain)
 
 **Step 4: Root re-export**
-- [ ] `src/lib.rs`: re-export `holo_async` under `hologram::async_exec`
+- [x] `src/lib.rs`: `pub use holo_async;`
 
-**Target**: ~30 new tests, ~681 total workspace, zero clippy warnings.
+**Result**: 18 new tests, 669 total workspace, zero clippy warnings. ✓
 
 ### Sprint 10: Codegen from Descriptors
 - [ ] Port ISA descriptor concept from [categorical-x/crates/holo/codegen/](../categorical-x/crates/holo/codegen/)

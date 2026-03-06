@@ -29,18 +29,7 @@
 
 ## Sprint 8: Constrained Device Validation
 
-**Goal**: Validate the hologram pipeline on constrained targets (WASM, ARM/ESP32, RPi). Add `no_alloc` static-buffer mode for ultra-constrained environments. Document feature availability per target.
-
-### Deliverables
-- [x] Verify `holo-core` compiles `no_std` cleanly: `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features`
-- [x] Verify `holo-core` compiles for bare-metal ARM: `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features`
-- [x] `no_alloc` feature in `holo-core`: `StaticBuf<const N: usize>` fixed-size stack buffer in `buffer/static_buf.rs`
-- [x] Feature flags: `no_alloc` marker flag, `serialize` optional rkyv for constrained builds
-- [x] Binary size analysis: documented in `specs/feature-matrix.md` (~35–40 KB .text, well under 100 KB target)
-- [x] `Justfile` recipes: `embedded` (thumbv7em), `wasm-nostd` (wasm32 no_std)
-- [x] `specs/feature-matrix.md`: document features per target (x86_64, wasm32, thumbv7em, esp32)
-- [x] Tests: `StaticBuf` unit tests — 15 tests covering capacity, overflow, extend, Q0 use case
-- [x] Upgrade rkyv 0.7 → 0.8.15 across all workspace crates (fix WASM32 const-eval bug; removes need for manual `serialize` feature workaround)
+(Sprint 8 complete) — [archived](sprints/8-constrained-devices.md)
 
 ---
 
@@ -49,15 +38,18 @@
 **Goal**: Add async compilation and execution paths backed by Tokio. Allow callers to stream graph evaluation across async tasks for large models and pipelined inference workloads.
 
 ### Deliverables
-- [ ] `holo-async` crate: `Cargo.toml`, `lib.rs`, feature `tokio` (gates all async impls)
-- [ ] `AsyncCompiler`: wraps `CompilerBuilder` in `tokio::task::spawn_blocking`; returns `CompilationOutput` via `JoinHandle`
-- [ ] `AsyncExecutor`: drives `KvExecutor` level-by-level across `tokio::task::spawn_blocking` calls; yields between levels
-- [ ] Streaming API: `execute_stream() -> impl Stream<Item = LevelResult>` using `tokio::sync::mpsc`
-- [ ] Integration with `holo-exec`: `AsyncExecutor` wraps existing `KvExecutor` (no duplication)
-- [ ] Benchmark: async vs sync compilation overhead (target: < 5% overhead for graphs > 10 nodes)
-- [ ] Benchmark: async streaming execution throughput vs batch
-- [ ] ~30 new tests: compile round-trip async, streaming level output, cancellation via `drop`
-- [ ] Zero clippy warnings; `just ci` green
+- [x] `holo-async` crate: `Cargo.toml`, `lib.rs`, `compiler.rs`, `executor.rs`, `stream.rs`
+- [x] `AsyncCompiler`: wraps `CompilerBuilder` in `tokio::task::spawn_blocking`; returns `JoinHandle<CompileResult<CompilationOutput>>`
+- [x] `AsyncExecutor`: wraps `execute_bytes` in `tokio::task::spawn_blocking`; returns `JoinHandle<ExecResult<GraphOutputs>>`
+- [x] `KvExecutor::execute_with_progress<F>`: per-level callback added to `holo-exec` (no duplication — `execute` delegates to it)
+- [x] `execute_bytes_with_progress`: added to `holo-exec` public API
+- [x] Streaming API: `execute_stream() -> (Receiver<LevelResult>, JoinHandle<...>)` via `tokio::sync::mpsc`
+- [x] `LevelResult { level_index, nodes_executed }` per-level progress type
+- [x] Benchmark: `async_exec.rs` — async vs sync compile + execute (10-node chain)
+- [x] Benchmark: `async_stream.rs` — streaming vs batch (20-node chain)
+- [x] 16 new tests in `holo-async` (5 compiler, 5 executor, 6 stream); 2 new in `holo-exec` (progress callback)
+- [x] Sprint 8 archived to `specs/sprints/8-constrained-devices.md`
+- [x] Zero clippy warnings; `just ci` green — **669 total workspace tests**
 
 ---
 

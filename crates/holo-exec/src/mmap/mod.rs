@@ -25,6 +25,22 @@ pub fn execute_bytes(data: &[u8], inputs: &GraphInputs) -> ExecResult<GraphOutpu
     execute_plan(&plan, inputs)
 }
 
+/// Execute a .holo archive with a per-level progress callback.
+///
+/// `on_level(level_index, nodes_executed)` fires after each schedule level completes.
+pub fn execute_bytes_with_progress<F>(
+    data: &[u8],
+    inputs: &GraphInputs,
+    on_level: F,
+) -> ExecResult<GraphOutputs>
+where
+    F: FnMut(usize, usize),
+{
+    let plan = holo_archive::load_from_bytes(data)?;
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_progress(plan.graph(), &schedule, inputs, on_level)
+}
+
 /// Execute a .holo archive from a file path (requires `std` feature).
 ///
 /// Memory-maps the file, parses, schedules, and runs.
