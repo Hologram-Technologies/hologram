@@ -15,18 +15,6 @@
 
 ### Backlog
 
-#### Phase 4: KV-Lookup Execution Engine
-- [ ] Implement `ExecError` enum + `ExecResult` type in `error/mod.rs`
-- [ ] Implement `KvStore`: table dispatch for all ops in `kv/store.rs`
-- [ ] Implement `Executor` trait in `eval/mod.rs`
-- [ ] Implement `KvExecutor`: level-based graph evaluation in `eval/executor.rs`
-- [ ] Implement `BufferArena`: zero-copy intermediates in `buffer/arena.rs`
-- [ ] Implement `MmapGraph`: loads from .holo archive in `mmap/mod.rs`
-- [ ] Implement mmap-archive integration in `mmap/loader.rs`
-- [ ] Implement rayon parallel level execution (feature-gated) in `parallel/mod.rs`
-- [ ] Update `lib.rs` with re-exports
-- [ ] Tests passing, zero clippy warnings
-
 #### Phase 5: Calculator Example & Benchmarks
 - [ ] Implement `examples/calculator.rs` — 29+ functions, pi-F-lambda, LUT vs f64
 - [ ] Implement Criterion benchmarks: calculator, lut_vs_f64, fusion, batch, kv_lookup, mmap, parallel, archive
@@ -110,3 +98,14 @@
 - [x] Implement `HoloLoader` (mmap, `#[cfg(feature = "std")]`) in `loader/mmap_loader.rs`
 - [x] Update `lib.rs` with re-exports + 5 integration tests
 - [x] 83 new tests (279 total), zero clippy warnings
+
+### Phase 4: KV-Lookup Execution Engine (Sprint 3)
+- [x] Implement `ExecError` enum (9 variants) + `ExecResult` type + `From<ArchiveError>` in `error/mod.rs`
+- [x] Implement `BufferArena` (`HashMap<NodeId, Vec<u8>>`) in `buffer/arena.rs`
+- [x] Implement `KvStore`: stateless dispatch (`apply_unary`, `apply_binary`, `dispatch`) in `kv/store.rs`
+- [x] Implement `build_schedule()`: Kahn's algorithm on `SerializedGraph` in `eval/schedule_bridge.rs`
+- [x] Implement `KvExecutor`, `GraphInputs`, `GraphOutputs` in `eval/executor.rs`
+- [x] Implement parallel level execution (rayon feature-gated, threshold=4) in `parallel/mod.rs`
+- [x] Implement `execute_plan()`, `execute_bytes()`, `execute_file()` in `mmap/mod.rs`
+- [x] Update `lib.rs` with re-exports
+- [x] 55 new tests (334 total), zero clippy warnings

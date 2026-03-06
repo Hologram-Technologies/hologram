@@ -339,43 +339,32 @@ Subgraphs can reference remote registries — enabling distributed execution whe
 
 ---
 
-## Phase 4: KV-Lookup Execution Engine (Sprint 3, Step 5)
+## Phase 4: KV-Lookup Execution Engine (Sprint 3, Step 5) — COMPLETED
 
 **Goal**: Every op = O(1) KV lookup. Rayon parallel levels. Loads from .holo via mmap.
 
+**Notes**: KvStore is stateless/zero-sized — all LUT tables are static in holo-core. BufferArena uses `HashMap<NodeId, Vec<u8>>`. Schedule bridge builds `ExecutionSchedule` directly from `SerializedGraph` via Kahn's algorithm (avoids reconstructing full arena `Graph`). Parallel execution is feature-gated on `rayon`. 55 tests, 334 workspace total.
+
 ### Crate: `crates/holo-exec/src/`
 ```
-lib.rs
+lib.rs              # Re-exports: KvStore, KvExecutor, GraphInputs, GraphOutputs,
+                    #   BufferArena, ExecError, build_schedule, execute_plan/bytes/file
+error/
+  mod.rs            # ExecError (9 variants), ExecResult, From<ArchiveError>
 kv/
   mod.rs
-  store.rs          # KvStore: table dispatch for all ops
+  store.rs          # KvStore: stateless dispatch (apply_unary, apply_binary, dispatch)
 eval/
-  mod.rs            # Executor trait
-  executor.rs       # KvExecutor: level-based graph evaluation
+  mod.rs
+  schedule_bridge.rs # build_schedule(SerializedGraph) → ExecutionSchedule via Kahn's
+  executor.rs       # KvExecutor, GraphInputs, GraphOutputs
 buffer/
   mod.rs
-  arena.rs          # BufferArena: zero-copy intermediates
+  arena.rs          # BufferArena: HashMap<NodeId, Vec<u8>>
 mmap/
-  mod.rs            # MmapGraph: loads from .holo archive
-  loader.rs         # Integration with holo-archive
+  mod.rs            # execute_plan, execute_bytes, execute_file (convenience)
 parallel/
-  mod.rs            # Rayon parallel level exec (feature-gated)
-error/
-  mod.rs
-```
-
-### Key Design
-```rust
-impl KvExecutor {
-    pub fn execute(&self, plan: &LoadedPlan) -> Result<Vec<Vec<u8>>> {
-        let schedule = &plan.schedule();
-        for level in &schedule.levels {
-            // feature: parallel → rayon par_iter
-            // no feature → sequential iter
-            execute_level(level, &self.store, &mut buffers);
-        }
-    }
-}
+  mod.rs            # execute_level: rayon par_iter when ≥ 4 nodes (feature-gated)
 ```
 
 ---

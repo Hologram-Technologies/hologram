@@ -10,3 +10,13 @@ pub mod eval;
 pub mod kv;
 pub mod mmap;
 pub mod parallel;
+
+// Re-exports for convenience.
+pub use buffer::BufferArena;
+pub use error::{ExecError, ExecResult};
+pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
+pub use kv::KvStore;
+pub use mmap::{execute_bytes, execute_plan};
+
+#[cfg(feature = "std")]
+pub use mmap::execute_file;
