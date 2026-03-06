@@ -17,11 +17,11 @@ Make the `hologram` CLI fully functional so the library is ready for `hologram-a
 - [x] Output printer: each named output as `name: <hex>` (or `<hex>` if unnamed)
 - [x] Inspect: file size, node count, input names, output names, schedule level count
 - [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
-- [x] 15 new tests in `holo-cli`; zero clippy warnings; `just ci` green — **684 total workspace tests**
+- [x] 15 new tests in `hologram-cli`; zero clippy warnings; `just ci` green — **684 total workspace tests**
 
 ## Implementation Notes
 
 - `run_cmd.rs`: `parse_input(s)` splits on first `:`, parses left as `u32` index, decodes right as hex bytes. `decode_hex` uses `.is_multiple_of(2)` per clippy. Error messages include the full input string for context.
-- `inspect.rs`: loads archive via `holo_archive::load_from_bytes`, builds schedule via `holo_exec::build_schedule` to get level count, prints all metadata.
+- `inspect.rs`: loads archive via `hologram_archive::load_from_bytes`, builds schedule via `hologram_exec::build_schedule` to get level count, prints all metadata.
 - `CliError::InvalidInput(String)` added for malformed `--input` flag values.
 - `decode_hex("")` returns empty `Vec<u8>` (valid — means no input data for that index).

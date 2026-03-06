@@ -1,4 +1,4 @@
-# CLAUDE.md — Hologram Greenfield
+# CLAUDE.md — Hologram
 
 ## Project Overview
 
@@ -12,16 +12,16 @@ just test      # cargo test --workspace
 just bench     # criterion benchmarks
 just fmt       # cargo fmt --all
 just clippy    # cargo clippy --workspace -- -D warnings
-just wasm      # build holo-core for wasm32-unknown-unknown
+just wasm      # build hologram-core for wasm32-unknown-unknown
 ```
 
 ## Architecture
 
-- **holo-core**: LUT tables, ElementWiseView, ring algebra, encoding. Zero deps except uor-foundation. `no_std`.
-- **holo-graph**: Expression graph, subgraphs, fusion, parallel scheduling.
-- **holo-archive**: `.holo` archive format, rkyv zero-copy, mmap, execution entrypoints.
-- **holo-exec**: KV-lookup executor, buffer arena, parallel level execution.
-- **holo-bench**: Criterion benchmarks.
+- **hologram-core**: LUT tables, ElementWiseView, ring algebra, encoding. Zero deps except uor-foundation. `no_std`.
+- **hologram-graph**: Expression graph, subgraphs, fusion, parallel scheduling.
+- **hologram-archive**: `.holo` archive format, rkyv zero-copy, mmap, execution entrypoints.
+- **hologram-exec**: KV-lookup executor, buffer arena, parallel level execution.
+- **hologram-bench**: Criterion benchmarks.
 
 Root crate (`src/lib.rs`) re-exports all subcrate APIs.
 

@@ -148,7 +148,7 @@
 - [x] Criterion benchmark `executor.rs`: KvExecutor::execute for linear/diamond/wide-parallel graphs, large buffer (64KB), schedule build
 - [x] Criterion benchmark `archive.rs`: HoloWriter::build + load_from_bytes round-trip, varying graph sizes (5, 50 nodes), diamond topology
 - [x] Criterion benchmark `fusion.rs`: fuse() pass on graphs of varying sizes (10, 100, 1000 nodes)
-- [x] Root crate `src/lib.rs` already re-exports holo-exec public API (done in Phase 4)
+- [x] Root crate `src/lib.rs` already re-exports hologram-exec public API (done in Phase 4)
 - [x] 8 new E2E tests (342 total workspace), zero clippy warnings
 
 ### Phase 6: Q1 Quantum Level Scaling (Sprint 4)
@@ -164,12 +164,12 @@
 - [x] 130 new tests (472 total workspace), zero clippy warnings
 
 ### Phase 7: LUT-GEMM for AI Model Inference (Sprint 5)
-- [x] `Psumbook4` (64B, 1 cache line) + `Psumbook8` (1KB) cache-aligned partial sum accumulators in `holo-exec/src/lut_gemm/psumbook.rs`
-- [x] `QuantizedWeights4` (nibble-packed indices, 16 centroids) + `QuantizedWeights8` (byte indices, 256 centroids) with k-means clustering in `holo-exec/src/lut_gemm/quantize.rs`
+- [x] `Psumbook4` (64B, 1 cache line) + `Psumbook8` (1KB) cache-aligned partial sum accumulators in `hologram-exec/src/lut_gemm/psumbook.rs`
+- [x] `QuantizedWeights4` (nibble-packed indices, 16 centroids) + `QuantizedWeights8` (byte indices, 256 centroids) with k-means clustering in `hologram-exec/src/lut_gemm/quantize.rs`
 - [x] `quantize_4bit()`, `quantize_8bit()`, `quantize_auto()` (tries Q4, falls back to Q8 if error > 5%)
 - [x] `dequantize_error_q4()`, `dequantize_error_q8()` — relative RMSE measurement
-- [x] Sequential LUT-GEMM kernels: `lut_gemm_4bit()`, `lut_gemm_8bit()`, `lut_gemm()` in `holo-exec/src/lut_gemm/matmul.rs`
-- [x] Column-parallel LUT-GEMM via rayon (`lut_gemm_4bit_par`, `lut_gemm_8bit_par`) with `PAR_COL_THRESHOLD=64`, feature-gated in `holo-exec/src/lut_gemm/parallel.rs`
+- [x] Sequential LUT-GEMM kernels: `lut_gemm_4bit()`, `lut_gemm_8bit()`, `lut_gemm()` in `hologram-exec/src/lut_gemm/matmul.rs`
+- [x] Column-parallel LUT-GEMM via rayon (`lut_gemm_4bit_par`, `lut_gemm_8bit_par`) with `PAR_COL_THRESHOLD=64`, feature-gated in `hologram-exec/src/lut_gemm/parallel.rs`
 - [x] 4 new `GraphOp` variants: `MatMulLut4(ConstantId)`, `MatMulLut8(ConstantId)`, `BatchMatMulLut4(ConstantId)`, `BatchMatMulLut8(ConstantId)` — all arity 1, pure
 - [x] `KvStore::dispatch_with_constants()` — resolves quantized weights from `ConstantStore`, casts via bytemuck, runs LUT-GEMM kernel
 - [x] `KvExecutor` updated to pass `&sg.constants` through dispatch
@@ -181,7 +181,7 @@
 - [x] 56 new tests (528 total workspace), zero clippy warnings
 
 ### Phase 8: Compiler Pipeline (Sprint 6)
-- [x] New `holo-compiler` crate: compilation pipeline separate from execution
+- [x] New `hologram-compiler` crate: compilation pipeline separate from execution
 - [x] `CompileError` enum (Validation, Fusion, Emission) + `CompileResult` type + `From<GraphError>` + `From<ArchiveError>` in `error/mod.rs`
 - [x] `LivenessInterval` { node_id, born, dies } + `compute_liveness(schedule, graph)` in `liveness/mod.rs` — tracks buffer lifetime intervals in schedule level order
 - [x] `WorkspaceLayout` + `BufferSlot` + `plan_workspace(intervals)` in `workspace/mod.rs` — first-fit-decreasing bin packing for buffer slot reuse
@@ -190,17 +190,17 @@
 - [x] `compile(graph)` convenience function
 - [x] `CompilationOutput` { archive: Vec<u8>, stats: CompilationStats, schedule: ExecutionSchedule }
 - [x] `CompilationStats` { workspace_slots, peak_live_buffers, total_nodes, schedule_levels, fusion: FusionStats }
-- [x] `SerializedGraph::to_graph()` reconstruction with ID remapping in `holo-archive/src/format/graph.rs`
+- [x] `SerializedGraph::to_graph()` reconstruction with ID remapping in `hologram-archive/src/format/graph.rs`
 - [x] CLI `hologram compile` wired to compiler pipeline with `--no-fuse` flag
-- [x] Root crate re-exports `holo_compiler` public API
+- [x] Root crate re-exports `hologram_compiler` public API
 - [x] Criterion benchmarks `compiler.rs`: compile/liveness/workspace at 10/50/100 nodes
 - [x] 7 E2E integration tests: compiler linear chain, diamond with fusion, constants, fusion disabled vs enabled, large graph, workspace reuse, LayerHeader presence
 - [x] 52 new tests (580 total workspace), zero clippy warnings
 
 ### Phase 10: Constrained Device Validation (Sprint 8)
 - [x] rkyv upgraded 0.7 → 0.8.15 across all workspace crates (fixes WASM32 const-eval overflow bug)
-- [x] rkyv made optional in `holo-core` via `serialize` feature flag (wasm32/ARM builds skip it entirely)
-- [x] `holo-core` no_std verified: `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` both compile clean
+- [x] rkyv made optional in `hologram-core` via `serialize` feature flag (wasm32/ARM builds skip it entirely)
+- [x] `hologram-core` no_std verified: `wasm32-unknown-unknown` and `thumbv7em-none-eabihf` both compile clean
 - [x] `f64::rem_euclid()` replaced with no_std-compatible manual implementation in `encoding/angle.rs`
 - [x] `StaticBuf<const N: usize>` — fixed-size stack/static byte buffer in `buffer/static_buf.rs`; 15 tests
 - [x] `Justfile` recipes: `wasm-nostd` (wasm32 no_std) and `embedded` (thumbv7em bare-metal)
@@ -208,15 +208,15 @@
 - [x] 15 new tests (651 total workspace), zero clippy warnings
 
 ### Phase 9: C FFI + WASM Bindings (Sprint 7)
-- [x] `holo-ffi` crate (`crates/holo-ffi/`): C ABI layer with opaque handles, `extern "C"` functions — `cdylib` + `rlib`
-- [x] Error handling: thread-local `LAST_ERROR` (`RefCell<Option<CString>>`), `holo_last_error() -> i32`, `holo_error_message() -> *const c_char`
+- [x] `hologram-ffi` crate (`crates/hologram-ffi/`): C ABI layer with opaque handles, `extern "C"` functions — `cdylib` + `rlib`
+- [x] Error handling: thread-local `LAST_ERROR` (`RefCell<Option<CString>>`), `hologram_last_error() -> i32`, `hologram_error_message() -> *const c_char`
 - [x] Handle management: `into_handle<T>()`, `borrow_handle()`, `borrow_handle_mut()`, `free_handle()` in `handle/mod.rs`
-- [x] Graph construction FFI: `holo_graph_builder_new/input/node/node_from_input/node_with_inputs/edge/output/build/free` + `holo_graph_node_count/free` in `graph/mod.rs`
+- [x] Graph construction FFI: `hologram_graph_builder_new/input/node/node_from_input/node_with_inputs/edge/output/build/free` + `holo_graph_node_count/free` in `graph/mod.rs`
 - [x] `FfiGraphBuilder` (non-consuming): wraps `Graph` directly with `index_to_id: Vec<NodeId>` for C-friendly index mapping
 - [x] `HoloOpKind` mapping: 0=Input, 1=Output, 2=Prim(op_param 0–9), 3=Lut(op_param 0–20)
-- [x] Compilation FFI: `holo_compile()`, `holo_compile_no_fuse()`, archive ptr/len, stats (nodes/levels/workspace_slots), `holo_compilation_free()` in `compiler/mod.rs`
-- [x] Execution FFI: `holo_inputs_new/set/free`, `holo_execute_bytes()`, `holo_outputs_len/get/name/by_name/free` in `exec/mod.rs`
-- [x] Encoding FFI: `holo_encoding_embed/lift()`, `holo_lut_apply()`, `holo_prim_apply_unary/binary()` in `encoding/mod.rs`
+- [x] Compilation FFI: `hologram_compile()`, `hologram_compile_no_fuse()`, archive ptr/len, stats (nodes/levels/workspace_slots), `holo_compilation_free()` in `compiler/mod.rs`
+- [x] Execution FFI: `hologram_inputs_new/set/free`, `hologram_execute_bytes()`, `hologram_outputs_len/get/name/by_name/free` in `exec/mod.rs`
+- [x] Encoding FFI: `hologram_encoding_embed/lift()`, `hologram_lut_apply()`, `hologram_prim_apply_unary/binary()` in `encoding/mod.rs`
 - [x] `cbindgen.toml` + auto-generated `include/hologram.h` C header (type renames: FfiGraphBuilder→HoloGraphBuilder, etc.)
 - [x] WASM module: `WasmGraphBuilder`, `wasm_execute()`, `wasm_lut_apply()`, `wasm_encoding_embed/lift()` in `wasm/mod.rs` (feature-gated `wasm`)
 - [x] Criterion benchmark `ffi.rs`: graph build, lut_apply, encoding embed/lift, full pipeline (build→compile→execute)
