@@ -1,0 +1,16 @@
+[package]
+name = "holo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core LUT tables, views, ring, encoding for O(1) computation"
+
+[dependencies]
+uor-foundation = { workspace = true }
+rkyv = { workspace = true }
+bytemuck = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+simd = []

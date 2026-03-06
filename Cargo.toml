@@ -1,6 +1,69 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+
+[workspace.dependencies]
+# Internal crates
+holo-core = { path = "crates/holo-core" }
+holo-graph = { path = "crates/holo-graph" }
+holo-archive = { path = "crates/holo-archive" }
+holo-exec = { path = "crates/holo-exec" }
+holo-cli = { path = "crates/holo-cli" }
+
+# UOR Foundation
+uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", tag = "v3.5.0" }
+
+# Serialization (rkyv only)
+rkyv = { version = "0.7", features = ["validation"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Parallelism
+rayon = "1.8"
+
+# Archive support
+memmap2 = "0.9"
+crc32fast = "1.4"
+
+# Data structures
+smallvec = "1.13"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+
+# Benchmarking
+criterion = "0.5"
+
 [package]
 name = "hologram-greenfield"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "O(1) compute acceleration via pre-computed lookup tables"
 
 [dependencies]
+holo-core = { workspace = true }
+holo-graph = { workspace = true }
+holo-archive = { workspace = true }
+holo-exec = { workspace = true }
+holo-cli = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = ["std", "simd", "parallel"]
+std = ["holo-core/std", "holo-exec/std"]
+simd = ["holo-core/simd"]
+parallel = ["holo-exec/parallel"]
+wasm = []
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true
+codegen-units = 1

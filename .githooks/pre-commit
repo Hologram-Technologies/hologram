@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Fast formatting check (read-only) ──────────────────────────
+if ! cargo fmt --all -- --check 2>/dev/null; then
+    echo "❌ cargo fmt failed. Run 'just fmt' to fix."
+    exit 1
+fi
+
+# ── Detect changed crates from staged files ────────────────────
+CHANGED_CRATES=""
+WORKSPACE_CHANGED=false
+
+for file in $(git diff --cached --name-only --diff-filter=ACMR); do
+    case "$file" in
+        crates/*/*)
+            crate_dir=$(echo "$file" | cut -d'/' -f1-2)
+            crate_name=$(basename "$crate_dir")
+            if [[ ! "$CHANGED_CRATES" == *"$crate_name"* ]]; then
+                CHANGED_CRATES="$CHANGED_CRATES $crate_name"
+            fi
+            ;;
+        Cargo.toml|src/*)
+            WORKSPACE_CHANGED=true
+            ;;
+    esac
+done
+
+# ── Incremental clippy on changed crates ───────────────────────
+if [ "$WORKSPACE_CHANGED" = true ]; then
+    echo "🔍 Workspace files changed — running full clippy..."
+    if ! cargo clippy --workspace -- -D warnings 2>/dev/null; then
+        echo "❌ clippy failed on workspace."
+        exit 1
+    fi
+elif [ -n "$CHANGED_CRATES" ]; then
+    for crate in $CHANGED_CRATES; do
+        echo "🔍 Running clippy on $crate..."
+        if ! cargo clippy -p "$crate" -- -D warnings 2>/dev/null; then
+            echo "❌ clippy failed on $crate."
+            exit 1
+        fi
+    done
+else
+    echo "✅ No Rust files changed — skipping clippy."
+fi
+
+echo "✅ Pre-commit checks passed."

@@ -1,0 +1,21 @@
+[package]
+name = "holo-archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = ".holo archive format with execution entrypoints, rkyv zero-copy, mmap"
+
+[dependencies]
+holo-core = { workspace = true }
+holo-graph = { workspace = true }
+rkyv = { workspace = true }
+crc32fast = { workspace = true }
+
+[dependencies.memmap2]
+workspace = true
+optional = true
+
+[features]
+default = ["std"]
+std = ["memmap2"]
+compression = []
