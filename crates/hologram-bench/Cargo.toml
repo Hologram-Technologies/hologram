@@ -3,7 +3,7 @@ name = "hologram-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Criterion benchmarks for hologram-greenfield"
+description = "Criterion benchmarks for hologram"
 
 [dependencies]
 hologram-core = { workspace = true }

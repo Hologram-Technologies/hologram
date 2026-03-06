@@ -1,7 +1,7 @@
 //! Consumer-registered custom op registry.
 //!
 //! Allows downstream crates (e.g. `hologram-ai`) to extend the op set
-//! without modifying `hologram-greenfield` source.
+//! without modifying `hologram` source.
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,1 +1,1 @@
-//! Criterion benchmarks for hologram-greenfield.
+//! Criterion benchmarks for hologram.
