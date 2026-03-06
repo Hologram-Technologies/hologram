@@ -8,6 +8,7 @@ pub mod buffer;
 pub mod error;
 pub mod eval;
 pub mod kv;
+pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
 

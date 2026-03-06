@@ -36,8 +36,8 @@ impl SubgraphId {
 
 /// Operations in the graph.
 ///
-/// Seven variants replace v1's 60+. The fusion interface is
-/// `to_view()`: any op returning `Some(view)` auto-participates in view fusion.
+/// The fusion interface is `to_view()`: any op returning `Some(view)`
+/// auto-participates in view fusion.
 ///
 /// `FusedView` is intentionally 256 bytes (cache-line aligned LUT).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -58,6 +58,14 @@ pub enum GraphOp {
     Constant(ConstantId),
     /// Invoke a subgraph template (flattened before scheduling).
     CallSubgraph(SubgraphId),
+    /// LUT-GEMM matmul with 4-bit quantized weights (stored as constant).
+    MatMulLut4(ConstantId),
+    /// LUT-GEMM matmul with 8-bit quantized weights (stored as constant).
+    MatMulLut8(ConstantId),
+    /// Batched LUT-GEMM with 4-bit quantized weights.
+    BatchMatMulLut4(ConstantId),
+    /// Batched LUT-GEMM with 8-bit quantized weights.
+    BatchMatMulLut8(ConstantId),
 }
 
 impl GraphOp {
@@ -69,7 +77,11 @@ impl GraphOp {
             Self::Output
             | Self::Lut(_)
             | Self::FusedView(_)
-            | Self::CallSubgraph(_) => 1,
+            | Self::CallSubgraph(_)
+            | Self::MatMulLut4(_)
+            | Self::MatMulLut8(_)
+            | Self::BatchMatMulLut4(_)
+            | Self::BatchMatMulLut8(_) => 1,
             Self::Prim(p) => p.arity(),
         }
     }
@@ -77,7 +89,16 @@ impl GraphOp {
     /// Whether this op is pure (no side effects, safe for CSE).
     #[must_use]
     pub const fn is_pure(&self) -> bool {
-        matches!(self, Self::Prim(_) | Self::Lut(_) | Self::FusedView(_))
+        matches!(
+            self,
+            Self::Prim(_)
+                | Self::Lut(_)
+                | Self::FusedView(_)
+                | Self::MatMulLut4(_)
+                | Self::MatMulLut8(_)
+                | Self::BatchMatMulLut4(_)
+                | Self::BatchMatMulLut8(_)
+        )
     }
 
     /// Whether this is a fusable unary op (can become a FusedView).

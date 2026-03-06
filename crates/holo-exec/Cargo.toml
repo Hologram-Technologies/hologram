@@ -9,6 +9,8 @@ description = "KV-lookup execution engine with parallel level scheduling"
 holo-core = { workspace = true }
 holo-graph = { workspace = true }
 holo-archive = { workspace = true }
+rkyv = { workspace = true }
+bytemuck = { workspace = true }
 
 [dependencies.rayon]
 workspace = true

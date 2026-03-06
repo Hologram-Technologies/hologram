@@ -1,0 +1,254 @@
+//! Quantum level utilities and scaling strategy documentation.
+//!
+//! This module provides helpers for working across quantum levels and documents
+//! the scaling strategy from Q0 through Q4+.
+//!
+//! # Quantum Levels
+//!
+//! | Level | Bits | Ring | States | Table Strategy |
+//! |-------|------|------|--------|----------------|
+//! | Q0 | 8 | Z/256Z | 256 | Full LUT (256B each) |
+//! | Q1 | 16 | Z/65536Z | 65,536 | Full LUT (128KB each) |
+//! | Q2 | 24 | Z/16777216Z | 16.7M | Hierarchical segmentation (~50MB each) |
+//! | Q3 | 32 | Z/4294967296Z | 4.3B | Algorithmic only (17GB/table infeasible) |
+//! | Q4+ | 40+ | Z/2^nZ | 2^n | Algorithmic with optional LRU cache |
+//!
+//! # Q0 (8-bit): Full Table
+//!
+//! All 256 entries fit in a single cache line (or two). Arithmetic uses
+//! precomputed 256×256 = 64KB tables. Activations are 256B each.
+//! Total memory: ~519KB. Fits in L1/L2 cache.
+//!
+//! # Q1 (16-bit): Full Table
+//!
+//! All 65,536 entries = 128KB per table. 21 activation tables = 2.7MB total.
+//! Arithmetic uses native wrapping ops (a 65536×65536 table would be 4GB).
+//! Total memory: ~2.7MB. Fits comfortably in L2/L3 cache.
+//!
+//! # Q2 (24-bit): Hierarchical Segmentation (Design Only)
+//!
+//! A full Q2 table would be 2^24 × 3 bytes = ~50MB per table. This is
+//! borderline for L3 cache on modern CPUs (typically 6-32MB). Strategy:
+//!
+//! - **High-byte coarse table** (256 entries): Maps the top 8 bits to a
+//!   segment index, providing a coarse approximation.
+//! - **Q1 fine table** (65,536 entries per segment): For each coarse region,
+//!   a Q1-sized table handles the lower 16 bits with higher precision.
+//! - **Correction table** (optional): A small table for interpolation error.
+//!
+//! This gives O(2) lookup (coarse + fine) with ~50MB per activation total.
+//! Implementation deferred to a future sprint when Q2 support is needed.
+//!
+//! # Q3 (32-bit): Algorithmic Computation (Design Only)
+//!
+//! A full Q3 table would be 2^32 × 4 bytes = 17GB — impossible to table.
+//! Strategy: pure algorithmic computation with optional Q1 piecewise
+//! approximation for hot paths.
+//!
+//! - Use native f32/f64 math for transcendental functions.
+//! - Optional: segment the input range into Q1-sized blocks and use
+//!   Q1 tables for the hot regions, falling back to computation for cold.
+//! - Arithmetic: native u32 wrapping operations (already O(1)).
+//!
+//! # Q4+ (40-bit and beyond): Algorithmic Only (Design Only)
+//!
+//! uor-foundation currently defines Q0–Q3 via `QuantumLevel` (which is
+//! `#[non_exhaustive]`). Future levels follow the +8 bits/level pattern:
+//!
+//! - **Q4 (40-bit)**: 2^40 = 1.1 trillion states. Tables completely infeasible.
+//! - **Strategy**: Algorithmic computation only, with optional LRU cache for
+//!   frequently accessed values. Composition via function chaining rather than
+//!   table fusion.
+//! - When uor-foundation extends `QuantumLevel`, the quantum module can add
+//!   concrete support following this pattern.
+
+use uor_foundation::enums::QuantumLevel;
+
+/// Bit width for a given quantum level.
+#[inline]
+#[must_use]
+pub const fn quantum_bit_width(level: QuantumLevel) -> u64 {
+    match level {
+        QuantumLevel::Q0 => 8,
+        QuantumLevel::Q1 => 16,
+        QuantumLevel::Q2 => 24,
+        QuantumLevel::Q3 => 32,
+        _ => 0, // future levels
+    }
+}
+
+/// Modulus (ring size) for a given quantum level: 2^bits.
+#[inline]
+#[must_use]
+pub const fn quantum_modulus(level: QuantumLevel) -> u64 {
+    match level {
+        QuantumLevel::Q0 => 256,
+        QuantumLevel::Q1 => 65536,
+        QuantumLevel::Q2 => 16777216,
+        QuantumLevel::Q3 => 4294967296,
+        _ => 0,
+    }
+}
+
+/// Number of entries in a full table at this quantum level.
+#[inline]
+#[must_use]
+pub const fn quantum_table_entries(level: QuantumLevel) -> u64 {
+    quantum_modulus(level)
+}
+
+/// Whether a full activation table is feasible at this quantum level.
+///
+/// Q0 and Q1 tables fit in L2/L3 cache. Q2 is borderline (~50MB).
+/// Q3 and above are infeasible (17GB+).
+#[inline]
+#[must_use]
+pub const fn quantum_is_table_feasible(level: QuantumLevel) -> bool {
+    matches!(level, QuantumLevel::Q0 | QuantumLevel::Q1)
+}
+
+/// Memory per activation table in bytes at this quantum level.
+///
+/// `entries * bytes_per_entry` where bytes_per_entry = ceil(bits / 8).
+#[inline]
+#[must_use]
+pub const fn quantum_table_size_bytes(level: QuantumLevel) -> u64 {
+    let entries = quantum_table_entries(level);
+    let bytes_per = quantum_bit_width(level).div_ceil(8);
+    entries * bytes_per
+}
+
+// ── Q2 helpers ──────────────────────────────────────────────────
+
+/// Stratum (popcount) for Q2 (24-bit) values.
+#[inline]
+#[must_use]
+pub const fn q2_stratum(value: u32) -> u8 {
+    (value & 0x00FF_FFFF).count_ones() as u8
+}
+
+/// Curvature for Q2: `hamming(value, value + 1)` masked to 24 bits.
+#[inline]
+#[must_use]
+pub const fn q2_curvature(value: u32) -> u8 {
+    let masked = value & 0x00FF_FFFF;
+    let next = masked.wrapping_add(1) & 0x00FF_FFFF;
+    (masked ^ next).count_ones() as u8
+}
+
+/// Addition in Z/2^24 Z.
+#[inline]
+#[must_use]
+pub const fn q2_add(a: u32, b: u32) -> u32 {
+    a.wrapping_add(b) & 0x00FF_FFFF
+}
+
+// ── Q3 helpers ──────────────────────────────────────────────────
+
+/// Stratum (popcount) for Q3 (32-bit) values.
+#[inline]
+#[must_use]
+pub const fn q3_stratum(value: u32) -> u8 {
+    value.count_ones() as u8
+}
+
+/// Curvature for Q3: `hamming(value, value + 1)`.
+#[inline]
+#[must_use]
+pub const fn q3_curvature(value: u32) -> u8 {
+    (value ^ value.wrapping_add(1)).count_ones() as u8
+}
+
+/// Addition in Z/2^32 Z.
+#[inline]
+#[must_use]
+pub const fn q3_add(a: u32, b: u32) -> u32 {
+    a.wrapping_add(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bit_widths() {
+        assert_eq!(quantum_bit_width(QuantumLevel::Q0), 8);
+        assert_eq!(quantum_bit_width(QuantumLevel::Q1), 16);
+        assert_eq!(quantum_bit_width(QuantumLevel::Q2), 24);
+        assert_eq!(quantum_bit_width(QuantumLevel::Q3), 32);
+    }
+
+    #[test]
+    fn moduli() {
+        assert_eq!(quantum_modulus(QuantumLevel::Q0), 256);
+        assert_eq!(quantum_modulus(QuantumLevel::Q1), 65536);
+        assert_eq!(quantum_modulus(QuantumLevel::Q2), 16_777_216);
+        assert_eq!(quantum_modulus(QuantumLevel::Q3), 4_294_967_296);
+    }
+
+    #[test]
+    fn table_feasibility() {
+        assert!(quantum_is_table_feasible(QuantumLevel::Q0));
+        assert!(quantum_is_table_feasible(QuantumLevel::Q1));
+        assert!(!quantum_is_table_feasible(QuantumLevel::Q2));
+        assert!(!quantum_is_table_feasible(QuantumLevel::Q3));
+    }
+
+    #[test]
+    fn table_sizes() {
+        // Q0: 256 entries * 1 byte = 256
+        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q0), 256);
+        // Q1: 65536 entries * 2 bytes = 131072
+        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q1), 131_072);
+        // Q2: 16.7M entries * 3 bytes ≈ 50.3MB
+        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q2), 50_331_648);
+        // Q3: 4.3B entries * 4 bytes = 17.2GB
+        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q3), 17_179_869_184);
+    }
+
+    #[test]
+    fn q2_stratum_values() {
+        assert_eq!(q2_stratum(0), 0);
+        assert_eq!(q2_stratum(0x00FF_FFFF), 24);
+        assert_eq!(q2_stratum(0xFF00_0000), 0); // high bits masked out
+        assert_eq!(q2_stratum(0x00AA_AAAA), 12);
+    }
+
+    #[test]
+    fn q2_curvature_values() {
+        assert_eq!(q2_curvature(0), 1); // 0→1, 1 bit changes
+        assert_eq!(q2_curvature(0x00FF_FFFF), 24); // all bits flip
+    }
+
+    #[test]
+    fn q2_add_wraps() {
+        assert_eq!(q2_add(0x00FF_FFFF, 1), 0);
+        assert_eq!(q2_add(100, 200), 300);
+    }
+
+    #[test]
+    fn q3_stratum_values() {
+        assert_eq!(q3_stratum(0), 0);
+        assert_eq!(q3_stratum(u32::MAX), 32);
+        assert_eq!(q3_stratum(0xAAAA_AAAA), 16);
+    }
+
+    #[test]
+    fn q3_curvature_values() {
+        assert_eq!(q3_curvature(0), 1);
+        assert_eq!(q3_curvature(u32::MAX), 32); // 0xFFFF_FFFF → 0, all bits flip
+    }
+
+    #[test]
+    fn q3_add_wraps() {
+        assert_eq!(q3_add(u32::MAX, 1), 0);
+        assert_eq!(q3_add(100, 200), 300);
+    }
+
+    #[test]
+    fn table_entries_matches_modulus() {
+        for level in [QuantumLevel::Q0, QuantumLevel::Q1, QuantumLevel::Q2, QuantumLevel::Q3] {
+            assert_eq!(quantum_table_entries(level), quantum_modulus(level));
+        }
+    }
+}

@@ -22,6 +22,11 @@ pub enum QuantizationScheme {
     AsymmetricAffine,
     /// Per-group quantization (GPTQ/AWQ style).
     PerGroup,
+    /// K-means clustered quantization (LUT-GEMM style).
+    KMeansClustered {
+        /// Number of quantization bits (4 or 8).
+        bits: u8,
+    },
 }
 
 /// Parameters for quantized weight storage.
@@ -77,5 +82,25 @@ mod tests {
             QuantizationScheme::None,
             QuantizationScheme::PerGroup
         );
+    }
+
+    #[test]
+    fn kmeans_clustered_rkyv_roundtrip() {
+        use rkyv::Deserialize;
+        let scheme = QuantizationScheme::KMeansClustered { bits: 4 };
+        let bytes = rkyv::to_bytes::<_, 64>(&scheme).unwrap();
+        let archived =
+            rkyv::check_archived_root::<QuantizationScheme>(&bytes).unwrap();
+        let deserialized: QuantizationScheme =
+            archived.deserialize(&mut rkyv::Infallible).unwrap();
+        assert_eq!(deserialized, scheme);
+    }
+
+    #[test]
+    fn kmeans_clustered_equality() {
+        let a = QuantizationScheme::KMeansClustered { bits: 4 };
+        let b = QuantizationScheme::KMeansClustered { bits: 8 };
+        assert_ne!(a, b);
+        assert_eq!(a, QuantizationScheme::KMeansClustered { bits: 4 });
     }
 }

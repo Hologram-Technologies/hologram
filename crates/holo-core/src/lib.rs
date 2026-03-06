@@ -19,6 +19,8 @@ pub mod encoding;
 pub mod error;
 pub mod lut;
 pub mod op;
+pub mod q1;
+pub mod quantum;
 pub mod ring;
 pub mod view;
 

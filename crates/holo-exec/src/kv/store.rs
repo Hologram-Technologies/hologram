@@ -2,9 +2,12 @@
 
 use holo_core::op::PrimOp;
 use holo_core::view::ElementWiseView;
+use holo_graph::constant::{ConstantData, ConstantStore};
 use holo_graph::graph::GraphOp;
 
 use crate::error::{ExecError, ExecResult};
+use crate::lut_gemm::matmul::{lut_gemm_4bit, lut_gemm_8bit};
+use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
 
 /// Stateless dispatch table for O(1) graph operations.
 ///
@@ -49,6 +52,17 @@ impl KvStore {
         op: &GraphOp,
         inputs: &[&[u8]],
     ) -> ExecResult<Vec<u8>> {
+        Self::dispatch_with_constants(op, inputs, &ConstantStore::new())
+    }
+
+    /// Dispatch with access to the graph's constant store.
+    ///
+    /// MatMulLut ops resolve their quantized weights from constants.
+    pub fn dispatch_with_constants(
+        op: &GraphOp,
+        inputs: &[&[u8]],
+        constants: &ConstantStore,
+    ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
             GraphOp::Lut(_) | GraphOp::FusedView(_) => {
@@ -66,8 +80,104 @@ impl KvStore {
             GraphOp::CallSubgraph(_) => {
                 Err(ExecError::UnsupportedOp("CallSubgraph".into()))
             }
+            GraphOp::MatMulLut4(cid) => {
+                dispatch_lut_gemm_4(inputs[0], *cid, constants)
+            }
+            GraphOp::MatMulLut8(cid) => {
+                dispatch_lut_gemm_8(inputs[0], *cid, constants)
+            }
+            GraphOp::BatchMatMulLut4(cid) => {
+                dispatch_lut_gemm_4(inputs[0], *cid, constants)
+            }
+            GraphOp::BatchMatMulLut8(cid) => {
+                dispatch_lut_gemm_8(inputs[0], *cid, constants)
+            }
         }
     }
+}
+
+/// Resolve constant and run 4-bit LUT-GEMM.
+fn dispatch_lut_gemm_4(
+    activation_bytes: &[u8],
+    cid: holo_graph::constant::ConstantId,
+    constants: &ConstantStore,
+) -> ExecResult<Vec<u8>> {
+    let weight_bytes = resolve_constant_bytes(cid, constants)?;
+    let archived = rkyv::check_archived_root::<QuantizedWeights4>(weight_bytes)
+        .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+    let qw = deserialize_q4(archived)?;
+    let activations = cast_f32(activation_bytes)?;
+    let m = activations.len() / qw.rows as usize;
+    let n = qw.cols as usize;
+    let mut output = vec![0.0f32; m * n];
+    lut_gemm_4bit(activations, &qw, &mut output);
+    Ok(bytemuck::cast_slice(&output).to_vec())
+}
+
+/// Resolve constant and run 8-bit LUT-GEMM.
+fn dispatch_lut_gemm_8(
+    activation_bytes: &[u8],
+    cid: holo_graph::constant::ConstantId,
+    constants: &ConstantStore,
+) -> ExecResult<Vec<u8>> {
+    let weight_bytes = resolve_constant_bytes(cid, constants)?;
+    let archived = rkyv::check_archived_root::<QuantizedWeights8>(weight_bytes)
+        .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+    let qw = deserialize_q8(archived)?;
+    let activations = cast_f32(activation_bytes)?;
+    let m = activations.len() / qw.rows as usize;
+    let n = qw.cols as usize;
+    let mut output = vec![0.0f32; m * n];
+    lut_gemm_8bit(activations, &qw, &mut output);
+    Ok(bytemuck::cast_slice(&output).to_vec())
+}
+
+/// Resolve a constant ID to its raw bytes.
+fn resolve_constant_bytes(
+    cid: holo_graph::constant::ConstantId,
+    constants: &ConstantStore,
+) -> ExecResult<&[u8]> {
+    let data = constants
+        .get(cid)
+        .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
+    match data {
+        ConstantData::Bytes(bytes) => Ok(bytes),
+        ConstantData::Deferred { .. } => {
+            Err(ExecError::UnsupportedOp("deferred constant".into()))
+        }
+    }
+}
+
+/// Cast `&[u8]` to `&[f32]` via bytemuck.
+fn cast_f32(bytes: &[u8]) -> ExecResult<&[f32]> {
+    bytemuck::try_cast_slice(bytes).map_err(|e| {
+        ExecError::ShapeMismatch {
+            expected: "f32-aligned bytes".into(),
+            actual: e.to_string(),
+        }
+    })
+}
+
+/// Deserialize archived Q4 weights.
+fn deserialize_q4(
+    archived: &rkyv::Archived<QuantizedWeights4>,
+) -> ExecResult<QuantizedWeights4> {
+    use rkyv::Deserialize;
+    let qw: QuantizedWeights4 = archived
+        .deserialize(&mut rkyv::Infallible)
+        .map_err(|e| ExecError::InvalidQuantization(format!("{e:?}")))?;
+    Ok(qw)
+}
+
+/// Deserialize archived Q8 weights.
+fn deserialize_q8(
+    archived: &rkyv::Archived<QuantizedWeights8>,
+) -> ExecResult<QuantizedWeights8> {
+    use rkyv::Deserialize;
+    let qw: QuantizedWeights8 = archived
+        .deserialize(&mut rkyv::Infallible)
+        .map_err(|e| ExecError::InvalidQuantization(format!("{e:?}")))?;
+    Ok(qw)
 }
 
 #[cfg(test)]
@@ -105,7 +215,6 @@ mod tests {
         let op = GraphOp::Lut(LutOp::Relu);
         let input = vec![0u8, 128, 255];
         let result = KvStore::dispatch(&op, &[&input]).unwrap();
-        // Relu: values below threshold → 0, above → identity
         assert_eq!(result[0], LutOp::Relu.apply(0));
         assert_eq!(result[1], LutOp::Relu.apply(128));
     }
@@ -180,6 +289,76 @@ mod tests {
         use holo_graph::SubgraphId;
         let op = GraphOp::CallSubgraph(SubgraphId::new(0));
         let result = KvStore::dispatch(&op, &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_matmul_lut4() {
+        use crate::lut_gemm::quantize::quantize_4bit;
+
+        let k = 4usize;
+        let n = 2usize;
+        let weights = vec![1.0f32; k * n];
+        let qw = quantize_4bit(&weights, k as u32, n as u32);
+        let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+
+        let mut constants = ConstantStore::new();
+        let cid = constants.insert(ConstantData::Bytes(qw_bytes));
+
+        let activations = [1.0f32, 2.0, 3.0, 4.0]; // 1×4
+        let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
+
+        let op = GraphOp::MatMulLut4(cid);
+        let result =
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants)
+                .unwrap();
+        let output: &[f32] = bytemuck::cast_slice(&result);
+        assert_eq!(output.len(), n);
+        // sum(1+2+3+4)=10, all weights=1.0
+        for &v in output {
+            assert!((v - 10.0).abs() < 0.5, "got {v}");
+        }
+    }
+
+    #[test]
+    fn dispatch_matmul_lut8() {
+        use crate::lut_gemm::quantize::quantize_8bit;
+
+        let k = 4usize;
+        let n = 2usize;
+        let weights = vec![2.0f32; k * n];
+        let qw = quantize_8bit(&weights, k as u32, n as u32);
+        let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+
+        let mut constants = ConstantStore::new();
+        let cid = constants.insert(ConstantData::Bytes(qw_bytes));
+
+        let activations = [1.0f32, 1.0, 1.0, 1.0];
+        let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
+
+        let op = GraphOp::MatMulLut8(cid);
+        let result =
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants)
+                .unwrap();
+        let output: &[f32] = bytemuck::cast_slice(&result);
+        assert_eq!(output.len(), n);
+        // sum(1*2 * 4) = 8
+        for &v in output {
+            assert!((v - 8.0).abs() < 0.1, "got {v}");
+        }
+    }
+
+    #[test]
+    fn dispatch_matmul_lut_missing_constant() {
+        use holo_graph::constant::ConstantId;
+        let op = GraphOp::MatMulLut4(ConstantId::new(99));
+        let act = [1.0f32; 4];
+        let act_bytes: &[u8] = bytemuck::cast_slice(&act);
+        let result = KvStore::dispatch_with_constants(
+            &op,
+            &[act_bytes],
+            &ConstantStore::new(),
+        );
         assert!(result.is_err());
     }
 }

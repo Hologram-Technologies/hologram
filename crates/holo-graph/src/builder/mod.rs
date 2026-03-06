@@ -90,6 +90,32 @@ impl GraphBuilder {
         self
     }
 
+    /// Add a 4-bit LUT-GEMM matmul node with pre-serialized weights.
+    pub fn matmul_lut_4bit(mut self, weight_data: ConstantData, inputs: &[usize]) -> Self {
+        let cid = self.graph.add_constant(weight_data);
+        let id = self.graph.add_node(GraphOp::MatMulLut4(cid));
+        self.index_to_id.push(id);
+        for (slot, &src_idx) in inputs.iter().enumerate() {
+            if let Some(&src_id) = self.index_to_id.get(src_idx) {
+                edge::connect(&mut self.graph, src_id, id, slot);
+            }
+        }
+        self
+    }
+
+    /// Add an 8-bit LUT-GEMM matmul node with pre-serialized weights.
+    pub fn matmul_lut_8bit(mut self, weight_data: ConstantData, inputs: &[usize]) -> Self {
+        let cid = self.graph.add_constant(weight_data);
+        let id = self.graph.add_node(GraphOp::MatMulLut8(cid));
+        self.index_to_id.push(id);
+        for (slot, &src_idx) in inputs.iter().enumerate() {
+            if let Some(&src_id) = self.index_to_id.get(src_idx) {
+                edge::connect(&mut self.graph, src_id, id, slot);
+            }
+        }
+        self
+    }
+
     /// Register a subgraph template.
     pub fn subgraph(mut self, def: SubgraphDef) -> Self {
         self.graph.register_subgraph(def);
@@ -190,6 +216,28 @@ mod tests {
         assert!(b.is_empty());
         let g = b.build();
         assert!(g.is_empty());
+    }
+
+    #[test]
+    fn matmul_lut_4bit_node() {
+        let g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .matmul_lut_4bit(ConstantData::Bytes(vec![1, 2, 3]), &[0])
+            .node_with_inputs(GraphOp::Output, &[1])
+            .build();
+        assert_eq!(g.node_count(), 3);
+        assert!(!g.constant_store().is_empty());
+    }
+
+    #[test]
+    fn matmul_lut_8bit_node() {
+        let g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .matmul_lut_8bit(ConstantData::Bytes(vec![4, 5, 6]), &[0])
+            .node_with_inputs(GraphOp::Output, &[1])
+            .build();
+        assert_eq!(g.node_count(), 3);
+        assert!(!g.constant_store().is_empty());
     }
 
     #[test]

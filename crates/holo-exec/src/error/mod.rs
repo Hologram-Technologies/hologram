@@ -24,6 +24,10 @@ pub enum ExecError {
     LengthMismatch { expected: usize, actual: usize },
     /// Error from the archive loader.
     ArchiveError(String),
+    /// Matrix dimension mismatch.
+    ShapeMismatch { expected: String, actual: String },
+    /// Invalid quantized weight data.
+    InvalidQuantization(String),
 }
 
 impl fmt::Display for ExecError {
@@ -56,6 +60,12 @@ impl fmt::Display for ExecError {
             }
             Self::ArchiveError(msg) => {
                 write!(f, "archive error: {msg}")
+            }
+            Self::ShapeMismatch { expected, actual } => {
+                write!(f, "shape mismatch: expected {expected}, got {actual}")
+            }
+            Self::InvalidQuantization(msg) => {
+                write!(f, "invalid quantization: {msg}")
             }
         }
     }

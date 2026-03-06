@@ -147,7 +147,11 @@ impl KvExecutor {
                 let input_refs: Vec<&[u8]> =
                     input_bufs.iter().map(|v| v.as_slice()).collect();
 
-                let output = KvStore::dispatch(&node.op, &input_refs)?;
+                let output = KvStore::dispatch_with_constants(
+                    &node.op,
+                    &input_refs,
+                    &sg.constants,
+                )?;
                 results.push((node_id, output));
             }
 
