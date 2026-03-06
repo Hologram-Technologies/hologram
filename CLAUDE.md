@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-V2 rewrite of `../categorical-x`. O(1) compute acceleration via precomputed LUT tables and KV-lookups, built on `uor-foundation` (v3.5.0).
+V2 rewrite of `../hologram-backup`. O(1) compute acceleration via precomputed LUT tables and KV-lookups, built on `uor-foundation` (v3.5.0).
 
 ## Build Commands
 

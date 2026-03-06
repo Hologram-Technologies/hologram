@@ -2,7 +2,7 @@
 
 ## Context
 
-V2 rewrite of `../categorical-x` (15+ crate workspace, 8-stage compiler, dual graph types, 60+ OpKind variants, two execution models). Strips away hacks and IRs, using `uor-foundation` (v3.5.0, git main) to turn execution into O(1) KV-lookups via precomputed LUT tables.
+V2 rewrite of `../hologram-backup` (15+ crate workspace, 8-stage compiler, dual graph types, 60+ OpKind variants, two execution models). Strips away hacks and IRs, using `uor-foundation` (v3.5.0, git main) to turn execution into O(1) KV-lookups via precomputed LUT tables.
 
 **Core requirements**:
 - O(1) execution via LUT fusion tables and KV-lookups
@@ -17,7 +17,7 @@ V2 rewrite of `../categorical-x` (15+ crate workspace, 8-stage compiler, dual gr
 - Max 3 args per function; builder pattern for more
 - Prefer macros for repeated trait impls
 - No backwards compatibility — single archive format
-- Network distribution deferred — will port from categorical-x when core pipeline is stable
+- Network distribution deferred — will port from hologram-backup when core pipeline is stable
 
 **Initial deliverable**: Super-fast calculator as `examples/calculator.rs` with benchmarks.
 
@@ -213,10 +213,10 @@ error/
 ### Port Sources
 | Source | Target |
 |---|---|
-| [crates/prism/src/lut.rs](../categorical-x/crates/prism/src/lut.rs) | `lut/` |
-| [crates/prism/src/view/mod.rs](../categorical-x/crates/prism/src/view/mod.rs) | `view/mod.rs` |
-| [crates/prism/src/view/simd.rs](../categorical-x/crates/prism/src/view/simd.rs) | `view/simd.rs` |
-| [examples/rust/calculator/main.rs](../categorical-x/examples/rust/calculator/main.rs) encodings | `encoding/` |
+| [crates/prism/src/lut.rs](../hologram-backup/crates/prism/src/lut.rs) | `lut/` |
+| [crates/prism/src/view/mod.rs](../hologram-backup/crates/prism/src/view/mod.rs) | `view/mod.rs` |
+| [crates/prism/src/view/simd.rs](../hologram-backup/crates/prism/src/view/simd.rs) | `view/simd.rs` |
+| [examples/rust/calculator/main.rs](../hologram-backup/examples/rust/calculator/main.rs) encodings | `encoding/` |
 
 ### Tests & Benchmarks
 - All LUT entries verified, ElementWiseView composition, ring axioms, SIMD parity, rkyv round-trip
@@ -260,8 +260,8 @@ error/
 ### Key Designs
 - **Single Graph** (fixes v1 hacks #1, #2): one type for building and optimization
 - **Op enum**: `Input | Output | Prim(PrimOp) | Lut(LutOp) | FusedView(ElementWiseView) | Constant(ConstantId) | CallSubgraph(SubgraphId)`
-- **SubgraphDef** (port concept from [crates/graph/src/subgraph.rs](../categorical-x/crates/graph/src/subgraph.rs)): reusable templates, two-phase flatten with input bindings
-- **Parallel levels** (port from [crates/compiler/src/partition/schedule.rs](../categorical-x/crates/compiler/src/partition/schedule.rs)): Level N nodes have all deps in levels < N → concurrent execution
+- **SubgraphDef** (port concept from [crates/graph/src/subgraph.rs](../hologram-backup/crates/graph/src/subgraph.rs)): reusable templates, two-phase flatten with input bindings
+- **Parallel levels** (port from [crates/compiler/src/partition/schedule.rs](../hologram-backup/crates/compiler/src/partition/schedule.rs)): Level N nodes have all deps in levels < N → concurrent execution
 - **Single-pass fusion** (fixes v1 hacks #3-5): one toposort walk → constant fold → CSE → view fusion
 
 ---
@@ -512,7 +512,7 @@ parallel/
 **Result**: 18 new tests, 669 total workspace, zero clippy warnings. ✓
 
 ### Sprint 10: Codegen from Descriptors
-- [ ] Port ISA descriptor concept from [categorical-x/crates/holo/codegen/](../categorical-x/crates/holo/codegen/)
+- [ ] Port ISA descriptor concept from [hologram-backup/crates/holo/codegen/](../hologram-backup/crates/holo/codegen/)
 - [ ] Build-time code generation for instruction dispatch
 - [ ] Generate op enum variants from descriptor files
 - [ ] Generate dispatch tables from descriptors
