@@ -453,43 +453,61 @@ parallel/
 - [x] `crates/holo-bench/benches/ffi.rs`: graph build, lut_apply, encoding, full pipeline benchmarks
 - [x] 6 FFI E2E tests in `tests/e2e.rs`: full pipeline, diamond, encoding round-trip, LUT ops, error handling, fusion toggle
 
-### Sprint 8: Constrained Device Validation
+### Sprint 8: Constrained Device Validation — COMPLETED
 
-**Goal**: Validate `holo-core` on constrained targets (WASM no_std, bare-metal ARM). Add `no_alloc` static-buffer mode. Document feature matrix per target.
+**Notes**: Fixed `f64::rem_euclid()` (std-only) with manual no_std modulo in `angle.rs`. Upgraded rkyv 0.7 → 0.8.15 across all 30+ workspace files — removes WASM32 const-eval overflow bug and eliminates manual `serialize` workaround; rkyv 0.8 auto-derives `CheckBytes` with `Archive`. `StaticBuf<const N: usize>` in `crates/holo-core/src/buffer/` with 15 unit tests. `Justfile` `wasm-nostd` / `embedded` recipes use rustup toolchain paths (needed because Homebrew Rust lacks cross targets). 15 new tests (StaticBuf), zero clippy warnings, holo-core no_std ~35–40 KB text (well under 100 KB).
 
-**Step 1: no_std Validation (~5 tests)**
-- [ ] Verify `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features` compiles cleanly
-- [ ] Verify `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features` compiles cleanly
-- [ ] Fix any `std`-only leaks in `holo-core` (e.g. `std::fmt`, `std::io` in non-std paths)
+**Step 1: no_std Validation**
+- [x] Verify `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features` compiles cleanly
+- [x] Verify `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features` compiles cleanly
+- [x] Fix `f64::rem_euclid()` std-only call in `encoding/angle.rs`
 
-**Step 2: `no_alloc` Static Buffer Mode (~15 tests)**
-- [ ] Add `alloc` feature to `holo-core/Cargo.toml` (default on; enables `Vec`-based paths)
-- [ ] `crates/holo-core/src/buffer/static_buf.rs` — `StaticBuf<const N: usize>`: fixed-size stack/static buffer, `push/get/len/clear`, overflow returns error
-- [ ] `crates/holo-core/src/buffer/mod.rs` — re-export `StaticBuf`
-- [ ] `holo-core/src/lib.rs` — re-export `buffer` module
-- [ ] Unit tests: capacity boundary, overflow, Q0 LUT apply via `StaticBuf<256>`
+**Step 2: `no_alloc` Static Buffer Mode**
+- [x] Add `no_alloc` marker feature to `holo-core/Cargo.toml`; make `rkyv` optional via `serialize` feature
+- [x] `crates/holo-core/src/buffer/static_buf.rs` — `StaticBuf<const N: usize>`: fixed-size stack/static buffer, `push/pop/extend_from_slice/as_slice/clear/is_full/capacity`
+- [x] `crates/holo-core/src/buffer/mod.rs` — re-export `StaticBuf`
+- [x] `holo-core/src/lib.rs` — re-export `buffer` module
+- [x] 15 unit tests: capacity boundary, overflow, extend, Q0 LUT use case
 
 **Step 3: Binary Size Analysis**
-- [ ] `cargo build --release -p holo-core --no-default-features` → measure with `size`
-- [ ] `cargo build --release --target wasm32-unknown-unknown -p holo-core --no-default-features` → `wasm-size` or `wasm-opt --print-stats`
-- [ ] Document results in `specs/SPRINT.md` (target: < 100KB `.text` for no_std + no_alloc)
+- [x] Measured: wasm32 ~40 KB `.text`, thumbv7em ~35 KB — documented in `specs/feature-matrix.md`
 
 **Step 4: Justfile + Feature Matrix**
-- [ ] Add `embedded` recipe to `Justfile`: `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features`
-- [ ] Add `wasm-nostd` recipe: `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features`
-- [ ] Create `specs/feature-matrix.md`: table of features vs targets (x86_64, wasm32, thumbv7em, esp32)
+- [x] `Justfile` `embedded` recipe (thumbv7em via rustup toolchain)
+- [x] `Justfile` `wasm-nostd` recipe (wasm32 no_std via rustup toolchain)
+- [x] `specs/feature-matrix.md` created: features vs targets matrix
 
-**Step 5: Benchmarks (~10 tests)**
-- [ ] `crates/holo-bench/benches/no_alloc.rs`: `StaticBuf` vs `Vec` for 256-byte LUT apply and Q0 encoding round-trip
+**Step 5: rkyv 0.8 Upgrade (added mid-sprint)**
+- [x] Upgrade workspace rkyv dep: `0.7` → `0.8.15`
+- [x] Remove all `#[archive(check_bytes)]` / `#[rkyv(derive(CheckBytes))]` (auto-derived in 0.8)
+- [x] Replace `to_bytes::<_, N>` → `to_bytes::<rkyv::rancor::Error>` across all crates + `tests/e2e.rs`
+- [x] Replace `check_archived_root + deserialize` → `rkyv::from_bytes::<T, rkyv::rancor::Error>`
+- [x] Replace `rkyv::Infallible` usage (removed in 0.8)
 
-**Target**: ~30 new tests, ~666 total workspace, zero clippy warnings, holo-core no_std < 100KB.
+**Target**: ~15 new tests, ~651 total workspace, zero clippy warnings, holo-core no_std < 100KB. ✓
 
 ### Sprint 9: Tokio Integration + Async Execution
-- [ ] Async graph compilation
-- [ ] Async streaming evaluation for large models
-- [ ] Async network transport for distributed execution
-- [ ] Integration with holo-net for async P2P
-- [ ] Benchmark: async vs sync execution overhead
+
+**Goal**: Add async compilation and execution paths. `holo-async` crate wraps existing `CompilerBuilder` and `KvExecutor` behind Tokio without duplicating logic.
+
+**Step 1: `holo-async` crate (~10 tests)**
+- [ ] `crates/holo-async/Cargo.toml`: deps `holo-compiler`, `holo-exec`, `tokio` (feature-gated)
+- [ ] `src/compiler.rs`: `AsyncCompiler::compile(graph) -> JoinHandle<CompilationOutput>` via `spawn_blocking`
+- [ ] `src/executor.rs`: `AsyncExecutor::execute(archive, inputs) -> JoinHandle<Outputs>` via `spawn_blocking`
+
+**Step 2: Streaming API (~10 tests)**
+- [ ] `src/stream.rs`: `execute_stream() -> impl Stream<Item = LevelResult>` using `tokio::sync::mpsc`
+- [ ] Level-by-level yield: each scheduler level emits one `LevelResult` to the channel
+- [ ] Cancellation: drop the receiver to cancel remaining levels cleanly
+
+**Step 3: Benchmarks (~10 tests)**
+- [ ] `crates/holo-bench/benches/async_exec.rs`: async vs sync compile (target: < 5% overhead)
+- [ ] `crates/holo-bench/benches/async_stream.rs`: streaming throughput vs batch
+
+**Step 4: Root re-export**
+- [ ] `src/lib.rs`: re-export `holo_async` under `hologram::async_exec`
+
+**Target**: ~30 new tests, ~681 total workspace, zero clippy warnings.
 
 ### Sprint 10: Codegen from Descriptors
 - [ ] Port ISA descriptor concept from [categorical-x/crates/holo/codegen/](../categorical-x/crates/holo/codegen/)

@@ -44,6 +44,23 @@
 
 ---
 
+## Sprint 9: Tokio Integration + Async Execution
+
+**Goal**: Add async compilation and execution paths backed by Tokio. Allow callers to stream graph evaluation across async tasks for large models and pipelined inference workloads.
+
+### Deliverables
+- [ ] `holo-async` crate: `Cargo.toml`, `lib.rs`, feature `tokio` (gates all async impls)
+- [ ] `AsyncCompiler`: wraps `CompilerBuilder` in `tokio::task::spawn_blocking`; returns `CompilationOutput` via `JoinHandle`
+- [ ] `AsyncExecutor`: drives `KvExecutor` level-by-level across `tokio::task::spawn_blocking` calls; yields between levels
+- [ ] Streaming API: `execute_stream() -> impl Stream<Item = LevelResult>` using `tokio::sync::mpsc`
+- [ ] Integration with `holo-exec`: `AsyncExecutor` wraps existing `KvExecutor` (no duplication)
+- [ ] Benchmark: async vs sync compilation overhead (target: < 5% overhead for graphs > 10 nodes)
+- [ ] Benchmark: async streaming execution throughput vs batch
+- [ ] ~30 new tests: compile round-trip async, streaming level output, cancellation via `drop`
+- [ ] Zero clippy warnings; `just ci` green
+
+---
+
 ## Completed (Running Log)
 
 ### Phase 0: Foundation Setup (Sprint 1)

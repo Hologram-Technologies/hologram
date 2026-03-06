@@ -50,8 +50,9 @@ hologram-greenfield/
 ### Implementer
 - Write code that passes `just ci` before committing.
 - Follow all hard rules above.
-- Update `specs/SPRINT.md` immediately on task state change.
-- Mark SPRINT tasks as `- [x]` only after `just ci` passes.
+- **After every task**: update `specs/SPRINT.md` AND `specs/plans/001-greenfield-refactor.md`.
+- Mark tasks `- [x]` in BOTH documents only after `just ci` passes.
+- Add implementation notes to `001-greenfield-refactor.md` sprint section when sprint completes.
 
 ### Reviewer
 - Verify hard rules compliance.
@@ -68,7 +69,9 @@ hologram-greenfield/
 
 - Active sprint tracked in `specs/SPRINT.md` with checkboxes (`- [ ]` / `- [x]`).
 - Task lifecycle: Backlog → In Progress → `just ci` → `/commit` → Completed.
-- Update `specs/SPRINT.md` immediately on task state change.
+- **MANDATORY**: After every task, update BOTH tracking documents before committing:
+  - `specs/SPRINT.md` — mark deliverables `[x]`, add Sprint 9+ section when sprint completes
+  - `specs/plans/001-greenfield-refactor.md` — mark sprint tasks `[x]`, add implementation notes
 - Archive completed sprints to `specs/sprints/<number>-<title>.md`.
 - "Completed (Running Log)" section in SPRINT.md is append-only, permanent.
 
