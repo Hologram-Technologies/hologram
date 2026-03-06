@@ -1,0 +1,38 @@
+---
+title: hologram-compiler
+description: Compiles a HoloGraph into an executable schedule.
+---
+
+Compiles a `HoloGraph` into an executable schedule, running fusion passes and producing an artifact ready for `hologram-exec`.
+
+## Modules
+
+### `compiler`
+
+- `HoloCompiler` — main entry point; runs the full compilation pipeline:
+  1. Graph validation
+  2. Constant folding
+  3. CSE (common subexpression elimination)
+  4. View fusion
+  5. Topological sort + level assignment
+  6. Schedule serialization
+
+### `liveness`
+
+Liveness analysis — determines which intermediate buffers can be freed between levels, minimizing peak memory usage in `hologram-exec`'s buffer arena.
+
+### `workspace`
+
+- `CompilerWorkspace` — holds intermediate representations during compilation; builder pattern for configuring optimization passes.
+
+## Usage
+
+```rust
+use hologram_compiler::compiler::HoloCompiler;
+
+let schedule = HoloCompiler::new()
+    .with_graph(graph)
+    .compile()?;
+
+let archive = HoloWriter::new().write(graph, weights, schedule)?;
+```

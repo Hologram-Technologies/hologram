@@ -53,6 +53,22 @@ build:
 clean:
     cargo clean
 
+# Install site dependencies
+site-install:
+    cd site && pnpm install
+
+# Start the docs site dev server
+site-dev:
+    cd site && pnpm dev
+
+# Build the docs site
+site-build:
+    cd site && pnpm build
+
+# Preview the built docs site
+site-preview:
+    cd site && pnpm preview
+
 # Install git hooks
 hooks:
     git config core.hooksPath .githooks

@@ -1,0 +1,60 @@
+---
+title: hologram-core
+description: Zero-dependency no_std LUT tables, ring algebra, encoding, and element-wise views.
+---
+
+Zero-dependency `no_std` crate providing the fundamental building blocks: LUT tables, ring algebra, encoding, and element-wise views.
+
+## Modules
+
+### `lut`
+
+Precomputed lookup tables for all supported activation functions.
+
+- `LutOp` — enum of all supported operations (relu, sigmoid, tanh, gelu, sin, cos, etc.)
+- `Lut` — wrapper around a `&'static [u8; 256]` table, indexed by `Q0` encoded value
+- `activation/` — tables for basic, math, modern, and scientific activations
+- `arith` — arithmetic operations (add, mul, sub) as LUT wrappers
+- `q0` — stratum lookup (quantization level mapping)
+
+### `q1`
+
+Fixed-point Q1 type — one bit integer, one bit fraction.
+
+- `Q1Datum` — the Q1 value type
+- Ring operations: add, mul, neg
+- Encoding/decoding to/from `u8`
+- Activation functions mirroring the LUT module but operating on Q1
+
+### `ring`
+
+Ring algebra traits and `ByteRing` — the `u8` ring with wraparound arithmetic.
+
+### `encoding`
+
+Encoding schemes for mapping float values into integer ring elements.
+
+- `AngleEncoding` — maps `[-π, π]` → `[0, 255]`
+- `RawEncoding` — direct `u8` passthrough
+- `SignedEncoding` — maps `[-128, 127]` → `[0, 255]`
+- `UnsignedEncoding` — maps `[0, 255]` → `[0, 255]`
+
+### `view`
+
+`ElementWiseView` — applies a LUT to a slice in-place. SIMD-accelerated when `simd` feature is enabled.
+
+### `buffer`
+
+`StaticBuf<N>` — fixed-size stack-allocated buffer for zero-alloc hot paths.
+
+### `op`
+
+`LutOp` (re-export) and `PrimOp` — primitive operation enum used by the graph layer.
+
+### `datum`
+
+`Datum` — unified value type wrapping Q0/Q1 encoded values.
+
+## `no_std` Compatibility
+
+`hologram-core` compiles for `wasm32-unknown-unknown` and `no_std + alloc` targets. LUT tables are `static` arrays — no heap allocation occurs in lookup functions.
