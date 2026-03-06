@@ -15,7 +15,6 @@ use holo_graph::Graph;
 /// Extracts only live nodes (no free-list gaps) and includes graph I/O
 /// metadata and constants. This is the on-disk graph representation.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct SerializedGraph {
     /// Dense array of live nodes.
     pub nodes: Vec<Node>,
@@ -156,8 +155,9 @@ mod tests {
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
             .build();
         let sg = SerializedGraph::from_graph(&g);
-        let bytes = rkyv::to_bytes::<_, 1024>(&sg).unwrap();
-        let archived = rkyv::check_archived_root::<SerializedGraph>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<SerializedGraph>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.nodes.len(), 2);
     }
 }

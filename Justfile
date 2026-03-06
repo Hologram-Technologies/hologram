@@ -29,9 +29,21 @@ fmt-check:
 clippy:
     cargo clippy --workspace -- -D warnings
 
-# Build for WASM target
+# Build for WASM target (std)
 wasm:
     cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features
+
+# Build holo-core for WASM with no_std + no rkyv (constrained device validation)
+wasm-nostd:
+    RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
+    ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
+    --target wasm32-unknown-unknown -p holo-core --no-default-features
+
+# Build holo-core for ARM bare-metal (thumbv7em, no_std)
+embedded:
+    RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
+    ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
+    --target thumbv7em-none-eabihf -p holo-core --no-default-features
 
 # Build all
 build:

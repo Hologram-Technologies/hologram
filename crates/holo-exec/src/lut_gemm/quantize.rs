@@ -42,7 +42,6 @@ pub fn get_q4_index(indices: &[u8], row: u32, col: u32, cols: u32) -> u8 {
 
 /// 4-bit quantized weight matrix (16 centroids).
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct QuantizedWeights4 {
     /// Packed indices: 2 per byte (high nibble first).
     pub indices: Vec<u8>,
@@ -56,7 +55,6 @@ pub struct QuantizedWeights4 {
 
 /// 8-bit quantized weight matrix (256 centroids).
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct QuantizedWeights8 {
     /// One index byte per weight.
     pub indices: Vec<u8>,
@@ -70,7 +68,6 @@ pub struct QuantizedWeights8 {
 
 /// Unified quantized weights (Q4 or Q8).
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub enum QuantizedWeights {
     /// 4-bit quantization (16 centroids).
     Q4(QuantizedWeights4),
@@ -366,8 +363,9 @@ mod tests {
     fn rkyv_roundtrip_q4() {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = quantize_4bit(&weights, 4, 4);
-        let bytes = rkyv::to_bytes::<_, 1024>(&qw).unwrap();
-        let archived = rkyv::check_archived_root::<QuantizedWeights4>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<QuantizedWeights4>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.rows, 4);
         assert_eq!(archived.cols, 4);
     }
@@ -376,8 +374,9 @@ mod tests {
     fn rkyv_roundtrip_q8() {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = quantize_8bit(&weights, 4, 4);
-        let bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap();
-        let archived = rkyv::check_archived_root::<QuantizedWeights8>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<QuantizedWeights8>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.rows, 4);
         assert_eq!(archived.cols, 4);
     }
@@ -386,8 +385,9 @@ mod tests {
     fn rkyv_roundtrip_enum() {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = QuantizedWeights::Q4(quantize_4bit(&weights, 4, 4));
-        let bytes = rkyv::to_bytes::<_, 1024>(&qw).unwrap();
-        let _archived = rkyv::check_archived_root::<QuantizedWeights>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap();
+        let _archived =
+            rkyv::access::<rkyv::Archived<QuantizedWeights>, rkyv::rancor::Error>(&bytes).unwrap();
     }
 
     #[test]

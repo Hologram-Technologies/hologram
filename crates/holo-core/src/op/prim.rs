@@ -6,10 +6,11 @@ use crate::lut::arith;
 ///
 /// Mirrors `uor_foundation::enums::PrimitiveOp` but adds
 /// LUT-backed apply methods for O(1) execution.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
-#[archive(check_bytes)]
 pub enum PrimOp {
     /// neg(x) = (-x) mod 256
     Neg,

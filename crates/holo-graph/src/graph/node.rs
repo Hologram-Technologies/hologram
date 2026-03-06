@@ -8,7 +8,6 @@ use alloc::vec::Vec;
 /// A stale `NodeId` (wrong generation) safely returns `None` on lookup,
 /// preventing use-after-free in the arena.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct NodeId {
     index: u32,
     generation: u32,
@@ -68,7 +67,6 @@ impl core::fmt::Debug for NodeId {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub enum InputSource {
     /// From another node's output.
     Node(NodeId),
@@ -89,7 +87,6 @@ impl Default for InputSource {
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub struct InputSlot {
     /// Where this input comes from.
     pub source: InputSource,
@@ -140,7 +137,6 @@ use super::GraphOp;
 
 /// A node in the compute graph.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct Node {
     /// Unique generational identifier.
     pub id: NodeId,
@@ -240,8 +236,8 @@ mod tests {
     #[test]
     fn rkyv_node_id_round_trip() {
         let id = NodeId::new(42, 7);
-        let bytes = rkyv::to_bytes::<_, 64>(&id).unwrap();
-        let archived = rkyv::check_archived_root::<NodeId>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&id).unwrap();
+        let archived = rkyv::access::<rkyv::Archived<NodeId>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.index, 42);
         assert_eq!(archived.generation, 7);
     }

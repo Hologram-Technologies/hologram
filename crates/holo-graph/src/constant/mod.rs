@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub struct ConstantId(u32);
 
 impl ConstantId {
@@ -28,7 +27,6 @@ impl ConstantId {
 
 /// Constant data stored in the graph.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub enum ConstantData {
     /// Inline byte blob.
     Bytes(Vec<u8>),
@@ -57,7 +55,6 @@ impl ConstantData {
 #[derive(
     Debug, Clone, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub struct ConstantStore {
     data: Vec<ConstantData>,
 }
@@ -147,8 +144,9 @@ mod tests {
     fn rkyv_round_trip() {
         let mut store = ConstantStore::new();
         store.insert(ConstantData::Bytes(alloc::vec![10, 20]));
-        let bytes = rkyv::to_bytes::<_, 256>(&store).unwrap();
-        let archived = rkyv::check_archived_root::<ConstantStore>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&store).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<ConstantStore>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.data.len(), 1);
     }
 }

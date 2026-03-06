@@ -45,12 +45,8 @@ fn load_graph(path: &PathBuf) -> Result<holo_graph::Graph, CliError> {
 fn deserialize_graph(
     data: &[u8],
 ) -> Result<holo_archive::format::graph::SerializedGraph, CliError> {
-    let archived = rkyv::check_archived_root::<holo_archive::format::graph::SerializedGraph>(data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
-    use rkyv::Deserialize;
-    archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))
+    rkyv::from_bytes::<holo_archive::format::graph::SerializedGraph, rkyv::rancor::Error>(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))
         .map_err(CliError::from)
 }
 

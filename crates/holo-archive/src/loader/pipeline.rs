@@ -1,7 +1,5 @@
 //! Pipeline loader: access individual models from a pipeline archive.
 
-use rkyv::Deserialize;
-
 use crate::error::{ArchiveError, ArchiveResult};
 use crate::loader::bytes::load_from_bytes;
 use crate::loader::plan::LoadedPlan;
@@ -37,11 +35,9 @@ impl LoadedPipeline {
         }
 
         let section_bytes = &data[section_start..section_end];
-        let archived = rkyv::check_archived_root::<PipelineHeader>(section_bytes)
-            .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
-        let ph: PipelineHeader = archived
-            .deserialize(&mut rkyv::Infallible)
-            .map_err(|e| ArchiveError::ValidationFailed(format!("{e:?}")))?;
+        let ph: PipelineHeader =
+            rkyv::from_bytes::<PipelineHeader, rkyv::rancor::Error>(section_bytes)
+                .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
 
         // Each model is a sub-archive within the wrapper's weights
         let weights = wrapper.weights();

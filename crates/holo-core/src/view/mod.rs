@@ -10,8 +10,11 @@ mod simd;
 use core::fmt;
 
 /// A 256-entry byte-to-byte lookup table for O(1) function application.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[repr(align(64))] // Cache-line aligned for SIMD
 pub struct ElementWiseView {
     table: [u8; 256],
@@ -265,11 +268,13 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "serialize")]
     #[test]
     fn rkyv_round_trip() {
         let inc = ElementWiseView::new(|x| x.wrapping_add(1));
-        let bytes = rkyv::to_bytes::<_, 256>(&inc).unwrap();
-        let archived = rkyv::check_archived_root::<ElementWiseView>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&inc).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<ElementWiseView>, rkyv::rancor::Error>(&bytes).unwrap();
         for i in 0..=255u8 {
             assert_eq!(archived.table[i as usize], inc.apply(i));
         }

@@ -86,9 +86,8 @@ fn dispatch_lut_gemm_4(
     constants: &ConstantStore,
 ) -> ExecResult<Vec<u8>> {
     let weight_bytes = resolve_constant_bytes(cid, constants)?;
-    let archived = rkyv::check_archived_root::<QuantizedWeights4>(weight_bytes)
+    let qw = rkyv::from_bytes::<QuantizedWeights4, rkyv::rancor::Error>(weight_bytes)
         .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
-    let qw = deserialize_q4(archived)?;
     let activations = cast_f32(activation_bytes)?;
     let m = activations.len() / qw.rows as usize;
     let n = qw.cols as usize;
@@ -104,9 +103,8 @@ fn dispatch_lut_gemm_8(
     constants: &ConstantStore,
 ) -> ExecResult<Vec<u8>> {
     let weight_bytes = resolve_constant_bytes(cid, constants)?;
-    let archived = rkyv::check_archived_root::<QuantizedWeights8>(weight_bytes)
+    let qw = rkyv::from_bytes::<QuantizedWeights8, rkyv::rancor::Error>(weight_bytes)
         .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
-    let qw = deserialize_q8(archived)?;
     let activations = cast_f32(activation_bytes)?;
     let m = activations.len() / qw.rows as usize;
     let n = qw.cols as usize;
@@ -135,24 +133,6 @@ fn cast_f32(bytes: &[u8]) -> ExecResult<&[f32]> {
         expected: "f32-aligned bytes".into(),
         actual: e.to_string(),
     })
-}
-
-/// Deserialize archived Q4 weights.
-fn deserialize_q4(archived: &rkyv::Archived<QuantizedWeights4>) -> ExecResult<QuantizedWeights4> {
-    use rkyv::Deserialize;
-    let qw: QuantizedWeights4 = archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| ExecError::InvalidQuantization(format!("{e:?}")))?;
-    Ok(qw)
-}
-
-/// Deserialize archived Q8 weights.
-fn deserialize_q8(archived: &rkyv::Archived<QuantizedWeights8>) -> ExecResult<QuantizedWeights8> {
-    use rkyv::Deserialize;
-    let qw: QuantizedWeights8 = archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| ExecError::InvalidQuantization(format!("{e:?}")))?;
-    Ok(qw)
 }
 
 #[cfg(test)]
@@ -266,7 +246,7 @@ mod tests {
         let n = 2usize;
         let weights = vec![1.0f32; k * n];
         let qw = quantize_4bit(&weights, k as u32, n as u32);
-        let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+        let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
         let mut constants = ConstantStore::new();
         let cid = constants.insert(ConstantData::Bytes(qw_bytes));
@@ -292,7 +272,7 @@ mod tests {
         let n = 2usize;
         let weights = vec![2.0f32; k * n];
         let qw = quantize_8bit(&weights, k as u32, n as u32);
-        let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+        let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
         let mut constants = ConstantStore::new();
         let cid = constants.insert(ConstantData::Bytes(qw_bytes));

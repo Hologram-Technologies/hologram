@@ -1,7 +1,5 @@
 //! Load a .holo archive from a byte slice (WASM/embedded compatible).
 
-use rkyv::Deserialize;
-
 use crate::checksum;
 use crate::error::{ArchiveError, ArchiveResult};
 use crate::format::graph::SerializedGraph;
@@ -73,11 +71,8 @@ fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<Serializ
         });
     }
     let graph_bytes = &data[start..end];
-    let archived = rkyv::check_archived_root::<SerializedGraph>(graph_bytes)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
-    archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e:?}")))
+    rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(graph_bytes)
+        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
 }
 
 fn extract_weights(data: &[u8], header: &HoloHeader) -> ArchiveResult<Vec<u8>> {
@@ -108,11 +103,8 @@ fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<
         });
     }
     let table_bytes = &data[start..end];
-    let archived = rkyv::check_archived_root::<SectionTable>(table_bytes)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
-    archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e:?}")))
+    rkyv::from_bytes::<SectionTable, rkyv::rancor::Error>(table_bytes)
+        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
 }
 
 fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {

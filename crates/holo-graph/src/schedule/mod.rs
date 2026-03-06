@@ -10,7 +10,6 @@ use levels::ParallelLevel;
 
 /// Complete execution schedule for a graph.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct ExecutionSchedule {
     /// Execution levels (nodes within each level can run in parallel).
     pub levels: Vec<ParallelLevel>,

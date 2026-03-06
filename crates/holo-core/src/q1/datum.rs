@@ -4,8 +4,11 @@ use crate::q1::observables;
 use crate::HoloPrimitives;
 
 /// An element of Z/65536Z at quantum level 1 (16-bit).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct WordDatum {
     value: u16,
     spectrum_buf: [u8; 16],
@@ -141,8 +144,11 @@ impl From<WordDatum> for u16 {
 ///
 /// Each Braille character encodes 6 bits. For 16-bit values,
 /// we use 3 characters (covering lo-6, mid-6, and hi-4 bits).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct WordAddress {
     value: u16,
     glyph_buf: [u8; 9],
@@ -360,13 +366,15 @@ mod tests {
     #[test]
     fn rkyv_round_trip() {
         let d = WordDatum::new(42000);
-        let bytes = rkyv::to_bytes::<_, 256>(&d).unwrap();
-        let archived = rkyv::check_archived_root::<WordDatum>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&d).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<WordDatum>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.value, 42000);
 
         let addr = WordAddress::from_word(42000);
-        let bytes = rkyv::to_bytes::<_, 256>(&addr).unwrap();
-        let archived = rkyv::check_archived_root::<WordAddress>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&addr).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<WordAddress>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.value, 42000);
     }
 }

@@ -38,7 +38,7 @@ impl HoloWriter {
     #[must_use]
     pub fn set_graph(mut self, graph: &holo_graph::Graph) -> Self {
         let sg = SerializedGraph::from_graph(graph);
-        let bytes = rkyv::to_bytes::<_, 4096>(&sg)
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg)
             .expect("graph serialization")
             .to_vec();
         self.graph_bytes = Some(bytes);
@@ -116,7 +116,8 @@ fn compute_layout(
     // Section table after section data
     let section_table_offset = cursor;
     let table = build_section_table(sections, &section_offsets);
-    let table_bytes = rkyv::to_bytes::<_, 1024>(&table).expect("section table serialization");
+    let table_bytes =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&table).expect("section table serialization");
     let section_table_size = table_bytes.len() as u64;
     cursor += section_table_size;
     cursor = align_to_page(cursor);
@@ -191,8 +192,8 @@ fn assemble_archive(
 
     // Write section table
     let table = build_section_table(sections, &layout.section_offsets);
-    let table_bytes =
-        rkyv::to_bytes::<_, 1024>(&table).map_err(|e| ArchiveError::GraphError(format!("{e}")))?;
+    let table_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&table)
+        .map_err(|e| ArchiveError::GraphError(format!("{e}")))?;
     let sto = layout.section_table_offset as usize;
     buf[sto..sto + table_bytes.len()].copy_from_slice(&table_bytes);
 

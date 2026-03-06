@@ -10,7 +10,8 @@ pub struct AngleEncoding;
 impl Encoding for AngleEncoding {
     #[inline]
     fn embed(&self, value: f64) -> u8 {
-        let normalized = value.rem_euclid(TAU) / TAU;
+        let r = value % TAU;
+        let normalized = (if r < 0.0 { r + TAU } else { r }) / TAU;
         (normalized * 256.0 + 0.5) as u8
     }
 

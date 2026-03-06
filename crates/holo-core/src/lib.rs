@@ -14,6 +14,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod buffer;
 pub mod datum;
 pub mod encoding;
 pub mod error;

@@ -4,8 +4,11 @@ use crate::lut::q0;
 use crate::HoloPrimitives;
 
 /// An element of Z/256Z at quantum level 0 (8-bit).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ByteDatum {
     value: u8,
     spectrum_buf: [u8; 8],
@@ -141,8 +144,11 @@ impl From<ByteDatum> for u8 {
 ///
 /// Each Braille character encodes 6 bits. For 8-bit values,
 /// we use 2 characters (covering lo-6 and hi-2 bits).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ByteAddress {
     value: u8,
     glyph_buf: [u8; 6],

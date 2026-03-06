@@ -316,7 +316,7 @@ fn e2e_lut_gemm_q4_pipeline() {
     let n = 2usize;
     let weights = vec![1.0f32; k * n];
     let qw = quantize_4bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     let g = GraphBuilder::new()
         .input("activations")
@@ -351,7 +351,7 @@ fn e2e_lut_gemm_q8_pipeline() {
     let n = 2usize;
     let weights = vec![2.0f32; k * n];
     let qw = quantize_8bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     let g = GraphBuilder::new()
         .input("activations")
@@ -392,7 +392,7 @@ fn e2e_lut_gemm_q4_accuracy() {
 
     // LUT-GEMM Q4 through archive pipeline
     let qw = quantize_4bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     let g = GraphBuilder::new()
         .input("a")
@@ -433,7 +433,7 @@ fn e2e_lut_gemm_q8_accuracy() {
     naive_matmul(&activations, &weights, &mut expected, m, k, n);
 
     let qw = quantize_8bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     let g = GraphBuilder::new()
         .input("a")
@@ -468,7 +468,7 @@ fn e2e_lut_gemm_with_activation() {
     let n = 4usize;
     let weights = vec![1.0f32; k * n];
     let qw = quantize_4bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     // Input → MatMulLut4 → Output
     // The matmul output is f32 bytes, not u8 LUT-compatible,
@@ -511,7 +511,7 @@ fn e2e_lut_gemm_archive_roundtrip() {
     let n = 2usize;
     let weights = vec![3.0f32; k * n];
     let qw = quantize_8bit(&weights, k as u32, n as u32);
-    let qw_bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap().to_vec();
+    let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
 
     let g = GraphBuilder::new()
         .input("a")

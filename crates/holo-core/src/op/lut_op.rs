@@ -5,10 +5,11 @@ use crate::lut::activation;
 /// Activation and scientific function operations via LUT.
 ///
 /// Each variant maps to a precomputed 256-entry table.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
-#[archive(check_bytes)]
 pub enum LutOp {
     Sigmoid,
     Tanh,

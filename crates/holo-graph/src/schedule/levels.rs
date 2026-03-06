@@ -8,7 +8,6 @@ use crate::graph::Graph;
 
 /// A level of nodes that can execute in parallel.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct ParallelLevel {
     /// Nodes in this level (no mutual dependencies).
     pub node_ids: Vec<NodeId>,

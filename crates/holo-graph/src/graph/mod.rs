@@ -17,7 +17,6 @@ use node::{InputSlot, InputSource, Node, NodeId};
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub struct SubgraphId(u32);
 
 impl SubgraphId {
@@ -43,7 +42,6 @@ impl SubgraphId {
 ///
 /// `FusedView` is intentionally 256 bytes (cache-line aligned LUT).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 #[allow(clippy::large_enum_variant)]
 pub enum GraphOp {
     /// Graph input boundary.

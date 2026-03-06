@@ -88,15 +88,18 @@ fn bench_composition_chain(c: &mut Criterion) {
 fn bench_rkyv_serialize(c: &mut Criterion) {
     let view = ElementWiseView::new(|x| x.wrapping_add(1));
     c.bench_function("view::rkyv_serialize", |b| {
-        b.iter(|| rkyv::to_bytes::<_, 512>(black_box(&view)).unwrap())
+        b.iter(|| rkyv::to_bytes::<rkyv::rancor::Error>(black_box(&view)).unwrap())
     });
 }
 
 fn bench_rkyv_deserialize(c: &mut Criterion) {
     let view = ElementWiseView::new(|x| x.wrapping_add(1));
-    let bytes = rkyv::to_bytes::<_, 512>(&view).unwrap();
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&view).unwrap();
     c.bench_function("view::rkyv_check_archived", |b| {
-        b.iter(|| rkyv::check_archived_root::<ElementWiseView>(black_box(&bytes)).unwrap())
+        b.iter(|| {
+            rkyv::access::<rkyv::Archived<ElementWiseView>, rkyv::rancor::Error>(black_box(&bytes))
+                .unwrap()
+        })
     });
 }
 

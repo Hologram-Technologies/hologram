@@ -2,7 +2,6 @@
 
 /// Where a layer's data is located.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub enum LayerLocation {
     /// Embedded within this archive at (offset, size).
     Embedded { offset: u64, size: u64 },
@@ -29,8 +28,6 @@ impl LayerLocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rkyv::Deserialize;
-
     #[test]
     fn embedded_is_embedded() {
         let loc = LayerLocation::Embedded {
@@ -64,9 +61,8 @@ mod tests {
             offset: 4096,
             size: 2048,
         };
-        let bytes = rkyv::to_bytes::<_, 128>(&loc).unwrap();
-        let archived = rkyv::check_archived_root::<LayerLocation>(&bytes).unwrap();
-        let deser: LayerLocation = archived.deserialize(&mut rkyv::Infallible).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&loc).unwrap();
+        let deser = rkyv::from_bytes::<LayerLocation, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(deser, loc);
     }
 }

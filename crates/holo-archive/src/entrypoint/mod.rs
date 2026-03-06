@@ -8,12 +8,10 @@ use crate::weight::WeightDType;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub struct LayerId(pub u32);
 
 /// Describes a single tensor I/O port on a layer.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct TensorPort {
     /// Port name (e.g. "hidden_state").
     pub name: String,
@@ -25,7 +23,6 @@ pub struct TensorPort {
 
 /// What a layer executes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub enum LayerEntrypoint {
     /// Execute the archive's embedded graph.
     Graph,
@@ -37,7 +34,6 @@ pub enum LayerEntrypoint {
 
 /// Descriptor for a single executable layer in the archive.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct LayerDescriptor {
     /// Layer identifier.
     pub id: LayerId,
@@ -103,8 +99,9 @@ mod tests {
             plan_offset: 4096,
             plan_size: 512,
         };
-        let bytes = rkyv::to_bytes::<_, 512>(&ld).unwrap();
-        let archived = rkyv::check_archived_root::<LayerDescriptor>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&ld).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<LayerDescriptor>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.name.as_str(), "encoder");
         assert_eq!(archived.plan_offset, 4096);
     }

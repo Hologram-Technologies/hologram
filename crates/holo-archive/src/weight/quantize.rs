@@ -4,7 +4,6 @@
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
-#[archive(check_bytes)]
 pub enum QuantizationScheme {
     /// No quantization.
     None,
@@ -23,7 +22,6 @@ pub enum QuantizationScheme {
 
 /// Parameters for quantized weight storage.
 #[derive(Debug, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[archive(check_bytes)]
 pub struct QuantizationParams {
     /// Quantization scheme.
     pub scheme: QuantizationScheme,
@@ -53,8 +51,10 @@ mod tests {
             max_val: 1.0,
             group_size: 0,
         };
-        let bytes = rkyv::to_bytes::<_, 256>(&p).unwrap();
-        let archived = rkyv::check_archived_root::<QuantizationParams>(&bytes).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&p).unwrap();
+        let archived =
+            rkyv::access::<rkyv::Archived<QuantizationParams>, rkyv::rancor::Error>(&bytes)
+                .unwrap();
         assert_eq!(archived.scale, 0.125);
         assert_eq!(archived.group_size, 0);
     }
@@ -67,11 +67,10 @@ mod tests {
 
     #[test]
     fn kmeans_clustered_rkyv_roundtrip() {
-        use rkyv::Deserialize;
         let scheme = QuantizationScheme::KMeansClustered { bits: 4 };
-        let bytes = rkyv::to_bytes::<_, 64>(&scheme).unwrap();
-        let archived = rkyv::check_archived_root::<QuantizationScheme>(&bytes).unwrap();
-        let deserialized: QuantizationScheme = archived.deserialize(&mut rkyv::Infallible).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&scheme).unwrap();
+        let deserialized =
+            rkyv::from_bytes::<QuantizationScheme, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(deserialized, scheme);
     }
 
