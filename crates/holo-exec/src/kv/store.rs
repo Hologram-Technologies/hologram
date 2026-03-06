@@ -6,6 +6,7 @@ use holo_graph::constant::{ConstantData, ConstantStore};
 use holo_graph::graph::GraphOp;
 
 use crate::error::{ExecError, ExecResult};
+use crate::kv::registry::CustomOpRegistry;
 use crate::lut_gemm::matmul::{lut_gemm_4bit, lut_gemm_8bit};
 use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
 
@@ -44,17 +45,23 @@ impl KvStore {
     ///
     /// `Input` and `Constant` nodes are handled by the caller
     /// (they inject data into the arena directly).
-    pub fn dispatch(op: &GraphOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
-        Self::dispatch_with_constants(op, inputs, &ConstantStore::new())
+    pub fn dispatch(
+        op: &GraphOp,
+        inputs: &[&[u8]],
+        registry: Option<&CustomOpRegistry>,
+    ) -> ExecResult<Vec<u8>> {
+        Self::dispatch_with_constants(op, inputs, &ConstantStore::new(), registry)
     }
 
     /// Dispatch with access to the graph's constant store.
     ///
     /// MatMulLut ops resolve their quantized weights from constants.
+    /// Pass a `CustomOpRegistry` to enable custom op dispatch.
     pub fn dispatch_with_constants(
         op: &GraphOp,
         inputs: &[&[u8]],
         constants: &ConstantStore,
+        registry: Option<&CustomOpRegistry>,
     ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
@@ -75,6 +82,9 @@ impl KvStore {
             GraphOp::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
             GraphOp::BatchMatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants),
             GraphOp::BatchMatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
+            GraphOp::Custom { id, .. } => registry
+                .ok_or_else(|| ExecError::UnsupportedOp(format!("custom op {}", id.raw())))?
+                .dispatch(*id, inputs, constants),
         }
     }
 }
@@ -158,7 +168,7 @@ mod tests {
     fn dispatch_sigmoid() {
         let op = GraphOp::Lut(LutOp::Sigmoid);
         let input = vec![0u8, 128, 255];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result.len(), 3);
     }
 
@@ -166,7 +176,7 @@ mod tests {
     fn dispatch_relu() {
         let op = GraphOp::Lut(LutOp::Relu);
         let input = vec![0u8, 128, 255];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result[0], LutOp::Relu.apply(0));
         assert_eq!(result[1], LutOp::Relu.apply(128));
     }
@@ -176,7 +186,7 @@ mod tests {
         let view = ElementWiseView::new(|x| x.wrapping_mul(2));
         let op = GraphOp::FusedView(view);
         let input = vec![1, 2, 3];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result, vec![2, 4, 6]);
     }
 
@@ -184,7 +194,7 @@ mod tests {
     fn dispatch_prim_neg() {
         let op = GraphOp::Prim(PrimOp::Neg);
         let input = vec![0, 1, 128, 255];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result[0], 0u8.wrapping_neg());
         assert_eq!(result[1], 1u8.wrapping_neg());
     }
@@ -193,7 +203,7 @@ mod tests {
     fn dispatch_prim_bnot() {
         let op = GraphOp::Prim(PrimOp::Bnot);
         let input = vec![0, 255, 0x0F];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result, vec![255, 0, 0xF0]);
     }
 
@@ -226,7 +236,7 @@ mod tests {
     fn dispatch_output_copies() {
         let op = GraphOp::Output;
         let input = vec![42, 43, 44];
-        let result = KvStore::dispatch(&op, &[&input]).unwrap();
+        let result = KvStore::dispatch(&op, &[&input], None).unwrap();
         assert_eq!(result, input);
     }
 
@@ -234,7 +244,7 @@ mod tests {
     fn dispatch_call_subgraph_unsupported() {
         use holo_graph::SubgraphId;
         let op = GraphOp::CallSubgraph(SubgraphId::new(0));
-        let result = KvStore::dispatch(&op, &[]);
+        let result = KvStore::dispatch(&op, &[], None);
         assert!(result.is_err());
     }
 
@@ -255,7 +265,7 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut4(cid);
-        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants).unwrap();
+        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1+2+3+4)=10, all weights=1.0
@@ -281,7 +291,7 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut8(cid);
-        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants).unwrap();
+        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1*2 * 4) = 8
@@ -296,7 +306,8 @@ mod tests {
         let op = GraphOp::MatMulLut4(ConstantId::new(99));
         let act = [1.0f32; 4];
         let act_bytes: &[u8] = bytemuck::cast_slice(&act);
-        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &ConstantStore::new());
+        let result =
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &ConstantStore::new(), None);
         assert!(result.is_err());
     }
 }

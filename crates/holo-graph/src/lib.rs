@@ -18,6 +18,6 @@ pub use constant::{ConstantData, ConstantId, ConstantStore};
 pub use error::{GraphError, GraphResult};
 pub use fusion::{fuse, FusionStats};
 pub use graph::node::NodeId;
-pub use graph::{Graph, GraphOp, SubgraphId};
+pub use graph::{CustomOpId, Graph, GraphOp, SubgraphId};
 pub use schedule::ExecutionSchedule;
 pub use subgraph::SubgraphDef;

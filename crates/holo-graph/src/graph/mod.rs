@@ -13,6 +13,21 @@ use holo_core::op::{LutOp, PrimOp};
 use holo_core::view::ElementWiseView;
 use node::{InputSlot, InputSource, Node, NodeId};
 
+/// Identifier for a consumer-registered custom op.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
+pub struct CustomOpId(pub u32);
+
+impl CustomOpId {
+    /// The raw identifier value.
+    #[inline]
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
 /// Identifier for a registered subgraph template.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
@@ -66,6 +81,10 @@ pub enum GraphOp {
     BatchMatMulLut4(ConstantId),
     /// Batched LUT-GEMM with 8-bit quantized weights.
     BatchMatMulLut8(ConstantId),
+    /// Consumer-defined op. Dispatched via `CustomOpRegistry` at execution time.
+    ///
+    /// The `arity` field must match the number of edges wired to this node.
+    Custom { id: CustomOpId, arity: u8 },
 }
 
 impl GraphOp {
@@ -83,6 +102,7 @@ impl GraphOp {
             | Self::BatchMatMulLut4(_)
             | Self::BatchMatMulLut8(_) => 1,
             Self::Prim(p) => p.arity(),
+            Self::Custom { arity, .. } => *arity,
         }
     }
 
@@ -98,6 +118,7 @@ impl GraphOp {
                 | Self::MatMulLut8(_)
                 | Self::BatchMatMulLut4(_)
                 | Self::BatchMatMulLut8(_)
+                | Self::Custom { .. }
         )
     }
 

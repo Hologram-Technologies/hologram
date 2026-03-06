@@ -8,6 +8,7 @@ use holo_archive::loader::plan::LoadedPlan;
 use crate::error::ExecResult;
 use crate::eval::executor::{GraphInputs, GraphOutputs, KvExecutor};
 use crate::eval::schedule_bridge::build_schedule;
+use crate::kv::CustomOpRegistry;
 
 /// Execute a loaded plan with the given inputs.
 ///
@@ -23,6 +24,19 @@ pub fn execute_plan(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<Graph
 pub fn execute_bytes(data: &[u8], inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let plan = holo_archive::load_from_bytes(data)?;
     execute_plan(&plan, inputs)
+}
+
+/// Execute a .holo archive with a custom op registry.
+///
+/// Enables graphs containing `GraphOp::Custom` nodes.
+pub fn execute_bytes_with_ops(
+    data: &[u8],
+    inputs: &GraphInputs,
+    registry: &CustomOpRegistry,
+) -> ExecResult<GraphOutputs> {
+    let plan = holo_archive::load_from_bytes(data)?;
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_registry(plan.graph(), &schedule, inputs, registry)
 }
 
 /// Execute a .holo archive with a per-level progress callback.

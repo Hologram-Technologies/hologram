@@ -4,6 +4,10 @@
 
 - Sprint 1: Foundation & Core LUT Engine — [archived](sprints/1-foundation-core-lut.md)
 - Sprint 2: Graph, Archive & Execution — [archived](sprints/2-graph-archive-execution.md)
+- Sprint 8: Constrained Device Validation — [archived](sprints/8-constrained-devices.md)
+- Sprint 9: Tokio Integration + Async Execution — [archived](sprints/9-tokio-async.md)
+- Sprint 10: CLI Completeness — [archived](sprints/10-cli-completeness.md)
+- Sprint 11: Custom Op Extension API — [archived](sprints/11-custom-op-api.md)
 
 ---
 
@@ -41,18 +45,13 @@
 
 ## Sprint 10: CLI Completeness
 
-**Goal**: Make `hologram` CLI fully functional: real `run` command that loads a `.holo` archive and executes it, plus an `inspect` command that surfaces archive metadata. Gives the library a complete user-facing surface before starting `hologram-ai`.
+(Sprint 10 complete) — [archived](sprints/10-cli-completeness.md)
 
-### Deliverables
-- [x] `hologram run <file.holo> [--input INDEX:HEX]...` — load archive, parse inputs, execute, print outputs
-- [x] `hologram inspect <file.holo>` — print header, node count, input/output names, schedule levels
-- [x] `CliError::Exec(ExecError)` variant + `From<ExecError>` impl
-- [x] `CliError::Archive(ArchiveError)` variant + `From<ArchiveError>` impl
-- [x] Input parser: `--input 0:deadbeef` → `GraphInputs::set(0, vec![0xde, 0xad, 0xbe, 0xef])`
-- [x] Output printer: each named output as `name: <hex>` (or `<hex>` if unnamed)
-- [x] Inspect: file size, node count, input names, output names, schedule level count
-- [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
-- [x] 15 new tests in `holo-cli`; zero clippy warnings; `just ci` green — **684 total workspace tests**
+---
+
+## Sprint 11: Custom Op Extension API
+
+(Sprint 11 complete) — [archived](sprints/11-custom-op-api.md)
 
 ---
 
