@@ -1,7 +1,7 @@
 # Sprint 2: Graph, Archive & Execution
 
 **Status**: Completed
-**Test count**: 279 (88 holo-graph + 83 holo-archive + 108 holo-core), zero clippy warnings
+**Test count**: 279 (88 hologram-graph + 83 hologram-archive + 108 hologram-core), zero clippy warnings
 
 ---
 

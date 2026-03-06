@@ -1,21 +1,21 @@
 //! End-to-end integration tests for the full pipeline:
 //! build graph → fuse → write .holo → load → build_schedule → execute → verify
 
-use holo_archive::{load_from_bytes, HoloWriter};
-use holo_compiler::{compile, CompilerBuilder};
-use holo_core::op::{LutOp, PrimOp};
-use holo_core::view::ElementWiseView;
-use holo_exec::lut_gemm::matmul::naive_matmul;
-use holo_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
-use holo_exec::{build_schedule, execute_bytes, GraphInputs, KvExecutor};
-use holo_ffi::compiler::*;
-use holo_ffi::encoding::*;
-use holo_ffi::exec::*;
-use holo_ffi::graph::*;
-use holo_graph::builder::GraphBuilder;
-use holo_graph::constant::ConstantData;
-use holo_graph::fusion;
-use holo_graph::graph::GraphOp;
+use hologram_archive::{load_from_bytes, HoloWriter};
+use hologram_compiler::{compile, CompilerBuilder};
+use hologram_core::op::{LutOp, PrimOp};
+use hologram_core::view::ElementWiseView;
+use hologram_exec::lut_gemm::matmul::naive_matmul;
+use hologram_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
+use hologram_exec::{build_schedule, execute_bytes, GraphInputs, KvExecutor};
+use hologram_ffi::compiler::*;
+use hologram_ffi::encoding::*;
+use hologram_ffi::exec::*;
+use hologram_ffi::graph::*;
+use hologram_graph::builder::GraphBuilder;
+use hologram_graph::constant::ConstantData;
+use hologram_graph::fusion;
+use hologram_graph::graph::GraphOp;
 
 /// E2E: build graph → fuse → write .holo → load_from_bytes → build_schedule → execute → verify
 #[test]
@@ -299,7 +299,7 @@ fn e2e_file_roundtrip() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, vec![0, 64, 128, 192, 255]);
 
-    let result = holo_exec::execute_file(&path, &inputs).unwrap();
+    let result = hologram_exec::execute_file(&path, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     for (i, &b) in [0u8, 64, 128, 192, 255].iter().enumerate() {
@@ -711,7 +711,7 @@ fn e2e_compiler_workspace_reuse() {
 /// E2E: LayerHeader present in compiled archive
 #[test]
 fn e2e_compiler_layer_header_present() {
-    use holo_archive::section::SECTION_LAYER_HEADER;
+    use hologram_archive::section::SECTION_LAYER_HEADER;
 
     let g = GraphBuilder::new()
         .node(GraphOp::Input)
@@ -734,50 +734,50 @@ fn e2e_ffi_full_pipeline() {
     use std::ffi::CString;
 
     // Build: Input → Sigmoid → Output
-    let b = holo_graph_builder_new();
+    let b = hologram_graph_builder_new();
     let name_x = CString::new("x").unwrap();
-    holo_graph_builder_input(b, name_x.as_ptr());
-    holo_graph_builder_node_from_input(b, 0, 0, 0);
+    hologram_graph_builder_input(b, name_x.as_ptr());
+    hologram_graph_builder_node_from_input(b, 0, 0, 0);
     let inputs = [0usize];
-    holo_graph_builder_node_with_inputs(b, 3, 0, inputs.as_ptr(), 1);
+    hologram_graph_builder_node_with_inputs(b, 3, 0, inputs.as_ptr(), 1);
     let inputs2 = [1usize];
-    holo_graph_builder_node_with_inputs(b, 1, 0, inputs2.as_ptr(), 1);
+    hologram_graph_builder_node_with_inputs(b, 1, 0, inputs2.as_ptr(), 1);
     let name_y = CString::new("y").unwrap();
-    holo_graph_builder_output(b, name_y.as_ptr(), 2);
-    let g = holo_graph_builder_build(b);
-    assert_eq!(holo_graph_node_count(g), 3);
+    hologram_graph_builder_output(b, name_y.as_ptr(), 2);
+    let g = hologram_graph_builder_build(b);
+    assert_eq!(hologram_graph_node_count(g), 3);
 
     // Compile
-    let out = holo_compile(g);
+    let out = hologram_compile(g);
     assert!(!out.is_null());
-    let archive_ptr = holo_compilation_archive_ptr(out);
-    let archive_len = holo_compilation_archive_len(out);
+    let archive_ptr = hologram_compilation_archive_ptr(out);
+    let archive_len = hologram_compilation_archive_len(out);
     assert!(archive_len > 0);
-    assert_eq!(holo_compilation_stats_nodes(out), 3);
+    assert_eq!(hologram_compilation_stats_nodes(out), 3);
 
     // Execute
-    let inp = holo_inputs_new();
-    holo_inputs_set(inp, 0, [42u8].as_ptr(), 1);
-    let outputs = holo_execute_bytes(archive_ptr, archive_len, inp);
+    let inp = hologram_inputs_new();
+    hologram_inputs_set(inp, 0, [42u8].as_ptr(), 1);
+    let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
     assert!(!outputs.is_null());
-    assert_eq!(holo_outputs_len(outputs), 1);
+    assert_eq!(hologram_outputs_len(outputs), 1);
 
     // Read output
     let mut ptr: *const u8 = std::ptr::null();
     let mut len: usize = 0;
-    let rc = holo_outputs_get(outputs, 0, &mut ptr, &mut len);
+    let rc = hologram_outputs_get(outputs, 0, &mut ptr, &mut len);
     assert_eq!(rc, 0);
     assert_eq!(len, 1);
 
     // Output by name
     let name_y2 = CString::new("y").unwrap();
-    let rc2 = holo_outputs_by_name(outputs, name_y2.as_ptr(), &mut ptr, &mut len);
+    let rc2 = hologram_outputs_by_name(outputs, name_y2.as_ptr(), &mut ptr, &mut len);
     assert_eq!(rc2, 0);
     assert_eq!(len, 1);
 
-    holo_outputs_free(outputs);
-    holo_inputs_free(inp);
-    holo_compilation_free(out);
+    hologram_outputs_free(outputs);
+    hologram_inputs_free(inp);
+    hologram_compilation_free(out);
 }
 
 /// E2E: FFI diamond graph with fusion.
@@ -785,51 +785,51 @@ fn e2e_ffi_full_pipeline() {
 fn e2e_ffi_diamond_with_fusion() {
     use std::ffi::CString;
 
-    let b = holo_graph_builder_new();
+    let b = hologram_graph_builder_new();
     let name = CString::new("x").unwrap();
-    holo_graph_builder_input(b, name.as_ptr());
-    holo_graph_builder_node_from_input(b, 0, 0, 0); // 0: Input
+    hologram_graph_builder_input(b, name.as_ptr());
+    hologram_graph_builder_node_from_input(b, 0, 0, 0); // 0: Input
     let i0 = [0usize];
-    holo_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1); // 1: Sigmoid
-    holo_graph_builder_node_with_inputs(b, 3, 4, i0.as_ptr(), 1); // 2: Relu
+    hologram_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1); // 1: Sigmoid
+    hologram_graph_builder_node_with_inputs(b, 3, 4, i0.as_ptr(), 1); // 2: Relu
     let i12 = [1usize, 2];
-    holo_graph_builder_node_with_inputs(b, 2, 4, i12.as_ptr(), 2); // 3: Add
+    hologram_graph_builder_node_with_inputs(b, 2, 4, i12.as_ptr(), 2); // 3: Add
     let i3 = [3usize];
-    holo_graph_builder_node_with_inputs(b, 1, 0, i3.as_ptr(), 1); // 4: Output
+    hologram_graph_builder_node_with_inputs(b, 1, 0, i3.as_ptr(), 1); // 4: Output
     let name_y = CString::new("y").unwrap();
-    holo_graph_builder_output(b, name_y.as_ptr(), 4);
-    let g = holo_graph_builder_build(b);
-    assert_eq!(holo_graph_node_count(g), 5);
+    hologram_graph_builder_output(b, name_y.as_ptr(), 4);
+    let g = hologram_graph_builder_build(b);
+    assert_eq!(hologram_graph_node_count(g), 5);
 
-    let out = holo_compile(g);
+    let out = hologram_compile(g);
     assert!(!out.is_null());
-    assert!(holo_compilation_stats_levels(out) > 0);
+    assert!(hologram_compilation_stats_levels(out) > 0);
 
-    let inp = holo_inputs_new();
-    holo_inputs_set(inp, 0, [100u8].as_ptr(), 1);
-    let outputs = holo_execute_bytes(
-        holo_compilation_archive_ptr(out),
-        holo_compilation_archive_len(out),
+    let inp = hologram_inputs_new();
+    hologram_inputs_set(inp, 0, [100u8].as_ptr(), 1);
+    let outputs = hologram_execute_bytes(
+        hologram_compilation_archive_ptr(out),
+        hologram_compilation_archive_len(out),
         inp,
     );
-    assert_eq!(holo_outputs_len(outputs), 1);
+    assert_eq!(hologram_outputs_len(outputs), 1);
 
-    holo_outputs_free(outputs);
-    holo_inputs_free(inp);
-    holo_compilation_free(out);
+    hologram_outputs_free(outputs);
+    hologram_inputs_free(inp);
+    hologram_compilation_free(out);
 }
 
 /// E2E: FFI encoding round-trip.
 #[test]
 fn e2e_ffi_encoding_round_trip() {
     // Signed encoding: embed 0.5, lift back, verify close
-    let byte = holo_encoding_embed(1, 0.5);
-    let val = holo_encoding_lift(1, byte);
+    let byte = hologram_encoding_embed(1, 0.5);
+    let val = hologram_encoding_lift(1, byte);
     assert!((val - 0.5).abs() < 0.01);
 
     // Angle encoding: embed pi, lift back
-    let byte = holo_encoding_embed(0, std::f64::consts::PI);
-    let val = holo_encoding_lift(0, byte);
+    let byte = hologram_encoding_embed(0, std::f64::consts::PI);
+    let val = hologram_encoding_lift(0, byte);
     assert!((val - std::f64::consts::PI).abs() < 0.05);
 }
 
@@ -838,33 +838,33 @@ fn e2e_ffi_encoding_round_trip() {
 fn e2e_ffi_lut_ops() {
     // Apply all 21 LUT ops to a byte — none should panic
     for i in 0..21 {
-        let result = holo_lut_apply(i, 128);
+        let result = hologram_lut_apply(i, 128);
         let _ = result; // just ensure no panic
     }
 
     // Prim ops
-    assert_eq!(holo_prim_apply_binary(4, 10, 20), 30); // Add
-    assert_eq!(holo_prim_apply_binary(5, 20, 10), 10); // Sub
-    assert_eq!(holo_prim_apply_unary(2, 5), 6); // Succ
+    assert_eq!(hologram_prim_apply_binary(4, 10, 20), 30); // Add
+    assert_eq!(hologram_prim_apply_binary(5, 20, 10), 10); // Sub
+    assert_eq!(hologram_prim_apply_unary(2, 5), 6); // Succ
 }
 
 /// E2E: FFI error handling.
 #[test]
 fn e2e_ffi_error_handling() {
-    use holo_ffi::error::{holo_error_message, holo_last_error};
+    use hologram_ffi::error::{hologram_error_message, hologram_last_error};
 
     // Compile null graph should fail
-    let out = holo_compile(std::ptr::null_mut());
+    let out = hologram_compile(std::ptr::null_mut());
     assert!(out.is_null());
-    assert_ne!(holo_last_error(), 0);
-    let msg = holo_error_message();
+    assert_ne!(hologram_last_error(), 0);
+    let msg = hologram_error_message();
     assert!(!msg.is_null());
 
     // Execute with null archive should fail
-    let inp = holo_inputs_new();
-    let outputs = holo_execute_bytes(std::ptr::null(), 0, inp);
+    let inp = hologram_inputs_new();
+    let outputs = hologram_execute_bytes(std::ptr::null(), 0, inp);
     assert!(outputs.is_null());
-    holo_inputs_free(inp);
+    hologram_inputs_free(inp);
 }
 
 /// E2E: FFI compile with fusion disabled vs enabled.
@@ -874,42 +874,42 @@ fn e2e_ffi_fusion_toggle() {
 
     // Build: Input → Sigmoid → Relu → Output (fusable chain)
     let build = || {
-        let b = holo_graph_builder_new();
+        let b = hologram_graph_builder_new();
         let name = CString::new("x").unwrap();
-        holo_graph_builder_input(b, name.as_ptr());
-        holo_graph_builder_node_from_input(b, 0, 0, 0);
+        hologram_graph_builder_input(b, name.as_ptr());
+        hologram_graph_builder_node_from_input(b, 0, 0, 0);
         let i0 = [0usize];
-        holo_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1);
+        hologram_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1);
         let i1 = [1usize];
-        holo_graph_builder_node_with_inputs(b, 3, 4, i1.as_ptr(), 1);
+        hologram_graph_builder_node_with_inputs(b, 3, 4, i1.as_ptr(), 1);
         let i2 = [2usize];
-        holo_graph_builder_node_with_inputs(b, 1, 0, i2.as_ptr(), 1);
+        hologram_graph_builder_node_with_inputs(b, 1, 0, i2.as_ptr(), 1);
         let name_y = CString::new("y").unwrap();
-        holo_graph_builder_output(b, name_y.as_ptr(), 3);
-        holo_graph_builder_build(b)
+        hologram_graph_builder_output(b, name_y.as_ptr(), 3);
+        hologram_graph_builder_build(b)
     };
 
-    let out_fused = holo_compile(build());
-    let out_no_fuse = holo_compile_no_fuse(build());
+    let out_fused = hologram_compile(build());
+    let out_no_fuse = hologram_compile_no_fuse(build());
     assert!(!out_fused.is_null());
     assert!(!out_no_fuse.is_null());
 
     // Both should produce valid archives that execute
-    let test = |out: *mut holo_compiler::CompilationOutput| {
-        let inp = holo_inputs_new();
-        holo_inputs_set(inp, 0, [42u8].as_ptr(), 1);
-        let outputs = holo_execute_bytes(
-            holo_compilation_archive_ptr(out),
-            holo_compilation_archive_len(out),
+    let test = |out: *mut hologram_compiler::CompilationOutput| {
+        let inp = hologram_inputs_new();
+        hologram_inputs_set(inp, 0, [42u8].as_ptr(), 1);
+        let outputs = hologram_execute_bytes(
+            hologram_compilation_archive_ptr(out),
+            hologram_compilation_archive_len(out),
             inp,
         );
-        assert_eq!(holo_outputs_len(outputs), 1);
-        holo_outputs_free(outputs);
-        holo_inputs_free(inp);
+        assert_eq!(hologram_outputs_len(outputs), 1);
+        hologram_outputs_free(outputs);
+        hologram_inputs_free(inp);
     };
     test(out_fused);
     test(out_no_fuse);
 
-    holo_compilation_free(out_fused);
-    holo_compilation_free(out_no_fuse);
+    hologram_compilation_free(out_fused);
+    hologram_compilation_free(out_no_fuse);
 }

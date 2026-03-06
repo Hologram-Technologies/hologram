@@ -53,7 +53,7 @@ V2 rewrite of `../hologram-backup` (15+ crate workspace, 8-stage compiler, dual 
 ## Workspace Structure
 
 ```
-hologram-greenfield/
+hologram/
   Cargo.toml                        # Workspace root + root crate re-exporting all public API
   AGENTS.md
   CLAUDE.md
@@ -64,30 +64,30 @@ hologram-greenfield/
     SPRINT.md                       # Active sprint tracking
     sprints/                        # Archived sprints
   crates/
-    holo-core/                      # Core: LUT, views, ring, encoding, types
-    holo-graph/                     # Graph, subgraphs, fusion, scheduling
-    holo-archive/                   # .holo format, rkyv, mmap, weights, entrypoints
-    holo-exec/                      # KV executor, buffer, parallel levels
-    holo-compiler/                   # Compilation pipeline: Graph → .holo archive
-    holo-ffi/                        # FFI layer: C ABI (extern "C", cbindgen) + WASM (wasm-bindgen, feature-gated)
-    holo-cli/                       # Async CLI with subcommands (exposes run())
-    holo-bench/                     # Criterion benchmarks
+    hologram-core/                      # Core: LUT, views, ring, encoding, types
+    hologram-graph/                     # Graph, subgraphs, fusion, scheduling
+    hologram-archive/                   # .holo format, rkyv, mmap, weights, entrypoints
+    hologram-exec/                      # KV executor, buffer, parallel levels
+    hologram-compiler/                   # Compilation pipeline: Graph → .holo archive
+    hologram-ffi/                        # FFI layer: C ABI (extern "C", cbindgen) + WASM (wasm-bindgen, feature-gated)
+    hologram-cli/                       # Async CLI with subcommands (exposes run())
+    hologram-bench/                     # Criterion benchmarks
   include/
     hologram.h                      # Auto-generated C header (cbindgen)
   examples/
     calculator.rs                   # Scientific calculator example
   src/lib.rs                        # Root crate: re-exports all public API from subcrates
-  src/main.rs                       # Binary: calls holo_cli::run()
+  src/main.rs                       # Binary: calls hologram_cli::run()
 ```
 
 **Root crate `src/lib.rs`**:
 ```rust
-pub use holo_core::*;
-pub use holo_graph::*;
-pub use holo_archive::*;
-pub use holo_exec::*;
+pub use hologram_core::*;
+pub use hologram_graph::*;
+pub use hologram_archive::*;
+pub use hologram_exec::*;
 ```
-Consumers add only `hologram-greenfield` as a dependency.
+Consumers add only `hologram` as a dependency.
 
 ---
 
@@ -150,7 +150,7 @@ Before any code, first:
 - Functions <= 15 lines. Max 3 arguments per function — use builder-pattern structs for more.
 - Traits for shared behavior; builder pattern for complex construction
 - **Prefer macros** (`macro_rules!`) for repeated trait implementations and boilerplate patterns
-- `holo-core` zero external deps except `uor-foundation` (no_std, traits-only)
+- `hologram-core` zero external deps except `uor-foundation` (no_std, traits-only)
 - Every public operation has a Criterion benchmark
 - SIMD behind `#[cfg(target_arch)]`, feature-gated
 - Rayon for parallel subgraph execution, feature-gated
@@ -171,7 +171,7 @@ Before any code, first:
 - `cargo build --workspace` succeeds
 - `cargo test --workspace` passes
 - `cargo clippy --workspace -- -D warnings` clean
-- `cargo build --target wasm32-unknown-unknown -p holo-core` succeeds
+- `cargo build --target wasm32-unknown-unknown -p hologram-core` succeeds
 
 ---
 
@@ -179,7 +179,7 @@ Before any code, first:
 
 **Goal**: LUT tables, ElementWiseView, encodings, ring. rkyv-serializable. SIMD batch. `no_std`.
 
-### Crate: `crates/holo-core/src/`
+### Crate: `crates/hologram-core/src/`
 ```
 lib.rs
 lut/
@@ -228,7 +228,7 @@ error/
 
 **Goal**: Single graph type, subgraphs, parallel levels, single-pass fusion. Auto-execute when deps satisfied.
 
-### Crate: `crates/holo-graph/src/`
+### Crate: `crates/hologram-graph/src/`
 ```
 lib.rs
 graph/
@@ -272,7 +272,7 @@ error/
 
 **Notes**: HoloHeader uses bytemuck (80-byte `#[repr(C)]` fixed layout) instead of rkyv for the header — rkyv's root-at-end design doesn't work for a fixed-position header. rkyv is used for variable-length data (graph, section table). 83 tests, 279 workspace total.
 
-### Crate: `crates/holo-archive/src/`
+### Crate: `crates/hologram-archive/src/`
 ```
 lib.rs
 format/
@@ -347,9 +347,9 @@ Subgraphs can reference remote registries — enabling distributed execution whe
 
 **Goal**: Every op = O(1) KV lookup. Rayon parallel levels. Loads from .holo via mmap.
 
-**Notes**: KvStore is stateless/zero-sized — all LUT tables are static in holo-core. BufferArena uses `HashMap<NodeId, Vec<u8>>`. Schedule bridge builds `ExecutionSchedule` directly from `SerializedGraph` via Kahn's algorithm (avoids reconstructing full arena `Graph`). Parallel execution is feature-gated on `rayon`. 55 tests, 334 workspace total.
+**Notes**: KvStore is stateless/zero-sized — all LUT tables are static in hologram-core. BufferArena uses `HashMap<NodeId, Vec<u8>>`. Schedule bridge builds `ExecutionSchedule` directly from `SerializedGraph` via Kahn's algorithm (avoids reconstructing full arena `Graph`). Parallel execution is feature-gated on `rayon`. 55 tests, 334 workspace total.
 
-### Crate: `crates/holo-exec/src/`
+### Crate: `crates/hologram-exec/src/`
 ```
 lib.rs              # Re-exports: KvStore, KvExecutor, GraphInputs, GraphOutputs,
                     #   BufferArena, ExecError, build_schedule, execute_plan/bytes/file
@@ -384,10 +384,10 @@ parallel/
 ### Files
 - `examples/calculator.rs` — scientific calculator with pi-F-lambda, LUT composition, graph I/O, full pipeline, error analysis
 - `tests/e2e.rs` — 8 E2E integration tests (linear fused, diamond parallel, constants, chained folding, multi-input, long chain, wide fan-out, file roundtrip)
-- `crates/holo-bench/benches/kv_dispatch.rs` — KvStore dispatch benchmarks (unary/binary, varying buffer sizes, all LutOp variants)
-- `crates/holo-bench/benches/executor.rs` — KvExecutor benchmarks (linear/diamond/wide-parallel graphs, large buffers, schedule build)
-- `crates/holo-bench/benches/archive.rs` — HoloWriter + load_from_bytes roundtrip benchmarks (varying sizes, diamond topology)
-- `crates/holo-bench/benches/fusion.rs` — fusion pass benchmarks (10, 100, 1000 node graphs)
+- `crates/hologram-bench/benches/kv_dispatch.rs` — KvStore dispatch benchmarks (unary/binary, varying buffer sizes, all LutOp variants)
+- `crates/hologram-bench/benches/executor.rs` — KvExecutor benchmarks (linear/diamond/wide-parallel graphs, large buffers, schedule build)
+- `crates/hologram-bench/benches/archive.rs` — HoloWriter + load_from_bytes roundtrip benchmarks (varying sizes, diamond topology)
+- `crates/hologram-bench/benches/fusion.rs` — fusion pass benchmarks (10, 100, 1000 node graphs)
 
 ---
 
@@ -409,10 +409,10 @@ parallel/
 - [x] 130 new tests (472 total workspace), zero clippy warnings
 
 ### Sprint 5: LUT-GEMM for AI Model Inference — COMPLETED
-- [x] Psumbook4 (64B) + Psumbook8 (1KB) cache-aligned accumulators in `holo-exec/src/lut_gemm/psumbook.rs`
-- [x] QuantizedWeights4/8 + k-means clustering, quantize_auto, dequantize_error in `holo-exec/src/lut_gemm/quantize.rs`
-- [x] Sequential LUT-GEMM kernels (lut_gemm_4bit/8bit) in `holo-exec/src/lut_gemm/matmul.rs`
-- [x] Column-parallel LUT-GEMM (rayon, PAR_COL_THRESHOLD=64) in `holo-exec/src/lut_gemm/parallel.rs`
+- [x] Psumbook4 (64B) + Psumbook8 (1KB) cache-aligned accumulators in `hologram-exec/src/lut_gemm/psumbook.rs`
+- [x] QuantizedWeights4/8 + k-means clustering, quantize_auto, dequantize_error in `hologram-exec/src/lut_gemm/quantize.rs`
+- [x] Sequential LUT-GEMM kernels (lut_gemm_4bit/8bit) in `hologram-exec/src/lut_gemm/matmul.rs`
+- [x] Column-parallel LUT-GEMM (rayon, PAR_COL_THRESHOLD=64) in `hologram-exec/src/lut_gemm/parallel.rs`
 - [x] 4 new GraphOp variants (MatMulLut4/8, BatchMatMulLut4/8) + KvStore::dispatch_with_constants
 - [x] KvExecutor updated to pass &sg.constants through dispatch
 - [x] ExecError::ShapeMismatch + ExecError::InvalidQuantization
@@ -423,7 +423,7 @@ parallel/
 - [x] 56 new tests (528 total workspace), zero clippy warnings
 
 ### Sprint 6: Compiler Pipeline — COMPLETED
-- [x] New `holo-compiler` crate: compilation pipeline separate from execution (`holo-graph` + `holo-archive` deps, no `holo-exec`)
+- [x] New `hologram-compiler` crate: compilation pipeline separate from execution (`hologram-graph` + `hologram-archive` deps, no `hologram-exec`)
 - [x] `CompileError` enum + `CompileResult` type with `From<GraphError>` + `From<ArchiveError>` conversions
 - [x] `LivenessInterval` + `compute_liveness(schedule, graph)` — buffer lifetime tracking in schedule level order
 - [x] `WorkspaceLayout` + `plan_workspace(intervals)` — first-fit-decreasing bin packing for buffer slot reuse
@@ -432,41 +432,41 @@ parallel/
 - [x] `compile(graph)` convenience function
 - [x] `SerializedGraph::to_graph()` reconstruction with ID remapping
 - [x] CLI `hologram compile` wired to compiler pipeline with `--no-fuse` flag
-- [x] Root crate re-exports `holo_compiler` public API
+- [x] Root crate re-exports `hologram_compiler` public API
 - [x] Criterion benchmarks `compiler.rs`: compile/liveness/workspace at 10/50/100 nodes
 - [x] 7 E2E tests: compiler linear chain, diamond, constants, fusion toggle, large graph, workspace reuse, LayerHeader
 - [x] 52 new tests (580 total workspace), zero clippy warnings
 
 ### Sprint 7: C FFI + WASM Bindings — COMPLETED
 
-**Notes**: Single `holo-ffi` crate (`cdylib` + `rlib`). `FfiGraphBuilder` wraps `Graph` directly (non-consuming) with `index_to_id: Vec<NodeId>` for C-friendly indexing. Thread-local `LAST_ERROR: RefCell<Option<CString>>` for error propagation. Op mapping: kind 0=Input, 1=Output, 2=Prim(param 0–9), 3=Lut(param 0–20). cbindgen renames FFI types to `Holo*` in C header. WASM bindings feature-gated behind `wasm`. 56 new tests (636 total workspace), zero clippy warnings.
+**Notes**: Single `hologram-ffi` crate (`cdylib` + `rlib`). `FfiGraphBuilder` wraps `Graph` directly (non-consuming) with `index_to_id: Vec<NodeId>` for C-friendly indexing. Thread-local `LAST_ERROR: RefCell<Option<CString>>` for error propagation. Op mapping: kind 0=Input, 1=Output, 2=Prim(param 0–9), 3=Lut(param 0–20). cbindgen renames FFI types to `Holo*` in C header. WASM bindings feature-gated behind `wasm`. 56 new tests (636 total workspace), zero clippy warnings.
 
-- [x] `crates/holo-ffi/` crate skeleton: `Cargo.toml`, `lib.rs`, all module declarations
-- [x] `error/mod.rs`: `FfiStatus` enum (8 codes), thread-local `LAST_ERROR`, `holo_last_error()`, `holo_error_message()`, `ffi_catch()` wrapper
+- [x] `crates/hologram-ffi/` crate skeleton: `Cargo.toml`, `lib.rs`, all module declarations
+- [x] `error/mod.rs`: `FfiStatus` enum (8 codes), thread-local `LAST_ERROR`, `hologram_last_error()`, `hologram_error_message()`, `ffi_catch()` wrapper
 - [x] `handle/mod.rs`: `into_handle<T>()`, `borrow_handle()`, `borrow_handle_mut()`, `free_handle()`
-- [x] `graph/mod.rs`: `FfiGraphBuilder` + all `holo_graph_builder_*` + `holo_graph_node_count/free`
-- [x] `compiler/mod.rs`: `holo_compile()`, `holo_compile_no_fuse()`, archive ptr/len, stats, `holo_compilation_free()`
-- [x] `exec/mod.rs`: `holo_inputs_new/set/free`, `holo_execute_bytes()`, `holo_outputs_*`
-- [x] `encoding/mod.rs`: `holo_encoding_embed/lift()`, `holo_lut_apply()`, `holo_prim_apply_unary/binary()`
+- [x] `graph/mod.rs`: `FfiGraphBuilder` + all `hologram_graph_builder_*` + `holo_graph_node_count/free`
+- [x] `compiler/mod.rs`: `hologram_compile()`, `hologram_compile_no_fuse()`, archive ptr/len, stats, `holo_compilation_free()`
+- [x] `exec/mod.rs`: `hologram_inputs_new/set/free`, `hologram_execute_bytes()`, `hologram_outputs_*`
+- [x] `encoding/mod.rs`: `hologram_encoding_embed/lift()`, `hologram_lut_apply()`, `hologram_prim_apply_unary/binary()`
 - [x] `cbindgen.toml` + `include/hologram.h` auto-generated C header
 - [x] `wasm/mod.rs`: `WasmGraphBuilder`, `wasm_execute()`, `wasm_lut_apply()`, `wasm_encoding_embed/lift()` (feature-gated)
-- [x] `crates/holo-bench/benches/ffi.rs`: graph build, lut_apply, encoding, full pipeline benchmarks
+- [x] `crates/hologram-bench/benches/ffi.rs`: graph build, lut_apply, encoding, full pipeline benchmarks
 - [x] 6 FFI E2E tests in `tests/e2e.rs`: full pipeline, diamond, encoding round-trip, LUT ops, error handling, fusion toggle
 
 ### Sprint 8: Constrained Device Validation — COMPLETED
 
-**Notes**: Fixed `f64::rem_euclid()` (std-only) with manual no_std modulo in `angle.rs`. Upgraded rkyv 0.7 → 0.8.15 across all 30+ workspace files — removes WASM32 const-eval overflow bug and eliminates manual `serialize` workaround; rkyv 0.8 auto-derives `CheckBytes` with `Archive`. `StaticBuf<const N: usize>` in `crates/holo-core/src/buffer/` with 15 unit tests. `Justfile` `wasm-nostd` / `embedded` recipes use rustup toolchain paths (needed because Homebrew Rust lacks cross targets). 15 new tests (StaticBuf), zero clippy warnings, holo-core no_std ~35–40 KB text (well under 100 KB).
+**Notes**: Fixed `f64::rem_euclid()` (std-only) with manual no_std modulo in `angle.rs`. Upgraded rkyv 0.7 → 0.8.15 across all 30+ workspace files — removes WASM32 const-eval overflow bug and eliminates manual `serialize` workaround; rkyv 0.8 auto-derives `CheckBytes` with `Archive`. `StaticBuf<const N: usize>` in `crates/hologram-core/src/buffer/` with 15 unit tests. `Justfile` `wasm-nostd` / `embedded` recipes use rustup toolchain paths (needed because Homebrew Rust lacks cross targets). 15 new tests (StaticBuf), zero clippy warnings, hologram-core no_std ~35–40 KB text (well under 100 KB).
 
 **Step 1: no_std Validation**
-- [x] Verify `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features` compiles cleanly
-- [x] Verify `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features` compiles cleanly
+- [x] Verify `cargo build --target wasm32-unknown-unknown -p hologram-core --no-default-features` compiles cleanly
+- [x] Verify `cargo build --target thumbv7em-none-eabihf -p hologram-core --no-default-features` compiles cleanly
 - [x] Fix `f64::rem_euclid()` std-only call in `encoding/angle.rs`
 
 **Step 2: `no_alloc` Static Buffer Mode**
-- [x] Add `no_alloc` marker feature to `holo-core/Cargo.toml`; make `rkyv` optional via `serialize` feature
-- [x] `crates/holo-core/src/buffer/static_buf.rs` — `StaticBuf<const N: usize>`: fixed-size stack/static buffer, `push/pop/extend_from_slice/as_slice/clear/is_full/capacity`
-- [x] `crates/holo-core/src/buffer/mod.rs` — re-export `StaticBuf`
-- [x] `holo-core/src/lib.rs` — re-export `buffer` module
+- [x] Add `no_alloc` marker feature to `hologram-core/Cargo.toml`; make `rkyv` optional via `serialize` feature
+- [x] `crates/hologram-core/src/buffer/static_buf.rs` — `StaticBuf<const N: usize>`: fixed-size stack/static buffer, `push/pop/extend_from_slice/as_slice/clear/is_full/capacity`
+- [x] `crates/hologram-core/src/buffer/mod.rs` — re-export `StaticBuf`
+- [x] `hologram-core/src/lib.rs` — re-export `buffer` module
 - [x] 15 unit tests: capacity boundary, overflow, extend, Q0 LUT use case
 
 **Step 3: Binary Size Analysis**
@@ -484,14 +484,14 @@ parallel/
 - [x] Replace `check_archived_root + deserialize` → `rkyv::from_bytes::<T, rkyv::rancor::Error>`
 - [x] Replace `rkyv::Infallible` usage (removed in 0.8)
 
-**Target**: ~15 new tests, ~651 total workspace, zero clippy warnings, holo-core no_std < 100KB. ✓
+**Target**: ~15 new tests, ~651 total workspace, zero clippy warnings, hologram-core no_std < 100KB. ✓
 
 ### Sprint 9: Tokio Integration + Async Execution — COMPLETED
 
-**Notes**: `holo-async` crate with `AsyncCompiler` (wraps `CompilerBuilder` in `spawn_blocking`), `AsyncExecutor` (wraps `execute_bytes` in `spawn_blocking`), and `execute_stream` (per-level `mpsc` channel). `KvExecutor::execute_with_progress<F>` added to `holo-exec` — `execute` delegates to it (no duplication). `execute_bytes_with_progress` exported from `holo-exec`. `LevelResult { level_index, nodes_executed }` is the per-level progress type. Dropping the receiver does not cancel execution; the task completes and channel sends are silently discarded. 16 new holo-async tests + 2 new holo-exec tests. 669 total workspace tests, zero clippy warnings.
+**Notes**: `hologram-async` crate with `AsyncCompiler` (wraps `CompilerBuilder` in `spawn_blocking`), `AsyncExecutor` (wraps `execute_bytes` in `spawn_blocking`), and `execute_stream` (per-level `mpsc` channel). `KvExecutor::execute_with_progress<F>` added to `hologram-exec` — `execute` delegates to it (no duplication). `execute_bytes_with_progress` exported from `hologram-exec`. `LevelResult { level_index, nodes_executed }` is the per-level progress type. Dropping the receiver does not cancel execution; the task completes and channel sends are silently discarded. 16 new hologram-async tests + 2 new hologram-exec tests. 669 total workspace tests, zero clippy warnings.
 
-**Step 1: `holo-async` crate**
-- [x] `crates/holo-async/Cargo.toml`: deps `holo-compiler`, `holo-exec`, `holo-graph`, `tokio`
+**Step 1: `hologram-async` crate**
+- [x] `crates/hologram-async/Cargo.toml`: deps `hologram-compiler`, `hologram-exec`, `hologram-graph`, `tokio`
 - [x] `src/compiler.rs`: `AsyncCompiler { graph, enable_fusion }`, `.fuse(bool)`, `.compile() -> JoinHandle<CompileResult<CompilationOutput>>`
 - [x] `src/executor.rs`: `AsyncExecutor::execute(archive, inputs) -> JoinHandle<ExecResult<GraphOutputs>>`
 - [x] `src/lib.rs`: re-exports `AsyncCompiler`, `AsyncExecutor`, `execute_stream`, `LevelResult`
@@ -499,38 +499,38 @@ parallel/
 **Step 2: Streaming API**
 - [x] `src/stream.rs`: `execute_stream(archive, inputs) -> (Receiver<LevelResult>, JoinHandle<ExecResult<GraphOutputs>>)`
 - [x] `LevelResult { level_index: usize, nodes_executed: usize }`
-- [x] `KvExecutor::execute_with_progress<F>` in `holo-exec/src/eval/executor.rs`
-- [x] `execute_bytes_with_progress<F>` in `holo-exec/src/mmap/mod.rs`, exported from `holo-exec/src/lib.rs`
+- [x] `KvExecutor::execute_with_progress<F>` in `hologram-exec/src/eval/executor.rs`
+- [x] `execute_bytes_with_progress<F>` in `hologram-exec/src/mmap/mod.rs`, exported from `hologram-exec/src/lib.rs`
 
 **Step 3: Benchmarks**
-- [x] `crates/holo-bench/benches/async_exec.rs`: sync vs async compile + execute (10-node chain)
-- [x] `crates/holo-bench/benches/async_stream.rs`: batch vs streaming (20-node chain)
+- [x] `crates/hologram-bench/benches/async_exec.rs`: sync vs async compile + execute (10-node chain)
+- [x] `crates/hologram-bench/benches/async_stream.rs`: batch vs streaming (20-node chain)
 
 **Step 4: Root re-export**
-- [x] `src/lib.rs`: `pub use holo_async;`
+- [x] `src/lib.rs`: `pub use hologram_async;`
 
 **Result**: 18 new tests, 669 total workspace, zero clippy warnings. ✓
 
 ### Sprint 10: CLI Completeness — COMPLETED
 
-**Notes**: `run` command now fully functional: reads `.holo` archive, parses `--input INDEX:HEX` flags via `parse_input`, executes via `execute_bytes`, prints `name: hex` per output. `inspect` command prints file size, node count, input/output names, schedule level count. `CliError` gained `Exec` and `Archive` variants with `From` impls. 15 new tests in `holo-cli`. 684 total workspace tests, zero clippy warnings.
+**Notes**: `run` command now fully functional: reads `.holo` archive, parses `--input INDEX:HEX` flags via `parse_input`, executes via `execute_bytes`, prints `name: hex` per output. `inspect` command prints file size, node count, input/output names, schedule level count. `CliError` gained `Exec` and `Archive` variants with `From` impls. 15 new tests in `hologram-cli`. 684 total workspace tests, zero clippy warnings.
 
-- [x] `CliError::Exec(ExecError)` + `From<ExecError>` in `crates/holo-cli/src/error/mod.rs`
-- [x] `CliError::Archive(ArchiveError)` + `From<ArchiveError>` in `crates/holo-cli/src/error/mod.rs`
+- [x] `CliError::Exec(ExecError)` + `From<ExecError>` in `crates/hologram-cli/src/error/mod.rs`
+- [x] `CliError::Archive(ArchiveError)` + `From<ArchiveError>` in `crates/hologram-cli/src/error/mod.rs`
 - [x] `commands/run_cmd.rs`: real execution — load archive, parse `--input INDEX:HEX` flags, execute, print outputs
 - [x] Input parser: `parse_input(s: &str) -> Result<(u32, Vec<u8>), CliError>` for `INDEX:HEX` format
 - [x] Output printer: `print_outputs(outputs: &GraphOutputs)` — `name: hex` per output
 - [x] `commands/inspect.rs`: `hologram inspect <file>` — print file size, node count, input/output names, level count
 - [x] Register `Inspect` variant in `commands/mod.rs` + `dispatch`
-- [x] 15 new tests in `holo-cli` (parse_input variants, inspect helpers)
+- [x] 15 new tests in `hologram-cli` (parse_input variants, inspect helpers)
 - [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
 - [x] Zero clippy warnings; `just ci` green — **684 total workspace tests**
 
 ### Sprint 11: Custom Op Extension API — COMPLETED
 
-**Notes**: `CustomOpId(u32)` newtype + `GraphOp::Custom { id, arity }` in `holo-graph`. `CustomOpRegistry` with `Arc<dyn Fn>` handlers in `holo-exec/src/kv/registry.rs`. Registry threaded through private `execute_core` → `dispatch_level` → `KvStore::dispatch_with_constants` without breaking existing caller signatures (all pass `None`). New public `KvExecutor::execute_with_registry` and `execute_bytes_with_ops` entry points. `register_op!` macro in `holo-exec/src/lib.rs`. Custom ops serialize cleanly via rkyv (id + arity only); handlers are re-registered at startup. 15 new tests (11 integration + 4 unit). 700 total workspace tests, zero clippy warnings.
+**Notes**: `CustomOpId(u32)` newtype + `GraphOp::Custom { id, arity }` in `hologram-graph`. `CustomOpRegistry` with `Arc<dyn Fn>` handlers in `hologram-exec/src/kv/registry.rs`. Registry threaded through private `execute_core` → `dispatch_level` → `KvStore::dispatch_with_constants` without breaking existing caller signatures (all pass `None`). New public `KvExecutor::execute_with_registry` and `execute_bytes_with_ops` entry points. `register_op!` macro in `hologram-exec/src/lib.rs`. Custom ops serialize cleanly via rkyv (id + arity only); handlers are re-registered at startup. 15 new tests (11 integration + 4 unit). 700 total workspace tests, zero clippy warnings.
 
-- [x] `CustomOpId(pub u32)` with rkyv derives, `raw()` method, re-exported from `holo-graph`
+- [x] `CustomOpId(pub u32)` with rkyv derives, `raw()` method, re-exported from `hologram-graph`
 - [x] `GraphOp::Custom { id: CustomOpId, arity: u8 }` variant; `arity`, `is_pure`, `to_view` updated
 - [x] `GraphBuilder::custom_op(id, arity, inputs)` builder method
 - [x] `CustomHandler` type alias + `CustomOpRegistry::register/dispatch/len/is_empty` + `Default`
@@ -542,7 +542,7 @@ parallel/
 - [x] 700 total workspace tests, zero clippy warnings
 
 ### Sprint 12 & beyond — Moved to separate consumer libraries
-Network distribution (holo-net) and AI model support (hologram-ai / ONNX/GGUF/GGML) will be implemented as separate libraries that depend on hologram-greenfield as a consumer.
+Network distribution (hologram-net) and AI model support (hologram-ai / ONNX/GGUF/GGML) will be implemented as separate libraries that depend on hologram as a consumer.
 
 ---
 
@@ -567,31 +567,31 @@ Network distribution (holo-net) and AI model support (hologram-ai / ONNX/GGUF/GG
 ```
 uor-foundation (git v3.5.0, traits only, no_std)
        |
-   holo-core (LUT, views, ring, encoding — no_std + alloc)
+   hologram-core (LUT, views, ring, encoding — no_std + alloc)
        |
-   holo-graph (graph, subgraphs, fusion, scheduling)
+   hologram-graph (graph, subgraphs, fusion, scheduling)
        |
-   holo-archive (.holo format, rkyv, mmap, entrypoints, weights)
+   hologram-archive (.holo format, rkyv, mmap, entrypoints, weights)
       / \
-holo-compiler    holo-exec
+hologram-compiler    hologram-exec
 (Graph → .holo)  (KV executor, buffer, parallel levels)
       \  |  /
-   holo-cli (async CLI with subcommands)
+   hologram-cli (async CLI with subcommands)
        |
-   holo-bench (criterion benchmarks)
+   hologram-bench (criterion benchmarks)
 
-holo-ffi  (C ABI + WASM: extern "C" + cbindgen header, wasm-bindgen feature-gated)
+hologram-ffi  (C ABI + WASM: extern "C" + cbindgen header, wasm-bindgen feature-gated)
 
-Root crate (src/lib.rs) re-exports: holo-core, holo-graph, holo-archive, holo-compiler, holo-exec
+Root crate (src/lib.rs) re-exports: hologram-core, hologram-graph, hologram-archive, hologram-compiler, hologram-exec
 Examples: examples/calculator.rs
 
 Consumer libraries (separate repos):
   hologram-ai (ONNX/GGUF/GGML support)
-  holo-net (network distribution)
+  hologram-net (network distribution)
 ```
 
 **Invariants**:
-- `holo-core` depends ONLY on `uor-foundation`
+- `hologram-core` depends ONLY on `uor-foundation`
 - All crates compile for `wasm32-unknown-unknown` with appropriate feature gates
 - Max 3 function args; builder pattern for more
 - Macros for repeated trait implementations

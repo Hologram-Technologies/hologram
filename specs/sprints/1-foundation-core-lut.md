@@ -1,7 +1,7 @@
 # Sprint 1: Foundation & Core LUT Engine
 
 **Status**: Completed
-**Test count**: 108 (holo-core), zero clippy warnings
+**Test count**: 108 (hologram-core), zero clippy warnings
 
 ---
 

@@ -8,17 +8,17 @@
 
 ## Goal
 
-Validate `holo-core` on constrained targets (WASM no_std, bare-metal ARM). Add `no_alloc`
+Validate `hologram-core` on constrained targets (WASM no_std, bare-metal ARM). Add `no_alloc`
 static-buffer mode. Upgrade rkyv 0.7 → 0.8.15. Document feature availability per target.
 
 ## Deliverables
 
-- [x] Verify `holo-core` compiles `no_std`: `wasm32-unknown-unknown` — no_std, no rkyv
-- [x] Verify `holo-core` compiles for bare-metal ARM: `thumbv7em-none-eabihf` — no_std
+- [x] Verify `hologram-core` compiles `no_std`: `wasm32-unknown-unknown` — no_std, no rkyv
+- [x] Verify `hologram-core` compiles for bare-metal ARM: `thumbv7em-none-eabihf` — no_std
 - [x] Fix `f64::rem_euclid()` std-only call in `encoding/angle.rs` with manual `% TAU` modulo
-- [x] `no_alloc` marker feature in `holo-core/Cargo.toml`
+- [x] `no_alloc` marker feature in `hologram-core/Cargo.toml`
 - [x] `serialize` feature gates rkyv (optional dep); excluded for no_std builds automatically
-- [x] `StaticBuf<const N: usize>` in `crates/holo-core/src/buffer/static_buf.rs`
+- [x] `StaticBuf<const N: usize>` in `crates/hologram-core/src/buffer/static_buf.rs`
   — `push/pop/extend_from_slice/as_slice/clear/is_full/capacity`, 15 unit tests
 - [x] Binary size: wasm32 ~40 KB `.text`, thumbv7em ~35 KB (well under 100 KB target)
 - [x] `Justfile` `embedded` recipe (thumbv7em via rustup toolchain)

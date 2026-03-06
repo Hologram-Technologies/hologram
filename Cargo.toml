@@ -10,14 +10,14 @@ authors = ["UOR Foundation"]
 
 [workspace.dependencies]
 # Internal crates
-holo-core = { path = "crates/holo-core" }
-holo-graph = { path = "crates/holo-graph" }
-holo-archive = { path = "crates/holo-archive" }
-holo-exec = { path = "crates/holo-exec" }
-holo-compiler = { path = "crates/holo-compiler" }
-holo-async = { path = "crates/holo-async" }
-holo-cli = { path = "crates/holo-cli" }
-holo-ffi = { path = "crates/holo-ffi" }
+hologram-core = { path = "crates/hologram-core" }
+hologram-graph = { path = "crates/hologram-graph" }
+hologram-archive = { path = "crates/hologram-archive" }
+hologram-exec = { path = "crates/hologram-exec" }
+hologram-compiler = { path = "crates/hologram-compiler" }
+hologram-async = { path = "crates/hologram-async" }
+hologram-cli = { path = "crates/hologram-cli" }
+hologram-ffi = { path = "crates/hologram-ffi" }
 
 # UOR Foundation
 uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", tag = "v3.5.0" }
@@ -47,31 +47,56 @@ criterion = "0.5"
 wasm-bindgen = "0.2"
 
 [package]
-name = "hologram-greenfield"
+name = "hologram"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "O(1) compute acceleration via pre-computed lookup tables"
 
+[[bin]]
+name = "hologram"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "e2e"
+required-features = ["ffi"]
+
 [dependencies]
-holo-core = { workspace = true }
-holo-graph = { workspace = true }
-holo-archive = { workspace = true }
-holo-exec = { workspace = true }
-holo-compiler = { workspace = true }
-holo-async = { workspace = true }
-holo-ffi = { workspace = true }
-holo-cli = { workspace = true }
-tokio = { workspace = true }
+# Always included: core execution stack
+hologram-core = { workspace = true }
+hologram-graph = { workspace = true }
+hologram-archive = { workspace = true }
+hologram-exec = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 
+# Optional: compilation pipeline
+hologram-compiler = { workspace = true, optional = true }
+
+# Optional: async execution wrappers (requires tokio)
+hologram-async = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+# Optional: C ABI + WASM bindings
+hologram-ffi = { workspace = true, optional = true }
+
+# Optional: command-line interface
+hologram-cli = { workspace = true, optional = true }
+
 [features]
-default = ["std", "simd", "parallel"]
-std = ["holo-core/std", "holo-exec/std"]
-simd = ["holo-core/simd"]
-parallel = ["holo-exec/parallel"]
-wasm = []
+default = ["std", "simd", "parallel", "compiler"]
+full = ["default", "async", "ffi", "cli"]
+
+std = ["hologram-core/std", "hologram-exec/std"]
+simd = ["hologram-core/simd"]
+parallel = ["hologram-exec/parallel"]
+
+compiler = ["dep:hologram-compiler"]
+async = ["dep:hologram-async", "dep:tokio"]
+ffi = ["dep:hologram-ffi"]
+cli = ["dep:hologram-cli", "dep:tokio"]
+wasm = ["ffi", "hologram-ffi/wasm"]
 
 [profile.release]
 opt-level = 3

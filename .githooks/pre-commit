@@ -1,48 +1,73 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+# Pre-commit hook for hologram
+# Enforces code quality standards from CLAUDE.md
 
-# ── Fast formatting check (read-only) ──────────────────────────
-if ! cargo fmt --all -- --check 2>/dev/null; then
-    echo "❌ cargo fmt failed. Run 'just fmt' to fix."
+set -e
+
+echo "Running pre-commit checks..."
+echo ""
+
+# Check if we're in the root directory
+if [ ! -f "Cargo.toml" ] || [ ! -d "crates" ]; then
+    echo "Not in repository root directory"
     exit 1
 fi
 
-# ── Detect changed crates from staged files ────────────────────
-CHANGED_CRATES=""
-WORKSPACE_CHANGED=false
-
-for file in $(git diff --cached --name-only --diff-filter=ACMR); do
-    case "$file" in
-        crates/*/*)
-            crate_dir=$(echo "$file" | cut -d'/' -f1-2)
-            crate_name=$(basename "$crate_dir")
-            if [[ ! "$CHANGED_CRATES" == *"$crate_name"* ]]; then
-                CHANGED_CRATES="$CHANGED_CRATES $crate_name"
-            fi
-            ;;
-        Cargo.toml|src/*)
-            WORKSPACE_CHANGED=true
-            ;;
-    esac
-done
-
-# ── Incremental clippy on changed crates ───────────────────────
-if [ "$WORKSPACE_CHANGED" = true ]; then
-    echo "🔍 Workspace files changed — running full clippy..."
-    if ! cargo clippy --workspace -- -D warnings 2>/dev/null; then
-        echo "❌ clippy failed on workspace."
-        exit 1
-    fi
-elif [ -n "$CHANGED_CRATES" ]; then
-    for crate in $CHANGED_CRATES; do
-        echo "🔍 Running clippy on $crate..."
-        if ! cargo clippy -p "$crate" -- -D warnings 2>/dev/null; then
-            echo "❌ clippy failed on $crate."
-            exit 1
-        fi
-    done
-else
-    echo "✅ No Rust files changed — skipping clippy."
+# Check if there are any staged changes
+if git diff --cached --quiet; then
+    echo "No staged changes to commit"
+    exit 0
 fi
 
-echo "✅ Pre-commit checks passed."
+# Auto-fix formatting and stage changes
+# Use +1.93.0 toolchain since it has rustfmt/clippy; stable toolchain may not in all envs
+echo "Auto-formatting code..."
+if ! cargo +1.93.0 fmt --all 2>/dev/null && ! cargo fmt --all; then
+    echo "Formatting failed!"
+    exit 1
+fi
+
+# Stage any formatting changes automatically
+if ! git diff --quiet --exit-code; then
+    echo "Auto-staging formatted files..."
+    git add -u
+fi
+echo "Code formatting applied and staged"
+echo ""
+
+# Run clippy check (zero warnings required)
+# Use +1.93.0 toolchain since it has clippy; stable toolchain may not in all envs
+echo "Running clippy check (zero warnings required)..."
+if cargo +1.93.0 clippy --workspace --all-targets -- -D warnings 2>&1; then
+    : # success
+elif cargo clippy --workspace --all-targets -- -D warnings 2>&1; then
+    : # success with default toolchain
+else
+    echo "Clippy check failed!"
+    echo "   Run 'cargo clippy --workspace --all-targets --fix --allow-dirty' to auto-fix"
+    exit 1
+fi
+echo "Clippy passed"
+echo ""
+
+# Run tests
+echo "Building and running unit tests..."
+if command -v cargo-nextest &> /dev/null; then
+    if ! cargo nextest run --workspace --lib --bins --no-fail-fast; then
+        echo "Tests failed!"
+        echo "   All unit tests must pass before committing"
+        echo "   Run 'cargo nextest run --workspace --lib --bins' for detailed output"
+        exit 1
+    fi
+else
+    if ! cargo test --workspace --lib --bins -- --color=always; then
+        echo "Tests failed!"
+        echo "   All unit tests must pass before committing"
+        echo "   Run 'cargo test --workspace --lib --bins' for detailed output"
+        exit 1
+    fi
+fi
+echo "All unit tests passed"
+echo ""
+
+echo "All pre-commit checks passed! Ready to commit."

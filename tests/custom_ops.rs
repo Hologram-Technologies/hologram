@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use holo_archive::HoloWriter;
-use holo_exec::eval::build_schedule;
-use holo_exec::{
+use hologram_archive::HoloWriter;
+use hologram_exec::eval::build_schedule;
+use hologram_exec::{
     execute_bytes_with_ops, register_op, CustomOpId, CustomOpRegistry, GraphInputs, KvExecutor,
 };
-use holo_graph::{builder::GraphBuilder, graph::GraphOp};
+use hologram_graph::{builder::GraphBuilder, graph::GraphOp};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ fn custom_op_serializes() {
         .build();
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
-    let plan = holo_archive::load_from_bytes(&archive).unwrap();
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
     // Graph survives round-trip
     assert_eq!(plan.node_count(), 3);
 
@@ -202,7 +202,7 @@ fn custom_op_with_constants() {
 /// `execute_bytes_with_ops` works when graph goes through full compiler pipeline.
 #[test]
 fn custom_op_in_compiler_pipeline() {
-    use holo_compiler::CompilerBuilder;
+    use hologram_compiler::CompilerBuilder;
 
     let g = GraphBuilder::new()
         .input("x")
@@ -228,7 +228,7 @@ fn custom_op_in_compiler_pipeline() {
 /// `KvExecutor::execute_with_registry` works end-to-end.
 #[test]
 fn kv_executor_execute_with_registry() {
-    use holo_archive::load_from_bytes;
+    use hologram_archive::load_from_bytes;
 
     let archive = build_custom_chain_archive(30, 1);
     let plan = load_from_bytes(&archive).unwrap();

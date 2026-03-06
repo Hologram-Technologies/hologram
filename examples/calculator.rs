@@ -7,16 +7,16 @@
 //! 4. Full pipeline: build → fuse → serialize → load → execute
 //! 5. Error analysis: LUT approximation vs f64 reference
 
-use holo_core::encoding::{AngleEncoding, Encoding, SignedEncoding, UnsignedEncoding};
-use holo_core::op::{LutOp, PrimOp};
-use holo_core::view::ElementWiseView;
-use holo_graph::builder::GraphBuilder;
-use holo_graph::fusion;
-use holo_graph::graph::GraphOp;
+use hologram_core::encoding::{AngleEncoding, Encoding, SignedEncoding, UnsignedEncoding};
+use hologram_core::op::{LutOp, PrimOp};
+use hologram_core::view::ElementWiseView;
+use hologram_graph::builder::GraphBuilder;
+use hologram_graph::fusion;
+use hologram_graph::graph::GraphOp;
 
-use holo_archive::HoloWriter;
+use hologram_archive::HoloWriter;
 
-use holo_exec::{execute_bytes, GraphInputs};
+use hologram_exec::{execute_bytes, GraphInputs};
 
 fn main() {
     println!("=== Hologram Scientific Calculator ===\n");

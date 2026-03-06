@@ -1,6 +1,6 @@
 # Feature Matrix — Hologram Target Compatibility
 
-## holo-core feature flags
+## hologram-core feature flags
 
 | Feature      | Description                                        | Default |
 |--------------|----------------------------------------------------|---------|
@@ -42,7 +42,7 @@ just embedded
 just ci
 ```
 
-## Binary size estimates (holo-core, release, no_std)
+## Binary size estimates (hologram-core, release, no_std)
 
 | Target           | Approx .text size |
 |------------------|-------------------|

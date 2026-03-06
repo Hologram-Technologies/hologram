@@ -9,7 +9,7 @@
 - Functions <= 15 lines. Max 3 arguments per function — use builder-pattern structs for more.
 - Traits for shared behavior; builder pattern for complex construction.
 - Prefer macros (`macro_rules!`) for repeated trait implementations and boilerplate patterns.
-- `holo-core` zero external deps except `uor-foundation` (no_std, traits-only).
+- `hologram-core` zero external deps except `uor-foundation` (no_std, traits-only).
 - Every public operation has a Criterion benchmark.
 - SIMD behind `#[cfg(target_arch)]`, feature-gated (`simd`).
 - Rayon for parallel subgraph execution, feature-gated (`parallel`).
@@ -19,11 +19,12 @@
 - Data structures fit L1/L2 cache constraints.
 - No backwards compatibility formats — single current format only.
 - Root crate (`src/lib.rs`) re-exports all public API from subcrates.
+- When adding or changing public API, update the corresponding `site/pages/crates/*.mdx` doc page.
 
 ## Workspace Structure
 
 ```
-hologram-greenfield/
+hologram/
   Cargo.toml         # Workspace root + root crate
   AGENTS.md          # This file
   CLAUDE.md          # Project context for AI agents
@@ -35,13 +36,16 @@ hologram-greenfield/
     sprints/         # Archived sprints
     plans/           # Implementation plans
   crates/
-    holo-core/       # LUT tables, views, ring, encoding (no_std)
-    holo-graph/      # Graph, subgraphs, fusion, scheduling
-    holo-archive/    # .holo format, rkyv, mmap, entrypoints
-    holo-exec/       # KV executor, buffer, parallel levels
-    holo-bench/      # Criterion benchmarks
+    hologram-core/       # LUT tables, views, ring, encoding (no_std)
+    hologram-graph/      # Graph, subgraphs, fusion, scheduling
+    hologram-archive/    # .holo format, rkyv, mmap, entrypoints
+    hologram-exec/       # KV executor, buffer, parallel levels
+    hologram-bench/      # Criterion benchmarks
   examples/
     calculator.rs    # Scientific calculator example
+  site/
+    pages/           # Nextra docs pages (MDX)
+    next.config.mjs  # Site configuration
   src/lib.rs         # Root: re-exports all subcrate APIs
 ```
 
@@ -51,6 +55,7 @@ hologram-greenfield/
 - Write code that passes `just ci` before committing.
 - Follow all hard rules above.
 - **After every task**: update `specs/SPRINT.md` AND `specs/plans/001-greenfield-refactor.md`.
+- If public API changed: update the relevant `site/pages/crates/*.mdx` page.
 - Mark tasks `- [x]` in BOTH documents only after `just ci` passes.
 - Add implementation notes to `001-greenfield-refactor.md` sprint section when sprint completes.
 
@@ -62,7 +67,7 @@ hologram-greenfield/
 
 ### Architect
 - Maintain `specs/plans/` with implementation plans.
-- Ensure dependency graph integrity (holo-core depends only on uor-foundation).
+- Ensure dependency graph integrity (hologram-core depends only on uor-foundation).
 - Review fusion and scheduling designs for correctness.
 
 ## Sprint Workflow
@@ -80,13 +85,13 @@ hologram-greenfield/
 ```
 uor-foundation (git v3.5.0, traits only, no_std)
        │
-   holo-core (LUT, views, ring, encoding — no_std + alloc)
+   hologram-core (LUT, views, ring, encoding — no_std + alloc)
        │
-   holo-graph (graph, subgraphs, fusion, scheduling)
+   hologram-graph (graph, subgraphs, fusion, scheduling)
        │
-   holo-archive (.holo format, rkyv, mmap, entrypoints, weights)
+   hologram-archive (.holo format, rkyv, mmap, entrypoints, weights)
        │
-   holo-exec (KV executor, buffer, parallel levels)
+   hologram-exec (KV executor, buffer, parallel levels)
        │
-   holo-bench (criterion benchmarks)
+   hologram-bench (criterion benchmarks)
 ```
