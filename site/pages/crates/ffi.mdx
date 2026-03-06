@@ -1,0 +1,82 @@
+# hologram-ffi
+
+C ABI and WebAssembly bindings for Hologram.
+
+## C ABI
+
+The C header is generated via `cbindgen` and lives at `include/hologram.h`.
+
+### Handles
+
+All Hologram objects are exposed as opaque `Handle` pointers:
+
+```c
+typedef struct HologramGraph *HologramGraphHandle;
+typedef struct HologramExecutor *HologramExecutorHandle;
+```
+
+### Key Functions
+
+```c
+// Compile a graph from bytes
+HologramGraphHandle hologram_graph_from_bytes(const uint8_t *data, size_t len);
+void hologram_graph_free(HologramGraphHandle graph);
+
+// Run inference
+HologramExecutorHandle hologram_executor_new(HologramGraphHandle graph);
+int hologram_executor_run(HologramExecutorHandle exec,
+                          const uint8_t *input, size_t input_len,
+                          uint8_t *output, size_t output_len);
+void hologram_executor_free(HologramExecutorHandle exec);
+```
+
+### Error Handling
+
+Functions return `0` on success, negative error codes on failure. Use `hologram_last_error()` to retrieve a human-readable string.
+
+## Modules
+
+### `compiler`
+
+FFI wrapper for `HoloCompiler` — accepts raw bytes, returns a compiled graph handle.
+
+### `exec`
+
+FFI wrapper for `Executor` — single-call and streaming inference via C function pointers.
+
+### `encoding`
+
+Encoding/decoding helpers exposed to C for converting float arrays to ring-encoded `u8` buffers.
+
+### `graph`
+
+Graph construction and serialization via C API.
+
+### `wasm`
+
+WASM-specific bindings using `wasm-bindgen`. Exposes `HologramSession` as a JavaScript class.
+
+```js
+import init, { HologramSession } from './hologram_ffi.js'
+await init()
+const session = HologramSession.from_bytes(modelBytes)
+const output = session.run(inputBytes)
+```
+
+### `handle`
+
+`Handle<T>` — internal ref-counted wrapper that keeps objects alive across FFI boundary.
+
+### `error`
+
+Thread-local last-error storage, exposed via `hologram_last_error()`.
+
+## Building
+
+```bash
+# C header
+cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
+
+# WASM bindings
+just wasm
+```

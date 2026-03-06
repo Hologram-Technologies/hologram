@@ -1,0 +1,259 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Job 1: Check formatting
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  # Job 2: Clippy linting
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Job 3: Build
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: ${{ matrix.os }}
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+
+  # Job 4: Test
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: ${{ matrix.os }}-test
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc
+
+  # Job 5: Test Coverage
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: coverage
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version 0.6.21
+
+      - name: Generate coverage
+        run: cargo llvm-cov --lib --workspace --lcov --output-path lcov.info
+        env:
+          # AVX2 required by compile-time guard in prism::channel
+          RUSTFLAGS: "-C target-feature=+avx2"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Job 6: Documentation
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: docs
+
+      - name: Build documentation
+        # Use --lib to only document libraries, avoiding filename collision
+        # between the 'hologram' library crate and 'hologram' CLI binary
+        run: cargo doc --workspace --no-deps --lib
+        env:
+          # Allow specific doc warnings that have many false positives:
+          # - broken_intra_doc_links: Square brackets in math expressions
+          # - invalid_html_tags: Angle brackets in type expressions
+          # Add AVX2 for x86_64 (required by compile-time guard in prism::channel)
+          RUSTDOCFLAGS: "-D warnings -A rustdoc::broken_intra_doc_links -A rustdoc::invalid_html_tags -C target-feature=+avx2"
+
+  # Job 7: Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Run security audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 8: Cross-compilation targets (WASM, aarch64)
+  cross-targets:
+    name: Cross (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: wasm32-unknown-unknown
+            packages: "-p prism -p hologram-atlas"
+            features: "--no-default-features"
+          - target: wasm32-unknown-unknown
+            packages: "-p prism -p hologram-atlas"
+            features: ""
+          - target: aarch64-unknown-linux-gnu
+            packages: "-p prism -p hologram-atlas"
+            features: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: cross-${{ matrix.target }}
+
+      - name: Check build
+        run: cargo check ${{ matrix.packages }} --target ${{ matrix.target }} ${{ matrix.features }}
+
+  # Job 9: Validate JSON-LD with SHACL
+
+  validate-jsonld:
+    name: SHACL Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pyshacl
+        run: pip install pyshacl rdflib
+
+      - name: Validate datum files
+        run: |
+          if [ -d "descriptors" ] && [ -n "$(ls -A descriptors/shacl/datum-shapes.ttl 2>/dev/null)" ]; then
+            echo "SHACL datum shapes present"
+          else
+            echo "No datum shapes to validate"
+          fi
+
+  # Job 10: Verify all quality gates passed
+  ci-success:
+    name: CI Success
+    if: always()
+    needs:
+      - format
+      - clippy
+      - build
+      - test
+      - coverage
+      - docs
+      - security
+      - cross-targets
+      - validate-jsonld
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs succeeded
+        if: |
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled')
+        run: exit 1

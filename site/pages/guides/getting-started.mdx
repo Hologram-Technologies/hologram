@@ -1,0 +1,67 @@
+# Getting Started
+
+## Prerequisites
+
+- Rust stable (1.75+)
+- `just` — `cargo install just`
+- `cargo-nextest` (optional, for faster tests) — `cargo install cargo-nextest`
+
+## Clone and Build
+
+```bash
+git clone https://github.com/UOR-Foundation/hologram
+cd hologram
+just ci   # fmt check + clippy + full test suite
+```
+
+## Run the Calculator Example
+
+The `examples/calculator.rs` demonstrates a scientific calculator built on Hologram's LUT activation ops:
+
+```bash
+cargo run --example calculator
+```
+
+This builds a small expression graph, compiles it, and runs inference using the KV executor.
+
+## Run Benchmarks
+
+```bash
+just bench
+# or for a single benchmark group:
+cargo bench -p hologram-bench -- activation_lookup
+```
+
+Criterion HTML reports are written to `target/criterion/report/index.html`.
+
+## WASM Build
+
+```bash
+just wasm
+# builds hologram-core for wasm32-unknown-unknown
+```
+
+## Project Layout
+
+```
+crates/
+  hologram-core/       # no_std LUT core
+  hologram-graph/      # expression graph
+  hologram-archive/    # .holo format
+  hologram-exec/       # KV executor
+  hologram-compiler/   # compilation pipeline
+  hologram-async/      # Tokio async
+  hologram-ffi/        # C/WASM bindings
+  hologram-bench/      # benchmarks
+src/
+  lib.rs               # re-exports all public API
+  main.rs              # hologram-cli entry point
+examples/
+  calculator.rs
+```
+
+## Next Steps
+
+- [Architecture](/architecture) — understand the design
+- [Custom Ops](/guides/custom-ops) — extend with your own operations
+- [hologram-core](/crates/core) — dive into LUT tables and ring algebra

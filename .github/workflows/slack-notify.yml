@@ -1,0 +1,157 @@
+name: Slack Notification
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  changelog-to-slack:
+    name: Changelog → Slack
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changelog and post to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_SERVER: ${{ github.server_url }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set, skipping Slack notification"
+            exit 0
+          fi
+
+          # Determine range: last push commit -> current push head
+          BEFORE_SHA=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")
+          HEAD_SHA=${GITHUB_SHA:-$(git rev-parse HEAD)}
+
+          if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BEFORE_SHA=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          DIFF_RANGE="${BEFORE_SHA}..${HEAD_SHA}"
+
+          # Core stats
+          COMMIT_COUNT=$(git rev-list --count ${DIFF_RANGE})
+          FILES_CHANGED=$(git diff --name-only ${DIFF_RANGE} | sed '/^$/d' | wc -l | tr -d ' ')
+          SHORTSTAT=$(git diff --shortstat ${DIFF_RANGE})
+          INSERTIONS=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ insertions?' | awk '{print $1}' || true)
+          DELETIONS=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ deletions?' | awk '{print $1}' || true)
+          INSERTIONS=${INSERTIONS:-0}
+          DELETIONS=${DELETIONS:-0}
+
+          # Top touched areas (group crates/<crate> and bins/<bin>)
+          TOP_AREAS=$(git diff --name-only ${DIFF_RANGE} | awk -F/ '
+            {
+              if ($1=="crates" && NF>1) bucket=$1 "/" $2;
+              else if ($1=="bins" && NF>1) bucket=$1 "/" $2;
+              else bucket=$1;
+              if (bucket=="") bucket="[root]";
+              counts[bucket]++;
+            }
+            END {
+              for (b in counts) printf "%s\t%d\n", b, counts[b];
+            }
+          ' | sort -k2,2nr -k1,1 | head -5 | awk '{plural=($2>1?"s":""); printf "• %s: %d file%s\n", $1, $2, plural}')
+
+          # Highlight most-changed files (top 5 by line delta)
+          FILE_STAT=$(git diff --stat ${DIFF_RANGE} | sed '$d' | sort -t'|' -k2,2nr | head -5 | sed 's/[[:space:]]*$//' )
+
+          # Extract affected crates from diff
+          AFFECTED_CRATES=$(git diff --name-only ${DIFF_RANGE} | grep -E '^crates/[^/]+/' | sed 's|crates/\([^/]*\)/.*|\1|' | sort -u | tr '\n' ', ' | sed 's/,$//' | sed 's/,/, /g' || true)
+
+          # Build summary lines (use printf to interpret \n as newlines)
+          printf -v SUMMARY '• Commits: %s\n• Files changed: %s\n• +%s / -%s' "${COMMIT_COUNT}" "${FILES_CHANGED}" "${INSERTIONS}" "${DELETIONS}"
+          SUMMARY_INLINE="Commits: ${COMMIT_COUNT} • Files: ${FILES_CHANGED} • +${INSERTIONS} / -${DELETIONS}"
+
+          TOUCHES=""
+          if [ -n "$TOP_AREAS" ]; then
+            printf -v TOUCHES '*Touched areas*\n%s' "${TOP_AREAS}"
+          fi
+
+          FILES=""
+          if [ -n "$FILE_STAT" ]; then
+            printf -v FILES '*Top file changes*\n%s' "$(echo "$FILE_STAT" | sed 's/^/• /')"
+          fi
+
+          # Build affected line if crates were touched
+          AFFECTED_LINE=""
+          if [ -n "$AFFECTED_CRATES" ]; then
+            AFFECTED_LINE="📦 *Affected:* ${AFFECTED_CRATES}"
+          fi
+
+          # Build JSON payload using jq for proper escaping
+          jq -n \
+            --arg summary "$SUMMARY" \
+            --arg summary_inline "$SUMMARY_INLINE" \
+            --arg touches "$TOUCHES" \
+            --arg files "$FILES" \
+            --arg diff_url "${GITHUB_SERVER}/${GITHUB_REPO}/compare/${BEFORE_SHA}...${HEAD_SHA}" \
+            --arg affected "$AFFECTED_LINE" \
+            '{
+              blocks: (
+                [
+                  {
+                    type: "header",
+                    text: {
+                      type: "plain_text",
+                      text: "📦 hologram Push to main",
+                      emoji: true
+                    }
+                  },
+                  {
+                    type: "divider"
+                  },
+                  {
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: ("*📝 Change summary*\n" + $summary)
+                    }
+                  }
+                ]
+                + (if $touches != "" then [{
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: $touches
+                    }
+                  }] else [] end)
+                + (if $files != "" then [{
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: $files
+                    }
+                  }] else [] end)
+                + (if $affected != "" then [{
+                    type: "context",
+                    elements: [{
+                      type: "mrkdwn",
+                      text: $affected
+                    }]
+                  }] else [] end)
+                + [{
+                    type: "context",
+                    elements: [{
+                      type: "mrkdwn",
+                      text: ("🔗 <" + $diff_url + "|View diff> • " + $summary_inline)
+                    }]
+                  }]
+              )
+            }' > slack-payload.json
+
+          # Post to Slack, but don't fail the workflow if Slack is unavailable
+          if ! curl -sf -X POST \
+            -H "Content-type: application/json" \
+            --data @slack-payload.json \
+            "$SLACK_WEBHOOK_URL"; then
+            echo "::warning::Slack notification failed (webhook may be invalid or expired)"
+          fi
