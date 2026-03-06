@@ -35,21 +35,24 @@
 
 ## Sprint 9: Tokio Integration + Async Execution
 
-**Goal**: Add async compilation and execution paths backed by Tokio. Allow callers to stream graph evaluation across async tasks for large models and pipelined inference workloads.
+(Sprint 9 complete) — [archived](sprints/9-tokio-async.md)
+
+---
+
+## Sprint 10: CLI Completeness
+
+**Goal**: Make `hologram` CLI fully functional: real `run` command that loads a `.holo` archive and executes it, plus an `inspect` command that surfaces archive metadata. Gives the library a complete user-facing surface before starting `hologram-ai`.
 
 ### Deliverables
-- [x] `holo-async` crate: `Cargo.toml`, `lib.rs`, `compiler.rs`, `executor.rs`, `stream.rs`
-- [x] `AsyncCompiler`: wraps `CompilerBuilder` in `tokio::task::spawn_blocking`; returns `JoinHandle<CompileResult<CompilationOutput>>`
-- [x] `AsyncExecutor`: wraps `execute_bytes` in `tokio::task::spawn_blocking`; returns `JoinHandle<ExecResult<GraphOutputs>>`
-- [x] `KvExecutor::execute_with_progress<F>`: per-level callback added to `holo-exec` (no duplication — `execute` delegates to it)
-- [x] `execute_bytes_with_progress`: added to `holo-exec` public API
-- [x] Streaming API: `execute_stream() -> (Receiver<LevelResult>, JoinHandle<...>)` via `tokio::sync::mpsc`
-- [x] `LevelResult { level_index, nodes_executed }` per-level progress type
-- [x] Benchmark: `async_exec.rs` — async vs sync compile + execute (10-node chain)
-- [x] Benchmark: `async_stream.rs` — streaming vs batch (20-node chain)
-- [x] 16 new tests in `holo-async` (5 compiler, 5 executor, 6 stream); 2 new in `holo-exec` (progress callback)
-- [x] Sprint 8 archived to `specs/sprints/8-constrained-devices.md`
-- [x] Zero clippy warnings; `just ci` green — **669 total workspace tests**
+- [x] `hologram run <file.holo> [--input INDEX:HEX]...` — load archive, parse inputs, execute, print outputs
+- [x] `hologram inspect <file.holo>` — print header, node count, input/output names, schedule levels
+- [x] `CliError::Exec(ExecError)` variant + `From<ExecError>` impl
+- [x] `CliError::Archive(ArchiveError)` variant + `From<ArchiveError>` impl
+- [x] Input parser: `--input 0:deadbeef` → `GraphInputs::set(0, vec![0xde, 0xad, 0xbe, 0xef])`
+- [x] Output printer: each named output as `name: <hex>` (or `<hex>` if unnamed)
+- [x] Inspect: file size, node count, input names, output names, schedule level count
+- [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
+- [x] 15 new tests in `holo-cli`; zero clippy warnings; `just ci` green — **684 total workspace tests**
 
 ---
 

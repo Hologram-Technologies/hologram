@@ -511,14 +511,26 @@ parallel/
 
 **Result**: 18 new tests, 669 total workspace, zero clippy warnings. ✓
 
-### Sprint 10: Codegen from Descriptors
-- [ ] Port ISA descriptor concept from [hologram-backup/crates/holo/codegen/](../hologram-backup/crates/holo/codegen/)
-- [ ] Build-time code generation for instruction dispatch
-- [ ] Generate op enum variants from descriptor files
-- [ ] Generate dispatch tables from descriptors
-- [ ] Proc-macro for op registration
+### Sprint 10: CLI Completeness — COMPLETED
 
-### ~~Sprint 11 & 12~~ — Moved to separate consumer libraries
+**Notes**: `run` command now fully functional: reads `.holo` archive, parses `--input INDEX:HEX` flags via `parse_input`, executes via `execute_bytes`, prints `name: hex` per output. `inspect` command prints file size, node count, input/output names, schedule level count. `CliError` gained `Exec` and `Archive` variants with `From` impls. 15 new tests in `holo-cli`. 684 total workspace tests, zero clippy warnings.
+
+- [x] `CliError::Exec(ExecError)` + `From<ExecError>` in `crates/holo-cli/src/error/mod.rs`
+- [x] `CliError::Archive(ArchiveError)` + `From<ArchiveError>` in `crates/holo-cli/src/error/mod.rs`
+- [x] `commands/run_cmd.rs`: real execution — load archive, parse `--input INDEX:HEX` flags, execute, print outputs
+- [x] Input parser: `parse_input(s: &str) -> Result<(u32, Vec<u8>), CliError>` for `INDEX:HEX` format
+- [x] Output printer: `print_outputs(outputs: &GraphOutputs)` — `name: hex` per output
+- [x] `commands/inspect.rs`: `hologram inspect <file>` — print file size, node count, input/output names, level count
+- [x] Register `Inspect` variant in `commands/mod.rs` + `dispatch`
+- [x] 15 new tests in `holo-cli` (parse_input variants, inspect helpers)
+- [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
+- [x] Zero clippy warnings; `just ci` green — **684 total workspace tests**
+
+### Sprint 11: Op Extension API (for hologram-ai)
+
+**Goal**: Allow `hologram-ai` to register custom ops without modifying `hologram-greenfield` internals. `GraphOp::Custom(...)` variant and `KvStore` registration mechanism.
+
+### Sprint 12 & beyond — Moved to separate consumer libraries
 Network distribution (holo-net) and AI model support (hologram-ai / ONNX/GGUF/GGML) will be implemented as separate libraries that depend on hologram-greenfield as a consumer.
 
 ---
