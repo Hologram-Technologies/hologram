@@ -1,5 +1,11 @@
 # Hologram Greenfield — build commands
 
+set dotenv-load := true
+
+# Default recipe: list all available recipes
+default:
+    @just --list
+
 # Full CI: format check, clippy, tests
 ci: fmt-check clippy test
 
