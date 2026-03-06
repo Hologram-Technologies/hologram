@@ -9,7 +9,7 @@ fn bench_dispatch_unary_lut(c: &mut Criterion) {
     let op = GraphOp::Lut(LutOp::Sigmoid);
     let input = vec![128u8; 256];
     c.bench_function("kv::dispatch_unary_lut(256B)", |b| {
-        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)]))
+        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)], None))
     });
 }
 
@@ -17,7 +17,7 @@ fn bench_dispatch_unary_4k(c: &mut Criterion) {
     let op = GraphOp::Lut(LutOp::Relu);
     let input = vec![100u8; 4096];
     c.bench_function("kv::dispatch_unary_lut(4KB)", |b| {
-        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)]))
+        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)], None))
     });
 }
 
@@ -25,7 +25,7 @@ fn bench_dispatch_unary_64k(c: &mut Criterion) {
     let op = GraphOp::Lut(LutOp::Tanh);
     let input = vec![64u8; 65536];
     c.bench_function("kv::dispatch_unary_lut(64KB)", |b| {
-        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)]))
+        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&input)], None))
     });
 }
 
@@ -34,7 +34,7 @@ fn bench_dispatch_binary_add(c: &mut Criterion) {
     let lhs = vec![100u8; 256];
     let rhs = vec![50u8; 256];
     c.bench_function("kv::dispatch_binary_add(256B)", |b| {
-        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&lhs), black_box(&rhs)]))
+        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&lhs), black_box(&rhs)], None))
     });
 }
 
@@ -43,7 +43,7 @@ fn bench_dispatch_binary_mul(c: &mut Criterion) {
     let lhs = vec![13u8; 4096];
     let rhs = vec![17u8; 4096];
     c.bench_function("kv::dispatch_binary_mul(4KB)", |b| {
-        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&lhs), black_box(&rhs)]))
+        b.iter(|| KvStore::dispatch(black_box(&op), &[black_box(&lhs), black_box(&rhs)], None))
     });
 }
 
@@ -53,7 +53,7 @@ fn bench_dispatch_all_lut_ops(c: &mut Criterion) {
     for op in &LutOp::ALL {
         let graph_op = GraphOp::Lut(*op);
         group.bench_function(op.name(), |b| {
-            b.iter(|| KvStore::dispatch(black_box(&graph_op), &[black_box(&input)]))
+            b.iter(|| KvStore::dispatch(black_box(&graph_op), &[black_box(&input)], None))
         });
     }
     group.finish();

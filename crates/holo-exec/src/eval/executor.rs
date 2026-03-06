@@ -15,7 +15,7 @@ use holo_graph::schedule::ExecutionSchedule;
 
 use crate::buffer::BufferArena;
 use crate::error::{ExecError, ExecResult};
-use crate::kv::KvStore;
+use crate::kv::{CustomOpRegistry, KvStore};
 
 /// Named graph inputs: maps input index to byte data.
 #[derive(Debug, Clone, Default)]
@@ -114,6 +114,29 @@ impl KvExecutor {
         sg: &SerializedGraph,
         schedule: &ExecutionSchedule,
         inputs: &GraphInputs,
+        on_level: F,
+    ) -> ExecResult<GraphOutputs>
+    where
+        F: FnMut(usize, usize),
+    {
+        Self::execute_core(sg, schedule, inputs, None, on_level)
+    }
+
+    /// Execute with a custom op registry (no progress callback).
+    pub fn execute_with_registry(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        registry: &CustomOpRegistry,
+    ) -> ExecResult<GraphOutputs> {
+        Self::execute_core(sg, schedule, inputs, Some(registry), |_, _| {})
+    }
+
+    fn execute_core<F>(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        registry: Option<&CustomOpRegistry>,
         mut on_level: F,
     ) -> ExecResult<GraphOutputs>
     where
@@ -123,7 +146,14 @@ impl KvExecutor {
         let mut arena = seed_arena(sg)?;
 
         for (i, level) in schedule.levels.iter().enumerate() {
-            let count = dispatch_level(level, &node_map, &mut arena, inputs, &sg.constants)?;
+            let count = dispatch_level(
+                level,
+                &node_map,
+                &mut arena,
+                inputs,
+                &sg.constants,
+                registry,
+            )?;
             on_level(i, count);
         }
 
@@ -154,6 +184,7 @@ fn dispatch_level(
     arena: &mut BufferArena,
     inputs: &GraphInputs,
     constants: &holo_graph::constant::ConstantStore,
+    registry: Option<&CustomOpRegistry>,
 ) -> ExecResult<usize> {
     let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
 
@@ -170,7 +201,7 @@ fn dispatch_level(
         let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
         results.push((
             node_id,
-            KvStore::dispatch_with_constants(&node.op, &input_refs, constants)?,
+            KvStore::dispatch_with_constants(&node.op, &input_refs, constants, registry)?,
         ));
     }
 

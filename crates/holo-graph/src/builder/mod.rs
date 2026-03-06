@@ -3,7 +3,7 @@
 use crate::constant::ConstantData;
 use crate::graph::edge;
 use crate::graph::node::NodeId;
-use crate::graph::{Graph, GraphOp};
+use crate::graph::{CustomOpId, Graph, GraphOp};
 use crate::subgraph::SubgraphDef;
 
 /// Fluent builder for constructing `Graph` instances.
@@ -110,6 +110,18 @@ impl GraphBuilder {
         for (slot, &src_idx) in inputs.iter().enumerate() {
             if let Some(&src_id) = self.index_to_id.get(src_idx) {
                 edge::connect(&mut self.graph, src_id, id, slot);
+            }
+        }
+        self
+    }
+
+    /// Add a consumer-defined custom op node wired to `inputs`.
+    pub fn custom_op(mut self, id: CustomOpId, arity: u8, inputs: &[usize]) -> Self {
+        let node_id = self.graph.add_node(GraphOp::Custom { id, arity });
+        self.index_to_id.push(node_id);
+        for (slot, &src_idx) in inputs.iter().enumerate() {
+            if let Some(&src_id) = self.index_to_id.get(src_idx) {
+                edge::connect(&mut self.graph, src_id, node_id, slot);
             }
         }
         self

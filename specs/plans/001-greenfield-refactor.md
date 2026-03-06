@@ -526,9 +526,20 @@ parallel/
 - [x] Sprint 9 archived to `specs/sprints/9-tokio-async.md`
 - [x] Zero clippy warnings; `just ci` green — **684 total workspace tests**
 
-### Sprint 11: Op Extension API (for hologram-ai)
+### Sprint 11: Custom Op Extension API — COMPLETED
 
-**Goal**: Allow `hologram-ai` to register custom ops without modifying `hologram-greenfield` internals. `GraphOp::Custom(...)` variant and `KvStore` registration mechanism.
+**Notes**: `CustomOpId(u32)` newtype + `GraphOp::Custom { id, arity }` in `holo-graph`. `CustomOpRegistry` with `Arc<dyn Fn>` handlers in `holo-exec/src/kv/registry.rs`. Registry threaded through private `execute_core` → `dispatch_level` → `KvStore::dispatch_with_constants` without breaking existing caller signatures (all pass `None`). New public `KvExecutor::execute_with_registry` and `execute_bytes_with_ops` entry points. `register_op!` macro in `holo-exec/src/lib.rs`. Custom ops serialize cleanly via rkyv (id + arity only); handlers are re-registered at startup. 15 new tests (11 integration + 4 unit). 700 total workspace tests, zero clippy warnings.
+
+- [x] `CustomOpId(pub u32)` with rkyv derives, `raw()` method, re-exported from `holo-graph`
+- [x] `GraphOp::Custom { id: CustomOpId, arity: u8 }` variant; `arity`, `is_pure`, `to_view` updated
+- [x] `GraphBuilder::custom_op(id, arity, inputs)` builder method
+- [x] `CustomHandler` type alias + `CustomOpRegistry::register/dispatch/len/is_empty` + `Default`
+- [x] `register_op!(registry, id = N, arity = A, handler = ...)` macro
+- [x] `KvStore::dispatch` / `dispatch_with_constants` accept `Option<&CustomOpRegistry>` — no breaking change (existing callers pass `None`)
+- [x] `KvExecutor::execute_with_registry` + private `execute_core` + `execute_bytes_with_ops`
+- [x] 11 integration tests in `tests/custom_ops.rs` + 4 unit tests in `registry.rs`
+- [x] Sprint 10 archived to `specs/sprints/10-cli-completeness.md`
+- [x] 700 total workspace tests, zero clippy warnings
 
 ### Sprint 12 & beyond — Moved to separate consumer libraries
 Network distribution (holo-net) and AI model support (hologram-ai / ONNX/GGUF/GGML) will be implemented as separate libraries that depend on hologram-greenfield as a consumer.
