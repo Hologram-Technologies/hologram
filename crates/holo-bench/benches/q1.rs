@@ -139,7 +139,10 @@ fn bench_arith_q1_vs_q0(c: &mut Criterion) {
         b.iter(|| {
             for a in 0..=255u8 {
                 for b_val in (0u8..=255).step_by(16) {
-                    black_box(holo_core::lut::arith::add_q0(black_box(a), black_box(b_val)));
+                    black_box(holo_core::lut::arith::add_q0(
+                        black_box(a),
+                        black_box(b_val),
+                    ));
                 }
             }
         })
@@ -162,7 +165,10 @@ fn bench_arith_q1_vs_q0(c: &mut Criterion) {
         b.iter(|| {
             for a in 0..=255u8 {
                 for b_val in (0u8..=255).step_by(16) {
-                    black_box(holo_core::lut::arith::mul_q0(black_box(a), black_box(b_val)));
+                    black_box(holo_core::lut::arith::mul_q0(
+                        black_box(a),
+                        black_box(b_val),
+                    ));
                 }
             }
         })
@@ -218,11 +224,7 @@ fn bench_memory_budget(c: &mut Criterion) {
             let q0_total = q0_arith + q0_act + q0_obs;
 
             let combined = q0_total + q1_total;
-            assert!(
-                combined < 4 * 1024 * 1024,
-                "combined = {} bytes",
-                combined
-            );
+            assert!(combined < 4 * 1024 * 1024, "combined = {} bytes", combined);
             black_box(combined);
         })
     });

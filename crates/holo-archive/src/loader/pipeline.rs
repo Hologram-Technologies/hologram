@@ -37,16 +37,11 @@ impl LoadedPipeline {
         }
 
         let section_bytes = &data[section_start..section_end];
-        let archived =
-            rkyv::check_archived_root::<PipelineHeader>(section_bytes)
-                .map_err(|e| {
-                    ArchiveError::ValidationFailed(format!("{e}"))
-                })?;
+        let archived = rkyv::check_archived_root::<PipelineHeader>(section_bytes)
+            .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
         let ph: PipelineHeader = archived
             .deserialize(&mut rkyv::Infallible)
-            .map_err(|e| {
-                ArchiveError::ValidationFailed(format!("{e:?}"))
-            })?;
+            .map_err(|e| ArchiveError::ValidationFailed(format!("{e:?}")))?;
 
         // Each model is a sub-archive within the wrapper's weights
         let weights = wrapper.weights();
@@ -64,10 +59,7 @@ impl LoadedPipeline {
             models.push((entry.name.clone(), model_plan));
         }
 
-        Ok(Self {
-            header: ph,
-            models,
-        })
+        Ok(Self { header: ph, models })
     }
 
     /// Number of models in the pipeline.
@@ -85,10 +77,7 @@ impl LoadedPipeline {
     /// Get a model by name.
     #[must_use]
     pub fn model_by_name(&self, name: &str) -> Option<&LoadedPlan> {
-        self.models
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, p)| p)
+        self.models.iter().find(|(n, _)| n == name).map(|(_, p)| p)
     }
 
     /// Pipeline header.

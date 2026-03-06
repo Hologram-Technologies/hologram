@@ -18,7 +18,7 @@ pub const LUT_TOTAL_SIZE: usize = 256 * 4       // q0 unary
     + 256 * 256 * 4                              // arith
     + 256 * 256 * 2 * 2                          // GF(2) + GF(3)
     + 256 * 21                                   // activation
-    + 256 * 3;                                   // torus + orbit
+    + 256 * 3; // torus + orbit
 
 /// Compose two 256-entry LUT tables: `result[i] = b[a[i]]`.
 pub const fn compose_tables(a: &[u8; 256], b: &[u8; 256]) -> [u8; 256] {

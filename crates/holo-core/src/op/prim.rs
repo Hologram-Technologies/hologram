@@ -6,7 +6,9 @@ use crate::lut::arith;
 ///
 /// Mirrors `uor_foundation::enums::PrimitiveOp` but adds
 /// LUT-backed apply methods for O(1) execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub enum PrimOp {
     /// neg(x) = (-x) mod 256
@@ -164,9 +166,16 @@ mod tests {
     #[test]
     fn foundation_round_trip() {
         let ops = [
-            PrimOp::Neg, PrimOp::Bnot, PrimOp::Succ, PrimOp::Pred,
-            PrimOp::Add, PrimOp::Sub, PrimOp::Mul,
-            PrimOp::Xor, PrimOp::And, PrimOp::Or,
+            PrimOp::Neg,
+            PrimOp::Bnot,
+            PrimOp::Succ,
+            PrimOp::Pred,
+            PrimOp::Add,
+            PrimOp::Sub,
+            PrimOp::Mul,
+            PrimOp::Xor,
+            PrimOp::And,
+            PrimOp::Or,
         ];
         for op in ops {
             let f = op.to_foundation();

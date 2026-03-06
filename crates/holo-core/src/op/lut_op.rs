@@ -5,7 +5,9 @@ use crate::lut::activation;
 /// Activation and scientific function operations via LUT.
 ///
 /// Each variant maps to a precomputed 256-entry table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub enum LutOp {
     Sigmoid,
@@ -103,14 +105,27 @@ impl LutOp {
 
     /// All LutOp variants.
     pub const ALL: [LutOp; 21] = [
-        Self::Sigmoid, Self::Tanh, Self::Exp, Self::Log,
-        Self::Relu, Self::Sqrt, Self::Abs,
-        Self::Gelu, Self::Silu,
-        Self::Sin, Self::Cos, Self::Tan,
-        Self::Asin, Self::Acos, Self::Atan,
-        Self::Log2, Self::Log10,
-        Self::Exp2, Self::Exp10,
-        Self::Square, Self::Cube,
+        Self::Sigmoid,
+        Self::Tanh,
+        Self::Exp,
+        Self::Log,
+        Self::Relu,
+        Self::Sqrt,
+        Self::Abs,
+        Self::Gelu,
+        Self::Silu,
+        Self::Sin,
+        Self::Cos,
+        Self::Tan,
+        Self::Asin,
+        Self::Acos,
+        Self::Atan,
+        Self::Log2,
+        Self::Log10,
+        Self::Exp2,
+        Self::Exp10,
+        Self::Square,
+        Self::Cube,
     ];
 }
 

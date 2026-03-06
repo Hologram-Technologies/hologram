@@ -69,9 +69,7 @@ fn bench_is_bijective(c: &mut Criterion) {
 
 fn bench_inverse(c: &mut Criterion) {
     let view = ElementWiseView::new(|x| x.wrapping_add(1));
-    c.bench_function("view::inverse()", |b| {
-        b.iter(|| black_box(&view).inverse())
-    });
+    c.bench_function("view::inverse()", |b| b.iter(|| black_box(&view).inverse()));
 }
 
 fn bench_composition_chain(c: &mut Criterion) {

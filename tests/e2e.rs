@@ -8,6 +8,10 @@ use holo_core::view::ElementWiseView;
 use holo_exec::lut_gemm::matmul::naive_matmul;
 use holo_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
 use holo_exec::{build_schedule, execute_bytes, GraphInputs, KvExecutor};
+use holo_ffi::compiler::*;
+use holo_ffi::encoding::*;
+use holo_ffi::exec::*;
+use holo_ffi::graph::*;
 use holo_graph::builder::GraphBuilder;
 use holo_graph::constant::ConstantData;
 use holo_graph::fusion;
@@ -215,13 +219,9 @@ fn e2e_long_chain_multi_fusion() {
 
     // Verify against chained application
     for b in 0u8..=255 {
-        let expected = LutOp::Sigmoid.apply(
-            LutOp::Relu.apply(LutOp::Cos.apply(LutOp::Sin.apply(b))),
-        );
-        assert_eq!(
-            output[b as usize], expected,
-            "mismatch at byte {b}"
-        );
+        let expected =
+            LutOp::Sigmoid.apply(LutOp::Relu.apply(LutOp::Cos.apply(LutOp::Sin.apply(b))));
+        assert_eq!(output[b as usize], expected, "mismatch at byte {b}");
     }
 }
 
@@ -268,10 +268,7 @@ fn e2e_wide_parallel_fanout() {
         let left = sin.wrapping_add(cos);
         let right = relu.wrapping_add(sigmoid);
         let expected = left.wrapping_add(right);
-        assert_eq!(
-            output[b as usize], expected,
-            "mismatch at byte {b}"
-        );
+        assert_eq!(output[b as usize], expected, "mismatch at byte {b}");
     }
 }
 
@@ -386,12 +383,8 @@ fn e2e_lut_gemm_q4_accuracy() {
     let k = 8usize;
     let n = 4usize;
     let m = 2usize;
-    let weights: Vec<f32> = (0..k * n)
-        .map(|i| (i as f32 + 1.0) * 0.05)
-        .collect();
-    let activations: Vec<f32> = (0..m * k)
-        .map(|i| (i as f32 + 1.0) * 0.1)
-        .collect();
+    let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.05).collect();
+    let activations: Vec<f32> = (0..m * k).map(|i| (i as f32 + 1.0) * 0.1).collect();
 
     // Reference: naive matmul
     let mut expected = vec![0.0f32; m * n];
@@ -433,12 +426,8 @@ fn e2e_lut_gemm_q8_accuracy() {
     let k = 8usize;
     let n = 4usize;
     let m = 2usize;
-    let weights: Vec<f32> = (0..k * n)
-        .map(|i| (i as f32 + 1.0) * 0.05)
-        .collect();
-    let activations: Vec<f32> = (0..m * k)
-        .map(|i| (i as f32 + 1.0) * 0.1)
-        .collect();
+    let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.05).collect();
+    let activations: Vec<f32> = (0..m * k).map(|i| (i as f32 + 1.0) * 0.1).collect();
 
     let mut expected = vec![0.0f32; m * n];
     naive_matmul(&activations, &weights, &mut expected, m, k, n);
@@ -505,7 +494,7 @@ fn e2e_lut_gemm_with_activation() {
     let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
     let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
     assert_eq!(output.len(), 2 * n); // 2 rows × 4 cols
-    // Row 0: [1,0,0,0] × I ≈ [1,1,1,1]
+                                     // Row 0: [1,0,0,0] × I ≈ [1,1,1,1]
     for &v in &output[..n] {
         assert!((v - 1.0).abs() < 0.5, "got {v}");
     }
@@ -649,8 +638,14 @@ fn e2e_compiler_fusion_disabled_vs_enabled() {
             .build()
     };
 
-    let fused = CompilerBuilder::new(make_graph()).fuse(true).build().unwrap();
-    let unfused = CompilerBuilder::new(make_graph()).fuse(false).build().unwrap();
+    let fused = CompilerBuilder::new(make_graph())
+        .fuse(true)
+        .build()
+        .unwrap();
+    let unfused = CompilerBuilder::new(make_graph())
+        .fuse(false)
+        .build()
+        .unwrap();
 
     assert!(fused.stats.fusion.views_fused > unfused.stats.fusion.views_fused);
 }
@@ -658,7 +653,13 @@ fn e2e_compiler_fusion_disabled_vs_enabled() {
 /// E2E: compile large graph (100 nodes) — archive is valid and loadable
 #[test]
 fn e2e_compiler_large_graph() {
-    let ops = [LutOp::Relu, LutOp::Sigmoid, LutOp::Tanh, LutOp::Sin, LutOp::Cos];
+    let ops = [
+        LutOp::Relu,
+        LutOp::Sigmoid,
+        LutOp::Tanh,
+        LutOp::Sin,
+        LutOp::Cos,
+    ];
     let mut b = GraphBuilder::new().node(GraphOp::Input);
     for i in 0..100 {
         b = b.node_with_inputs(GraphOp::Lut(ops[i % ops.len()]), &[i]);
@@ -721,4 +722,194 @@ fn e2e_compiler_layer_header_present() {
     let out = compile(g).unwrap();
     let plan = load_from_bytes(&out.archive).unwrap();
     assert!(plan.sections().find(SECTION_LAYER_HEADER).is_some());
+}
+
+// ──────────────────────────────────────────────────────────────
+// FFI E2E tests: full pipeline through C ABI functions
+// ──────────────────────────────────────────────────────────────
+
+/// E2E: build graph → compile → execute entirely through FFI C ABI.
+#[test]
+fn e2e_ffi_full_pipeline() {
+    use std::ffi::CString;
+
+    // Build: Input → Sigmoid → Output
+    let b = holo_graph_builder_new();
+    let name_x = CString::new("x").unwrap();
+    holo_graph_builder_input(b, name_x.as_ptr());
+    holo_graph_builder_node_from_input(b, 0, 0, 0);
+    let inputs = [0usize];
+    holo_graph_builder_node_with_inputs(b, 3, 0, inputs.as_ptr(), 1);
+    let inputs2 = [1usize];
+    holo_graph_builder_node_with_inputs(b, 1, 0, inputs2.as_ptr(), 1);
+    let name_y = CString::new("y").unwrap();
+    holo_graph_builder_output(b, name_y.as_ptr(), 2);
+    let g = holo_graph_builder_build(b);
+    assert_eq!(holo_graph_node_count(g), 3);
+
+    // Compile
+    let out = holo_compile(g);
+    assert!(!out.is_null());
+    let archive_ptr = holo_compilation_archive_ptr(out);
+    let archive_len = holo_compilation_archive_len(out);
+    assert!(archive_len > 0);
+    assert_eq!(holo_compilation_stats_nodes(out), 3);
+
+    // Execute
+    let inp = holo_inputs_new();
+    holo_inputs_set(inp, 0, [42u8].as_ptr(), 1);
+    let outputs = holo_execute_bytes(archive_ptr, archive_len, inp);
+    assert!(!outputs.is_null());
+    assert_eq!(holo_outputs_len(outputs), 1);
+
+    // Read output
+    let mut ptr: *const u8 = std::ptr::null();
+    let mut len: usize = 0;
+    let rc = holo_outputs_get(outputs, 0, &mut ptr, &mut len);
+    assert_eq!(rc, 0);
+    assert_eq!(len, 1);
+
+    // Output by name
+    let name_y2 = CString::new("y").unwrap();
+    let rc2 = holo_outputs_by_name(outputs, name_y2.as_ptr(), &mut ptr, &mut len);
+    assert_eq!(rc2, 0);
+    assert_eq!(len, 1);
+
+    holo_outputs_free(outputs);
+    holo_inputs_free(inp);
+    holo_compilation_free(out);
+}
+
+/// E2E: FFI diamond graph with fusion.
+#[test]
+fn e2e_ffi_diamond_with_fusion() {
+    use std::ffi::CString;
+
+    let b = holo_graph_builder_new();
+    let name = CString::new("x").unwrap();
+    holo_graph_builder_input(b, name.as_ptr());
+    holo_graph_builder_node_from_input(b, 0, 0, 0); // 0: Input
+    let i0 = [0usize];
+    holo_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1); // 1: Sigmoid
+    holo_graph_builder_node_with_inputs(b, 3, 4, i0.as_ptr(), 1); // 2: Relu
+    let i12 = [1usize, 2];
+    holo_graph_builder_node_with_inputs(b, 2, 4, i12.as_ptr(), 2); // 3: Add
+    let i3 = [3usize];
+    holo_graph_builder_node_with_inputs(b, 1, 0, i3.as_ptr(), 1); // 4: Output
+    let name_y = CString::new("y").unwrap();
+    holo_graph_builder_output(b, name_y.as_ptr(), 4);
+    let g = holo_graph_builder_build(b);
+    assert_eq!(holo_graph_node_count(g), 5);
+
+    let out = holo_compile(g);
+    assert!(!out.is_null());
+    assert!(holo_compilation_stats_levels(out) > 0);
+
+    let inp = holo_inputs_new();
+    holo_inputs_set(inp, 0, [100u8].as_ptr(), 1);
+    let outputs = holo_execute_bytes(
+        holo_compilation_archive_ptr(out),
+        holo_compilation_archive_len(out),
+        inp,
+    );
+    assert_eq!(holo_outputs_len(outputs), 1);
+
+    holo_outputs_free(outputs);
+    holo_inputs_free(inp);
+    holo_compilation_free(out);
+}
+
+/// E2E: FFI encoding round-trip.
+#[test]
+fn e2e_ffi_encoding_round_trip() {
+    // Signed encoding: embed 0.5, lift back, verify close
+    let byte = holo_encoding_embed(1, 0.5);
+    let val = holo_encoding_lift(1, byte);
+    assert!((val - 0.5).abs() < 0.01);
+
+    // Angle encoding: embed pi, lift back
+    let byte = holo_encoding_embed(0, std::f64::consts::PI);
+    let val = holo_encoding_lift(0, byte);
+    assert!((val - std::f64::consts::PI).abs() < 0.05);
+}
+
+/// E2E: FFI LUT operations.
+#[test]
+fn e2e_ffi_lut_ops() {
+    // Apply all 21 LUT ops to a byte — none should panic
+    for i in 0..21 {
+        let result = holo_lut_apply(i, 128);
+        let _ = result; // just ensure no panic
+    }
+
+    // Prim ops
+    assert_eq!(holo_prim_apply_binary(4, 10, 20), 30); // Add
+    assert_eq!(holo_prim_apply_binary(5, 20, 10), 10); // Sub
+    assert_eq!(holo_prim_apply_unary(2, 5), 6); // Succ
+}
+
+/// E2E: FFI error handling.
+#[test]
+fn e2e_ffi_error_handling() {
+    use holo_ffi::error::{holo_error_message, holo_last_error};
+
+    // Compile null graph should fail
+    let out = holo_compile(std::ptr::null_mut());
+    assert!(out.is_null());
+    assert_ne!(holo_last_error(), 0);
+    let msg = holo_error_message();
+    assert!(!msg.is_null());
+
+    // Execute with null archive should fail
+    let inp = holo_inputs_new();
+    let outputs = holo_execute_bytes(std::ptr::null(), 0, inp);
+    assert!(outputs.is_null());
+    holo_inputs_free(inp);
+}
+
+/// E2E: FFI compile with fusion disabled vs enabled.
+#[test]
+fn e2e_ffi_fusion_toggle() {
+    use std::ffi::CString;
+
+    // Build: Input → Sigmoid → Relu → Output (fusable chain)
+    let build = || {
+        let b = holo_graph_builder_new();
+        let name = CString::new("x").unwrap();
+        holo_graph_builder_input(b, name.as_ptr());
+        holo_graph_builder_node_from_input(b, 0, 0, 0);
+        let i0 = [0usize];
+        holo_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1);
+        let i1 = [1usize];
+        holo_graph_builder_node_with_inputs(b, 3, 4, i1.as_ptr(), 1);
+        let i2 = [2usize];
+        holo_graph_builder_node_with_inputs(b, 1, 0, i2.as_ptr(), 1);
+        let name_y = CString::new("y").unwrap();
+        holo_graph_builder_output(b, name_y.as_ptr(), 3);
+        holo_graph_builder_build(b)
+    };
+
+    let out_fused = holo_compile(build());
+    let out_no_fuse = holo_compile_no_fuse(build());
+    assert!(!out_fused.is_null());
+    assert!(!out_no_fuse.is_null());
+
+    // Both should produce valid archives that execute
+    let test = |out: *mut holo_compiler::CompilationOutput| {
+        let inp = holo_inputs_new();
+        holo_inputs_set(inp, 0, [42u8].as_ptr(), 1);
+        let outputs = holo_execute_bytes(
+            holo_compilation_archive_ptr(out),
+            holo_compilation_archive_len(out),
+            inp,
+        );
+        assert_eq!(holo_outputs_len(outputs), 1);
+        holo_outputs_free(outputs);
+        holo_inputs_free(inp);
+    };
+    test(out_fused);
+    test(out_no_fuse);
+
+    holo_compilation_free(out_fused);
+    holo_compilation_free(out_no_fuse);
 }

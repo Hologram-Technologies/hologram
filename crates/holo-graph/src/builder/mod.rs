@@ -59,10 +59,9 @@ impl GraphBuilder {
 
     /// Add an edge from `source` to `target` (builder indices).
     pub fn edge(mut self, source: usize, target: usize) -> Self {
-        if let (Some(&src), Some(&tgt)) = (
-            self.index_to_id.get(source),
-            self.index_to_id.get(target),
-        ) {
+        if let (Some(&src), Some(&tgt)) =
+            (self.index_to_id.get(source), self.index_to_id.get(target))
+        {
             self.graph.add_edge(src, tgt);
         }
         self
@@ -155,9 +154,9 @@ mod tests {
     #[test]
     fn simple_chain() {
         let g = GraphBuilder::new()
-            .node(GraphOp::Input)                        // 0
+            .node(GraphOp::Input) // 0
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 1
-            .node_with_inputs(GraphOp::Output, &[1])     // 2
+            .node_with_inputs(GraphOp::Output, &[1]) // 2
             .build();
         assert_eq!(g.node_count(), 3);
         assert_eq!(g.edges().len(), 2);
@@ -166,11 +165,11 @@ mod tests {
     #[test]
     fn diamond_graph() {
         let g = GraphBuilder::new()
-            .node(GraphOp::Input)                              // 0
-            .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])      // 1
-            .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])   // 2
-            .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[1, 2])  // 3
-            .node_with_inputs(GraphOp::Output, &[3])           // 4
+            .node(GraphOp::Input) // 0
+            .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 1
+            .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0]) // 2
+            .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[1, 2]) // 3
+            .node_with_inputs(GraphOp::Output, &[3]) // 4
             .build();
         assert_eq!(g.node_count(), 5);
         // 0→1, 0→2, 1→3, 2→3, 3→4

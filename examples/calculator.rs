@@ -41,7 +41,10 @@ fn demo_pi_f_lambda() {
 
     // Test sin via angle encoding
     let test_values = [0.0_f64, 0.5, 1.0, 2.0, 3.14159, 5.0];
-    println!("  {:>10} {:>10} {:>10} {:>10}", "input", "f64_sin", "lut_sin", "error");
+    println!(
+        "  {:>10} {:>10} {:>10} {:>10}",
+        "input", "f64_sin", "lut_sin", "error"
+    );
     for &x in &test_values {
         let byte_in = angle.embed(x);
         let byte_out = LutOp::Sin.apply(byte_in);
@@ -56,7 +59,10 @@ fn demo_pi_f_lambda() {
 
     // Test sqrt via unsigned encoding
     println!();
-    println!("  {:>10} {:>10} {:>10} {:>10}", "input", "f64_sqrt", "lut_sqrt", "error");
+    println!(
+        "  {:>10} {:>10} {:>10} {:>10}",
+        "input", "f64_sqrt", "lut_sqrt", "error"
+    );
     let sqrt_values = [0.0_f64, 0.1, 0.25, 0.5, 0.75, 1.0];
     for &x in &sqrt_values {
         let byte_in = unsigned.embed(x);
@@ -85,7 +91,10 @@ fn demo_lut_composition() {
     let composed = cos_view.then(&sin_view);
 
     // Compare composed single-lookup vs chained lookups
-    println!("  {:>6} {:>12} {:>12} {:>6}", "byte", "chained", "composed", "match");
+    println!(
+        "  {:>6} {:>12} {:>12} {:>6}",
+        "byte", "chained", "composed", "match"
+    );
     let test_bytes: [u8; 8] = [0, 32, 64, 96, 128, 160, 192, 224];
     for &b in &test_bytes {
         let chained = LutOp::Sin.apply(LutOp::Cos.apply(b));
@@ -124,13 +133,13 @@ fn demo_graph_io() {
     // Build: x → relu(x), sigmoid(x), abs(x)
     let g = GraphBuilder::new()
         .input("x")
-        .node_from_graph_input(GraphOp::Input, 0)          // 0
-        .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])    // 1
+        .node_from_graph_input(GraphOp::Input, 0) // 0
+        .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 1
         .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0]) // 2
-        .node_with_inputs(GraphOp::Lut(LutOp::Abs), &[0])     // 3
-        .node_with_inputs(GraphOp::Output, &[1])               // 4
-        .node_with_inputs(GraphOp::Output, &[2])               // 5
-        .node_with_inputs(GraphOp::Output, &[3])               // 6
+        .node_with_inputs(GraphOp::Lut(LutOp::Abs), &[0]) // 3
+        .node_with_inputs(GraphOp::Output, &[1]) // 4
+        .node_with_inputs(GraphOp::Output, &[2]) // 5
+        .node_with_inputs(GraphOp::Output, &[3]) // 6
         .output("relu", 4)
         .output("sigmoid", 5)
         .output("abs", 6)
@@ -168,10 +177,10 @@ fn demo_full_pipeline() {
     // Fusion should collapse sin→cos into a single FusedView.
     let mut g = GraphBuilder::new()
         .input("x")
-        .node_from_graph_input(GraphOp::Input, 0)             // 0
-        .node_with_inputs(GraphOp::Lut(LutOp::Sin), &[0])     // 1
-        .node_with_inputs(GraphOp::Lut(LutOp::Cos), &[1])     // 2
-        .node_with_inputs(GraphOp::Output, &[2])               // 3
+        .node_from_graph_input(GraphOp::Input, 0) // 0
+        .node_with_inputs(GraphOp::Lut(LutOp::Sin), &[0]) // 1
+        .node_with_inputs(GraphOp::Lut(LutOp::Cos), &[1]) // 2
+        .node_with_inputs(GraphOp::Output, &[2]) // 3
         .output("y", 3)
         .build();
 
@@ -208,7 +217,10 @@ fn demo_full_pipeline() {
             mismatches += 1;
         }
     }
-    println!("  Execution matches direct composition: {}/256", 256 - mismatches);
+    println!(
+        "  Execution matches direct composition: {}/256",
+        256 - mismatches
+    );
 
     // Error analysis vs f64 reference
     println!("\n  Error analysis (angle encoding → cos(sin(x)) vs f64):");
@@ -231,7 +243,10 @@ fn demo_full_pipeline() {
     println!("  Mean error: {:.6}", sum_error / n as f64);
 
     // Show a few sample values
-    println!("\n  {:>6} {:>10} {:>10} {:>10} {:>10}", "byte", "angle", "f64", "lut", "error");
+    println!(
+        "\n  {:>6} {:>10} {:>10} {:>10} {:>10}",
+        "byte", "angle", "f64", "lut", "error"
+    );
     for &b in &[0u8, 32, 64, 96, 128, 160, 192, 224] {
         let x = angle.lift(b);
         let f64_val = x.sin().cos();
@@ -248,10 +263,10 @@ fn demo_full_pipeline() {
     let mut g2 = GraphBuilder::new()
         .input("a")
         .input("b")
-        .node_from_graph_input(GraphOp::Input, 0)                // 0
-        .node_from_graph_input(GraphOp::Input, 1)                // 1
-        .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[0, 1])  // 2
-        .node_with_inputs(GraphOp::Output, &[2])                 // 3
+        .node_from_graph_input(GraphOp::Input, 0) // 0
+        .node_from_graph_input(GraphOp::Input, 1) // 1
+        .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[0, 1]) // 2
+        .node_with_inputs(GraphOp::Output, &[2]) // 3
         .output("sum", 3)
         .build();
     let _ = fusion::fuse(&mut g2).unwrap();

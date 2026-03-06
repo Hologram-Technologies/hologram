@@ -12,7 +12,7 @@ pub static SIGMOID_65536: [u16; 65536] = {
     let mut i = 0u32;
     while i < 65536 {
         let x = signed16(i) as f64 / 4096.0; // scale to ~[-8, 8]
-        // Const-compatible sigmoid approximation
+                                             // Const-compatible sigmoid approximation
         let sig = if x > 6.0 {
             1.0
         } else if x < -6.0 {

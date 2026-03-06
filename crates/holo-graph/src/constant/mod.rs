@@ -4,7 +4,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 /// Identifier for a constant in the ConstantStore.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct ConstantId(u32);
 
@@ -52,7 +54,9 @@ impl ConstantData {
 }
 
 /// Store for all constants referenced by graph nodes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct ConstantStore {
     data: Vec<ConstantData>,

@@ -298,10 +298,7 @@ mod tests {
     fn sin_bounds() {
         // At i=0, angle=0, sin(0)=0 → midpoint ~32768
         let at_zero = SIN_65536[0];
-        assert!(
-            (32000..=33500).contains(&at_zero),
-            "sin(0) = {at_zero}"
-        );
+        assert!((32000..=33500).contains(&at_zero), "sin(0) = {at_zero}");
         // At i=16384, angle=pi/2, sin(pi/2)=1 → near max
         assert!(SIN_65536[16384] > 64000);
         // At i=49152, angle=3pi/2, sin(3pi/2)=-1 → near min
@@ -378,19 +375,13 @@ mod tests {
     fn asin_at_zero() {
         // At midpoint (32768), input=0, asin(0)=0, maps to pi/2 normalized → ~32768
         let at_mid = ASIN_65536[32768];
-        assert!(
-            (32000..=33500).contains(&at_mid),
-            "asin(0) = {at_mid}"
-        );
+        assert!((32000..=33500).contains(&at_mid), "asin(0) = {at_mid}");
     }
 
     #[test]
     fn acos_at_zero() {
         // At midpoint (32768), input=0, acos(0)=pi/2, maps to 0.5 → ~32768
         let at_mid = ACOS_65536[32768];
-        assert!(
-            (32000..=33500).contains(&at_mid),
-            "acos(0) = {at_mid}"
-        );
+        assert!((32000..=33500).contains(&at_mid), "acos(0) = {at_mid}");
     }
 }

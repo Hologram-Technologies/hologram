@@ -47,9 +47,7 @@ fn bench_sigmoid_vs_f64(c: &mut Criterion) {
 fn bench_all_activations(c: &mut Criterion) {
     let mut group = c.benchmark_group("activation_lookup");
     for op in &LutOp::ALL {
-        group.bench_function(op.name(), |b| {
-            b.iter(|| op.apply(black_box(128)))
-        });
+        group.bench_function(op.name(), |b| b.iter(|| op.apply(black_box(128))));
     }
     group.finish();
 }

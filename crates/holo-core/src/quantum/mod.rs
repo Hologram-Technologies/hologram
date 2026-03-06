@@ -247,7 +247,12 @@ mod tests {
 
     #[test]
     fn table_entries_matches_modulus() {
-        for level in [QuantumLevel::Q0, QuantumLevel::Q1, QuantumLevel::Q2, QuantumLevel::Q3] {
+        for level in [
+            QuantumLevel::Q0,
+            QuantumLevel::Q1,
+            QuantumLevel::Q2,
+            QuantumLevel::Q3,
+        ] {
             assert_eq!(quantum_table_entries(level), quantum_modulus(level));
         }
     }

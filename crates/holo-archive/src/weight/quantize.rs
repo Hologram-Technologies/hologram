@@ -2,15 +2,7 @@
 
 /// Quantization scheme identifier.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 #[archive(check_bytes)]
 pub enum QuantizationScheme {
@@ -30,14 +22,7 @@ pub enum QuantizationScheme {
 }
 
 /// Parameters for quantized weight storage.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct QuantizationParams {
     /// Quantization scheme.
@@ -69,8 +54,7 @@ mod tests {
             group_size: 0,
         };
         let bytes = rkyv::to_bytes::<_, 256>(&p).unwrap();
-        let archived =
-            rkyv::check_archived_root::<QuantizationParams>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<QuantizationParams>(&bytes).unwrap();
         assert_eq!(archived.scale, 0.125);
         assert_eq!(archived.group_size, 0);
     }
@@ -78,10 +62,7 @@ mod tests {
     #[test]
     fn scheme_equality() {
         assert_eq!(QuantizationScheme::None, QuantizationScheme::None);
-        assert_ne!(
-            QuantizationScheme::None,
-            QuantizationScheme::PerGroup
-        );
+        assert_ne!(QuantizationScheme::None, QuantizationScheme::PerGroup);
     }
 
     #[test]
@@ -89,10 +70,8 @@ mod tests {
         use rkyv::Deserialize;
         let scheme = QuantizationScheme::KMeansClustered { bits: 4 };
         let bytes = rkyv::to_bytes::<_, 64>(&scheme).unwrap();
-        let archived =
-            rkyv::check_archived_root::<QuantizationScheme>(&bytes).unwrap();
-        let deserialized: QuantizationScheme =
-            archived.deserialize(&mut rkyv::Infallible).unwrap();
+        let archived = rkyv::check_archived_root::<QuantizationScheme>(&bytes).unwrap();
+        let deserialized: QuantizationScheme = archived.deserialize(&mut rkyv::Infallible).unwrap();
         assert_eq!(deserialized, scheme);
     }
 

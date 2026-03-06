@@ -6,15 +6,7 @@ use crate::format::align_to_page;
 use crate::section::{EmbeddableSection, SECTION_PIPELINE};
 
 /// Entry for a model within a pipeline archive.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct PipelineEntry {
     /// Model name.
@@ -28,15 +20,7 @@ pub struct PipelineEntry {
 }
 
 /// Header for multi-model pipeline archives.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct PipelineHeader {
     /// Models in the pipeline.
@@ -73,9 +57,7 @@ impl PipelineWriter {
     /// Create a new empty pipeline writer.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            models: Vec::new(),
-        }
+        Self { models: Vec::new() }
     }
 
     /// Add a named model (as a complete .holo archive).

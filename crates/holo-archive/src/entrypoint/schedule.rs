@@ -7,15 +7,7 @@ use crate::section::{EmbeddableSection, SECTION_LAYER_HEADER};
 ///
 /// Embedded as a section in the archive. Contains all layer descriptors
 /// and their execution ordering as parallel level groups.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct LayerHeader {
     /// All layer descriptors in this archive.
@@ -123,8 +115,7 @@ mod tests {
         h.layers.push(sample_layer());
         h.schedule.push(vec![LayerId(0)]);
         let bytes = rkyv::to_bytes::<_, 1024>(&h).unwrap();
-        let archived =
-            rkyv::check_archived_root::<LayerHeader>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<LayerHeader>(&bytes).unwrap();
         assert_eq!(archived.layers.len(), 1);
         assert_eq!(archived.schedule.len(), 1);
     }

@@ -188,14 +188,27 @@ impl LutOp16 {
 
     /// All LutOp16 variants.
     pub const ALL: [LutOp16; 21] = [
-        Self::Sigmoid, Self::Tanh, Self::Exp, Self::Log,
-        Self::Relu, Self::Sqrt, Self::Abs,
-        Self::Gelu, Self::Silu,
-        Self::Sin, Self::Cos, Self::Tan,
-        Self::Asin, Self::Acos, Self::Atan,
-        Self::Log2, Self::Log10,
-        Self::Exp2, Self::Exp10,
-        Self::Square, Self::Cube,
+        Self::Sigmoid,
+        Self::Tanh,
+        Self::Exp,
+        Self::Log,
+        Self::Relu,
+        Self::Sqrt,
+        Self::Abs,
+        Self::Gelu,
+        Self::Silu,
+        Self::Sin,
+        Self::Cos,
+        Self::Tan,
+        Self::Asin,
+        Self::Acos,
+        Self::Atan,
+        Self::Log2,
+        Self::Log10,
+        Self::Exp2,
+        Self::Exp10,
+        Self::Square,
+        Self::Cube,
     ];
 }
 

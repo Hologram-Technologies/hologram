@@ -157,10 +157,7 @@ impl ByteAddress {
         // Braille U+2800..U+283F → UTF-8: E2 A0 {80+offset}
         Self {
             value,
-            glyph_buf: [
-                0xE2, 0xA0, 0x80 + lo6,
-                0xE2, 0xA0, 0x80 + hi2,
-            ],
+            glyph_buf: [0xE2, 0xA0, 0x80 + lo6, 0xE2, 0xA0, 0x80 + hi2],
         }
     }
 

@@ -3,9 +3,7 @@
 //! Three stages: parse (validate), fuse (optimize), emit (schedule + archive).
 
 use holo_archive::entrypoint::schedule::LayerHeader;
-use holo_archive::entrypoint::{
-    LayerDescriptor, LayerEntrypoint, LayerId, TensorPort,
-};
+use holo_archive::entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId, TensorPort};
 use holo_archive::weight::WeightDType;
 use holo_archive::writer::holo_writer::HoloWriter;
 use holo_graph::fusion::{self, FusionStats};
@@ -78,10 +76,7 @@ pub fn compile(graph: Graph) -> CompileResult<CompilationOutput> {
 }
 
 /// Internal compilation implementation.
-fn compile_impl(
-    mut graph: Graph,
-    enable_fusion: bool,
-) -> CompileResult<CompilationOutput> {
+fn compile_impl(mut graph: Graph, enable_fusion: bool) -> CompileResult<CompilationOutput> {
     parse_stage(&graph)?;
     let fusion_stats = fuse_stage(&mut graph, enable_fusion)?;
     emit_stage(&graph, fusion_stats)
@@ -93,10 +88,7 @@ fn parse_stage(graph: &Graph) -> CompileResult<()> {
 }
 
 /// Stage 2: run fusion optimization pass if enabled.
-fn fuse_stage(
-    graph: &mut Graph,
-    enable: bool,
-) -> CompileResult<FusionStats> {
+fn fuse_stage(graph: &mut Graph, enable: bool) -> CompileResult<FusionStats> {
     if !enable {
         return Ok(FusionStats::default());
     }
@@ -104,10 +96,7 @@ fn fuse_stage(
 }
 
 /// Stage 3: schedule, liveness, workspace, emit archive.
-fn emit_stage(
-    graph: &Graph,
-    fusion_stats: FusionStats,
-) -> CompileResult<CompilationOutput> {
+fn emit_stage(graph: &Graph, fusion_stats: FusionStats) -> CompileResult<CompilationOutput> {
     let schedule = build_schedule(graph)?;
     let intervals = liveness::compute_liveness(&schedule, graph);
     let layout = workspace::plan_workspace(&intervals);
@@ -154,10 +143,7 @@ fn compute_peak_live(schedule: &ExecutionSchedule) -> usize {
 }
 
 /// Build a LayerHeader describing the graph as a single layer.
-fn build_layer_header(
-    graph: &Graph,
-    schedule: &ExecutionSchedule,
-) -> LayerHeader {
+fn build_layer_header(graph: &Graph, schedule: &ExecutionSchedule) -> LayerHeader {
     let descriptor = build_layer_descriptor(graph);
     let sched_levels = build_schedule_levels(schedule);
     LayerHeader {
@@ -212,10 +198,7 @@ fn build_schedule_levels(schedule: &ExecutionSchedule) -> Vec<Vec<LayerId>> {
 }
 
 /// Write the .holo archive.
-fn write_archive(
-    graph: &Graph,
-    layer_header: &LayerHeader,
-) -> CompileResult<Vec<u8>> {
+fn write_archive(graph: &Graph, layer_header: &LayerHeader) -> CompileResult<Vec<u8>> {
     HoloWriter::new()
         .set_graph(graph)
         .add_section(layer_header)

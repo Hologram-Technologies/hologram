@@ -7,7 +7,9 @@ pub use lut_op::LutOp;
 pub use prim::PrimOp;
 
 /// Unified operation enum for all byte-level operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub enum Op {
     /// One of the 10 UOR primitive operations.

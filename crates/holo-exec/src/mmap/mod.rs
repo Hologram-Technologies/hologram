@@ -12,10 +12,7 @@ use crate::eval::schedule_bridge::build_schedule;
 /// Execute a loaded plan with the given inputs.
 ///
 /// Builds the execution schedule and runs the graph.
-pub fn execute_plan(
-    plan: &LoadedPlan,
-    inputs: &GraphInputs,
-) -> ExecResult<GraphOutputs> {
+pub fn execute_plan(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
     KvExecutor::execute(plan.graph(), &schedule, inputs)
 }
@@ -23,10 +20,7 @@ pub fn execute_plan(
 /// Execute a .holo archive from raw bytes.
 ///
 /// Parses the archive, builds the schedule, and runs the graph.
-pub fn execute_bytes(
-    data: &[u8],
-    inputs: &GraphInputs,
-) -> ExecResult<GraphOutputs> {
+pub fn execute_bytes(data: &[u8], inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let plan = holo_archive::load_from_bytes(data)?;
     execute_plan(&plan, inputs)
 }
@@ -35,10 +29,7 @@ pub fn execute_bytes(
 ///
 /// Memory-maps the file, parses, schedules, and runs.
 #[cfg(feature = "std")]
-pub fn execute_file(
-    path: &std::path::Path,
-    inputs: &GraphInputs,
-) -> ExecResult<GraphOutputs> {
+pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let loader = holo_archive::HoloLoader::open(path)?;
     let plan = loader.load()?;
     execute_plan(&plan, inputs)
@@ -48,17 +39,17 @@ pub fn execute_file(
 mod tests {
     use super::*;
     use holo_archive::HoloWriter;
+    use holo_core::op::LutOp;
     use holo_graph::builder::GraphBuilder;
     use holo_graph::graph::GraphOp;
-    use holo_core::op::LutOp;
 
     #[test]
     fn execute_bytes_passthrough() {
         // Input(0) → Output(1)
         let g = GraphBuilder::new()
             .input("x")
-            .node_from_graph_input(GraphOp::Input, 0)  // 0
-            .node_with_inputs(GraphOp::Output, &[0])    // 1
+            .node_from_graph_input(GraphOp::Input, 0) // 0
+            .node_with_inputs(GraphOp::Output, &[0]) // 1
             .output("y", 1)
             .build();
         let archive = HoloWriter::new().set_graph(&g).build().unwrap();
@@ -74,9 +65,9 @@ mod tests {
         // Input(0) → Relu(1) → Output(2)
         let g = GraphBuilder::new()
             .input("x")
-            .node_from_graph_input(GraphOp::Input, 0)          // 0
+            .node_from_graph_input(GraphOp::Input, 0) // 0
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 1
-            .node_with_inputs(GraphOp::Output, &[1])            // 2
+            .node_with_inputs(GraphOp::Output, &[1]) // 2
             .output("y", 2)
             .build();
         let archive = HoloWriter::new().set_graph(&g).build().unwrap();
@@ -114,9 +105,9 @@ mod tests {
 
         let g = GraphBuilder::new()
             .input("x")
-            .node_from_graph_input(GraphOp::Input, 0)                // 0
-            .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])   // 1
-            .node_with_inputs(GraphOp::Output, &[1])                 // 2
+            .node_from_graph_input(GraphOp::Input, 0) // 0
+            .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0]) // 1
+            .node_with_inputs(GraphOp::Output, &[1]) // 2
             .output("y", 2)
             .build();
         let archive = HoloWriter::new().set_graph(&g).build().unwrap();
@@ -131,10 +122,7 @@ mod tests {
         let mut inputs = GraphInputs::new();
         inputs.set(0, vec![100]);
         let result = execute_file(&path, &inputs).unwrap();
-        assert_eq!(
-            result.by_name("y").unwrap(),
-            &[LutOp::Sigmoid.apply(100)]
-        );
+        assert_eq!(result.by_name("y").unwrap(), &[LutOp::Sigmoid.apply(100)]);
 
         std::fs::remove_file(&path).ok();
     }

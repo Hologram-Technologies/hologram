@@ -135,7 +135,11 @@ impl ElementWiseView16 {
 
 impl fmt::Debug for ElementWiseView16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ElementWiseView16 {{ bijective: {}, ", self.is_bijective())?;
+        write!(
+            f,
+            "ElementWiseView16 {{ bijective: {}, ",
+            self.is_bijective()
+        )?;
         write!(f, "table: [")?;
         for (i, &val) in self.table.iter().enumerate() {
             if i > 0 {

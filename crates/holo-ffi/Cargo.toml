@@ -1,0 +1,22 @@
+[package]
+name = "holo-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FFI layer: C ABI (extern C, cbindgen) + WASM (wasm-bindgen, feature-gated)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+holo-core = { workspace = true }
+holo-graph = { workspace = true }
+holo-archive = { workspace = true }
+holo-exec = { workspace = true }
+holo-compiler = { workspace = true }
+
+wasm-bindgen = { workspace = true, optional = true }
+
+[features]
+default = []
+wasm = ["wasm-bindgen"]

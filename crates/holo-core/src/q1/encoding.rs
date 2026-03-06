@@ -27,7 +27,11 @@ impl Encoding16 for AngleEncoding16 {
         let tau = core::f64::consts::TAU;
         let normalized = ((value % tau) + tau) % tau;
         let scaled = normalized / tau * 65536.0;
-        if scaled >= 65536.0 { 65535 } else { scaled as u16 }
+        if scaled >= 65536.0 {
+            65535
+        } else {
+            scaled as u16
+        }
     }
 
     #[inline]
@@ -111,8 +115,8 @@ impl Encoding16 for RawEncoding16 {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use std::vec::Vec;
     use super::*;
+    use std::vec::Vec;
 
     // --- AngleEncoding16 ---
 
@@ -180,9 +184,7 @@ mod tests {
     #[test]
     fn signed_monotonic() {
         let enc = SignedEncoding16;
-        let steps: Vec<u16> = (-100..=100)
-            .map(|i| enc.embed(i as f64 / 100.0))
-            .collect();
+        let steps: Vec<u16> = (-100..=100).map(|i| enc.embed(i as f64 / 100.0)).collect();
         for w in steps.windows(2) {
             assert!(w[0] <= w[1]);
         }
@@ -214,9 +216,7 @@ mod tests {
     #[test]
     fn unsigned_monotonic() {
         let enc = UnsignedEncoding16;
-        let steps: Vec<u16> = (0..=100)
-            .map(|i| enc.embed(i as f64 / 100.0))
-            .collect();
+        let steps: Vec<u16> = (0..=100).map(|i| enc.embed(i as f64 / 100.0)).collect();
         for w in steps.windows(2) {
             assert!(w[0] <= w[1]);
         }

@@ -20,7 +20,9 @@ pub mod view;
 // Re-exports for convenience.
 pub use arith::{add_q1, mul_q1, pow_q1, sub_q1};
 pub use datum::{WordAddress, WordDatum};
-pub use encoding::{AngleEncoding16, Encoding16, RawEncoding16, SignedEncoding16, UnsignedEncoding16};
+pub use encoding::{
+    AngleEncoding16, Encoding16, RawEncoding16, SignedEncoding16, UnsignedEncoding16,
+};
 pub use observables::{
     curvature_q1, domain_q1, orbit_class_q1, rank_q1, stratum_q1, torus_offset_q1, torus_page_q1,
 };

@@ -7,7 +7,13 @@ use holo_graph::fusion;
 use holo_graph::graph::GraphOp;
 
 fn build_linear_graph(size: usize) -> holo_graph::Graph {
-    let ops = [LutOp::Relu, LutOp::Sigmoid, LutOp::Tanh, LutOp::Sin, LutOp::Cos];
+    let ops = [
+        LutOp::Relu,
+        LutOp::Sigmoid,
+        LutOp::Tanh,
+        LutOp::Sin,
+        LutOp::Cos,
+    ];
     let mut builder = GraphBuilder::new()
         .input("x")
         .node_from_graph_input(GraphOp::Input, 0); // 0
@@ -53,10 +59,5 @@ fn bench_fuse_1000(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_fuse_10,
-    bench_fuse_100,
-    bench_fuse_1000,
-);
+criterion_group!(benches, bench_fuse_10, bench_fuse_100, bench_fuse_1000,);
 criterion_main!(benches);

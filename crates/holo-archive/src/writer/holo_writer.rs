@@ -116,8 +116,7 @@ fn compute_layout(
     // Section table after section data
     let section_table_offset = cursor;
     let table = build_section_table(sections, &section_offsets);
-    let table_bytes = rkyv::to_bytes::<_, 1024>(&table)
-        .expect("section table serialization");
+    let table_bytes = rkyv::to_bytes::<_, 1024>(&table).expect("section table serialization");
     let section_table_size = table_bytes.len() as u64;
     cursor += section_table_size;
     cursor = align_to_page(cursor);
@@ -136,10 +135,7 @@ fn compute_layout(
     }
 }
 
-fn build_section_table(
-    sections: &[(u32, Vec<u8>)],
-    offsets: &[u64],
-) -> SectionTable {
+fn build_section_table(sections: &[(u32, Vec<u8>)], offsets: &[u64]) -> SectionTable {
     let mut table = SectionTable::new();
     for ((kind, data), &offset) in sections.iter().zip(offsets.iter()) {
         table.push(SectionEntry {
@@ -152,11 +148,7 @@ fn build_section_table(
     table
 }
 
-fn build_header(
-    layout: &ArchiveLayout,
-    graph_data: &[u8],
-    weight_data: &[u8],
-) -> HoloHeader {
+fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -> HoloHeader {
     HoloHeader {
         magic: HOLO_MAGIC,
         version: FORMAT_VERSION,
@@ -199,8 +191,8 @@ fn assemble_archive(
 
     // Write section table
     let table = build_section_table(sections, &layout.section_offsets);
-    let table_bytes = rkyv::to_bytes::<_, 1024>(&table)
-        .map_err(|e| ArchiveError::GraphError(format!("{e}")))?;
+    let table_bytes =
+        rkyv::to_bytes::<_, 1024>(&table).map_err(|e| ArchiveError::GraphError(format!("{e}")))?;
     let sto = layout.section_table_offset as usize;
     buf[sto..sto + table_bytes.len()].copy_from_slice(&table_bytes);
 
@@ -248,10 +240,7 @@ mod tests {
     fn build_with_section() {
         use crate::entrypoint::schedule::LayerHeader;
         let header = LayerHeader::new();
-        let archive = HoloWriter::new()
-            .add_section(&header)
-            .build()
-            .unwrap();
+        let archive = HoloWriter::new().add_section(&header).build().unwrap();
         assert!(!archive.is_empty());
     }
 

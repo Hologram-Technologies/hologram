@@ -71,9 +71,27 @@ pub const LUT_ID_SQUARE: u8 = 19;
 pub const LUT_ID_CUBE: u8 = 20;
 
 pub static LUT_TABLES: [&[u8; 256]; LUT_TABLE_COUNT] = [
-    &SIGMOID_256, &TANH_256, &EXP_256, &LOG_256, &RELU_256, &SQRT_256, &ABS_256, &GELU_256,
-    &SILU_256, &SIN_256, &COS_256, &TAN_256, &ASIN_256, &ACOS_256, &ATAN_256, &LOG2_256,
-    &LOG10_256, &EXP2_256, &EXP10_256, &SQUARE_256, &CUBE_256,
+    &SIGMOID_256,
+    &TANH_256,
+    &EXP_256,
+    &LOG_256,
+    &RELU_256,
+    &SQRT_256,
+    &ABS_256,
+    &GELU_256,
+    &SILU_256,
+    &SIN_256,
+    &COS_256,
+    &TAN_256,
+    &ASIN_256,
+    &ACOS_256,
+    &ATAN_256,
+    &LOG2_256,
+    &LOG10_256,
+    &EXP2_256,
+    &EXP10_256,
+    &SQUARE_256,
+    &CUBE_256,
 ];
 
 /// Get a LUT table by numeric ID.

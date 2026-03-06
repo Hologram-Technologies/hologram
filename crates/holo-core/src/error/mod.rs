@@ -32,8 +32,14 @@ mod tests {
         extern crate alloc;
         use alloc::format;
         assert_eq!(format!("{}", CoreError::OutOfRange), "value out of range");
-        assert_eq!(format!("{}", CoreError::UnsupportedOp), "unsupported operation");
-        assert_eq!(format!("{}", CoreError::LengthMismatch), "slice length mismatch");
+        assert_eq!(
+            format!("{}", CoreError::UnsupportedOp),
+            "unsupported operation"
+        );
+        assert_eq!(
+            format!("{}", CoreError::LengthMismatch),
+            "slice length mismatch"
+        );
     }
 
     #[test]

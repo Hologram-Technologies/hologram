@@ -17,10 +17,7 @@ pub const PARALLEL_THRESHOLD: usize = 4;
 /// When the `parallel` feature is enabled and the level has at least
 /// `PARALLEL_THRESHOLD` nodes, uses rayon's `par_iter`. Otherwise
 /// executes sequentially.
-pub fn execute_level<F>(
-    level: &ParallelLevel,
-    f: F,
-) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
+pub fn execute_level<F>(level: &ParallelLevel, f: F) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
 where
     F: Fn(NodeId) -> ExecResult<Vec<u8>> + Sync,
 {
@@ -32,10 +29,7 @@ where
 }
 
 /// Sequential fallback.
-fn execute_level_sequential<F>(
-    level: &ParallelLevel,
-    f: F,
-) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
+fn execute_level_sequential<F>(level: &ParallelLevel, f: F) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
 where
     F: Fn(NodeId) -> ExecResult<Vec<u8>>,
 {
@@ -54,10 +48,7 @@ fn should_parallelize(level: &ParallelLevel) -> bool {
 
 /// Parallel execution via rayon (only compiled with the `parallel` feature).
 #[cfg(feature = "parallel")]
-fn execute_level_parallel<F>(
-    level: &ParallelLevel,
-    f: F,
-) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
+fn execute_level_parallel<F>(level: &ParallelLevel, f: F) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
 where
     F: Fn(NodeId) -> ExecResult<Vec<u8>> + Sync,
 {
@@ -75,10 +66,7 @@ where
 
 /// Sequential fallback when rayon is not available.
 #[cfg(not(feature = "parallel"))]
-fn execute_level_parallel<F>(
-    level: &ParallelLevel,
-    f: F,
-) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
+fn execute_level_parallel<F>(level: &ParallelLevel, f: F) -> ExecResult<Vec<(NodeId, Vec<u8>)>>
 where
     F: Fn(NodeId) -> ExecResult<Vec<u8>>,
 {
@@ -98,10 +86,7 @@ mod tests {
         let level = ParallelLevel {
             node_ids: vec![nid(0), nid(1), nid(2)],
         };
-        let results = execute_level(&level, |id| {
-            Ok(vec![id.index() as u8])
-        })
-        .unwrap();
+        let results = execute_level(&level, |id| Ok(vec![id.index() as u8])).unwrap();
         assert_eq!(results.len(), 3);
         assert_eq!(results[0], (nid(0), vec![0]));
         assert_eq!(results[1], (nid(1), vec![1]));
@@ -110,9 +95,7 @@ mod tests {
 
     #[test]
     fn empty_level() {
-        let level = ParallelLevel {
-            node_ids: vec![],
-        };
+        let level = ParallelLevel { node_ids: vec![] };
         let results = execute_level(&level, |_| Ok(vec![])).unwrap();
         assert!(results.is_empty());
     }
@@ -156,10 +139,7 @@ mod tests {
         let level = ParallelLevel {
             node_ids: (0..8).map(nid).collect(),
         };
-        let results = execute_level(&level, |id| {
-            Ok(vec![id.index() as u8 * 2])
-        })
-        .unwrap();
+        let results = execute_level(&level, |id| Ok(vec![id.index() as u8 * 2])).unwrap();
         assert_eq!(results.len(), 8);
         for (i, (id, data)) in results.iter().enumerate() {
             assert_eq!(id.index(), i as u32);

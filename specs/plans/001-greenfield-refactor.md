@@ -69,8 +69,11 @@ hologram-greenfield/
     holo-archive/                   # .holo format, rkyv, mmap, weights, entrypoints
     holo-exec/                      # KV executor, buffer, parallel levels
     holo-compiler/                   # Compilation pipeline: Graph → .holo archive
+    holo-ffi/                        # FFI layer: C ABI (extern "C", cbindgen) + WASM (wasm-bindgen, feature-gated)
     holo-cli/                       # Async CLI with subcommands (exposes run())
     holo-bench/                     # Criterion benchmarks
+  include/
+    hologram.h                      # Auto-generated C header (cbindgen)
   examples/
     calculator.rs                   # Scientific calculator example
   src/lib.rs                        # Root crate: re-exports all public API from subcrates
@@ -434,22 +437,52 @@ parallel/
 - [x] 7 E2E tests: compiler linear chain, diamond, constants, fusion toggle, large graph, workspace reuse, LayerHeader
 - [x] 52 new tests (580 total workspace), zero clippy warnings
 
-### Sprint 7: FFI Bindings (was Sprint 8)
-- [ ] Python bindings via UniFFI (auto-generated)
-- [ ] TypeScript/WASM bindings via wasm-bindgen
-- [ ] C bindings via cbindgen
-- [ ] Thin translation layer — all logic in Rust crates
-- [ ] FFI call overhead target: < 10 ns
-- [ ] Integration tests in each target language
-- [ ] Package and publish to PyPI, npm
+### Sprint 7: C FFI + WASM Bindings — COMPLETED
+
+**Notes**: Single `holo-ffi` crate (`cdylib` + `rlib`). `FfiGraphBuilder` wraps `Graph` directly (non-consuming) with `index_to_id: Vec<NodeId>` for C-friendly indexing. Thread-local `LAST_ERROR: RefCell<Option<CString>>` for error propagation. Op mapping: kind 0=Input, 1=Output, 2=Prim(param 0–9), 3=Lut(param 0–20). cbindgen renames FFI types to `Holo*` in C header. WASM bindings feature-gated behind `wasm`. 56 new tests (636 total workspace), zero clippy warnings.
+
+- [x] `crates/holo-ffi/` crate skeleton: `Cargo.toml`, `lib.rs`, all module declarations
+- [x] `error/mod.rs`: `FfiStatus` enum (8 codes), thread-local `LAST_ERROR`, `holo_last_error()`, `holo_error_message()`, `ffi_catch()` wrapper
+- [x] `handle/mod.rs`: `into_handle<T>()`, `borrow_handle()`, `borrow_handle_mut()`, `free_handle()`
+- [x] `graph/mod.rs`: `FfiGraphBuilder` + all `holo_graph_builder_*` + `holo_graph_node_count/free`
+- [x] `compiler/mod.rs`: `holo_compile()`, `holo_compile_no_fuse()`, archive ptr/len, stats, `holo_compilation_free()`
+- [x] `exec/mod.rs`: `holo_inputs_new/set/free`, `holo_execute_bytes()`, `holo_outputs_*`
+- [x] `encoding/mod.rs`: `holo_encoding_embed/lift()`, `holo_lut_apply()`, `holo_prim_apply_unary/binary()`
+- [x] `cbindgen.toml` + `include/hologram.h` auto-generated C header
+- [x] `wasm/mod.rs`: `WasmGraphBuilder`, `wasm_execute()`, `wasm_lut_apply()`, `wasm_encoding_embed/lift()` (feature-gated)
+- [x] `crates/holo-bench/benches/ffi.rs`: graph build, lut_apply, encoding, full pipeline benchmarks
+- [x] 6 FFI E2E tests in `tests/e2e.rs`: full pipeline, diamond, encoding round-trip, LUT ops, error handling, fusion toggle
 
 ### Sprint 8: Constrained Device Validation
-- [ ] ESP32 cross-compilation and testing
-- [ ] Raspberry Pi cross-compilation and testing
-- [ ] Binary size budget analysis (target: < 100KB for core)
-- [ ] Memory usage profiling on constrained targets
-- [ ] `no_std` + `no_alloc` mode for ultra-constrained (static buffer only)
-- [ ] Feature matrix: which features available on which targets
+
+**Goal**: Validate `holo-core` on constrained targets (WASM no_std, bare-metal ARM). Add `no_alloc` static-buffer mode. Document feature matrix per target.
+
+**Step 1: no_std Validation (~5 tests)**
+- [ ] Verify `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features` compiles cleanly
+- [ ] Verify `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features` compiles cleanly
+- [ ] Fix any `std`-only leaks in `holo-core` (e.g. `std::fmt`, `std::io` in non-std paths)
+
+**Step 2: `no_alloc` Static Buffer Mode (~15 tests)**
+- [ ] Add `alloc` feature to `holo-core/Cargo.toml` (default on; enables `Vec`-based paths)
+- [ ] `crates/holo-core/src/buffer/static_buf.rs` — `StaticBuf<const N: usize>`: fixed-size stack/static buffer, `push/get/len/clear`, overflow returns error
+- [ ] `crates/holo-core/src/buffer/mod.rs` — re-export `StaticBuf`
+- [ ] `holo-core/src/lib.rs` — re-export `buffer` module
+- [ ] Unit tests: capacity boundary, overflow, Q0 LUT apply via `StaticBuf<256>`
+
+**Step 3: Binary Size Analysis**
+- [ ] `cargo build --release -p holo-core --no-default-features` → measure with `size`
+- [ ] `cargo build --release --target wasm32-unknown-unknown -p holo-core --no-default-features` → `wasm-size` or `wasm-opt --print-stats`
+- [ ] Document results in `specs/SPRINT.md` (target: < 100KB `.text` for no_std + no_alloc)
+
+**Step 4: Justfile + Feature Matrix**
+- [ ] Add `embedded` recipe to `Justfile`: `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features`
+- [ ] Add `wasm-nostd` recipe: `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features`
+- [ ] Create `specs/feature-matrix.md`: table of features vs targets (x86_64, wasm32, thumbv7em, esp32)
+
+**Step 5: Benchmarks (~10 tests)**
+- [ ] `crates/holo-bench/benches/no_alloc.rs`: `StaticBuf` vs `Vec` for 256-byte LUT apply and Q0 encoding round-trip
+
+**Target**: ~30 new tests, ~666 total workspace, zero clippy warnings, holo-core no_std < 100KB.
 
 ### Sprint 9: Tokio Integration + Async Execution
 - [ ] Async graph compilation
@@ -503,6 +536,8 @@ holo-compiler    holo-exec
    holo-cli (async CLI with subcommands)
        |
    holo-bench (criterion benchmarks)
+
+holo-ffi  (C ABI + WASM: extern "C" + cbindgen header, wasm-bindgen feature-gated)
 
 Root crate (src/lib.rs) re-exports: holo-core, holo-graph, holo-archive, holo-compiler, holo-exec
 Examples: examples/calculator.rs

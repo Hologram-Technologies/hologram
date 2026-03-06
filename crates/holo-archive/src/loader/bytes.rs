@@ -54,10 +54,7 @@ fn find_and_validate_header(data: &[u8]) -> ArchiveResult<HoloHeader> {
     validate_header(data)
 }
 
-fn deserialize_graph(
-    data: &[u8],
-    header: &HoloHeader,
-) -> ArchiveResult<SerializedGraph> {
+fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<SerializedGraph> {
     let start = header.graph_offset as usize;
     let end = start + header.graph_size as usize;
     if end > data.len() {
@@ -83,10 +80,7 @@ fn deserialize_graph(
         .map_err(|e| ArchiveError::ValidationFailed(format!("{e:?}")))
 }
 
-fn extract_weights(
-    data: &[u8],
-    header: &HoloHeader,
-) -> ArchiveResult<Vec<u8>> {
+fn extract_weights(data: &[u8], header: &HoloHeader) -> ArchiveResult<Vec<u8>> {
     if header.weights_size == 0 {
         return Ok(Vec::new());
     }
@@ -101,10 +95,7 @@ fn extract_weights(
     Ok(data[start..end].to_vec())
 }
 
-fn deserialize_section_table(
-    data: &[u8],
-    header: &HoloHeader,
-) -> ArchiveResult<SectionTable> {
+fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<SectionTable> {
     if header.section_count == 0 {
         return Ok(SectionTable::new());
     }
@@ -194,10 +185,7 @@ mod tests {
         use crate::section::SECTION_LAYER_HEADER;
 
         let header = LayerHeader::new();
-        let archive = HoloWriter::new()
-            .add_section(&header)
-            .build()
-            .unwrap();
+        let archive = HoloWriter::new().add_section(&header).build().unwrap();
         let plan = load_from_bytes(&archive).unwrap();
         assert!(plan.sections().find(SECTION_LAYER_HEADER).is_some());
     }
@@ -212,10 +200,7 @@ mod tests {
     #[test]
     fn checksum_verified() {
         let weights = vec![1u8, 2, 3];
-        let archive = HoloWriter::new()
-            .set_weights(weights)
-            .build()
-            .unwrap();
+        let archive = HoloWriter::new().set_weights(weights).build().unwrap();
         // Loading should succeed (checksums match)
         let plan = load_from_bytes(&archive).unwrap();
         assert_eq!(plan.weights(), &[1, 2, 3]);

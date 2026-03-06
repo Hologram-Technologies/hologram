@@ -73,9 +73,7 @@ impl HoloHeader {
         if data.len() < HEADER_SIZE {
             return None;
         }
-        Some(bytemuck::pod_read_unaligned::<Self>(
-            &data[..HEADER_SIZE],
-        ))
+        Some(bytemuck::pod_read_unaligned::<Self>(&data[..HEADER_SIZE]))
     }
 }
 

@@ -1,15 +1,7 @@
 //! Section table: index of sections within the archive.
 
 /// An entry in the section table.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct SectionEntry {
     /// Section kind identifier.
@@ -24,14 +16,7 @@ pub struct SectionEntry {
 
 /// Table of all sections in an archive.
 #[derive(
-    Debug,
-    Clone,
-    Default,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, Default, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 #[archive(check_bytes)]
 pub struct SectionTable {
@@ -111,8 +96,7 @@ mod tests {
             checksum: 0xDEAD,
         };
         let bytes = rkyv::to_bytes::<_, 64>(&e).unwrap();
-        let archived =
-            rkyv::check_archived_root::<SectionEntry>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<SectionEntry>(&bytes).unwrap();
         assert_eq!(archived.kind, 2);
         assert_eq!(archived.size, 1024);
     }
@@ -127,8 +111,7 @@ mod tests {
             checksum: 0,
         });
         let bytes = rkyv::to_bytes::<_, 256>(&t).unwrap();
-        let archived =
-            rkyv::check_archived_root::<SectionTable>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<SectionTable>(&bytes).unwrap();
         assert_eq!(archived.entries.len(), 1);
     }
 }

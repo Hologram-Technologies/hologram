@@ -4,15 +4,7 @@ pub mod quantize;
 
 /// Data type of a stored tensor's elements.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 #[archive(check_bytes)]
 pub enum WeightDType {
@@ -70,14 +62,7 @@ impl WeightDType {
 }
 
 /// Metadata for a single tensor in the weight section.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct TensorMetadata {
     /// Tensor name (e.g. "layer0.weight").
@@ -155,10 +140,8 @@ mod tests {
     fn rkyv_weight_dtype() {
         let dt = WeightDType::BF16;
         let bytes = rkyv::to_bytes::<_, 64>(&dt).unwrap();
-        let archived =
-            rkyv::check_archived_root::<WeightDType>(&bytes).unwrap();
-        let deserialized: WeightDType =
-            archived.deserialize(&mut rkyv::Infallible).unwrap();
+        let archived = rkyv::check_archived_root::<WeightDType>(&bytes).unwrap();
+        let deserialized: WeightDType = archived.deserialize(&mut rkyv::Infallible).unwrap();
         assert_eq!(deserialized, WeightDType::BF16);
     }
 
@@ -174,8 +157,7 @@ mod tests {
             checksum: 0xABCD,
         };
         let bytes = rkyv::to_bytes::<_, 256>(&m).unwrap();
-        let archived =
-            rkyv::check_archived_root::<TensorMetadata>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<TensorMetadata>(&bytes).unwrap();
         assert_eq!(archived.name.as_str(), "bias");
         assert_eq!(archived.checksum, 0xABCD);
     }

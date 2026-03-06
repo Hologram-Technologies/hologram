@@ -58,17 +58,12 @@ fn empty_layout() -> WorkspaceLayout {
 /// Sort interval indices by duration (longest first).
 fn sort_by_duration(intervals: &[LivenessInterval]) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..intervals.len()).collect();
-    indices.sort_by(|&a, &b| {
-        intervals[b].duration().cmp(&intervals[a].duration())
-    });
+    indices.sort_by(|&a, &b| intervals[b].duration().cmp(&intervals[a].duration()));
     indices
 }
 
 /// Assign intervals to slots using first-fit.
-fn assign_slots(
-    sorted_indices: &[usize],
-    intervals: &[LivenessInterval],
-) -> WorkspaceLayout {
+fn assign_slots(sorted_indices: &[usize], intervals: &[LivenessInterval]) -> WorkspaceLayout {
     let mut slots: Vec<(u32, Vec<usize>)> = Vec::new();
     let mut assignments = Vec::new();
 

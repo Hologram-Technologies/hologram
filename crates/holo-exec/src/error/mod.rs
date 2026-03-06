@@ -53,10 +53,7 @@ impl fmt::Display for ExecError {
                 write!(f, "unsupported operation: {op}")
             }
             Self::LengthMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "length mismatch: expected {expected}, got {actual}"
-                )
+                write!(f, "length mismatch: expected {expected}, got {actual}")
             }
             Self::ArchiveError(msg) => {
                 write!(f, "archive error: {msg}")

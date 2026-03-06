@@ -18,10 +18,8 @@ pub struct HoloLoader {
 impl HoloLoader {
     /// Open and memory-map a .holo file.
     pub fn open(path: &Path) -> ArchiveResult<Self> {
-        let file = std::fs::File::open(path)
-            .map_err(ArchiveError::Io)?;
-        let mmap = unsafe { Mmap::map(&file) }
-            .map_err(ArchiveError::Io)?;
+        let file = std::fs::File::open(path).map_err(ArchiveError::Io)?;
+        let mmap = unsafe { Mmap::map(&file) }.map_err(ArchiveError::Io)?;
         Ok(Self { mmap })
     }
 

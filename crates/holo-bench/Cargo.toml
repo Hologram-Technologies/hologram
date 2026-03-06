@@ -11,6 +11,7 @@ holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
 holo-compiler = { workspace = true }
+holo-ffi = { workspace = true }
 rkyv = { workspace = true }
 
 [dev-dependencies]
@@ -50,4 +51,8 @@ harness = false
 
 [[bench]]
 name = "compiler"
+harness = false
+
+[[bench]]
+name = "ffi"
 harness = false

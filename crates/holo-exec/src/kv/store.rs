@@ -25,11 +25,7 @@ impl KvStore {
     }
 
     /// Apply a binary `PrimOp` element-wise on two inputs.
-    pub fn apply_binary(
-        op: PrimOp,
-        lhs: &[u8],
-        rhs: &[u8],
-    ) -> ExecResult<Vec<u8>> {
+    pub fn apply_binary(op: PrimOp, lhs: &[u8], rhs: &[u8]) -> ExecResult<Vec<u8>> {
         if lhs.len() != rhs.len() {
             return Err(ExecError::LengthMismatch {
                 expected: lhs.len(),
@@ -48,10 +44,7 @@ impl KvStore {
     ///
     /// `Input` and `Constant` nodes are handled by the caller
     /// (they inject data into the arena directly).
-    pub fn dispatch(
-        op: &GraphOp,
-        inputs: &[&[u8]],
-    ) -> ExecResult<Vec<u8>> {
+    pub fn dispatch(op: &GraphOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
         Self::dispatch_with_constants(op, inputs, &ConstantStore::new())
     }
 
@@ -77,21 +70,11 @@ impl KvStore {
             GraphOp::Input | GraphOp::Constant(_) => {
                 Ok(inputs.first().copied().unwrap_or(&[]).to_vec())
             }
-            GraphOp::CallSubgraph(_) => {
-                Err(ExecError::UnsupportedOp("CallSubgraph".into()))
-            }
-            GraphOp::MatMulLut4(cid) => {
-                dispatch_lut_gemm_4(inputs[0], *cid, constants)
-            }
-            GraphOp::MatMulLut8(cid) => {
-                dispatch_lut_gemm_8(inputs[0], *cid, constants)
-            }
-            GraphOp::BatchMatMulLut4(cid) => {
-                dispatch_lut_gemm_4(inputs[0], *cid, constants)
-            }
-            GraphOp::BatchMatMulLut8(cid) => {
-                dispatch_lut_gemm_8(inputs[0], *cid, constants)
-            }
+            GraphOp::CallSubgraph(_) => Err(ExecError::UnsupportedOp("CallSubgraph".into())),
+            GraphOp::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants),
+            GraphOp::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
+            GraphOp::BatchMatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants),
+            GraphOp::BatchMatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
         }
     }
 }
@@ -142,26 +125,20 @@ fn resolve_constant_bytes(
         .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
     match data {
         ConstantData::Bytes(bytes) => Ok(bytes),
-        ConstantData::Deferred { .. } => {
-            Err(ExecError::UnsupportedOp("deferred constant".into()))
-        }
+        ConstantData::Deferred { .. } => Err(ExecError::UnsupportedOp("deferred constant".into())),
     }
 }
 
 /// Cast `&[u8]` to `&[f32]` via bytemuck.
 fn cast_f32(bytes: &[u8]) -> ExecResult<&[f32]> {
-    bytemuck::try_cast_slice(bytes).map_err(|e| {
-        ExecError::ShapeMismatch {
-            expected: "f32-aligned bytes".into(),
-            actual: e.to_string(),
-        }
+    bytemuck::try_cast_slice(bytes).map_err(|e| ExecError::ShapeMismatch {
+        expected: "f32-aligned bytes".into(),
+        actual: e.to_string(),
     })
 }
 
 /// Deserialize archived Q4 weights.
-fn deserialize_q4(
-    archived: &rkyv::Archived<QuantizedWeights4>,
-) -> ExecResult<QuantizedWeights4> {
+fn deserialize_q4(archived: &rkyv::Archived<QuantizedWeights4>) -> ExecResult<QuantizedWeights4> {
     use rkyv::Deserialize;
     let qw: QuantizedWeights4 = archived
         .deserialize(&mut rkyv::Infallible)
@@ -170,9 +147,7 @@ fn deserialize_q4(
 }
 
 /// Deserialize archived Q8 weights.
-fn deserialize_q8(
-    archived: &rkyv::Archived<QuantizedWeights8>,
-) -> ExecResult<QuantizedWeights8> {
+fn deserialize_q8(archived: &rkyv::Archived<QuantizedWeights8>) -> ExecResult<QuantizedWeights8> {
     use rkyv::Deserialize;
     let qw: QuantizedWeights8 = archived
         .deserialize(&mut rkyv::Infallible)
@@ -196,10 +171,7 @@ mod tests {
     fn unary_increment() {
         let view = ElementWiseView::new(|x| x.wrapping_add(1));
         let input = vec![0, 1, 254, 255];
-        assert_eq!(
-            KvStore::apply_unary(&view, &input),
-            vec![1, 2, 255, 0]
-        );
+        assert_eq!(KvStore::apply_unary(&view, &input), vec![1, 2, 255, 0]);
     }
 
     #[test]
@@ -247,32 +219,26 @@ mod tests {
 
     #[test]
     fn binary_add() {
-        let result =
-            KvStore::apply_binary(PrimOp::Add, &[10, 200], &[5, 100])
-                .unwrap();
+        let result = KvStore::apply_binary(PrimOp::Add, &[10, 200], &[5, 100]).unwrap();
         assert_eq!(result, vec![15, 44]); // 200+100=300 mod 256=44
     }
 
     #[test]
     fn binary_sub() {
-        let result =
-            KvStore::apply_binary(PrimOp::Sub, &[10, 5], &[3, 10]).unwrap();
+        let result = KvStore::apply_binary(PrimOp::Sub, &[10, 5], &[3, 10]).unwrap();
         assert_eq!(result[0], 7);
         assert_eq!(result[1], 251); // 5-10 mod 256
     }
 
     #[test]
     fn binary_xor() {
-        let result =
-            KvStore::apply_binary(PrimOp::Xor, &[0xFF, 0x0F], &[0x0F, 0xF0])
-                .unwrap();
+        let result = KvStore::apply_binary(PrimOp::Xor, &[0xFF, 0x0F], &[0x0F, 0xF0]).unwrap();
         assert_eq!(result, vec![0xF0, 0xFF]);
     }
 
     #[test]
     fn binary_length_mismatch() {
-        let result =
-            KvStore::apply_binary(PrimOp::Add, &[1, 2, 3], &[4, 5]);
+        let result = KvStore::apply_binary(PrimOp::Add, &[1, 2, 3], &[4, 5]);
         assert!(result.is_err());
     }
 
@@ -309,9 +275,7 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut4(cid);
-        let result =
-            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants)
-                .unwrap();
+        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1+2+3+4)=10, all weights=1.0
@@ -337,9 +301,7 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut8(cid);
-        let result =
-            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants)
-                .unwrap();
+        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1*2 * 4) = 8
@@ -354,11 +316,7 @@ mod tests {
         let op = GraphOp::MatMulLut4(ConstantId::new(99));
         let act = [1.0f32; 4];
         let act_bytes: &[u8] = bytemuck::cast_slice(&act);
-        let result = KvStore::dispatch_with_constants(
-            &op,
-            &[act_bytes],
-            &ConstantStore::new(),
-        );
+        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &ConstantStore::new());
         assert!(result.is_err());
     }
 }

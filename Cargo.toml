@@ -16,6 +16,7 @@ holo-archive = { path = "crates/holo-archive" }
 holo-exec = { path = "crates/holo-exec" }
 holo-compiler = { path = "crates/holo-compiler" }
 holo-cli = { path = "crates/holo-cli" }
+holo-ffi = { path = "crates/holo-ffi" }
 
 # UOR Foundation
 uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", tag = "v3.5.0" }
@@ -41,6 +42,9 @@ clap = { version = "4", features = ["derive"] }
 # Benchmarking
 criterion = "0.5"
 
+# FFI
+wasm-bindgen = "0.2"
+
 [package]
 name = "hologram-greenfield"
 version.workspace = true
@@ -54,6 +58,7 @@ holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
 holo-compiler = { workspace = true }
+holo-ffi = { workspace = true }
 holo-cli = { workspace = true }
 tokio = { workspace = true }
 rkyv = { workspace = true }

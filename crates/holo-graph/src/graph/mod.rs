@@ -8,13 +8,15 @@ pub mod edge;
 pub mod node;
 pub mod validate;
 
+use crate::constant::{ConstantData, ConstantId, ConstantStore};
 use holo_core::op::{LutOp, PrimOp};
 use holo_core::view::ElementWiseView;
-use crate::constant::{ConstantData, ConstantId, ConstantStore};
 use node::{InputSlot, InputSource, Node, NodeId};
 
 /// Identifier for a registered subgraph template.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct SubgraphId(u32);
 
@@ -113,9 +115,7 @@ impl GraphOp {
         match self {
             Self::Lut(op) => Some(ElementWiseView::from_table(*op.table())),
             Self::FusedView(v) => Some(*v),
-            Self::Prim(p) if p.arity() == 1 => {
-                Some(ElementWiseView::new(|x| p.apply_unary(x)))
-            }
+            Self::Prim(p) if p.arity() == 1 => Some(ElementWiseView::new(|x| p.apply_unary(x))),
             _ => None,
         }
     }
@@ -400,10 +400,7 @@ impl Graph {
     // --- Subgraphs ---
 
     /// Register a subgraph template, returning its ID.
-    pub fn register_subgraph(
-        &mut self,
-        def: crate::subgraph::SubgraphDef,
-    ) -> SubgraphId {
+    pub fn register_subgraph(&mut self, def: crate::subgraph::SubgraphDef) -> SubgraphId {
         let id = SubgraphId(self.subgraphs.len() as u32);
         self.subgraphs.push(def);
         id
@@ -411,10 +408,7 @@ impl Graph {
 
     /// Look up a subgraph by ID.
     #[must_use]
-    pub fn get_subgraph(
-        &self,
-        id: SubgraphId,
-    ) -> Option<&crate::subgraph::SubgraphDef> {
+    pub fn get_subgraph(&self, id: SubgraphId) -> Option<&crate::subgraph::SubgraphDef> {
         self.subgraphs.get(id.0 as usize)
     }
 
@@ -586,7 +580,7 @@ mod tests {
         // Unary PrimOp produces a view
         let v = GraphOp::Prim(PrimOp::Neg).to_view().unwrap();
         assert_eq!(v.apply(1), 255); // wrapping_neg
-        // Binary PrimOp does not
+                                     // Binary PrimOp does not
         assert!(GraphOp::Prim(PrimOp::Add).to_view().is_none());
         // Input does not
         assert!(GraphOp::Input.to_view().is_none());

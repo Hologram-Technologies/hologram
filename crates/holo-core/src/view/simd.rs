@@ -24,26 +24,18 @@ pub fn apply_avx2(view: &ElementWiseView, data: &mut [u8]) {
                 let ptr = data.as_mut_ptr().add(chunk * 32);
                 let input = _mm256_loadu_si256(ptr as *const __m256i);
                 let lo = _mm256_and_si256(input, low_mask);
-                let hi = _mm256_and_si256(
-                    _mm256_srli_epi16(input, 4),
-                    low_mask,
-                );
+                let hi = _mm256_and_si256(_mm256_srli_epi16(input, 4), low_mask);
                 let mut result = _mm256_setzero_si256();
 
                 for sub in 0..16u8 {
                     let base = (sub as usize) * 16;
-                    let subtable = _mm256_broadcastsi128_si256(
-                        _mm_loadu_si128(
-                            table.as_ptr().add(base) as *const __m128i,
-                        ),
-                    );
+                    let subtable = _mm256_broadcastsi128_si256(_mm_loadu_si128(
+                        table.as_ptr().add(base) as *const __m128i,
+                    ));
                     let match_val = _mm256_set1_epi8(sub as i8);
                     let mask = _mm256_cmpeq_epi8(hi, match_val);
                     let shuffled = _mm256_shuffle_epi8(subtable, lo);
-                    result = _mm256_or_si256(
-                        result,
-                        _mm256_and_si256(mask, shuffled),
-                    );
+                    result = _mm256_or_si256(result, _mm256_and_si256(mask, shuffled));
                 }
 
                 _mm256_storeu_si256(ptr as *mut __m256i, result);
@@ -59,11 +51,7 @@ pub fn apply_avx2(view: &ElementWiseView, data: &mut [u8]) {
 
 /// AVX2 separate input/output apply.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-pub fn apply_to_avx2(
-    view: &ElementWiseView,
-    input: &[u8],
-    output: &mut [u8],
-) {
+pub fn apply_to_avx2(view: &ElementWiseView, input: &[u8], output: &mut [u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64::*;
@@ -77,32 +65,22 @@ pub fn apply_to_avx2(
             let low_mask = _mm256_set1_epi8(0x0F);
 
             for chunk in 0..chunks {
-                let in_ptr =
-                    input.as_ptr().add(chunk * 32) as *const __m256i;
-                let out_ptr =
-                    output.as_mut_ptr().add(chunk * 32) as *mut __m256i;
+                let in_ptr = input.as_ptr().add(chunk * 32) as *const __m256i;
+                let out_ptr = output.as_mut_ptr().add(chunk * 32) as *mut __m256i;
                 let inv = _mm256_loadu_si256(in_ptr);
                 let lo = _mm256_and_si256(inv, low_mask);
-                let hi = _mm256_and_si256(
-                    _mm256_srli_epi16(inv, 4),
-                    low_mask,
-                );
+                let hi = _mm256_and_si256(_mm256_srli_epi16(inv, 4), low_mask);
                 let mut result = _mm256_setzero_si256();
 
                 for sub in 0..16u8 {
                     let base = (sub as usize) * 16;
-                    let subtable = _mm256_broadcastsi128_si256(
-                        _mm_loadu_si128(
-                            table.as_ptr().add(base) as *const __m128i,
-                        ),
-                    );
+                    let subtable = _mm256_broadcastsi128_si256(_mm_loadu_si128(
+                        table.as_ptr().add(base) as *const __m128i,
+                    ));
                     let match_val = _mm256_set1_epi8(sub as i8);
                     let mask = _mm256_cmpeq_epi8(hi, match_val);
                     let shuffled = _mm256_shuffle_epi8(subtable, lo);
-                    result = _mm256_or_si256(
-                        result,
-                        _mm256_and_si256(mask, shuffled),
-                    );
+                    result = _mm256_or_si256(result, _mm256_and_si256(mask, shuffled));
                 }
 
                 _mm256_storeu_si256(out_ptr, result);
@@ -135,24 +113,16 @@ pub fn apply_sse42(view: &ElementWiseView, data: &mut [u8]) {
                 let ptr = data.as_mut_ptr().add(chunk * 16);
                 let input = _mm_loadu_si128(ptr as *const __m128i);
                 let lo = _mm_and_si128(input, low_mask);
-                let hi = _mm_and_si128(
-                    _mm_srli_epi16(input, 4),
-                    low_mask,
-                );
+                let hi = _mm_and_si128(_mm_srli_epi16(input, 4), low_mask);
                 let mut result = _mm_setzero_si128();
 
                 for sub in 0..16u8 {
                     let base = (sub as usize) * 16;
-                    let subtable = _mm_loadu_si128(
-                        table.as_ptr().add(base) as *const __m128i,
-                    );
+                    let subtable = _mm_loadu_si128(table.as_ptr().add(base) as *const __m128i);
                     let match_val = _mm_set1_epi8(sub as i8);
                     let mask = _mm_cmpeq_epi8(hi, match_val);
                     let shuffled = _mm_shuffle_epi8(subtable, lo);
-                    result = _mm_or_si128(
-                        result,
-                        _mm_and_si128(mask, shuffled),
-                    );
+                    result = _mm_or_si128(result, _mm_and_si128(mask, shuffled));
                 }
 
                 _mm_storeu_si128(ptr as *mut __m128i, result);
@@ -168,11 +138,7 @@ pub fn apply_sse42(view: &ElementWiseView, data: &mut [u8]) {
 
 /// SSE4.2 separate input/output apply.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse4.2"))]
-pub fn apply_to_sse42(
-    view: &ElementWiseView,
-    input: &[u8],
-    output: &mut [u8],
-) {
+pub fn apply_to_sse42(view: &ElementWiseView, input: &[u8], output: &mut [u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64::*;
@@ -186,30 +152,20 @@ pub fn apply_to_sse42(
             let low_mask = _mm_set1_epi8(0x0F);
 
             for chunk in 0..chunks {
-                let in_ptr =
-                    input.as_ptr().add(chunk * 16) as *const __m128i;
-                let out_ptr =
-                    output.as_mut_ptr().add(chunk * 16) as *mut __m128i;
+                let in_ptr = input.as_ptr().add(chunk * 16) as *const __m128i;
+                let out_ptr = output.as_mut_ptr().add(chunk * 16) as *mut __m128i;
                 let inv = _mm_loadu_si128(in_ptr);
                 let lo = _mm_and_si128(inv, low_mask);
-                let hi = _mm_and_si128(
-                    _mm_srli_epi16(inv, 4),
-                    low_mask,
-                );
+                let hi = _mm_and_si128(_mm_srli_epi16(inv, 4), low_mask);
                 let mut result = _mm_setzero_si128();
 
                 for sub in 0..16u8 {
                     let base = (sub as usize) * 16;
-                    let subtable = _mm_loadu_si128(
-                        table.as_ptr().add(base) as *const __m128i,
-                    );
+                    let subtable = _mm_loadu_si128(table.as_ptr().add(base) as *const __m128i);
                     let match_val = _mm_set1_epi8(sub as i8);
                     let mask = _mm_cmpeq_epi8(hi, match_val);
                     let shuffled = _mm_shuffle_epi8(subtable, lo);
-                    result = _mm_or_si128(
-                        result,
-                        _mm_and_si128(mask, shuffled),
-                    );
+                    result = _mm_or_si128(result, _mm_and_si128(mask, shuffled));
                 }
 
                 _mm_storeu_si128(out_ptr, result);

@@ -13,11 +13,7 @@ pub const PAR_COL_THRESHOLD: usize = 64;
 
 /// Column-parallel LUT-GEMM with 4-bit quantized weights.
 #[cfg(feature = "parallel")]
-pub fn lut_gemm_4bit_par(
-    activations: &[f32],
-    weights: &QuantizedWeights4,
-    output: &mut [f32],
-) {
+pub fn lut_gemm_4bit_par(activations: &[f32], weights: &QuantizedWeights4, output: &mut [f32]) {
     let n = weights.cols as usize;
     if n < PAR_COL_THRESHOLD {
         return lut_gemm_4bit(activations, weights, output);
@@ -47,11 +43,7 @@ fn compute_col_q4(a_row: &[f32], w: &QuantizedWeights4, col: u32) -> f32 {
 
 /// Column-parallel LUT-GEMM with 8-bit quantized weights.
 #[cfg(feature = "parallel")]
-pub fn lut_gemm_8bit_par(
-    activations: &[f32],
-    weights: &QuantizedWeights8,
-    output: &mut [f32],
-) {
+pub fn lut_gemm_8bit_par(activations: &[f32], weights: &QuantizedWeights8, output: &mut [f32]) {
     let n = weights.cols as usize;
     if n < PAR_COL_THRESHOLD {
         return lut_gemm_8bit(activations, weights, output);
@@ -82,11 +74,7 @@ fn compute_col_q8(a_row: &[f32], w: &QuantizedWeights8, col: u32) -> f32 {
 
 /// Unified column-parallel LUT-GEMM dispatching to Q4 or Q8.
 #[cfg(feature = "parallel")]
-pub fn lut_gemm_par(
-    activations: &[f32],
-    weights: &QuantizedWeights,
-    output: &mut [f32],
-) {
+pub fn lut_gemm_par(activations: &[f32], weights: &QuantizedWeights, output: &mut [f32]) {
     match weights {
         QuantizedWeights::Q4(w) => lut_gemm_4bit_par(activations, w, output),
         QuantizedWeights::Q8(w) => lut_gemm_8bit_par(activations, w, output),
@@ -105,13 +93,9 @@ mod tests {
         let m = 2;
         let k = 16;
         let n = 128; // > PAR_COL_THRESHOLD
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32 + 1.0) * 0.01)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.01).collect();
         let qw = quantize_4bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32) * 0.1)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.1).collect();
         let mut seq_out = vec![0.0f32; m * n];
         let mut par_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut seq_out);
@@ -126,13 +110,9 @@ mod tests {
         let m = 2;
         let k = 16;
         let n = 128;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32 + 1.0) * 0.01)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.01).collect();
         let qw = quantize_8bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32) * 0.1)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.1).collect();
         let mut seq_out = vec![0.0f32; m * n];
         let mut par_out = vec![0.0f32; m * n];
         lut_gemm_8bit(&activations, &qw, &mut seq_out);
@@ -163,12 +143,8 @@ mod tests {
         let m = 1;
         let k = 8;
         let n = 128;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32) * 0.01)
-            .collect();
-        let qw = QuantizedWeights::Q8(Box::new(
-            quantize_8bit(&weights, k as u32, n as u32),
-        ));
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.01).collect();
+        let qw = QuantizedWeights::Q8(Box::new(quantize_8bit(&weights, k as u32, n as u32)));
         let activations = vec![1.0f32; m * k];
         let mut output = vec![0.0f32; m * n];
         lut_gemm_par(&activations, &qw, &mut output);
@@ -181,13 +157,9 @@ mod tests {
         let m = 4;
         let k = 64;
         let n = 256;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32 + 1.0) * 0.001)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.001).collect();
         let qw = quantize_4bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32 + 1.0) * 0.01)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32 + 1.0) * 0.01).collect();
         let mut seq_out = vec![0.0f32; m * n];
         let mut par_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut seq_out);

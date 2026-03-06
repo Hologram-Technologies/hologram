@@ -104,8 +104,7 @@ pub(crate) const fn const_exp2(x: f64) -> f64 {
     let int_part = x as i32;
     let frac = x - int_part as f64;
     let t = frac * core::f64::consts::LN_2;
-    let exp_frac =
-        1.0 + t * (1.0 + t / 2.0 * (1.0 + t / 3.0 * (1.0 + t / 4.0 * (1.0 + t / 5.0))));
+    let exp_frac = 1.0 + t * (1.0 + t / 2.0 * (1.0 + t / 3.0 * (1.0 + t / 4.0 * (1.0 + t / 5.0))));
     let mut result = exp_frac;
     if int_part >= 0 {
         let mut i = 0;

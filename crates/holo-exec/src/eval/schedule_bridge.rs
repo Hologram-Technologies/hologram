@@ -28,11 +28,8 @@ pub fn build_schedule(sg: &SerializedGraph) -> ExecResult<ExecutionSchedule> {
     }
 
     // Position map: NodeId → index in the dense array
-    let id_to_pos: HashMap<NodeId, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id, i))
-        .collect();
+    let id_to_pos: HashMap<NodeId, usize> =
+        nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
 
     let total = nodes.len();
 
@@ -77,7 +74,9 @@ pub fn build_schedule(sg: &SerializedGraph) -> ExecResult<ExecutionSchedule> {
                 }
             }
         }
-        levels.push(ParallelLevel { node_ids: level_ids });
+        levels.push(ParallelLevel {
+            node_ids: level_ids,
+        });
         cursor = level_end;
     }
 
@@ -96,9 +95,9 @@ pub fn build_schedule(sg: &SerializedGraph) -> ExecResult<ExecutionSchedule> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use holo_graph::constant::ConstantStore;
     use holo_graph::graph::node::{InputSlot, Node};
     use holo_graph::graph::GraphOp;
-    use holo_graph::constant::ConstantStore;
 
     /// Helper to build a minimal SerializedGraph from nodes.
     fn sg(nodes: Vec<Node>) -> SerializedGraph {
@@ -144,12 +143,12 @@ mod tests {
         // 0 → 1 → 2
         let g = sg(vec![
             node(0, GraphOp::Input, vec![]),
-            node(1, GraphOp::Lut(holo_core::op::LutOp::Relu), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(2, GraphOp::Output, vec![
-                InputSlot::from_node(nid(1)),
-            ]),
+            node(
+                1,
+                GraphOp::Lut(holo_core::op::LutOp::Relu),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(2, GraphOp::Output, vec![InputSlot::from_node(nid(1))]),
         ]);
         let sched = build_schedule(&g).unwrap();
         assert_eq!(sched.levels.len(), 3);
@@ -161,16 +160,21 @@ mod tests {
         // 0 → [1, 2] → 3
         let g = sg(vec![
             node(0, GraphOp::Input, vec![]),
-            node(1, GraphOp::Lut(holo_core::op::LutOp::Relu), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(2, GraphOp::Lut(holo_core::op::LutOp::Sigmoid), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(3, GraphOp::Prim(holo_core::op::PrimOp::Add), vec![
-                InputSlot::from_node(nid(1)),
-                InputSlot::from_node(nid(2)),
-            ]),
+            node(
+                1,
+                GraphOp::Lut(holo_core::op::LutOp::Relu),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(
+                2,
+                GraphOp::Lut(holo_core::op::LutOp::Sigmoid),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(
+                3,
+                GraphOp::Prim(holo_core::op::PrimOp::Add),
+                vec![InputSlot::from_node(nid(1)), InputSlot::from_node(nid(2))],
+            ),
         ]);
         let sched = build_schedule(&g).unwrap();
         assert_eq!(sched.levels.len(), 3);
@@ -181,11 +185,11 @@ mod tests {
     #[test]
     fn graph_inputs_ignored_in_deps() {
         // Node with GraphInput source — no node dependency
-        let g = sg(vec![
-            node(0, GraphOp::Lut(holo_core::op::LutOp::Relu), vec![
-                InputSlot::from_graph_input(0),
-            ]),
-        ]);
+        let g = sg(vec![node(
+            0,
+            GraphOp::Lut(holo_core::op::LutOp::Relu),
+            vec![InputSlot::from_graph_input(0)],
+        )]);
         let sched = build_schedule(&g).unwrap();
         assert_eq!(sched.levels.len(), 1);
     }
@@ -195,20 +199,30 @@ mod tests {
         // 0 → [1, 2, 3] → 4  =>  3 levels, 5 nodes, ratio = 5/3
         let g = sg(vec![
             node(0, GraphOp::Input, vec![]),
-            node(1, GraphOp::Lut(holo_core::op::LutOp::Relu), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(2, GraphOp::Lut(holo_core::op::LutOp::Sigmoid), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(3, GraphOp::Lut(holo_core::op::LutOp::Tanh), vec![
-                InputSlot::from_node(nid(0)),
-            ]),
-            node(4, GraphOp::Output, vec![
-                InputSlot::from_node(nid(1)),
-                InputSlot::from_node(nid(2)),
-                InputSlot::from_node(nid(3)),
-            ]),
+            node(
+                1,
+                GraphOp::Lut(holo_core::op::LutOp::Relu),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(
+                2,
+                GraphOp::Lut(holo_core::op::LutOp::Sigmoid),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(
+                3,
+                GraphOp::Lut(holo_core::op::LutOp::Tanh),
+                vec![InputSlot::from_node(nid(0))],
+            ),
+            node(
+                4,
+                GraphOp::Output,
+                vec![
+                    InputSlot::from_node(nid(1)),
+                    InputSlot::from_node(nid(2)),
+                    InputSlot::from_node(nid(3)),
+                ],
+            ),
         ]);
         let sched = build_schedule(&g).unwrap();
         assert_eq!(sched.num_levels(), 3);

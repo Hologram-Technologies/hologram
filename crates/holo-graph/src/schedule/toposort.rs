@@ -12,8 +12,7 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let id_set: HashMap<NodeId, usize> =
-        ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let id_set: HashMap<NodeId, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
     let mut in_degree = vec![0u32; ids.len()];
     for node in graph.nodes() {
         if let Some(&pos) = id_set.get(&node.id) {

@@ -14,9 +14,7 @@ use holo_graph::Graph;
 ///
 /// Extracts only live nodes (no free-list gaps) and includes graph I/O
 /// metadata and constants. This is the on-disk graph representation.
-#[derive(
-    Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct SerializedGraph {
     /// Dense array of live nodes.
@@ -75,11 +73,7 @@ fn insert_nodes(graph: &mut Graph, nodes: &[Node]) -> HashMap<NodeId, NodeId> {
 }
 
 /// Wire edges using remapped IDs.
-fn wire_edges(
-    graph: &mut Graph,
-    nodes: &[Node],
-    id_map: &HashMap<NodeId, NodeId>,
-) {
+fn wire_edges(graph: &mut Graph, nodes: &[Node], id_map: &HashMap<NodeId, NodeId>) {
     for node in nodes {
         let new_target = id_map[&node.id];
         for input in &node.inputs {
@@ -93,11 +87,7 @@ fn wire_edges(
 }
 
 /// Restore graph-level I/O metadata.
-fn restore_io(
-    graph: &mut Graph,
-    sg: &SerializedGraph,
-    id_map: &HashMap<NodeId, NodeId>,
-) {
+fn restore_io(graph: &mut Graph, sg: &SerializedGraph, id_map: &HashMap<NodeId, NodeId>) {
     for name in &sg.input_names {
         graph.add_input(name.clone());
     }
@@ -111,10 +101,10 @@ fn restore_io(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use holo_core::op::LutOp;
     use holo_graph::builder::GraphBuilder;
     use holo_graph::constant::ConstantData;
     use holo_graph::graph::GraphOp;
-    use holo_core::op::LutOp;
 
     #[test]
     fn from_empty_graph() {
@@ -167,8 +157,7 @@ mod tests {
             .build();
         let sg = SerializedGraph::from_graph(&g);
         let bytes = rkyv::to_bytes::<_, 1024>(&sg).unwrap();
-        let archived =
-            rkyv::check_archived_root::<SerializedGraph>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<SerializedGraph>(&bytes).unwrap();
         assert_eq!(archived.nodes.len(), 2);
     }
 }

@@ -1,15 +1,7 @@
 //! Layer location references for embedded, external, and remote layers.
 
 /// Where a layer's data is located.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub enum LayerLocation {
     /// Embedded within this archive at (offset, size).
@@ -73,10 +65,8 @@ mod tests {
             size: 2048,
         };
         let bytes = rkyv::to_bytes::<_, 128>(&loc).unwrap();
-        let archived =
-            rkyv::check_archived_root::<LayerLocation>(&bytes).unwrap();
-        let deser: LayerLocation =
-            archived.deserialize(&mut rkyv::Infallible).unwrap();
+        let archived = rkyv::check_archived_root::<LayerLocation>(&bytes).unwrap();
+        let deser: LayerLocation = archived.deserialize(&mut rkyv::Infallible).unwrap();
         assert_eq!(deser, loc);
     }
 }

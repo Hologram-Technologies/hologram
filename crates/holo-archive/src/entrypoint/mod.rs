@@ -6,29 +6,13 @@ use crate::weight::WeightDType;
 
 /// Unique identifier for a layer.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]
 #[archive(check_bytes)]
 pub struct LayerId(pub u32);
 
 /// Describes a single tensor I/O port on a layer.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct TensorPort {
     /// Port name (e.g. "hidden_state").
@@ -40,16 +24,7 @@ pub struct TensorPort {
 }
 
 /// What a layer executes.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub enum LayerEntrypoint {
     /// Execute the archive's embedded graph.
@@ -61,15 +36,7 @@ pub enum LayerEntrypoint {
 }
 
 /// Descriptor for a single executable layer in the archive.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
 pub struct LayerDescriptor {
     /// Layer identifier.
@@ -137,8 +104,7 @@ mod tests {
             plan_size: 512,
         };
         let bytes = rkyv::to_bytes::<_, 512>(&ld).unwrap();
-        let archived =
-            rkyv::check_archived_root::<LayerDescriptor>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<LayerDescriptor>(&bytes).unwrap();
         assert_eq!(archived.name.as_str(), "encoder");
         assert_eq!(archived.plan_offset, 4096);
     }

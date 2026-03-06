@@ -1,2 +1,1 @@
-Can you explain to me if the compiler optimizes the compiled graphs?
-Should the compiler be it's own crate?
+When you're done with the Sprint, Make a git commit, merge to main, checkout a work branch for the next sprint. I want you to plan out the next sprint in @specs/SPRINT.md and the @specs/plans/001-greenfield-refactor.md  (and keep this up-to-date). Next start in on the next sprint

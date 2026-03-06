@@ -7,4 +7,5 @@ pub use holo_archive;
 pub use holo_compiler;
 pub use holo_core;
 pub use holo_exec;
+pub use holo_ffi;
 pub use holo_graph;

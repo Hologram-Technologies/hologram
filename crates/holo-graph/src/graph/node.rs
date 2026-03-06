@@ -65,7 +65,9 @@ impl core::fmt::Debug for NodeId {
 }
 
 /// Where a node input originates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub enum InputSource {
     /// From another node's output.
@@ -84,7 +86,9 @@ impl Default for InputSource {
 }
 
 /// An input connection to a node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct InputSlot {
     /// Where this input comes from.

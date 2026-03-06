@@ -12,7 +12,13 @@ fn build_graph(size: usize) -> holo_graph::Graph {
         .input("x")
         .node_from_graph_input(GraphOp::Input, 0); // 0
 
-    let ops = [LutOp::Relu, LutOp::Sigmoid, LutOp::Tanh, LutOp::Sin, LutOp::Cos];
+    let ops = [
+        LutOp::Relu,
+        LutOp::Sigmoid,
+        LutOp::Tanh,
+        LutOp::Sin,
+        LutOp::Cos,
+    ];
     for i in 0..size {
         let op = ops[i % ops.len()];
         builder = builder.node_with_inputs(GraphOp::Lut(op), &[i]);

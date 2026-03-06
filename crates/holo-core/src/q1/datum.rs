@@ -159,9 +159,15 @@ impl WordAddress {
         Self {
             value,
             glyph_buf: [
-                0xE2, 0xA0, 0x80 + lo6,
-                0xE2, 0xA0, 0x80 + mid6,
-                0xE2, 0xA0, 0x80 + hi4,
+                0xE2,
+                0xA0,
+                0x80 + lo6,
+                0xE2,
+                0xA0,
+                0x80 + mid6,
+                0xE2,
+                0xA0,
+                0x80 + hi4,
             ],
         }
     }
@@ -337,7 +343,10 @@ mod tests {
         let d = WordDatum::new(1000);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 1000);
         assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 16);
-        assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 1000u16.count_ones() as u64);
+        assert_eq!(
+            Datum::<HoloPrimitives>::stratum(&d),
+            1000u16.count_ones() as u64
+        );
     }
 
     #[test]

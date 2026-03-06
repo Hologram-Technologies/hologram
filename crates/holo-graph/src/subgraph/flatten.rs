@@ -34,8 +34,7 @@ pub fn flatten_subgraph(
         .graph
         .clone();
 
-    let binding_map: HashMap<u32, NodeId> =
-        input_bindings.iter().copied().collect();
+    let binding_map: HashMap<u32, NodeId> = input_bindings.iter().copied().collect();
     let mut id_map = HashMap::new();
 
     // Phase 1: add all template nodes to parent (no inputs yet).

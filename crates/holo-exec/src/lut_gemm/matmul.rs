@@ -4,16 +4,10 @@
 //! grouped by quantized weight index, then dots with centroids.
 
 use super::psumbook::{Psumbook4, Psumbook8};
-use super::quantize::{
-    get_q4_index, QuantizedWeights, QuantizedWeights4, QuantizedWeights8,
-};
+use super::quantize::{get_q4_index, QuantizedWeights, QuantizedWeights4, QuantizedWeights8};
 
 /// Compute one output element for Q4: build psumbook, dot with centroids.
-fn compute_element_q4(
-    a_row: &[f32],
-    weights: &QuantizedWeights4,
-    col: u32,
-) -> f32 {
+fn compute_element_q4(a_row: &[f32], weights: &QuantizedWeights4, col: u32) -> f32 {
     let mut book = Psumbook4::new();
     for (l, &a_val) in a_row.iter().enumerate() {
         let idx = get_q4_index(&weights.indices, l as u32, col, weights.cols);
@@ -23,11 +17,7 @@ fn compute_element_q4(
 }
 
 /// Compute one output element for Q8: build psumbook, dot with centroids.
-fn compute_element_q8(
-    a_row: &[f32],
-    weights: &QuantizedWeights8,
-    col: u32,
-) -> f32 {
+fn compute_element_q8(a_row: &[f32], weights: &QuantizedWeights8, col: u32) -> f32 {
     let mut book = Psumbook8::new();
     let k = weights.rows as usize;
     let n = weights.cols as usize;
@@ -43,11 +33,7 @@ fn compute_element_q8(
 /// `activations`: row-major M×K matrix (f32).
 /// `weights`: K×N quantized weight matrix.
 /// `output`: row-major M×N output buffer (f32).
-pub fn lut_gemm_4bit(
-    activations: &[f32],
-    weights: &QuantizedWeights4,
-    output: &mut [f32],
-) {
+pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &mut [f32]) {
     let k = weights.rows as usize;
     let n = weights.cols as usize;
     let m = activations.len() / k;
@@ -64,11 +50,7 @@ pub fn lut_gemm_4bit(
 /// `activations`: row-major M×K matrix (f32).
 /// `weights`: K×N quantized weight matrix.
 /// `output`: row-major M×N output buffer (f32).
-pub fn lut_gemm_8bit(
-    activations: &[f32],
-    weights: &QuantizedWeights8,
-    output: &mut [f32],
-) {
+pub fn lut_gemm_8bit(activations: &[f32], weights: &QuantizedWeights8, output: &mut [f32]) {
     let k = weights.rows as usize;
     let n = weights.cols as usize;
     let m = activations.len() / k;
@@ -81,11 +63,7 @@ pub fn lut_gemm_8bit(
 }
 
 /// Unified LUT-GEMM dispatching to Q4 or Q8.
-pub fn lut_gemm(
-    activations: &[f32],
-    weights: &QuantizedWeights,
-    output: &mut [f32],
-) {
+pub fn lut_gemm(activations: &[f32], weights: &QuantizedWeights, output: &mut [f32]) {
     match weights {
         QuantizedWeights::Q4(w) => lut_gemm_4bit(activations, w, output),
         QuantizedWeights::Q8(w) => lut_gemm_8bit(activations, w, output),
@@ -95,14 +73,7 @@ pub fn lut_gemm(
 /// Naive f32 matrix multiply (reference implementation for tests).
 ///
 /// C[i,j] = Σ_l A[i,l] × B[l,j], all row-major.
-pub fn naive_matmul(
-    a: &[f32],
-    b: &[f32],
-    c: &mut [f32],
-    m: usize,
-    k: usize,
-    n: usize,
-) {
+pub fn naive_matmul(a: &[f32], b: &[f32], c: &mut [f32], m: usize, k: usize, n: usize) {
     for i in 0..m {
         for j in 0..n {
             let mut sum = 0.0f32;
@@ -181,13 +152,9 @@ mod tests {
         let k = 4;
         let n = 4;
         let m = 4;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32) * 0.1)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.1).collect();
         let qw = quantize_4bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32) * 0.2)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.2).collect();
         let mut lut_out = vec![0.0f32; m * n];
         let mut naive_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut lut_out);
@@ -201,13 +168,9 @@ mod tests {
         let k = 4;
         let n = 4;
         let m = 4;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32) * 0.1)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.1).collect();
         let qw = quantize_8bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32) * 0.2)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.2).collect();
         let mut lut_out = vec![0.0f32; m * n];
         let mut naive_out = vec![0.0f32; m * n];
         lut_gemm_8bit(&activations, &qw, &mut lut_out);
@@ -221,13 +184,9 @@ mod tests {
         let m = 4;
         let k = 8;
         let n = 16;
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| ((i as f32) - 64.0) * 0.01)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| ((i as f32) - 64.0) * 0.01).collect();
         let qw = quantize_8bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32) * 0.1)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.1).collect();
         let mut lut_out = vec![0.0f32; m * n];
         let mut naive_out = vec![0.0f32; m * n];
         lut_gemm_8bit(&activations, &qw, &mut lut_out);
@@ -256,13 +215,9 @@ mod tests {
         let k = 32;
         let n = 64;
         // Positive weights to avoid near-zero expected values
-        let weights: Vec<f32> = (0..k * n)
-            .map(|i| (i as f32 + 1.0) * 0.01)
-            .collect();
+        let weights: Vec<f32> = (0..k * n).map(|i| (i as f32 + 1.0) * 0.01).collect();
         let qw = quantize_4bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i as f32 + 1.0) * 0.05)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i as f32 + 1.0) * 0.05).collect();
         let mut lut_out = vec![0.0f32; m * n];
         let mut naive_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut lut_out);
@@ -289,9 +244,7 @@ mod tests {
         let m = 3;
         let weights = vec![1.0f32; k * n];
         let qw = quantize_8bit(&weights, k as u32, n as u32);
-        let activations: Vec<f32> = (0..m * k)
-            .map(|i| (i + 1) as f32)
-            .collect();
+        let activations: Vec<f32> = (0..m * k).map(|i| (i + 1) as f32).collect();
         let mut output = vec![0.0f32; m * n];
         lut_gemm_8bit(&activations, &qw, &mut output);
         // Row 0: sum(1+2+3+4)=10, Row 1: sum(5+6+7+8)=26, Row 2: sum(9+10+11+12)=42

@@ -113,8 +113,7 @@ impl KvExecutor {
         inputs: &GraphInputs,
     ) -> ExecResult<GraphOutputs> {
         // Build node-id → node lookup
-        let node_map: HashMap<NodeId, &Node> =
-            sg.nodes.iter().map(|n| (n.id, n)).collect();
+        let node_map: HashMap<NodeId, &Node> = sg.nodes.iter().map(|n| (n.id, n)).collect();
 
         let mut arena = BufferArena::with_capacity(sg.nodes.len());
 
@@ -128,8 +127,7 @@ impl KvExecutor {
 
         // Execute level by level
         for level in &schedule.levels {
-            let mut results: Vec<(NodeId, Vec<u8>)> =
-                Vec::with_capacity(level.node_ids.len());
+            let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
 
             for &node_id in &level.node_ids {
                 let node = node_map
@@ -142,16 +140,11 @@ impl KvExecutor {
                 }
 
                 // Gather inputs from arena / graph inputs
-                let input_bufs =
-                    gather_inputs(node, &arena, inputs)?;
-                let input_refs: Vec<&[u8]> =
-                    input_bufs.iter().map(|v| v.as_slice()).collect();
+                let input_bufs = gather_inputs(node, &arena, inputs)?;
+                let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
 
-                let output = KvStore::dispatch_with_constants(
-                    &node.op,
-                    &input_refs,
-                    &sg.constants,
-                )?;
+                let output =
+                    KvStore::dispatch_with_constants(&node.op, &input_refs, &sg.constants)?;
                 results.push((node_id, output));
             }
 
@@ -260,12 +253,8 @@ mod tests {
     fn passthrough() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(1, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -284,15 +273,13 @@ mod tests {
     fn relu_pipeline() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Lut(LutOp::Relu), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(1)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(2, GraphOp::Output, vec![InputSlot::from_node(nid(1))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -315,22 +302,23 @@ mod tests {
     fn diamond_graph() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Lut(LutOp::Relu), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Lut(LutOp::Sigmoid), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(3, GraphOp::Prim(PrimOp::Add), vec![
-                    InputSlot::from_node(nid(1)),
-                    InputSlot::from_node(nid(2)),
-                ]),
-                node(4, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(3)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(
+                    2,
+                    GraphOp::Lut(LutOp::Sigmoid),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(
+                    3,
+                    GraphOp::Prim(PrimOp::Add),
+                    vec![InputSlot::from_node(nid(1)), InputSlot::from_node(nid(2))],
+                ),
+                node(4, GraphOp::Output, vec![InputSlot::from_node(nid(3))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -341,7 +329,9 @@ mod tests {
         inputs.set(0, vec![128]);
         let result = KvExecutor::execute(&sg, &sched, &inputs).unwrap();
         let y = result.by_name("y").unwrap();
-        let expected = LutOp::Relu.apply(128).wrapping_add(LutOp::Sigmoid.apply(128));
+        let expected = LutOp::Relu
+            .apply(128)
+            .wrapping_add(LutOp::Sigmoid.apply(128));
         assert_eq!(y[0], expected);
     }
 
@@ -350,29 +340,21 @@ mod tests {
     fn two_inputs() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(1),
-                ]),
-                node(2, GraphOp::Prim(PrimOp::Add), vec![
-                    InputSlot::from_node(nid(0)),
-                    InputSlot::from_node(nid(1)),
-                ]),
-                node(3, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(2)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(1, GraphOp::Input, vec![InputSlot::from_graph_input(1)]),
+                node(
+                    2,
+                    GraphOp::Prim(PrimOp::Add),
+                    vec![InputSlot::from_node(nid(0)), InputSlot::from_node(nid(1))],
+                ),
+                node(3, GraphOp::Output, vec![InputSlot::from_node(nid(2))]),
             ],
             vec!["a", "b"],
             vec!["sum"],
             vec![nid(3)],
         );
         let sched = build_schedule(&sg).unwrap();
-        let inputs = GraphInputs::from_pairs(vec![
-            (0, vec![10, 20]),
-            (1, vec![5, 100]),
-        ]);
+        let inputs = GraphInputs::from_pairs(vec![(0, vec![10, 20]), (1, vec![5, 100])]);
         let result = KvExecutor::execute(&sg, &sched, &inputs).unwrap();
         assert_eq!(result.by_name("sum").unwrap(), &[15, 120]);
     }
@@ -382,18 +364,14 @@ mod tests {
     fn multiple_outputs() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Lut(LutOp::Relu), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(3, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(1)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(2, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
+                node(3, GraphOp::Output, vec![InputSlot::from_node(nid(1))]),
             ],
             vec!["x"],
             vec!["raw", "activated"],
@@ -420,9 +398,7 @@ mod tests {
         let sg = SerializedGraph {
             nodes: vec![
                 node(0, GraphOp::Constant(cid), vec![]),
-                node(1, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
+                node(1, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
             ],
             input_names: Vec::new(),
             output_names: vec!["out".into()],
@@ -430,8 +406,7 @@ mod tests {
             constants,
         };
         let sched = build_schedule(&sg).unwrap();
-        let result =
-            KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
+        let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
         assert_eq!(result.by_name("out").unwrap(), &[7, 8, 9]);
     }
 
@@ -440,20 +415,15 @@ mod tests {
     fn missing_graph_input() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(1, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
             ],
             vec!["x"],
             vec!["y"],
             vec![nid(1)],
         );
         let sched = build_schedule(&sg).unwrap();
-        let result =
-            KvExecutor::execute(&sg, &sched, &GraphInputs::new());
+        let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new());
         assert!(result.is_err());
     }
 
@@ -462,18 +432,18 @@ mod tests {
     fn chain_of_unary() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Lut(LutOp::Relu), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Lut(LutOp::Sigmoid), vec![
-                    InputSlot::from_node(nid(1)),
-                ]),
-                node(3, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(2)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Lut(LutOp::Relu),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(
+                    2,
+                    GraphOp::Lut(LutOp::Sigmoid),
+                    vec![InputSlot::from_node(nid(1))],
+                ),
+                node(3, GraphOp::Output, vec![InputSlot::from_node(nid(2))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -493,8 +463,7 @@ mod tests {
     fn empty_graph() {
         let sg = sg_with_io(vec![], vec![], vec![], vec![]);
         let sched = build_schedule(&sg).unwrap();
-        let result =
-            KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
+        let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
         assert!(result.is_empty());
     }
 
@@ -503,12 +472,8 @@ mod tests {
     fn output_by_index() {
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(1, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -530,15 +495,13 @@ mod tests {
         let view = ElementWiseView::new(|x| x.wrapping_mul(3));
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::FusedView(view), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(1)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::FusedView(view),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(2, GraphOp::Output, vec![InputSlot::from_node(nid(1))]),
             ],
             vec!["x"],
             vec!["y"],
@@ -558,19 +521,18 @@ mod tests {
         // Identity is achieved by Output-like passthrough via Input node
         let sg = sg_with_io(
             vec![
-                node(0, GraphOp::Input, vec![
-                    InputSlot::from_graph_input(0),
-                ]),
-                node(1, GraphOp::Prim(PrimOp::Neg), vec![
-                    InputSlot::from_node(nid(0)),
-                ]),
-                node(2, GraphOp::Prim(PrimOp::Xor), vec![
-                    InputSlot::from_node(nid(0)),
-                    InputSlot::from_node(nid(1)),
-                ]),
-                node(3, GraphOp::Output, vec![
-                    InputSlot::from_node(nid(2)),
-                ]),
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Prim(PrimOp::Neg),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(
+                    2,
+                    GraphOp::Prim(PrimOp::Xor),
+                    vec![InputSlot::from_node(nid(0)), InputSlot::from_node(nid(1))],
+                ),
+                node(3, GraphOp::Output, vec![InputSlot::from_node(nid(2))]),
             ],
             vec!["x"],
             vec!["y"],

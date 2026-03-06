@@ -33,10 +33,7 @@ impl LivenessInterval {
 }
 
 /// Compute liveness intervals for all nodes in the schedule.
-pub fn compute_liveness(
-    schedule: &ExecutionSchedule,
-    graph: &Graph,
-) -> Vec<LivenessInterval> {
+pub fn compute_liveness(schedule: &ExecutionSchedule, graph: &Graph) -> Vec<LivenessInterval> {
     if schedule.levels.is_empty() {
         return Vec::new();
     }
@@ -99,7 +96,11 @@ fn build_intervals(
         .iter()
         .map(|(&node_id, &born)| {
             let dies = last_use.get(&node_id).copied().unwrap_or(born);
-            LivenessInterval { node_id, born, dies }
+            LivenessInterval {
+                node_id,
+                born,
+                dies,
+            }
         })
         .collect()
 }

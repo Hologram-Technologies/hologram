@@ -403,6 +403,7 @@ dependencies = [
  "holo-compiler",
  "holo-core",
  "holo-exec",
+ "holo-ffi",
  "holo-graph",
  "rkyv",
 ]
@@ -452,6 +453,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "holo-ffi"
+version = "0.1.0"
+dependencies = [
+ "holo-archive",
+ "holo-compiler",
+ "holo-core",
+ "holo-exec",
+ "holo-graph",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "holo-graph"
 version = "0.1.0"
 dependencies = [
@@ -470,6 +483,7 @@ dependencies = [
  "holo-compiler",
  "holo-core",
  "holo-exec",
+ "holo-ffi",
  "holo-graph",
  "rkyv",
  "tokio",

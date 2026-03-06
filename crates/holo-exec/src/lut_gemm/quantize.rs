@@ -116,15 +116,14 @@ fn find_nearest(value: f32, centroids: &[f32]) -> u8 {
 
 /// Assign each weight to its nearest centroid.
 fn assign_all(weights: &[f32], centroids: &[f32]) -> Vec<u8> {
-    weights.iter().map(|&w| find_nearest(w, centroids)).collect()
+    weights
+        .iter()
+        .map(|&w| find_nearest(w, centroids))
+        .collect()
 }
 
 /// Recompute centroids as mean of assigned weights.
-fn update_centroids(
-    weights: &[f32],
-    assignments: &[u8],
-    centroids: &mut [f32],
-) {
+fn update_centroids(weights: &[f32], assignments: &[u8], centroids: &mut [f32]) {
     let k = centroids.len();
     let mut sums = vec![0.0f32; k];
     let mut counts = vec![0u32; k];
@@ -154,8 +153,12 @@ fn min_max(data: &[f32]) -> (f32, f32) {
     let mut lo = f32::MAX;
     let mut hi = f32::MIN;
     for &v in data {
-        if v < lo { lo = v; }
-        if v > hi { hi = v; }
+        if v < lo {
+            lo = v;
+        }
+        if v > hi {
+            hi = v;
+        }
     }
     (lo, hi)
 }
@@ -174,7 +177,12 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
     let mut centroids = [0.0f32; Q4_LEVELS];
     centroids.copy_from_slice(&centroids_vec);
     let indices = pack_assignments_q4(&assignments);
-    QuantizedWeights4 { indices, centroids, rows, cols }
+    QuantizedWeights4 {
+        indices,
+        centroids,
+        rows,
+        cols,
+    }
 }
 
 /// Pack u8 assignments into nibble-packed bytes.
@@ -200,16 +208,17 @@ pub fn quantize_8bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights8
     }
     let mut centroids = [0.0f32; Q8_LEVELS];
     centroids.copy_from_slice(&centroids_vec);
-    QuantizedWeights8 { indices: assignments, centroids, rows, cols }
+    QuantizedWeights8 {
+        indices: assignments,
+        centroids,
+        rows,
+        cols,
+    }
 }
 
 /// Quantize with auto-selection: tries Q4, falls back to Q8.
 #[must_use]
-pub fn quantize_auto(
-    weights: &[f32],
-    rows: u32,
-    cols: u32,
-) -> QuantizedWeights {
+pub fn quantize_auto(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights {
     let q4 = quantize_4bit(weights, rows, cols);
     let err = dequantize_error_q4(weights, &q4);
     if err < 0.05 {
@@ -230,7 +239,11 @@ pub fn dequantize_error_q4(original: &[f32], qw: &QuantizedWeights4) -> f32 {
         sq_err += (w - recon) * (w - recon);
         sq_orig += w * w;
     }
-    if sq_orig > 0.0 { (sq_err / sq_orig).sqrt() } else { 0.0 }
+    if sq_orig > 0.0 {
+        (sq_err / sq_orig).sqrt()
+    } else {
+        0.0
+    }
 }
 
 /// Relative RMSE of Q8 quantization.
@@ -243,7 +256,11 @@ pub fn dequantize_error_q8(original: &[f32], qw: &QuantizedWeights8) -> f32 {
         sq_err += (w - recon) * (w - recon);
         sq_orig += w * w;
     }
-    if sq_orig > 0.0 { (sq_err / sq_orig).sqrt() } else { 0.0 }
+    if sq_orig > 0.0 {
+        (sq_err / sq_orig).sqrt()
+    } else {
+        0.0
+    }
 }
 
 /// Get Q4 index by flat element position.
@@ -305,9 +322,7 @@ mod tests {
 
     #[test]
     fn quantize_4bit_error_bounded() {
-        let weights: Vec<f32> = (0..256)
-            .map(|i| (i as f32) / 256.0)
-            .collect();
+        let weights: Vec<f32> = (0..256).map(|i| (i as f32) / 256.0).collect();
         let qw = quantize_4bit(&weights, 16, 16);
         let err = dequantize_error_q4(&weights, &qw);
         // 16 centroids on uniform data: error should be small
@@ -316,9 +331,7 @@ mod tests {
 
     #[test]
     fn quantize_8bit_error_bounded() {
-        let weights: Vec<f32> = (0..256)
-            .map(|i| (i as f32) / 256.0)
-            .collect();
+        let weights: Vec<f32> = (0..256).map(|i| (i as f32) / 256.0).collect();
         let qw = quantize_8bit(&weights, 16, 16);
         let err = dequantize_error_q8(&weights, &qw);
         // 256 centroids on 256 values: should be near-zero
@@ -327,9 +340,7 @@ mod tests {
 
     #[test]
     fn quantize_auto_selects_q4_for_uniform() {
-        let weights: Vec<f32> = (0..64)
-            .map(|i| (i as f32) / 64.0)
-            .collect();
+        let weights: Vec<f32> = (0..64).map(|i| (i as f32) / 64.0).collect();
         let qw = quantize_auto(&weights, 8, 8);
         // Uniform data with 64 values and 16 centroids: Q4 error < 5%
         assert!(matches!(qw, QuantizedWeights::Q4(_)));
@@ -356,8 +367,7 @@ mod tests {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = quantize_4bit(&weights, 4, 4);
         let bytes = rkyv::to_bytes::<_, 1024>(&qw).unwrap();
-        let archived =
-            rkyv::check_archived_root::<QuantizedWeights4>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<QuantizedWeights4>(&bytes).unwrap();
         assert_eq!(archived.rows, 4);
         assert_eq!(archived.cols, 4);
     }
@@ -367,8 +377,7 @@ mod tests {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = quantize_8bit(&weights, 4, 4);
         let bytes = rkyv::to_bytes::<_, 4096>(&qw).unwrap();
-        let archived =
-            rkyv::check_archived_root::<QuantizedWeights8>(&bytes).unwrap();
+        let archived = rkyv::check_archived_root::<QuantizedWeights8>(&bytes).unwrap();
         assert_eq!(archived.rows, 4);
         assert_eq!(archived.cols, 4);
     }
@@ -378,8 +387,7 @@ mod tests {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = QuantizedWeights::Q4(quantize_4bit(&weights, 4, 4));
         let bytes = rkyv::to_bytes::<_, 1024>(&qw).unwrap();
-        let _archived =
-            rkyv::check_archived_root::<QuantizedWeights>(&bytes).unwrap();
+        let _archived = rkyv::check_archived_root::<QuantizedWeights>(&bytes).unwrap();
     }
 
     #[test]

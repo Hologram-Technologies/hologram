@@ -66,7 +66,9 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
                 }
             }
         }
-        levels.push(ParallelLevel { node_ids: level_ids });
+        levels.push(ParallelLevel {
+            node_ids: level_ids,
+        });
         cursor = level_end;
     }
 

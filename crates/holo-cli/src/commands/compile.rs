@@ -45,28 +45,17 @@ fn load_graph(path: &PathBuf) -> Result<holo_graph::Graph, CliError> {
 fn deserialize_graph(
     data: &[u8],
 ) -> Result<holo_archive::format::graph::SerializedGraph, CliError> {
-    let archived = rkyv::check_archived_root::<
-        holo_archive::format::graph::SerializedGraph,
-    >(data)
-    .map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
-    })?;
+    let archived = rkyv::check_archived_root::<holo_archive::format::graph::SerializedGraph>(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
     use rkyv::Deserialize;
     archived
         .deserialize(&mut rkyv::Infallible)
-        .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{e:?}"),
-            )
-        })
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))
         .map_err(CliError::from)
 }
 
 /// Reconstruct a live Graph from a SerializedGraph.
-fn reconstruct_graph(
-    sg: &holo_archive::format::graph::SerializedGraph,
-) -> holo_graph::Graph {
+fn reconstruct_graph(sg: &holo_archive::format::graph::SerializedGraph) -> holo_graph::Graph {
     sg.to_graph()
 }
 
@@ -87,19 +76,13 @@ fn write_archive(path: &PathBuf, data: &[u8]) -> Result<(), CliError> {
 }
 
 /// Print compilation statistics.
-fn print_stats(
-    input: &PathBuf,
-    output: &PathBuf,
-    stats: &holo_compiler::CompilationStats,
-) {
+fn print_stats(input: &PathBuf, output: &PathBuf, stats: &holo_compiler::CompilationStats) {
     println!("Compiled {:?} -> {:?}", input, output);
     println!("  nodes: {}", stats.total_nodes);
     println!("  levels: {}", stats.schedule_levels);
     println!("  workspace slots: {}", stats.workspace_slots);
     println!(
         "  fusion: {} folded, {} fused, {} CSE",
-        stats.fusion.constants_folded,
-        stats.fusion.views_fused,
-        stats.fusion.cse_eliminated,
+        stats.fusion.constants_folded, stats.fusion.views_fused, stats.fusion.cse_eliminated,
     );
 }

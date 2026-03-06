@@ -23,6 +23,25 @@
 
 (Sprint 6 complete)
 
+## Sprint 7: C FFI + WASM Bindings
+
+(Sprint 7 complete)
+
+## Sprint 8: Constrained Device Validation
+
+**Goal**: Validate the hologram pipeline on constrained targets (WASM, ARM/ESP32, RPi). Add `no_alloc` static-buffer mode for ultra-constrained environments. Document feature availability per target.
+
+### Deliverables
+- [ ] Verify `holo-core` compiles `no_std` cleanly: `cargo build --target wasm32-unknown-unknown -p holo-core --no-default-features`
+- [ ] Verify `holo-core` compiles for bare-metal ARM: `cargo build --target thumbv7em-none-eabihf -p holo-core --no-default-features`
+- [ ] `no_alloc` feature in `holo-core`: `StaticBuf<const N: usize>` fixed-size stack buffer in `buffer/static_buf.rs`
+- [ ] Feature flags: `alloc` (default on), `no_alloc` mode with `StaticBuf`
+- [ ] Binary size analysis: measure `holo-core` `.text` section for `no_std` + `no_alloc` (target: < 100KB)
+- [ ] `Justfile` recipes: `embedded` (thumbv7em), `wasm-nostd` (wasm32 no_std)
+- [ ] `specs/feature-matrix.md`: document features per target (x86_64, wasm32, thumbv7em, esp32)
+- [ ] Tests: `StaticBuf` unit tests covering capacity, overflow, Q0 LUT apply (~15 tests)
+- [ ] Benchmark `no_alloc.rs`: `StaticBuf` vs `Vec` for LUT apply, Q0 encoding round-trip
+
 ---
 
 ## Completed (Running Log)
@@ -166,3 +185,19 @@
 - [x] Criterion benchmarks `compiler.rs`: compile/liveness/workspace at 10/50/100 nodes
 - [x] 7 E2E integration tests: compiler linear chain, diamond with fusion, constants, fusion disabled vs enabled, large graph, workspace reuse, LayerHeader presence
 - [x] 52 new tests (580 total workspace), zero clippy warnings
+
+### Phase 9: C FFI + WASM Bindings (Sprint 7)
+- [x] `holo-ffi` crate (`crates/holo-ffi/`): C ABI layer with opaque handles, `extern "C"` functions — `cdylib` + `rlib`
+- [x] Error handling: thread-local `LAST_ERROR` (`RefCell<Option<CString>>`), `holo_last_error() -> i32`, `holo_error_message() -> *const c_char`
+- [x] Handle management: `into_handle<T>()`, `borrow_handle()`, `borrow_handle_mut()`, `free_handle()` in `handle/mod.rs`
+- [x] Graph construction FFI: `holo_graph_builder_new/input/node/node_from_input/node_with_inputs/edge/output/build/free` + `holo_graph_node_count/free` in `graph/mod.rs`
+- [x] `FfiGraphBuilder` (non-consuming): wraps `Graph` directly with `index_to_id: Vec<NodeId>` for C-friendly index mapping
+- [x] `HoloOpKind` mapping: 0=Input, 1=Output, 2=Prim(op_param 0–9), 3=Lut(op_param 0–20)
+- [x] Compilation FFI: `holo_compile()`, `holo_compile_no_fuse()`, archive ptr/len, stats (nodes/levels/workspace_slots), `holo_compilation_free()` in `compiler/mod.rs`
+- [x] Execution FFI: `holo_inputs_new/set/free`, `holo_execute_bytes()`, `holo_outputs_len/get/name/by_name/free` in `exec/mod.rs`
+- [x] Encoding FFI: `holo_encoding_embed/lift()`, `holo_lut_apply()`, `holo_prim_apply_unary/binary()` in `encoding/mod.rs`
+- [x] `cbindgen.toml` + auto-generated `include/hologram.h` C header (type renames: FfiGraphBuilder→HoloGraphBuilder, etc.)
+- [x] WASM module: `WasmGraphBuilder`, `wasm_execute()`, `wasm_lut_apply()`, `wasm_encoding_embed/lift()` in `wasm/mod.rs` (feature-gated `wasm`)
+- [x] Criterion benchmark `ffi.rs`: graph build, lut_apply, encoding embed/lift, full pipeline (build→compile→execute)
+- [x] 6 FFI E2E tests: full pipeline, diamond with fusion, encoding round-trip, LUT ops, error handling, fusion toggle
+- [x] 56 new tests (636 total workspace), zero clippy warnings

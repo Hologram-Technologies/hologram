@@ -58,8 +58,14 @@ fn bench_executor_diamond(c: &mut Criterion) {
 fn bench_executor_wide_parallel(c: &mut Criterion) {
     // Wide: Input → 8x(LutOp) → sum all → Output
     let ops = [
-        LutOp::Relu, LutOp::Sigmoid, LutOp::Tanh, LutOp::Sin,
-        LutOp::Cos, LutOp::Abs, LutOp::Sqrt, LutOp::Gelu,
+        LutOp::Relu,
+        LutOp::Sigmoid,
+        LutOp::Tanh,
+        LutOp::Sin,
+        LutOp::Cos,
+        LutOp::Abs,
+        LutOp::Sqrt,
+        LutOp::Gelu,
     ];
     let mut builder = GraphBuilder::new()
         .input("x")
