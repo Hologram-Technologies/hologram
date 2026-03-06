@@ -68,6 +68,7 @@ hologram-greenfield/
     holo-graph/                     # Graph, subgraphs, fusion, scheduling
     holo-archive/                   # .holo format, rkyv, mmap, weights, entrypoints
     holo-exec/                      # KV executor, buffer, parallel levels
+    holo-compiler/                   # Compilation pipeline: Graph → .holo archive
     holo-cli/                       # Async CLI with subcommands (exposes run())
     holo-bench/                     # Criterion benchmarks
   examples/
@@ -369,49 +370,69 @@ parallel/
 
 ---
 
-## Phase 5: Calculator Example & Benchmarks (Sprint 3, Step 6)
+## Phase 5: Calculator Example & Benchmarks (Sprint 3, Step 6) — COMPLETED
+
+### Implementation Notes
+- `examples/calculator.rs`: 4 demos (pi-F-lambda encoding, LUT composition, graph I/O, full pipeline with error analysis)
+- `tests/e2e.rs`: 8 E2E integration tests covering full pipeline (build → fuse → serialize → load → execute → verify)
+- 4 new Criterion benchmark files: `kv_dispatch.rs` (6 benchmarks), `executor.rs` (5 benchmarks), `archive.rs` (5 benchmarks), `fusion.rs` (3 benchmarks)
+- Root crate re-exports already complete from Phase 4
 
 ### Files
-- `examples/calculator.rs` — 29+ functions, pi-F-lambda, LUT vs f64, composition
-- `crates/holo-bench/benches/` — calculator, lut_vs_f64, fusion, batch, kv_lookup, mmap, parallel, archive
+- `examples/calculator.rs` — scientific calculator with pi-F-lambda, LUT composition, graph I/O, full pipeline, error analysis
+- `tests/e2e.rs` — 8 E2E integration tests (linear fused, diamond parallel, constants, chained folding, multi-input, long chain, wide fan-out, file roundtrip)
+- `crates/holo-bench/benches/kv_dispatch.rs` — KvStore dispatch benchmarks (unary/binary, varying buffer sizes, all LutOp variants)
+- `crates/holo-bench/benches/executor.rs` — KvExecutor benchmarks (linear/diamond/wide-parallel graphs, large buffers, schedule build)
+- `crates/holo-bench/benches/archive.rs` — HoloWriter + load_from_bytes roundtrip benchmarks (varying sizes, diamond topology)
+- `crates/holo-bench/benches/fusion.rs` — fusion pass benchmarks (10, 100, 1000 node graphs)
 
 ---
 
 ## Future Sprints (Full Task Breakdown)
 
-### Sprint 4: Q1/Q2/Q3 Quantum Level Scaling
-- [ ] Design segmented LUT strategy for Q1 (16-bit): high-byte table + low-byte table + correction table
-- [ ] Implement `Q1Ring` trait for `ByteRing16` (Z/65536Z)
-- [ ] Implement Q1 `Datum` with 16-bit quantum level
-- [ ] Build Q1 arithmetic tables (segmented approach to avoid 4GB tables)
-- [ ] Build Q1 activation tables (segmented)
-- [ ] Extend `ElementWiseView` to `ElementWiseView<N>` generic over table size or use segmented variant
-- [ ] Add Q1 encoding types (16-bit angle, signed, unsigned)
-- [ ] Design Q2/Q3 strategy (likely hierarchical segmentation or sparse tables)
-- [ ] Benchmark Q1 vs Q0 lookup performance
-- [ ] Tests: ring axioms at Q1, encoding round-trips, critical identity
+### Sprint 4: Q1/Q2/Q3 Quantum Level Scaling — COMPLETED
 
-### Sprint 5: LUT-GEMM for AI Model Inference
-- [ ] Port Psumbook concept from [categorical-x/crates/backends/src/backends/cpu/lut_matmul.rs](../categorical-x/crates/backends/src/backends/cpu/lut_matmul.rs)
-- [ ] Implement 4-bit weight quantization with partial sum books
-- [ ] Implement 8-bit weight quantization
-- [ ] Column-parallel psumbook construction (rayon-parallelized)
-- [ ] Integrate LUT-GEMM into KvExecutor as MatMulLUT op
-- [ ] Support deferred/streaming weight loading from mmap'd .holo archives
-- [ ] Add `MatMul`, `BatchMatMul` op variants to graph
-- [ ] Benchmark: LUT-GEMM vs naive matmul vs BLAS for small/medium/large matrices
-- [ ] Tests: correctness against naive matmul for various sizes and quantization levels
+**Notes**: Full 65536-entry tables (128KB each) instead of segmented approach — fits L3 cache at ~2.7MB total. Parallel Q1 types in `q1/` submodule (not generic over quantum level). Q2/Q3/Q4+ documented as scaling strategy in `quantum/mod.rs`. 130 new tests (472 total workspace), zero clippy warnings.
 
-### Sprint 6: Simplified Compiler Pipeline
-- [ ] Design 3-stage pipeline: Parse → Fuse → Emit (replaces v1's 8-stage)
-- [ ] Stage 1 (Parse): expression/graph input → internal Graph with validation
-- [ ] Stage 2 (Fuse): single-pass fusion (already in holo-graph) + kernel cost integration
-- [ ] Stage 3 (Emit): fused Graph → .holo archive with execution schedule
-- [ ] Liveness analysis for buffer reuse (port concept from [crates/compiler/src/workspace/liveness.rs](../categorical-x/crates/compiler/src/workspace/liveness.rs))
-- [ ] Workspace planning: compute buffer offsets and total workspace size
-- [ ] Emit execution entrypoints into .holo header
-- [ ] Benchmark: compilation time for various graph sizes
-- [ ] Tests: compile → execute → verify for diverse graph topologies
+- [x] Q1 skeleton: `q1/mod.rs`, `q1/observables.rs` (7 functions), `q1/arith.rs` (4 wrapping ops)
+- [x] `WordDatum` + `WordAddress` (16-bit, 3 Braille glyphs) in `q1/datum.rs` — rkyv derives, Datum/Address trait impls
+- [x] `WordRing` (Z/65536Z) + `WordInvolution` (Neg/Bnot) in `q1/ring.rs` — Ring + Q1Ring trait impls
+- [x] 21 Q1 activation tables (128KB each, 2.7MB total) in `q1/activation/` — sigmoid through cube
+- [x] `ElementWiseView16` (heap-allocated 128KB table) in `q1/view.rs` — std-gated
+- [x] `Encoding16` trait + 4 impls (angle, signed, unsigned, raw) in `q1/encoding.rs`
+- [x] `PrimOp16` (10 ops), `LutOp16` (21 ops), `Op16` enum in `q1/op.rs`
+- [x] Quantum scaling module in `quantum/mod.rs` — Q0-Q4+ strategy, Q2/Q3 helpers
+- [x] Criterion benchmark `q1.rs` — Q1 vs Q0 vs f64 comparisons
+- [x] 130 new tests (472 total workspace), zero clippy warnings
+
+### Sprint 5: LUT-GEMM for AI Model Inference — COMPLETED
+- [x] Psumbook4 (64B) + Psumbook8 (1KB) cache-aligned accumulators in `holo-exec/src/lut_gemm/psumbook.rs`
+- [x] QuantizedWeights4/8 + k-means clustering, quantize_auto, dequantize_error in `holo-exec/src/lut_gemm/quantize.rs`
+- [x] Sequential LUT-GEMM kernels (lut_gemm_4bit/8bit) in `holo-exec/src/lut_gemm/matmul.rs`
+- [x] Column-parallel LUT-GEMM (rayon, PAR_COL_THRESHOLD=64) in `holo-exec/src/lut_gemm/parallel.rs`
+- [x] 4 new GraphOp variants (MatMulLut4/8, BatchMatMulLut4/8) + KvStore::dispatch_with_constants
+- [x] KvExecutor updated to pass &sg.constants through dispatch
+- [x] ExecError::ShapeMismatch + ExecError::InvalidQuantization
+- [x] GraphBuilder::matmul_lut_4bit/8bit builder helpers
+- [x] QuantizationScheme::KMeansClustered { bits } archive weight scheme
+- [x] Criterion benchmarks: lut_gemm.rs (Q4/Q8 at multiple sizes, naive comparison, quantization cost)
+- [x] 6 E2E tests (Q4/Q8 pipeline, accuracy vs naive, matmul+activation, archive roundtrip)
+- [x] 56 new tests (528 total workspace), zero clippy warnings
+
+### Sprint 6: Compiler Pipeline — COMPLETED
+- [x] New `holo-compiler` crate: compilation pipeline separate from execution (`holo-graph` + `holo-archive` deps, no `holo-exec`)
+- [x] `CompileError` enum + `CompileResult` type with `From<GraphError>` + `From<ArchiveError>` conversions
+- [x] `LivenessInterval` + `compute_liveness(schedule, graph)` — buffer lifetime tracking in schedule level order
+- [x] `WorkspaceLayout` + `plan_workspace(intervals)` — first-fit-decreasing bin packing for buffer slot reuse
+- [x] 3-stage pipeline: Parse (validate) → Fuse (constant folding, view fusion, CSE) → Emit (schedule, liveness, workspace, LayerHeader, .holo)
+- [x] `CompilerBuilder::new(graph).fuse(bool).build()` → `CompilationOutput { archive, stats, schedule }`
+- [x] `compile(graph)` convenience function
+- [x] `SerializedGraph::to_graph()` reconstruction with ID remapping
+- [x] CLI `hologram compile` wired to compiler pipeline with `--no-fuse` flag
+- [x] Root crate re-exports `holo_compiler` public API
+- [x] Criterion benchmarks `compiler.rs`: compile/liveness/workspace at 10/50/100 nodes
+- [x] 7 E2E tests: compiler linear chain, diamond, constants, fusion toggle, large graph, workspace reuse, LayerHeader
+- [x] 52 new tests (580 total workspace), zero clippy warnings
 
 ### Sprint 7: FFI Bindings (was Sprint 8)
 - [ ] Python bindings via UniFFI (auto-generated)
@@ -444,29 +465,8 @@ parallel/
 - [ ] Generate dispatch tables from descriptors
 - [ ] Proc-macro for op registration
 
-### Sprint 11: Network Distribution (holo-net — deferred, will port from categorical-x)
-- [ ] Port/adapt categorical-x's `crates/network/` and `crates/orchestrate/` crates
-- [ ] Adapt to use holo-graph/holo-exec types
-- [ ] Implement `Registry` variant of `LayerLocation`: fetch subgraphs by URL + version
-- [ ] Distributed scheduler: assign subgraph levels to worker nodes
-- [ ] Content-addressed subgraph storage
-- [ ] Worker pool, P2P discovery, remote execution, fault tolerance
-
-### Sprint 12+: hologram-ai (Separate Greenfield — ONNX/GGUF/GGML Support)
-A separate project (`hologram-ai`) built on top of hologram-greenfield's core:
-- [ ] Design extensible operation registry: consumers can register custom ops via trait impls
-- [ ] ONNX operation support: parse ONNX protobuf, map ONNX ops → hologram Graph ops
-- [ ] ONNX model import: load `.onnx` files → OperationGraph → fuse → .holo archive
-- [ ] GGUF model support: parse GGUF format, extract quantized weights + graph topology
-- [ ] GGML model support: parse GGML format, map operations to hologram primitives
-- [ ] Consumer-extensible op system: `trait CustomOp` that users implement to add new operations
-  - Custom ops provide their own LUT tables or compute functions
-  - Registration via `OpRegistry::register::<MyOp>()`
-  - Custom ops participate in fusion when they provide `ElementWiseView`
-- [ ] Quantized weight import: ONNX Q8/Q4 → hologram LUT-GEMM quantization
-- [ ] Shape inference for ONNX dynamic shapes → hologram symbolic dimensions
-- [ ] End-to-end test: load ONNX model → compile → execute via KV lookups → verify accuracy
-- [ ] Benchmark: hologram execution vs ONNX Runtime for small models
+### ~~Sprint 11 & 12~~ — Moved to separate consumer libraries
+Network distribution (holo-net) and AI model support (hologram-ai / ONNX/GGUF/GGML) will be implemented as separate libraries that depend on hologram-greenfield as a consumer.
 
 ---
 
@@ -496,14 +496,20 @@ uor-foundation (git v3.5.0, traits only, no_std)
    holo-graph (graph, subgraphs, fusion, scheduling)
        |
    holo-archive (.holo format, rkyv, mmap, entrypoints, weights)
-       |
-   holo-exec (KV executor, buffer, parallel levels)
+      / \
+holo-compiler    holo-exec
+(Graph → .holo)  (KV executor, buffer, parallel levels)
+      \  |  /
+   holo-cli (async CLI with subcommands)
        |
    holo-bench (criterion benchmarks)
 
-Root crate (src/lib.rs) re-exports: holo-core, holo-graph, holo-archive, holo-exec
-Future: holo-net (port from categorical-x when core pipeline is stable)
+Root crate (src/lib.rs) re-exports: holo-core, holo-graph, holo-archive, holo-compiler, holo-exec
 Examples: examples/calculator.rs
+
+Consumer libraries (separate repos):
+  hologram-ai (ONNX/GGUF/GGML support)
+  holo-net (network distribution)
 ```
 
 **Invariants**:

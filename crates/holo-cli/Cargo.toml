@@ -10,5 +10,7 @@ holo-core = { workspace = true }
 holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
+holo-compiler = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
+rkyv = { workspace = true }

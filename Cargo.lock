@@ -400,6 +400,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "holo-archive",
+ "holo-compiler",
  "holo-core",
  "holo-exec",
  "holo-graph",
@@ -412,10 +413,21 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "holo-archive",
+ "holo-compiler",
  "holo-core",
  "holo-exec",
  "holo-graph",
+ "rkyv",
  "tokio",
+]
+
+[[package]]
+name = "holo-compiler"
+version = "0.1.0"
+dependencies = [
+ "holo-archive",
+ "holo-core",
+ "holo-graph",
 ]
 
 [[package]]
@@ -431,10 +443,12 @@ dependencies = [
 name = "holo-exec"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "holo-archive",
  "holo-core",
  "holo-graph",
  "rayon",
+ "rkyv",
 ]
 
 [[package]]
@@ -450,11 +464,14 @@ dependencies = [
 name = "hologram-greenfield"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "holo-archive",
  "holo-cli",
+ "holo-compiler",
  "holo-core",
  "holo-exec",
  "holo-graph",
+ "rkyv",
  "tokio",
 ]
 

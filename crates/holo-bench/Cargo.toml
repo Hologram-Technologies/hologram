@@ -10,6 +10,7 @@ holo-core = { workspace = true }
 holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
+holo-compiler = { workspace = true }
 rkyv = { workspace = true }
 
 [dev-dependencies]
@@ -21,4 +22,32 @@ harness = false
 
 [[bench]]
 name = "view"
+harness = false
+
+[[bench]]
+name = "kv_dispatch"
+harness = false
+
+[[bench]]
+name = "executor"
+harness = false
+
+[[bench]]
+name = "archive"
+harness = false
+
+[[bench]]
+name = "fusion"
+harness = false
+
+[[bench]]
+name = "q1"
+harness = false
+
+[[bench]]
+name = "lut_gemm"
+harness = false
+
+[[bench]]
+name = "compiler"
 harness = false

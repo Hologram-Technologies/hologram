@@ -4,8 +4,10 @@
 //! unsuitable for serialization. `SerializedGraph` extracts only live nodes
 //! into a dense representation.
 
+use std::collections::HashMap;
+
 use holo_graph::constant::ConstantStore;
-use holo_graph::graph::node::{Node, NodeId};
+use holo_graph::graph::node::{InputSource, Node, NodeId};
 use holo_graph::Graph;
 
 /// Compact, rkyv-serializable snapshot of a Graph.
@@ -51,6 +53,58 @@ impl SerializedGraph {
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Reconstruct a live Graph from this serialized snapshot.
+    #[must_use]
+    pub fn to_graph(&self) -> Graph {
+        let mut graph = Graph::new();
+        let id_map = insert_nodes(&mut graph, &self.nodes);
+        wire_edges(&mut graph, &self.nodes, &id_map);
+        restore_io(&mut graph, self, &id_map);
+        graph
+    }
+}
+
+/// Insert all nodes, building old→new ID mapping.
+fn insert_nodes(graph: &mut Graph, nodes: &[Node]) -> HashMap<NodeId, NodeId> {
+    nodes
+        .iter()
+        .map(|n| (n.id, graph.add_node(n.op.clone())))
+        .collect()
+}
+
+/// Wire edges using remapped IDs.
+fn wire_edges(
+    graph: &mut Graph,
+    nodes: &[Node],
+    id_map: &HashMap<NodeId, NodeId>,
+) {
+    for node in nodes {
+        let new_target = id_map[&node.id];
+        for input in &node.inputs {
+            if let InputSource::Node(old_src) = input.source {
+                if let Some(&new_src) = id_map.get(&old_src) {
+                    graph.add_edge(new_src, new_target);
+                }
+            }
+        }
+    }
+}
+
+/// Restore graph-level I/O metadata.
+fn restore_io(
+    graph: &mut Graph,
+    sg: &SerializedGraph,
+    id_map: &HashMap<NodeId, NodeId>,
+) {
+    for name in &sg.input_names {
+        graph.add_input(name.clone());
+    }
+    for (name, old_id) in sg.output_names.iter().zip(&sg.output_node_ids) {
+        if let Some(&new_id) = id_map.get(old_id) {
+            graph.add_output(name.clone(), new_id);
+        }
     }
 }
 

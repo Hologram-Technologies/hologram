@@ -9,18 +9,19 @@
 
 ## Sprint 3: Execution Engine & Calculator
 
-### In Progress
+(Sprint 3 complete)
 
-(none)
+## Sprint 4: Q1 Quantum Level Scaling
 
-### Backlog
+(Sprint 4 complete)
 
-#### Phase 5: Calculator Example & Benchmarks
-- [ ] Implement `examples/calculator.rs` — 29+ functions, pi-F-lambda, LUT vs f64
-- [ ] Implement Criterion benchmarks: calculator, lut_vs_f64, fusion, batch, kv_lookup, mmap, parallel, archive
-- [ ] End-to-end test: build graph → fuse → write .holo → load → execute → verify
+## Sprint 5: LUT-GEMM for AI Model Inference
 
-### Blocked
+(Sprint 5 complete)
+
+## Sprint 6: Compiler Pipeline
+
+(Sprint 6 complete)
 
 ---
 
@@ -109,3 +110,59 @@
 - [x] Implement `execute_plan()`, `execute_bytes()`, `execute_file()` in `mmap/mod.rs`
 - [x] Update `lib.rs` with re-exports
 - [x] 55 new tests (334 total), zero clippy warnings
+
+### Phase 5: Calculator Example & Benchmarks (Sprint 3)
+- [x] Build scientific calculator example (`examples/calculator.rs`): pi-F-lambda encoding, LUT composition, graph I/O, full pipeline, error analysis
+- [x] 8 E2E integration tests (`tests/e2e.rs`): linear chain fused, diamond parallel fan-out, constants through pipeline, chained constant folding, multi-input binary, long chain multi-fusion, wide parallel fan-out, file roundtrip
+- [x] Criterion benchmark `kv_dispatch.rs`: KvStore::dispatch for unary/binary ops, varying buffer sizes (256B, 4KB, 64KB), all 21 LutOp variants
+- [x] Criterion benchmark `executor.rs`: KvExecutor::execute for linear/diamond/wide-parallel graphs, large buffer (64KB), schedule build
+- [x] Criterion benchmark `archive.rs`: HoloWriter::build + load_from_bytes round-trip, varying graph sizes (5, 50 nodes), diamond topology
+- [x] Criterion benchmark `fusion.rs`: fuse() pass on graphs of varying sizes (10, 100, 1000 nodes)
+- [x] Root crate `src/lib.rs` already re-exports holo-exec public API (done in Phase 4)
+- [x] 8 new E2E tests (342 total workspace), zero clippy warnings
+
+### Phase 6: Q1 Quantum Level Scaling (Sprint 4)
+- [x] Q1 skeleton: `q1/mod.rs`, `q1/observables.rs` (7 functions), `q1/arith.rs` (4 wrapping ops)
+- [x] `WordDatum` + `WordAddress` (16-bit, 3 Braille glyphs) in `q1/datum.rs` — rkyv derives, Datum/Address trait impls
+- [x] `WordRing` (Z/65536Z) + `WordInvolution` (Neg/Bnot) in `q1/ring.rs` — Ring + Q1Ring trait impls
+- [x] 21 Q1 activation tables (128KB each, 2.7MB total) in `q1/activation/` — sigmoid, tanh, exp, log, relu, sqrt, abs, gelu, silu, sin, cos, tan, asin, acos, atan, log2, log10, exp2, exp10, square, cube
+- [x] `ElementWiseView16` (heap-allocated 128KB table) in `q1/view.rs` — from_static, from_fn, then(), is_bijective, inverse, apply_slice
+- [x] `Encoding16` trait + 4 impls (angle, signed, unsigned, raw) in `q1/encoding.rs`
+- [x] `PrimOp16` (10 ops), `LutOp16` (21 ops), `Op16` enum in `q1/op.rs`
+- [x] Quantum module (`quantum/mod.rs`): quantum_bit_width, quantum_modulus, quantum_is_table_feasible, quantum_table_size_bytes, Q2/Q3 helpers (stratum, curvature, add), Q4+ scaling strategy docs
+- [x] Criterion benchmark `q1.rs`: Q1 vs Q0 vs f64 comparisons (sigmoid, sin), batch throughput, view16 ops, arith comparison, memory budget verification
+- [x] 130 new tests (472 total workspace), zero clippy warnings
+
+### Phase 7: LUT-GEMM for AI Model Inference (Sprint 5)
+- [x] `Psumbook4` (64B, 1 cache line) + `Psumbook8` (1KB) cache-aligned partial sum accumulators in `holo-exec/src/lut_gemm/psumbook.rs`
+- [x] `QuantizedWeights4` (nibble-packed indices, 16 centroids) + `QuantizedWeights8` (byte indices, 256 centroids) with k-means clustering in `holo-exec/src/lut_gemm/quantize.rs`
+- [x] `quantize_4bit()`, `quantize_8bit()`, `quantize_auto()` (tries Q4, falls back to Q8 if error > 5%)
+- [x] `dequantize_error_q4()`, `dequantize_error_q8()` — relative RMSE measurement
+- [x] Sequential LUT-GEMM kernels: `lut_gemm_4bit()`, `lut_gemm_8bit()`, `lut_gemm()` in `holo-exec/src/lut_gemm/matmul.rs`
+- [x] Column-parallel LUT-GEMM via rayon (`lut_gemm_4bit_par`, `lut_gemm_8bit_par`) with `PAR_COL_THRESHOLD=64`, feature-gated in `holo-exec/src/lut_gemm/parallel.rs`
+- [x] 4 new `GraphOp` variants: `MatMulLut4(ConstantId)`, `MatMulLut8(ConstantId)`, `BatchMatMulLut4(ConstantId)`, `BatchMatMulLut8(ConstantId)` — all arity 1, pure
+- [x] `KvStore::dispatch_with_constants()` — resolves quantized weights from `ConstantStore`, casts via bytemuck, runs LUT-GEMM kernel
+- [x] `KvExecutor` updated to pass `&sg.constants` through dispatch
+- [x] `ExecError::ShapeMismatch` + `ExecError::InvalidQuantization` error variants
+- [x] `GraphBuilder::matmul_lut_4bit()` + `matmul_lut_8bit()` builder helpers
+- [x] `QuantizationScheme::KMeansClustered { bits }` archive weight scheme
+- [x] Criterion benchmarks: `lut_gemm.rs` — Q4/Q8 at 16x16, 64x64, 256x256, naive matmul comparison, quantization cost
+- [x] 6 E2E integration tests: Q4/Q8 pipeline, Q4/Q8 accuracy vs naive, matmul+activation diamond, archive roundtrip
+- [x] 56 new tests (528 total workspace), zero clippy warnings
+
+### Phase 8: Compiler Pipeline (Sprint 6)
+- [x] New `holo-compiler` crate: compilation pipeline separate from execution
+- [x] `CompileError` enum (Validation, Fusion, Emission) + `CompileResult` type + `From<GraphError>` + `From<ArchiveError>` in `error/mod.rs`
+- [x] `LivenessInterval` { node_id, born, dies } + `compute_liveness(schedule, graph)` in `liveness/mod.rs` — tracks buffer lifetime intervals in schedule level order
+- [x] `WorkspaceLayout` + `BufferSlot` + `plan_workspace(intervals)` in `workspace/mod.rs` — first-fit-decreasing bin packing for buffer slot reuse
+- [x] `CompilerBuilder::new(graph).fuse(bool).build()` → `CompilationOutput` in `compiler/mod.rs`
+- [x] 3-stage pipeline: parse (validate) → fuse (constant folding, view fusion, CSE) → emit (schedule, liveness, workspace, LayerHeader, .holo archive)
+- [x] `compile(graph)` convenience function
+- [x] `CompilationOutput` { archive: Vec<u8>, stats: CompilationStats, schedule: ExecutionSchedule }
+- [x] `CompilationStats` { workspace_slots, peak_live_buffers, total_nodes, schedule_levels, fusion: FusionStats }
+- [x] `SerializedGraph::to_graph()` reconstruction with ID remapping in `holo-archive/src/format/graph.rs`
+- [x] CLI `hologram compile` wired to compiler pipeline with `--no-fuse` flag
+- [x] Root crate re-exports `holo_compiler` public API
+- [x] Criterion benchmarks `compiler.rs`: compile/liveness/workspace at 10/50/100 nodes
+- [x] 7 E2E integration tests: compiler linear chain, diamond with fusion, constants, fusion disabled vs enabled, large graph, workspace reuse, LayerHeader presence
+- [x] 52 new tests (580 total workspace), zero clippy warnings

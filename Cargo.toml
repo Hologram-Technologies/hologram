@@ -14,6 +14,7 @@ holo-core = { path = "crates/holo-core" }
 holo-graph = { path = "crates/holo-graph" }
 holo-archive = { path = "crates/holo-archive" }
 holo-exec = { path = "crates/holo-exec" }
+holo-compiler = { path = "crates/holo-compiler" }
 holo-cli = { path = "crates/holo-cli" }
 
 # UOR Foundation
@@ -52,8 +53,11 @@ holo-core = { workspace = true }
 holo-graph = { workspace = true }
 holo-archive = { workspace = true }
 holo-exec = { workspace = true }
+holo-compiler = { workspace = true }
 holo-cli = { workspace = true }
 tokio = { workspace = true }
+rkyv = { workspace = true }
+bytemuck = { workspace = true }
 
 [features]
 default = ["std", "simd", "parallel"]
