@@ -9,6 +9,7 @@ description = ".holo archive format with execution entrypoints, rkyv zero-copy, 
 holo-core = { workspace = true }
 holo-graph = { workspace = true }
 rkyv = { workspace = true }
+bytemuck = { workspace = true }
 crc32fast = { workspace = true }
 
 [dependencies.memmap2]

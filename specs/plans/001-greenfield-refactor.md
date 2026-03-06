@@ -97,7 +97,7 @@ Before any code, first:
 
 ---
 
-## Phase 0: Foundation Setup (Sprint 1, Step 1)
+## Phase 0: Foundation Setup (Sprint 1, Step 1) — COMPLETED
 
 **Goal**: Workspace, AGENTS.md, SPRINT.md, deps, build system, `no_std` structure.
 
@@ -171,7 +171,7 @@ Before any code, first:
 
 ---
 
-## Phase 1: Core LUT Engine (Sprint 1, Step 2)
+## Phase 1: Core LUT Engine (Sprint 1, Step 2) — COMPLETED
 
 **Goal**: LUT tables, ElementWiseView, encodings, ring. rkyv-serializable. SIMD batch. `no_std`.
 
@@ -220,7 +220,7 @@ error/
 
 ---
 
-## Phase 2: Graph, Subgraphs & Fusion (Sprint 2, Step 3)
+## Phase 2: Graph, Subgraphs & Fusion (Sprint 2, Step 3) — COMPLETED
 
 **Goal**: Single graph type, subgraphs, parallel levels, single-pass fusion. Auto-execute when deps satisfied.
 
@@ -262,9 +262,11 @@ error/
 
 ---
 
-## Phase 3: .holo Archive Format (Sprint 2, Step 4)
+## Phase 3: .holo Archive Format (Sprint 2, Step 4) — COMPLETED
 
 **Goal**: Single clean .holo format with execution entrypoints. Page-aligned mmap. rkyv zero-copy. No backwards compat.
+
+**Notes**: HoloHeader uses bytemuck (80-byte `#[repr(C)]` fixed layout) instead of rkyv for the header — rkyv's root-at-end design doesn't work for a fixed-position header. rkyv is used for variable-length data (graph, section table). 83 tests, 279 workspace total.
 
 ### Crate: `crates/holo-archive/src/`
 ```
