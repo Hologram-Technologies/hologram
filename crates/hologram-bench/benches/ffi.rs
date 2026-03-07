@@ -15,13 +15,7 @@ fn bench_ffi_graph_build(c: &mut Criterion) {
             hologram_graph_builder_node_from_input(builder, 0, 0, 0);
             for i in 0..8 {
                 let inputs = [i as usize];
-                hologram_graph_builder_node_with_inputs(
-                    builder,
-                    3,
-                    (i % 21) as i32,
-                    inputs.as_ptr(),
-                    1,
-                );
+                hologram_graph_builder_node_with_inputs(builder, 3, i % 21, inputs.as_ptr(), 1);
             }
             let inputs = [8usize];
             hologram_graph_builder_node_with_inputs(builder, 1, 0, inputs.as_ptr(), 1);

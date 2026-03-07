@@ -224,7 +224,7 @@ mod tests {
         let archive_len = hologram_compilation_archive_len(out);
 
         let inp = hologram_inputs_new();
-        let data = vec![42u8];
+        let data = [42u8];
         hologram_inputs_set(inp, 0, data.as_ptr(), data.len());
 
         let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
@@ -249,7 +249,7 @@ mod tests {
         let archive_len = hologram_compilation_archive_len(out);
 
         let inp = hologram_inputs_new();
-        let data = vec![100u8];
+        let data = [100u8];
         hologram_inputs_set(inp, 0, data.as_ptr(), data.len());
 
         let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);

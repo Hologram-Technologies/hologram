@@ -40,7 +40,7 @@ fn demo_pi_f_lambda() {
     let unsigned = UnsignedEncoding;
 
     // Test sin via angle encoding
-    let test_values = [0.0_f64, 0.5, 1.0, 2.0, 3.14159, 5.0];
+    let test_values = [0.0_f64, 0.5, 1.0, 2.0, std::f64::consts::PI, 5.0];
     println!(
         "  {:>10} {:>10} {:>10} {:>10}",
         "input", "f64_sin", "lut_sin", "error"

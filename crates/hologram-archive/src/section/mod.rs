@@ -42,6 +42,6 @@ mod tests {
 
     #[test]
     fn custom_base_above_built_in() {
-        assert!(SECTION_CUSTOM_BASE > SECTION_PIPELINE);
+        const { assert!(SECTION_CUSTOM_BASE > SECTION_PIPELINE) };
     }
 }

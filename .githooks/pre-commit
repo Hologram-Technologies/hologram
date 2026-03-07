@@ -36,7 +36,7 @@ echo ""
 
 # Run clippy check (zero warnings required)
 echo "Running clippy check (zero warnings required)..."
-if ! cargo clippy --workspace -- -D warnings; then
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
     echo "Clippy check failed!"
     echo "   Run 'cargo clippy --workspace --fix --allow-dirty' to auto-fix"
     exit 1
