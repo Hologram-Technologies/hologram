@@ -5,3 +5,4 @@
 .DS_Store
 .claude/
 .holoarch/
+.mypy_cache
