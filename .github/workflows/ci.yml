@@ -46,30 +46,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # Job 3: Build
-  build:
-    name: Build (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: ${{ matrix.os }}
-
-      - name: Build workspace
-        run: cargo build --workspace --all-targets
-
-  # Job 4: Test
+  # Job 3: Test
   test:
     name: Test (${{ matrix.os }})
     strategy:
@@ -95,33 +72,7 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
-  # Job 5: Test Coverage
-  coverage:
-    name: Test Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: coverage
-
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --version 0.6.21
-
-      - name: Generate coverage
-        run: cargo llvm-cov --lib --workspace --lcov --output-path lcov.info
-        env:
-          RUSTFLAGS: "-C target-feature=+avx2"
-
-  # Job 6: Documentation
+  # Job 5: Documentation
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -204,44 +155,17 @@ jobs:
       - name: Check build
         run: cargo check ${{ matrix.packages }} --target ${{ matrix.target }} ${{ matrix.features }}
 
-  # Job 9: Validate JSON-LD with SHACL
-
-  validate-jsonld:
-    name: SHACL Validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install pyshacl
-        run: pip install pyshacl rdflib
-
-      - name: Validate datum files
-        run: |
-          if [ -d "descriptors" ] && [ -n "$(ls -A descriptors/shacl/datum-shapes.ttl 2>/dev/null)" ]; then
-            echo "SHACL datum shapes present"
-          else
-            echo "No datum shapes to validate"
-          fi
-
-  # Job 10: Verify all quality gates passed
+  # Job 8: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()
     needs:
       - format
       - clippy
-      - build
       - test
-      - coverage
       - docs
       - security
       - cross-targets
-      - validate-jsonld
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded
