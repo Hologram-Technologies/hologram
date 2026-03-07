@@ -95,3 +95,19 @@ uor-foundation (git v3.5.0, traits only, no_std)
        │
    hologram-bench (criterion benchmarks)
 ```
+
+
+## Architecture Reference
+
+Architecture decisions for this project are synced from `hologram-architecture`.
+Before implementing significant functionality, read:
+
+```
+specs/docs/
+```
+
+To pull the latest:
+
+```bash
+holoarch pull
+```
