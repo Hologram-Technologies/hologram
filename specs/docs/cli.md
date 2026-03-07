@@ -1,12 +1,16 @@
-# CLI Reference — hologram
+# hologram: CLI Specification
 
-## Commands
+---
 
-| Command | Description |
-|---------|-------------|
-| `hologram compile` | Compile a graph file into a `.holo` archive |
-| `hologram run` | Execute a `.holo` archive with provided inputs |
-| `hologram inspect` | Print archive metadata without executing |
+## Overview
+
+The hologram CLI is the primary tool for compiling graphs into `.holo` archives,
+executing archives, and inspecting their contents. It ships as part of the
+`hologram-cli` crate and is built when the `cli` feature is enabled.
+
+```sh
+hologram <command> [options]
+```
 
 ---
 
@@ -21,126 +25,158 @@
 
 ---
 
-## compile
+## Commands
 
-Compile a serialized graph into a `.holo` archive.
+### `hologram compile`
 
-```bash
-hologram compile <INPUT> [OPTIONS]
+Compiles a serialized graph into an optimized `.holo` archive.
+
+```sh
+hologram compile --input <graph.bin> --output <dir/> [--no-fuse]
 ```
 
-### Arguments
+**Arguments:**
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<INPUT>` | Yes | Path to rkyv-serialized graph file |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--input <path>` | Yes | Path to the serialized graph (rkyv format) |
+| `--output <dir>` | Yes | Output directory for the `.holo` archive |
+| `--no-fuse` | No | Disable the fusion/optimization pass |
 
-### Options
+**Process:**
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `-o`, `--output` | `<INPUT>.holo` | Output archive path |
-| `--no-fuse` | false | Disable fusion optimization |
+1. Read and deserialize the graph from rkyv bytes
+2. Run the compiler pipeline:
+   - Parse: validate graph structure
+   - Fuse: constant folding + view fusion + CSE (unless `--no-fuse`)
+   - Plan & Emit: liveness analysis → workspace layout → scheduling → archive
+3. Create the output directory if it does not exist
+4. Write the `.holo` archive into the output directory
+5. Print compilation statistics
 
-### Output
+**Output directory:** The `--output` flag specifies a directory, not a filename.
+The compiler derives the archive filename from the input filename (replacing the
+extension with `.holo`). The compile command MUST create the output directory
+(and any missing parents) if it does not exist. For example:
 
-Prints compilation statistics:
-- Node count
-- Schedule levels
-- Workspace slots
-- Fusion results (folded, fused, CSE)
-
-### Example
-
-```bash
-hologram compile model.graph --output model.holo
-# Compiled "model.graph" -> "model.holo"
-#   nodes: 42
-#   levels: 7
-#   workspace slots: 5
-#   fusion: 3 folded, 2 fused, 1 CSE
+```sh
+hologram compile --input model/graph.bin --output build/out/
+# writes build/out/graph.holo
 ```
+
+The current implementation uses `std::fs::write()` to a file path — this needs
+to be changed to accept a directory, derive the filename, and call
+`std::fs::create_dir_all()` before writing.
+
+**Output (stdout):**
+
+```
+Compiled graph.bin → model.holo
+  Nodes:             42
+  Levels:            8
+  Workspace slots:   12
+  Constants folded:  3
+  Views fused:       7
+  CSE eliminated:    2
+  Archive size:      4.2 KB
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Invalid graph (parse failure) |
+| 2 | I/O error (file not found, write failure) |
 
 ---
 
-## run
+### `hologram run`
 
-Execute a `.holo` archive with provided inputs.
+Loads and executes a `.holo` archive with provided inputs.
 
-```bash
-hologram run <FILE> [OPTIONS]
+```sh
+hologram run <model.holo> --input <INDEX:HEX> [--input <INDEX:HEX> ...]
 ```
 
-### Arguments
+**Arguments:**
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<FILE>` | Yes | Path to `.holo` archive |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<model.holo>` | Yes | Path to the `.holo` archive |
+| `--input <INDEX:HEX>` | Yes (1+) | Input data as index:hex pairs |
 
-### Options
+**Input format:**
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `-i`, `--input` | — | Input in format `INDEX:HEX` (repeatable) |
+Inputs are specified as `INDEX:HEX` pairs where:
 
-### Input Format
+- `INDEX` is the zero-based input index (matching the graph's input order)
+- `HEX` is the hex-encoded byte data
 
-Inputs are specified as `INDEX:HEX` pairs:
-- `INDEX`: Input port number (0, 1, 2, ...)
-- `HEX`: Hex-encoded byte string
+Examples:
 
-### Output
+```sh
+hologram run model.holo --input 0:deadbeef
+hologram run model.holo --input 0:ff --input 1:00ff00
+```
 
-Prints:
+**Process:**
+
+1. Load the `.holo` archive via `load_from_bytes()`
+2. Parse hex inputs into `GraphInputs`
+3. Build the `ExecutionSchedule`
+4. Execute via `KvExecutor::execute()`
+5. Print named outputs as hex strings
+
+**Output (stdout):**
+
+```
+output_0: a3b2c1d0
+output_1: ff00
+```
+
+Additional output includes:
 - Layer info (inputs, outputs)
-- Output values (hex-encoded)
 - Execution time (milliseconds)
 
-### Example
+**Exit codes:**
 
-```bash
-hologram run model.holo --input 0:deadbeef --input 1:cafebabe
-# Layer: main
-#   inputs: 2
-#   outputs: 1
-# Output 0: 42beef...
-# Execution time: 0.5 ms
-```
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Archive load failure (corrupt, bad checksum) |
+| 2 | Input parse error (bad hex, wrong index) |
+| 3 | Execution error |
 
 ---
 
-## inspect
+### `hologram inspect`
 
-Print archive metadata without executing.
+Inspects a `.holo` archive at varying levels of detail without executing it.
 
-```bash
-hologram inspect <FILE> [OPTIONS]
+```sh
+hologram inspect <model.holo> [--detail <LEVEL>]
 ```
 
-### Arguments
+**Arguments:**
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<FILE>` | Yes | Path to `.holo` archive |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<model.holo>` | Yes | Path to the `.holo` archive |
+| `--detail <LEVEL>` | No | Inspection depth (default: `summary`) |
 
-### Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `-d`, `--detail` | `summary` | Detail level (repeatable) |
-
-### Detail Levels
+**Detail levels:**
 
 | Level | Description |
 |-------|-------------|
-| `summary` | File size, format version, node count, I/O names |
-| `graph` | All nodes with ops, edges, constants |
-| `schedule` | Parallel levels, nodes per level, critical path |
-| `sections` | Section table (kind, size, offset, CRC32) |
-| `weights` | Weight tensor metadata |
+| `summary` | File size, format version, node count, I/O names, schedule overview (default) |
+| `graph` | All nodes with operations, edges, and constant references |
+| `schedule` | Detailed execution schedule — parallel levels, nodes per level, critical path |
+| `sections` | Section table — kind, size, offset, and checksum for each section |
+| `weights` | Weight/constant metadata — tensor names, shapes, dtypes, quantization, offsets |
 | `layout` | Visual byte-map of archive layout |
-| `full` | All of the above |
-| `json` | Machine-readable JSON output |
+| `full` | Everything combined (summary + graph + schedule + sections + weights + layout) |
+| `json` | Machine-readable JSON of all information |
 
 Multiple detail levels can be combined:
 
@@ -148,20 +184,120 @@ Multiple detail levels can be combined:
 hologram inspect model.holo --detail graph --detail schedule
 ```
 
-### Example
+**Process:**
 
-```bash
-hologram inspect model.holo --detail full
-# hologram archive: model.holo
-# Format version: 1
-# File size: 4096 bytes
-#
-# Graph:
-#   nodes: 42
-#   inputs: ["x", "y"]
-#   outputs: ["z"]
-# ...
+1. Load the archive via `HoloLoader`
+2. Build the execution schedule
+3. Read section table and weight index (if present)
+4. Print information for the requested detail level
+
+#### `--detail summary` (default)
+
 ```
+Archive:       model.holo
+File size:     4.2 KB
+Format:        HOLO v1
+
+Graph:
+  Nodes:       42
+  Inputs:      x (index 0)
+  Outputs:     y (index 0)
+
+Schedule:
+  Levels:      8
+  Critical path: 8
+  Parallelism:   5.25x
+```
+
+#### `--detail graph`
+
+```
+Graph (42 nodes):
+  [0] Input "x"
+  [1] Lut(Relu) ← [0]
+  [2] Lut(Sigmoid) ← [1]
+  [3] FusedView ← [0]    (256-byte table)
+  [4] Constant(id=0)     (1024 bytes)
+  [5] MatMulLut4(id=1) ← [3, 4]
+  ...
+  [41] Output "y" ← [40]
+```
+
+Lists every node in the graph with its index, operation type, input edges, and
+relevant metadata (table size for fused views, byte size for constants, constant
+ID for quantized matmul).
+
+#### `--detail schedule`
+
+```
+Execution Schedule (8 levels, 42 nodes):
+  Level 0:  [0]                          (1 node)
+  Level 1:  [1, 3, 4]                    (3 nodes)
+  Level 2:  [2, 5, 6, 7, 8]             (5 nodes)
+  ...
+  Level 7:  [41]                         (1 node)
+
+  Critical path:    8 levels
+  Max parallelism:  5 nodes (level 2)
+  Avg parallelism:  5.25x
+```
+
+Shows the full parallel execution schedule — every level and its constituent
+nodes, plus critical path and parallelism statistics.
+
+#### `--detail sections`
+
+```
+Section Table (3 entries):
+  Kind 1 (WEIGHT_INDEX)   offset=8192    size=512     checksum=0xA3B2C1D0
+  Kind 2 (LAYER_HEADER)   offset=12288   size=256     checksum=0xF1E2D3C4
+  Kind 3 (PIPELINE)       offset=16384   size=128     checksum=0x12345678
+```
+
+Dumps the section table with kind (resolved to name for well-known kinds),
+byte offset, byte size, and CRC32 checksum for each entry.
+
+#### `--detail weights`
+
+```
+Weights (2.1 KB total, 4 tensors):
+  "fc1.weight"  [768, 256]  Q4_0   offset=0      size=768    checksum=0xAABBCCDD
+  "fc1.bias"    [256]       F32    offset=768    size=1024   checksum=0x11223344
+  "fc2.weight"  [256, 10]   Q4_0   offset=1792   size=256    checksum=0x55667788
+  "fc2.bias"    [10]        F32    offset=2048   size=40     checksum=0x99AABBCC
+```
+
+Reads the weight index section (kind 1) and lists each tensor with name, shape,
+dtype, offset within the weights section, byte size, and checksum. Requires the
+archive to contain a `SECTION_WEIGHT_INDEX` section; prints "No weight index
+section" otherwise.
+
+#### `--detail full`
+
+Concatenation of all sections above: summary, graph, schedule, sections, weights,
+and layout — separated by blank lines.
+
+#### `--detail json`
+
+Machine-readable JSON combining all information. Suitable for tooling, CI
+pipelines, and scripting. Structure:
+
+```json
+{
+  "archive": { "name": "model.holo", "size": 4301, "format_version": 1 },
+  "graph": { "node_count": 42, "inputs": [...], "outputs": [...], "nodes": [...] },
+  "schedule": { "levels": [...], "critical_path": 8, "parallelism": 5.25 },
+  "sections": [...],
+  "weights": { "total_size": 2150, "tensors": [...] }
+}
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Archive load failure |
 
 ---
 
@@ -175,29 +311,45 @@ Environment variables:
 
 ---
 
-## Examples
+## Usage Examples
 
-### Full Pipeline
+### Compile and run a simple graph
 
-```bash
-# Compile a graph
-hologram compile my_model.graph --output my_model.holo
+```sh
+# Compile (writes relu_chain.holo into build/)
+hologram compile --input relu_chain.bin --output build/
 
-# Inspect the archive
-hologram inspect my_model.holo --detail summary
+# Quick summary
+hologram inspect build/relu_chain.holo
 
-# Run with inputs
-hologram run my_model.holo --input 0:00112233
+# Detailed graph structure
+hologram inspect build/relu_chain.holo --detail graph
+
+# Full inspection (everything)
+hologram inspect build/relu_chain.holo --detail full
+
+# Machine-readable output for tooling
+hologram inspect build/relu_chain.holo --detail json
+
+# Run with a single byte input
+hologram run build/relu_chain.holo --input 0:80
 
 # Run with multiple inputs
-hologram run my_model.holo --input 0:deadbeef --input 1:cafebabe
+hologram run build/relu_chain.holo --input 0:deadbeef --input 1:cafebabe
+```
+
+### Compile without fusion (debugging)
+
+```sh
+hologram compile --input graph.bin --output build/ --no-fuse
+hologram inspect build/graph.holo --detail schedule
 ```
 
 ### Debugging
 
 ```bash
 # Verbose compilation
-hologram compile model.graph -v
+hologram compile --input model.graph --output build/ -v
 
 # Full archive inspection
 hologram inspect model.holo --detail full
@@ -211,10 +363,22 @@ hologram inspect model.holo --detail json > metadata.json
 ## Exit Codes
 
 | Code | Meaning |
-|------|--------|
+|------|---------|
 | 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments |
-| 3 | File not found |
-| 4 | Invalid archive format |
-| 5 | Execution error |
+| 1 | General error / Invalid graph / Archive load failure |
+| 2 | I/O error / Invalid arguments / Input parse error |
+| 3 | Execution error |
+
+---
+
+## Integration with hologram-ai
+
+The `hologram-ai` CLI delegates compilation to the hologram CLI. When
+`hologram-ai compile` is invoked, it:
+
+1. Imports the model and lowers to `hologram::Graph`
+2. Serializes the graph
+3. Invokes `hologram compile` (or calls `hologram::compile()` as a library)
+4. Produces the final `.holo` archive
+
+See ADR-0009 for the delegation design.
