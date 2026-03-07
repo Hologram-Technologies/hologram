@@ -5,6 +5,12 @@
 //! For each chunk, we extract high/low nibbles, iterate over subtables,
 //! mask-select matching bytes, shuffle via low nibble, and OR into result.
 
+#[cfg(any(
+    all(target_arch = "x86_64", target_feature = "avx2"),
+    all(target_arch = "x86_64", target_feature = "sse4.2"),
+))]
+use super::ElementWiseView;
+
 /// AVX2 in-place apply: process 32 bytes at a time via `vpshufb`.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 pub fn apply_avx2(view: &ElementWiseView, data: &mut [u8]) {
@@ -181,8 +187,16 @@ pub fn apply_to_sse42(view: &ElementWiseView, input: &[u8], output: &mut [u8]) {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(
+        all(target_arch = "x86_64", target_feature = "avx2"),
+        all(target_arch = "x86_64", target_feature = "sse4.2"),
+    ))]
     use super::super::ElementWiseView;
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx2", target_feature = "sse4.2")
+    ))]
+    use std::vec::Vec;
 
     #[test]
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
