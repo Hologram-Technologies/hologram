@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn lut_total_size_fits_l2() {
-        assert!(LUT_TOTAL_SIZE < 768 * 1024);
+        const { assert!(LUT_TOTAL_SIZE < 768 * 1024) };
     }
 
     #[test]

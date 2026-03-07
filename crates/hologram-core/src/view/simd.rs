@@ -196,6 +196,11 @@ mod tests {
         target_arch = "x86_64",
         any(target_feature = "avx2", target_feature = "sse4.2")
     ))]
+    use std::vec;
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx2", target_feature = "sse4.2")
+    ))]
     use std::vec::Vec;
 
     #[test]
