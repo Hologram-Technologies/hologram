@@ -119,15 +119,7 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --lib --workspace --lcov --output-path lcov.info
         env:
-          # AVX2 required by compile-time guard in prism::channel
           RUSTFLAGS: "-C target-feature=+avx2"
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   # Job 6: Documentation
   docs:
