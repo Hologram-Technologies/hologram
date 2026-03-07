@@ -34,11 +34,18 @@ fi
 echo "Code formatting applied and staged"
 echo ""
 
-# Run clippy check (zero warnings required)
+# Run clippy auto-fix, then verify
 echo "Running clippy check (zero warnings required)..."
+cargo clippy --workspace --all-targets --fix --allow-staged 2>/dev/null || true
+
+# Stage any clippy auto-fixes
+if ! git diff --quiet --exit-code; then
+    echo "Auto-staging clippy fixes..."
+    git add -u
+fi
+
 if ! cargo clippy --workspace --all-targets -- -D warnings; then
-    echo "Clippy check failed!"
-    echo "   Run 'cargo clippy --workspace --fix --allow-dirty' to auto-fix"
+    echo "Clippy check failed! Some issues require manual fixes."
     exit 1
 fi
 echo "Clippy passed"
