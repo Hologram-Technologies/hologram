@@ -49,16 +49,22 @@ jobs:
           echo "=== Benchmark Results Summary ==="
           cat bench.json | python3 -m json.tool | head -100
 
-      - name: Push benchmarks to website repository
+      - name: Generate deploy token
+        id: app-token
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
-        run: |
-          if [ -z "$WEBSITE_DEPLOY_TOKEN" ]; then
-            echo "WEBSITE_DEPLOY_TOKEN not configured, skipping website deploy"
-            exit 0
-          fi
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: UOR-Foundation
+          repositories: hologram-website
 
+      - name: Push benchmarks to website repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.app-token.outputs.token != ''
+        env:
+          WEBSITE_DEPLOY_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
           DATE=$(date -u +"%Y-%m-%d")
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
           git clone --depth 1 "https://x-access-token:${WEBSITE_DEPLOY_TOKEN}@github.com/UOR-Foundation/hologram-website.git" /tmp/website
