@@ -46,8 +46,10 @@ jobs:
       - name: Aggregate benchmark results to JSON
         run: |
           python3 scripts/aggregate-benchmarks.py target/criterion bench.json ${{ github.sha }}
-          echo "=== Benchmark Results Summary ==="
-          cat bench.json | python3 -m json.tool | head -100
+
+      - name: Write benchmark summary
+        run: |
+          python3 scripts/summarize-benchmarks.py bench.json --output "$GITHUB_STEP_SUMMARY"
 
       - name: Generate deploy token
         id: app-token
