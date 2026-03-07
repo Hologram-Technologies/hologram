@@ -52,41 +52,32 @@
 //!
 //! # Q4+ (40-bit and beyond): Algorithmic Only (Design Only)
 //!
-//! uor-foundation currently defines Q0–Q3 via `QuantumLevel` (which is
-//! `#[non_exhaustive]`). Future levels follow the +8 bits/level pattern:
+//! uor-foundation defines Q0–Q3 as named constants on the open-world
+//! `QuantumLevel` struct. Arbitrary levels can be constructed via
+//! `QuantumLevel::new(k)` with bit width `8*(k+1)`. Future levels follow
+//! the +8 bits/level pattern:
 //!
 //! - **Q4 (40-bit)**: 2^40 = 1.1 trillion states. Tables completely infeasible.
 //! - **Strategy**: Algorithmic computation only, with optional LRU cache for
 //!   frequently accessed values. Composition via function chaining rather than
 //!   table fusion.
-//! - When uor-foundation extends `QuantumLevel`, the quantum module can add
-//!   concrete support following this pattern.
 
 use uor_foundation::enums::QuantumLevel;
 
-/// Bit width for a given quantum level.
+/// Bit width for a given quantum level: `8 * (k + 1)`.
 #[inline]
 #[must_use]
 pub const fn quantum_bit_width(level: QuantumLevel) -> u64 {
-    match level {
-        QuantumLevel::Q0 => 8,
-        QuantumLevel::Q1 => 16,
-        QuantumLevel::Q2 => 24,
-        QuantumLevel::Q3 => 32,
-        _ => 0, // future levels
-    }
+    level.bits_width() as u64
 }
 
 /// Modulus (ring size) for a given quantum level: 2^bits.
 #[inline]
 #[must_use]
 pub const fn quantum_modulus(level: QuantumLevel) -> u64 {
-    match level {
-        QuantumLevel::Q0 => 256,
-        QuantumLevel::Q1 => 65536,
-        QuantumLevel::Q2 => 16777216,
-        QuantumLevel::Q3 => 4294967296,
-        _ => 0,
+    match level.cycle_size() {
+        Some(s) => s as u64,
+        None => 0,
     }
 }
 
@@ -104,7 +95,7 @@ pub const fn quantum_table_entries(level: QuantumLevel) -> u64 {
 #[inline]
 #[must_use]
 pub const fn quantum_is_table_feasible(level: QuantumLevel) -> bool {
-    matches!(level, QuantumLevel::Q0 | QuantumLevel::Q1)
+    level.index() <= 1
 }
 
 /// Memory per activation table in bytes at this quantum level.

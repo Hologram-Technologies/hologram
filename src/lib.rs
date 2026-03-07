@@ -33,3 +33,39 @@ pub use hologram_ffi;
 
 #[cfg(feature = "cli")]
 pub use hologram_cli;
+
+// ── Flat convenience re-exports ───────────────────────────────────────────────
+// Consumers can use `hologram::Graph` instead of `hologram::hologram_graph::Graph`.
+
+// Core primitives
+pub use hologram_core::op::{LutOp, Op, PrimOp};
+pub use hologram_core::view::ElementWiseView;
+
+// Graph IR
+pub use hologram_graph::{
+    ConstantData, ConstantId, ConstantStore, CustomOpId, ExecutionSchedule, FusionStats, Graph,
+    GraphBuilder, GraphOp, NodeId, SubgraphDef, SubgraphId,
+};
+
+// Execution
+#[cfg(feature = "std")]
+pub use hologram_exec::execute_file;
+pub use hologram_exec::{
+    execute_bytes, execute_bytes_with_ops, execute_plan, BufferArena, CustomHandler,
+    CustomOpRegistry, GraphInputs, GraphOutputs, KvExecutor, KvStore,
+};
+
+// Archive
+#[cfg(feature = "std")]
+pub use hologram_archive::HoloLoader;
+pub use hologram_archive::{
+    load_from_bytes, ArchiveError, ArchiveResult, HoloHeader, HoloWriter, LoadedPlan,
+};
+
+// Compiler (gated)
+#[cfg(feature = "compiler")]
+pub use hologram_compiler::{compile, CompilationOutput, CompilerBuilder};
+
+// Async (gated)
+#[cfg(feature = "async")]
+pub use hologram_async::{execute_stream, AsyncCompiler, AsyncExecutor};

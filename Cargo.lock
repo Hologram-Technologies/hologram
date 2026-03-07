@@ -983,8 +983,8 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "uor-foundation"
-version = "3.5.0"
-source = "git+https://github.com/UOR-Foundation/UOR-Framework?tag=v3.5.0#e67847731e7f082571fd558120fd03d33bbef389"
+version = "4.1.0"
+source = "git+https://github.com/UOR-Foundation/UOR-Framework?rev=bfe21f4#bfe21f42a1e399e8b70d8098ea8bfbd3d296ca90"
 
 [[package]]
 name = "utf8parse"
