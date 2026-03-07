@@ -31,6 +31,21 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
+impl CliError {
+    /// Return the process exit code for this error.
+    ///
+    /// - 1: general / I/O / archive / invalid input
+    /// - 2: compilation error
+    /// - 3: execution error
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::Compile(_) => 2,
+            Self::Exec(_) => 3,
+            _ => 1,
+        }
+    }
+}
+
 impl From<std::io::Error> for CliError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)

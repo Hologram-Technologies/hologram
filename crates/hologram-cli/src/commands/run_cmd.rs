@@ -1,8 +1,10 @@
 //! `hologram run` — execute a `.holo` file.
 
 use crate::error::CliError;
+use crate::fmt::format_bytes;
 use clap::Args;
-use hologram_exec::{execute_bytes, GraphInputs, GraphOutputs};
+use hologram_archive::HoloLoader;
+use hologram_exec::{execute_plan, GraphInputs, GraphOutputs};
 use std::path::PathBuf;
 
 /// Arguments for the run subcommand.
@@ -17,11 +19,45 @@ pub struct RunArgs {
 
 /// Execute the run command.
 pub async fn execute(args: RunArgs) -> Result<(), CliError> {
-    let data = std::fs::read(&args.file)?;
+    let loader = HoloLoader::open(&args.file)?;
+    let plan = loader.load()?;
+
+    print_entrypoint_info(&plan);
+
     let graph_inputs = parse_inputs(&args.inputs)?;
-    let outputs = execute_bytes(&data, &graph_inputs)?;
+    let start = std::time::Instant::now();
+    let outputs = execute_plan(&plan, &graph_inputs)?;
+    let elapsed = start.elapsed();
+
     print_outputs(&outputs);
+    eprintln!(
+        "executed in {:.3}ms (weights {})",
+        elapsed.as_secs_f64() * 1000.0,
+        format_bytes(plan.weights().len() as u64),
+    );
     Ok(())
+}
+
+/// Print entrypoint info from the archive's `LayerHeader` to stderr.
+fn print_entrypoint_info(plan: &hologram_archive::LoadedPlan) {
+    let lh = match plan.layer_header() {
+        Some(lh) => lh,
+        None => {
+            eprintln!("no layer header; using direct graph execution");
+            return;
+        }
+    };
+    for layer in &lh.layers {
+        let inputs: Vec<&str> = layer.inputs.iter().map(|p| p.name.as_str()).collect();
+        let outputs: Vec<&str> = layer.outputs.iter().map(|p| p.name.as_str()).collect();
+        eprintln!(
+            "layer {:?}: {:?} [{}] -> [{}]",
+            layer.name,
+            layer.entrypoint,
+            inputs.join(", "),
+            outputs.join(", "),
+        );
+    }
 }
 
 /// Parse a list of `INDEX:HEX` strings into `GraphInputs`.

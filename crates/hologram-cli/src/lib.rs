@@ -3,7 +3,8 @@
 //! Exposes a single `run()` function for the binary entry point.
 
 pub mod commands;
-mod error;
+pub mod error;
+pub mod fmt;
 
 use clap::Parser;
 use commands::Command;

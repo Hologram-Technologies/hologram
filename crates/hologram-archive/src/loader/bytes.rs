@@ -1,11 +1,13 @@
 //! Load a .holo archive from a byte slice (WASM/embedded compatible).
 
 use crate::checksum;
+use crate::entrypoint::schedule::LayerHeader;
 use crate::error::{ArchiveError, ArchiveResult};
 use crate::format::graph::SerializedGraph;
 use crate::format::header::{HoloHeader, HEADER_SIZE};
 use crate::loader::plan::LoadedPlan;
 use crate::section::table::SectionTable;
+use crate::section::SECTION_LAYER_HEADER;
 
 /// Validate the archive header bytes.
 ///
@@ -41,10 +43,17 @@ pub fn load_from_bytes(data: &[u8]) -> ArchiveResult<LoadedPlan> {
     let graph = deserialize_graph(data, &header)?;
     let weights = extract_weights(data, &header)?;
     let section_table = deserialize_section_table(data, &header)?;
+    let layer_header = extract_layer_header(data, &section_table)?;
 
     verify_checksums(data, &header)?;
 
-    Ok(LoadedPlan::new(header, graph, weights, section_table))
+    Ok(LoadedPlan::new(
+        header,
+        graph,
+        weights,
+        section_table,
+        layer_header,
+    ))
 }
 
 fn find_and_validate_header(data: &[u8]) -> ArchiveResult<HoloHeader> {
@@ -105,6 +114,25 @@ fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<
     let table_bytes = &data[start..end];
     rkyv::from_bytes::<SectionTable, rkyv::rancor::Error>(table_bytes)
         .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
+}
+
+/// Extract the `LayerHeader` section from the archive, if present.
+fn extract_layer_header(data: &[u8], table: &SectionTable) -> ArchiveResult<Option<LayerHeader>> {
+    let entry = match table.find(SECTION_LAYER_HEADER) {
+        Some(e) => e,
+        None => return Ok(None),
+    };
+    let start = entry.offset as usize;
+    let end = start + entry.size as usize;
+    if end > data.len() {
+        return Err(ArchiveError::OutOfBounds {
+            offset: entry.offset,
+            size: entry.size,
+        });
+    }
+    let lh = rkyv::from_bytes::<LayerHeader, rkyv::rancor::Error>(&data[start..end])
+        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
+    Ok(Some(lh))
 }
 
 fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {
@@ -222,5 +250,33 @@ mod tests {
         assert_eq!(plan.weights().len(), 64);
         assert!(plan.header().is_valid_magic());
         assert!(plan.header().is_supported_version());
+    }
+
+    #[test]
+    fn layer_header_extracted() {
+        use crate::entrypoint::LayerEntrypoint;
+        use hologram_graph::builder::GraphBuilder;
+
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Output, &[0])
+            .output("y", 1)
+            .build();
+
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+        let plan = load_from_bytes(&archive).unwrap();
+        let lh = plan.layer_header().expect("layer header present");
+        assert_eq!(lh.layer_count(), 1);
+        let layer = &lh.layers[0];
+        assert_eq!(layer.name, "main");
+        assert_eq!(layer.entrypoint, LayerEntrypoint::Graph);
+    }
+
+    #[test]
+    fn no_layer_header_without_graph() {
+        let archive = HoloWriter::new().build().unwrap();
+        let plan = load_from_bytes(&archive).unwrap();
+        assert!(plan.layer_header().is_none());
     }
 }

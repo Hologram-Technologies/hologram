@@ -59,7 +59,8 @@ pub use hologram_exec::{
 #[cfg(feature = "std")]
 pub use hologram_archive::HoloLoader;
 pub use hologram_archive::{
-    load_from_bytes, ArchiveError, ArchiveResult, HoloHeader, HoloWriter, LoadedPlan,
+    load_from_bytes, ArchiveError, ArchiveResult, HoloHeader, HoloWriter, LayerDescriptor,
+    LayerEntrypoint, LayerHeader, LayerId, LoadedPlan,
 };
 
 // Compiler (gated)

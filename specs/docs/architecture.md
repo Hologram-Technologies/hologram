@@ -2,7 +2,7 @@
 
 ## System Purpose
 
-Hologram is an O(1) compute acceleration substrate that executes computation graphs via precomputed lookup tables (LUTs) and KV-store dispatch. Rather than computing operations at runtime, all unary byte-to-byte functions are precomputed into 256-byte tables, reducing every element-wise operation to a single array index access regardless of the mathematical complexity of the original function.
+Hologram is an O(1) compute acceleration framework that replaces iterative computation with precomputed lookup table (LUT) operations. It solves the problem of making neural network inference and scientific computation dramatically faster by eliminating multiply-accumulate operations in favor of array lookups. Any unary function (activation, trigonometric, logarithmic) is precomputed into a 256-entry byte-indexed lookup table. Chains of operations are fused at compile time into a single table, so `sigmoid(relu(gelu(x)))` costs the same as a single array access—O(1) regardless of composition depth.
 
 ---
 
@@ -10,76 +10,159 @@ Hologram is an O(1) compute acceleration substrate that executes computation gra
 
 ### What hologram owns
 
-- **LUT tables and ring algebra**: Precomputed 256-byte tables for unary operations (activations, mathematical functions), stored in `.rodata` at compile time.
-- **ElementWiseView function composition**: The `then()` combinator that fuses arbitrary chains of byte-to-byte functions into a single LUT at zero runtime cost.
-- **Graph IR**: The unified `Graph` type for representing computation DAGs with operations, subgraphs, and constants.
-- **Execution scheduling**: Dependency-aware parallel level scheduling via `ExecutionSchedule`.
-- **KV-store dispatch**: The `KvStore` type that routes `GraphOp` nodes to their corresponding O(1) kernels.
-- **Buffer arena**: Memory management for intermediate values during graph execution.
-- **`.holo` archive format**: rkyv-based zero-copy serialization of compiled graphs, weights, and execution metadata.
-- **Compilation pipeline**: Graph validation, fusion passes, liveness analysis, and `.holo` emission.
-- **Custom op registry**: Extensibility point for user-defined operations.
+- **LUT generation and composition**: Precomputed 256-byte lookup tables for unary functions (21+ activations, 10 primitives)
+- **Pi-F-Lambda encoding**: Continuous-to-byte domain mapping strategies (Angle, Signed, Unsigned, Raw)
+- **Graph IR**: Arena-based expression graph with typed operations (Lut, Prim, FusedView, MatMulLut, Custom)
+- **Fusion passes**: Compile-time optimization (constant folding, view fusion, CSE)
+- **Parallel scheduling**: Topological sort into dependency-aware parallel levels
+- **Archive format**: `.holo` binary format with rkyv zero-copy serialization and mmap support
+- **KV execution**: Level-by-level dispatch via precomputed operation tables
+- **Buffer management**: Liveness-based workspace allocation and reuse
+- **LUT-GEMM kernels**: Quantized matrix multiplication via 4-bit/8-bit codebook lookup
+- **Cross-platform execution**: x86_64 (SIMD), ARM, WebAssembly, bare-metal (`no_std`)
 
 ### What hologram does NOT own
 
-- **AI model formats and semantics**: ONNX, GGUF, GGML import and AI-specific IR live in `hologram-ai`.
-- **Runtime isolation and sandboxing**: Process, WASM, and microVM targets belong in `hologram-sandbox`.
-- **Training**: Hologram is inference-first; training is out of scope.
-- **Hardware-specific backends**: GPU (CUDA, Metal, WebGPU) acceleration is future scope, not core.
+- **AI model format parsing**: ONNX, GGUF, GGML importers belong in `hologram-ai`
+- **AI-specific semantics**: Attention heads, KV-cache, token generation are `hologram-ai` concerns
+- **Process/VM isolation**: Sandbox and runtime targets belong in `hologram-sandbox`
+- **GPU backends**: Metal, CUDA, WebGPU kernels are future extensions
+- **Training**: Hologram is inference-first; training is out of scope
+- **Model serving infrastructure**: HTTP APIs, batching, load balancing are application-layer concerns
 
 ---
 
 ## Major Layers
 
-1. **hologram-core**: Mathematical foundation. LUT tables, `ElementWiseView`, byte-ring algebra, encoding pipelines. Zero dependencies except `uor-foundation`. Supports `no_std` for embedded targets.
-
-2. **hologram-graph**: Expression DAG representation. `Graph` type, `GraphBuilder`, subgraph templates, single-pass fusion engine, and `ExecutionSchedule` for parallel level ordering.
-
-3. **hologram-archive**: Persistence layer. `.holo` binary format with rkyv zero-copy serialization, mmap loading, checksum validation, and section-based extensibility.
-
-4. **hologram-exec**: Runtime execution. `KvStore` dispatch, `BufferArena` for intermediates, level-parallel execution via rayon, and custom op registry.
-
-5. **hologram-compiler**: Compilation pipeline. Graph validation, constant folding, view fusion, liveness analysis, workspace layout planning, and `.holo` emission.
-
-6. **hologram-async**: Optional async wrappers around compilation and execution for non-blocking integration with tokio runtimes.
-
-7. **hologram-cli**: Command-line interface with `compile`, `run`, and `inspect` subcommands.
-
-8. **hologram-ffi**: C ABI and WASM bindings for cross-language integration.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        CLI / FFI / WASM                         │
+│  hologram-cli (compile, run, inspect)                           │
+│  hologram-ffi (C ABI, wasm-bindgen)                             │
+├─────────────────────────────────────────────────────────────────┤
+│                      Async Wrappers (optional)                  │
+│  hologram-async (Tokio spawn_blocking, streaming)               │
+├─────────────────────────────────────────────────────────────────┤
+│                       Compilation Pipeline                       │
+│  hologram-compiler (parse → fuse → emit)                        │
+│  • validate graph structure                                     │
+│  • fusion: constant fold, view composition, CSE                 │
+│  • liveness analysis, workspace planning                        │
+│  • schedule generation, archive emission                        │
+├─────────────────────────────────────────────────────────────────┤
+│                         Execution Layer                          │
+│  hologram-exec (KvExecutor, BufferArena, CustomOpRegistry)      │
+│  • level-by-level dispatch via KvStore                          │
+│  • Rayon parallel execution within levels                       │
+│  • LUT-GEMM kernels (Q4/Q8 matmul)                              │
+├─────────────────────────────────────────────────────────────────┤
+│                      Serialization Layer                         │
+│  hologram-archive (.holo format, HoloWriter, HoloLoader)        │
+│  • rkyv zero-copy serialization                                 │
+│  • mmap for instant archive loading                             │
+│  • 4 KB page alignment, CRC32 checksums                         │
+├─────────────────────────────────────────────────────────────────┤
+│                          Graph IR Layer                          │
+│  hologram-graph (Graph, GraphBuilder, ExecutionSchedule)        │
+│  • arena-based node storage with generation versioning          │
+│  • subgraph templates for reusable patterns                     │
+│  • topological sort into parallel levels                        │
+├─────────────────────────────────────────────────────────────────┤
+│                           Core Layer                             │
+│  hologram-core (ElementWiseView, LutOp, ByteRing, encoding)     │
+│  • 256-byte cache-line-aligned lookup tables                    │
+│  • SIMD-accelerated bulk apply (AVX2 vpshufb)                   │
+│  • no_std compatible, zero external dependencies                │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Key Data Flows
 
-1. **Graph construction**: Callers build a `Graph` via `GraphBuilder`, adding nodes (`Input`, `Lut`, `Prim`, `Output`, etc.) and edges.
+### Compilation Flow
 
-2. **Compilation**: `CompilerBuilder` takes the graph, runs fusion passes to collapse chains of `LutOp` nodes into `FusedView` nodes, computes liveness intervals, plans workspace layout, and emits a `.holo` archive.
+```
+GraphBuilder API        →  Graph (arena-based)
+                              ↓
+CompilerBuilder.build() →  Validate (structure check)
+                              ↓
+                           Fuse (constant fold, view fusion, CSE)
+                              ↓
+                           Schedule (topo sort → parallel levels)
+                              ↓
+                           Liveness (compute buffer lifetimes)
+                              ↓
+                           Emit (HoloWriter → .holo archive)
+```
 
-3. **Loading**: `HoloLoader` memory-maps or reads the `.holo` archive. `load_from_bytes` returns a `LoadedPlan` containing the deserialized graph, execution schedule, weights, and section table.
+### Execution Flow
 
-4. **Execution**: `KvExecutor` iterates through the `ExecutionSchedule` level by level. For each level, it dispatches nodes in parallel (if rayon enabled) via `KvStore::dispatch_with_constants`, reading inputs from the `BufferArena` and writing outputs back. Custom ops are dispatched via the `CustomOpRegistry`.
+```
+.holo archive           →  HoloLoader (mmap, zero-copy)
+                              ↓
+                           LoadedPlan (graph + weights + metadata)
+                              ↓
+build_schedule()        →  ExecutionSchedule (Vec<ParallelLevel>)
+                              ↓
+GraphInputs             →  KvExecutor.execute()
+                              ↓
+                           For each level (Rayon parallel):
+                             For each node:
+                               Read inputs from BufferArena
+                               Dispatch via KvStore (O(1) lookup)
+                               Write output to BufferArena
+                              ↓
+                           GraphOutputs (named results)
+```
 
-5. **Output extraction**: After execution, `GraphOutputs` contains the final output buffers which callers can retrieve by output node ID.
+### Memory Layout During Execution
+
+```
+BufferArena:
+  ┌─────────────────────────────────┐
+  │ slot_0 [256 B] ← input          │
+  │ slot_1 [256 B] ← temp (reused)  │
+  │ slot_2 [256 B] ← temp (reused)  │
+  │ slot_3 [256 B] ← output         │
+  └─────────────────────────────────┘
+       ↑
+   Liveness-based reuse (computed at compile time)
+```
 
 ---
 
 ## Integration Points
 
-| Repo/System | Integration |
-|-------------|-------------|
-| `hologram-ai` | Lowers `AiGraph` to `hologram::Graph` + `ExecutionSchedule`; calls `KvExecutor::execute_with_registry` |
-| `hologram-sandbox` | Loads `.holo` archives and executes them inside isolated process/WASM/microVM targets |
-| `uor-foundation` | Provides `Primitives` trait for type mappings; `hologram-core` implements `HoloPrimitives` |
+| Integration | Direction | Mechanism |
+|-------------|-----------|-----------|
+| **hologram-ai** | Consumer | Lowers `AiGraph` to `hologram::Graph`, calls `KvExecutor` |
+| **hologram-sandbox** | Consumer | Loads `.holo` archives, executes in isolated runtime |
+| **hologram-architecture** | Upstream | ADRs and docs sync via `holoarch pull` |
+| **uor-foundation** | Dependency | Trait-only foundation (`Primitives` trait) |
+| **C/C++ consumers** | FFI | `hologram-ffi` provides opaque handle API |
+| **Browser/JS** | FFI | `hologram-ffi` with `wasm-bindgen` feature |
 
 ---
 
 ## Design Constraints
 
-- **O(1) lookup guarantee**: All element-wise operations must resolve to a single array index access. No runtime arithmetic for unary ops.
-- **`no_std` core**: `hologram-core` must compile without the standard library for embedded/WASM targets.
-- **rkyv only**: All serialization uses rkyv 0.8 with zero-copy deserialization. No serde.
-- **Single format version**: No backwards compatibility shims. The `.holo` format has a single version at any time.
-- **Max 3 function arguments**: Larger signatures use builder patterns.
-- **Functions ≤ 15 lines**: Keep functions small and focused.
-- **No TODOs/stubs**: All code paths must be implemented.
-- **Feature-gated SIMD/parallel**: `simd` enables AVX2/SSE4.2 paths; `parallel` enables rayon.
+1. **O(1) per operation**: All unary functions execute as single array lookups regardless of mathematical complexity.
+
+2. **Zero-copy serialization**: Archives use rkyv for instant deserialization without intermediate copies; mmap enables O(1) loading.
+
+3. **no_std compatibility**: `hologram-core` has zero dependencies beyond `uor-foundation` and runs on bare-metal ARM (thumbv7em).
+
+4. **Cache-line alignment**: `ElementWiseView` is 256 bytes (4 cache lines) for optimal memory access patterns.
+
+5. **Single format version**: No backwards compatibility; `.holo` format has one version at any time.
+
+6. **SIMD feature-gated**: SIMD acceleration (`vpshufb`) behind `simd` feature; parallel execution behind `parallel` feature.
+
+7. **Functions ≤ 15 lines**: Code convention enforces small, focused functions.
+
+8. **Max 3 function arguments**: Builder pattern required for more complex construction.
+
+9. **rkyv-only serialization**: All persistent types derive rkyv traits; no serde, no custom binary formats.
+
+10. **No stubs or TODOs**: Implementation is complete or not present; no placeholder code.

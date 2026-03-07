@@ -42,8 +42,11 @@ pub fn is_acyclic(graph: &Graph) -> bool {
     let mut in_degree = alloc::vec![0usize; total];
     for node in graph.nodes() {
         if let Some(&pos) = id_to_pos.get(&node.id) {
+            // Count each unique predecessor once, matching successors() which
+            // also returns each successor at most once.
+            let mut seen = std::collections::HashSet::new();
             for dep in node.dependencies() {
-                if id_to_pos.contains_key(&dep) {
+                if id_to_pos.contains_key(&dep) && seen.insert(dep) {
                     in_degree[pos] += 1;
                 }
             }
@@ -109,6 +112,19 @@ mod tests {
         g.add_edge(b, a);
         assert!(!is_acyclic(&g));
         assert_eq!(validate(&g), Err(GraphError::CycleDetected));
+    }
+
+    #[test]
+    fn duplicate_edge_not_a_cycle() {
+        // A node using the same input twice (e.g. Mul(x, x)) must not
+        // be falsely reported as a cycle.
+        let mut g = Graph::new();
+        let a = g.add_node(GraphOp::Input);
+        let b = g.add_node(GraphOp::Lut(LutOp::Relu));
+        g.add_edge(a, b); // first edge
+        g.add_edge(a, b); // duplicate edge (same source → same target)
+        assert!(is_acyclic(&g));
+        assert!(validate(&g).is_ok());
     }
 
     #[test]

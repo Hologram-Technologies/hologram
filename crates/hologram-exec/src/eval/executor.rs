@@ -119,7 +119,7 @@ impl KvExecutor {
     where
         F: FnMut(usize, usize),
     {
-        Self::execute_core(sg, schedule, inputs, None, on_level)
+        Self::execute_core(sg, schedule, inputs, None, &[], on_level)
     }
 
     /// Execute with a custom op registry (no progress callback).
@@ -129,21 +129,50 @@ impl KvExecutor {
         inputs: &GraphInputs,
         registry: &CustomOpRegistry,
     ) -> ExecResult<GraphOutputs> {
-        Self::execute_core(sg, schedule, inputs, Some(registry), |_, _| {})
+        Self::execute_core(sg, schedule, inputs, Some(registry), &[], |_, _| {})
     }
 
-    fn execute_core<F>(
+    /// Execute with archive weight data (no custom ops or progress).
+    ///
+    /// Primary method for archives containing `ConstantData::Deferred`
+    /// references that resolve from the weight blob.
+    pub fn execute_with_plan(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        weights: &[u8],
+    ) -> ExecResult<GraphOutputs> {
+        Self::execute_core(sg, schedule, inputs, None, weights, |_, _| {})
+    }
+
+    /// Execute with a custom op registry and archive weight data.
+    ///
+    /// `weights` is the raw weight blob from the `.holo` archive.
+    /// `ConstantData::Deferred` nodes are resolved by slicing into this blob
+    /// using `source_id` as the byte offset.
+    pub fn execute_with_weights(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        registry: &CustomOpRegistry,
+        weights: &[u8],
+    ) -> ExecResult<GraphOutputs> {
+        Self::execute_core(sg, schedule, inputs, Some(registry), weights, |_, _| {})
+    }
+
+    pub(crate) fn execute_core<F>(
         sg: &SerializedGraph,
         schedule: &ExecutionSchedule,
         inputs: &GraphInputs,
         registry: Option<&CustomOpRegistry>,
+        weights: &[u8],
         mut on_level: F,
     ) -> ExecResult<GraphOutputs>
     where
         F: FnMut(usize, usize),
     {
         let node_map = build_node_map(sg);
-        let mut arena = seed_arena(sg)?;
+        let mut arena = seed_arena(sg, weights)?;
 
         for (i, level) in schedule.levels.iter().enumerate() {
             let count = dispatch_level(
@@ -153,6 +182,7 @@ impl KvExecutor {
                 inputs,
                 &sg.constants,
                 registry,
+                weights,
             )?;
             on_level(i, count);
         }
@@ -167,11 +197,11 @@ fn build_node_map(sg: &SerializedGraph) -> HashMap<NodeId, &Node> {
 }
 
 /// Initialize the arena and seed all constant nodes.
-fn seed_arena(sg: &SerializedGraph) -> ExecResult<BufferArena> {
+fn seed_arena(sg: &SerializedGraph, weights: &[u8]) -> ExecResult<BufferArena> {
     let mut arena = BufferArena::with_capacity(sg.nodes.len());
     for node in &sg.nodes {
         if let GraphOp::Constant(cid) = &node.op {
-            arena.insert(node.id, resolve_constant(&sg.constants, *cid)?);
+            arena.insert(node.id, resolve_constant(&sg.constants, *cid, weights)?);
         }
     }
     Ok(arena)
@@ -185,6 +215,7 @@ fn dispatch_level(
     inputs: &GraphInputs,
     constants: &hologram_graph::constant::ConstantStore,
     registry: Option<&CustomOpRegistry>,
+    weights: &[u8],
 ) -> ExecResult<usize> {
     let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
 
@@ -201,7 +232,7 @@ fn dispatch_level(
         let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
         results.push((
             node_id,
-            KvStore::dispatch_with_constants(&node.op, &input_refs, constants, registry)?,
+            KvStore::dispatch_with_constants(&node.op, &input_refs, constants, registry, weights)?,
         ));
     }
 
@@ -255,18 +286,30 @@ fn gather_inputs<'a>(
 }
 
 /// Resolve a constant ID to byte data.
+///
+/// `Deferred` constants are resolved from the `weights` blob using
+/// `source_id` as the byte offset and `byte_size` as the length.
 fn resolve_constant(
     store: &hologram_graph::constant::ConstantStore,
     cid: ConstantId,
+    weights: &[u8],
 ) -> ExecResult<Vec<u8>> {
     let data = store
         .get(cid)
         .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
     match data {
         ConstantData::Bytes(bytes) => Ok(bytes.clone()),
-        ConstantData::Deferred { .. } => Err(ExecError::UnsupportedOp(
-            "deferred constants not yet supported".into(),
-        )),
+        ConstantData::Deferred {
+            byte_size,
+            source_id,
+        } => {
+            let start = *source_id as usize;
+            let end = start + *byte_size as usize;
+            if end > weights.len() {
+                return Err(ExecError::ConstantNotFound(cid.raw()));
+            }
+            Ok(weights[start..end].to_vec())
+        }
     }
 }
 
@@ -649,5 +692,30 @@ mod tests {
         KvExecutor::execute_with_progress(&sg, &sched, &inputs, |_, count| total += count).unwrap();
 
         assert_eq!(total, 4); // Input, Relu, Sigmoid, Output
+    }
+
+    #[test]
+    fn deferred_constant_with_weights() {
+        use hologram_graph::constant::ConstantData;
+        let mut constants = ConstantStore::new();
+        let cid = constants.insert(ConstantData::Deferred {
+            byte_size: 3,
+            source_id: 0,
+        });
+        let sg = SerializedGraph {
+            nodes: vec![
+                node(0, GraphOp::Constant(cid), vec![]),
+                node(1, GraphOp::Output, vec![InputSlot::from_node(nid(0))]),
+            ],
+            input_names: Vec::new(),
+            output_names: vec!["out".into()],
+            output_node_ids: vec![nid(1)],
+            constants,
+        };
+        let sched = build_schedule(&sg).unwrap();
+        let weights = vec![10, 20, 30, 99];
+        let result =
+            KvExecutor::execute_with_plan(&sg, &sched, &GraphInputs::new(), &weights).unwrap();
+        assert_eq!(result.by_name("out").unwrap(), &[10, 20, 30]);
     }
 }

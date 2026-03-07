@@ -41,3 +41,29 @@ Root crate (`src/lib.rs`) re-exports all subcrate APIs.
 Active sprint: `specs/SPRINT.md`
 Archived sprints: `specs/sprints/`
 Plans: `specs/plans/`
+
+<!-- HOLOARCH:MANAGED:BEGIN -->
+## Relationship to hologram-architecture
+
+This project is part of the Hologram ecosystem. Architecture decisions,
+ADRs, and planning artifacts are maintained in `hologram-architecture`.
+
+Before implementing significant functionality:
+
+1. Read `specs/docs/architecture.md` and `specs/docs/upstream-architecture.md`.
+2. Check `specs/docs/development.md` for the local development workflow.
+3. Pull updated architecture docs with:
+```bash
+holoarch pull
+```
+
+## Important Commands
+
+```bash
+holoarch check       # validate repository conformance
+holoarch pull        # pull latest docs + refresh managed sections
+holoarch doc <name>  # generate a new doc template in specs/docs/
+```
+
+_This section is managed by `holoarch pull`. Repo: hologram_
+<!-- HOLOARCH:MANAGED:END -->

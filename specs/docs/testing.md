@@ -14,60 +14,103 @@ mod tests {
 }
 ```
 
-Each crate has comprehensive unit tests for its public API and internal invariants.
-
 ---
 
 ## Integration Tests
 
-Integration tests live in `tests/`. The main integration test is `e2e.rs` which requires the `ffi` feature:
+Integration tests live in `tests/`. Each file in `tests/` is a separate
+test binary that can import the crate as an external user would.
 
-```bash
-cargo test --features ffi --test e2e
-```
+### Key Test Files
 
-The `hologram-archive` crate has embedded integration tests for round-trip serialization, mmap loading, and pipeline handling.
+| File | Purpose |
+|------|---------|
+| `tests/e2e.rs` | Full pipeline: graph construction → compilation → execution |
+| `tests/custom_ops.rs` | Custom operation registration and dispatch verification |
+
+### Test Patterns
+
+- **Linear chain**: Sigmoid → Relu → Output (verifies view fusion)
+- **Diamond graph**: Fan-out and fan-in (verifies parallel execution)
+- **Custom ops**: Register handler, execute, verify output
+- **FFI round-trip**: C/WASM bindings produce correct results
 
 ---
 
 ## Test Conventions
 
-- Test names are descriptive: `<module>_<behavior>_<condition>` (e.g., `arena_insert_and_get`).
-- Use `std::env::temp_dir()` for tests that need the filesystem.
+- Test names are descriptive: `test_<behavior>_<condition>`.
+- Use `tempfile::tempdir()` for tests that need the filesystem.
 - Do not write to shared state; tests must be order-independent.
 - Each test covers one behavior.
-- LUT tables are tested exhaustively: verify all 256 values match expected computation.
-- Serialization tests verify round-trip: write → read → compare.
+- Generated fixtures are preferred over static fixture files.
+- Tests verify O(1) execution property: fused chains execute in single lookup.
+
+### Naming Examples
+
+```rust
+#[test]
+fn test_sigmoid_lut_matches_reference() { ... }
+
+#[test]
+fn test_fusion_collapses_chain_to_single_view() { ... }
+
+#[test]
+fn test_parallel_levels_execute_independently() { ... }
+
+#[test]
+fn test_archive_roundtrip_preserves_graph() { ... }
+```
 
 ---
 
-## Benchmark Tests
+## Benchmarks
 
-Criterion benchmarks in `crates/hologram-bench/benches/` cover:
+Criterion benchmarks live in `hologram-bench`. Run via:
 
-| Benchmark | What it measures |
-|-----------|-----------------|
-| `lut.rs` | LUT table lookup throughput |
-| `view.rs` | ElementWiseView apply performance |
-| `fusion.rs` | View fusion compilation cost |
-| `executor.rs` | Graph execution throughput |
-| `kv_dispatch.rs` | KvStore dispatch latency |
-| `archive.rs` | .holo serialization/deserialization |
-| `compiler.rs` | Full compilation pipeline |
-| `lut_gemm.rs` | Quantized matrix multiplication |
+```bash
+just bench                              # all suites
+cargo bench -p hologram-bench <suite>   # specific suite
+```
+
+### Benchmark Suites
+
+| Suite | What it measures |
+|-------|------------------|
+| `lut` | Table generation, single-byte apply, 21 LutOp variants |
+| `view` | Composition chains, SIMD `apply_slice()`, rkyv round-trip |
+| `kv_dispatch` | KvStore unary/binary at 256 B – 64 KB |
+| `executor` | Linear, diamond, wide-parallel graph topologies |
+| `lut_gemm` | Q4/Q8 matmul at 16×16 – 256×256 |
+| `compiler` | Full compile pipeline at 10/50/100 nodes |
+| `fusion` | Constant fold + CSE + view fusion at 10 – 1,000 nodes |
+| `archive` | HoloWriter build + HoloLoader round-trip |
+| `q1` | 16-bit quantum scaling |
+| `async_exec` | Tokio batch throughput |
+| `async_stream` | Token-streaming scheduling |
+| `ffi` | C/WASM interface overhead |
 
 ---
 
 ## Running Tests
 
 ```bash
-cargo test                       # all tests
-cargo test --workspace           # all workspace crates
-cargo test -p hologram-core      # single crate
-cargo test --test e2e            # single integration test (needs --features ffi)
-cargo test <pattern>             # filter by test name
-
-# Via just:
-just test                        # cargo test --workspace
-just ci                          # full CI: fmt + clippy + test
+cargo test                   # all tests
+cargo test --workspace       # all workspace crates
+cargo test --test <name>     # single integration test file
+cargo test <pattern>         # filter by test name
+just test                    # workspace tests via just
+just ci                      # full CI gate (fmt + clippy + test)
 ```
+
+---
+
+## CI Integration
+
+CI runs:
+
+1. `cargo fmt --check` — formatting verification
+2. `cargo clippy --workspace -- -D warnings` — lint check
+3. `cargo test --workspace` — all unit and integration tests
+
+All three must pass for PR merge.

@@ -1,18 +1,25 @@
 //! Builder for constructing .holo archives in memory.
 
 use crate::checksum;
+use crate::entrypoint::schedule::LayerHeader;
+use crate::entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId, TensorPort};
 use crate::error::{ArchiveError, ArchiveResult};
 use crate::format::graph::SerializedGraph;
 use crate::format::header::HoloHeader;
 use crate::format::{align_to_page, FORMAT_VERSION, HOLO_MAGIC, PAGE_SIZE};
 use crate::section::table::{SectionEntry, SectionTable};
-use crate::section::EmbeddableSection;
+use crate::section::{EmbeddableSection, SECTION_LAYER_HEADER};
+use crate::weight::WeightDType;
 
 /// Builder for constructing a .holo archive in memory.
 ///
 /// Uses builder pattern: set graph, weights, and sections, then call `build()`.
+/// Automatically generates a `LayerHeader` section with a default "main"
+/// entrypoint when a graph is set and no `LayerHeader` is explicitly added.
 pub struct HoloWriter {
     graph_bytes: Option<Vec<u8>>,
+    graph_input_names: Vec<String>,
+    graph_output_names: Vec<String>,
     weight_bytes: Option<Vec<u8>>,
     sections: Vec<(u32, Vec<u8>)>,
 }
@@ -29,6 +36,8 @@ impl HoloWriter {
     pub fn new() -> Self {
         Self {
             graph_bytes: None,
+            graph_input_names: Vec::new(),
+            graph_output_names: Vec::new(),
             weight_bytes: None,
             sections: Vec::new(),
         }
@@ -38,6 +47,8 @@ impl HoloWriter {
     #[must_use]
     pub fn set_graph(mut self, graph: &hologram_graph::Graph) -> Self {
         let sg = SerializedGraph::from_graph(graph);
+        self.graph_input_names = sg.input_names.clone();
+        self.graph_output_names = sg.output_names.clone();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg)
             .expect("graph serialization")
             .to_vec();
@@ -68,7 +79,12 @@ impl HoloWriter {
     }
 
     /// Build the complete archive as a byte vector.
-    pub fn build(self) -> ArchiveResult<Vec<u8>> {
+    ///
+    /// If a graph was set via `set_graph` and no `LayerHeader` section was
+    /// explicitly added, a default one is generated with a single "main"
+    /// layer using `LayerEntrypoint::Graph`.
+    pub fn build(mut self) -> ArchiveResult<Vec<u8>> {
+        self.ensure_layer_header();
         let graph_data = self.graph_bytes.unwrap_or_default();
         let weight_data = self.weight_bytes.unwrap_or_default();
 
@@ -80,6 +96,49 @@ impl HoloWriter {
 
         let header = build_header(&layout, &graph_data, &weight_data);
         assemble_archive(header, &layout, &graph_data, &weight_data, &self.sections)
+    }
+
+    /// Add a default `LayerHeader` if a graph was set and none was provided.
+    fn ensure_layer_header(&mut self) {
+        if self.graph_bytes.is_none() {
+            return;
+        }
+        let has_layer_header = self
+            .sections
+            .iter()
+            .any(|(k, _)| *k == SECTION_LAYER_HEADER);
+        if has_layer_header {
+            return;
+        }
+        let lh = build_default_layer_header(&self.graph_input_names, &self.graph_output_names);
+        self.sections.push((lh.section_kind(), lh.to_bytes()));
+    }
+}
+
+/// Build a default `LayerHeader` with a single "main" graph entrypoint.
+fn build_default_layer_header(inputs: &[String], outputs: &[String]) -> LayerHeader {
+    let descriptor = LayerDescriptor {
+        id: LayerId(0),
+        name: "main".into(),
+        entrypoint: LayerEntrypoint::Graph,
+        inputs: inputs.iter().map(|n| default_port(n)).collect(),
+        outputs: outputs.iter().map(|n| default_port(n)).collect(),
+        group: 0,
+        plan_offset: 0,
+        plan_size: 0,
+    };
+    LayerHeader {
+        layers: vec![descriptor],
+        schedule: vec![vec![LayerId(0)]],
+    }
+}
+
+/// Build a default tensor port with U8 dtype and scalar shape.
+fn default_port(name: &str) -> TensorPort {
+    TensorPort {
+        name: name.to_string(),
+        shape: vec![1],
+        dtype: WeightDType::U8,
     }
 }
 
@@ -286,5 +345,44 @@ mod tests {
         let w = HoloWriter::default();
         let archive = w.build().unwrap();
         assert!(!archive.is_empty());
+    }
+
+    #[test]
+    fn auto_generates_layer_header() {
+        use crate::loader::bytes::load_from_bytes;
+        use hologram_graph::builder::GraphBuilder;
+
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Output, &[0])
+            .output("y", 1)
+            .build();
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+        let plan = load_from_bytes(&archive).unwrap();
+        assert!(plan.sections().find(SECTION_LAYER_HEADER).is_some());
+    }
+
+    #[test]
+    fn explicit_layer_header_not_duplicated() {
+        use crate::entrypoint::schedule::LayerHeader;
+        use crate::load_from_bytes;
+
+        let mut g = Graph::new();
+        g.add_node(GraphOp::Input);
+        let custom = LayerHeader::new();
+        let archive = HoloWriter::new()
+            .set_graph(&g)
+            .add_section(&custom)
+            .build()
+            .unwrap();
+        let plan = load_from_bytes(&archive).unwrap();
+        let count = plan
+            .sections()
+            .entries
+            .iter()
+            .filter(|e| e.kind == SECTION_LAYER_HEADER)
+            .count();
+        assert_eq!(count, 1);
     }
 }

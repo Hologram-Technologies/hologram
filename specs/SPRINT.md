@@ -1,5 +1,9 @@
 # Sprint Tracking
 
+## Backlog
+
+- [ ] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
+
 ## Sprint History
 
 - Sprint 1: Foundation & Core LUT Engine — [archived](sprints/1-foundation-core-lut.md)

@@ -16,8 +16,11 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
     let mut in_degree = vec![0u32; ids.len()];
     for node in graph.nodes() {
         if let Some(&pos) = id_set.get(&node.id) {
+            // Count each unique predecessor once, matching successors() which
+            // also returns each successor at most once.
+            let mut seen = std::collections::HashSet::new();
             for dep in node.dependencies() {
-                if id_set.contains_key(&dep) {
+                if id_set.contains_key(&dep) && seen.insert(dep) {
                     in_degree[pos] += 1;
                 }
             }

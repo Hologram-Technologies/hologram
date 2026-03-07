@@ -50,18 +50,20 @@ impl KvStore {
         inputs: &[&[u8]],
         registry: Option<&CustomOpRegistry>,
     ) -> ExecResult<Vec<u8>> {
-        Self::dispatch_with_constants(op, inputs, &ConstantStore::new(), registry)
+        Self::dispatch_with_constants(op, inputs, &ConstantStore::new(), registry, &[])
     }
 
-    /// Dispatch with access to the graph's constant store.
+    /// Dispatch with access to the graph's constant store and archive weights.
     ///
     /// MatMulLut ops resolve their quantized weights from constants.
     /// Pass a `CustomOpRegistry` to enable custom op dispatch.
+    /// `weights` is the raw weight blob for resolving `Deferred` constants.
     pub fn dispatch_with_constants(
         op: &GraphOp,
         inputs: &[&[u8]],
         constants: &ConstantStore,
         registry: Option<&CustomOpRegistry>,
+        weights: &[u8],
     ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
@@ -78,10 +80,14 @@ impl KvStore {
                 Ok(inputs.first().copied().unwrap_or(&[]).to_vec())
             }
             GraphOp::CallSubgraph(_) => Err(ExecError::UnsupportedOp("CallSubgraph".into())),
-            GraphOp::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants),
-            GraphOp::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
-            GraphOp::BatchMatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants),
-            GraphOp::BatchMatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants),
+            GraphOp::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs[0], *cid, constants, weights),
+            GraphOp::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs[0], *cid, constants, weights),
+            GraphOp::BatchMatMulLut4(cid) => {
+                dispatch_lut_gemm_4(inputs[0], *cid, constants, weights)
+            }
+            GraphOp::BatchMatMulLut8(cid) => {
+                dispatch_lut_gemm_8(inputs[0], *cid, constants, weights)
+            }
             GraphOp::Custom { id, .. } => registry
                 .ok_or_else(|| ExecError::UnsupportedOp(format!("custom op {}", id.raw())))?
                 .dispatch(*id, inputs, constants),
@@ -94,8 +100,9 @@ fn dispatch_lut_gemm_4(
     activation_bytes: &[u8],
     cid: hologram_graph::constant::ConstantId,
     constants: &ConstantStore,
+    weights: &[u8],
 ) -> ExecResult<Vec<u8>> {
-    let weight_bytes = resolve_constant_bytes(cid, constants)?;
+    let weight_bytes = resolve_constant_bytes(cid, constants, weights)?;
     let qw = rkyv::from_bytes::<QuantizedWeights4, rkyv::rancor::Error>(weight_bytes)
         .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
     let activations = cast_f32(activation_bytes)?;
@@ -111,8 +118,9 @@ fn dispatch_lut_gemm_8(
     activation_bytes: &[u8],
     cid: hologram_graph::constant::ConstantId,
     constants: &ConstantStore,
+    weights: &[u8],
 ) -> ExecResult<Vec<u8>> {
-    let weight_bytes = resolve_constant_bytes(cid, constants)?;
+    let weight_bytes = resolve_constant_bytes(cid, constants, weights)?;
     let qw = rkyv::from_bytes::<QuantizedWeights8, rkyv::rancor::Error>(weight_bytes)
         .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
     let activations = cast_f32(activation_bytes)?;
@@ -124,16 +132,29 @@ fn dispatch_lut_gemm_8(
 }
 
 /// Resolve a constant ID to its raw bytes.
-fn resolve_constant_bytes(
+///
+/// `Deferred` constants are resolved from `weights` using `source_id` as offset.
+fn resolve_constant_bytes<'a>(
     cid: hologram_graph::constant::ConstantId,
-    constants: &ConstantStore,
-) -> ExecResult<&[u8]> {
+    constants: &'a ConstantStore,
+    weights: &'a [u8],
+) -> ExecResult<&'a [u8]> {
     let data = constants
         .get(cid)
         .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
     match data {
         ConstantData::Bytes(bytes) => Ok(bytes),
-        ConstantData::Deferred { .. } => Err(ExecError::UnsupportedOp("deferred constant".into())),
+        ConstantData::Deferred {
+            byte_size,
+            source_id,
+        } => {
+            let start = *source_id as usize;
+            let end = start + *byte_size as usize;
+            if end > weights.len() {
+                return Err(ExecError::ConstantNotFound(cid.raw()));
+            }
+            Ok(&weights[start..end])
+        }
     }
 }
 
@@ -265,7 +286,8 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut4(cid);
-        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None).unwrap();
+        let result =
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None, &[]).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1+2+3+4)=10, all weights=1.0
@@ -291,7 +313,8 @@ mod tests {
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
         let op = GraphOp::MatMulLut8(cid);
-        let result = KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None).unwrap();
+        let result =
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None, &[]).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(output.len(), n);
         // sum(1*2 * 4) = 8
@@ -307,7 +330,7 @@ mod tests {
         let act = [1.0f32; 4];
         let act_bytes: &[u8] = bytemuck::cast_slice(&act);
         let result =
-            KvStore::dispatch_with_constants(&op, &[act_bytes], &ConstantStore::new(), None);
+            KvStore::dispatch_with_constants(&op, &[act_bytes], &ConstantStore::new(), None, &[]);
         assert!(result.is_err());
     }
 }

@@ -16,6 +16,8 @@ pub mod weight;
 pub mod writer;
 
 // Re-exports for convenience.
+pub use entrypoint::schedule::LayerHeader;
+pub use entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId};
 pub use error::{ArchiveError, ArchiveResult};
 pub use format::header::HoloHeader;
 pub use loader::bytes::load_from_bytes;

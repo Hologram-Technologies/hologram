@@ -28,8 +28,11 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
     let mut in_degree = vec![0u32; total];
     for node in graph.nodes() {
         if let Some(&pos) = id_to_pos.get(&node.id) {
+            // Count each unique predecessor once, matching successors() which
+            // also returns each successor at most once.
+            let mut seen = std::collections::HashSet::new();
             for dep in node.dependencies() {
-                if id_to_pos.contains_key(&dep) {
+                if id_to_pos.contains_key(&dep) && seen.insert(dep) {
                     in_degree[pos] += 1;
                 }
             }

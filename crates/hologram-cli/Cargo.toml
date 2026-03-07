@@ -14,3 +14,4 @@ hologram-compiler = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 rkyv = { workspace = true }
+serde_json = { workspace = true }

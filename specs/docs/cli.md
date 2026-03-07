@@ -4,9 +4,9 @@
 
 | Command | Description |
 |---------|-------------|
-| `hologram compile <source> -o <output>` | Compile a source file to `.holo` archive format |
-| `hologram run <archive> [inputs...]` | Execute a `.holo` file with provided inputs |
-| `hologram inspect <archive>` | Print metadata without executing |
+| `hologram compile` | Compile a graph file into a `.holo` archive |
+| `hologram run` | Execute a `.holo` archive with provided inputs |
+| `hologram inspect` | Print archive metadata without executing |
 
 ---
 
@@ -16,63 +16,194 @@
 |------|---------|-------------|
 | `--help` | — | Print help |
 | `--version` | — | Print version |
+| `-v`, `--verbose` | false | Enable verbose output |
+| `-q`, `--quiet` | false | Suppress non-essential output |
 
 ---
 
-## Subcommand Details
+## compile
 
-### compile
-
-```bash
-hologram compile <source> -o <output.holo>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-o, --output <path>` | Output `.holo` file path (required) |
-| `--no-fuse` | Disable fusion optimization pass |
-
-### run
+Compile a serialized graph into a `.holo` archive.
 
 ```bash
-hologram run <archive.holo> [--input <file>]...
+hologram compile <INPUT> [OPTIONS]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--input <file>` | Input data file (can be repeated) |
-| `--output <file>` | Write output to file instead of stdout |
+### Arguments
 
-### inspect
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<INPUT>` | Yes | Path to rkyv-serialized graph file |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-o`, `--output` | `<INPUT>.holo` | Output archive path |
+| `--no-fuse` | false | Disable fusion optimization |
+
+### Output
+
+Prints compilation statistics:
+- Node count
+- Schedule levels
+- Workspace slots
+- Fusion results (folded, fused, CSE)
+
+### Example
 
 ```bash
-hologram inspect <archive.holo>
+hologram compile model.graph --output model.holo
+# Compiled "model.graph" -> "model.holo"
+#   nodes: 42
+#   levels: 7
+#   workspace slots: 5
+#   fusion: 3 folded, 2 fused, 1 CSE
 ```
+
+---
+
+## run
+
+Execute a `.holo` archive with provided inputs.
+
+```bash
+hologram run <FILE> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<FILE>` | Yes | Path to `.holo` archive |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-i`, `--input` | — | Input in format `INDEX:HEX` (repeatable) |
+
+### Input Format
+
+Inputs are specified as `INDEX:HEX` pairs:
+- `INDEX`: Input port number (0, 1, 2, ...)
+- `HEX`: Hex-encoded byte string
+
+### Output
 
 Prints:
-- Header: magic, version, node count, weight size
-- Graph structure summary
-- Section table
+- Layer info (inputs, outputs)
+- Output values (hex-encoded)
+- Execution time (milliseconds)
+
+### Example
+
+```bash
+hologram run model.holo --input 0:deadbeef --input 1:cafebabe
+# Layer: main
+#   inputs: 2
+#   outputs: 1
+# Output 0: 42beef...
+# Execution time: 0.5 ms
+```
+
+---
+
+## inspect
+
+Print archive metadata without executing.
+
+```bash
+hologram inspect <FILE> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<FILE>` | Yes | Path to `.holo` archive |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-d`, `--detail` | `summary` | Detail level (repeatable) |
+
+### Detail Levels
+
+| Level | Description |
+|-------|-------------|
+| `summary` | File size, format version, node count, I/O names |
+| `graph` | All nodes with ops, edges, constants |
+| `schedule` | Parallel levels, nodes per level, critical path |
+| `sections` | Section table (kind, size, offset, CRC32) |
+| `weights` | Weight tensor metadata |
+| `layout` | Visual byte-map of archive layout |
+| `full` | All of the above |
+| `json` | Machine-readable JSON output |
+
+Multiple detail levels can be combined:
+
+```bash
+hologram inspect model.holo --detail graph --detail schedule
+```
+
+### Example
+
+```bash
+hologram inspect model.holo --detail full
+# hologram archive: model.holo
+# Format version: 1
+# File size: 4096 bytes
+#
+# Graph:
+#   nodes: 42
+#   inputs: ["x", "y"]
+#   outputs: ["z"]
+# ...
+```
 
 ---
 
 ## Configuration
 
-No configuration file. All options are passed via command-line flags.
+The CLI does not use a configuration file. All options are passed as command-line arguments.
+
+Environment variables:
+- `RAYON_NUM_THREADS`: Control parallel execution thread count
+- `RUST_LOG`: Enable debug logging (e.g., `RUST_LOG=hologram=debug`)
 
 ---
 
 ## Examples
 
+### Full Pipeline
+
 ```bash
-# Compile a graph definition
-hologram compile model.graph -o model.holo
+# Compile a graph
+hologram compile my_model.graph --output my_model.holo
 
-# Run with input files
-hologram run model.holo --input data.bin
+# Inspect the archive
+hologram inspect my_model.holo --detail summary
 
-# Inspect archive metadata
-hologram inspect model.holo
+# Run with inputs
+hologram run my_model.holo --input 0:00112233
+
+# Run with multiple inputs
+hologram run my_model.holo --input 0:deadbeef --input 1:cafebabe
+```
+
+### Debugging
+
+```bash
+# Verbose compilation
+hologram compile model.graph -v
+
+# Full archive inspection
+hologram inspect model.holo --detail full
+
+# JSON output for tooling
+hologram inspect model.holo --detail json > metadata.json
 ```
 
 ---
@@ -82,6 +213,8 @@ hologram inspect model.holo
 | Code | Meaning |
 |------|--------|
 | 0 | Success |
-| 1 | General error (invalid args, file not found, etc.) |
-| 2 | Compilation error |
-| 3 | Execution error |
+| 1 | General error |
+| 2 | Invalid arguments |
+| 3 | File not found |
+| 4 | Invalid archive format |
+| 5 | Execution error |

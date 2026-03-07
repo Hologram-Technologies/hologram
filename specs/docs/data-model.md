@@ -4,80 +4,149 @@
 
 | Type | Description | Where defined |
 |------|-------------|---------------|
-| `ElementWiseView` | 256-byte LUT for O(1) byte-to-byte function application | `hologram-core::view` |
-| `LutOp` | Enum of precomputed unary operations (Relu, Sigmoid, etc.) | `hologram-core::op::lut_op` |
-| `PrimOp` | Primitive binary/unary ops (Add, Sub, Xor, Neg, etc.) | `hologram-core::op::prim` |
-| `Graph` | DAG of `GraphOp` nodes with edges and constants | `hologram-graph::graph` |
-| `GraphOp` | Node operation variant (Input, Lut, Prim, Output, FusedView, etc.) | `hologram-graph::graph` |
-| `NodeId` | Unique identifier for a graph node | `hologram-graph::graph::node` |
-| `ExecutionSchedule` | Ordered levels of node IDs for parallel execution | `hologram-graph::schedule` |
-| `ConstantStore` | Map from `ConstantId` to `ConstantData` | `hologram-graph::constant` |
-| `HoloHeader` | Fixed-size binary header for `.holo` archives | `hologram-archive::format::header` |
-| `LoadedPlan` | Deserialized graph + schedule + weights from `.holo` | `hologram-archive::loader::plan` |
-| `BufferArena` | HashMap-based storage for execution intermediates | `hologram-exec::buffer::arena` |
-| `KvStore` | Stateless dispatch table for graph operations | `hologram-exec::kv::store` |
-| `KvExecutor` | Stateful executor that runs graphs level-by-level | `hologram-exec::eval::executor` |
+| `ElementWiseView` | 256-byte cache-aligned lookup table for O(1) unary functions | `hologram-core/src/view/` |
+| `LutOp` | Enum of 21+ precomputed activation functions (Sigmoid, Relu, Gelu, etc.) | `hologram-core/src/op/` |
+| `PrimOp` | Enum of 10 primitive operations (Add, Sub, Mul, Xor, etc.) | `hologram-core/src/op/` |
+| `ByteRing` | Ring algebra on Z/256Z for modular arithmetic | `hologram-core/src/ring/` |
+| `Graph` | Arena-based expression graph with generation versioning | `hologram-graph/src/graph/` |
+| `GraphOp` | Union type for graph operations (Lut, Prim, FusedView, MatMulLut, Custom) | `hologram-graph/src/graph/` |
+| `NodeId` | (index: u32, generation: u32) handle for graph nodes | `hologram-graph/src/node/` |
+| `ExecutionSchedule` | Ordered parallel levels for execution | `hologram-graph/src/schedule/` |
+| `SubgraphDef` | Template for reusable subgraph patterns | `hologram-graph/src/subgraph/` |
+| `HoloHeader` | Archive header (magic, version, metadata) | `hologram-archive/src/format/` |
+| `LoadedPlan` | Deserialized archive view (graph + weights) | `hologram-archive/src/loader/` |
+| `KvExecutor` | Level-by-level graph executor | `hologram-exec/src/eval/` |
+| `KvStore` | Operation dispatch via precomputed tables | `hologram-exec/src/kv/` |
+| `BufferArena` | Workspace memory with liveness-based reuse | `hologram-exec/src/buffer/` |
+| `CustomOpRegistry` | User-defined operation registration | `hologram-exec/src/kv/` |
+| `GraphInputs` | Named input map (index → bytes) | `hologram-exec/src/eval/` |
+| `GraphOutputs` | Named output list (name → bytes) | `hologram-exec/src/eval/` |
 
 ---
 
 ## Relationships
 
+### Graph Structure
+
 ```
 Graph
-├── nodes: Vec<GraphOp>
-├── edges: adjacency (inputs per node)
-└── constants: ConstantStore
-        └── ConstantId → ConstantData (Bytes | Deferred)
+ ├── nodes: Arena<Node>           # slot + generation storage
+ │    └── Node
+ │         ├── op: GraphOp        # operation type
+ │         ├── inputs: SmallVec   # predecessor NodeIds
+ │         └── generation: u32    # validity token
+ ├── inputs: Vec<NodeId>          # input port nodes
+ ├── outputs: Vec<NodeId>         # output port nodes
+ └── subgraphs: Vec<SubgraphDef>  # callable templates
+```
 
+### Execution Structure
+
+```
 ExecutionSchedule
-└── levels: Vec<Vec<NodeId>>  (nodes per level, dependencies satisfied)
+ └── levels: Vec<ParallelLevel>
+      └── ParallelLevel
+           └── nodes: Vec<NodeId>  # nodes with satisfied deps
+```
 
-LoadedPlan
-├── graph: Graph (deserialized)
-├── schedule: ExecutionSchedule
-├── weights: &[u8]
-└── header: HoloHeader
+### Archive Structure
 
-BufferArena
-└── buffers: HashMap<NodeId, Vec<u8>>
-
-KvExecutor
-├── arena: BufferArena
-└── registry: Option<CustomOpRegistry>
+```
+HoloArchive (.holo file)
+ ├── HoloHeader
+ │    ├── magic: [u8; 4]           # "HOLO"
+ │    ├── version: u32             # format version
+ │    └── metadata: Metadata
+ ├── GraphSection
+ │    └── rkyv-serialized Graph
+ ├── WeightsSection
+ │    └── quantized constant data
+ ├── LayerHeader
+ │    ├── inputs: Vec<TensorPort>
+ │    └── outputs: Vec<TensorPort>
+ └── SectionTable
+      └── entries: Vec<SectionEntry>
+           ├── kind: SectionKind
+           ├── offset: u64
+           ├── size: u64
+           └── crc32: u32
 ```
 
 ---
 
 ## Invariants
 
-| Type | Invariants |
-|------|------------|
-| `ElementWiseView` | Exactly 256 entries; immutable after construction |
-| `Graph` | Acyclic; all node inputs reference existing nodes with lower indices |
-| `ExecutionSchedule` | All nodes in level N have dependencies only in levels < N |
-| `NodeId` | Unique within a graph; index + generation for validity checking |
-| `ConstantStore` | IDs are monotonically increasing; no gaps |
-| `BufferArena` | Each `NodeId` has at most one buffer |
-| `HoloHeader` | Magic bytes = `HOLO`; version must match `FORMAT_VERSION` |
+### Graph Invariants
+
+1. **Acyclic**: Graph has no cycles; topological sort always succeeds
+2. **Generation validity**: NodeId.generation matches Node.generation or node is stale
+3. **Input connectivity**: Every non-input node has at least one predecessor
+4. **Output reachability**: Every node is reachable from outputs (no dead nodes after fusion)
+
+### Execution Invariants
+
+1. **Level ordering**: Nodes in level N have all dependencies in levels < N
+2. **Disjoint writes**: Nodes in same level write to disjoint arena slots
+3. **Arena bounds**: All slot accesses are within allocated arena
+
+### Archive Invariants
+
+1. **Magic match**: First 4 bytes are `"HOLO"`
+2. **Version match**: Format version matches loader version
+3. **CRC validity**: Section CRC32 matches computed checksum
+4. **Alignment**: Section offsets are 4 KB aligned (for mmap)
 
 ---
 
 ## Serialization
 
-All persistent types use **rkyv 0.8** for zero-copy serialization:
+All persistent types use **rkyv** for zero-copy serialization:
 
-- `Graph`, `ExecutionSchedule`, `ConstantStore` derive `Archive`, `Serialize`, `Deserialize`
-- `HoloHeader` uses `bytemuck` for fixed-layout binary (no rkyv overhead)
-- Weights are stored as raw `&[u8]` sections
-- `.holo` format: `Header (64 bytes) | Graph (rkyv) | Weights | Sections`
+```rust
+#[derive(Archive, Serialize, Deserialize)]
+pub struct Graph { ... }
+```
+
+### Serialization Properties
+
+| Property | Guarantee |
+|----------|-----------|
+| Zero-copy | Deserialization casts bytes to typed reference |
+| Deterministic | Same input produces identical bytes |
+| Backward compat | None; single format version |
+| Validation | `bytecheck` validates pointer integrity |
+
+### Weight Encoding
+
+| WeightDType | Storage | Description |
+|-------------|---------|-------------|
+| `F32` | 4 bytes | IEEE 754 single |
+| `F64` | 8 bytes | IEEE 754 double |
+| `Q4` | 4 bits | Index into 16-entry codebook |
+| `Q8` | 8 bits | Index into 256-entry codebook |
 
 ---
 
 ## Versioning / Migrations
 
-Single format version policy: no backwards compatibility. The `.holo` format version is stored in `HoloHeader::version`. If the version doesn't match `FORMAT_VERSION`, loading fails.
+### Format Versioning
 
-When format changes are needed:
-1. Bump `FORMAT_VERSION`
-2. Update writer and loader
-3. Recompile all `.holo` archives
+- `.holo` format has a version number in header
+- **No backwards compatibility**: Only current version is supported
+- Format changes require MAJOR version bump of hologram
+
+### Migration Strategy
+
+When format changes:
+
+1. Increment format version in `HoloHeader`
+2. Update `HoloWriter` to emit new format
+3. Update `HoloLoader` to read new format
+4. Remove old format support (no migration path)
+5. Re-compile all archives from source graphs
+
+### Graph Versioning
+
+- Graphs are not versioned separately from archives
+- Graph changes that affect serialization require format version bump
+- Adding new `GraphOp` variants is a breaking change

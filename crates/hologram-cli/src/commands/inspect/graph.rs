@@ -1,0 +1,69 @@
+//! `--detail graph` output.
+
+use hologram_archive::LoadedPlan;
+use hologram_graph::constant::ConstantStore;
+use hologram_graph::graph::node::{InputSlot, InputSource, Node};
+use hologram_graph::graph::GraphOp;
+
+/// Print every node with its operation and input edges.
+pub fn print(plan: &LoadedPlan) {
+    let sg = plan.graph();
+    println!("Graph ({} nodes):", sg.node_count());
+    for (idx, node) in sg.nodes.iter().enumerate() {
+        println!("  {}", format_node(idx, node, &sg.constants));
+    }
+}
+
+/// Format a single node line.
+fn format_node(idx: usize, node: &Node, constants: &ConstantStore) -> String {
+    let op = format_op(&node.op, constants);
+    let edges = format_inputs(&node.inputs);
+    if edges.is_empty() {
+        format!("[{idx}] {op}")
+    } else {
+        format!("[{idx}] {op} <- {edges}")
+    }
+}
+
+/// Format the operation name with metadata.
+fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
+    match op {
+        GraphOp::Input => "Input".into(),
+        GraphOp::Output => "Output".into(),
+        GraphOp::Prim(p) => format!("Prim({})", p.name()),
+        GraphOp::Lut(l) => format!("Lut({})", l.name()),
+        GraphOp::FusedView(_) => "FusedView (256-byte table)".into(),
+        GraphOp::Constant(id) => format_constant(id, constants),
+        GraphOp::CallSubgraph(s) => format!("CallSubgraph({})", s.raw()),
+        GraphOp::MatMulLut4(id) => format!("MatMulLut4(id={})", id.raw()),
+        GraphOp::MatMulLut8(id) => format!("MatMulLut8(id={})", id.raw()),
+        GraphOp::BatchMatMulLut4(id) => format!("BatchMatMulLut4(id={})", id.raw()),
+        GraphOp::BatchMatMulLut8(id) => format!("BatchMatMulLut8(id={})", id.raw()),
+        GraphOp::Custom { id, arity } => {
+            format!("Custom(id={}, arity={})", id.raw(), arity)
+        }
+    }
+}
+
+/// Format a constant reference with its byte size.
+fn format_constant(id: &hologram_graph::constant::ConstantId, constants: &ConstantStore) -> String {
+    let size = constants.get(*id).map_or(0, |c| c.byte_size());
+    format!("Constant(id={}) ({} bytes)", id.raw(), size)
+}
+
+/// Format input edges as a bracketed list.
+fn format_inputs(inputs: &[InputSlot]) -> String {
+    let parts: Vec<String> = inputs
+        .iter()
+        .filter_map(|slot| match slot.source {
+            InputSource::Node(id) => Some(format!("{}", id.index())),
+            InputSource::GraphInput { index } => Some(format!("input[{index}]")),
+            InputSource::None => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", parts.join(", "))
+    }
+}

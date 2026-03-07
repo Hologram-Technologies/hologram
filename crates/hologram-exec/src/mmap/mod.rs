@@ -1,26 +1,66 @@
 //! Convenience functions for executing archives directly.
 //!
 //! Bridges `hologram-archive` loading with `hologram-exec` execution,
-//! providing one-call entry points for the common case.
+//! providing one-call entry points for the common case. Dispatches
+//! execution via the archive's `LayerHeader` entrypoints when present.
 
 use hologram_archive::loader::plan::LoadedPlan;
+use hologram_archive::LayerEntrypoint;
 
-use crate::error::ExecResult;
+use crate::error::{ExecError, ExecResult};
 use crate::eval::executor::{GraphInputs, GraphOutputs, KvExecutor};
 use crate::eval::schedule_bridge::build_schedule;
 use crate::kv::CustomOpRegistry;
 
-/// Execute a loaded plan with the given inputs.
+/// Execute a loaded plan using its `LayerHeader` entrypoints.
 ///
-/// Builds the execution schedule and runs the graph.
+/// If the archive contains a `LayerHeader`, walks the layer schedule
+/// and dispatches each layer by entrypoint type. Falls back to direct
+/// graph execution if no `LayerHeader` is present (backward compat).
 pub fn execute_plan(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
+    match plan.layer_header() {
+        Some(lh) => dispatch_layers(lh, plan, inputs),
+        None => execute_graph_entrypoint(plan, inputs),
+    }
+}
+
+/// Dispatch layers according to the `LayerHeader` schedule.
+fn dispatch_layers(
+    lh: &hologram_archive::LayerHeader,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+) -> ExecResult<GraphOutputs> {
+    let mut result = None;
+    for level in &lh.schedule {
+        for layer_id in level {
+            let desc = lh
+                .find_layer(*layer_id)
+                .ok_or_else(|| ExecError::UnsupportedOp(format!("layer {:?}", layer_id.0)))?;
+            match &desc.entrypoint {
+                LayerEntrypoint::Graph => {
+                    result = Some(execute_graph_entrypoint(plan, inputs)?);
+                }
+                LayerEntrypoint::Subgraph(id) => {
+                    return Err(ExecError::UnsupportedOp(format!("subgraph {id}")));
+                }
+                LayerEntrypoint::External(r) => {
+                    return Err(ExecError::UnsupportedOp(format!("external {r}")));
+                }
+            }
+        }
+    }
+    result.map_or_else(|| execute_graph_entrypoint(plan, inputs), Ok)
+}
+
+/// Execute the archive's embedded graph with weights.
+fn execute_graph_entrypoint(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
-    KvExecutor::execute(plan.graph(), &schedule, inputs)
+    KvExecutor::execute_with_plan(plan.graph(), &schedule, inputs, plan.weights())
 }
 
 /// Execute a .holo archive from raw bytes.
 ///
-/// Parses the archive, builds the schedule, and runs the graph.
+/// Parses the archive, dispatches via entrypoints, and runs the graph.
 pub fn execute_bytes(data: &[u8], inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let plan = hologram_archive::load_from_bytes(data)?;
     execute_plan(&plan, inputs)
@@ -36,7 +76,7 @@ pub fn execute_bytes_with_ops(
 ) -> ExecResult<GraphOutputs> {
     let plan = hologram_archive::load_from_bytes(data)?;
     let schedule = build_schedule(plan.graph())?;
-    KvExecutor::execute_with_registry(plan.graph(), &schedule, inputs, registry)
+    KvExecutor::execute_with_weights(plan.graph(), &schedule, inputs, registry, plan.weights())
 }
 
 /// Execute a .holo archive with a per-level progress callback.
@@ -52,12 +92,19 @@ where
 {
     let plan = hologram_archive::load_from_bytes(data)?;
     let schedule = build_schedule(plan.graph())?;
-    KvExecutor::execute_with_progress(plan.graph(), &schedule, inputs, on_level)
+    KvExecutor::execute_core(
+        plan.graph(),
+        &schedule,
+        inputs,
+        None,
+        plan.weights(),
+        on_level,
+    )
 }
 
 /// Execute a .holo archive from a file path (requires `std` feature).
 ///
-/// Memory-maps the file, parses, schedules, and runs.
+/// Memory-maps the file, parses, dispatches via entrypoints, and runs.
 #[cfg(feature = "std")]
 pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let loader = hologram_archive::HoloLoader::open(path)?;

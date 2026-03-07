@@ -1,5 +1,6 @@
 //! Loaded and validated archive plan.
 
+use crate::entrypoint::schedule::LayerHeader;
 use crate::format::graph::SerializedGraph;
 use crate::format::header::HoloHeader;
 use crate::section::table::SectionTable;
@@ -7,12 +8,13 @@ use crate::section::table::SectionTable;
 /// A loaded and validated archive.
 ///
 /// Provides access to the deserialized graph, raw weight bytes,
-/// and the section table for locating custom sections.
+/// the section table, and the layer header (if present).
 pub struct LoadedPlan {
     header: HoloHeader,
     graph: SerializedGraph,
     weights: Vec<u8>,
     section_table: SectionTable,
+    layer_header: Option<LayerHeader>,
 }
 
 impl LoadedPlan {
@@ -22,12 +24,14 @@ impl LoadedPlan {
         graph: SerializedGraph,
         weights: Vec<u8>,
         section_table: SectionTable,
+        layer_header: Option<LayerHeader>,
     ) -> Self {
         Self {
             header,
             graph,
             weights,
             section_table,
+            layer_header,
         }
     }
 
@@ -53,6 +57,12 @@ impl LoadedPlan {
     #[must_use]
     pub fn sections(&self) -> &SectionTable {
         &self.section_table
+    }
+
+    /// The layer header with execution entrypoints, if present.
+    #[must_use]
+    pub fn layer_header(&self) -> Option<&LayerHeader> {
+        self.layer_header.as_ref()
     }
 
     /// Number of nodes in the graph.

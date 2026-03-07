@@ -414,6 +414,7 @@ dependencies = [
  "hologram-exec",
  "hologram-graph",
  "rkyv",
+ "serde_json",
  "tokio",
 ]
 

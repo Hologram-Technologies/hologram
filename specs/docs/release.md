@@ -5,37 +5,92 @@
 This project follows [Semantic Versioning](https://semver.org):
 `MAJOR.MINOR.PATCH`.
 
-- **MAJOR**: breaking API or format change (e.g., `.holo` format version bump).
+- **MAJOR**: breaking API or behavior change.
 - **MINOR**: new functionality, backward-compatible.
 - **PATCH**: bug fixes, no API change.
 
-Current version: `0.1.0` (pre-1.0 development).
+Note: The `.holo` archive format does not maintain backwards compatibility. Format version changes require a MAJOR version bump.
 
 ---
 
 ## Release Checklist
 
-- [ ] All tests pass (`just ci`)
-- [ ] No Clippy warnings (`cargo clippy --workspace -- -D warnings`)
+- [ ] All tests pass (`cargo test --workspace`)
+- [ ] No Clippy warnings (`cargo clippy -- -D warnings`)
+- [ ] `just ci` passes (full CI gate)
 - [ ] Benchmarks run without regression (`just bench`)
-- [ ] Version bumped in workspace `Cargo.toml` and all crate `Cargo.toml` files
+- [ ] CHANGELOG.md updated (generated via `git-cliff`)
+- [ ] Version bumped in root `Cargo.toml`
+- [ ] Version bumped in all workspace member `Cargo.toml` files
 - [ ] PR merged to `main`
 - [ ] Release tag created: `v<version>`
+- [ ] Architecture docs synced (`holoarch pull`)
 
 ---
 
 ## Publishing
 
-Crates are published to crates.io in dependency order:
+### Crates.io
 
-1. `hologram-core` (no internal deps)
-2. `hologram-graph` (depends on hologram-core)
-3. `hologram-archive` (depends on hologram-graph, hologram-core)
-4. `hologram-exec` (depends on hologram-graph, hologram-core)
-5. `hologram-compiler` (depends on hologram-graph, hologram-archive)
-6. `hologram-async` (depends on hologram-exec)
-7. `hologram-ffi` (depends on hologram-exec)
-8. `hologram-cli` (depends on hologram-compiler, hologram-exec, hologram-archive)
-9. `hologram` (root crate, depends on all)
+Workspace crates are published to crates.io in dependency order:
 
-Binary releases are built with `--features full` for maximum functionality.
+```bash
+# 1. Core (no internal dependencies)
+cargo publish -p hologram-core
+
+# 2. Graph (depends on core)
+cargo publish -p hologram-graph
+
+# 3. Archive (depends on core, graph)
+cargo publish -p hologram-archive
+
+# 4. Exec (depends on core, graph, archive)
+cargo publish -p hologram-exec
+
+# 5. Compiler (depends on core, graph, archive)
+cargo publish -p hologram-compiler
+
+# 6. Async (depends on compiler, exec)
+cargo publish -p hologram-async
+
+# 7. FFI (depends on all)
+cargo publish -p hologram-ffi
+
+# 8. CLI (depends on all)
+cargo publish -p hologram-cli
+
+# 9. Root crate (re-exports)
+cargo publish -p hologram
+```
+
+### Binary Releases
+
+Binary releases are built for:
+
+- `x86_64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`
+
+Binaries are attached to GitHub releases.
+
+### WASM Package
+
+WASM builds are published to npm:
+
+```bash
+wasm-pack build crates/hologram-ffi --target web --features wasm
+wasm-pack publish
+```
+
+---
+
+## Changelog Generation
+
+Changelog is generated from conventional commits using `git-cliff`:
+
+```bash
+git cliff --output CHANGELOG.md
+```
+
+Configuration is in `cliff.toml`.
