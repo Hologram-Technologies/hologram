@@ -89,6 +89,15 @@ impl GraphBuilder {
         self
     }
 
+    /// Add a constant with a known N-D shape (e.g. weight matrix).
+    pub fn constant_with_shape(mut self, data: ConstantData, shape: Vec<usize>) -> Self {
+        let cid = self.graph.add_constant(data);
+        self.graph.set_constant_shape(cid, shape);
+        let id = self.graph.add_node(GraphOp::Constant(cid));
+        self.index_to_id.push(id);
+        self
+    }
+
     /// Add a 4-bit LUT-GEMM matmul node with pre-serialized weights.
     pub fn matmul_lut_4bit(mut self, weight_data: ConstantData, inputs: &[usize]) -> Self {
         let cid = self.graph.add_constant(weight_data);

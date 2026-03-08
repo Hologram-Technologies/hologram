@@ -399,15 +399,17 @@ fn run_generation(
     for step in 0..max_tokens {
         // Build inputs: token IDs serialized per input dtype.
         let input_bytes = serialize_token_ids(&token_ids, input_dtype);
+        let seq_len = token_ids.len();
 
         let mut inputs = GraphInputs::new();
-        inputs.set(input_slot, input_bytes);
+        // Set input_ids with shape [1, seq_len] so the executor knows the N-D shape.
+        inputs.set_with_shape(input_slot, input_bytes, vec![1, seq_len]);
 
         // Add attention mask if needed (all ones).
         if let Some(slot) = mask_slot {
             let mask_bytes =
                 serialize_ones(token_ids.len(), mask_dtype.unwrap_or(WeightDType::I64));
-            inputs.set(slot, mask_bytes);
+            inputs.set_with_shape(slot, mask_bytes, vec![1, seq_len]);
         }
 
         let outputs =

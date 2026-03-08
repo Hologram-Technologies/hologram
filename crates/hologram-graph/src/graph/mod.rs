@@ -3,6 +3,7 @@
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use std::collections::HashMap;
 
 pub mod edge;
 pub mod node;
@@ -178,6 +179,7 @@ pub struct Graph {
     graph_inputs: Vec<String>,
     graph_outputs: Vec<(String, NodeId)>,
     constants: ConstantStore,
+    constant_shapes: HashMap<ConstantId, Vec<usize>>,
     subgraphs: Vec<crate::subgraph::SubgraphDef>,
 }
 
@@ -199,6 +201,7 @@ impl Graph {
             graph_inputs: Vec::new(),
             graph_outputs: Vec::new(),
             constants: ConstantStore::new(),
+            constant_shapes: HashMap::new(),
             subgraphs: Vec::new(),
         }
     }
@@ -214,6 +217,7 @@ impl Graph {
             graph_inputs: Vec::new(),
             graph_outputs: Vec::new(),
             constants: ConstantStore::new(),
+            constant_shapes: HashMap::new(),
             subgraphs: Vec::new(),
         }
     }
@@ -427,6 +431,23 @@ impl Graph {
     #[must_use]
     pub fn constant_store(&self) -> &ConstantStore {
         &self.constants
+    }
+
+    /// Set the N-D shape for a constant (e.g. weight matrix shape).
+    pub fn set_constant_shape(&mut self, id: ConstantId, shape: Vec<usize>) {
+        self.constant_shapes.insert(id, shape);
+    }
+
+    /// Get the N-D shape for a constant, if recorded.
+    #[must_use]
+    pub fn constant_shape(&self, id: ConstantId) -> Option<&[usize]> {
+        self.constant_shapes.get(&id).map(|v| v.as_slice())
+    }
+
+    /// All recorded constant shapes.
+    #[must_use]
+    pub fn constant_shapes(&self) -> &HashMap<ConstantId, Vec<usize>> {
+        &self.constant_shapes
     }
 
     // --- Subgraphs ---

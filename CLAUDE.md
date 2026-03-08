@@ -1,78 +1,48 @@
-# CLAUDE.md — Hologram
+# CLAUDE.md
+
+This file provides context for Claude Code when working in **`hologram`**.
 
 ## Project Overview
 
-V2 rewrite of `../hologram-backup`. O(1) compute acceleration via precomputed LUT tables and KV-lookups, built on `uor-foundation` (v3.5.0).
-
-## Build Commands
-
-```bash
-just ci        # fmt check + clippy + test (full CI)
-just test      # cargo test --workspace
-just bench     # criterion benchmarks
-just fmt       # cargo fmt --all
-just clippy    # cargo clippy --workspace -- -D warnings
-just wasm      # build hologram-core for wasm32-unknown-unknown
-```
+- **Name**: hologram
+- **Role**: library
+- **Type**: rust-workspace
+- **Standards Version**: 2026.03
 
 ## Architecture
 
-- **hologram-core**: LUT tables, ElementWiseView, ring algebra, encoding. Zero deps except uor-foundation. `no_std`.
-- **hologram-graph**: Expression graph, subgraphs, fusion, parallel scheduling.
-- **hologram-archive**: `.holo` archive format, rkyv zero-copy, mmap, execution entrypoints.
-- **hologram-exec**: KV-lookup executor, buffer arena, parallel level execution.
-- **hologram-bench**: Criterion benchmarks.
+This repository follows the ecosystem's architecture standards.
+See `specs/docs/architecture.md` for project-specific architecture details.
 
-Root crate (`src/lib.rs`) re-exports all subcrate APIs.
+## Development
+
+- Run tests: `cargo test`
+- Check lints: `cargo clippy -- -D warnings`
+- Format code: `cargo fmt`
 
 ## Conventions
 
-- Max 3 function arguments; use builder pattern for more.
-- Prefer `macro_rules!` for repeated trait implementations.
-- Functions <= 15 lines.
-- Subdirectory organization within crates (no loose files beyond `lib.rs`).
-- Only rkyv for serialization. All persistent types derive rkyv traits.
-- SIMD feature-gated behind `simd`. Rayon behind `parallel`.
-- No TODOs, stubs, or `unimplemented!()`.
-- No backwards compatibility — single format version.
+- Use a consistent naming prefix for all crate names
+- Follow architecture decisions from the architecture repo
+- Document significant decisions as ADRs in `specs/adrs/`
 
-## Sprint Tracking
+<!-- ARCHON:MANAGED:BEGIN -->
+## Ecosystem Context
 
-Active sprint: `specs/SPRINT.md`
-Archived sprints: `specs/sprints/`
-Plans: `specs/plans/`
+This repository is part of the **Hologram** ecosystem — a multi-repo project governed by shared architecture decisions.
 
-<!-- HOLOARCH:MANAGED:BEGIN -->
-## Relationship to hologram-architecture
+### Key files
+- `hologram.repo.yaml` — this repo's role, contracts, and standards version
+- `AGENTS.md` — guidance for AI agents (includes ecosystem-wide rules)
+- `specs/docs/architecture.md` — project-specific architecture documentation
 
-This project is part of the Hologram ecosystem. Architecture decisions,
-ADRs, and planning artifacts are maintained in `hologram-architecture`.
+### Standards
+- Standards version is declared in `hologram.repo.yaml`
+- Run `archon verify` to check conformance
+- Run `archon sync` to pull latest managed content from the architecture repo
 
-Before implementing significant functionality:
-
-1. Read `specs/docs/architecture.md` and `specs/docs/upstream-architecture.md`.
-2. Check `specs/docs/development.md` for the local development workflow.
-3. Pull updated architecture docs with:
-```bash
-holoarch pull
-```
-
-## Important Commands
-
-```bash
-holoarch check       # validate repository conformance
-holoarch pull        # pull latest docs + refresh managed sections
-holoarch doc <name>  # generate a new doc template in specs/docs/
-```
-
-## Cross-Repository Isolation
-
-Do NOT modify `hologram-architecture` or any sibling repository from this project.
-Architecture flows one way: from the architecture repo into subprojects via
-`holoarch pull`. Files under `specs/docs/` are read-only and will be overwritten.
-
-If you need changes in another repository, write a prompt or spec describing the
-required change and save it to `specs/plans/`. Never make the change directly.
-
-_This section is managed by `holoarch pull`. Repo: hologram_
-<!-- HOLOARCH:MANAGED:END -->
+### Conventions
+- Use `hologram-` prefix for crate names
+- Follow ADR decisions (see `hologram-architecture/specs/adrs/`)
+- Declare inter-repo dependencies as contracts in `hologram.repo.yaml`
+<!-- ARCHON:MANAGED:END -->

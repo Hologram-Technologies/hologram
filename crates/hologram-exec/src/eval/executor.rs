@@ -19,10 +19,11 @@ use crate::float_dispatch;
 use crate::kv::{CustomOpRegistry, KvStore};
 use hologram_core::op::FloatOp;
 
-/// Named graph inputs: maps input index to byte data.
+/// Named graph inputs: maps input index to byte data and optional shape.
 #[derive(Debug, Clone, Default)]
 pub struct GraphInputs {
     inputs: HashMap<u32, Vec<u8>>,
+    shapes: HashMap<u32, Vec<usize>>,
 }
 
 impl GraphInputs {
@@ -31,6 +32,7 @@ impl GraphInputs {
     pub fn new() -> Self {
         Self {
             inputs: HashMap::new(),
+            shapes: HashMap::new(),
         }
     }
 
@@ -39,9 +41,20 @@ impl GraphInputs {
         self.inputs.insert(index, data);
     }
 
+    /// Set data with an explicit N-D shape for graph input at `index`.
+    pub fn set_with_shape(&mut self, index: u32, data: Vec<u8>, shape: Vec<usize>) {
+        self.inputs.insert(index, data);
+        self.shapes.insert(index, shape);
+    }
+
     /// Get data for graph input at `index`.
     pub fn get(&self, index: u32) -> Option<&[u8]> {
         self.inputs.get(&index).map(|v| v.as_slice())
+    }
+
+    /// Get the shape for graph input at `index`, if set.
+    pub fn shape(&self, index: u32) -> Option<&[usize]> {
+        self.shapes.get(&index).map(|v| v.as_slice())
     }
 
     /// Create from a list of (index, data) pairs.
@@ -49,6 +62,7 @@ impl GraphInputs {
     pub fn from_pairs(pairs: Vec<(u32, Vec<u8>)>) -> Self {
         Self {
             inputs: pairs.into_iter().collect(),
+            shapes: HashMap::new(),
         }
     }
 }
@@ -175,7 +189,7 @@ impl KvExecutor {
     {
         let node_map = build_node_map(sg);
         let mut arena = seed_arena(sg, weights)?;
-        let mut shape_map = seed_shape_map(sg, &arena);
+        let mut shape_map = seed_shape_map(sg, &arena, inputs);
 
         for (i, level) in schedule.levels.iter().enumerate() {
             let count = dispatch_level(
@@ -211,17 +225,90 @@ fn seed_arena(sg: &SerializedGraph, weights: &[u8]) -> ExecResult<BufferArena> {
     Ok(arena)
 }
 
-/// Initialize shape map: seed constants and graph inputs with 1-D shapes.
-fn seed_shape_map(sg: &SerializedGraph, arena: &BufferArena) -> ShapeMap {
+/// Initialize shape map: seed constants with 1-D shapes and graph inputs with
+/// caller-provided N-D shapes (if available).
+fn seed_shape_map(sg: &SerializedGraph, arena: &BufferArena, inputs: &GraphInputs) -> ShapeMap {
     let mut sm = ShapeMap::new();
+
     for node in &sg.nodes {
-        if matches!(node.op, GraphOp::Constant(_)) {
-            if let Ok(buf) = arena.get(node.id) {
-                sm.insert(node.id, ShapeMap::infer_1d(buf.len()));
+        match &node.op {
+            GraphOp::Constant(_) => {
+                if let Ok(buf) = arena.get(node.id) {
+                    sm.insert(node.id, ShapeMap::infer_1d(buf.len()));
+                }
             }
+            GraphOp::Input => {
+                // Use caller-provided N-D shape if available.
+                if let Some(slot_idx) = find_input_slot_index(node) {
+                    if let Some(shape) = inputs.shape(slot_idx) {
+                        sm.insert(node.id, shape.to_vec());
+                    }
+                }
+            }
+            _ => {}
         }
     }
     sm
+}
+
+/// Find the graph input slot index that an Input node reads from.
+fn find_input_slot_index(node: &Node) -> Option<u32> {
+    node.inputs.iter().find_map(|slot| match slot.source {
+        InputSource::GraphInput { index } => Some(index),
+        _ => None,
+    })
+}
+
+/// Resolve `size=0` sentinels in FloatOps using the input shape's last dimension.
+///
+/// When the compiler can't determine the last-dim size (symbolic shapes like seq_len),
+/// it emits size=0. At runtime we resolve this from the actual input shape.
+/// If the shape-based size doesn't divide the input, falls back to the full input length.
+fn resolve_dynamic_sizes(
+    op: &GraphOp,
+    input_shapes: &[Vec<usize>],
+    input_refs: &[&[u8]],
+) -> Option<GraphOp> {
+    let resolve = |input_idx: usize| -> u32 {
+        let shape_last = input_shapes
+            .get(input_idx)
+            .and_then(|s| s.last().copied())
+            .unwrap_or(0);
+        // Validate: the last dim must divide the actual buffer size.
+        let buf_floats = input_refs.get(input_idx).map(|b| b.len() / 4).unwrap_or(0);
+        if shape_last > 0 && buf_floats > 0 && buf_floats.is_multiple_of(shape_last) {
+            shape_last as u32
+        } else if buf_floats > 0 {
+            // Shape tracking failed — use full buffer (single-row softmax).
+            buf_floats as u32
+        } else {
+            0
+        }
+    };
+
+    match op {
+        GraphOp::Float(fop) => {
+            let resolved = match fop {
+                FloatOp::Softmax { size: 0 } => FloatOp::Softmax { size: resolve(0) },
+                FloatOp::LogSoftmax { size: 0 } => FloatOp::LogSoftmax { size: resolve(0) },
+                FloatOp::RmsNorm { size: 0, epsilon } => FloatOp::RmsNorm {
+                    size: resolve(0),
+                    epsilon: *epsilon,
+                },
+                FloatOp::LayerNorm { size: 0, epsilon } => FloatOp::LayerNorm {
+                    size: resolve(0),
+                    epsilon: *epsilon,
+                },
+                FloatOp::ReduceSum { size: 0 } => FloatOp::ReduceSum { size: resolve(0) },
+                FloatOp::ReduceMean { size: 0 } => FloatOp::ReduceMean { size: resolve(0) },
+                FloatOp::ReduceMax { size: 0 } => FloatOp::ReduceMax { size: resolve(0) },
+                FloatOp::ReduceMin { size: 0 } => FloatOp::ReduceMin { size: resolve(0) },
+                _ => return None,
+            };
+            Some(GraphOp::Float(resolved))
+        }
+        _ => None,
+    }
 }
 
 /// Execute all non-constant nodes in a single level; returns the count dispatched.
@@ -298,7 +385,33 @@ fn dispatch_level(
                         expected: format!("node {node_id:?} (Reshape)"),
                         actual: e.to_string(),
                     })?;
+                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
+                    eprintln!(
+                        "[SHAPE] {node_id:?} Reshape: in={:?} → out={:?} ({}B)",
+                        &input_shapes[0],
+                        &shape,
+                        data.len()
+                    );
+                }
                 (data, shape)
+            }
+            GraphOp::Float(FloatOp::MatMul { m, k, n })
+                if input_shapes.len() >= 2
+                    && input_shapes[0].len() >= 3
+                    && input_shapes[1].len() >= 3 =>
+            {
+                // Batched matmul: both A and B have ≥3-D shapes.
+                let a_shape = &input_shapes[0];
+                let b_shape = &input_shapes[1];
+                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
+                    eprintln!("[SHAPE] {node_id:?} MatMul(BATCHED) m={m} k={k} n={n}: A={a_shape:?} B={b_shape:?}");
+                }
+                float_dispatch::dispatch_batched_matmul(&input_refs, a_shape, b_shape).map_err(
+                    |e| ExecError::ShapeMismatch {
+                        expected: format!("node {node_id:?} (batched MatMul)"),
+                        actual: e.to_string(),
+                    },
+                )?
             }
             GraphOp::Float(FloatOp::Transpose { perm, ndim }) => {
                 let nd = *ndim as usize;
@@ -307,7 +420,6 @@ fn dispatch_level(
                 // If input shape has fewer dims than perm expects,
                 // reshape the 1-D shape to match ndim dims.
                 let effective_shape = if in_shape.len() < nd {
-                    // Try to infer: total elements from flat buffer.
                     let total: usize = in_shape.iter().copied().fold(1usize, usize::saturating_mul);
                     let mut s = vec![1usize; nd];
                     if nd > 0 {
@@ -323,11 +435,17 @@ fn dispatch_level(
                             expected: format!("node {node_id:?} (Transpose)"),
                             actual: e.to_string(),
                         })?;
+                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
+                    eprintln!("[SHAPE] {node_id:?} Transpose perm={p:?}: in={in_shape:?} eff={effective_shape:?} → out={shape:?}");
+                }
                 (data, shape)
             }
             _ => {
+                // Resolve size=0 sentinel in FloatOps using the input's last shape dim.
+                let resolved_op = resolve_dynamic_sizes(&node.op, &input_shapes, &input_refs);
+                let dispatch_op = resolved_op.as_ref().unwrap_or(&node.op);
                 let result = KvStore::dispatch_with_constants(
-                    &node.op,
+                    dispatch_op,
                     &input_refs,
                     constants,
                     registry,
@@ -338,20 +456,29 @@ fn dispatch_level(
                     actual: e.to_string(),
                 })?;
                 // Infer output shape.
-                let shape = match &node.op {
+                let shape = match dispatch_op {
                     GraphOp::Float(fop) => {
                         let ishape_refs: Vec<&[usize]> =
                             input_shapes.iter().map(|s| s.as_slice()).collect();
                         float_dispatch::infer_output_shape(fop, &ishape_refs, result.len())
                     }
-                    // For graph inputs, seed shape from data.
-                    GraphOp::Input => ShapeMap::infer_1d(result.len()),
+                    // For graph inputs, preserve caller-provided N-D shape if available.
+                    GraphOp::Input => shape_map
+                        .get(node_id)
+                        .map(|s| s.to_vec())
+                        .unwrap_or_else(|| ShapeMap::infer_1d(result.len())),
                     // Output, FusedView, etc.: pass through first input shape.
                     _ => input_shapes
                         .first()
                         .cloned()
                         .unwrap_or_else(|| ShapeMap::infer_1d(result.len())),
                 };
+                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
+                    if let GraphOp::Float(fop) = dispatch_op {
+                        let in_sizes: Vec<usize> = input_refs.iter().map(|b| b.len() / 4).collect();
+                        eprintln!("[SHAPE] {node_id:?} {fop:?}: in_sizes={in_sizes:?} in_shapes={input_shapes:?} → out={shape:?} ({}B)", result.len());
+                    }
+                }
                 (result, shape)
             }
         };
