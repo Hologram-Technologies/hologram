@@ -20,3 +20,4 @@ optional = true
 default = ["std"]
 std = ["hologram-archive/std"]
 parallel = ["rayon"]
+accelerate = []

@@ -7,6 +7,7 @@
 pub mod buffer;
 pub mod error;
 pub mod eval;
+pub mod float_dispatch;
 pub mod kv;
 pub mod lut_gemm;
 pub mod mmap;

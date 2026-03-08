@@ -3,8 +3,13 @@
 use crate::error::CliError;
 use crate::fmt::format_bytes;
 use clap::Args;
-use hologram_archive::HoloLoader;
-use hologram_exec::{execute_plan, GraphInputs, GraphOutputs};
+use hologram_archive::entrypoint::TensorPort;
+use hologram_archive::section::model_meta::{ModelMetaSection, SECTION_MODEL_META};
+use hologram_archive::section::tokenizer::{MiniBpeEncoder, TokenizerSection, SECTION_TOKENIZER};
+use hologram_archive::weight::WeightDType;
+use hologram_archive::{HoloLoader, LoadedPlan};
+use hologram_exec::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
+use std::io::Write;
 use std::path::PathBuf;
 
 /// Arguments for the run subcommand.
@@ -15,31 +20,88 @@ pub struct RunArgs {
     /// Input values as `INDEX:HEX` pairs (e.g. `--input 0:deadbeef`).
     #[arg(long = "input", value_name = "INDEX:HEX")]
     pub inputs: Vec<String>,
+    /// Input from file as `SLOT:PATH` pairs (e.g. `--input-file 0:input.bin`).
+    #[arg(long = "input-file", value_name = "SLOT:PATH")]
+    pub input_files: Vec<String>,
+    /// Text prompt for autoregressive generation (requires embedded tokenizer).
+    #[arg(long)]
+    pub prompt: Option<String>,
+    /// Maximum tokens to generate when using --prompt (default: 128).
+    #[arg(long, default_value = "128")]
+    pub max_tokens: usize,
 }
 
 /// Execute the run command.
 pub async fn execute(args: RunArgs) -> Result<(), CliError> {
     let loader = HoloLoader::open(&args.file)?;
     let plan = loader.load()?;
+    let archive_bytes = loader.as_bytes();
 
-    print_entrypoint_info(&plan);
+    // Load optional sections.
+    let tokenizer = load_section::<TokenizerSection>(archive_bytes, &plan, SECTION_TOKENIZER);
+    let model_meta = load_section::<ModelMetaSection>(archive_bytes, &plan, SECTION_MODEL_META);
 
-    let graph_inputs = parse_inputs(&args.inputs)?;
-    let start = std::time::Instant::now();
-    let outputs = execute_plan(&plan, &graph_inputs)?;
-    let elapsed = start.elapsed();
+    print_model_info(&plan, &model_meta);
 
-    print_outputs(&outputs);
-    eprintln!(
-        "executed in {:.3}ms (weights {})",
-        elapsed.as_secs_f64() * 1000.0,
-        format_bytes(plan.weights().len() as u64),
-    );
+    if let Some(prompt) = &args.prompt {
+        // Guard: check model supports prompt generation.
+        if let Some(meta) = &model_meta {
+            if !meta.supports_prompt {
+                return Err(CliError::InvalidInput(format!(
+                    "model kind {:?} does not support --prompt (arch: {})",
+                    meta.kind, meta.arch,
+                )));
+            }
+        }
+        let tok = tokenizer.as_ref().ok_or_else(|| {
+            CliError::InvalidInput(
+                "archive has no embedded tokenizer section; \
+                 recompile with --tokenizer to use --prompt"
+                    .into(),
+            )
+        })?;
+        run_generation(&plan, tok, prompt, args.max_tokens)?;
+    } else {
+        let mut graph_inputs = parse_inputs(&args.inputs)?;
+        load_file_inputs(&args.input_files, &mut graph_inputs)?;
+
+        // Show help if no inputs provided.
+        if args.inputs.is_empty() && args.input_files.is_empty() {
+            print_input_help(&plan);
+        }
+
+        let start = std::time::Instant::now();
+        let outputs = hologram_exec::execute_plan(&plan, &graph_inputs)?;
+        let elapsed = start.elapsed();
+
+        if let Some(tok) = &tokenizer {
+            print_decoded_outputs(&outputs, tok);
+        } else {
+            print_typed_outputs(&outputs, &plan);
+        }
+        eprintln!(
+            "executed in {:.3}ms (weights {})",
+            elapsed.as_secs_f64() * 1000.0,
+            format_bytes(plan.weights().len() as u64),
+        );
+    }
     Ok(())
 }
 
-/// Print entrypoint info from the archive's `LayerHeader` to stderr.
-fn print_entrypoint_info(plan: &hologram_archive::LoadedPlan) {
+// ── Model info ─────────────────────────────────────────────────────────
+
+/// Print model metadata and entrypoint info to stderr.
+fn print_model_info(plan: &LoadedPlan, model_meta: &Option<ModelMetaSection>) {
+    if let Some(meta) = model_meta {
+        eprintln!(
+            "model: {:?} arch={} seq_len={} prompt={}",
+            meta.kind, meta.arch, meta.max_seq_len, meta.supports_prompt,
+        );
+        if !meta.description.is_empty() {
+            eprintln!("  {}", meta.description);
+        }
+    }
+
     let lh = match plan.layer_header() {
         Some(lh) => lh,
         None => {
@@ -48,8 +110,16 @@ fn print_entrypoint_info(plan: &hologram_archive::LoadedPlan) {
         }
     };
     for layer in &lh.layers {
-        let inputs: Vec<&str> = layer.inputs.iter().map(|p| p.name.as_str()).collect();
-        let outputs: Vec<&str> = layer.outputs.iter().map(|p| p.name.as_str()).collect();
+        let inputs: Vec<String> = layer
+            .inputs
+            .iter()
+            .map(|p| format!("{}:{:?}:{}", p.name, p.shape, p.dtype.name()))
+            .collect();
+        let outputs: Vec<String> = layer
+            .outputs
+            .iter()
+            .map(|p| format!("{}:{:?}:{}", p.name, p.shape, p.dtype.name()))
+            .collect();
         eprintln!(
             "layer {:?}: {:?} [{}] -> [{}]",
             layer.name,
@@ -59,6 +129,42 @@ fn print_entrypoint_info(plan: &hologram_archive::LoadedPlan) {
         );
     }
 }
+
+/// Print expected input specs to help users understand what the model needs.
+fn print_input_help(plan: &LoadedPlan) {
+    let lh = match plan.layer_header() {
+        Some(lh) => lh,
+        None => {
+            // Fall back to graph input names.
+            eprintln!("inputs (by graph name):");
+            for (i, name) in plan.graph().input_names.iter().enumerate() {
+                eprintln!("  slot {i}: \"{name}\"");
+            }
+            return;
+        }
+    };
+    eprintln!("expected inputs:");
+    for layer in &lh.layers {
+        for (i, port) in layer.inputs.iter().enumerate() {
+            let elem_bytes = port.dtype.byte_size();
+            let total_elems: u64 = port.shape.iter().product();
+            let total_bytes = if elem_bytes > 0 && total_elems > 0 {
+                format!("{} bytes", total_elems as usize * elem_bytes)
+            } else {
+                "dynamic".into()
+            };
+            eprintln!(
+                "  slot {i} '{}': shape {:?} dtype {} ({})",
+                port.name,
+                port.shape,
+                port.dtype.name(),
+                total_bytes,
+            );
+        }
+    }
+}
+
+// ── Input parsing ──────────────────────────────────────────────────────
 
 /// Parse a list of `INDEX:HEX` strings into `GraphInputs`.
 fn parse_inputs(raw: &[String]) -> Result<GraphInputs, CliError> {
@@ -82,6 +188,26 @@ pub fn parse_input(s: &str) -> Result<(u32, Vec<u8>), CliError> {
     Ok((idx, bytes))
 }
 
+/// Load file-based inputs (`SLOT:PATH` pairs).
+fn load_file_inputs(raw: &[String], inputs: &mut GraphInputs) -> Result<(), CliError> {
+    for s in raw {
+        let (idx_str, path_str) = s
+            .split_once(':')
+            .ok_or_else(|| CliError::InvalidInput(format!("expected SLOT:PATH, got {s:?}")))?;
+        let idx: u32 = idx_str
+            .parse()
+            .map_err(|_| CliError::InvalidInput(format!("invalid slot {idx_str:?} in {s:?}")))?;
+        let bytes = std::fs::read(path_str)
+            .map_err(|e| CliError::InvalidInput(format!("reading input file {path_str:?}: {e}")))?;
+        eprintln!(
+            "loaded slot {idx} from {path_str:?} ({} bytes)",
+            bytes.len()
+        );
+        inputs.set(idx, bytes);
+    }
+    Ok(())
+}
+
 /// Decode a hex string into bytes.
 fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     if !s.len().is_multiple_of(2) {
@@ -96,13 +222,297 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-/// Print each named output as `name: <hex>`.
-fn print_outputs(outputs: &GraphOutputs) {
+// ── Section loading ────────────────────────────────────────────────────
+
+/// Generic section loader — try to load and deserialize a section by kind.
+fn load_section<T>(archive_bytes: &[u8], plan: &LoadedPlan, kind: u32) -> Option<T>
+where
+    T: SectionDeserialize,
+{
+    let entry = plan.sections().find(kind)?;
+    let offset = entry.offset as usize;
+    let size = entry.size as usize;
+    if offset + size > archive_bytes.len() {
+        return None;
+    }
+    T::deserialize_section(&archive_bytes[offset..offset + size]).ok()
+}
+
+/// Trait for section types that can be deserialized from bytes.
+trait SectionDeserialize: Sized {
+    fn deserialize_section(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error>;
+}
+
+impl SectionDeserialize for TokenizerSection {
+    fn deserialize_section(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error> {
+        TokenizerSection::deserialize_from(bytes)
+    }
+}
+
+impl SectionDeserialize for ModelMetaSection {
+    fn deserialize_section(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error> {
+        ModelMetaSection::deserialize_from(bytes)
+    }
+}
+
+// ── Output formatting ──────────────────────────────────────────────────
+
+/// Get output TensorPort specs from the LayerHeader (if available).
+fn get_output_ports(plan: &LoadedPlan) -> Vec<TensorPort> {
+    plan.layer_header()
+        .into_iter()
+        .flat_map(|lh| lh.layers.iter())
+        .flat_map(|l| l.outputs.iter().cloned())
+        .collect()
+}
+
+/// Print outputs with dtype-aware formatting.
+fn print_typed_outputs(outputs: &GraphOutputs, plan: &LoadedPlan) {
+    let output_ports = get_output_ports(plan);
     for i in 0..outputs.len() {
         if let Some((name, data)) = outputs.get(i) {
-            let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
-            println!("{name}: {hex}");
+            let dtype = output_ports.get(i).map(|p| p.dtype);
+            match dtype {
+                Some(WeightDType::F32) if data.len() >= 4 => {
+                    let n = data.len() / 4;
+                    let floats: Vec<f32> = (0..n)
+                        .map(|j| f32::from_le_bytes(data[j * 4..(j + 1) * 4].try_into().unwrap()))
+                        .collect();
+                    if floats.len() <= 16 {
+                        println!("{name}: {floats:?}");
+                    } else {
+                        let min = floats.iter().copied().reduce(f32::min).unwrap_or(0.0);
+                        let max = floats.iter().copied().reduce(f32::max).unwrap_or(0.0);
+                        let mean = floats.iter().sum::<f32>() / floats.len() as f32;
+                        println!(
+                            "{name}: [{} f32] min={min:.4} max={max:.4} mean={mean:.4}",
+                            floats.len(),
+                        );
+                    }
+                }
+                Some(WeightDType::F64) if data.len() >= 8 => {
+                    let n = data.len() / 8;
+                    let floats: Vec<f64> = (0..n)
+                        .map(|j| f64::from_le_bytes(data[j * 8..(j + 1) * 8].try_into().unwrap()))
+                        .collect();
+                    if floats.len() <= 16 {
+                        println!("{name}: {floats:?}");
+                    } else {
+                        println!("{name}: [{} f64 values]", floats.len());
+                    }
+                }
+                Some(WeightDType::I64) if data.len() >= 8 => {
+                    let n = data.len() / 8;
+                    let ints: Vec<i64> = (0..n)
+                        .map(|j| i64::from_le_bytes(data[j * 8..(j + 1) * 8].try_into().unwrap()))
+                        .collect();
+                    if ints.len() <= 32 {
+                        println!("{name}: {ints:?}");
+                    } else {
+                        println!("{name}: [{} i64 values]", ints.len());
+                    }
+                }
+                Some(WeightDType::I32) if data.len() >= 4 => {
+                    let n = data.len() / 4;
+                    let ints: Vec<i32> = (0..n)
+                        .map(|j| i32::from_le_bytes(data[j * 4..(j + 1) * 4].try_into().unwrap()))
+                        .collect();
+                    if ints.len() <= 32 {
+                        println!("{name}: {ints:?}");
+                    } else {
+                        println!("{name}: [{} i32 values]", ints.len());
+                    }
+                }
+                _ => {
+                    // Fallback: truncated hex with byte count.
+                    let hex: String = data.iter().take(64).map(|b| format!("{b:02x}")).collect();
+                    let suffix = if data.len() > 64 { "..." } else { "" };
+                    println!("{name}: {hex}{suffix} ({} bytes)", data.len());
+                }
+            }
         }
+    }
+}
+
+/// Print outputs decoded as text tokens via argmax.
+fn print_decoded_outputs(outputs: &GraphOutputs, tok: &TokenizerSection) {
+    for i in 0..outputs.len() {
+        if let Some((name, data)) = outputs.get(i) {
+            if let Some(token_id) = TokenizerSection::argmax_f32(data) {
+                let text = tok.id_to_token(token_id).unwrap_or("<unk>");
+                println!("{name}: token_id={token_id} \"{text}\"");
+            } else {
+                let hex: String = data.iter().take(64).map(|b| format!("{b:02x}")).collect();
+                let suffix = if data.len() > 64 { "..." } else { "" };
+                println!("{name}: {hex}{suffix} ({} bytes)", data.len());
+            }
+        }
+    }
+}
+
+// ── Autoregressive generation ──────────────────────────────────────────
+
+/// Autoregressive text generation loop.
+fn run_generation(
+    plan: &LoadedPlan,
+    tok_section: &TokenizerSection,
+    prompt: &str,
+    max_tokens: usize,
+) -> Result<(), CliError> {
+    let encoder = MiniBpeEncoder::from_tokenizer_section(tok_section);
+
+    // Determine input dtype for token IDs from TensorPort (default I64).
+    let input_dtype = resolve_input_dtype(plan, "input_ids");
+
+    // Encode the prompt.
+    let mut token_ids = encoder.encode(prompt);
+    eprintln!(
+        "prompt: {} tokens (vocab_size={}, input_dtype={})",
+        token_ids.len(),
+        encoder.vocab_size(),
+        input_dtype.name(),
+    );
+
+    // Find input slot for "input_ids" (default slot 0).
+    let input_slot = plan
+        .graph()
+        .input_names
+        .iter()
+        .position(|n| n == "input_ids")
+        .unwrap_or(0) as u32;
+
+    // Check if model needs attention_mask.
+    let mask_slot = plan
+        .graph()
+        .input_names
+        .iter()
+        .position(|n| n == "attention_mask")
+        .map(|i| i as u32);
+    let mask_dtype = mask_slot.map(|_| resolve_input_dtype(plan, "attention_mask"));
+
+    // Build execution schedule once.
+    let schedule = build_schedule(plan.graph())?;
+
+    let start = std::time::Instant::now();
+    let prompt_len = token_ids.len();
+
+    for step in 0..max_tokens {
+        // Build inputs: token IDs serialized per input dtype.
+        let input_bytes = serialize_token_ids(&token_ids, input_dtype);
+
+        let mut inputs = GraphInputs::new();
+        inputs.set(input_slot, input_bytes);
+
+        // Add attention mask if needed (all ones).
+        if let Some(slot) = mask_slot {
+            let mask_bytes =
+                serialize_ones(token_ids.len(), mask_dtype.unwrap_or(WeightDType::I64));
+            inputs.set(slot, mask_bytes);
+        }
+
+        let outputs =
+            KvExecutor::execute_with_plan(plan.graph(), &schedule, &inputs, plan.weights())?;
+
+        // Argmax over last position's logits.
+        let logit_data = match outputs.get(0) {
+            Some((_, data)) => data,
+            None => {
+                return Err(CliError::InvalidInput("model produced no output".into()));
+            }
+        };
+
+        let vocab_size = encoder.vocab_size();
+        let last_pos_bytes = vocab_size * 4; // f32 = 4 bytes
+        let next_token = if logit_data.len() >= last_pos_bytes {
+            let last_logits = &logit_data[logit_data.len() - last_pos_bytes..];
+            TokenizerSection::argmax_f32(last_logits)
+        } else {
+            TokenizerSection::argmax_f32(logit_data)
+        };
+
+        let next_token = match next_token {
+            Some(id) => id,
+            None => {
+                eprintln!("\n[no logits in output]");
+                break;
+            }
+        };
+
+        // Check EOS.
+        if next_token == encoder.eos_id() {
+            break;
+        }
+
+        // Decode and print incrementally.
+        let text = encoder.decode(&[next_token]);
+        print!("{text}");
+        std::io::stdout().flush().ok();
+
+        token_ids.push(next_token);
+
+        if step == 0 {
+            let prefill_ms = start.elapsed().as_secs_f64() * 1000.0;
+            eprintln!("\n[prefill {prefill_ms:.0}ms]");
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let generated = token_ids.len() - prompt_len;
+    let tok_per_sec = if elapsed.as_secs_f64() > 0.0 {
+        generated as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+    eprintln!(
+        "\n[{generated} tokens in {:.1}s ({tok_per_sec:.1} tok/s), weights {}]",
+        elapsed.as_secs_f64(),
+        format_bytes(plan.weights().len() as u64),
+    );
+    Ok(())
+}
+
+/// Resolve the dtype of a named input port from the LayerHeader.
+///
+/// Falls back to I64 if no port is found or the port has a placeholder
+/// dtype (U8 with shape [1] is the compiler's default placeholder).
+fn resolve_input_dtype(plan: &LoadedPlan, name: &str) -> WeightDType {
+    plan.layer_header()
+        .into_iter()
+        .flat_map(|lh| lh.layers.iter())
+        .flat_map(|l| l.inputs.iter())
+        .find(|p| p.name == name)
+        .map(|p| {
+            // U8 with shape [1] is the compiler's placeholder — treat as unknown.
+            if p.dtype == WeightDType::U8 && p.shape == [1] {
+                WeightDType::I64
+            } else {
+                p.dtype
+            }
+        })
+        .unwrap_or(WeightDType::I64)
+}
+
+/// Serialize token IDs to bytes in the given dtype.
+fn serialize_token_ids(ids: &[u32], dtype: WeightDType) -> Vec<u8> {
+    match dtype {
+        WeightDType::I32 => ids
+            .iter()
+            .flat_map(|&id| (id as i32).to_le_bytes())
+            .collect(),
+        // Default to I64 for all other dtypes.
+        _ => ids
+            .iter()
+            .flat_map(|&id| (id as i64).to_le_bytes())
+            .collect(),
+    }
+}
+
+/// Serialize N ones in the given dtype (for attention masks).
+fn serialize_ones(n: usize, dtype: WeightDType) -> Vec<u8> {
+    match dtype {
+        WeightDType::I32 => (0..n).flat_map(|_| 1i32.to_le_bytes()).collect(),
+        WeightDType::F32 => (0..n).flat_map(|_| 1.0f32.to_le_bytes()).collect(),
+        _ => (0..n).flat_map(|_| 1i64.to_le_bytes()).collect(),
     }
 }
 
@@ -189,5 +599,37 @@ mod tests {
         let result = decode_hex(&hex).unwrap();
         let expected: Vec<u8> = (0u8..=255).collect();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn serialize_token_ids_i64() {
+        let ids = vec![1, 2, 3];
+        let bytes = serialize_token_ids(&ids, WeightDType::I64);
+        assert_eq!(bytes.len(), 24); // 3 * 8
+        assert_eq!(&bytes[0..8], &1i64.to_le_bytes());
+    }
+
+    #[test]
+    fn serialize_token_ids_i32() {
+        let ids = vec![1, 2, 3];
+        let bytes = serialize_token_ids(&ids, WeightDType::I32);
+        assert_eq!(bytes.len(), 12); // 3 * 4
+        assert_eq!(&bytes[0..4], &1i32.to_le_bytes());
+    }
+
+    #[test]
+    fn serialize_ones_i64() {
+        let bytes = serialize_ones(2, WeightDType::I64);
+        assert_eq!(bytes.len(), 16);
+        let val = i64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        assert_eq!(val, 1);
+    }
+
+    #[test]
+    fn serialize_ones_f32() {
+        let bytes = serialize_ones(2, WeightDType::F32);
+        assert_eq!(bytes.len(), 8);
+        let val = f32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        assert_eq!(val, 1.0);
     }
 }

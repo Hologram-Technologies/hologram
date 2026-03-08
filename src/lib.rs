@@ -38,7 +38,7 @@ pub use hologram_cli;
 // Consumers can use `hologram::Graph` instead of `hologram::hologram_graph::Graph`.
 
 // Core primitives
-pub use hologram_core::op::{LutOp, Op, PrimOp};
+pub use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp, LutOp, Op, PrimOp};
 pub use hologram_core::view::ElementWiseView;
 
 // Graph IR

@@ -1,6 +1,8 @@
 //! Extensible section system for archive metadata.
 
+pub mod model_meta;
 pub mod table;
+pub mod tokenizer;
 
 /// Well-known section kind: weight index.
 pub const SECTION_WEIGHT_INDEX: u32 = 1;

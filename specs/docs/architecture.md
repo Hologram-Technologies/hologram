@@ -1,4 +1,4 @@
-# hologram — Full Architecture
+# hologram: Full Architecture
 
 ---
 

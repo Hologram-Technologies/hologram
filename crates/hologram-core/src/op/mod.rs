@@ -1,8 +1,11 @@
-//! Op types: PrimOp (10 primitives) and LutOp (21+ activation functions).
+//! Op types: PrimOp (10 primitives), LutOp (21+ activation functions),
+//! and FloatOp (typed f32 tensor operations for AI inference).
 
+mod float_op;
 mod lut_op;
 mod prim;
 
+pub use float_op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp};
 pub use lut_op::LutOp;
 pub use prim::PrimOp;
 
@@ -17,6 +20,8 @@ pub enum Op {
     Prim(PrimOp),
     /// An activation/scientific function via LUT.
     Lut(LutOp),
+    /// A typed f32 tensor operation for AI inference.
+    Float(FloatOp),
 }
 
 impl Op {
@@ -27,6 +32,7 @@ impl Op {
         match self {
             Self::Prim(p) => p.arity(),
             Self::Lut(_) => 1,
+            Self::Float(f) => f.arity(),
         }
     }
 
@@ -36,6 +42,7 @@ impl Op {
         match self {
             Self::Prim(p) => p.name(),
             Self::Lut(l) => l.name(),
+            Self::Float(f) => f.name(),
         }
     }
 }

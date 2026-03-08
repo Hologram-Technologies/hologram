@@ -9,7 +9,7 @@ pub mod node;
 pub mod validate;
 
 use crate::constant::{ConstantData, ConstantId, ConstantStore};
-use hologram_core::op::{LutOp, PrimOp};
+use hologram_core::op::{FloatOp, LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
 use node::{InputSlot, InputSource, Node, NodeId};
 
@@ -85,6 +85,15 @@ pub enum GraphOp {
     ///
     /// The `arity` field must match the number of edges wired to this node.
     Custom { id: CustomOpId, arity: u8 },
+    /// Typed f32 tensor operation for AI inference.
+    ///
+    /// Unlike `PrimOp`/`LutOp` (byte-domain), these operate on f32 buffers
+    /// with shape-aware semantics. Serialized into archives alongside other ops.
+    Float(FloatOp),
+    /// Fused chain of unary element-wise f32 ops. Single input, single output.
+    /// Applied sequentially: chain[0](x) → chain[1](...) → ... → chain[n](...).
+    /// Produced by the float fusion pass.
+    FusedFloatChain(Vec<FloatOp>),
 }
 
 impl GraphOp {
@@ -103,6 +112,8 @@ impl GraphOp {
             | Self::BatchMatMulLut8(_) => 1,
             Self::Prim(p) => p.arity(),
             Self::Custom { arity, .. } => *arity,
+            Self::Float(f) => f.arity(),
+            Self::FusedFloatChain(_) => 1,
         }
     }
 
@@ -119,6 +130,8 @@ impl GraphOp {
                 | Self::BatchMatMulLut4(_)
                 | Self::BatchMatMulLut8(_)
                 | Self::Custom { .. }
+                | Self::Float(_)
+                | Self::FusedFloatChain(_)
         )
     }
 

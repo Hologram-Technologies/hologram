@@ -88,18 +88,23 @@ hologram-ffi = { workspace = true, optional = true }
 hologram-cli = { workspace = true, optional = true }
 
 [features]
-default = ["std", "simd", "parallel", "compiler"]
+default = ["std", "simd", "parallel", "compiler", "accelerate"]
 full = ["default", "async", "ffi", "cli"]
 
 std = ["hologram-core/std", "hologram-exec/std"]
 simd = ["hologram-core/simd"]
 parallel = ["hologram-exec/parallel"]
+accelerate = ["hologram-exec/accelerate"]
 
 compiler = ["dep:hologram-compiler"]
 async = ["dep:hologram-async", "dep:tokio"]
 ffi = ["dep:hologram-ffi"]
 cli = ["dep:hologram-cli", "dep:tokio"]
 wasm = ["ffi", "hologram-ffi/wasm"]
+
+# Keep debug symbols but optimize enough for usable LLM inference (~10-50x faster).
+[profile.dev]
+opt-level = 2
 
 [profile.release]
 opt-level = 3

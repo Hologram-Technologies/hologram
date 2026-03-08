@@ -78,6 +78,13 @@ impl HoloWriter {
         self
     }
 
+    /// Add a section from raw bytes (kind + pre-serialized data).
+    #[must_use]
+    pub fn add_raw_section(mut self, kind: u32, bytes: Vec<u8>) -> Self {
+        self.sections.push((kind, bytes));
+        self
+    }
+
     /// Build the complete archive as a byte vector.
     ///
     /// If a graph was set via `set_graph` and no `LayerHeader` section was

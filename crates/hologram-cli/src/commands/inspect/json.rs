@@ -98,6 +98,11 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::MatMulLut8(id) => json!({"MatMulLut8": id.raw()}),
         GraphOp::BatchMatMulLut4(id) => json!({"BatchMatMulLut4": id.raw()}),
         GraphOp::BatchMatMulLut8(id) => json!({"BatchMatMulLut8": id.raw()}),
+        GraphOp::Float(f) => json!({"Float": f.name()}),
+        GraphOp::FusedFloatChain(chain) => {
+            let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
+            json!({"FusedFloatChain": names})
+        }
         GraphOp::Custom { id, arity } => {
             json!({"Custom": {"id": id.raw(), "arity": arity}})
         }

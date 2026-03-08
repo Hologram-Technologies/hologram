@@ -66,3 +66,7 @@ harness = false
 [[bench]]
 name = "async_stream"
 harness = false
+
+[[bench]]
+name = "calculator"
+harness = false

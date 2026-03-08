@@ -88,6 +88,10 @@ impl KvStore {
             GraphOp::BatchMatMulLut8(cid) => {
                 dispatch_lut_gemm_8(inputs[0], *cid, constants, weights)
             }
+            GraphOp::Float(ref f) => crate::float_dispatch::dispatch_float(f, inputs),
+            GraphOp::FusedFloatChain(ref chain) => {
+                crate::float_dispatch::dispatch_fused_chain(chain, inputs)
+            }
             GraphOp::Custom { id, .. } => registry
                 .ok_or_else(|| ExecError::UnsupportedOp(format!("custom op {}", id.raw())))?
                 .dispatch(*id, inputs, constants),

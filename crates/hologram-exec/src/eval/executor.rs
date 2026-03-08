@@ -13,9 +13,11 @@ use hologram_graph::graph::GraphOp;
 use hologram_graph::schedule::levels::ParallelLevel;
 use hologram_graph::schedule::ExecutionSchedule;
 
-use crate::buffer::BufferArena;
+use crate::buffer::{BufferArena, ShapeMap};
 use crate::error::{ExecError, ExecResult};
+use crate::float_dispatch;
 use crate::kv::{CustomOpRegistry, KvStore};
+use hologram_core::op::FloatOp;
 
 /// Named graph inputs: maps input index to byte data.
 #[derive(Debug, Clone, Default)]
@@ -173,12 +175,14 @@ impl KvExecutor {
     {
         let node_map = build_node_map(sg);
         let mut arena = seed_arena(sg, weights)?;
+        let mut shape_map = seed_shape_map(sg, &arena);
 
         for (i, level) in schedule.levels.iter().enumerate() {
             let count = dispatch_level(
                 level,
                 &node_map,
                 &mut arena,
+                &mut shape_map,
                 inputs,
                 &sg.constants,
                 registry,
@@ -207,17 +211,32 @@ fn seed_arena(sg: &SerializedGraph, weights: &[u8]) -> ExecResult<BufferArena> {
     Ok(arena)
 }
 
+/// Initialize shape map: seed constants and graph inputs with 1-D shapes.
+fn seed_shape_map(sg: &SerializedGraph, arena: &BufferArena) -> ShapeMap {
+    let mut sm = ShapeMap::new();
+    for node in &sg.nodes {
+        if matches!(node.op, GraphOp::Constant(_)) {
+            if let Ok(buf) = arena.get(node.id) {
+                sm.insert(node.id, ShapeMap::infer_1d(buf.len()));
+            }
+        }
+    }
+    sm
+}
+
 /// Execute all non-constant nodes in a single level; returns the count dispatched.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_level(
     level: &ParallelLevel,
     node_map: &HashMap<NodeId, &Node>,
     arena: &mut BufferArena,
+    shape_map: &mut ShapeMap,
     inputs: &GraphInputs,
     constants: &hologram_graph::constant::ConstantStore,
     registry: Option<&CustomOpRegistry>,
     weights: &[u8],
 ) -> ExecResult<usize> {
-    let mut results: Vec<(NodeId, Vec<u8>)> = Vec::with_capacity(level.node_ids.len());
+    let mut results: Vec<(NodeId, Vec<u8>, Vec<usize>)> = Vec::with_capacity(level.node_ids.len());
 
     for &node_id in &level.node_ids {
         let node = node_map
@@ -230,15 +249,120 @@ fn dispatch_level(
 
         let input_bufs = gather_inputs(node, arena, inputs)?;
         let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
-        results.push((
-            node_id,
-            KvStore::dispatch_with_constants(&node.op, &input_refs, constants, registry, weights)?,
-        ));
+
+        // Gather input shapes for shape-aware ops.
+        let input_shapes: Vec<Vec<usize>> = node
+            .inputs
+            .iter()
+            .zip(input_bufs.iter())
+            .map(|(slot, buf)| {
+                let dep_id = match slot.source {
+                    InputSource::Node(id) => Some(id),
+                    _ => None,
+                };
+                dep_id
+                    .and_then(|id| shape_map.get(id).map(|s| s.to_vec()))
+                    .unwrap_or_else(|| ShapeMap::infer_1d(buf.len()))
+            })
+            .collect();
+
+        // Handle shape-aware ops (Reshape, Transpose, Shape) specially.
+        let (result, out_shape) = match &node.op {
+            GraphOp::Float(FloatOp::Shape { dtype }) => {
+                // Return the input's logical shape as an i64 tensor.
+                // If shape is 1-D (inferred from bytes), recompute using the correct dtype.
+                let in_shape = &input_shapes[0];
+                let shape_i64: Vec<i64> = if in_shape.len() == 1 {
+                    // Re-derive from byte count using the declared dtype.
+                    let elem_size = dtype.byte_size().max(1);
+                    vec![input_refs[0].len() as i64 / elem_size as i64]
+                } else {
+                    in_shape.iter().map(|&d| d as i64).collect()
+                };
+                let data: Vec<u8> = bytemuck::cast_slice(&shape_i64).to_vec();
+                let out_shape = vec![shape_i64.len()];
+                (data, out_shape)
+            }
+            GraphOp::Float(FloatOp::Concat { .. }) if input_refs.len() > 2 => {
+                // N-input concat: concatenate all input bytes.
+                let mut data = Vec::new();
+                for inp in &input_refs {
+                    data.extend_from_slice(inp);
+                }
+                let out_shape = vec![data.len() / 4];
+                (data, out_shape)
+            }
+            GraphOp::Float(FloatOp::Reshape) => {
+                let (data, shape) = float_dispatch::dispatch_reshape_with_shape(&input_refs)
+                    .map_err(|e| ExecError::ShapeMismatch {
+                        expected: format!("node {node_id:?} (Reshape)"),
+                        actual: e.to_string(),
+                    })?;
+                (data, shape)
+            }
+            GraphOp::Float(FloatOp::Transpose { perm, ndim }) => {
+                let nd = *ndim as usize;
+                let p = &perm[..nd];
+                let in_shape = &input_shapes[0];
+                // If input shape has fewer dims than perm expects,
+                // reshape the 1-D shape to match ndim dims.
+                let effective_shape = if in_shape.len() < nd {
+                    // Try to infer: total elements from flat buffer.
+                    let total: usize = in_shape.iter().copied().fold(1usize, usize::saturating_mul);
+                    let mut s = vec![1usize; nd];
+                    if nd > 0 {
+                        s[0] = total;
+                    }
+                    s
+                } else {
+                    in_shape.clone()
+                };
+                let (data, shape) =
+                    float_dispatch::dispatch_transpose(input_refs[0], p, &effective_shape)
+                        .map_err(|e| ExecError::ShapeMismatch {
+                            expected: format!("node {node_id:?} (Transpose)"),
+                            actual: e.to_string(),
+                        })?;
+                (data, shape)
+            }
+            _ => {
+                let result = KvStore::dispatch_with_constants(
+                    &node.op,
+                    &input_refs,
+                    constants,
+                    registry,
+                    weights,
+                )
+                .map_err(|e| ExecError::ShapeMismatch {
+                    expected: format!("node {node_id:?} ({:?})", node.op),
+                    actual: e.to_string(),
+                })?;
+                // Infer output shape.
+                let shape = match &node.op {
+                    GraphOp::Float(fop) => {
+                        let ishape_refs: Vec<&[usize]> =
+                            input_shapes.iter().map(|s| s.as_slice()).collect();
+                        float_dispatch::infer_output_shape(fop, &ishape_refs, result.len())
+                    }
+                    // For graph inputs, seed shape from data.
+                    GraphOp::Input => ShapeMap::infer_1d(result.len()),
+                    // Output, FusedView, etc.: pass through first input shape.
+                    _ => input_shapes
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| ShapeMap::infer_1d(result.len())),
+                };
+                (result, shape)
+            }
+        };
+
+        results.push((node_id, result, out_shape));
     }
 
     let dispatched = results.len();
-    for (id, data) in results {
+    for (id, data, shape) in results {
         arena.insert(id, data);
+        shape_map.insert(id, shape);
     }
     Ok(dispatched)
 }

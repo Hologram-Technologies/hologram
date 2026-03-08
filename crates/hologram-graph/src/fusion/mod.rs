@@ -1,9 +1,10 @@
 //! Single-pass fusion engine.
 //!
-//! One topological walk interleaving three optimizations:
+//! One topological walk interleaving four optimizations:
 //! 1. Constant folding — evaluate ops on constant inputs at compile time
-//! 2. View fusion — collapse unary chains into a single 256-byte LUT
-//! 3. CSE — deduplicate nodes with identical (op, sorted predecessors)
+//! 2. View fusion — collapse byte-domain unary chains into a single 256-byte LUT
+//! 3. Float chain fusion — collapse f32-domain unary chains into FusedFloatChain
+//! 4. CSE — deduplicate nodes with identical (op, sorted predecessors)
 //!
 //! Why single-pass works: topo order ensures predecessors are processed first.
 //! Constant folding propagates forward. View fusion looks backward (chain
@@ -11,6 +12,7 @@
 
 pub mod constant;
 pub mod cse;
+pub mod float_fusion;
 pub mod view_fusion;
 
 use crate::error::GraphResult;
@@ -24,6 +26,8 @@ pub struct FusionStats {
     pub constants_folded: usize,
     /// Number of unary chains fused into FusedViews.
     pub views_fused: usize,
+    /// Number of float element-wise chains fused into FusedFloatChain.
+    pub float_chains_fused: usize,
     /// Number of duplicate nodes eliminated by CSE.
     pub cse_eliminated: usize,
 }
@@ -32,7 +36,7 @@ impl FusionStats {
     /// Total number of nodes removed by all optimizations.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.constants_folded + self.views_fused + self.cse_eliminated
+        self.constants_folded + self.views_fused + self.float_chains_fused + self.cse_eliminated
     }
 }
 
@@ -59,9 +63,14 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
         while view_fusion::try_fuse_unary_backward(graph, id) {
             stats.views_fused += 1;
         }
+
+        // 3. Float chain fusion (f32-domain backward chain walk)
+        while float_fusion::try_fuse_float_unary(graph, id) {
+            stats.float_chains_fused += 1;
+        }
     }
 
-    // 3. CSE on the post-fold/fuse graph (needs fresh topo order)
+    // 4. CSE on the post-fold/fuse graph (needs fresh topo order)
     let order = toposort::toposort(graph)?;
     stats.cse_eliminated = cse::eliminate_common_subexpressions(graph, &order);
 
@@ -139,9 +148,10 @@ mod tests {
         let stats = FusionStats {
             constants_folded: 3,
             views_fused: 2,
+            float_chains_fused: 1,
             cse_eliminated: 1,
         };
-        assert_eq!(stats.total_removed(), 6);
+        assert_eq!(stats.total_removed(), 7);
     }
 
     #[test]

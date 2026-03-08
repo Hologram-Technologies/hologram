@@ -39,6 +39,11 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::MatMulLut8(id) => format!("MatMulLut8(id={})", id.raw()),
         GraphOp::BatchMatMulLut4(id) => format!("BatchMatMulLut4(id={})", id.raw()),
         GraphOp::BatchMatMulLut8(id) => format!("BatchMatMulLut8(id={})", id.raw()),
+        GraphOp::Float(f) => f.name().to_string(),
+        GraphOp::FusedFloatChain(chain) => {
+            let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
+            format!("FusedFloatChain({})", names.join(" → "))
+        }
         GraphOp::Custom { id, arity } => {
             format!("Custom(id={}, arity={})", id.raw(), arity)
         }
