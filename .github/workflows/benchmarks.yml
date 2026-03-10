@@ -51,6 +51,10 @@ jobs:
         run: |
           python3 scripts/summarize-benchmarks.py bench.json --output "$GITHUB_STEP_SUMMARY"
 
+      - name: Inject benchmark data into site demo page
+        run: |
+          python3 scripts/inject-bench-data.py bench.json site/src/pages/demo/calculator.astro
+
       - name: Generate deploy token
         id: app-token
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -101,5 +105,6 @@ jobs:
           path: |
             bench.json
             benchmark-output.txt
+            site/src/pages/demo/calculator.astro
             target/criterion/
           retention-days: 30

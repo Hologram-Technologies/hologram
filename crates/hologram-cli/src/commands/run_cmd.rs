@@ -393,29 +393,68 @@ fn run_generation(
     // Build execution schedule once.
     let schedule = build_schedule(plan.graph())?;
 
+    // Get compiled input sequence length from TensorPort shape.
+    // Static-shape ONNX models (no KV-cache) require inputs padded to the
+    // compiled seq_len. The model will process the full padded sequence and
+    // we extract logits from the last real-token position.
+    let compiled_seq_len: Option<usize> = plan
+        .layer_header()
+        .into_iter()
+        .flat_map(|lh| lh.layers.iter())
+        .flat_map(|l| l.inputs.iter())
+        .find(|p| p.name == "input_ids")
+        .and_then(|p| p.shape.get(1).copied())
+        .filter(|&s| s > 0)
+        .map(|s| s as usize);
+
     let start = std::time::Instant::now();
     let prompt_len = token_ids.len();
 
     for step in 0..max_tokens {
+        // For static-shape models, pad token IDs to the compiled sequence length.
+        // The attention mask distinguishes real tokens (1) from padding (0).
+        let effective_tokens = if let Some(max_seq) = compiled_seq_len {
+            if token_ids.len() > max_seq {
+                // Truncate to max sequence length (take the last max_seq tokens).
+                token_ids[token_ids.len() - max_seq..].to_vec()
+            } else {
+                // Pad with 0s to fill the compiled sequence length.
+                let mut padded = token_ids.clone();
+                padded.resize(max_seq, 0);
+                padded
+            }
+        } else {
+            token_ids.clone()
+        };
+
+        let actual_len = token_ids
+            .len()
+            .min(compiled_seq_len.unwrap_or(token_ids.len()));
+        let padded_len = effective_tokens.len();
+
         // Build inputs: token IDs serialized per input dtype.
-        let input_bytes = serialize_token_ids(&token_ids, input_dtype);
-        let seq_len = token_ids.len();
+        let input_bytes = serialize_token_ids(&effective_tokens, input_dtype);
 
         let mut inputs = GraphInputs::new();
-        // Set input_ids with shape [1, seq_len] so the executor knows the N-D shape.
-        inputs.set_with_shape(input_slot, input_bytes, vec![1, seq_len]);
+        inputs.set_with_shape(input_slot, input_bytes, vec![1, padded_len]);
 
-        // Add attention mask if needed (all ones).
+        // Add attention mask: 1 for real tokens, 0 for padding.
         if let Some(slot) = mask_slot {
-            let mask_bytes =
-                serialize_ones(token_ids.len(), mask_dtype.unwrap_or(WeightDType::I64));
-            inputs.set_with_shape(slot, mask_bytes, vec![1, seq_len]);
+            let mask_dtype_val = mask_dtype.unwrap_or(WeightDType::I64);
+            let mask_bytes = if compiled_seq_len.is_some() {
+                serialize_mask(actual_len, padded_len, mask_dtype_val)
+            } else {
+                serialize_ones(token_ids.len(), mask_dtype_val)
+            };
+            inputs.set_with_shape(slot, mask_bytes, vec![1, padded_len]);
         }
 
         let outputs =
             KvExecutor::execute_with_plan(plan.graph(), &schedule, &inputs, plan.weights())?;
 
-        // Argmax over last position's logits.
+        // Argmax over the last real-token position's logits.
+        // For padded inputs, logits are [1, padded_len, vocab_size] and we want
+        // position (actual_len - 1), not the last padded position.
         let logit_data = match outputs.get(0) {
             Some((_, data)) => data,
             None => {
@@ -424,13 +463,20 @@ fn run_generation(
         };
 
         let vocab_size = encoder.vocab_size();
-        let last_pos_bytes = vocab_size * 4; // f32 = 4 bytes
-        let next_token = if logit_data.len() >= last_pos_bytes {
-            let last_logits = &logit_data[logit_data.len() - last_pos_bytes..];
-            TokenizerSection::argmax_f32(last_logits)
-        } else {
-            TokenizerSection::argmax_f32(logit_data)
-        };
+        let bytes_per_pos = vocab_size * 4; // f32 = 4 bytes
+        let target_pos = actual_len.saturating_sub(1);
+        let next_token =
+            if compiled_seq_len.is_some() && logit_data.len() >= (target_pos + 1) * bytes_per_pos {
+                // Extract logits at the last real-token position.
+                let offset = target_pos * bytes_per_pos;
+                let logits_slice = &logit_data[offset..offset + bytes_per_pos];
+                TokenizerSection::argmax_f32(logits_slice)
+            } else if logit_data.len() >= bytes_per_pos {
+                let last_logits = &logit_data[logit_data.len() - bytes_per_pos..];
+                TokenizerSection::argmax_f32(last_logits)
+            } else {
+                TokenizerSection::argmax_f32(logit_data)
+            };
 
         let next_token = match next_token {
             Some(id) => id,
@@ -515,6 +561,39 @@ fn serialize_ones(n: usize, dtype: WeightDType) -> Vec<u8> {
         WeightDType::I32 => (0..n).flat_map(|_| 1i32.to_le_bytes()).collect(),
         WeightDType::F32 => (0..n).flat_map(|_| 1.0f32.to_le_bytes()).collect(),
         _ => (0..n).flat_map(|_| 1i64.to_le_bytes()).collect(),
+    }
+}
+
+/// Serialize an attention mask: 1 for real tokens, 0 for padding.
+fn serialize_mask(real_len: usize, total_len: usize, dtype: WeightDType) -> Vec<u8> {
+    match dtype {
+        WeightDType::I32 => (0..total_len)
+            .flat_map(|i| {
+                if i < real_len {
+                    1i32.to_le_bytes()
+                } else {
+                    0i32.to_le_bytes()
+                }
+            })
+            .collect(),
+        WeightDType::F32 => (0..total_len)
+            .flat_map(|i| {
+                if i < real_len {
+                    1.0f32.to_le_bytes()
+                } else {
+                    0.0f32.to_le_bytes()
+                }
+            })
+            .collect(),
+        _ => (0..total_len)
+            .flat_map(|i| {
+                if i < real_len {
+                    1i64.to_le_bytes()
+                } else {
+                    0i64.to_le_bytes()
+                }
+            })
+            .collect(),
     }
 }
 

@@ -37,6 +37,14 @@ impl GraphBuilder {
         self
     }
 
+    /// Add a node and record its N-D output shape, returning `self` for chaining.
+    pub fn node_with_shape(mut self, op: GraphOp, shape: Vec<usize>) -> Self {
+        let id = self.graph.add_node(op);
+        self.graph.set_node_shape(id, shape);
+        self.index_to_id.push(id);
+        self
+    }
+
     /// Add a node with edges from the given builder indices.
     pub fn node_with_inputs(mut self, op: GraphOp, inputs: &[usize]) -> Self {
         let id = self.graph.add_node(op);
@@ -45,6 +53,40 @@ impl GraphBuilder {
             if let Some(&src_id) = self.index_to_id.get(src_idx) {
                 edge::connect(&mut self.graph, src_id, id, slot);
             }
+        }
+        self
+    }
+
+    /// Add a node with edges and an N-D output shape.
+    pub fn node_with_inputs_and_shape(
+        mut self,
+        op: GraphOp,
+        inputs: &[usize],
+        shape: Vec<usize>,
+    ) -> Self {
+        let id = self.graph.add_node(op);
+        self.graph.set_node_shape(id, shape);
+        self.index_to_id.push(id);
+        for (slot, &src_idx) in inputs.iter().enumerate() {
+            if let Some(&src_id) = self.index_to_id.get(src_idx) {
+                edge::connect(&mut self.graph, src_id, id, slot);
+            }
+        }
+        self
+    }
+
+    /// Set the N-D output shape for a node by builder index.
+    pub fn set_node_shape(mut self, index: usize, shape: Vec<usize>) -> Self {
+        if let Some(&id) = self.index_to_id.get(index) {
+            self.graph.set_node_shape(id, shape);
+        }
+        self
+    }
+
+    /// Set the output dtype for a node by builder index.
+    pub fn set_node_dtype(mut self, index: usize, dtype: hologram_core::op::FloatDType) -> Self {
+        if let Some(&id) = self.index_to_id.get(index) {
+            self.graph.set_node_dtype(id, dtype);
         }
         self
     }

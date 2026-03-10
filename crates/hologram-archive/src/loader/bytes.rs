@@ -77,10 +77,31 @@ fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<Serializ
             output_names: Vec::new(),
             output_node_ids: Vec::new(),
             constants: hologram_graph::constant::ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
         });
     }
     let graph_bytes = &data[start..end];
-    rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(graph_bytes)
+
+    // Decompress if the graph section is compressed, then copy into an
+    // AlignedVec<16> so rkyv's pointer-alignment validation succeeds.
+    // (rkyv serializes into AlignedVec<16>; a plain Vec<u8> from
+    // decompression is only guaranteed alignment 1.)
+    let aligned = if header.is_graph_compressed() {
+        let decompressed = hologram_compression::decompress(graph_bytes).ok_or_else(|| {
+            ArchiveError::ValidationFailed("failed to decompress graph section".into())
+        })?;
+        let mut av = rkyv::util::AlignedVec::<16>::with_capacity(decompressed.len());
+        av.extend_from_slice(&decompressed);
+        av
+    } else {
+        let mut av = rkyv::util::AlignedVec::<16>::with_capacity(graph_bytes.len());
+        av.extend_from_slice(graph_bytes);
+        av
+    };
+
+    rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(&aligned)
         .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
 }
 
@@ -96,7 +117,16 @@ fn extract_weights(data: &[u8], header: &HoloHeader) -> ArchiveResult<Vec<u8>> {
             size: header.weights_size,
         });
     }
-    Ok(data[start..end].to_vec())
+    let weight_bytes = &data[start..end];
+
+    // Decompress if the weights section is compressed.
+    if header.is_weights_compressed() {
+        return hologram_compression::decompress(weight_bytes).ok_or_else(|| {
+            ArchiveError::ValidationFailed("failed to decompress weights section".into())
+        });
+    }
+
+    Ok(weight_bytes.to_vec())
 }
 
 fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<SectionTable> {
@@ -112,7 +142,9 @@ fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<
         });
     }
     let table_bytes = &data[start..end];
-    rkyv::from_bytes::<SectionTable, rkyv::rancor::Error>(table_bytes)
+    let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(table_bytes.len());
+    aligned.extend_from_slice(table_bytes);
+    rkyv::from_bytes::<SectionTable, rkyv::rancor::Error>(&aligned)
         .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
 }
 
@@ -130,7 +162,10 @@ fn extract_layer_header(data: &[u8], table: &SectionTable) -> ArchiveResult<Opti
             size: entry.size,
         });
     }
-    let lh = rkyv::from_bytes::<LayerHeader, rkyv::rancor::Error>(&data[start..end])
+    let section_bytes = &data[start..end];
+    let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(section_bytes.len());
+    aligned.extend_from_slice(section_bytes);
+    let lh = rkyv::from_bytes::<LayerHeader, rkyv::rancor::Error>(&aligned)
         .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
     Ok(Some(lh))
 }

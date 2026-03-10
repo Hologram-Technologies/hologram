@@ -12,6 +12,8 @@ pub mod kv;
 pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
+#[cfg(feature = "profile")]
+pub mod profile;
 
 // Re-exports for convenience.
 pub use buffer::BufferArena;

@@ -6,3 +6,4 @@
 .claude/
 .holoarch/
 .mypy_cache
+.playwright-mcp/

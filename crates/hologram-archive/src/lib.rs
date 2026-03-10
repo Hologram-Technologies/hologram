@@ -104,7 +104,8 @@ mod tests {
         let header = plan.header();
         assert_eq!(header.magic, format::HOLO_MAGIC);
         assert_eq!(header.version, format::FORMAT_VERSION);
-        assert_eq!(header.weights_size, 3);
+        assert!(header.weights_size > 0);
+        assert_eq!(plan.weights(), &[1, 2, 3]);
     }
 
     #[test]

@@ -69,6 +69,29 @@ site-build:
 site-preview:
     cd site && pnpm preview
 
+# Deploy the docs site (via GitHub Pages — push to main triggers the workflow)
+site-deploy: site-build
+    @echo "Site deploys automatically via GitHub Actions on push to main."
+    @echo "To trigger manually: gh workflow run deploy-site.yml"
+
+# Install required dependencies (Rust toolchain assumed)
+install:
+    cd site && pnpm install
+
+# Install optional dependencies (WASM tooling, benchmark visualization)
+install-optional:
+    cargo install wasm-pack wasm-bindgen-cli
+    rustup target add wasm32-unknown-unknown
+
+# Build WASM module for the demo page (uses rustup toolchain to find wasm32 target)
+wasm-demo:
+    RUSTUP_TOOLCHAIN=stable RUSTC="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc" "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo" build --target wasm32-unknown-unknown -p hologram-ffi --features wasm --no-default-features --release
+    wasm-bindgen target/wasm32-unknown-unknown/release/hologram_ffi.wasm --out-dir site/public/demo/pkg --target web
+
+# Build WASM and start the calculator demo
+demo: wasm-demo
+    cd site && pnpm dev
+
 # Install git hooks
 hooks:
     git config core.hooksPath .githooks

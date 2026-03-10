@@ -1,0 +1,366 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+---
+
+<StarlightPage
+  frontmatter={{ title: 'Calculator Demo', description: 'O(1) LUT compute benchmarks and accuracy analysis' }}
+  headings={[
+    { depth: 2, slug: 'benchmark-results', text: 'Benchmark Results' },
+    { depth: 2, slug: 'accuracy-analysis', text: 'Accuracy Analysis' },
+    { depth: 2, slug: 'how-it-works', text: 'How It Works' },
+  ]}
+>
+
+<style is:global>
+  .calculator-demo {
+    --cd-bg: var(--sl-color-bg);
+    --cd-bg2: var(--sl-color-bg-nav);
+    --cd-border: var(--sl-color-hairline);
+    --cd-text: var(--sl-color-text);
+    --cd-text-dim: var(--sl-color-text-badge);
+    --cd-accent: var(--sl-color-text-accent);
+    --cd-green: #16a34a;
+    --cd-orange: #ca8a04;
+    --cd-purple: #9333ea;
+    --cd-radius: 8px;
+  }
+  :root[data-theme='dark'] .calculator-demo {
+    --cd-green: #3fb950;
+    --cd-orange: #d29922;
+    --cd-purple: #bc8cff;
+  }
+
+  .calculator-demo .pipeline { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+  .calculator-demo .pipeline .step { background: var(--cd-bg2); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 500; color: var(--cd-text); }
+  .calculator-demo .pipeline .arrow { color: var(--cd-text-dim); font-size: 1.2rem; }
+  .calculator-demo .card { background: var(--cd-bg2); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 1.25rem; margin-bottom: 1rem; }
+  .calculator-demo .section-note { font-size: 0.8rem; color: var(--cd-text-dim); font-style: italic; margin-bottom: 1rem; }
+  .calculator-demo p { color: var(--cd-text-dim); }
+  .calculator-demo ol { color: var(--cd-text-dim); }
+
+  /* Benchmark chart */
+  .calculator-demo .bench-group { margin-bottom: 1.5rem; }
+  .calculator-demo .bench-group-title { font-size: 0.95rem; font-weight: 700; color: var(--cd-text); margin: 0 0 0.15rem; }
+  .calculator-demo .bench-group-desc { font-size: 0.78rem; color: var(--cd-text-dim); margin: 0 0 0.75rem; }
+
+  .calculator-demo .bench-item {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--cd-border);
+  }
+  .calculator-demo .bench-item:last-child { border-bottom: none; }
+
+  .calculator-demo .bench-item-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 0.4rem;
+  }
+  .calculator-demo .bench-item-label {
+    font-size: 0.82rem; color: var(--cd-text); font-weight: 500;
+  }
+  .calculator-demo .bench-item-speedup {
+    font-size: 1.1rem; font-weight: 800; color: var(--cd-purple);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .calculator-demo .bench-item-speedup small {
+    font-size: 0.6rem; font-weight: 400; color: var(--cd-text-dim);
+    margin-left: 0.25rem;
+  }
+
+  .calculator-demo .bench-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px; height: 26px;
+  }
+  .calculator-demo .bench-row-label {
+    flex: 0 0 70px; height: 22px; line-height: 22px;
+    font-size: 0.72rem; font-weight: 600;
+    color: var(--cd-text-dim); text-align: right;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .calculator-demo .bench-bar-track {
+    flex: 1 1 0; height: 22px;
+    background: var(--cd-bg); border: 1px solid var(--cd-border);
+    border-radius: 4px; overflow: hidden;
+    position: relative; box-sizing: border-box;
+  }
+  .calculator-demo .bench-bar {
+    height: 100%; border-radius: 4px;
+    min-width: 4px;
+  }
+  .calculator-demo .bench-bar.holo { background: var(--cd-accent); }
+  .calculator-demo .bench-bar.native { background: var(--cd-green); opacity: 0.7; }
+  .calculator-demo .bench-row-time {
+    flex: 0 0 80px; height: 22px; line-height: 22px;
+    font-size: 0.72rem; font-weight: 600;
+    color: var(--cd-text); text-align: left;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    white-space: nowrap;
+  }
+
+  .calculator-demo .bench-legend {
+    display: flex; gap: 1.25rem; font-size: 0.75rem; color: var(--cd-text-dim);
+    margin-bottom: 1rem;
+  }
+  .calculator-demo .bench-legend-item { display: flex; align-items: center; gap: 0.35rem; }
+  .calculator-demo .bench-legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
+
+  /* Accuracy tables */
+  .calculator-demo .cd-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0; }
+  .calculator-demo .cd-table th,
+  .calculator-demo .cd-table td { padding: 0.5rem 0.75rem; text-align: right; border-bottom: 1px solid var(--cd-border); color: var(--cd-text); }
+  .calculator-demo .cd-table th { color: var(--cd-text-dim); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+  .calculator-demo .cd-table td:first-child,
+  .calculator-demo .cd-table th:first-child { text-align: left; }
+  .calculator-demo .accuracy-table td.good { color: var(--cd-green); }
+  .calculator-demo .accuracy-table td.ok { color: var(--cd-orange); }
+</style>
+
+<div class="calculator-demo">
+
+<!-- Hero -->
+<div style="text-align: center; padding: 1rem 0;">
+  <p class="section-note" style="font-size: 1.15rem; max-width: 600px; margin: 0 auto; font-style: normal;">
+    O(1) compute via lookup tables. Every math operation is a single byte-array access.
+  </p>
+  <div class="pipeline">
+    <span class="step">f64 value</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">embed(&pi;)</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step" style="border-color: var(--cd-accent); color: var(--cd-accent); font-weight: 700;">LUT[F]</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">lift(&lambda;)</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">f64 result</span>
+  </div>
+</div>
+
+<!-- Benchmark Results -->
+<h2 id="benchmark-results">Benchmark Results</h2>
+<p class="section-note">Criterion benchmarks on native Rust. Hologram's advantage grows with operation complexity and data size.</p>
+
+<div id="bench-container">
+  <div class="card" style="text-align:center;padding:2rem;color:var(--cd-text-dim)">Loading benchmark data&hellip;</div>
+</div>
+
+<!-- Accuracy Analysis -->
+<h2 id="accuracy-analysis">Accuracy Analysis</h2>
+<p class="section-note">LUT operations quantize continuous values into 256 levels. The tables below show approximation error from the calculator example.</p>
+
+<h3>Sin (Angle Encoding)</h3>
+<div class="card">
+<table class="cd-table accuracy-table">
+  <thead><tr><th>Input</th><th>f64 sin</th><th>LUT sin</th><th>Error</th></tr></thead>
+  <tbody>
+    <tr><td>0.0000</td><td>0.000000</td><td>0.003922</td><td class="ok">0.003922</td></tr>
+    <tr><td>0.5000</td><td>0.479426</td><td>0.466667</td><td class="ok">0.012759</td></tr>
+    <tr><td>1.0000</td><td>0.841471</td><td>0.843137</td><td class="good">0.001666</td></tr>
+    <tr><td>2.0000</td><td>0.909297</td><td>0.913725</td><td class="good">0.004428</td></tr>
+    <tr><td>&pi;</td><td>0.000000</td><td>0.003922</td><td class="ok">0.003922</td></tr>
+    <tr><td>5.0000</td><td>-0.958924</td><td>-0.952941</td><td class="ok">0.005983</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Sqrt (Unsigned Encoding)</h3>
+<div class="card">
+<table class="cd-table accuracy-table">
+  <thead><tr><th>Input</th><th>f64 sqrt</th><th>LUT sqrt</th><th>Error</th></tr></thead>
+  <tbody>
+    <tr><td>0.0000</td><td>0.000000</td><td>0.000000</td><td class="good">0.000000</td></tr>
+    <tr><td>0.1000</td><td>0.316228</td><td>0.313725</td><td class="good">0.002502</td></tr>
+    <tr><td>0.2500</td><td>0.500000</td><td>0.494118</td><td class="ok">0.005882</td></tr>
+    <tr><td>0.5000</td><td>0.707107</td><td>0.705882</td><td class="good">0.001224</td></tr>
+    <tr><td>0.7500</td><td>0.866025</td><td>0.866667</td><td class="good">0.000641</td></tr>
+    <tr><td>1.0000</td><td>1.000000</td><td>1.000000</td><td class="good">0.000000</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- How It Works -->
+<h2 id="how-it-works">How It Works</h2>
+<div class="card">
+  <p>Hologram pre-computes a <strong>256-entry lookup table</strong> for each mathematical function. At runtime:</p>
+  <ol style="margin: 0.75rem 0 0 1.5rem;">
+    <li><strong>Embed</strong> &mdash; an encoding maps a continuous f64 value to a byte (0-255)</li>
+    <li><strong>LUT Apply</strong> &mdash; a single array access <code>table[byte]</code> gives the output byte</li>
+    <li><strong>Lift</strong> &mdash; the inverse encoding maps the output byte back to f64</li>
+  </ol>
+  <p style="margin-top: 0.75rem;">This trades precision (8-bit quantization, ~0.004 typical error) for <strong>constant-time O(1) execution</strong> regardless of operation complexity. Chains of operations (e.g., sin(cos(x))) are <em>fused</em> into a single 256-byte table at compile time.</p>
+</div>
+
+</div><!-- .calculator-demo -->
+
+<script is:inline>
+function fmtNs(ns) {
+  if (ns == null || isNaN(ns)) return '-';
+  if (ns < 1000) return ns.toFixed(1) + ' ns';
+  if (ns < 1e6) return (ns / 1000).toFixed(ns < 10000 ? 2 : 1) + ' \u00b5s';
+  return (ns / 1e6).toFixed(2) + ' ms';
+}
+
+var BENCH_DATA = {"sha":"3ac97b0","timestamp":"2026-03-09T19:50:30Z","benchmarks":[{"name":"encoding_roundtrip/lut_sin_single","mean_ns":2.03,"median_ns":2.03,"std_dev_ns":0.03},{"name":"encoding_roundtrip/native_sin_single","mean_ns":2.42,"median_ns":2.30,"std_dev_ns":0.29},{"name":"encoding_roundtrip/lut_sin_256","mean_ns":462.45,"median_ns":460.94,"std_dev_ns":12.04},{"name":"encoding_roundtrip/native_sin_256","mean_ns":612.24,"median_ns":601.94,"std_dev_ns":37.61},{"name":"lut_composition/fused_sin_cos","mean_ns":0.38,"median_ns":0.38,"std_dev_ns":0.004},{"name":"lut_composition/chained_sin_cos","mean_ns":0.40,"median_ns":0.39,"std_dev_ns":0.01},{"name":"lut_composition/native_sin_cos","mean_ns":4.03,"median_ns":4.03,"std_dev_ns":0.04},{"name":"lut_composition/fused_256","mean_ns":77.60,"median_ns":77.34,"std_dev_ns":2.61},{"name":"lut_composition/native_sin_cos_256","mean_ns":1209.81,"median_ns":1207.14,"std_dev_ns":14.89},{"name":"graph_io/execute_multi_output(64KB)","mean_ns":64771.08,"median_ns":54250.86,"std_dev_ns":20996.06},{"name":"graph_io/native_multi_output(64K)","mean_ns":140338.06,"median_ns":139988.11,"std_dev_ns":1481.75},{"name":"full_pipeline/end_to_end(64KB)","mean_ns":23556.67,"median_ns":23458.54,"std_dev_ns":570.90},{"name":"full_pipeline/native_cos_sin(64K)","mean_ns":294221.66,"median_ns":293304.98,"std_dev_ns":6572.06}]};
+
+var COMPARISONS = [
+  {
+    title: 'LUT Composition',
+    desc: 'sin(cos(x)) fused into a single 256-byte lookup vs sequential native transcendentals.',
+    pairs: [
+      { label: 'sin(cos(x)) fused', holo: 'lut_composition/fused_sin_cos', native: 'lut_composition/native_sin_cos' },
+      { label: 'sin(cos(x)) chained', holo: 'lut_composition/chained_sin_cos', native: 'lut_composition/native_sin_cos' },
+      { label: 'sin(cos(x)) \u00d7256 fused', holo: 'lut_composition/fused_256', native: 'lut_composition/native_sin_cos_256' },
+    ],
+  },
+  {
+    title: 'Graph Execution (64KB)',
+    desc: 'Compiled hologram graph with multi-output execution over 64KB of data.',
+    pairs: [
+      { label: 'Multi-output graph', holo: 'graph_io/execute_multi_output(64KB)', native: 'graph_io/native_multi_output(64K)' },
+    ],
+  },
+  {
+    title: 'Full Pipeline (64KB)',
+    desc: 'End-to-end: archive load \u2192 graph compile \u2192 execute \u2192 output.',
+    pairs: [
+      { label: 'cos(sin(x)) end-to-end', holo: 'full_pipeline/end_to_end(64KB)', native: 'full_pipeline/native_cos_sin(64K)' },
+    ],
+  },
+];
+
+function renderBenchmarks(data) {
+  if (!data || !data.benchmarks || !data.benchmarks.length) return;
+  var c = document.getElementById('bench-container');
+  if (!c) return;
+  c.innerHTML = '';
+
+  var byName = {};
+  for (var i = 0; i < data.benchmarks.length; i++) {
+    byName[data.benchmarks[i].name] = data.benchmarks[i].mean_ns;
+  }
+
+  // Legend
+  var legend = document.createElement('div');
+  legend.className = 'bench-legend';
+  legend.innerHTML =
+    '<div class="bench-legend-item"><div class="bench-legend-swatch" style="background:var(--cd-accent)"></div> Hologram</div>' +
+    '<div class="bench-legend-item"><div class="bench-legend-swatch" style="background:var(--cd-green);opacity:0.8"></div> Native f64</div>';
+  c.appendChild(legend);
+
+  for (var gi = 0; gi < COMPARISONS.length; gi++) {
+    var group = COMPARISONS[gi];
+
+    var resolved = [];
+    var groupMax = 0;
+    for (var pi = 0; pi < group.pairs.length; pi++) {
+      var p = group.pairs[pi];
+      var h = byName[p.holo];
+      var n = byName[p.native];
+      if (h != null && n != null) {
+        resolved.push({ label: p.label, holo: h, native: n, speedup: n / h });
+        groupMax = Math.max(groupMax, h, n);
+      }
+    }
+    if (!resolved.length) continue;
+
+    var card = document.createElement('div');
+    card.className = 'card bench-group';
+
+    var title = document.createElement('div');
+    title.className = 'bench-group-title';
+    title.textContent = group.title;
+    card.appendChild(title);
+
+    var desc = document.createElement('div');
+    desc.className = 'bench-group-desc';
+    desc.textContent = group.desc;
+    card.appendChild(desc);
+
+    // Log scale: compress range so small and large values both visible
+    var groupMin = Infinity;
+    for (var pi = 0; pi < resolved.length; pi++) {
+      groupMin = Math.min(groupMin, resolved[pi].holo, resolved[pi].native);
+    }
+    var logMin = Math.log(groupMin);
+    var logMax = Math.log(groupMax);
+    var logRange = logMax - logMin || 1;
+
+    for (var pi = 0; pi < resolved.length; pi++) {
+      var r = resolved[pi];
+      var holoPct = Math.max(5, ((Math.log(r.holo) - logMin) / logRange) * 85 + 5);
+      var natPct = Math.max(5, ((Math.log(r.native) - logMin) / logRange) * 85 + 5);
+
+      var item = document.createElement('div');
+      item.className = 'bench-item';
+
+      // Header: label + speedup
+      var header = document.createElement('div');
+      header.className = 'bench-item-header';
+      var lbl = document.createElement('span');
+      lbl.className = 'bench-item-label';
+      lbl.textContent = r.label;
+      var spd = document.createElement('span');
+      spd.className = 'bench-item-speedup';
+      spd.innerHTML = r.speedup.toFixed(1) + '<small>\u00d7 hologram faster</small>';
+      header.appendChild(lbl);
+      header.appendChild(spd);
+      item.appendChild(header);
+
+      // Hologram row: label | bar | time
+      var holoRow = document.createElement('div');
+      holoRow.className = 'bench-row';
+      var holoLabel = document.createElement('div');
+      holoLabel.className = 'bench-row-label';
+      holoLabel.textContent = 'Hologram';
+      var holoTrack = document.createElement('div');
+      holoTrack.className = 'bench-bar-track';
+      var holoBar = document.createElement('div');
+      holoBar.className = 'bench-bar holo';
+      holoBar.style.width = holoPct + '%';
+      holoTrack.appendChild(holoBar);
+      var holoTime = document.createElement('div');
+      holoTime.className = 'bench-row-time';
+      holoTime.textContent = fmtNs(r.holo);
+      holoRow.appendChild(holoLabel);
+      holoRow.appendChild(holoTrack);
+      holoRow.appendChild(holoTime);
+      item.appendChild(holoRow);
+
+      // Native row: label | bar | time
+      var natRow = document.createElement('div');
+      natRow.className = 'bench-row';
+      var natLabel = document.createElement('div');
+      natLabel.className = 'bench-row-label';
+      natLabel.textContent = 'Native';
+      var natTrack = document.createElement('div');
+      natTrack.className = 'bench-bar-track';
+      var natBar = document.createElement('div');
+      natBar.className = 'bench-bar native';
+      natBar.style.width = natPct + '%';
+      natTrack.appendChild(natBar);
+      var natTime = document.createElement('div');
+      natTime.className = 'bench-row-time';
+      natTime.textContent = fmtNs(r.native);
+      natRow.appendChild(natLabel);
+      natRow.appendChild(natTrack);
+      natRow.appendChild(natTime);
+      item.appendChild(natRow);
+
+      card.appendChild(item);
+    }
+
+    c.appendChild(card);
+  }
+
+  // Timestamp
+  if (data.sha || data.timestamp) {
+    var footer = document.createElement('p');
+    footer.className = 'section-note';
+    footer.style.textAlign = 'center';
+    footer.style.marginTop = '0.5rem';
+    footer.textContent = 'Criterion benchmarks from ' + (data.sha || '').substring(0, 7) + (data.timestamp ? ' \u2014 ' + data.timestamp.split('T')[0] : '');
+    c.appendChild(footer);
+  }
+}
+
+renderBenchmarks(BENCH_DATA);
+</script>
+
+</StarlightPage>

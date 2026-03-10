@@ -1,0 +1,35 @@
+name: hologram
+description: O(1) compute acceleration runtime built on UOR-Framework
+role: library
+depends_on:
+- UOR-Framework
+crates:
+- name: hologram-archive
+  public: true
+- name: hologram-async
+  public: true
+- name: hologram-bench
+  public: true
+- name: hologram-cli
+  public: true
+- name: hologram-compiler
+  public: true
+- name: hologram-core
+  public: true
+- name: hologram-exec
+  public: true
+- name: hologram-ffi
+  public: true
+- name: hologram-graph
+  public: true
+registry: ../hologram-architecture/archon-registry
+rules:
+- id: tests-pass
+  run: cargo test --all
+  description: All tests pass across the workspace
+- id: no-clippy-warnings
+  run: cargo clippy --all -- -D warnings
+  description: No clippy warnings or errors
+- id: builds-clean
+  run: cargo build --all
+  description: All crates build successfully

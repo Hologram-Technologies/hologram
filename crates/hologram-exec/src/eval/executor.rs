@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use hologram_archive::format::graph::SerializedGraph;
+use hologram_core::op::FloatDType;
 use hologram_graph::constant::{ConstantData, ConstantId};
 use hologram_graph::graph::node::{InputSource, Node, NodeId};
 use hologram_graph::graph::GraphOp;
@@ -15,9 +16,24 @@ use hologram_graph::schedule::ExecutionSchedule;
 
 use crate::buffer::{BufferArena, ShapeMap};
 use crate::error::{ExecError, ExecResult};
+use crate::eval::shape_resolve;
 use crate::float_dispatch;
 use crate::kv::{CustomOpRegistry, KvStore};
-use hologram_core::op::FloatOp;
+use hologram_core::op::{FloatOp, ShapeDim, ShapeSpec};
+
+/// Immutable graph-wide context shared across level dispatch and shape propagation.
+///
+/// Groups the read-only parameters that don't change between levels,
+/// reducing argument counts in `dispatch_level` and `propagate_level_shapes`.
+struct DispatchContext<'a> {
+    node_map: HashMap<NodeId, &'a Node>,
+    compiled_shapes: HashMap<NodeId, Vec<usize>>,
+    compiled_dtypes: HashMap<NodeId, FloatDType>,
+    inputs: &'a GraphInputs,
+    constants: &'a hologram_graph::constant::ConstantStore,
+    registry: Option<&'a CustomOpRegistry>,
+    weights: &'a [u8],
+}
 
 /// Named graph inputs: maps input index to byte data and optional shape.
 #[derive(Debug, Clone, Default)]
@@ -187,22 +203,73 @@ impl KvExecutor {
     where
         F: FnMut(usize, usize),
     {
-        let node_map = build_node_map(sg);
+        let compiled_dtypes = sg.node_dtypes_map();
         let mut arena = seed_arena(sg, weights)?;
-        let mut shape_map = seed_shape_map(sg, &arena, inputs);
+        let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
+
+        let dctx = DispatchContext {
+            node_map: build_node_map(sg),
+            compiled_shapes: sg.node_shapes_map(),
+            compiled_dtypes,
+            inputs,
+            constants: &sg.constants,
+            registry,
+            weights,
+        };
+
+        #[cfg(feature = "profile")]
+        let mut prof = crate::profile::PerfProfile::new();
+        #[cfg(feature = "profile")]
+        prof.start_total();
+
+        let max_level_size = schedule
+            .levels
+            .iter()
+            .map(|l| l.node_ids.len())
+            .max()
+            .unwrap_or(0);
+        let mut results_buf: Vec<(NodeId, Vec<u8>, Vec<usize>)> =
+            Vec::with_capacity(max_level_size);
 
         for (i, level) in schedule.levels.iter().enumerate() {
+            // Pre-propagate shapes for this level before data dispatch.
+            #[cfg(feature = "profile")]
+            let shape_start = std::time::Instant::now();
+
+            super::shape_propagate::propagate_level_shapes(
+                level,
+                &dctx.node_map,
+                &arena,
+                &mut shape_map,
+                &dctx.compiled_shapes,
+                &dctx.compiled_dtypes,
+            );
+
+            #[cfg(feature = "profile")]
+            let shape_elapsed = shape_start.elapsed();
+            #[cfg(feature = "profile")]
+            let dispatch_start = std::time::Instant::now();
+
             let count = dispatch_level(
                 level,
-                &node_map,
+                &dctx,
                 &mut arena,
                 &mut shape_map,
-                inputs,
-                &sg.constants,
-                registry,
-                weights,
+                &mut results_buf,
+                #[cfg(feature = "profile")]
+                &mut prof,
             )?;
+
+            #[cfg(feature = "profile")]
+            prof.record_level(shape_elapsed, dispatch_start.elapsed(), count);
+
             on_level(i, count);
+        }
+
+        #[cfg(feature = "profile")]
+        {
+            prof.stop_total();
+            prof.print_summary();
         }
 
         extract_named_outputs(sg, &mut arena)
@@ -215,30 +282,75 @@ fn build_node_map(sg: &SerializedGraph) -> HashMap<NodeId, &Node> {
 }
 
 /// Initialize the arena and seed all constant nodes.
-fn seed_arena(sg: &SerializedGraph, weights: &[u8]) -> ExecResult<BufferArena> {
+fn seed_arena<'a>(sg: &'a SerializedGraph, weights: &'a [u8]) -> ExecResult<BufferArena<'a>> {
     let mut arena = BufferArena::with_capacity(sg.nodes.len());
     for node in &sg.nodes {
         if let GraphOp::Constant(cid) = &node.op {
-            arena.insert(node.id, resolve_constant(&sg.constants, *cid, weights)?);
+            let data = resolve_constant_ref(&sg.constants, *cid, weights)?;
+            arena.insert_borrowed(node.id, data);
         }
     }
     Ok(arena)
 }
 
-/// Initialize shape map: seed constants with 1-D shapes and graph inputs with
-/// caller-provided N-D shapes (if available).
-fn seed_shape_map(sg: &SerializedGraph, arena: &BufferArena, inputs: &GraphInputs) -> ShapeMap {
+/// Initialize shape map with compiled shapes, constant shapes, and graph input shapes.
+///
+/// Priority: compiled node shapes > caller-provided input shapes > inferred 1-D shapes.
+/// Compiled shapes may contain 0-sentinel dimensions (symbolic at compile time);
+/// these are resolved at dispatch time from actual buffer sizes.
+fn seed_shape_map(
+    sg: &SerializedGraph,
+    arena: &BufferArena,
+    inputs: &GraphInputs,
+    compiled_dtypes: &HashMap<NodeId, FloatDType>,
+) -> ShapeMap {
     let mut sm = ShapeMap::new();
+
+    // 1. Seed compiled node shapes (from lowering).
+    let compiled = sg.node_shapes_map();
+    let target_id = NodeId::new(467, 0);
+    for (node_id, shape) in &compiled {
+        if *node_id == target_id {
+            eprintln!("[seed-debug] inserting compiled shape for {node_id:?}: {shape:?}");
+        }
+        sm.insert(*node_id, shape.clone());
+    }
+    if sm.get(target_id).is_some() {
+        eprintln!(
+            "[seed-debug] after compiled: {target_id:?} = {:?}",
+            sm.get(target_id)
+        );
+    } else {
+        eprintln!("[seed-debug] after compiled: {target_id:?} NOT FOUND");
+    }
+
+    // 2. Seed constant shapes from the constant_shapes table.
+    let const_shapes = sg.constant_shapes_map();
 
     for node in &sg.nodes {
         match &node.op {
-            GraphOp::Constant(_) => {
-                if let Ok(buf) = arena.get(node.id) {
-                    sm.insert(node.id, ShapeMap::infer_1d(buf.len()));
+            GraphOp::Constant(cid) => {
+                // Prefer N-D constant shape from the table, else 1-D from buffer.
+                if let Some(shape) = const_shapes.get(cid) {
+                    if !compiled.contains_key(&node.id) {
+                        sm.insert(node.id, shape.clone());
+                    }
+                } else if !compiled.contains_key(&node.id) {
+                    if let Ok(buf) = arena.get(node.id) {
+                        let elem_size = compiled_dtypes
+                            .get(&node.id)
+                            .map(|d| d.byte_size())
+                            .unwrap_or(4);
+                        sm.insert(
+                            node.id,
+                            ShapeMap::infer_1d_with_elem_size(buf.len(), elem_size),
+                        );
+                    }
                 }
             }
             GraphOp::Input => {
-                // Use caller-provided N-D shape if available.
+                // Caller-provided runtime shape overrides compiled shape
+                // (which may have 0-sentinels for batch/seq dims).
                 if let Some(slot_idx) = find_input_slot_index(node) {
                     if let Some(shape) = inputs.shape(slot_idx) {
                         sm.insert(node.id, shape.to_vec());
@@ -311,37 +423,247 @@ fn resolve_dynamic_sizes(
     }
 }
 
+/// Resolve 0-sentinel dimensions in a compiled shape using actual result size.
+///
+/// Compiled shapes may have 0 for dimensions that were symbolic at compile time
+/// (e.g. batch_size, seq_len). At runtime we resolve these from the actual output
+/// byte count. Strategy:
+/// - Count the number of 0-dims and the product of known dims
+/// - If there's exactly one 0-dim, compute it as `total_elements / known_product`
+/// - If there are multiple 0-dims, try to inherit from input shapes
+/// - If resolution fails, return the shape with 0s unresolved (better than wrong inference)
+fn resolve_compiled_shape(
+    compiled: &[usize],
+    result_bytes: usize,
+    input_shapes: &[Vec<usize>],
+    elem_size: usize,
+) -> Vec<usize> {
+    let zero_count = compiled.iter().filter(|&&d| d == 0).count();
+    if zero_count == 0 {
+        return compiled.to_vec();
+    }
+
+    let elem_size = elem_size.max(1);
+    let total_elems = result_bytes / elem_size;
+
+    let known_product: usize = compiled.iter().filter(|&&d| d > 0).product();
+    let known_product = known_product.max(1);
+
+    let mut resolved = compiled.to_vec();
+
+    if zero_count == 1 {
+        // Single unknown dim: compute from total elements.
+        let unknown_dim = if known_product > 0 && total_elems > 0 {
+            total_elems / known_product
+        } else {
+            0
+        };
+        for d in &mut resolved {
+            if *d == 0 {
+                *d = unknown_dim;
+                break;
+            }
+        }
+    } else {
+        // Multiple unknown dims: try to inherit from matching input shape dims.
+        for (i, d) in resolved.iter_mut().enumerate() {
+            if *d == 0 {
+                for in_shape in input_shapes {
+                    if let Some(&in_dim) = in_shape.get(i) {
+                        if in_dim > 0 {
+                            *d = in_dim;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // If still have 0s and exactly one remains, resolve from total.
+        let remaining_zeros = resolved.iter().filter(|&&d| d == 0).count();
+        if remaining_zeros == 1 {
+            let kp: usize = resolved.iter().filter(|&&d| d > 0).product();
+            let kp = kp.max(1);
+            let unknown = if kp > 0 { total_elems / kp } else { 0 };
+            for d in &mut resolved {
+                if *d == 0 {
+                    *d = unknown;
+                    break;
+                }
+            }
+        }
+    }
+    resolved
+}
+
+/// Resolve a `ShapeSpec` against actual runtime input shapes and output buffer size.
+///
+/// Legacy resolver kept for compatibility. New code should use
+/// `shape_resolve::resolve_float_shape()` instead.
+pub fn resolve_shape_spec(
+    spec: &ShapeSpec,
+    input_shapes: &[Vec<usize>],
+    result_bytes: usize,
+    elem_size: usize,
+) -> Vec<usize> {
+    let elem_size = elem_size.max(1);
+    let total_elems = result_bytes / elem_size;
+
+    match spec {
+        ShapeSpec::SameAs(i) => input_shapes
+            .get(*i as usize)
+            .cloned()
+            .unwrap_or_else(|| vec![total_elems]),
+
+        ShapeSpec::Broadcast(a, b) => {
+            let sa = input_shapes.get(*a as usize);
+            let sb = input_shapes.get(*b as usize);
+            match (sa, sb) {
+                (Some(a_shape), Some(b_shape)) if b_shape.len() > a_shape.len() => b_shape.clone(),
+                (Some(a_shape), _) => a_shape.clone(),
+                (_, Some(b_shape)) => b_shape.clone(),
+                _ => vec![total_elems],
+            }
+        }
+
+        ShapeSpec::DropLastDim(i) => {
+            if let Some(s) = input_shapes.get(*i as usize) {
+                if s.len() > 1 {
+                    s[..s.len() - 1].to_vec()
+                } else {
+                    vec![1]
+                }
+            } else {
+                vec![total_elems]
+            }
+        }
+
+        ShapeSpec::Dims(dims) => {
+            let mut shape = Vec::with_capacity(dims.len());
+            let mut known_product = 1usize;
+            let mut inferred_idx = None;
+
+            for (i, dim) in dims.iter().enumerate() {
+                match dim {
+                    ShapeDim::Fixed(v) => {
+                        let v = *v as usize;
+                        shape.push(v);
+                        known_product = known_product.saturating_mul(v.max(1));
+                    }
+                    ShapeDim::FromInput { input, axis } => {
+                        let v = input_shapes
+                            .get(*input as usize)
+                            .and_then(|s| {
+                                let idx = if *axis < 0 {
+                                    s.len().wrapping_add(*axis as usize)
+                                } else {
+                                    *axis as usize
+                                };
+                                s.get(idx).copied()
+                            })
+                            .unwrap_or(1);
+                        shape.push(v);
+                        known_product = known_product.saturating_mul(v.max(1));
+                    }
+                    ShapeDim::Inferred => {
+                        shape.push(0); // placeholder
+                        inferred_idx = Some(i);
+                    }
+                }
+            }
+
+            if let Some(idx) = inferred_idx {
+                shape[idx] = if known_product > 0 {
+                    total_elems / known_product
+                } else {
+                    total_elems
+                };
+            }
+            shape
+        }
+
+        ShapeSpec::Custom => {
+            // Caller must handle Custom separately.
+            vec![total_elems]
+        }
+    }
+}
+
 /// Execute all non-constant nodes in a single level; returns the count dispatched.
-#[allow(clippy::too_many_arguments)]
 fn dispatch_level(
     level: &ParallelLevel,
-    node_map: &HashMap<NodeId, &Node>,
+    dctx: &DispatchContext<'_>,
     arena: &mut BufferArena,
     shape_map: &mut ShapeMap,
-    inputs: &GraphInputs,
-    constants: &hologram_graph::constant::ConstantStore,
-    registry: Option<&CustomOpRegistry>,
-    weights: &[u8],
+    results: &mut Vec<(NodeId, Vec<u8>, Vec<usize>)>,
+    #[cfg(feature = "profile")] prof: &mut crate::profile::PerfProfile,
 ) -> ExecResult<usize> {
-    let mut results: Vec<(NodeId, Vec<u8>, Vec<usize>)> = Vec::with_capacity(level.node_ids.len());
+    results.clear();
 
     for &node_id in &level.node_ids {
-        let node = node_map
+        let node = dctx
+            .node_map
             .get(&node_id)
             .ok_or(ExecError::NodeNotFound(node_id))?;
 
         if matches!(node.op, GraphOp::Constant(_)) {
+            // Debug: print small constants near the cascade.
+            if node_id.index() >= 208 && node_id.index() <= 215 {
+                let data = arena.get(node_id).ok();
+                let bytes = data.map(|d| d.len()).unwrap_or(0);
+                let preview = data
+                    .map(|d| {
+                        if d.len() <= 64 {
+                            if d.len() % 4 == 0 {
+                                let floats: Vec<f32> = d
+                                    .chunks(4)
+                                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                                    .collect();
+                                format!("f32={floats:?}")
+                            } else {
+                                format!("raw={d:?}")
+                            }
+                        } else {
+                            format!("({bytes}B)")
+                        }
+                    })
+                    .unwrap_or_default();
+                eprintln!(
+                    "[const-trace] {node_id:?} {:?}: {bytes}B {preview}",
+                    node.op
+                );
+            }
             continue;
         }
 
-        let input_bufs = gather_inputs(node, arena, inputs)?;
-        let input_refs: Vec<&[u8]> = input_bufs.iter().map(|v| v.as_slice()).collect();
+        let input_refs = gather_inputs(node, arena, dctx.inputs)?;
+
+        // Debug: trace nodes near the first cascade failure.
+        if (node_id.index() >= 208 && node_id.index() <= 215)
+            || (node_id.index() >= 464 && node_id.index() <= 470)
+            || (node_id.index() >= 498 && node_id.index() <= 504)
+        {
+            let input_srcs: Vec<String> = node
+                .inputs
+                .iter()
+                .enumerate()
+                .map(|(i, slot)| {
+                    let src = format!("{:?}", slot.source);
+                    let sz = input_refs.get(i).map(|r| r.len()).unwrap_or(0);
+                    format!("[{i}]={src}({}B)", sz)
+                })
+                .collect();
+            eprintln!(
+                "[node-trace] {node_id:?} {:?}: inputs={}",
+                node.op,
+                input_srcs.join(", ")
+            );
+        }
 
         // Gather input shapes for shape-aware ops.
         let input_shapes: Vec<Vec<usize>> = node
             .inputs
             .iter()
-            .zip(input_bufs.iter())
+            .zip(input_refs.iter())
             .map(|(slot, buf)| {
                 let dep_id = match slot.source {
                     InputSource::Node(id) => Some(id),
@@ -349,76 +671,188 @@ fn dispatch_level(
                 };
                 dep_id
                     .and_then(|id| shape_map.get(id).map(|s| s.to_vec()))
-                    .unwrap_or_else(|| ShapeMap::infer_1d(buf.len()))
+                    .unwrap_or_else(|| {
+                        // Use dtype-aware element size when available.
+                        let es = dep_id
+                            .and_then(|id| dctx.compiled_dtypes.get(&id))
+                            .map(|d| d.byte_size())
+                            .unwrap_or(4);
+                        ShapeMap::infer_1d_with_elem_size(buf.len(), es)
+                    })
             })
             .collect();
 
         // Handle shape-aware ops (Reshape, Transpose, Shape) specially.
+        #[cfg(feature = "profile")]
+        let op_start = std::time::Instant::now();
+        #[cfg(feature = "profile")]
+        let op_name = crate::profile::op_name(&node.op);
+
         let (result, out_shape) = match &node.op {
             GraphOp::Float(FloatOp::Shape { dtype }) => {
                 // Return the input's logical shape as an i64 tensor.
-                // If shape is 1-D (inferred from bytes), recompute using the correct dtype.
+                // dtype = the input tensor's dtype (not output — output is always I64).
                 let in_shape = &input_shapes[0];
-                let shape_i64: Vec<i64> = if in_shape.len() == 1 {
-                    // Re-derive from byte count using the declared dtype.
-                    let elem_size = dtype.byte_size().max(1);
-                    vec![input_refs[0].len() as i64 / elem_size as i64]
-                } else {
+                let elem_size = dtype.byte_size().max(1);
+                let in_bytes = input_refs[0].len();
+
+                // Resolve input shape: handle 0-sentinels and wrong-dtype inference.
+                let total_elems = in_bytes / elem_size;
+                let shape_i64: Vec<i64> = if !in_shape.is_empty()
+                    && !in_shape.contains(&0)
+                    && in_shape.iter().product::<usize>() == total_elems
+                {
+                    // Tracked shape is consistent with actual data — use it.
                     in_shape.iter().map(|&d| d as i64).collect()
+                } else {
+                    // Tracked shape has 0-sentinels or is inconsistent with
+                    // byte count (e.g. was inferred with wrong element size).
+                    // Try the input node's compiled shape first, resolving sentinels.
+                    let input_nid = node.inputs.first().and_then(|s| match s.source {
+                        InputSource::Node(id) => Some(id),
+                        _ => None,
+                    });
+                    let resolved = input_nid
+                        .and_then(|id| dctx.compiled_shapes.get(&id))
+                        .map(|cs| resolve_compiled_shape(cs, in_bytes, &input_shapes, elem_size))
+                        .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == total_elems);
+                    if let Some(good) = resolved {
+                        good.iter().map(|&d| d as i64).collect()
+                    } else {
+                        // Last resort: flatten to 1-D with correct element count.
+                        vec![total_elems as i64]
+                    }
                 };
                 let data: Vec<u8> = bytemuck::cast_slice(&shape_i64).to_vec();
                 let out_shape = vec![shape_i64.len()];
                 (data, out_shape)
             }
-            GraphOp::Float(FloatOp::Concat { .. }) if input_refs.len() > 2 => {
+            GraphOp::Float(FloatOp::Concat { dtype, .. }) if input_refs.len() > 2 => {
                 // N-input concat: concatenate all input bytes.
                 let mut data = Vec::new();
                 for inp in &input_refs {
                     data.extend_from_slice(inp);
                 }
-                let out_shape = vec![data.len() / 4];
+                let elem_size = dtype.byte_size().max(1);
+                let out_shape = vec![data.len() / elem_size];
                 (data, out_shape)
             }
             GraphOp::Float(FloatOp::Reshape) => {
-                let (data, shape) = float_dispatch::dispatch_reshape_with_shape(&input_refs)
-                    .map_err(|e| ExecError::ShapeMismatch {
-                        expected: format!("node {node_id:?} (Reshape)"),
-                        actual: e.to_string(),
-                    })?;
-                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
-                    eprintln!(
-                        "[SHAPE] {node_id:?} Reshape: in={:?} → out={:?} ({}B)",
-                        &input_shapes[0],
-                        &shape,
-                        data.len()
-                    );
+                // Shape is pre-computed by the shape_propagate pass using
+                // shape_resolve::resolve_float_shape(). Read it from shape_map.
+                let elem_size = dctx
+                    .compiled_dtypes
+                    .get(&node_id)
+                    .or_else(|| {
+                        node.inputs.first().and_then(|s| match s.source {
+                            InputSource::Node(id) => dctx.compiled_dtypes.get(&id),
+                            _ => None,
+                        })
+                    })
+                    .map(|d| d.byte_size())
+                    .unwrap_or(4)
+                    .max(1);
+                let n_elems = input_refs[0].len() / elem_size;
+
+                let shape = shape_map
+                    .get(node_id)
+                    .filter(|s| !s.contains(&0))
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| {
+                        if input_refs.len() >= 2 && !input_refs[1].is_empty() {
+                            shape_resolve::parse_shape_values(input_refs[1], n_elems)
+                                .unwrap_or_else(|| vec![n_elems])
+                        } else {
+                            vec![n_elems]
+                        }
+                    });
+
+                // Check if broadcast expansion is needed.
+                let out_product: usize = shape.iter().product();
+                if out_product > n_elems && n_elems > 0 && out_product.is_multiple_of(n_elems) {
+                    // Broadcast expansion (e.g., GQA key repeat) — must allocate.
+                    float_dispatch::dispatch_reshape_with_shape(&input_refs)
+                        .map(|(d, _)| (d, shape.clone()))
+                        .unwrap_or_else(|_| (input_refs[0].to_vec(), shape))
+                } else {
+                    // Pure reshape: data unchanged, only shape metadata differs.
+                    // Copy bytes without going through dispatch_reshape_with_shape.
+                    (input_refs[0].to_vec(), shape)
                 }
-                (data, shape)
             }
-            GraphOp::Float(FloatOp::MatMul { m, k, n })
-                if input_shapes.len() >= 2
-                    && input_shapes[0].len() >= 3
-                    && input_shapes[1].len() >= 3 =>
-            {
-                // Batched matmul: both A and B have ≥3-D shapes.
-                let a_shape = &input_shapes[0];
-                let b_shape = &input_shapes[1];
-                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
-                    eprintln!("[SHAPE] {node_id:?} MatMul(BATCHED) m={m} k={k} n={n}: A={a_shape:?} B={b_shape:?}");
+            GraphOp::Float(FloatOp::MatMul { m, k, n }) => {
+                // Shape is pre-computed by shape_resolve. Use input shapes
+                // from shape_map (already resolved by pre-propagation).
+                let a_elems = input_refs[0].len() / 4;
+                let b_elems = input_refs[1].len() / 4;
+
+                // Try batched matmul if both inputs have ≥3-D resolved shapes.
+                let batched = if input_shapes.len() >= 2 {
+                    let a_ok = input_shapes[0].len() >= 3
+                        && !input_shapes[0].contains(&0)
+                        && input_shapes[0].iter().product::<usize>() == a_elems;
+                    let b_ok = input_shapes[1].len() >= 3
+                        && !input_shapes[1].contains(&0)
+                        && input_shapes[1].iter().product::<usize>() == b_elems;
+                    if !(a_ok && b_ok) {
+                        let a_src = node
+                            .inputs
+                            .first()
+                            .map(|s| format!("{:?}", s.source))
+                            .unwrap_or_default();
+                        let b_src = node
+                            .inputs
+                            .get(1)
+                            .map(|s| format!("{:?}", s.source))
+                            .unwrap_or_default();
+                        eprintln!("[matmul-debug] {node_id:?}: a_ok={a_ok} b_ok={b_ok} a_shape={:?}(prod={}) a_elems={a_elems} b_shape={:?}(prod={}) b_elems={b_elems} a_src={a_src} b_src={b_src}",
+                            input_shapes[0], input_shapes[0].iter().product::<usize>(),
+                            input_shapes[1], input_shapes[1].iter().product::<usize>());
+                    }
+                    if a_ok && b_ok {
+                        Some((input_shapes[0].clone(), input_shapes[1].clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some((a_shape, b_shape)) = batched {
+                    float_dispatch::dispatch_batched_matmul(&input_refs, &a_shape, &b_shape)
+                        .map_err(|e| ExecError::ShapeMismatch {
+                            expected: format!("node {node_id:?} (batched MatMul)"),
+                            actual: e.to_string(),
+                        })?
+                } else {
+                    // 2D matmul fallback.
+                    let m_hint = *m as usize;
+                    let k_hint = *k as usize;
+                    let n_hint = *n as usize;
+                    let result =
+                        float_dispatch::dispatch_matmul(&input_refs, m_hint, k_hint, n_hint)
+                            .map_err(|e| ExecError::ShapeMismatch {
+                                expected: format!(
+                                    "node {node_id:?} (MatMul m={m_hint} k={k_hint} n={n_hint})"
+                                ),
+                                actual: e.to_string(),
+                            })?;
+                    // Read pre-computed shape from shape_map, fall back to input-based inference.
+                    let shape = shape_map
+                        .get(node_id)
+                        .filter(|s| !s.contains(&0))
+                        .map(|s| s.to_vec())
+                        .unwrap_or_else(|| vec![result.len() / 4]);
+                    (result, shape)
                 }
-                float_dispatch::dispatch_batched_matmul(&input_refs, a_shape, b_shape).map_err(
-                    |e| ExecError::ShapeMismatch {
-                        expected: format!("node {node_id:?} (batched MatMul)"),
-                        actual: e.to_string(),
-                    },
-                )?
             }
             GraphOp::Float(FloatOp::Transpose { perm, ndim }) => {
                 let nd = *ndim as usize;
                 let p = &perm[..nd];
-                let in_shape = &input_shapes[0];
+                // Input shape should be resolved in shape_map by pre-propagation.
+                let in_shape = input_shapes[0].clone();
                 // If input shape has fewer dims than perm expects,
-                // reshape the 1-D shape to match ndim dims.
+                // pad to match ndim dims.
                 let effective_shape = if in_shape.len() < nd {
                     let total: usize = in_shape.iter().copied().fold(1usize, usize::saturating_mul);
                     let mut s = vec![1usize; nd];
@@ -427,7 +861,7 @@ fn dispatch_level(
                     }
                     s
                 } else {
-                    in_shape.clone()
+                    in_shape
                 };
                 let (data, shape) =
                     float_dispatch::dispatch_transpose(input_refs[0], p, &effective_shape)
@@ -435,9 +869,6 @@ fn dispatch_level(
                             expected: format!("node {node_id:?} (Transpose)"),
                             actual: e.to_string(),
                         })?;
-                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
-                    eprintln!("[SHAPE] {node_id:?} Transpose perm={p:?}: in={in_shape:?} eff={effective_shape:?} → out={shape:?}");
-                }
                 (data, shape)
             }
             _ => {
@@ -447,47 +878,75 @@ fn dispatch_level(
                 let result = KvStore::dispatch_with_constants(
                     dispatch_op,
                     &input_refs,
-                    constants,
-                    registry,
-                    weights,
+                    dctx.constants,
+                    dctx.registry,
+                    dctx.weights,
                 )
                 .map_err(|e| ExecError::ShapeMismatch {
                     expected: format!("node {node_id:?} ({:?})", node.op),
                     actual: e.to_string(),
                 })?;
-                // Infer output shape.
-                let shape = match dispatch_op {
-                    GraphOp::Float(fop) => {
-                        let ishape_refs: Vec<&[usize]> =
-                            input_shapes.iter().map(|s| s.as_slice()).collect();
-                        float_dispatch::infer_output_shape(fop, &ishape_refs, result.len())
-                    }
-                    // For graph inputs, preserve caller-provided N-D shape if available.
-                    GraphOp::Input => shape_map
-                        .get(node_id)
-                        .map(|s| s.to_vec())
-                        .unwrap_or_else(|| ShapeMap::infer_1d(result.len())),
-                    // Output, FusedView, etc.: pass through first input shape.
-                    _ => input_shapes
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| ShapeMap::infer_1d(result.len())),
-                };
-                if std::env::var("HOLO_DEBUG_SHAPES").is_ok() {
-                    if let GraphOp::Float(fop) = dispatch_op {
-                        let in_sizes: Vec<usize> = input_refs.iter().map(|b| b.len() / 4).collect();
-                        eprintln!("[SHAPE] {node_id:?} {fop:?}: in_sizes={in_sizes:?} in_shapes={input_shapes:?} → out={shape:?} ({}B)", result.len());
-                    }
+
+                // Shape: prefer pre-computed from shape_map (set by pre-propagation pass).
+                let node_elem_size = dctx
+                    .compiled_dtypes
+                    .get(&node_id)
+                    .map(|d| d.byte_size())
+                    .or_else(|| match &node.op {
+                        GraphOp::Float(FloatOp::Gather { dtype, .. })
+                        | GraphOp::Float(FloatOp::Concat { dtype, .. })
+                        | GraphOp::Float(FloatOp::Cast { to: dtype, .. }) => {
+                            Some(dtype.byte_size())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(4);
+
+                let sm_val = shape_map.get(node_id).map(|s| s.to_vec());
+                let shape = sm_val
+                    .as_ref()
+                    .filter(|s| !s.contains(&0))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        // Fallback: infer from result size.
+                        ShapeMap::infer_1d_with_elem_size(result.len(), node_elem_size)
+                    });
+
+                if matches!(node.op, GraphOp::Float(FloatOp::Gather { .. })) && result.len() > 10000
+                {
+                    eprintln!("[gather-shape-debug] {node_id:?}: sm_val={sm_val:?} shape={shape:?} result_bytes={}", result.len());
                 }
+
                 (result, shape)
             }
         };
+
+        #[cfg(feature = "profile")]
+        prof.record_op(op_name, op_start.elapsed(), result.len());
 
         results.push((node_id, result, out_shape));
     }
 
     let dispatched = results.len();
-    for (id, data, shape) in results {
+    for (id, data, shape) in results.drain(..) {
+        // Debug: detect where runtime shapes diverge from compiled shapes.
+        if let Some(compiled) = dctx.compiled_shapes.get(&id) {
+            let compiled_prod: usize = compiled.iter().product();
+            let actual_elems = data.len() / 4;
+            // Detect buffer size mismatch vs compiled shape.
+            if compiled_prod > 0
+                && actual_elems > 0
+                && actual_elems != compiled_prod
+                && compiled_prod / actual_elems > 2
+            {
+                let op = dctx
+                    .node_map
+                    .get(&id)
+                    .map(|n| format!("{:?}", n.op))
+                    .unwrap_or_default();
+                eprintln!("[size-mismatch] {id:?} ({op}): compiled={compiled:?}(elems={compiled_prod}) actual_elems={actual_elems} bytes={}", data.len());
+            }
+        }
         arena.insert(id, data);
         shape_map.insert(id, shape);
     }
@@ -507,23 +966,23 @@ fn extract_named_outputs(
     Ok(GraphOutputs { outputs })
 }
 
-/// Gather input buffers for a node from the arena and graph inputs.
+/// Gather input buffers for a node as borrowed slices (zero-copy).
 fn gather_inputs<'a>(
     node: &Node,
     arena: &'a BufferArena,
     graph_inputs: &'a GraphInputs,
-) -> ExecResult<Vec<Vec<u8>>> {
+) -> ExecResult<Vec<&'a [u8]>> {
     let mut bufs = Vec::with_capacity(node.inputs.len());
     for (slot_idx, slot) in node.inputs.iter().enumerate() {
         match slot.source {
             InputSource::Node(dep_id) => {
-                bufs.push(arena.get(dep_id)?.to_vec());
+                bufs.push(arena.get(dep_id)?);
             }
             InputSource::GraphInput { index } => {
                 let data = graph_inputs
                     .get(index)
                     .ok_or(ExecError::MissingGraphInput(index))?;
-                bufs.push(data.to_vec());
+                bufs.push(data);
             }
             InputSource::None => {
                 return Err(ExecError::MissingInput {
@@ -536,20 +995,21 @@ fn gather_inputs<'a>(
     Ok(bufs)
 }
 
-/// Resolve a constant ID to byte data.
+/// Resolve a constant ID to a borrowed byte slice (zero-copy).
 ///
-/// `Deferred` constants are resolved from the `weights` blob using
+/// `Bytes` constants borrow from the `ConstantStore`'s inline data.
+/// `Deferred` constants borrow from the `weights` blob using
 /// `source_id` as the byte offset and `byte_size` as the length.
-fn resolve_constant(
-    store: &hologram_graph::constant::ConstantStore,
+fn resolve_constant_ref<'a>(
+    store: &'a hologram_graph::constant::ConstantStore,
     cid: ConstantId,
-    weights: &[u8],
-) -> ExecResult<Vec<u8>> {
+    weights: &'a [u8],
+) -> ExecResult<&'a [u8]> {
     let data = store
         .get(cid)
         .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
     match data {
-        ConstantData::Bytes(bytes) => Ok(bytes.clone()),
+        ConstantData::Bytes(bytes) => Ok(bytes),
         ConstantData::Deferred {
             byte_size,
             source_id,
@@ -559,7 +1019,7 @@ fn resolve_constant(
             if end > weights.len() {
                 return Err(ExecError::ConstantNotFound(cid.raw()));
             }
-            Ok(weights[start..end].to_vec())
+            Ok(&weights[start..end])
         }
     }
 }
@@ -597,6 +1057,9 @@ mod tests {
             output_names: output_names.into_iter().map(String::from).collect(),
             output_node_ids: output_ids,
             constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
         }
     }
 
@@ -747,6 +1210,9 @@ mod tests {
             output_names: vec!["out".into()],
             output_node_ids: vec![nid(1)],
             constants,
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
         };
         let sched = build_schedule(&sg).unwrap();
         let result = KvExecutor::execute(&sg, &sched, &GraphInputs::new()).unwrap();
@@ -962,6 +1428,9 @@ mod tests {
             output_names: vec!["out".into()],
             output_node_ids: vec![nid(1)],
             constants,
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
         };
         let sched = build_schedule(&sg).unwrap();
         let weights = vec![10, 20, 30, 99];

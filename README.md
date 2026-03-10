@@ -131,6 +131,8 @@ Requires: Rust stable, [`just`](https://github.com/casey/just).
 | `simd` | ✓ | AVX2 `vpshufb` / SSE4.2 `pshufb` bulk LUT apply |
 | `parallel` | ✓ | Rayon work-stealing within execution levels |
 | `compiler` | ✓ | Full compilation pipeline (`hologram-compiler`) |
+| `profile` | — | Execution profiling (per-op timing, per-level breakdown) |
+| `accelerate` | — | macOS Accelerate BLAS for MatMul/Attention (Apple Silicon) |
 | `async` | — | Tokio async wrappers (`hologram-async`) |
 | `ffi` | — | C ABI + WASM bindings (`hologram-ffi`) |
 | `cli` | — | `hologram` binary (`hologram-cli`) |
@@ -155,6 +157,49 @@ hologram = { ..., default-features = false, features = ["parallel"] }
 | `wasm32-unknown-unknown` | Full | Browser + WASM runtime, `no_std` |
 | `aarch64-unknown-linux-gnu` | Full | CI cross-compiled |
 | `thumbv7em-none-eabihf` | Core | `no_std`, no heap — `hologram-core` only |
+
+---
+
+## Profiling
+
+Enable the `profile` feature to collect per-op timing, per-level breakdown, and shape propagation overhead during execution:
+
+```bash
+cargo run --features profile,cli -p hologram -- run model.holo --prompt "Hello"
+```
+
+The profile summary is printed to stderr when execution completes:
+
+```
+═══════════════════════════════════════════════════════════════
+  EXECUTION PROFILE
+═══════════════════════════════════════════════════════════════
+  Total wall time: 1234.567ms
+
+  OP TIMING (sorted by total time)
+  ─────────────────────────────────────────────────────────────
+  Op                    Calls   Total(ms)    Avg(µs)  Out(MB)  Pct(%)
+  ─────────────────────────────────────────────────────────────
+  MatMul                   64    890.123     13908.2    24.50    72.1%
+  Attention                32    210.456      6576.8    12.25    17.0%
+  RMSNorm                  64     45.678       713.7     6.00     3.7%
+  ...
+
+  LEVEL TIMING (top 10 by dispatch time)
+  ─────────────────────────────────────────────────────────────
+  Level    Nodes     Shape(ms)  Dispatch(ms)
+  ─────────────────────────────────────────────────────────────
+      0        3        0.012        0.045
+     12        5        0.008       42.315
+  ...
+═══════════════════════════════════════════════════════════════
+```
+
+The profiling infrastructure has zero overhead when the `profile` feature is disabled. On macOS with Apple Silicon, enable `accelerate` alongside `profile` to benchmark with BLAS-accelerated MatMul and Attention:
+
+```bash
+cargo run --features profile,accelerate,cli -p hologram -- run model.holo --prompt "Hello"
+```
 
 ---
 

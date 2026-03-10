@@ -1,5 +1,6 @@
 //! Arena-based buffer storage for graph execution intermediates.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use hologram_graph::graph::node::NodeId;
@@ -8,19 +9,20 @@ use crate::error::{ExecError, ExecResult};
 
 /// Arena that stores output buffers keyed by `NodeId`.
 ///
-/// Each node's output is a `Vec<u8>`. Buffers are allocated
-/// on first write and can be read by downstream nodes.
-pub struct BufferArena {
-    buffers: HashMap<NodeId, Vec<u8>>,
+/// Buffers are either borrowed (zero-copy from mmap'd weights or
+/// inline constants) or owned (computed dispatch results). Reading
+/// always returns `&[u8]` regardless of ownership.
+pub struct BufferArena<'a> {
+    buffers: HashMap<NodeId, Cow<'a, [u8]>>,
 }
 
-impl Default for BufferArena {
+impl Default for BufferArena<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BufferArena {
+impl<'a> BufferArena<'a> {
     /// Create an empty arena.
     #[must_use]
     pub fn new() -> Self {
@@ -37,16 +39,21 @@ impl BufferArena {
         }
     }
 
-    /// Insert a buffer for the given node.
+    /// Insert an owned buffer for the given node.
     pub fn insert(&mut self, id: NodeId, data: Vec<u8>) {
-        self.buffers.insert(id, data);
+        self.buffers.insert(id, Cow::Owned(data));
+    }
+
+    /// Insert a borrowed buffer for the given node (zero-copy).
+    pub fn insert_borrowed(&mut self, id: NodeId, data: &'a [u8]) {
+        self.buffers.insert(id, Cow::Borrowed(data));
     }
 
     /// Get the buffer for the given node.
     pub fn get(&self, id: NodeId) -> ExecResult<&[u8]> {
         self.buffers
             .get(&id)
-            .map(|v| v.as_slice())
+            .map(|v| v.as_ref())
             .ok_or(ExecError::BufferNotReady(id))
     }
 
@@ -56,10 +63,11 @@ impl BufferArena {
         self.buffers.contains_key(&id)
     }
 
-    /// Remove and return the buffer for the given node.
+    /// Remove and return the buffer for the given node as owned bytes.
     pub fn take(&mut self, id: NodeId) -> ExecResult<Vec<u8>> {
         self.buffers
             .remove(&id)
+            .map(|cow| cow.into_owned())
             .ok_or(ExecError::BufferNotReady(id))
     }
 
@@ -104,6 +112,14 @@ mod tests {
     }
 
     #[test]
+    fn insert_borrowed_and_get() {
+        let data = vec![4, 5, 6];
+        let mut arena = BufferArena::new();
+        arena.insert_borrowed(id(0), &data);
+        assert_eq!(arena.get(id(0)).unwrap(), &[4, 5, 6]);
+    }
+
+    #[test]
     fn get_missing_returns_error() {
         let arena = BufferArena::new();
         assert!(arena.get(id(99)).is_err());
@@ -124,6 +140,15 @@ mod tests {
         let data = arena.take(id(0)).unwrap();
         assert_eq!(data, vec![10, 20]);
         assert!(arena.take(id(0)).is_err());
+    }
+
+    #[test]
+    fn take_borrowed_clones() {
+        let data = vec![10, 20];
+        let mut arena = BufferArena::new();
+        arena.insert_borrowed(id(0), &data);
+        let taken = arena.take(id(0)).unwrap();
+        assert_eq!(taken, vec![10, 20]);
     }
 
     #[test]

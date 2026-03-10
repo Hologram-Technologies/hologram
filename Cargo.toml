@@ -10,7 +10,7 @@ authors = ["UOR Foundation"]
 
 [workspace.dependencies]
 # Internal crates
-hologram-core = { path = "crates/hologram-core" }
+hologram-core = { path = "crates/hologram-core", default-features = false }
 hologram-graph = { path = "crates/hologram-graph" }
 hologram-archive = { path = "crates/hologram-archive" }
 hologram-exec = { path = "crates/hologram-exec" }
@@ -21,6 +21,9 @@ hologram-ffi = { path = "crates/hologram-ffi" }
 
 # UOR Foundation
 uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", rev = "bfe21f4" }
+
+# Compression
+hologram-compression = { path = "crates/hologram-compression" }
 
 # Serialization (rkyv only)
 rkyv = { version = "0.8" }
@@ -95,6 +98,7 @@ std = ["hologram-core/std", "hologram-exec/std"]
 simd = ["hologram-core/simd"]
 parallel = ["hologram-exec/parallel"]
 accelerate = ["hologram-exec/accelerate"]
+profile = ["hologram-exec/profile"]
 
 compiler = ["dep:hologram-compiler"]
 async = ["dep:hologram-async", "dep:tokio"]

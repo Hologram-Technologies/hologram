@@ -16,7 +16,9 @@ crc32fast = { workspace = true }
 workspace = true
 optional = true
 
+[dependencies.hologram-compression]
+workspace = true
+
 [features]
 default = ["std"]
 std = ["memmap2"]
-compression = []

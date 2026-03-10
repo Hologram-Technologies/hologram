@@ -22,6 +22,9 @@ pub struct HoloWriter {
     graph_output_names: Vec<String>,
     weight_bytes: Option<Vec<u8>>,
     sections: Vec<(u32, Vec<u8>)>,
+    /// When true, `graph_bytes` are already compressed and should not be
+    /// compressed again during `build()`.
+    graph_pre_compressed: bool,
 }
 
 impl Default for HoloWriter {
@@ -40,6 +43,7 @@ impl HoloWriter {
             graph_output_names: Vec::new(),
             weight_bytes: None,
             sections: Vec::new(),
+            graph_pre_compressed: false,
         }
     }
 
@@ -56,10 +60,15 @@ impl HoloWriter {
         self
     }
 
-    /// Set the graph from pre-serialized bytes.
+    /// Set the graph from pre-serialized (and already compressed) bytes.
+    ///
+    /// These bytes are assumed to already be compressed and will NOT be
+    /// compressed again during `build()`. Use this when extracting graph
+    /// bytes from an existing archive for rebuild.
     #[must_use]
     pub fn set_graph_bytes(mut self, bytes: Vec<u8>) -> Self {
         self.graph_bytes = Some(bytes);
+        self.graph_pre_compressed = true;
         self
     }
 
@@ -95,13 +104,45 @@ impl HoloWriter {
         let graph_data = self.graph_bytes.unwrap_or_default();
         let weight_data = self.weight_bytes.unwrap_or_default();
 
+        // Compress graph and weight sections.
+        let (graph_data, weight_data, flags) = {
+            use crate::format::header::{FLAG_GRAPH_COMPRESSED, FLAG_WEIGHTS_COMPRESSED};
+            use hologram_compression::codec::CompressionMode;
+
+            let mut flags = 0u32;
+
+            let graph_data = if graph_data.is_empty() {
+                graph_data
+            } else if self.graph_pre_compressed {
+                // Already compressed from a prior archive — skip double compression.
+                flags |= FLAG_GRAPH_COMPRESSED;
+                graph_data
+            } else {
+                let block = hologram_compression::compress(&graph_data, CompressionMode::Generic);
+                flags |= FLAG_GRAPH_COMPRESSED;
+                block.data
+            };
+
+            let weight_data = if !weight_data.is_empty() {
+                let mode = hologram_compression::pipeline::auto_select_mode(&weight_data);
+                let block = hologram_compression::compress(&weight_data, mode);
+                flags |= FLAG_WEIGHTS_COMPRESSED;
+                block.data
+            } else {
+                weight_data
+            };
+
+            (graph_data, weight_data, flags)
+        };
+
         let layout = compute_layout(
             graph_data.len() as u64,
             weight_data.len() as u64,
             &self.sections,
         );
 
-        let header = build_header(&layout, &graph_data, &weight_data);
+        let mut header = build_header(&layout, &graph_data, &weight_data);
+        header.flags = flags;
         assemble_archive(header, &layout, &graph_data, &weight_data, &self.sections)
     }
 

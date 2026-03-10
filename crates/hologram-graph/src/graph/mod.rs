@@ -10,7 +10,7 @@ pub mod node;
 pub mod validate;
 
 use crate::constant::{ConstantData, ConstantId, ConstantStore};
-use hologram_core::op::{FloatOp, LutOp, PrimOp};
+use hologram_core::op::{FloatDType, FloatOp, LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
 use node::{InputSlot, InputSource, Node, NodeId};
 
@@ -180,6 +180,19 @@ pub struct Graph {
     graph_outputs: Vec<(String, NodeId)>,
     constants: ConstantStore,
     constant_shapes: HashMap<ConstantId, Vec<usize>>,
+    /// Compiled N-D output shapes per node.
+    ///
+    /// Populated during lowering from the AI-level IR which has complete shape
+    /// information. Dimensions that are symbolic at compile time use 0 as a
+    /// sentinel. The executor uses these shapes as ground truth, resolving 0s
+    /// from actual buffer sizes at runtime.
+    node_shapes: HashMap<NodeId, Vec<usize>>,
+    /// Compiled output dtype per node.
+    ///
+    /// Populated during lowering from the AI-level IR. Defaults to F32 when
+    /// absent. The executor uses this to dispatch type-aware operations
+    /// (e.g., i64 shape subgraphs vs f32 tensor data).
+    node_dtypes: HashMap<NodeId, FloatDType>,
     subgraphs: Vec<crate::subgraph::SubgraphDef>,
 }
 
@@ -202,6 +215,8 @@ impl Graph {
             graph_outputs: Vec::new(),
             constants: ConstantStore::new(),
             constant_shapes: HashMap::new(),
+            node_shapes: HashMap::new(),
+            node_dtypes: HashMap::new(),
             subgraphs: Vec::new(),
         }
     }
@@ -218,6 +233,8 @@ impl Graph {
             graph_outputs: Vec::new(),
             constants: ConstantStore::new(),
             constant_shapes: HashMap::new(),
+            node_shapes: HashMap::new(),
+            node_dtypes: HashMap::new(),
             subgraphs: Vec::new(),
         }
     }
@@ -448,6 +465,47 @@ impl Graph {
     #[must_use]
     pub fn constant_shapes(&self) -> &HashMap<ConstantId, Vec<usize>> {
         &self.constant_shapes
+    }
+
+    // --- Node shapes ---
+
+    /// Set the compiled N-D output shape for a node.
+    ///
+    /// Use 0 for dimensions that are symbolic at compile time (batch, seq_len).
+    /// The executor resolves 0s from actual buffer sizes at runtime.
+    pub fn set_node_shape(&mut self, id: NodeId, shape: Vec<usize>) {
+        self.node_shapes.insert(id, shape);
+    }
+
+    /// Get the compiled N-D output shape for a node, if recorded.
+    #[must_use]
+    pub fn node_shape(&self, id: NodeId) -> Option<&[usize]> {
+        self.node_shapes.get(&id).map(|v| v.as_slice())
+    }
+
+    /// All recorded node shapes.
+    #[must_use]
+    pub fn node_shapes(&self) -> &HashMap<NodeId, Vec<usize>> {
+        &self.node_shapes
+    }
+
+    // --- Node dtypes ---
+
+    /// Set the compiled output dtype for a node.
+    pub fn set_node_dtype(&mut self, id: NodeId, dtype: FloatDType) {
+        self.node_dtypes.insert(id, dtype);
+    }
+
+    /// Get the compiled output dtype for a node, if recorded.
+    #[must_use]
+    pub fn node_dtype(&self, id: NodeId) -> Option<FloatDType> {
+        self.node_dtypes.get(&id).copied()
+    }
+
+    /// All recorded node dtypes.
+    #[must_use]
+    pub fn node_dtypes(&self) -> &HashMap<NodeId, FloatDType> {
+        &self.node_dtypes
     }
 
     // --- Subgraphs ---

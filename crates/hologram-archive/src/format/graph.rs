@@ -6,7 +6,8 @@
 
 use std::collections::HashMap;
 
-use hologram_graph::constant::ConstantStore;
+use hologram_core::op::FloatDType;
+use hologram_graph::constant::{ConstantId, ConstantStore};
 use hologram_graph::graph::node::{InputSource, Node, NodeId};
 use hologram_graph::Graph;
 
@@ -26,6 +27,24 @@ pub struct SerializedGraph {
     pub output_node_ids: Vec<NodeId>,
     /// Constant store.
     pub constants: ConstantStore,
+    /// N-D shapes for constant nodes (weight matrices).
+    ///
+    /// Flat list of `(ConstantId, shape)` pairs. Converted to `HashMap` via
+    /// `constant_shapes_map()` for efficient lookup. Uses a flat vec rather
+    /// than `HashMap` because rkyv's archived key types need `Hash + Eq`.
+    pub constant_shapes: Vec<(ConstantId, Vec<usize>)>,
+    /// Compiled N-D output shapes per node.
+    ///
+    /// Flat list of `(NodeId, shape)` pairs. Populated during lowering from
+    /// the AI-level IR. Dimensions that are symbolic at compile time use 0
+    /// as a sentinel. The executor resolves 0s from actual buffer sizes.
+    pub node_shapes: Vec<(NodeId, Vec<usize>)>,
+    /// Compiled output dtype per node.
+    ///
+    /// Flat list of `(NodeId, FloatDType)` pairs. Populated during lowering.
+    /// Defaults to F32 when absent. Used by the executor to dispatch
+    /// type-aware operations (e.g., i64 shape subgraphs vs f32 tensor data).
+    pub node_dtypes: Vec<(NodeId, FloatDType)>,
 }
 
 impl SerializedGraph {
@@ -37,12 +56,27 @@ impl SerializedGraph {
         let (output_names, output_node_ids): (Vec<_>, Vec<_>) =
             graph.outputs().iter().cloned().unzip();
         let constants = graph.constant_store().clone();
+        let constant_shapes: Vec<(ConstantId, Vec<usize>)> = graph
+            .constant_shapes()
+            .iter()
+            .map(|(&k, v)| (k, v.clone()))
+            .collect();
+        let node_shapes: Vec<(NodeId, Vec<usize>)> = graph
+            .node_shapes()
+            .iter()
+            .map(|(&k, v)| (k, v.clone()))
+            .collect();
+        let node_dtypes: Vec<(NodeId, FloatDType)> =
+            graph.node_dtypes().iter().map(|(&k, &v)| (k, v)).collect();
         Self {
             nodes,
             input_names,
             output_names,
             output_node_ids,
             constants,
+            constant_shapes,
+            node_shapes,
+            node_dtypes,
         }
     }
 
@@ -52,6 +86,24 @@ impl SerializedGraph {
         self.nodes.len()
     }
 
+    /// Build a `HashMap<NodeId, Vec<usize>>` from the flat node_shapes list.
+    #[must_use]
+    pub fn node_shapes_map(&self) -> HashMap<NodeId, Vec<usize>> {
+        self.node_shapes.iter().cloned().collect()
+    }
+
+    /// Build a `HashMap<ConstantId, Vec<usize>>` from the flat constant_shapes list.
+    #[must_use]
+    pub fn constant_shapes_map(&self) -> HashMap<ConstantId, Vec<usize>> {
+        self.constant_shapes.iter().cloned().collect()
+    }
+
+    /// Build a `HashMap<NodeId, FloatDType>` from the flat node_dtypes list.
+    #[must_use]
+    pub fn node_dtypes_map(&self) -> HashMap<NodeId, FloatDType> {
+        self.node_dtypes.iter().copied().collect()
+    }
+
     /// Reconstruct a live Graph from this serialized snapshot.
     #[must_use]
     pub fn to_graph(&self) -> Graph {
@@ -59,6 +111,22 @@ impl SerializedGraph {
         let id_map = insert_nodes(&mut graph, &self.nodes);
         wire_edges(&mut graph, &self.nodes, &id_map);
         restore_io(&mut graph, self, &id_map);
+        // Restore constant shapes.
+        for (cid, shape) in &self.constant_shapes {
+            graph.set_constant_shape(*cid, shape.clone());
+        }
+        // Restore node shapes (remapped to new IDs).
+        for (old_id, shape) in &self.node_shapes {
+            if let Some(&new_id) = id_map.get(old_id) {
+                graph.set_node_shape(new_id, shape.clone());
+            }
+        }
+        // Restore node dtypes (remapped to new IDs).
+        for &(old_id, dtype) in &self.node_dtypes {
+            if let Some(&new_id) = id_map.get(&old_id) {
+                graph.set_node_dtype(new_id, dtype);
+            }
+        }
         graph
     }
 }

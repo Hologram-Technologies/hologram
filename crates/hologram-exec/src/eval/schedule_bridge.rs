@@ -107,6 +107,9 @@ mod tests {
             output_names: Vec::new(),
             output_node_ids: Vec::new(),
             constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
         }
     }
 

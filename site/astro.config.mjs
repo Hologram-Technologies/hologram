@@ -2,6 +2,11 @@ import { defineConfig } from 'astro/config'
 import starlight from '@astrojs/starlight'
 
 export default defineConfig({
+  site: 'https://uor-foundation.github.io',
+  base: '/hologram',
+  server: {
+    allowedHosts: ["bore.pub", "localhost"]
+  },
   integrations: [
     starlight({
       title: 'Hologram',
@@ -33,6 +38,13 @@ export default defineConfig({
           items: [
             { label: 'Getting Started', link: '/guides/getting-started/' },
             { label: 'Custom Ops', link: '/guides/custom-ops/' },
+          ],
+        },
+        {
+          label: 'Demos',
+          items: [
+            { label: 'Calculator', link: '/demo/calculator/' },
+            { label: 'Compression', link: '/demo/compression/' },
           ],
         },
       ],

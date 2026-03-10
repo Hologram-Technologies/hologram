@@ -369,6 +369,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "crc32fast",
+ "hologram-compression",
  "hologram-core",
  "hologram-graph",
  "memmap2",
@@ -428,6 +429,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hologram-compression"
+version = "0.1.0"
+dependencies = [
+ "hologram-core",
+]
+
+[[package]]
 name = "hologram-core"
 version = "0.1.0"
 dependencies = [
@@ -454,9 +462,11 @@ version = "0.1.0"
 dependencies = [
  "hologram-archive",
  "hologram-compiler",
+ "hologram-compression",
  "hologram-core",
  "hologram-exec",
  "hologram-graph",
+ "js-sys",
  "wasm-bindgen",
 ]
 

@@ -1,0 +1,505 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+---
+
+<StarlightPage
+  frontmatter={{ title: 'Compression Demo', description: 'UOR-based lossless compression using ring algebra observables' }}
+  headings={[
+    { depth: 2, slug: 'from-landauer-to-minimal-representation', text: 'From Landauer to Minimal Representation' },
+    { depth: 2, slug: 'ring-algebra-explorer', text: 'Ring Algebra Explorer' },
+    { depth: 2, slug: 'stratum-analysis', text: 'Stratum Analysis' },
+    { depth: 2, slug: 'compression-ratios', text: 'Compression Ratios' },
+    { depth: 2, slug: 'float-byte-plane-visualization', text: 'Float Byte-Plane Visualization' },
+  ]}
+>
+
+<style is:global>
+  .compression-demo {
+    --cd-bg: var(--sl-color-bg);
+    --cd-bg2: var(--sl-color-bg-nav);
+    --cd-border: var(--sl-color-hairline);
+    --cd-text: var(--sl-color-text);
+    --cd-text-dim: var(--sl-color-text-badge);
+    --cd-accent: var(--sl-color-text-accent);
+    --cd-green: #16a34a;
+    --cd-orange: #ca8a04;
+    --cd-purple: #9333ea;
+    --cd-blue: #2563eb;
+    --cd-red: #dc2626;
+    --cd-radius: 8px;
+    --cd-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  }
+  :root[data-theme='dark'] .compression-demo {
+    --cd-green: #3fb950;
+    --cd-orange: #d29922;
+    --cd-purple: #bc8cff;
+    --cd-blue: #58a6ff;
+    --cd-red: #f85149;
+  }
+
+  .compression-demo .pipeline { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+  .compression-demo .pipeline .step { background: var(--cd-bg2); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 500; color: var(--cd-text); }
+  .compression-demo .pipeline .step.active { border-color: var(--cd-accent); color: var(--cd-accent); font-weight: 700; }
+  .compression-demo .pipeline .arrow { color: var(--cd-text-dim); font-size: 1.2rem; }
+  .compression-demo .card { background: var(--cd-bg2); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 1.25rem; margin-bottom: 1rem; overflow-x: auto; }
+  .compression-demo .section-note { font-size: 0.8rem; color: var(--cd-text-dim); font-style: italic; margin-bottom: 1rem; }
+  .compression-demo p { color: var(--cd-text-dim); }
+
+  /* Ring explorer */
+  .compression-demo .ring-explorer { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .compression-demo .ring-inputs { flex: 0 0 auto; }
+  .compression-demo .ring-inputs label { display: block; font-size: 0.8rem; color: var(--cd-text-dim); margin-bottom: 0.25rem; font-weight: 600; }
+  .compression-demo .ring-inputs input[type="range"] { width: 200px; }
+  .compression-demo .ring-value { font-family: var(--cd-mono); font-size: 1.1rem; color: var(--cd-accent); font-weight: 700; min-width: 2.5rem; display: inline-block; }
+  .compression-demo .ring-results { flex: 1 1 300px; }
+  .compression-demo .ring-results table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .compression-demo .ring-results th { text-align: left; color: var(--cd-text-dim); font-weight: 600; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--cd-border); text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }
+  .compression-demo .ring-results td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--cd-border); font-family: var(--cd-mono); font-size: 0.85rem; color: var(--cd-text); }
+  .compression-demo .binary { font-family: var(--cd-mono); font-size: 0.78rem; color: var(--cd-text-dim); letter-spacing: 0.05em; }
+
+  /* Stratum histogram */
+  .compression-demo .stratum-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin: 1rem 0; padding: 0 0.5rem; }
+  .compression-demo .stratum-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+  .compression-demo .stratum-bar { width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; transition: height 0.3s; }
+  .compression-demo .stratum-label { font-size: 0.7rem; color: var(--cd-text-dim); margin-top: 4px; font-family: var(--cd-mono); }
+  .compression-demo .stratum-count { font-size: 0.65rem; color: var(--cd-text-dim); font-family: var(--cd-mono); margin-bottom: 2px; }
+
+  /* Ratio chart */
+  .compression-demo .ratio-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0; table-layout: auto; }
+  .compression-demo .ratio-table th,
+  .compression-demo .ratio-table td { padding: 0.4rem 0.5rem; text-align: right; border-bottom: 1px solid var(--cd-border); color: var(--cd-text); white-space: nowrap; }
+  .compression-demo .ratio-table th { color: var(--cd-text-dim); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }
+  .compression-demo .ratio-table td:first-child,
+  .compression-demo .ratio-table th:first-child { text-align: left; white-space: normal; }
+  .compression-demo .ratio-bar-track { height: 18px; background: var(--cd-bg); border: 1px solid var(--cd-border); border-radius: 3px; overflow: hidden; min-width: 60px; }
+  .compression-demo .ratio-bar { height: 100%; border-radius: 3px; min-width: 2px; }
+
+  /* Data type selector */
+  .compression-demo .data-selector { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .compression-demo .data-selector button { background: var(--cd-bg2); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 0.4rem 0.8rem; font-size: 0.8rem; color: var(--cd-text-dim); cursor: pointer; font-family: inherit; }
+  .compression-demo .data-selector button:hover { border-color: var(--cd-accent); color: var(--cd-text); }
+  .compression-demo .data-selector button.active { border-color: var(--cd-accent); color: var(--cd-accent); font-weight: 600; background: color-mix(in srgb, var(--cd-accent) 10%, transparent); }
+
+  /* Float planes */
+  .compression-demo .plane-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+  .compression-demo .plane-card { background: var(--cd-bg); border: 1px solid var(--cd-border); border-radius: var(--cd-radius); padding: 0.75rem; text-align: center; min-width: 0; }
+  .compression-demo .plane-card h4 { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--cd-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .compression-demo .plane-card .entropy-val { font-family: var(--cd-mono); font-size: 1.1rem; font-weight: 700; }
+  .compression-demo .plane-card .entropy-label { font-size: 0.7rem; color: var(--cd-text-dim); }
+
+  @media (max-width: 600px) {
+    .compression-demo .plane-grid { grid-template-columns: repeat(2, 1fr); }
+    .compression-demo .ring-explorer { flex-direction: column; }
+  }
+
+  /* Mode badges */
+  .compression-demo .mode-badge { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 10px; font-family: var(--cd-mono); }
+  .compression-demo .mode-0 { background: color-mix(in srgb, var(--cd-blue) 15%, transparent); color: var(--cd-blue); }
+  .compression-demo .mode-1 { background: color-mix(in srgb, var(--cd-purple) 15%, transparent); color: var(--cd-purple); }
+  .compression-demo .mode-2 { background: color-mix(in srgb, var(--cd-green) 15%, transparent); color: var(--cd-green); }
+  .compression-demo .mode-3 { background: color-mix(in srgb, var(--cd-orange) 15%, transparent); color: var(--cd-orange); }
+</style>
+
+<div class="compression-demo">
+
+<!-- Hero -->
+<div style="text-align: center; padding: 1rem 0;">
+  <p class="section-note" style="font-size: 1.15rem; max-width: 650px; margin: 0 auto; font-style: normal;">
+    Lossless compression using UOR ring algebra observables. Every byte is decomposed through algebraic structure to find its irreducible representation.
+  </p>
+  <div class="pipeline">
+    <span class="step">raw bytes</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">permute</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step active">ring-diff</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step active">SPEC / torus</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">rANS</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">compressed</span>
+  </div>
+</div>
+
+<!-- From Landauer to Minimal Representation -->
+<h2 id="from-landauer-to-minimal-representation">From Landauer to Minimal Representation</h2>
+<div class="card">
+  <p>The <strong>Landauer limit</strong> establishes that erasing one bit of information costs a minimum of <em>kT&middot;ln(2)</em> energy. This defines the irreducible information content of any data &mdash; the bits that <em>cannot</em> be removed without thermodynamic cost.</p>
+  <p style="margin-top: 0.75rem;">Hologram compression uses <strong>UOR algebraic observables</strong> to find this minimal representation:</p>
+  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; margin-top: 1rem;">
+    <div style="padding: 0.75rem; background: var(--cd-bg); border-radius: var(--cd-radius); border: 1px solid var(--cd-border);">
+      <strong style="color: var(--cd-purple); font-size: 0.85rem;">Stratum</strong>
+      <p style="font-size: 0.78rem; margin: 0.25rem 0 0;">Popcount partitions Z/256Z into 9 classes. Weights cluster in few strata.</p>
+    </div>
+    <div style="padding: 0.75rem; background: var(--cd-bg); border-radius: var(--cd-radius); border: 1px solid var(--cd-border);">
+      <strong style="color: var(--cd-blue); font-size: 0.85rem;">Ring Differential</strong>
+      <p style="font-size: 0.78rem; margin: 0.25rem 0 0;">ByteRing::sub reveals sequential correlation. Residuals cluster near 0.</p>
+    </div>
+    <div style="padding: 0.75rem; background: var(--cd-bg); border-radius: var(--cd-radius); border: 1px solid var(--cd-border);">
+      <strong style="color: var(--cd-orange); font-size: 0.85rem;">Torus Position</strong>
+      <p style="font-size: 0.78rem; margin: 0.25rem 0 0;">Page/offset split exploits clustering in quantized weights.</p>
+    </div>
+    <div style="padding: 0.75rem; background: var(--cd-bg); border-radius: var(--cd-radius); border: 1px solid var(--cd-border);">
+      <strong style="color: var(--cd-green); font-size: 0.85rem;">Float Structure</strong>
+      <p style="font-size: 0.78rem; margin: 0.25rem 0 0;">Byte-plane transpose. Exponent bytes carry far less entropy than mantissa.</p>
+    </div>
+  </div>
+  <p style="margin-top: 1rem; font-size: 0.82rem;">Each observable reveals a different kind of redundancy invisible in the raw encoding. Shannon entropy is the floor; UOR algebra is the lens for reaching it.</p>
+</div>
+
+<div class="card">
+  <p style="font-size: 0.82rem; margin: 0;"><strong>Four compression modes</strong>, each targeting a different data profile:</p>
+  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem;">
+    <span class="mode-badge mode-0">Mode 0: Generic</span>
+    <span class="mode-badge mode-1">Mode 1: Stratum</span>
+    <span class="mode-badge mode-2">Mode 2: Float</span>
+    <span class="mode-badge mode-3">Mode 3: Quantized</span>
+  </div>
+  <p style="font-size: 0.78rem; margin-top: 0.5rem;">Mode selection is automatic: analyze the first 1024 bytes, compute stratum histogram + torus page concentration + exponent entropy, pick the best mode.</p>
+</div>
+
+<!-- Ring Algebra Explorer -->
+<h2 id="ring-algebra-explorer">Ring Algebra Explorer</h2>
+<p class="section-note">Interactive Z/256Z ring operations. These are the primitives that power ring-differential coding.</p>
+
+<div class="card">
+  <div class="ring-explorer">
+    <div class="ring-inputs">
+      <div style="margin-bottom: 1rem;">
+        <label>a = <span class="ring-value" id="ring-a-val">42</span></label>
+        <input type="range" id="ring-a" min="0" max="255" value="42">
+        <div class="binary" id="ring-a-bin">00101010</div>
+      </div>
+      <div>
+        <label>b = <span class="ring-value" id="ring-b-val">137</span></label>
+        <input type="range" id="ring-b" min="0" max="255" value="137">
+        <div class="binary" id="ring-b-bin">10001001</div>
+      </div>
+    </div>
+    <div class="ring-results">
+      <table>
+        <thead><tr><th>Operation</th><th>Formula</th><th>Result</th><th>Binary</th></tr></thead>
+        <tbody id="ring-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Stratum Analysis -->
+<h2 id="stratum-analysis">Stratum Analysis</h2>
+<p class="section-note">Stratum = popcount. Bytes partition into 9 equivalence classes by number of set bits. Data that clusters in few strata compresses well with SPEC.</p>
+
+<div class="data-selector" id="stratum-selector">
+  <button class="active" data-dist="uniform">Uniform</button>
+  <button data-dist="gaussian">Gaussian Weights</button>
+  <button data-dist="sparse">Sparse Weights</button>
+  <button data-dist="quantized">Q0 Quantized</button>
+</div>
+
+<div class="card">
+  <div class="stratum-chart" id="stratum-chart"></div>
+  <p class="section-note" style="text-align: center; margin: 0.5rem 0 0;" id="stratum-info">
+    Stratum sizes: C(8,k) = [1, 8, 28, 56, 70, 56, 28, 8, 1]
+  </p>
+</div>
+
+<!-- Compression Ratios -->
+<h2 id="compression-ratios">Compression Ratios</h2>
+<p class="section-note">Compression ratio = original / compressed. Higher is better. All compression is bit-perfect lossless.</p>
+
+<div class="card">
+  <table class="ratio-table">
+    <thead>
+      <tr><th>Data Type</th><th>Best Mode</th><th>Ratio</th><th style="min-width: 120px;">Visual</th></tr>
+    </thead>
+    <tbody id="ratio-tbody"></tbody>
+  </table>
+</div>
+
+<!-- Float Byte-Plane Visualization -->
+<h2 id="float-byte-plane-visualization">Float Byte-Plane Visualization</h2>
+<p class="section-note">f32 values split into 4 byte planes. The MSB (sign+exponent) has extremely low entropy; the LSB (mantissa_lo) is near-random.</p>
+
+<div class="card">
+  <div class="plane-grid" id="plane-grid"></div>
+  <p class="section-note" style="text-align: center; margin-top: 0.5rem;">
+    Stratum histogram per plane shows why plane 3 compresses so well with SPEC.
+  </p>
+  <div id="plane-histograms"></div>
+</div>
+
+</div><!-- .compression-demo -->
+
+<script is:inline>
+// ── Utilities ──
+function toBin(v) {
+  return v.toString(2).padStart(8, '0');
+}
+function popcount(v) {
+  v = v - ((v >> 1) & 0x55);
+  v = (v & 0x33) + ((v >> 2) & 0x33);
+  return (v + (v >> 4)) & 0x0f;
+}
+function byteRingAdd(a, b) { return (a + b) & 0xff; }
+function byteRingSub(a, b) { return (a - b + 256) & 0xff; }
+function byteRingMul(a, b) { return (a * b) & 0xff; }
+function byteRingNeg(a) { return (256 - a) & 0xff; }
+
+function makeEl(tag, attrs, children) {
+  var el = document.createElement(tag);
+  if (attrs) {
+    for (var k in attrs) {
+      if (k === 'style') el.style.cssText = attrs[k];
+      else if (k === 'className') el.className = attrs[k];
+      else el.setAttribute(k, attrs[k]);
+    }
+  }
+  if (typeof children === 'string') el.textContent = children;
+  else if (Array.isArray(children)) {
+    for (var i = 0; i < children.length; i++) {
+      if (children[i]) el.appendChild(children[i]);
+    }
+  }
+  return el;
+}
+
+// ── Ring Algebra Explorer ──
+var ringA = document.getElementById('ring-a');
+var ringB = document.getElementById('ring-b');
+
+function updateRing() {
+  var a = parseInt(ringA.value);
+  var b = parseInt(ringB.value);
+  document.getElementById('ring-a-val').textContent = a;
+  document.getElementById('ring-b-val').textContent = b;
+  document.getElementById('ring-a-bin').textContent = toBin(a);
+  document.getElementById('ring-b-bin').textContent = toBin(b);
+
+  var ops = [
+    ['add(a,b)', '(a + b) mod 256', byteRingAdd(a, b)],
+    ['sub(a,b)', '(a \u2212 b) mod 256', byteRingSub(a, b)],
+    ['mul(a,b)', '(a \u00d7 b) mod 256', byteRingMul(a, b)],
+    ['neg(a)', '(256 \u2212 a) mod 256', byteRingNeg(a)],
+    ['bnot(a)', '255 \u2212 a', a ^ 0xff],
+    ['stratum(a)', 'popcount(a)', popcount(a)],
+    ['stratum(b)', 'popcount(b)', popcount(b)],
+  ];
+
+  var tbody = document.getElementById('ring-tbody');
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  for (var i = 0; i < ops.length; i++) {
+    var tr = makeEl('tr', null, [
+      makeEl('td', { style: 'color:var(--cd-accent)' }, ops[i][0]),
+      makeEl('td', { style: 'color:var(--cd-text-dim);font-size:0.78rem' }, ops[i][1]),
+      makeEl('td', { style: 'font-weight:700' }, String(ops[i][2])),
+      makeEl('td', { className: 'binary' }, toBin(ops[i][2])),
+    ]);
+    tbody.appendChild(tr);
+  }
+}
+
+ringA.addEventListener('input', updateRing);
+ringB.addEventListener('input', updateRing);
+updateRing();
+
+// ── Stratum Analysis ──
+var STRATUM_COLORS = [
+  'var(--cd-blue)', 'var(--cd-blue)', 'var(--cd-accent)',
+  'var(--cd-accent)', 'var(--cd-purple)', 'var(--cd-purple)',
+  'var(--cd-orange)', 'var(--cd-orange)', 'var(--cd-red)',
+];
+
+function generateData(dist) {
+  var data = [];
+  var n = 1024;
+  if (dist === 'uniform') {
+    for (var i = 0; i < n; i++) data.push(i & 0xff);
+  } else if (dist === 'gaussian') {
+    for (var i = 0; i < n; i++) {
+      var u1 = (Math.random() * 0.998) + 0.001;
+      var u2 = Math.random();
+      var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      data.push(Math.max(0, Math.min(255, Math.round(128 + z * 30))));
+    }
+  } else if (dist === 'sparse') {
+    for (var i = 0; i < n; i++) {
+      data.push(Math.random() < 0.85 ? 0 : Math.floor(Math.random() * 256));
+    }
+  } else if (dist === 'quantized') {
+    var centers = [3, 12, 28, 45, 67, 89, 110, 128, 145, 167, 189, 201, 218, 230, 243, 252];
+    for (var i = 0; i < n; i++) {
+      var c = centers[Math.floor(Math.random() * centers.length)];
+      data.push(Math.max(0, Math.min(255, c + Math.round((Math.random() - 0.5) * 4))));
+    }
+  }
+  return data;
+}
+
+function stratumHistogram(data) {
+  var hist = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (var i = 0; i < data.length; i++) {
+    hist[popcount(data[i])]++;
+  }
+  return hist;
+}
+
+function renderStratumChart(data) {
+  var hist = stratumHistogram(data);
+  var max = Math.max.apply(null, hist);
+  var chart = document.getElementById('stratum-chart');
+  while (chart.firstChild) chart.removeChild(chart.firstChild);
+
+  for (var s = 0; s <= 8; s++) {
+    var wrap = makeEl('div', { className: 'stratum-bar-wrap' }, [
+      makeEl('div', { className: 'stratum-count' }, String(hist[s])),
+      makeEl('div', { className: 'stratum-bar', style: 'height:' + (max > 0 ? (hist[s] / max) * 100 : 0) + '%;background:' + STRATUM_COLORS[s] }),
+      makeEl('div', { className: 'stratum-label' }, 's' + s),
+    ]);
+    chart.appendChild(wrap);
+  }
+}
+
+var selectorBtns = document.querySelectorAll('#stratum-selector button');
+function selectDist(dist) {
+  selectorBtns.forEach(function(b) {
+    b.classList.toggle('active', b.getAttribute('data-dist') === dist);
+  });
+  renderStratumChart(generateData(dist));
+}
+selectorBtns.forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    selectDist(btn.getAttribute('data-dist'));
+  });
+});
+renderStratumChart(generateData('uniform'));
+
+// ── Compression Ratios ──
+var RATIO_DATA = [
+  { type: 'Random bytes', mode: 'Any', modeClass: 'mode-0', ratio: 1.00 },
+  { type: 'f32 Gaussian weights', mode: 'Float', modeClass: 'mode-2', ratio: 1.5 },
+  { type: 'f32 sparse weights', mode: 'Float', modeClass: 'mode-2', ratio: 3.0 },
+  { type: 'Q0 symmetric quantized', mode: 'Stratum', modeClass: 'mode-1', ratio: 1.35 },
+  { type: 'Q0 clustered (k=16)', mode: 'Torus', modeClass: 'mode-3', ratio: 2.0 },
+  { type: 'rkyv graph data', mode: 'Generic', modeClass: 'mode-0', ratio: 2.0 },
+];
+
+function renderRatioTable() {
+  var tbody = document.getElementById('ratio-tbody');
+  var maxRatio = 0;
+  for (var i = 0; i < RATIO_DATA.length; i++) {
+    if (RATIO_DATA[i].ratio > maxRatio) maxRatio = RATIO_DATA[i].ratio;
+  }
+
+  for (var i = 0; i < RATIO_DATA.length; i++) {
+    var d = RATIO_DATA[i];
+    var pct = Math.min(100, (d.ratio / maxRatio) * 100);
+    var color = d.ratio >= 2.0 ? 'var(--cd-green)' : d.ratio >= 1.2 ? 'var(--cd-accent)' : 'var(--cd-text-dim)';
+
+    var badge = makeEl('span', { className: 'mode-badge ' + d.modeClass }, d.mode);
+    var bar = makeEl('div', { className: 'ratio-bar', style: 'width:' + pct + '%;background:' + color });
+    var barTrack = makeEl('div', { className: 'ratio-bar-track' }, [bar]);
+
+    var tdType = makeEl('td', null, d.type);
+    var tdMode = makeEl('td', null, [badge]);
+    var tdRatio = makeEl('td', { style: 'font-family:var(--cd-mono);font-weight:700;color:' + color }, d.ratio.toFixed(2) + '\u00d7');
+    var tdVisual = makeEl('td', null, [barTrack]);
+
+    tbody.appendChild(makeEl('tr', null, [tdType, tdMode, tdRatio, tdVisual]));
+  }
+}
+renderRatioTable();
+
+// ── Float Byte-Plane Visualization ──
+function generateF32Gaussian(count) {
+  var bytes = [];
+  for (var i = 0; i < count; i++) {
+    var u1 = (Math.random() * 0.998) + 0.001;
+    var u2 = Math.random();
+    var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    var buf = new Float32Array(1);
+    buf[0] = z * 0.5;
+    var view = new Uint8Array(buf.buffer);
+    for (var b = 0; b < 4; b++) bytes.push(view[b]);
+  }
+  return bytes;
+}
+
+function transposeF32(bytes) {
+  var n = bytes.length / 4;
+  var planes = [[], [], [], []];
+  for (var i = 0; i < n; i++) {
+    for (var p = 0; p < 4; p++) {
+      planes[p].push(bytes[i * 4 + p]);
+    }
+  }
+  return planes;
+}
+
+function shannonEntropy(data) {
+  var freq = new Array(256).fill(0);
+  for (var i = 0; i < data.length; i++) freq[data[i]]++;
+  var n = data.length;
+  var h = 0;
+  for (var i = 0; i < 256; i++) {
+    if (freq[i] > 0) {
+      var p = freq[i] / n;
+      h -= p * Math.log2(p);
+    }
+  }
+  return h;
+}
+
+function renderFloatPlanes() {
+  var f32data = generateF32Gaussian(256);
+  var planes = transposeF32(f32data);
+
+  var planeNames = ['Plane 0 (LSB)', 'Plane 1', 'Plane 2', 'Plane 3 (MSB)'];
+  var planeDescs = ['mantissa_lo', 'mantissa_mid', 'exp+mantissa_hi', 'sign+exponent'];
+  var planeColors = ['var(--cd-text-dim)', 'var(--cd-orange)', 'var(--cd-accent)', 'var(--cd-green)'];
+
+  var grid = document.getElementById('plane-grid');
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+  for (var p = 0; p < 4; p++) {
+    var entropy = shannonEntropy(planes[p]);
+    var card = makeEl('div', { className: 'plane-card' }, [
+      makeEl('h4', null, planeNames[p]),
+      makeEl('div', { className: 'entropy-val', style: 'color:' + planeColors[p] }, entropy.toFixed(2)),
+      makeEl('div', { className: 'entropy-label' }, 'bits/byte'),
+      makeEl('div', { className: 'entropy-label', style: 'margin-top:0.25rem;font-size:0.68rem;color:var(--cd-text-dim)' }, planeDescs[p]),
+    ]);
+    grid.appendChild(card);
+  }
+
+  // Per-plane stratum histograms
+  var histContainer = document.getElementById('plane-histograms');
+  while (histContainer.firstChild) histContainer.removeChild(histContainer.firstChild);
+
+  var histGrid = makeEl('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.75rem;margin-top:1rem;' });
+
+  for (var p = 0; p < 4; p++) {
+    var hist = stratumHistogram(planes[p]);
+    var max = Math.max.apply(null, hist);
+
+    var label = makeEl('div', { style: 'font-size:0.72rem;color:var(--cd-text-dim);margin-bottom:0.25rem;font-weight:600;' }, planeNames[p]);
+    var chart = makeEl('div', { style: 'display:flex;align-items:flex-end;gap:2px;height:60px;padding:0 2px;' });
+
+    for (var s = 0; s <= 8; s++) {
+      var bar = makeEl('div', { style: 'width:100%;min-height:1px;border-radius:2px 2px 0 0;background:' + planeColors[p] + ';height:' + (max > 0 ? (hist[s] / max) * 100 : 0) + '%;' });
+      var barWrap = makeEl('div', { style: 'flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;' }, [bar]);
+      chart.appendChild(barWrap);
+    }
+
+    var wrap = makeEl('div', { style: 'text-align:center;' }, [label, chart]);
+    histGrid.appendChild(wrap);
+  }
+
+  histContainer.appendChild(histGrid);
+}
+
+renderFloatPlanes();
+</script>
+
+</StarlightPage>

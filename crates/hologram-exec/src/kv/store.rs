@@ -114,7 +114,7 @@ fn dispatch_lut_gemm_4(
     let n = qw.cols as usize;
     let mut output = vec![0.0f32; m * n];
     lut_gemm_4bit(activations, &qw, &mut output);
-    Ok(bytemuck::cast_slice(&output).to_vec())
+    Ok(crate::float_dispatch::f32_vec_to_bytes(output))
 }
 
 /// Resolve constant and run 8-bit LUT-GEMM.
@@ -132,7 +132,7 @@ fn dispatch_lut_gemm_8(
     let n = qw.cols as usize;
     let mut output = vec![0.0f32; m * n];
     lut_gemm_8bit(activations, &qw, &mut output);
-    Ok(bytemuck::cast_slice(&output).to_vec())
+    Ok(crate::float_dispatch::f32_vec_to_bytes(output))
 }
 
 /// Resolve a constant ID to its raw bytes.
