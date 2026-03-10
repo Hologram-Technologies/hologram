@@ -458,8 +458,10 @@ impl FloatOp {
             | Self::ReduceMax { .. }
             | Self::ReduceMin { .. } => ShapeSpec::DropLastDim(0),
 
-            // Where: output = input[1] shape (x tensor)
-            Self::Where => ShapeSpec::SameAs(1),
+            // Where: output = broadcast of condition and x shapes.
+            // All three inputs are broadcast in the kernel; condition (input[0])
+            // is typically the highest-rank tensor (e.g., attention mask).
+            Self::Where => ShapeSpec::Broadcast(0, 1),
 
             // Range: 1-D output, length inferred from start/limit/delta
             Self::Range => ShapeSpec::inferred_1d(),
@@ -881,7 +883,10 @@ mod tests {
             ShapeSpec::DropLastDim(0)
         );
         // Where
-        assert_eq!(FloatOp::Where.output_shape_spec(), ShapeSpec::SameAs(1));
+        assert_eq!(
+            FloatOp::Where.output_shape_spec(),
+            ShapeSpec::Broadcast(0, 1)
+        );
         // Embed (Custom — output = indices_shape ++ [dim])
         assert_eq!(
             FloatOp::Embed { dim: 256 }.output_shape_spec(),
