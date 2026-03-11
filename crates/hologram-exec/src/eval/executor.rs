@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use hologram_archive::format::graph::SerializedGraph;
 use hologram_core::op::FloatDType;
 use hologram_graph::constant::{ConstantData, ConstantId};
-use hologram_graph::graph::node::{InputSource, Node, NodeId};
+use hologram_graph::graph::node::{InputSlot, InputSource, Node, NodeId};
 use hologram_graph::graph::GraphOp;
 use hologram_graph::schedule::levels::ParallelLevel;
 use hologram_graph::schedule::ExecutionSchedule;
@@ -204,7 +204,7 @@ impl KvExecutor {
         F: FnMut(usize, usize),
     {
         let compiled_dtypes = sg.node_dtypes_map();
-        let mut arena = seed_arena(sg, weights)?;
+        let mut arena = seed_arena(sg, weights, &compiled_dtypes)?;
         let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
 
         let dctx = DispatchContext {
@@ -282,12 +282,41 @@ fn build_node_map(sg: &SerializedGraph) -> HashMap<NodeId, &Node> {
 }
 
 /// Initialize the arena and seed all constant nodes.
-fn seed_arena<'a>(sg: &'a SerializedGraph, weights: &'a [u8]) -> ExecResult<BufferArena<'a>> {
+///
+/// Also seeds elem_sizes from `compiled_dtypes` for every node that has
+/// a known dtype, and marks graph Input nodes as I64 (the standard dtype
+/// for token IDs and attention masks in LLM models).
+fn seed_arena<'a>(
+    sg: &'a SerializedGraph,
+    weights: &'a [u8],
+    compiled_dtypes: &HashMap<NodeId, FloatDType>,
+) -> ExecResult<BufferArena<'a>> {
     let mut arena = BufferArena::with_capacity(sg.nodes.len());
     for node in &sg.nodes {
-        if let GraphOp::Constant(cid) = &node.op {
-            let data = resolve_constant_ref(&sg.constants, *cid, weights)?;
-            arena.insert_borrowed(node.id, data);
+        match &node.op {
+            GraphOp::Constant(cid) => {
+                let data = resolve_constant_ref(&sg.constants, *cid, weights)?;
+                let es = compiled_dtypes
+                    .get(&node.id)
+                    .map(|d| d.byte_size())
+                    .unwrap_or(4);
+                arena.insert_borrowed_with_elem_size(node.id, data, es);
+            }
+            GraphOp::Input => {
+                // Input nodes: use compiled dtype if available, else I64
+                // (standard for LLM token IDs / attention masks).
+                let es = compiled_dtypes
+                    .get(&node.id)
+                    .map(|d| d.byte_size())
+                    .unwrap_or(8); // I64 default for inputs
+                arena.set_elem_size(node.id, es);
+            }
+            _ => {
+                // Seed elem_size from compiled_dtypes if available.
+                if let Some(dtype) = compiled_dtypes.get(&node.id) {
+                    arena.set_elem_size(node.id, dtype.byte_size());
+                }
+            }
         }
     }
     Ok(arena)
@@ -308,20 +337,8 @@ fn seed_shape_map(
 
     // 1. Seed compiled node shapes (from lowering).
     let compiled = sg.node_shapes_map();
-    let target_id = NodeId::new(467, 0);
     for (node_id, shape) in &compiled {
-        if *node_id == target_id {
-            eprintln!("[seed-debug] inserting compiled shape for {node_id:?}: {shape:?}");
-        }
         sm.insert(*node_id, shape.clone());
-    }
-    if sm.get(target_id).is_some() {
-        eprintln!(
-            "[seed-debug] after compiled: {target_id:?} = {:?}",
-            sm.get(target_id)
-        );
-    } else {
-        eprintln!("[seed-debug] after compiled: {target_id:?} NOT FOUND");
     }
 
     // 2. Seed constant shapes from the constant_shapes table.
@@ -380,6 +397,7 @@ fn resolve_dynamic_sizes(
     op: &GraphOp,
     input_shapes: &[Vec<usize>],
     input_refs: &[&[u8]],
+    elem_size: usize,
 ) -> Option<GraphOp> {
     let resolve = |input_idx: usize| -> u32 {
         let shape_last = input_shapes
@@ -387,7 +405,10 @@ fn resolve_dynamic_sizes(
             .and_then(|s| s.last().copied())
             .unwrap_or(0);
         // Validate: the last dim must divide the actual buffer size.
-        let buf_floats = input_refs.get(input_idx).map(|b| b.len() / 4).unwrap_or(0);
+        let buf_floats = input_refs
+            .get(input_idx)
+            .map(|b| b.len() / elem_size)
+            .unwrap_or(0);
         if shape_last > 0 && buf_floats > 0 && buf_floats.is_multiple_of(shape_last) {
             shape_last as u32
         } else if buf_floats > 0 {
@@ -490,6 +511,25 @@ fn resolve_compiled_shape(
                     break;
                 }
             }
+        } else if remaining_zeros == 2 {
+            // Two equal unknowns (e.g. seq×seq in attention scores [batch, heads, seq, seq]).
+            // If their product is a perfect square, both resolve to sqrt.
+            let kp: usize = resolved
+                .iter()
+                .filter(|&&d| d > 0)
+                .product::<usize>()
+                .max(1);
+            if total_elems > 0 && total_elems.is_multiple_of(kp) {
+                let rem = total_elems / kp;
+                let isqrt = (rem as f64).sqrt() as usize;
+                if isqrt > 0 && isqrt * isqrt == rem {
+                    for d in &mut resolved {
+                        if *d == 0 {
+                            *d = isqrt;
+                        }
+                    }
+                }
+            }
         }
     }
     resolved
@@ -581,6 +621,15 @@ pub fn resolve_shape_spec(
             shape
         }
 
+        ShapeSpec::BroadcastAll => {
+            // Use highest-rank input shape as the output shape.
+            input_shapes
+                .iter()
+                .max_by_key(|s| s.len())
+                .cloned()
+                .unwrap_or_else(|| vec![total_elems])
+        }
+
         ShapeSpec::Custom => {
             // Caller must handle Custom separately.
             vec![total_elems]
@@ -606,60 +655,47 @@ fn dispatch_level(
             .ok_or(ExecError::NodeNotFound(node_id))?;
 
         if matches!(node.op, GraphOp::Constant(_)) {
-            // Debug: print small constants near the cascade.
-            if node_id.index() >= 208 && node_id.index() <= 215 {
-                let data = arena.get(node_id).ok();
-                let bytes = data.map(|d| d.len()).unwrap_or(0);
-                let preview = data
-                    .map(|d| {
-                        if d.len() <= 64 {
-                            if d.len() % 4 == 0 {
-                                let floats: Vec<f32> = d
-                                    .chunks(4)
-                                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                                    .collect();
-                                format!("f32={floats:?}")
-                            } else {
-                                format!("raw={d:?}")
-                            }
-                        } else {
-                            format!("({bytes}B)")
-                        }
-                    })
-                    .unwrap_or_default();
-                eprintln!(
-                    "[const-trace] {node_id:?} {:?}: {bytes}B {preview}",
-                    node.op
-                );
-            }
             continue;
+        }
+
+        // Trace nodes near the first attention block
+        if node_id.index() >= 320 && node_id.index() <= 340 {
+            let sm = shape_map
+                .get(node_id)
+                .map(|s| format!("{s:?}"))
+                .unwrap_or("None".into());
+            let cs = dctx
+                .compiled_shapes
+                .get(&node_id)
+                .map(|s| format!("{s:?}"))
+                .unwrap_or("None".into());
+            let inp_srcs: Vec<String> = node
+                .inputs
+                .iter()
+                .map(|s| match s.source {
+                    InputSource::Node(id) => {
+                        let sh = shape_map
+                            .get(id)
+                            .map(|s| format!("{s:?}"))
+                            .unwrap_or("?".into());
+                        let bsz = arena.get(id).map(|b| b.len()).unwrap_or(0);
+                        format!("{id:?}(sh={sh},{}B)", bsz)
+                    }
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            eprintln!(
+                "[trace] {node_id:?} {:?}: sm={sm} cs={cs} inputs=[{}]",
+                node.op,
+                inp_srcs.join(", ")
+            );
         }
 
         let input_refs = gather_inputs(node, arena, dctx.inputs)?;
 
-        // Debug: trace nodes near the first cascade failure.
-        if (node_id.index() >= 208 && node_id.index() <= 215)
-            || (node_id.index() >= 464 && node_id.index() <= 470)
-            || (node_id.index() >= 498 && node_id.index() <= 504)
-        {
-            let input_srcs: Vec<String> = node
-                .inputs
-                .iter()
-                .enumerate()
-                .map(|(i, slot)| {
-                    let src = format!("{:?}", slot.source);
-                    let sz = input_refs.get(i).map(|r| r.len()).unwrap_or(0);
-                    format!("[{i}]={src}({}B)", sz)
-                })
-                .collect();
-            eprintln!(
-                "[node-trace] {node_id:?} {:?}: inputs={}",
-                node.op,
-                input_srcs.join(", ")
-            );
-        }
-
         // Gather input shapes for shape-aware ops.
+        // When compiled shapes contain 0-sentinels (dynamic dims like seq_len),
+        // resolve them from the actual input buffer sizes.
         let input_shapes: Vec<Vec<usize>> = node
             .inputs
             .iter()
@@ -669,16 +705,21 @@ fn dispatch_level(
                     InputSource::Node(id) => Some(id),
                     _ => None,
                 };
-                dep_id
+                let es = dep_id
+                    .and_then(|id| dctx.compiled_dtypes.get(&id))
+                    .map(|d| d.byte_size())
+                    .unwrap_or(4);
+                let raw = dep_id
                     .and_then(|id| shape_map.get(id).map(|s| s.to_vec()))
-                    .unwrap_or_else(|| {
-                        // Use dtype-aware element size when available.
-                        let es = dep_id
-                            .and_then(|id| dctx.compiled_dtypes.get(&id))
-                            .map(|d| d.byte_size())
-                            .unwrap_or(4);
-                        ShapeMap::infer_1d_with_elem_size(buf.len(), es)
-                    })
+                    .unwrap_or_else(|| ShapeMap::infer_1d_with_elem_size(buf.len(), es));
+                // Resolve 0-sentinel dims from actual buffer size.
+                if raw.contains(&0) {
+                    let resolved = resolve_compiled_shape(&raw, buf.len(), &[], es);
+                    if !resolved.contains(&0) {
+                        return resolved;
+                    }
+                }
+                raw
             })
             .collect();
 
@@ -738,77 +779,176 @@ fn dispatch_level(
                 (data, out_shape)
             }
             GraphOp::Float(FloatOp::Reshape) => {
-                // Shape is pre-computed by the shape_propagate pass using
-                // shape_resolve::resolve_float_shape(). Read it from shape_map.
-                let elem_size = dctx
-                    .compiled_dtypes
-                    .get(&node_id)
-                    .or_else(|| {
-                        node.inputs.first().and_then(|s| match s.source {
-                            InputSource::Node(id) => dctx.compiled_dtypes.get(&id),
-                            _ => None,
-                        })
+                // Reshape preserves dtype — elem_size comes from the input's arena
+                // tracked size, NOT from compiled_dtypes (which may mis-assign dtypes
+                // from adjacent nodes like IsNaN that share a node-ID range).
+                let elem_size = node
+                    .inputs
+                    .first()
+                    .and_then(|s| match s.source {
+                        InputSource::Node(id) => Some(arena.elem_size(id)),
+                        _ => None,
                     })
-                    .map(|d| d.byte_size())
-                    .unwrap_or(4)
-                    .max(1);
+                    .filter(|&es| es > 0)
+                    .unwrap_or(4);
                 let n_elems = input_refs[0].len() / elem_size;
 
-                let shape = shape_map
-                    .get(node_id)
-                    .filter(|s| !s.contains(&0))
-                    .map(|s| s.to_vec())
-                    .unwrap_or_else(|| {
-                        if input_refs.len() >= 2 && !input_refs[1].is_empty() {
-                            shape_resolve::parse_shape_values(input_refs[1], n_elems)
-                                .unwrap_or_else(|| vec![n_elems])
-                        } else {
-                            vec![n_elems]
-                        }
-                    });
-
-                // Check if broadcast expansion is needed.
-                let out_product: usize = shape.iter().product();
-                if out_product > n_elems && n_elems > 0 && out_product.is_multiple_of(n_elems) {
-                    // Broadcast expansion (e.g., GQA key repeat) — must allocate.
-                    float_dispatch::dispatch_reshape_with_shape(&input_refs)
-                        .map(|(d, _)| (d, shape.clone()))
-                        .unwrap_or_else(|_| (input_refs[0].to_vec(), shape))
+                // Shape tensor (input 1) is the authoritative target shape for ONNX Reshape.
+                // Parse it before consulting shape_map — propagation may have stale values.
+                let tensor_shape = if input_refs.len() >= 2 && !input_refs[1].is_empty() {
+                    shape_resolve::parse_shape_values(input_refs[1], n_elems)
                 } else {
-                    // Pure reshape: data unchanged, only shape metadata differs.
-                    // Copy bytes without going through dispatch_reshape_with_shape.
-                    (input_refs[0].to_vec(), shape)
+                    None
+                };
+
+                // Priority for output shape:
+                // 1. Compiled shape with exact match — most reliable (ONNX inference)
+                // 2. Shape tensor with exact match — may be stale/wrong from compiler
+                // 3. Shape map resolved (0-sentinels filled) with exact match
+                // 4. Shape tensor with expansion (broadcast/GQA key repeat)
+                // 5. Flat fallback
+                let (data, shape) = {
+                    let cs_exact = dctx
+                        .compiled_shapes
+                        .get(&node_id)
+                        .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == n_elems);
+                    let tensor_exact = tensor_shape
+                        .as_ref()
+                        .filter(|s| s.iter().product::<usize>() == n_elems);
+                    let sm_exact = shape_map
+                        .get(node_id)
+                        .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == n_elems);
+
+                    if let Some(s) = cs_exact {
+                        (input_refs[0].to_vec(), s.to_vec())
+                    } else if let Some(s) = tensor_exact {
+                        (input_refs[0].to_vec(), s.to_vec())
+                    } else if let Some(s) = sm_exact {
+                        (input_refs[0].to_vec(), s.to_vec())
+                    } else {
+                        // Try resolving 0-sentinels in shape_map via actual element count.
+                        let sm_resolved = shape_map
+                            .get(node_id)
+                            .filter(|s| s.contains(&0))
+                            .map(|s| {
+                                resolve_compiled_shape(
+                                    s,
+                                    input_refs[0].len(),
+                                    &input_shapes,
+                                    elem_size,
+                                )
+                            })
+                            .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == n_elems);
+
+                        if let Some(s) = sm_resolved {
+                            (input_refs[0].to_vec(), s)
+                        } else if let Some(ts) = tensor_shape.as_ref() {
+                            // Broadcast expansion (e.g. GQA key repeat): tensor requests more elements.
+                            let tp: usize = ts.iter().product();
+                            if tp > n_elems && n_elems > 0 && tp.is_multiple_of(n_elems) {
+                                match float_dispatch::dispatch_reshape_with_shape(&input_refs) {
+                                    Ok((d, _)) => (d, ts.clone()),
+                                    Err(_) => (input_refs[0].to_vec(), ts.clone()),
+                                }
+                            } else {
+                                (input_refs[0].to_vec(), vec![n_elems])
+                            }
+                        } else {
+                            (input_refs[0].to_vec(), vec![n_elems])
+                        }
+                    }
+                };
+                (data, shape)
+            }
+            GraphOp::Float(FloatOp::Slice {
+                axis_from_end,
+                start,
+                end,
+            }) => {
+                let start = *start as usize;
+                let end = *end as usize;
+                let axis_from_end = *axis_from_end as usize;
+                let in_shape = &input_shapes[0];
+                let data = input_refs[0];
+
+                // Determine the axis and dim size.
+                let ndim = in_shape.len().max(1);
+                let axis = ndim.saturating_sub(axis_from_end);
+                let axis_size = in_shape.get(axis).copied().unwrap_or(1);
+                // end=0 is a 0-sentinel (compiled from dynamic seq_len=0);
+                // treat it as "full axis" so the slice is not erroneously empty.
+                let actual_end = if end == 0 {
+                    axis_size
+                } else {
+                    end.min(axis_size)
+                };
+
+                if start >= actual_end || start >= axis_size {
+                    // Empty slice — return empty data with zero shape.
+                    let mut out_shape = in_shape.to_vec();
+                    if axis < out_shape.len() {
+                        out_shape[axis] = 0;
+                    }
+                    (vec![], out_shape)
+                } else {
+                    let slice_len = actual_end - start;
+                    // Compute strides for the slice.
+                    let pre: usize = in_shape[..axis].iter().product::<usize>().max(1);
+                    let post: usize = in_shape[axis + 1..].iter().product::<usize>().max(1);
+                    let elem_size = dctx
+                        .compiled_dtypes
+                        .get(&node_id)
+                        .or_else(|| {
+                            node.inputs.first().and_then(|s| match s.source {
+                                InputSource::Node(id) => dctx.compiled_dtypes.get(&id),
+                                _ => None,
+                            })
+                        })
+                        .map(|d| d.byte_size())
+                        .unwrap_or(4)
+                        .max(1);
+
+                    let chunk = post * elem_size; // bytes per element along axis
+                    let src_stride = axis_size * chunk;
+                    let dst_stride = slice_len * chunk;
+                    let out_bytes = pre * dst_stride;
+
+                    let mut out = vec![0u8; out_bytes];
+                    for i in 0..pre {
+                        let src_off = i * src_stride + start * chunk;
+                        let dst_off = i * dst_stride;
+                        out[dst_off..dst_off + dst_stride]
+                            .copy_from_slice(&data[src_off..src_off + dst_stride]);
+                    }
+
+                    let mut out_shape = in_shape.to_vec();
+                    if axis < out_shape.len() {
+                        out_shape[axis] = slice_len;
+                    }
+                    (out, out_shape)
                 }
             }
             GraphOp::Float(FloatOp::MatMul { m, k, n }) => {
                 // Shape is pre-computed by shape_resolve. Use input shapes
                 // from shape_map (already resolved by pre-propagation).
-                let a_elems = input_refs[0].len() / 4;
-                let b_elems = input_refs[1].len() / 4;
+                let a_es = input_elem_size(&node.inputs, 0, arena);
+                let b_es = input_elem_size(&node.inputs, 1, arena);
+                let a_elems = input_refs[0].len() / a_es;
+                let b_elems = input_refs[1].len() / b_es;
 
-                // Try batched matmul if both inputs have ≥3-D resolved shapes.
+                // Try batched matmul when A is ≥3-D (batch × M × K).
+                // B may be ≥3-D (per-head weight) or 2-D (shared projection
+                // weight): dispatch_batched_matmul handles broadcast via
+                // b_batch_count, so 2-D B is safe for any batch size in A.
                 let batched = if input_shapes.len() >= 2 {
+                    let a_prod = input_shapes[0].iter().product::<usize>();
+                    let b_prod = input_shapes[1].iter().product::<usize>();
                     let a_ok = input_shapes[0].len() >= 3
                         && !input_shapes[0].contains(&0)
-                        && input_shapes[0].iter().product::<usize>() == a_elems;
-                    let b_ok = input_shapes[1].len() >= 3
+                        && a_prod == a_elems;
+                    let b_ok = input_shapes[1].len() >= 2
                         && !input_shapes[1].contains(&0)
-                        && input_shapes[1].iter().product::<usize>() == b_elems;
-                    if !(a_ok && b_ok) {
-                        let a_src = node
-                            .inputs
-                            .first()
-                            .map(|s| format!("{:?}", s.source))
-                            .unwrap_or_default();
-                        let b_src = node
-                            .inputs
-                            .get(1)
-                            .map(|s| format!("{:?}", s.source))
-                            .unwrap_or_default();
-                        eprintln!("[matmul-debug] {node_id:?}: a_ok={a_ok} b_ok={b_ok} a_shape={:?}(prod={}) a_elems={a_elems} b_shape={:?}(prod={}) b_elems={b_elems} a_src={a_src} b_src={b_src}",
-                            input_shapes[0], input_shapes[0].iter().product::<usize>(),
-                            input_shapes[1], input_shapes[1].iter().product::<usize>());
-                    }
+                        && b_prod == b_elems;
                     if a_ok && b_ok {
                         Some((input_shapes[0].clone(), input_shapes[1].clone()))
                     } else {
@@ -838,11 +978,16 @@ fn dispatch_level(
                                 actual: e.to_string(),
                             })?;
                     // Read pre-computed shape from shape_map, fall back to input-based inference.
+                    let mm_elem_size = dctx
+                        .compiled_dtypes
+                        .get(&node_id)
+                        .map(|d| d.byte_size())
+                        .unwrap_or(4);
                     let shape = shape_map
                         .get(node_id)
                         .filter(|s| !s.contains(&0))
                         .map(|s| s.to_vec())
-                        .unwrap_or_else(|| vec![result.len() / 4]);
+                        .unwrap_or_else(|| vec![result.len() / mm_elem_size]);
                     (result, shape)
                 }
             }
@@ -871,9 +1016,60 @@ fn dispatch_level(
                         })?;
                 (data, shape)
             }
+            GraphOp::Float(FloatOp::Where) => {
+                // Where(condition, true_val, false_val).
+                // The condition may be Bool (1 byte/elem) or f32-encoded booleans.
+                // Use elem_size from arena to interpret correctly.
+                let cond_es = input_elem_size(&node.inputs, 0, arena);
+                let cond_bytes = input_refs[0];
+                let x = input_refs.get(1).copied().unwrap_or(&[]);
+                let y = input_refs.get(2).copied().unwrap_or(&[]);
+
+                // Convert condition to per-element booleans based on actual dtype.
+                let cond_bools: Vec<u8> = if cond_es == 1 {
+                    // Already u8 booleans — use directly.
+                    cond_bytes.iter().map(|&v| (v != 0) as u8).collect()
+                } else if cond_es == 4 {
+                    // f32-encoded booleans.
+                    bytemuck::cast_slice::<u8, f32>(cond_bytes)
+                        .iter()
+                        .map(|&v| (v != 0.0) as u8)
+                        .collect()
+                } else if cond_es == 8 {
+                    // i64-encoded booleans.
+                    bytemuck::cast_slice::<u8, i64>(cond_bytes)
+                        .iter()
+                        .map(|&v| (v != 0) as u8)
+                        .collect()
+                } else {
+                    cond_bytes.iter().map(|&v| (v != 0) as u8).collect()
+                };
+
+                let x_f32 = bytemuck::cast_slice::<u8, f32>(x);
+                let y_f32 = bytemuck::cast_slice::<u8, f32>(y);
+                let n = cond_bools.len().max(x_f32.len()).max(y_f32.len());
+                let out: Vec<f32> = (0..n)
+                    .map(|i| {
+                        if cond_bools[i % cond_bools.len()] != 0 {
+                            x_f32[i % x_f32.len()]
+                        } else {
+                            y_f32[i % y_f32.len()]
+                        }
+                    })
+                    .collect();
+                let result: Vec<u8> = bytemuck::cast_slice(&out).to_vec();
+                let shape = shape_map
+                    .get(node_id)
+                    .filter(|s| !s.contains(&0))
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| vec![out.len()]);
+                (result, shape)
+            }
             _ => {
                 // Resolve size=0 sentinel in FloatOps using the input's last shape dim.
-                let resolved_op = resolve_dynamic_sizes(&node.op, &input_shapes, &input_refs);
+                let input0_es = input_elem_size(&node.inputs, 0, arena);
+                let resolved_op =
+                    resolve_dynamic_sizes(&node.op, &input_shapes, &input_refs, input0_es);
                 let dispatch_op = resolved_op.as_ref().unwrap_or(&node.op);
                 let result = KvStore::dispatch_with_constants(
                     dispatch_op,
@@ -888,19 +1084,8 @@ fn dispatch_level(
                 })?;
 
                 // Shape: prefer pre-computed from shape_map (set by pre-propagation pass).
-                let node_elem_size = dctx
-                    .compiled_dtypes
-                    .get(&node_id)
-                    .map(|d| d.byte_size())
-                    .or_else(|| match &node.op {
-                        GraphOp::Float(FloatOp::Gather { dtype, .. })
-                        | GraphOp::Float(FloatOp::Concat { dtype, .. })
-                        | GraphOp::Float(FloatOp::Cast { to: dtype, .. }) => {
-                            Some(dtype.byte_size())
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(4);
+                // Use arena-tracked elem_size (bootstrapped from output_dtype).
+                let node_elem_size = compute_output_elem_size(&node_id, dctx, arena);
 
                 let sm_val = shape_map.get(node_id).map(|s| s.to_vec());
                 let shape = sm_val
@@ -908,14 +1093,22 @@ fn dispatch_level(
                     .filter(|s| !s.contains(&0))
                     .cloned()
                     .unwrap_or_else(|| {
-                        // Fallback: infer from result size.
-                        ShapeMap::infer_1d_with_elem_size(result.len(), node_elem_size)
+                        // Try to resolve 0-sentinel compiled shape from result buffer.
+                        sm_val
+                            .as_ref()
+                            .map(|cs| {
+                                resolve_compiled_shape(
+                                    cs,
+                                    result.len(),
+                                    &input_shapes,
+                                    node_elem_size,
+                                )
+                            })
+                            .filter(|s| !s.contains(&0))
+                            .unwrap_or_else(|| {
+                                ShapeMap::infer_1d_with_elem_size(result.len(), node_elem_size)
+                            })
                     });
-
-                if matches!(node.op, GraphOp::Float(FloatOp::Gather { .. })) && result.len() > 10000
-                {
-                    eprintln!("[gather-shape-debug] {node_id:?}: sm_val={sm_val:?} shape={shape:?} result_bytes={}", result.len());
-                }
 
                 (result, shape)
             }
@@ -924,30 +1117,91 @@ fn dispatch_level(
         #[cfg(feature = "profile")]
         prof.record_op(op_name, op_start.elapsed(), result.len());
 
+        // NaN detector: find first op that produces NaN in f32 output.
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static NAN_FOUND: AtomicBool = AtomicBool::new(false);
+            if !NAN_FOUND.load(Ordering::Relaxed) && result.len() >= 4 && result.len() % 4 == 0 {
+                let floats: &[f32] = bytemuck::cast_slice(&result);
+                if floats.iter().any(|v| v.is_nan()) {
+                    NAN_FOUND.store(true, Ordering::Relaxed);
+                    let nan_count = floats.iter().filter(|v| v.is_nan()).count();
+                    let first_nan_idx = floats.iter().position(|v| v.is_nan()).unwrap_or(0);
+                    eprintln!(
+                        "[first-nan] node={node_id:?} op={:?} nan={nan_count}/{} first_nan_idx={first_nan_idx}",
+                        node.op, floats.len()
+                    );
+                    // Also check inputs for NaN to find where NaN originates.
+                    for (i, buf) in input_refs.iter().enumerate() {
+                        if buf.len() >= 4 && buf.len() % 4 == 0 {
+                            let inp: &[f32] = bytemuck::cast_slice(buf);
+                            let inp_nan = inp.iter().filter(|v| v.is_nan()).count();
+                            let inp_pos_inf = inp.iter().filter(|&&v| v == f32::INFINITY).count();
+                            let inp_neg_inf =
+                                inp.iter().filter(|&&v| v == f32::NEG_INFINITY).count();
+                            let inp_src = node
+                                .inputs
+                                .get(i)
+                                .map(|s| format!("{:?}", s.source))
+                                .unwrap_or("?".into());
+                            let first8_raw: Vec<u32> = buf
+                                .chunks(4)
+                                .take(8)
+                                .map(|b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])))
+                                .collect();
+                            eprintln!("  input[{i}] src={inp_src} nan={inp_nan}/{} +inf={inp_pos_inf} -inf={inp_neg_inf} first8_raw={first8_raw:08x?}", inp.len());
+                            // For Softmax: find first row (size=2048) that has +inf or all-neg-inf.
+                            if let GraphOp::Float(FloatOp::Softmax { size }) = &node.op {
+                                let sz = *size as usize;
+                                if sz > 0 {
+                                    let mut nan_rows = 0u32;
+                                    let mut pos_inf_rows = 0u32;
+                                    for (row_idx, row) in inp.chunks(sz).enumerate() {
+                                        let has_pos_inf = row.contains(&f32::INFINITY);
+                                        let all_neg_inf =
+                                            row.iter().all(|&v| v == f32::NEG_INFINITY);
+                                        if has_pos_inf {
+                                            if pos_inf_rows < 3 {
+                                                let max_val = row
+                                                    .iter()
+                                                    .cloned()
+                                                    .fold(f32::NEG_INFINITY, f32::max);
+                                                eprintln!("    row[{row_idx}] has +inf: max={max_val:.4} first4={:.4?}", &row[..row.len().min(4)]);
+                                            }
+                                            pos_inf_rows += 1;
+                                        }
+                                        if all_neg_inf {
+                                            nan_rows += 1;
+                                        }
+                                    }
+                                    eprintln!("    softmax_rows_with_pos_inf={pos_inf_rows} softmax_rows_all_neg_inf={nan_rows}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         results.push((node_id, result, out_shape));
     }
 
     let dispatched = results.len();
-    for (id, data, shape) in results.drain(..) {
-        // Debug: detect where runtime shapes diverge from compiled shapes.
-        if let Some(compiled) = dctx.compiled_shapes.get(&id) {
-            let compiled_prod: usize = compiled.iter().product();
-            let actual_elems = data.len() / 4;
-            // Detect buffer size mismatch vs compiled shape.
-            if compiled_prod > 0
-                && actual_elems > 0
-                && actual_elems != compiled_prod
-                && compiled_prod / actual_elems > 2
-            {
-                let op = dctx
-                    .node_map
-                    .get(&id)
-                    .map(|n| format!("{:?}", n.op))
-                    .unwrap_or_default();
-                eprintln!("[size-mismatch] {id:?} ({op}): compiled={compiled:?}(elems={compiled_prod}) actual_elems={actual_elems} bytes={}", data.len());
-            }
+    for (id, data, mut shape) in results.drain(..) {
+        // Compute output elem_size from the op's declared output_dtype.
+        // Input elem_sizes come from the arena (already tracked for all
+        // upstream nodes), making this fully self-bootstrapping.
+        let elem_size = compute_output_elem_size(&id, dctx, arena);
+        let actual_elems = data.len() / elem_size;
+        let shape_prod: usize = shape.iter().product();
+
+        if actual_elems > 0 && shape_prod > 0 && actual_elems != shape_prod {
+            // Try to preserve dimensionality by scaling the seq-sentinel dim
+            // (a compile-time 1 at a non-batch position that maps to runtime seq_len).
+            shape = correct_shape_for_actual_elems(&shape, actual_elems)
+                .unwrap_or_else(|| vec![actual_elems]);
         }
-        arena.insert(id, data);
+
+        arena.insert_with_elem_size(id, data, elem_size);
         shape_map.insert(id, shape);
     }
     Ok(dispatched)
@@ -964,6 +1218,86 @@ fn extract_named_outputs(
         outputs.push((name.clone(), arena.take(node_id)?));
     }
     Ok(GraphOutputs { outputs })
+}
+
+/// Get the element size of a node's input at the given slot index.
+///
+/// Reads from the arena (which tracks elem_size per node). Falls back to
+/// 8 for graph-level inputs (I64 token IDs) and 4 (f32) otherwise.
+fn input_elem_size(inputs: &[InputSlot], idx: usize, arena: &BufferArena<'_>) -> usize {
+    inputs
+        .get(idx)
+        .map(|slot| match &slot.source {
+            InputSource::Node(src_id) => arena.elem_size(*src_id),
+            InputSource::GraphInput { .. } => 8, // I64
+            InputSource::None => 4,
+        })
+        .unwrap_or(4)
+}
+
+/// Attempt to correct a shape whose product doesn't match `actual_elems`.
+///
+/// Handles the common case where a compile-time "1" sentinel (frozen seq_len)
+/// needs to be scaled up to match the actual runtime buffer size.
+/// Returns `None` if no clean single-dim correction exists.
+fn correct_shape_for_actual_elems(shape: &[usize], actual_elems: usize) -> Option<Vec<usize>> {
+    use crate::eval::shape_resolve::correct_stale_shape;
+    let shape_prod: usize = shape.iter().product();
+    if shape_prod == 0 || actual_elems == 0 || shape_prod == actual_elems {
+        return None;
+    }
+    let corrected = correct_stale_shape(shape, actual_elems);
+    let new_prod: usize = corrected.iter().product();
+    if new_prod == actual_elems && corrected != shape {
+        Some(corrected)
+    } else {
+        None
+    }
+}
+
+/// Compute the output element size for a node using `FloatOp::output_dtype()`.
+///
+/// Reads input elem_sizes from the arena (which tracks them per-node),
+/// making this self-bootstrapping — no external dtype map needed.
+/// Falls back to compiled_dtypes, then 4 (f32 default).
+fn compute_output_elem_size(
+    node_id: &NodeId,
+    dctx: &DispatchContext<'_>,
+    arena: &BufferArena<'_>,
+) -> usize {
+    let node = match dctx.node_map.get(node_id) {
+        Some(n) => n,
+        None => {
+            return dctx
+                .compiled_dtypes
+                .get(node_id)
+                .map(|d| d.byte_size())
+                .unwrap_or(4);
+        }
+    };
+    match &node.op {
+        GraphOp::Float(fop) => {
+            // Build input dtype list from arena elem_sizes.
+            let input_dtypes: Vec<FloatDType> = node
+                .inputs
+                .iter()
+                .map(|slot| {
+                    let es = match &slot.source {
+                        InputSource::Node(src_id) => arena.elem_size(*src_id),
+                        InputSource::GraphInput { .. } => 8, // I64 for graph inputs
+                        InputSource::None => 4,
+                    };
+                    FloatDType::from_byte_size(es)
+                })
+                .collect();
+            fop.output_dtype(&input_dtypes).byte_size()
+        }
+        _ => dctx
+            .compiled_dtypes
+            .get(node_id)
+            .map(|d| d.byte_size())
+            .unwrap_or(4),
+    }
 }
 
 /// Gather input buffers for a node as borrowed slices (zero-copy).

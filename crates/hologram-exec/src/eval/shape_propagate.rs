@@ -35,11 +35,20 @@ pub fn propagate_level_shapes(
         let Some(node) = node_map.get(&node_id) else {
             continue;
         };
-        let GraphOp::Float(fop) = &node.op else {
-            continue;
+        let fop = match &node.op {
+            GraphOp::Float(fop) => fop,
+            GraphOp::FusedFloatChain(chain) => {
+                // Use first op for shape spec (chain preserves shape).
+                if let Some(first) = chain.first() {
+                    first
+                } else {
+                    continue;
+                }
+            }
+            _ => continue,
         };
 
-        // Gather input shapes from shape_map.
+        // Gather input shapes from shape_map (may be stale compiled shapes).
         let input_shapes: Vec<Vec<usize>> = node
             .inputs
             .iter()
@@ -55,10 +64,32 @@ pub fn propagate_level_shapes(
             continue;
         }
 
-        let input_elems = input_shapes
-            .first()
-            .map(|s| s.iter().product::<usize>())
-            .unwrap_or(0);
+        // Collect actual element counts from the arena for ALL inputs.
+        // These are used by ShapeContext to detect and correct stale shapes
+        // (e.g. compiled seq=32 sentinel when runtime seq=9) before computing
+        // broadcast/element-wise output shapes.
+        let input_elem_counts: Vec<usize> = node
+            .inputs
+            .iter()
+            .map(|slot| match slot.source {
+                InputSource::Node(src_id) => {
+                    let es = compiled_dtypes
+                        .get(&src_id)
+                        .map(|d| d.byte_size())
+                        .unwrap_or(4)
+                        .max(1);
+                    arena
+                        .get(src_id)
+                        .ok()
+                        .map(|buf| buf.len() / es)
+                        .unwrap_or(0)
+                }
+                _ => 0,
+            })
+            .collect();
+
+        // Actual element count of input[0] from arena (authoritative for all ops).
+        let input_elems = input_elem_counts.first().copied().unwrap_or(0);
 
         // For Reshape, get shape tensor bytes from arena (input[1]).
         let shape_tensor_bytes = if matches!(fop, FloatOp::Reshape) && node.inputs.len() >= 2 {
@@ -74,6 +105,7 @@ pub fn propagate_level_shapes(
             input_shapes: &input_shapes,
             compiled_shape: compiled_shapes.get(&node_id),
             input_elems,
+            input_elem_counts: &input_elem_counts,
             shape_tensor_bytes,
             compiled_dtype: compiled_dtypes.get(&node_id),
         };
@@ -81,15 +113,29 @@ pub fn propagate_level_shapes(
         // Only propagate if no concrete compiled shape exists.
         // Compiled shapes are authoritative — runtime propagation should
         // only fill in shapes for nodes the compiler couldn't resolve.
+        //
+        // Exception: for Reshape, the compiled shape may use seq=1 as a static
+        // sentinel (rather than 0) for dims that are actually dynamic. We detect
+        // this as a product mismatch vs. the actual input buffer and re-propagate.
         if let Some(compiled) = compiled_shapes.get(&node_id) {
             if !compiled.is_empty() && !compiled.contains(&0) {
-                // Compiled shape is fully concrete — trust it over propagation.
-                // Ensure it's in shape_map (seed_shape_map should have done this,
-                // but guard against missed cases).
-                if shape_map.get(node_id).is_none() {
-                    shape_map.insert(node_id, compiled.clone());
+                // For Reshape, verify the compiled product matches actual input.
+                // A mismatch means seq=1 was used as a compile-time sentinel.
+                let compiled_product: usize = compiled.iter().product();
+                let stale = matches!(fop, FloatOp::Reshape)
+                    && input_elems > 0
+                    && input_elems != compiled_product;
+
+                if !stale {
+                    // Compiled shape is fully concrete — trust it over propagation.
+                    // Ensure it's in shape_map (seed_shape_map should have done this,
+                    // but guard against missed cases).
+                    if shape_map.get(node_id).is_none() {
+                        shape_map.insert(node_id, compiled.clone());
+                    }
+                    continue;
                 }
-                continue;
+                // Fall through: let resolve_reshape produce the correct shape.
             }
         }
 
@@ -114,6 +160,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: None,
             input_elems: 24,
+            input_elem_counts: &[],
             shape_tensor_bytes: None,
             compiled_dtype: None,
         };

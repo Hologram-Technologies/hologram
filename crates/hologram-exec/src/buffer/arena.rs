@@ -12,8 +12,15 @@ use crate::error::{ExecError, ExecResult};
 /// Buffers are either borrowed (zero-copy from mmap'd weights or
 /// inline constants) or owned (computed dispatch results). Reading
 /// always returns `&[u8]` regardless of ownership.
+///
+/// Each buffer also tracks its element size in bytes (4 for f32, 8 for i64,
+/// 1 for bool/u8). This eliminates all hardcoded `/4` assumptions in shape
+/// validation — the arena is the single source of truth for element sizes.
 pub struct BufferArena<'a> {
     buffers: HashMap<NodeId, Cow<'a, [u8]>>,
+    /// Element size in bytes per node. Used for `data.len() / elem_size`
+    /// to convert byte counts to element counts during shape validation.
+    elem_sizes: HashMap<NodeId, usize>,
 }
 
 impl Default for BufferArena<'_> {
@@ -28,6 +35,7 @@ impl<'a> BufferArena<'a> {
     pub fn new() -> Self {
         Self {
             buffers: HashMap::new(),
+            elem_sizes: HashMap::new(),
         }
     }
 
@@ -36,6 +44,7 @@ impl<'a> BufferArena<'a> {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             buffers: HashMap::with_capacity(cap),
+            elem_sizes: HashMap::with_capacity(cap),
         }
     }
 
@@ -44,9 +53,39 @@ impl<'a> BufferArena<'a> {
         self.buffers.insert(id, Cow::Owned(data));
     }
 
+    /// Insert an owned buffer with a known element size.
+    pub fn insert_with_elem_size(&mut self, id: NodeId, data: Vec<u8>, elem_size: usize) {
+        self.buffers.insert(id, Cow::Owned(data));
+        self.elem_sizes.insert(id, elem_size);
+    }
+
     /// Insert a borrowed buffer for the given node (zero-copy).
     pub fn insert_borrowed(&mut self, id: NodeId, data: &'a [u8]) {
         self.buffers.insert(id, Cow::Borrowed(data));
+    }
+
+    /// Insert a borrowed buffer with a known element size.
+    pub fn insert_borrowed_with_elem_size(&mut self, id: NodeId, data: &'a [u8], elem_size: usize) {
+        self.buffers.insert(id, Cow::Borrowed(data));
+        self.elem_sizes.insert(id, elem_size);
+    }
+
+    /// Set the element size for a node (without changing its buffer).
+    pub fn set_elem_size(&mut self, id: NodeId, elem_size: usize) {
+        self.elem_sizes.insert(id, elem_size);
+    }
+
+    /// Get the element size for a node. Returns 4 (f32) as the default.
+    #[must_use]
+    pub fn elem_size(&self, id: NodeId) -> usize {
+        self.elem_sizes.get(&id).copied().unwrap_or(4)
+    }
+
+    /// Get the element count for a node: `data.len() / elem_size`.
+    pub fn elem_count(&self, id: NodeId) -> ExecResult<usize> {
+        let data = self.get(id)?;
+        let es = self.elem_size(id);
+        Ok(data.len() / es)
     }
 
     /// Get the buffer for the given node.
@@ -86,6 +125,7 @@ impl<'a> BufferArena<'a> {
     /// Remove all buffers.
     pub fn clear(&mut self) {
         self.buffers.clear();
+        self.elem_sizes.clear();
     }
 }
 
@@ -177,5 +217,34 @@ mod tests {
         for i in 0..10 {
             assert_eq!(arena.get(id(i)).unwrap(), &[i as u8]);
         }
+    }
+
+    #[test]
+    fn elem_size_default_is_f32() {
+        let arena = BufferArena::new();
+        assert_eq!(arena.elem_size(id(0)), 4);
+    }
+
+    #[test]
+    fn elem_size_tracks_insertions() {
+        let mut arena = BufferArena::new();
+        // i64 data: 3 elements * 8 bytes = 24 bytes
+        arena.insert_with_elem_size(id(0), vec![0u8; 24], 8);
+        assert_eq!(arena.elem_size(id(0)), 8);
+        assert_eq!(arena.elem_count(id(0)).unwrap(), 3);
+    }
+
+    #[test]
+    fn set_elem_size_independent() {
+        let mut arena = BufferArena::new();
+        arena.insert(id(0), vec![0u8; 12]);
+        // Default is f32 (4 bytes) → 3 elements
+        assert_eq!(arena.elem_count(id(0)).unwrap(), 3);
+        // Change to i32 — same 12 bytes, still 3 elements
+        arena.set_elem_size(id(0), 4);
+        assert_eq!(arena.elem_count(id(0)).unwrap(), 3);
+        // Change to u8 — 12 bytes → 12 elements
+        arena.set_elem_size(id(0), 1);
+        assert_eq!(arena.elem_count(id(0)).unwrap(), 12);
     }
 }

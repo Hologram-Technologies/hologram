@@ -9,12 +9,17 @@ use hologram_core::op::{FloatDType, FloatOp, ShapeDim, ShapeSpec};
 
 /// Context for shape resolution — all borrowed, zero allocation.
 pub struct ShapeContext<'a> {
-    /// Shapes of each input tensor (from ShapeMap).
+    /// Shapes of each input tensor (from ShapeMap, may be stale/compiled).
     pub input_shapes: &'a [Vec<usize>],
     /// Compiled shape for this node (from .holo archive, may have 0-sentinels).
     pub compiled_shape: Option<&'a Vec<usize>>,
-    /// Element count of input[0] (product of input[0].shape).
+    /// Actual element count of input[0] from the arena buffer (0 if unavailable).
     pub input_elems: usize,
+    /// Actual element counts from arena for ALL inputs (0 for unavailable inputs).
+    ///
+    /// Used to detect and correct stale shapes in `input_shapes` before computing
+    /// broadcast/element-wise output shapes. Empty slice is safe — treated as all zeros.
+    pub input_elem_counts: &'a [usize],
     /// Raw shape tensor bytes (input[1] for Reshape), if available in arena.
     pub shape_tensor_bytes: Option<&'a [u8]>,
     /// Compiled dtype for this node, used for element size.
@@ -35,19 +40,73 @@ pub fn resolve_float_shape(op: &FloatOp, ctx: &ShapeContext<'_>) -> Option<Vec<u
 
 // ── Standard ShapeSpec resolution ───────────────────────────────────────────
 
+/// Correct a shape whose product doesn't match `actual_count`.
+///
+/// Tries replacing a single dimension so the product equals `actual_count`.
+/// Scans dimensions from index 0 upward and returns the first clean correction,
+/// or the original shape if no single-dim correction exists.
+///
+/// This handles stale compile-time shapes (e.g. `seq=32` sentinel when runtime
+/// seq is 9) that propagate incorrect broadcast results for multi-input ops.
+pub fn correct_stale_shape(shape: &[usize], actual_count: usize) -> Vec<usize> {
+    let prod: usize = shape.iter().product();
+    if prod == actual_count || actual_count == 0 || prod == 0 {
+        return shape.to_vec();
+    }
+    for i in 0..shape.len() {
+        let d = shape[i];
+        if d == 0 {
+            continue;
+        }
+        let others = prod / d;
+        if others == 0 {
+            continue;
+        }
+        if actual_count.is_multiple_of(others) {
+            let candidate = actual_count / others;
+            if candidate != d {
+                let mut corrected = shape.to_vec();
+                corrected[i] = candidate;
+                return corrected;
+            }
+        }
+    }
+    shape.to_vec()
+}
+
+/// Get the corrected input shape at index `i`, using `input_elem_counts` when available.
+fn input_shape(ctx: &ShapeContext<'_>, i: usize) -> Option<Vec<usize>> {
+    let s = ctx.input_shapes.get(i)?;
+    let actual = ctx.input_elem_counts.get(i).copied().unwrap_or(0);
+    if actual > 0 {
+        Some(correct_stale_shape(s, actual))
+    } else {
+        Some(s.clone())
+    }
+}
+
 /// Resolve a non-Custom ShapeSpec from input shapes alone.
 fn resolve_standard(spec: &ShapeSpec, ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
     let shape = match spec {
-        ShapeSpec::SameAs(i) => ctx.input_shapes.get(*i as usize)?.clone(),
+        ShapeSpec::SameAs(i) => input_shape(ctx, *i as usize)?,
 
         ShapeSpec::Broadcast(a, b) => {
-            let sa = ctx.input_shapes.get(*a as usize)?;
-            let sb = ctx.input_shapes.get(*b as usize)?;
-            broadcast_shapes(sa, sb)
+            let sa = input_shape(ctx, *a as usize)?;
+            let sb = input_shape(ctx, *b as usize)?;
+            broadcast_shapes(&sa, &sb)
+        }
+
+        ShapeSpec::BroadcastAll => {
+            let mut result = input_shape(ctx, 0)?;
+            for i in 1..ctx.input_shapes.len() {
+                let s = input_shape(ctx, i)?;
+                result = broadcast_shapes(&result, &s);
+            }
+            result
         }
 
         ShapeSpec::DropLastDim(i) => {
-            let s = ctx.input_shapes.get(*i as usize)?;
+            let s = input_shape(ctx, *i as usize)?;
             if s.len() > 1 {
                 s[..s.len() - 1].to_vec()
             } else {
@@ -169,7 +228,26 @@ fn resolve_custom(op: &FloatOp, ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
         FloatOp::Concat { .. } => resolve_concat(ctx),
         FloatOp::Shape { .. } => ctx.input_shapes.first().map(|s| vec![s.len()]),
         FloatOp::Attention { .. } => ctx.input_shapes.first().cloned(),
+        FloatOp::Slice {
+            axis_from_end,
+            start,
+            end,
+        } => {
+            let in_shape = ctx.input_shapes.first()?;
+            let ndim = in_shape.len();
+            let afe = *axis_from_end as usize;
+            let axis = ndim.saturating_sub(afe);
+            let axis_size = in_shape.get(axis).copied().unwrap_or(1);
+            let actual_end = (*end as usize).min(axis_size);
+            let slice_len = actual_end.saturating_sub(*start as usize);
+            let mut out = in_shape.clone();
+            if axis < out.len() {
+                out[axis] = slice_len;
+            }
+            Some(out)
+        }
         FloatOp::GatherND => None, // complex shape, deferred to dispatch
+        FloatOp::Dequantize => resolve_dequantize(ctx),
         _ => None,
     }
 }
@@ -397,20 +475,29 @@ pub fn parse_shape_values(shape_bytes: &[u8], n_elems: usize) -> Option<Vec<usiz
         return None;
     }
 
+    // Use alignment-safe byte reads — shape tensors may live in computed
+    // intermediate buffers with arbitrary (e.g. 1-byte) alignment.
     let shape_vals: Vec<i64> = if shape_bytes.len().is_multiple_of(8) {
-        let i64s: &[i64] = bytemuck::try_cast_slice(shape_bytes).ok()?;
-        let reasonable = i64s.iter().all(|&v| v >= -1 && v <= n_elems as i64 + 1);
+        let vals: Vec<i64> = shape_bytes
+            .chunks_exact(8)
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let reasonable = vals.iter().all(|&v| v >= -1 && v <= n_elems as i64 + 1);
         if reasonable {
-            i64s.to_vec()
+            vals
         } else if shape_bytes.len().is_multiple_of(4) {
-            let i32s: &[i32] = bytemuck::try_cast_slice(shape_bytes).ok()?;
-            i32s.iter().map(|&v| v as i64).collect()
+            shape_bytes
+                .chunks_exact(4)
+                .map(|c| i32::from_le_bytes(c.try_into().unwrap()) as i64)
+                .collect()
         } else {
-            i64s.to_vec()
+            vals
         }
     } else if shape_bytes.len().is_multiple_of(4) {
-        let i32s: &[i32] = bytemuck::try_cast_slice(shape_bytes).ok()?;
-        i32s.iter().map(|&v| v as i64).collect()
+        shape_bytes
+            .chunks_exact(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()) as i64)
+            .collect()
     } else {
         return None;
     };
@@ -541,6 +628,25 @@ fn resolve_concat(ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
     Some(out)
 }
 
+// ── Dequantize ───────────────────────────────────────────────────────────────
+
+/// Dequantize: Q4_0 blocks expand 18 bytes → 32 f32 values.
+/// Falls back to pass-through (SameAs input) for non-Q4_0 data.
+fn resolve_dequantize(ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
+    let in_shape = ctx.input_shapes.first()?;
+    let elem_size = ctx.compiled_dtype.map(|d| d.byte_size()).unwrap_or(4);
+    let in_bytes: usize = in_shape.iter().product::<usize>() * elem_size;
+    // Q4_0 block size = 18 bytes (2-byte scale + 16 half-bytes for 32 values)
+    const Q4_BLOCK: usize = 18;
+    if in_bytes > 0 && in_bytes.is_multiple_of(Q4_BLOCK) {
+        let n_blocks = in_bytes / Q4_BLOCK;
+        Some(vec![n_blocks * 32])
+    } else {
+        // Non-Q4_0: pass-through (same as input)
+        Some(in_shape.clone())
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -556,6 +662,7 @@ mod tests {
             input_shapes,
             compiled_shape: None,
             input_elems,
+            input_elem_counts: &[],
             shape_tensor_bytes: None,
             compiled_dtype: None,
         }
@@ -629,6 +736,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: None,
             input_elems: 24,
+            input_elem_counts: &[],
             shape_tensor_bytes: Some(&shape_bytes),
             compiled_dtype: None,
         };
@@ -646,6 +754,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: None,
             input_elems: 24,
+            input_elem_counts: &[],
             shape_tensor_bytes: Some(&shape_bytes),
             compiled_dtype: None,
         };
@@ -664,6 +773,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: None,
             input_elems: 512,
+            input_elem_counts: &[],
             shape_tensor_bytes: Some(&shape_bytes),
             compiled_dtype: None,
         };
@@ -680,6 +790,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: Some(&compiled),
             input_elems: 24,
+            input_elem_counts: &[],
             shape_tensor_bytes: None,
             compiled_dtype: None,
         };
@@ -697,6 +808,7 @@ mod tests {
             input_shapes: &inputs,
             compiled_shape: Some(&compiled),
             input_elems: 12288,
+            input_elem_counts: &[],
             shape_tensor_bytes: None,
             compiled_dtype: None,
         };

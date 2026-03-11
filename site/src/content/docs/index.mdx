@@ -6,10 +6,10 @@ hero:
   tagline: O(1) neural network inference via precomputed lookup tables and KV-dispatch.
   actions:
     - text: Getting Started
-      link: /guides/getting-started/
+      link: guides/getting-started/
       icon: right-arrow
     - text: Architecture
-      link: /architecture/
+      link: architecture/
       icon: open-book
       variant: minimal
 ---
@@ -26,14 +26,14 @@ result = LUT[encoded_input]   // O(1), integer index
 
 Weights are quantized to integer ring elements. Matrix multiplication becomes a sum of LUT lookups (`LUT-GEMM`), eliminating floating-point entirely on hot paths.
 
-## Crates
+## Capabilities
 
-| Crate | Role |
-|-------|------|
-| [hologram-core](/crates/core/) | LUT tables, ring algebra, encoding, views (`no_std`) |
-| [hologram-graph](/crates/graph/) | Expression graph, fusion, parallel scheduling |
-| [hologram-archive](/crates/archive/) | `.holo` file format, rkyv zero-copy, mmap |
-| [hologram-exec](/crates/exec/) | KV executor, buffer arena, parallel level execution |
-| [hologram-compiler](/crates/compiler/) | Graph → schedule compilation |
-| [hologram-async](/crates/async/) | Tokio async execution + streaming |
-| [hologram-ffi](/crates/ffi/) | C ABI + WASM bindings |
+| Feature | What it does |
+|---------|-------------|
+| **Activation Lookup** | All activation functions precomputed into static arrays — each inference call is one integer index |
+| **LUT-GEMM** | Matrix multiplication via LUT row-sum accumulation — no floating-point on hot paths |
+| **Zero-Copy Loading** | `.holo` archives are memory-mapped and deserialized without copying bytes |
+| **Graph Fusion** | Constant folding, CSE, and view fusion reduce ops before execution |
+| **Parallel Execution** | Independent graph nodes execute in parallel across Rayon threads |
+| **Async & Streaming** | Tokio-based async inference with incremental output streaming |
+| **Cross-Platform** | `no_std` core, C ABI, and WASM bindings for embedded and browser targets |

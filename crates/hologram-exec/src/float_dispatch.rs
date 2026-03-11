@@ -105,6 +105,26 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
             *causal,
         ),
         FloatOp::Dequantize => dispatch_dequantize(inputs),
+        // Vision + utility ops: stub dispatch (kernels not yet implemented).
+        FloatOp::Conv2d { .. }
+        | FloatOp::ConvTranspose { .. }
+        | FloatOp::MaxPool2d { .. }
+        | FloatOp::AvgPool2d { .. }
+        | FloatOp::GlobalAvgPool
+        | FloatOp::Resize { .. }
+        | FloatOp::PadOp { .. }
+        | FloatOp::InstanceNorm { .. }
+        | FloatOp::LRN { .. }
+        | FloatOp::ReduceProd { .. }
+        | FloatOp::TopK { .. }
+        | FloatOp::ScatterND
+        | FloatOp::CumSum { .. }
+        | FloatOp::NonZero
+        | FloatOp::Compress { .. }
+        | FloatOp::ReverseSequence { .. } => Err(ExecError::UnsupportedOp(format!(
+            "kernel not yet implemented for {:?}",
+            op
+        ))),
         _ => unreachable!("non-custom op {:?} routed to dispatch_custom", op),
     }
 }
@@ -129,25 +149,46 @@ pub fn dispatch_fused_chain(chain: &[FloatOp], inputs: &[&[u8]]) -> ExecResult<V
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn cast_f32(bytes: &[u8]) -> ExecResult<&[f32]> {
-    bytemuck::try_cast_slice(bytes).map_err(|e| ExecError::ShapeMismatch {
-        expected: "f32-aligned bytes".into(),
-        actual: e.to_string(),
-    })
+fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
+    match bytemuck::try_cast_slice(bytes) {
+        Ok(s) => Ok(std::borrow::Cow::Borrowed(s)),
+        Err(_) => Ok(std::borrow::Cow::Owned(
+            bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect(),
+        )),
+    }
 }
 
-fn cast_i64(bytes: &[u8]) -> ExecResult<&[i64]> {
-    bytemuck::try_cast_slice(bytes).map_err(|e| ExecError::ShapeMismatch {
-        expected: "i64-aligned bytes".into(),
-        actual: e.to_string(),
-    })
+/// Iterator over i64 values read from potentially-misaligned bytes.
+fn iter_i64(bytes: &[u8]) -> impl Iterator<Item = i64> + '_ {
+    bytes
+        .chunks_exact(8)
+        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
 }
 
-fn cast_i32(bytes: &[u8]) -> ExecResult<&[i32]> {
-    bytemuck::try_cast_slice(bytes).map_err(|e| ExecError::ShapeMismatch {
-        expected: "i32-aligned bytes".into(),
-        actual: e.to_string(),
-    })
+/// Read a single i64 at element index `idx` from potentially-misaligned bytes.
+fn read_i64_at(bytes: &[u8], idx: usize) -> Option<i64> {
+    let off = idx * 8;
+    bytes
+        .get(off..off + 8)
+        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+}
+
+/// Iterator over i32 values read from potentially-misaligned bytes.
+fn iter_i32(bytes: &[u8]) -> impl Iterator<Item = i32> + '_ {
+    bytes
+        .chunks_exact(4)
+        .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+}
+
+/// Read a single i32 at element index `idx` from potentially-misaligned bytes.
+fn read_i32_at(bytes: &[u8], idx: usize) -> Option<i32> {
+    let off = idx * 4;
+    bytes
+        .get(off..off + 4)
+        .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
 }
 
 /// Zero-copy conversion from `Vec<f32>` to `Vec<u8>`.
@@ -324,7 +365,7 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
 
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     {
-        blas::sgemm(actual_m, actual_n, actual_k, a, b, &mut out);
+        blas::sgemm(actual_m, actual_n, actual_k, &a, &b, &mut out);
     }
 
     #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
@@ -375,8 +416,16 @@ pub fn dispatch_batched_matmul(
     let b_stride = mat_k * mat_n;
     let c_stride = mat_m * mat_n;
 
+    // Support broadcast: 2-D B (shared weight) reuses the same matrix for
+    // every batch slice. b_batch_count=1 means b_off stays at 0 each iteration.
+    let b_batch_count = if b_stride > 0 {
+        (b.len() / b_stride).max(1)
+    } else {
+        1
+    };
+
     // Validate sizes.
-    if batch * a_stride > a.len() || batch * b_stride > b.len() {
+    if batch * a_stride > a.len() || b_stride > b.len() {
         return Err(ExecError::ShapeMismatch {
             expected: format!(
                 "batched matmul: batch={batch} A=[{mat_m},{mat_k}] B=[{mat_k},{mat_n}]"
@@ -397,7 +446,7 @@ pub fn dispatch_batched_matmul(
 
     for bat in 0..batch {
         let a_off = bat * a_stride;
-        let b_off = bat * b_stride;
+        let b_off = (bat % b_batch_count) * b_stride;
         let c_off = bat * c_stride;
         let a_slice = &a[a_off..a_off + a_stride];
         let b_slice = &b[b_off..b_off + b_stride];
@@ -514,18 +563,81 @@ fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
             actual: format!("{} floats", x.len()),
         });
     }
+
+    // Diagnostic: detect NaN inputs or all-neg-inf rows that produce NaN output.
+    static SOFTMAX_CALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static SOFTMAX_NAN_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let call_id = SOFTMAX_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Per-layer score magnitude diagnostic (first 22 layers).
+    if call_id < 22 {
+        // max absolute value among all finite scores (excluding mask values near -FLT_MAX).
+        let max_finite_score = x
+            .iter()
+            .filter(|&&v| v.is_finite() && v > -1e30)
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let has_pos_inf = x.contains(&f32::INFINITY);
+        let pos_inf_count = x.iter().filter(|&&v| v == f32::INFINITY).count();
+        eprintln!("[softmax-layer] call={call_id} max_finite_score={max_finite_score:.4} has_pos_inf={has_pos_inf} pos_inf_count={pos_inf_count}");
+    }
+    let total_rows = x.len() / size;
+    for (row_idx, row) in x.chunks(size).enumerate() {
+        let has_nan_in = row.iter().any(|v| v.is_nan());
+        let all_neg_inf = row.iter().all(|&v| v == f32::NEG_INFINITY);
+        let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if has_nan_in || all_neg_inf {
+            let prev = SOFTMAX_NAN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if prev < 3 {
+                eprintln!(
+                    "[softmax-nan] call={call_id} row={row_idx}/{total_rows} size={size} has_nan_in={has_nan_in} all_neg_inf={all_neg_inf} max={max_val:.4} first4={:?}",
+                    &row[..row.len().min(4)]
+                );
+            }
+        }
+    }
+
     let mut out = x.to_vec();
+    let uniform = 1.0f32 / size as f32;
     for row in out.chunks_mut(size) {
         let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if max == f32::INFINITY {
+            // Overflow: some scores are +inf (padding positions with overflowed Q@K).
+            // Only +inf positions get non-zero weight; finite positions get 0.
+            // This is the limit of softmax as the max diverges to infinity.
+            let inf_count = row.iter().filter(|&&v| v == f32::INFINITY).count();
+            let w = if inf_count > 0 {
+                1.0f32 / inf_count as f32
+            } else {
+                uniform
+            };
+            for v in row.iter_mut() {
+                *v = if *v == f32::INFINITY { w } else { 0.0 };
+            }
+            continue;
+        }
+        if !max.is_finite() {
+            // All-masked (-inf or NaN): uniform output to prevent NaN propagation.
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
+            continue;
+        }
         let mut sum = 0.0f32;
         for v in row.iter_mut() {
             *v = (*v - max).exp();
             sum += *v;
         }
-        for v in row.iter_mut() {
-            *v /= sum;
+        if sum > 0.0 {
+            for v in row.iter_mut() {
+                *v /= sum;
+            }
+        } else {
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
         }
     }
+
     Ok(f32_vec_to_bytes(out))
 }
 
@@ -618,39 +730,40 @@ fn reduce_min(row: &[f32]) -> f32 {
 // ── Gather ───────────────────────────────────────────────────────────────────
 
 fn dispatch_gather(inputs: &[&[u8]], dim: usize, dtype: FloatDType) -> ExecResult<Vec<u8>> {
-    let indices = cast_i64(inputs[0])?;
+    let index_bytes = inputs[0];
+    let n_indices = index_bytes.len() / 8;
     let table_bytes = inputs[1];
 
     match dtype {
         FloatDType::I64 => {
             // i64 gather (shape subgraph): indices select individual i64 values.
-            let table_i64 = cast_i64(table_bytes)?;
-            let mut out = Vec::with_capacity(indices.len() * 8);
-            for &idx in indices {
-                let idx = idx as usize;
-                if idx >= table_i64.len() {
+            let n_table = table_bytes.len() / 8;
+            let mut out = Vec::with_capacity(n_indices * 8);
+            for idx in iter_i64(index_bytes).map(|v| v as usize) {
+                if idx >= n_table {
                     return Err(ExecError::ShapeMismatch {
-                        expected: format!("i64 index < {}", table_i64.len()),
+                        expected: format!("i64 index < {n_table}"),
                         actual: format!("index = {idx}"),
                     });
                 }
-                out.extend_from_slice(&table_i64[idx].to_le_bytes());
+                let val = read_i64_at(table_bytes, idx).unwrap();
+                out.extend_from_slice(&val.to_le_bytes());
             }
             Ok(out)
         }
         FloatDType::I32 => {
             // i32 gather: indices select individual i32 values.
-            let table_i32 = cast_i32(table_bytes)?;
-            let mut out = Vec::with_capacity(indices.len() * 4);
-            for &idx in indices {
-                let idx = idx as usize;
-                if idx >= table_i32.len() {
+            let n_table = table_bytes.len() / 4;
+            let mut out = Vec::with_capacity(n_indices * 4);
+            for idx in iter_i64(index_bytes).map(|v| v as usize) {
+                if idx >= n_table {
                     return Err(ExecError::ShapeMismatch {
-                        expected: format!("i32 index < {}", table_i32.len()),
+                        expected: format!("i32 index < {n_table}"),
                         actual: format!("index = {idx}"),
                     });
                 }
-                out.extend_from_slice(&table_i32[idx].to_le_bytes());
+                let val = read_i32_at(table_bytes, idx).unwrap();
+                out.extend_from_slice(&val.to_le_bytes());
             }
             Ok(out)
         }
@@ -659,18 +772,17 @@ fn dispatch_gather(inputs: &[&[u8]], dim: usize, dtype: FloatDType) -> ExecResul
             let table = cast_f32(table_bytes)?;
             let dim = if dim > 0 { dim } else { 1 };
             let vocab = table.len() / dim;
-            let mut out = Vec::with_capacity(indices.len() * dim);
-            for &idx in indices {
-                let idx = idx as usize;
+            let mut out = Vec::with_capacity(n_indices * dim * 4);
+            for idx in iter_i64(index_bytes).map(|v| v as usize) {
                 if idx >= vocab {
                     return Err(ExecError::ShapeMismatch {
                         expected: format!("index < {vocab}"),
                         actual: format!("index = {idx}"),
                     });
                 }
-                out.extend_from_slice(&table[idx * dim..(idx + 1) * dim]);
+                out.extend_from_slice(bytemuck::cast_slice(&table[idx * dim..(idx + 1) * dim]));
             }
-            Ok(f32_vec_to_bytes(out))
+            Ok(out)
         }
     }
 }
@@ -750,8 +862,8 @@ fn dispatch_concat(
         } else {
             // Fallback: simple append (axis=0 or shape mismatch).
             let mut out = Vec::with_capacity(a.len() + b.len());
-            out.extend_from_slice(a);
-            out.extend_from_slice(b);
+            out.extend_from_slice(&a);
+            out.extend_from_slice(&b);
             Ok(f32_vec_to_bytes(out))
         }
     } else {
@@ -767,9 +879,24 @@ fn dispatch_concat(
 
 // ── Boolean / byte-wise ops ─────────────────────────────────────────────
 
+/// Convert raw bytes to per-element booleans (0 or 1).
+///
+/// If the buffer is f32-aligned, each 4-byte f32 becomes one bool (nonzero → 1).
+/// Otherwise, each byte is a boolean directly.
+fn to_bools(data: &[u8]) -> Vec<u8> {
+    if data.len().is_multiple_of(4) && data.len() >= 4 {
+        // Try interpreting as f32 — common when upstream is a comparison or cast.
+        if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>(data) {
+            return floats.iter().map(|&v| (v != 0.0) as u8).collect();
+        }
+    }
+    // Byte-level booleans.
+    data.iter().map(|&v| (v != 0) as u8).collect()
+}
+
 fn binary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8, u8) -> u8) -> ExecResult<Vec<u8>> {
-    let a = inputs[0];
-    let b = inputs[1];
+    let a = to_bools(inputs[0]);
+    let b = to_bools(inputs[1]);
     let out_len = a.len().max(b.len());
     let out: Vec<u8> = (0..out_len)
         .map(|i| f(a[i % a.len()], b[i % b.len()]))
@@ -778,7 +905,8 @@ fn binary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8, u8) -> u8) -> ExecResult<Ve
 }
 
 fn unary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8) -> u8) -> ExecResult<Vec<u8>> {
-    let out: Vec<u8> = inputs[0].iter().map(|&x| f(x)).collect();
+    let bools = to_bools(inputs[0]);
+    let out: Vec<u8> = bools.iter().map(|&x| f(x)).collect();
     Ok(out)
 }
 
@@ -826,7 +954,7 @@ fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams) -> ExecResult<Vec<u8>> {
 
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     {
-        blas::sgemm_full(GemmParams { m, n, k, ..p }, a, b, &mut out);
+        blas::sgemm_full(GemmParams { m, n, k, ..p }, &a, &b, &mut out);
     }
 
     #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
@@ -890,19 +1018,12 @@ fn dispatch_embed(inputs: &[&[u8]], dim: usize) -> ExecResult<Vec<u8>> {
     let vocab = table.len() / dim;
 
     // Detect token ID dtype: i64 (8 bytes each) or u32 (4 bytes each).
+    // Use alignment-safe byte reads — token buffers may not be f32/i64 aligned.
     let token_ids: Vec<usize> = if raw.len().is_multiple_of(8) {
         // Prefer i64 — matches the typical INT64 graph input dtype.
-        let i64s: &[i64] = bytemuck::try_cast_slice(raw).map_err(|e| ExecError::ShapeMismatch {
-            expected: "i64-aligned bytes".into(),
-            actual: e.to_string(),
-        })?;
-        i64s.iter().map(|&v| v as usize).collect()
+        iter_i64(raw).map(|v| v as usize).collect()
     } else {
-        let u32s: &[u32] = bytemuck::try_cast_slice(raw).map_err(|e| ExecError::ShapeMismatch {
-            expected: "u32-aligned bytes".into(),
-            actual: e.to_string(),
-        })?;
-        u32s.iter().map(|&v| v as usize).collect()
+        iter_i32(raw).map(|v| v as usize).collect()
     };
 
     let mut out = Vec::with_capacity(token_ids.len() * dim);
@@ -921,14 +1042,23 @@ fn dispatch_embed(inputs: &[&[u8]], dim: usize) -> ExecResult<Vec<u8>> {
 // ── Where ───────────────────────────────────────────────────────────────
 
 fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
-    // inputs: [cond (u8), x (f32), y (f32)]
-    let cond = inputs[0];
+    // inputs: [cond (u8 or f32), x (f32), y (f32)]
+    // Condition is normalized to per-element booleans via to_bools(),
+    // which handles both u8 masks and f32-encoded booleans uniformly.
+    let cond = to_bools(inputs[0]);
     let x = cast_f32(inputs[1])?;
     let y = cast_f32(inputs[2])?;
-    let out: Vec<f32> = cond
-        .iter()
-        .zip(x.iter().zip(y.iter()))
-        .map(|(&c, (&xv, &yv))| if c != 0 { xv } else { yv })
+
+    let n = cond.len().max(x.len()).max(y.len());
+
+    let out: Vec<f32> = (0..n)
+        .map(|i| {
+            if cond[i % cond.len()] != 0 {
+                x[i % x.len()]
+            } else {
+                y[i % y.len()]
+            }
+        })
         .collect();
     Ok(f32_vec_to_bytes(out))
 }
@@ -964,17 +1094,11 @@ fn dispatch_cast(inputs: &[&[u8]], from: FloatDType, to: FloatDType) -> ExecResu
 
     match (from, to) {
         (FloatDType::I64, FloatDType::F32) => {
-            let src = cast_i64(data)?;
-            let out: Vec<f32> = src.iter().map(|&v| v as f32).collect();
+            let out: Vec<f32> = iter_i64(data).map(|v| v as f32).collect();
             Ok(f32_vec_to_bytes(out))
         }
         (FloatDType::I32, FloatDType::F32) => {
-            let src: &[i32] =
-                bytemuck::try_cast_slice(data).map_err(|e| ExecError::ShapeMismatch {
-                    expected: "i32-aligned bytes".into(),
-                    actual: e.to_string(),
-                })?;
-            let out: Vec<f32> = src.iter().map(|&v| v as f32).collect();
+            let out: Vec<f32> = iter_i32(data).map(|v| v as f32).collect();
             Ok(f32_vec_to_bytes(out))
         }
         (FloatDType::F32, FloatDType::I64) => {
@@ -1000,6 +1124,34 @@ fn dispatch_cast(inputs: &[&[u8]], from: FloatDType, to: FloatDType) -> ExecResu
                 .iter()
                 .map(|&v| if v != 0.0 { 1u8 } else { 0u8 })
                 .collect())
+        }
+        (FloatDType::I64, FloatDType::Bool) => Ok(iter_i64(data)
+            .map(|v| if v != 0 { 1u8 } else { 0u8 })
+            .collect()),
+        (FloatDType::I64, FloatDType::I32) => {
+            let out: Vec<i32> = iter_i64(data).map(|v| v as i32).collect();
+            Ok(bytemuck::cast_slice(&out).to_vec())
+        }
+        (FloatDType::I32, FloatDType::I64) => {
+            let out: Vec<i64> = iter_i32(data).map(|v| v as i64).collect();
+            Ok(bytemuck::cast_slice(&out).to_vec())
+        }
+        (FloatDType::I32, FloatDType::Bool) => Ok(iter_i32(data)
+            .map(|v| if v != 0 { 1u8 } else { 0u8 })
+            .collect()),
+        (FloatDType::Bool, FloatDType::I64) => {
+            let out: Vec<i64> = data
+                .iter()
+                .map(|&v| if v != 0 { 1i64 } else { 0i64 })
+                .collect();
+            Ok(bytemuck::cast_slice(&out).to_vec())
+        }
+        (FloatDType::Bool, FloatDType::I32) => {
+            let out: Vec<i32> = data
+                .iter()
+                .map(|&v| if v != 0 { 1i32 } else { 0i32 })
+                .collect();
+            Ok(bytemuck::cast_slice(&out).to_vec())
         }
         // Fallback: pass-through (same bytes, different interpretation).
         _ => Ok(data.to_vec()),
@@ -1248,7 +1400,7 @@ pub fn dispatch_reshape_with_shape(inputs: &[&[u8]]) -> ExecResult<(Vec<u8>, Vec
         } else if shape_product > n_elems && n_elems > 0 && shape_product <= n_elems * 1024 {
             // Broadcast expansion (e.g. GQA key repeat): replicate data.
             let src = cast_f32(&data)?;
-            let expanded = broadcast_to(src, n_elems, &shape);
+            let expanded = broadcast_to(&src, n_elems, &shape);
             Ok((f32_vec_to_bytes(expanded), shape))
         } else {
             // Can't match — fall back to 1-D.

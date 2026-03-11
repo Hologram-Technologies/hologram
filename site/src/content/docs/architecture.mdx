@@ -1,59 +1,99 @@
 ---
 title: Architecture
-description: Crate dependency graph and design principles.
+description: System layers, component responsibilities, and design principles.
 ---
 
-## Dependency Graph
+Hologram is structured as a stack of focused layers. Each layer has a single responsibility and depends only on the layer below it.
+
+## System Layers
+
+### LUT & Ring Layer
+
+The foundation. All activation functions and pointwise arithmetic are precomputed into static `[u8; 256]` lookup tables at compile time. Values are encoded as elements of integer rings (Q0, Q1) — no floats on hot paths.
+
+- Activation tables: relu, sigmoid, tanh, gelu, sin, cos, and more
+- `ByteRing` — u8 arithmetic with wraparound, closed under add/mul/neg
+- Encoding schemes: `AngleEncoding`, `SignedEncoding`, `RawEncoding`
+- `ElementWiseView` — applies a LUT to a slice in-place (SIMD-accelerated)
+- `no_std + alloc` compatible; compiles for `wasm32-unknown-unknown`
+
+### Expression Graph Layer
+
+Models are expressed as directed acyclic graphs of typed operations. The graph layer handles construction, validation, and optimization before anything runs.
+
+- `HoloGraph` — DAG of `Node` + `Edge` values, each node wrapping a `PrimOp`
+- Fusion passes: constant folding, CSE, view fusion
+- Scheduling: topological sort → level assignment for parallel execution
+- Fluent `GraphBuilder` API for programmatic graph construction
+
+### Compiler Pipeline
+
+Transforms a `HoloGraph` into an executable schedule artifact.
+
+1. Graph validation
+2. Constant folding
+3. Common subexpression elimination (CSE)
+4. View fusion
+5. Topological sort + level assignment
+6. Liveness analysis (minimizes peak buffer memory)
+7. Schedule serialization into a `.holo` archive
+
+### Archive & Loading Layer
+
+Models are stored in `.holo` binary archives — a three-section format (header, graph, weights) using `rkyv` for zero-copy deserialization.
 
 ```
-uor-foundation (git v3.5.0, traits only, no_std)
-       │
-   hologram-core       (LUT, views, ring, encoding — no_std + alloc)
-       │
-   hologram-graph      (expression graph, subgraphs, fusion, scheduling)
-       │
-   hologram-archive    (.holo format, rkyv zero-copy, mmap, entrypoints)
-       │
-   hologram-exec       (KV executor, buffer arena, parallel levels)
-       │
-   hologram-bench      (Criterion benchmarks)
+┌──────────────────┐
+│  Header (fixed)  │  Magic bytes, version, section offsets
+├──────────────────┤
+│  Graph section   │  Serialized HoloGraph (rkyv)
+├──────────────────┤
+│  Weight section  │  Quantized weight tensors (rkyv) + SHA-256 checksum
+└──────────────────┘
 ```
 
-Horizontal additions (no extra deps on core):
+Weights are memory-mapped at load time — no copying. `BytesLoader` covers in-memory slices for WASM.
 
-- **hologram-compiler** depends on hologram-graph
-- **hologram-async** depends on hologram-exec + Tokio
-- **hologram-ffi** depends on hologram-compiler + hologram-exec
+### Execution Layer
+
+Drives inference level by level. Nodes at the same level are independent and run in parallel (Rayon, feature-gated).
+
+```
+Level 0: [node_A, node_B]   ← parallel
+Level 1: [node_C]           ← depends on A + B
+Level 2: [node_D, node_E]   ← parallel
+```
+
+Each node dispatch is a KV lookup: `(op_id, encoded_input) → encoded_output`. `BufferArena` provides a bump-allocator for intermediate activations, reset between calls.
+
+**LUT-GEMM**: matrix multiplication is decomposed into row-wise LUT lookups summed via `PsumBook` — eliminating FLOP entirely for quantized weights.
+
+### Async & Streaming
+
+Tokio-based async wrappers around the compiler and executor. The `InferenceStream` type yields partial outputs as a `Stream`, enabling incremental results for large models.
+
+### C & WASM Bindings
+
+- **C ABI** — opaque handles, generated header via `cbindgen`, error propagation via `hologram_last_error()`
+- **WASM** — `wasm-bindgen` bindings exposing `HologramSession` as a JavaScript class
 
 ## Design Principles
 
 ### O(1) Compute
 
-All activation functions and pointwise ops are precomputed into LUT arrays at compile time. At inference time, each op is a single array index.
+Every activation and pointwise op is a single array index. No branching, no transcendental functions at inference time.
 
 ### Ring Algebra
 
-Weights and activations are encoded as elements of integer rings (Q0, Q1). Arithmetic is closed within the ring — no float promotion needed.
+Weights and activations are encoded as integer ring elements. Arithmetic is closed — no float promotion needed.
 
 ### KV-Dispatch
 
-Execution is a key-value dispatch: operation ID + operand encoding → precomputed result. The `hologram-exec` KV registry stores all reachable `(op, input) → output` pairs.
-
-### LUT-GEMM
-
-Matrix multiplication is decomposed into row-wise LUT lookups summed via an accumulator (`PsumBook`). Eliminates FLOP entirely for quantized weights.
+Operation ID + encoded operands → precomputed result. The KV registry stores all reachable `(op, input) → output` pairs upfront.
 
 ### Zero-Copy Loading
 
-Model weights are stored in `.holo` archives using `rkyv` for zero-copy deserialization. The loader maps the archive into memory and validates the header without copying bytes.
-
-## Feature Gates
-
-| Feature | Controls |
-|---------|----------|
-| `simd` | SIMD acceleration behind `#[cfg(target_arch)]` guards |
-| `parallel` | Rayon parallel level execution in `hologram-exec` |
-| `wasm` | Strips non-WASM deps; `hologram-core` compiles for `wasm32-unknown-unknown` |
+Model weights are mmap'd from `.holo` archives and validated in-place. No deserialization heap allocation.
 
 ## Conventions
 

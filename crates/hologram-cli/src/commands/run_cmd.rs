@@ -465,6 +465,39 @@ fn run_generation(
         let vocab_size = encoder.vocab_size();
         let bytes_per_pos = vocab_size * 4; // f32 = 4 bytes
         let target_pos = actual_len.saturating_sub(1);
+
+        // Debug: inspect logits at target position.
+        if step == 0 {
+            let offset = target_pos * bytes_per_pos;
+            if logit_data.len() >= offset + bytes_per_pos {
+                let slice = &logit_data[offset..offset + bytes_per_pos];
+                let floats: Vec<f32> = slice
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                    .collect();
+                let nan_count = floats.iter().filter(|f| f.is_nan()).count();
+                let inf_count = floats.iter().filter(|f| f.is_infinite()).count();
+                let zero_count = floats.iter().filter(|&&f| f == 0.0).count();
+                let min = floats.iter().copied().reduce(f32::min).unwrap_or(0.0);
+                let max = floats.iter().copied().reduce(f32::max).unwrap_or(0.0);
+                let mean = floats.iter().sum::<f32>() / floats.len() as f32;
+                eprintln!(
+                    "[logit-debug] pos={target_pos} vocab={vocab_size} total_bytes={} nan={nan_count} inf={inf_count} zero={zero_count} min={min:.4} max={max:.4} mean={mean:.6}",
+                    logit_data.len()
+                );
+                // Show top-5 tokens
+                let mut indexed: Vec<(usize, f32)> = floats.iter().copied().enumerate().collect();
+                indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                for (i, (tok_id, val)) in indexed.iter().take(5).enumerate() {
+                    let tok_str = tok_section.id_to_token(*tok_id as u32).unwrap_or("<unk>");
+                    eprintln!(
+                        "[logit-debug] top-{}: id={tok_id} val={val:.6} \"{tok_str}\"",
+                        i + 1
+                    );
+                }
+            }
+        }
+
         let next_token =
             if compiled_seq_len.is_some() && logit_data.len() >= (target_pos + 1) * bytes_per_pos {
                 // Extract logits at the last real-token position.

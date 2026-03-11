@@ -23,10 +23,6 @@ impl ShapeMap {
     /// Insert or overwrite the shape for a node.
     #[track_caller]
     pub fn insert(&mut self, id: NodeId, shape: Vec<usize>) {
-        if id.index() == 467 && id.generation() == 0 {
-            let loc = std::panic::Location::caller();
-            eprintln!("[sm-467] ← {shape:?} @ {loc}");
-        }
         self.shapes.insert(id, shape);
     }
 

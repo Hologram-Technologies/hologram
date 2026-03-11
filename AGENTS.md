@@ -29,6 +29,13 @@ specs/
 3. Run `cargo clippy -- -D warnings` before committing Rust changes
 4. Use a consistent naming prefix for all crate names
 
+### Runtime Performance (hologram-exec)
+- **Zero allocation in hot paths**: shape resolution runs per-node per-level (thousands of times per inference). No `Vec` allocations inside shape-resolution functions except when constructing the output shape itself.
+- **Prefer compile-time solutions over runtime inference**: stale-shape recovery in `ShapeContext` is a fallback; the correct long-term fix is ensuring the compiler emits accurate shapes via the ONNX Shape Oracle (see plan). Do not grow `shape_resolve.rs` with new per-op heuristics — add oracle coverage instead.
+- **No speculative corrections**: `correct_stale_shape` scans at most `ndim` integers (≤8 for all current ops). It must not call external functions, allocate, or recurse.
+- **Fast-path first**: the common case is that compiled shapes are correct. All correction logic must be guarded by a cheap identity check (`prod == actual_count`) that short-circuits to a no-op.
+- **Avoid growing shape_resolve.rs**: new op support belongs in the compiler's shape oracle, not in runtime shape inference. If a new op's output shape cannot be expressed via `ShapeSpec`, add a `ShapeSpec` variant rather than a new `resolve_*` function.
+
 ---
 
 <!-- ARCHON:MANAGED:BEGIN -->

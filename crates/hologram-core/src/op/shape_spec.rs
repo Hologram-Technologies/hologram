@@ -5,6 +5,11 @@
 //! the scattered shape logic that was previously duplicated across
 //! `executor.rs` and `float_dispatch.rs`.
 //!
+//! **Invariant:** Every `FloatOp`'s `ShapeSpec` MUST match the output size
+//! its kernel actually produces. When adding or modifying a `FloatOp`,
+//! verify the spec against the kernel in `float_dispatch.rs`. Mismatches
+//! cause silent shape corruption at runtime.
+//!
 //! This module is runtime-only — `ShapeSpec` is not serialized into `.holo`
 //! archives. The archive format continues to use `node_shapes: Vec<(NodeId,
 //! Vec<usize>)>` with 0-sentinels for symbolic dimensions.
@@ -37,6 +42,9 @@ pub enum ShapeSpec {
     /// Output shape = broadcast of `input[a]` and `input[b]` shapes.
     /// Uses the longer shape (higher rank).
     Broadcast(u8, u8),
+    /// Output shape = broadcast of all inputs (numpy-style N-way broadcast).
+    /// Used for ops like Where(cond, x, y) where all inputs participate.
+    BroadcastAll,
     /// Output shape = `input[i].shape` with last dimension removed (reductions).
     DropLastDim(u8),
     /// Output shape described per-dimension via `ShapeDim` entries.

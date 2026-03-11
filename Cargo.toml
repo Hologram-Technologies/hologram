@@ -18,12 +18,11 @@ hologram-compiler = { path = "crates/hologram-compiler" }
 hologram-async = { path = "crates/hologram-async" }
 hologram-cli = { path = "crates/hologram-cli" }
 hologram-ffi = { path = "crates/hologram-ffi" }
+# Compression
+hologram-compression = { path = "crates/hologram-compression" }
 
 # UOR Foundation
 uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", rev = "bfe21f4" }
-
-# Compression
-hologram-compression = { path = "crates/hologram-compression" }
 
 # Serialization (rkyv only)
 rkyv = { version = "0.8" }

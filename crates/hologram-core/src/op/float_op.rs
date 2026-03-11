@@ -38,6 +38,20 @@ impl FloatDType {
             Self::U8 | Self::Bool | Self::I8 => 1,
         }
     }
+
+    /// Infer a dtype from its byte size. Used when only the element size
+    /// is known (e.g., from arena tracking). Picks the most common type
+    /// for each size: 4→F32, 8→I64, 2→F16, 1→Bool.
+    #[must_use]
+    pub const fn from_byte_size(bytes: usize) -> Self {
+        match bytes {
+            8 => Self::I64,
+            4 => Self::F32,
+            2 => Self::F16,
+            1 => Self::Bool,
+            _ => Self::F32, // safe default
+        }
+    }
 }
 
 /// Float-domain tensor operations for AI inference.
@@ -218,6 +232,16 @@ pub enum FloatOp {
     /// Extract shape as i64 tensor (returns [n_elements] based on dtype byte size).
     Shape { dtype: FloatDType },
 
+    /// Contiguous slice along a single axis.
+    /// Extracts elements [start..end) along the specified axis.
+    /// `axis_from_end` counts backward: 1 = last axis, 2 = second-to-last, etc.
+    /// Inputs: [data].
+    Slice {
+        axis_from_end: u8,
+        start: u32,
+        end: u32,
+    },
+
     /// GatherND (stub: pass-through, full N-D gather later).
     GatherND,
 
@@ -243,6 +267,84 @@ pub enum FloatOp {
     // ── Quantization ─────────────────────────────────────────────────────
     /// Dequantize Q4_0 → f32.
     Dequantize,
+
+    // ── Vision / spatial ops ────────────────────────────────────────────
+    /// 2-D convolution. Inputs: [data (f32), weight (f32), bias (f32, optional)].
+    /// Strides, pads, dilations, group packed into u32 fields.
+    Conv2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+    },
+    /// 2-D transposed convolution.
+    ConvTranspose {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        output_pad_h: u32,
+        output_pad_w: u32,
+    },
+    /// 2-D max pooling.
+    MaxPool2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+    },
+    /// 2-D average pooling.
+    AvgPool2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+    },
+    /// Global average pool: spatial dims → 1.
+    GlobalAvgPool,
+    /// Resize (nearest/linear/cubic). Mode encoded as u8.
+    Resize { mode: u8 },
+    /// N-D padding. Mode: 0=constant, 1=reflect, 2=edge.
+    PadOp { mode: u8 },
+    /// Instance normalization.
+    InstanceNorm { size: u32, epsilon: u32 },
+    /// Local response normalization.
+    LRN {
+        size: u32,
+        alpha: u32,
+        beta: u32,
+        bias: u32,
+    },
+
+    // ── Utility ops ─────────────────────────────────────────────────────
+    /// Product reduction along last `size` elements.
+    ReduceProd { size: u32 },
+    /// Top-K along an axis. Inputs: [data, K (i64)].
+    TopK { axis: u32, largest: bool },
+    /// ScatterND. Inputs: [data, indices, updates].
+    ScatterND,
+    /// Cumulative sum along an axis.
+    CumSum { axis: u32 },
+    /// NonZero: returns indices of non-zero elements.
+    NonZero,
+    /// Compress along an axis. Inputs: [data, condition].
+    Compress { axis: u32 },
+    /// ReverseSequence along time/batch axes.
+    ReverseSequence { batch_axis: u32, time_axis: u32 },
 }
 
 impl FloatOp {
@@ -282,6 +384,7 @@ impl FloatOp {
             | Self::Transpose { .. }
             | Self::Cast { .. }
             | Self::Shape { .. }
+            | Self::Slice { .. }
             | Self::GatherND
             | Self::Dequantize => 1,
 
@@ -315,7 +418,27 @@ impl FloatOp {
             | Self::Gemm { .. }
             | Self::Attention { .. }
             | Self::Where
-            | Self::Range => 3,
+            | Self::Range
+            | Self::ScatterND => 3,
+
+            // Vision ops
+            Self::Conv2d { .. } => 3, // data, weight, bias (bias can be zero-length)
+            Self::ConvTranspose { .. } => 3,
+            Self::MaxPool2d { .. } => 1,
+            Self::AvgPool2d { .. } => 1,
+            Self::GlobalAvgPool => 1,
+            Self::Resize { .. } => 2,       // data, scales/sizes
+            Self::PadOp { .. } => 2,        // data, pads
+            Self::InstanceNorm { .. } => 3, // data, scale, bias
+            Self::LRN { .. } => 1,
+
+            // Utility ops
+            Self::ReduceProd { .. } => 1,
+            Self::TopK { .. } => 2, // data, K
+            Self::CumSum { .. } => 1,
+            Self::NonZero => 1,
+            Self::Compress { .. } => 2, // data, condition
+            Self::ReverseSequence { .. } => 1,
         }
     }
 
@@ -379,11 +502,28 @@ impl FloatOp {
             Self::Where => "float.where",
             Self::Range => "float.range",
             Self::Shape { .. } => "float.shape",
+            Self::Slice { .. } => "float.slice",
             Self::GatherND => "float.gather_nd",
             Self::FusedSwiGLU => "float.fused_swiglu",
             Self::RotaryEmbedding { .. } => "float.rope",
             Self::Attention { .. } => "float.attention",
             Self::Dequantize => "float.dequantize",
+            Self::Conv2d { .. } => "float.conv2d",
+            Self::ConvTranspose { .. } => "float.conv_transpose",
+            Self::MaxPool2d { .. } => "float.max_pool_2d",
+            Self::AvgPool2d { .. } => "float.avg_pool_2d",
+            Self::GlobalAvgPool => "float.global_avg_pool",
+            Self::Resize { .. } => "float.resize",
+            Self::PadOp { .. } => "float.pad",
+            Self::InstanceNorm { .. } => "float.instance_norm",
+            Self::LRN { .. } => "float.lrn",
+            Self::ReduceProd { .. } => "float.reduce_prod",
+            Self::TopK { .. } => "float.top_k",
+            Self::ScatterND => "float.scatter_nd",
+            Self::CumSum { .. } => "float.cumsum",
+            Self::NonZero => "float.nonzero",
+            Self::Compress { .. } => "float.compress",
+            Self::ReverseSequence { .. } => "float.reverse_sequence",
         }
     }
 }
@@ -423,8 +563,11 @@ impl FloatOp {
             | Self::Clip { .. }
             | Self::Not
             | Self::IsNaN
-            | Self::Dequantize
             | Self::Cast { .. } => ShapeSpec::SameAs(0),
+
+            // Dequantize: expands Q4_0 blocks (18 bytes → 32 f32s), output
+            // size differs from input. Requires custom shape logic.
+            Self::Dequantize => ShapeSpec::Custom,
 
             // Shape-preserving: output = input[0] shape
             Self::Softmax { .. }
@@ -458,10 +601,8 @@ impl FloatOp {
             | Self::ReduceMax { .. }
             | Self::ReduceMin { .. } => ShapeSpec::DropLastDim(0),
 
-            // Where: output = broadcast of condition and x shapes.
-            // All three inputs are broadcast in the kernel; condition (input[0])
-            // is typically the highest-rank tensor (e.g., attention mask).
-            Self::Where => ShapeSpec::Broadcast(0, 1),
+            // Where: output = broadcast of all three inputs (cond, x, y).
+            Self::Where => ShapeSpec::BroadcastAll,
 
             // Range: 1-D output, length inferred from start/limit/delta
             Self::Range => ShapeSpec::inferred_1d(),
@@ -476,8 +617,149 @@ impl FloatOp {
             | Self::Transpose { .. }
             | Self::Concat { .. }
             | Self::Shape { .. }
+            | Self::Slice { .. }
             | Self::Attention { .. }
             | Self::GatherND => ShapeSpec::Custom,
+
+            // Vision/spatial: all need custom shape logic
+            Self::Conv2d { .. }
+            | Self::ConvTranspose { .. }
+            | Self::MaxPool2d { .. }
+            | Self::AvgPool2d { .. }
+            | Self::GlobalAvgPool
+            | Self::Resize { .. }
+            | Self::PadOp { .. }
+            | Self::LRN { .. } => ShapeSpec::Custom,
+
+            // Shape-preserving vision ops
+            Self::InstanceNorm { .. } => ShapeSpec::SameAs(0),
+
+            // Utility: custom shape logic
+            Self::ReduceProd { .. } => ShapeSpec::DropLastDim(0),
+            Self::TopK { .. }
+            | Self::ScatterND
+            | Self::CumSum { .. }
+            | Self::NonZero
+            | Self::Compress { .. }
+            | Self::ReverseSequence { .. } => ShapeSpec::Custom,
+        }
+    }
+
+    /// Determine the output element type given the input dtypes.
+    ///
+    /// This is the single source of truth for dtype propagation. The executor
+    /// uses it for element-size calculations in shape validation, replacing
+    /// the scattered `/ 4` and `* 4` assumptions that caused cascading shape
+    /// corruption when non-f32 types (i64, bool) flowed through the graph.
+    ///
+    /// Rules:
+    /// - Unary/binary elementwise f32 ops preserve input dtype (always f32 in practice).
+    /// - Comparisons and boolean ops produce `Bool` (1 byte/element).
+    /// - Cast explicitly declares its target dtype.
+    /// - Gather/Concat carry their element dtype.
+    /// - Most other ops (MatMul, Softmax, norms, etc.) produce F32.
+    #[must_use]
+    pub fn output_dtype(&self, input_dtypes: &[FloatDType]) -> FloatDType {
+        let input0 = input_dtypes.first().copied().unwrap_or(FloatDType::F32);
+        match self {
+            // ── Type-preserving: output dtype = input[0] dtype ──
+            Self::Neg
+            | Self::Relu
+            | Self::Gelu
+            | Self::Silu
+            | Self::Tanh
+            | Self::Sigmoid
+            | Self::Exp
+            | Self::Log
+            | Self::Sqrt
+            | Self::Abs
+            | Self::Reciprocal
+            | Self::Cos
+            | Self::Sin
+            | Self::Sign
+            | Self::Floor
+            | Self::Ceil
+            | Self::Round
+            | Self::Erf
+            | Self::Clip { .. }
+            | Self::Reshape => input0,
+
+            // ── Binary elementwise: preserve input dtype (broadcast doesn't change type) ──
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Pow
+            | Self::Mod
+            | Self::Min
+            | Self::Max
+            | Self::FusedSwiGLU => input0,
+
+            // ── Boolean output: comparisons and logical ops ──
+            Self::Equal
+            | Self::Less
+            | Self::LessOrEqual
+            | Self::Greater
+            | Self::GreaterOrEqual
+            | Self::And
+            | Self::Or
+            | Self::Xor
+            | Self::Not
+            | Self::IsNaN => FloatDType::Bool,
+
+            // ── Explicit type change ──
+            Self::Cast { to, .. } => *to,
+
+            // ── Ops that carry their dtype ──
+            Self::Gather { dtype, .. } | Self::Concat { dtype, .. } => *dtype,
+            Self::Shape { .. } => FloatDType::I64,
+
+            // ── Type-preserving structural ops: output dtype = input[0] dtype ──
+            Self::GatherND | Self::Transpose { .. } | Self::Slice { .. } => input0,
+
+            // Where(condition, true_val, false_val): output dtype = true_val dtype
+            Self::Where => input_dtypes.get(1).copied().unwrap_or(input0),
+
+            // ── Reduce ops: preserve input dtype ──
+            Self::ReduceSum { .. }
+            | Self::ReduceMean { .. }
+            | Self::ReduceMax { .. }
+            | Self::ReduceMin { .. } => input0,
+
+            // ── Float-producing ops ──
+            Self::MatMul { .. }
+            | Self::Gemm { .. }
+            | Self::Softmax { .. }
+            | Self::LogSoftmax { .. }
+            | Self::RmsNorm { .. }
+            | Self::LayerNorm { .. }
+            | Self::Embed { .. }
+            | Self::Range
+            | Self::RotaryEmbedding { .. }
+            | Self::Attention { .. }
+            | Self::Dequantize
+            | Self::Conv2d { .. }
+            | Self::ConvTranspose { .. }
+            | Self::MaxPool2d { .. }
+            | Self::AvgPool2d { .. }
+            | Self::GlobalAvgPool
+            | Self::Resize { .. }
+            | Self::PadOp { .. }
+            | Self::InstanceNorm { .. }
+            | Self::LRN { .. }
+            | Self::ReduceProd { .. }
+            | Self::CumSum { .. }
+            | Self::Compress { .. }
+            | Self::ReverseSequence { .. } => FloatDType::F32,
+
+            // ── Type-preserving utility ops ──
+            Self::ScatterND => input0,
+
+            // TopK produces F32 values (and I64 indices, but multi-output handled separately)
+            Self::TopK { .. } => FloatDType::F32,
+
+            // NonZero produces I64 indices
+            Self::NonZero => FloatDType::I64,
         }
     }
 
@@ -634,6 +916,23 @@ impl FloatOp {
             Self::Not => OpCategory::UnaryByteBool,
             Self::IsNaN => OpCategory::UnaryToU8,
 
+            Self::Conv2d { .. }
+            | Self::ConvTranspose { .. }
+            | Self::MaxPool2d { .. }
+            | Self::AvgPool2d { .. }
+            | Self::GlobalAvgPool
+            | Self::Resize { .. }
+            | Self::PadOp { .. }
+            | Self::InstanceNorm { .. }
+            | Self::LRN { .. }
+            | Self::ReduceProd { .. }
+            | Self::TopK { .. }
+            | Self::ScatterND
+            | Self::CumSum { .. }
+            | Self::NonZero
+            | Self::Compress { .. }
+            | Self::ReverseSequence { .. } => OpCategory::Custom,
+
             _ => OpCategory::Custom,
         }
     }
@@ -754,11 +1053,28 @@ impl FloatOp {
             Self::Where => "Where",
             Self::Range => "Range",
             Self::Shape { .. } => "Shape",
+            Self::Slice { .. } => "Slice",
             Self::GatherND => "GatherND",
             Self::FusedSwiGLU => "SwiGLU",
             Self::RotaryEmbedding { .. } => "RoPE",
             Self::Attention { .. } => "Attention",
             Self::Dequantize => "Dequantize",
+            Self::Conv2d { .. } => "Conv2d",
+            Self::ConvTranspose { .. } => "ConvTranspose",
+            Self::MaxPool2d { .. } => "MaxPool2d",
+            Self::AvgPool2d { .. } => "AvgPool2d",
+            Self::GlobalAvgPool => "GlobalAvgPool",
+            Self::Resize { .. } => "Resize",
+            Self::PadOp { .. } => "Pad",
+            Self::InstanceNorm { .. } => "InstanceNorm",
+            Self::LRN { .. } => "LRN",
+            Self::ReduceProd { .. } => "ReduceProd",
+            Self::TopK { .. } => "TopK",
+            Self::ScatterND => "ScatterND",
+            Self::CumSum { .. } => "CumSum",
+            Self::NonZero => "NonZero",
+            Self::Compress { .. } => "Compress",
+            Self::ReverseSequence { .. } => "ReverseSequence",
         }
     }
 }
@@ -883,10 +1199,7 @@ mod tests {
             ShapeSpec::DropLastDim(0)
         );
         // Where
-        assert_eq!(
-            FloatOp::Where.output_shape_spec(),
-            ShapeSpec::Broadcast(0, 1)
-        );
+        assert_eq!(FloatOp::Where.output_shape_spec(), ShapeSpec::BroadcastAll);
         // Embed (Custom — output = indices_shape ++ [dim])
         assert_eq!(
             FloatOp::Embed { dim: 256 }.output_shape_spec(),
