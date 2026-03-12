@@ -1,0 +1,67 @@
+---
+title: Configuration
+description: Cargo features, dependency setup, and runtime configuration.
+---
+
+## Cargo Features
+
+| Feature | Crate | Effect |
+|---------|-------|--------|
+| `simd` | `hologram-core` | Enables SIMD acceleration for `ElementWiseView` behind `#[cfg(target_arch)]` guards |
+| `parallel` | `hologram-exec` | Enables Rayon parallel level execution and LUT-GEMM tile parallelism |
+| `wasm` | `hologram-core`, `hologram-ffi` | Strips non-WASM dependencies; enables `wasm-bindgen` bindings |
+
+Enable features in `Cargo.toml`:
+
+```toml
+[dependencies]
+hologram = { version = "0.1", features = ["parallel", "simd"] }
+```
+
+## Tokio Runtime
+
+`hologram-async` requires Tokio with the `rt-multi-thread` feature for the blocking compiler wrapper:
+
+```toml
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+hologram-async = { version = "0.1" }
+```
+
+The async executor itself is runtime-agnostic — single-thread `rt` works for embedded or WASM contexts.
+
+## no_std Targets
+
+`hologram-core` is `no_std + alloc`. To use it in a `no_std` environment:
+
+```toml
+[dependencies]
+hologram-core = { version = "0.1", default-features = false }
+```
+
+LUT tables are `static` arrays — no heap allocation occurs in lookup functions.
+
+## WASM Build
+
+```bash
+# Install wasm-pack if needed
+cargo install wasm-pack
+
+# Build via just
+just wasm
+
+# Or manually
+cargo build -p hologram-ffi --target wasm32-unknown-unknown --features wasm
+```
+
+The generated JS bindings and `.wasm` file are output to `pkg/`.
+
+## C Bindings
+
+Generate the C header with `cbindgen`:
+
+```bash
+cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
+```
+
+Link against the compiled `libhologram_ffi` and include `hologram.h`. Functions return `0` on success, negative error codes on failure — call `hologram_last_error()` for details.

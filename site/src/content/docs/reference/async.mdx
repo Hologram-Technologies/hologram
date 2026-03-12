@@ -1,0 +1,47 @@
+---
+title: Async & Streaming
+description: Tokio-based async compilation and execution, plus streaming output for large models.
+---
+
+Tokio-based async compilation and execution, plus streaming output for large models.
+
+## Components
+
+### `compiler`
+
+Async wrapper around the compiler pipeline. Runs compilation on a Tokio blocking thread.
+
+```rust
+use hologram_async::compiler::AsyncCompiler;
+
+let schedule = AsyncCompiler::compile(graph).await?;
+```
+
+### `executor`
+
+Async execution driver. Each inference call is a `Future`; level execution can yield between levels.
+
+```rust
+use hologram_async::executor::AsyncExecutor;
+
+let output = AsyncExecutor::new(entrypoint)
+    .run(input)
+    .await?;
+```
+
+### `stream`
+
+`InferenceStream` — a `Stream` of partial outputs for models that produce incremental results.
+
+```rust
+use futures::StreamExt;
+
+let mut stream = AsyncExecutor::new(entrypoint).stream(input);
+while let Some(token) = stream.next().await {
+    println!("{:?}", token?);
+}
+```
+
+## Tokio Compatibility
+
+Requires Tokio `rt-multi-thread` for the blocking compiler wrapper. The executor itself is runtime-agnostic — works with `rt` single-thread for embedded or WASM contexts.

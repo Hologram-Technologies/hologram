@@ -1,0 +1,66 @@
+---
+title: Executor & KV-Dispatch
+description: Level-by-level KV-lookup execution, buffer arena, and LUT-GEMM.
+---
+
+KV-lookup executor, buffer arena, and parallel level execution.
+
+## Execution Model
+
+Execution proceeds level by level. Nodes at the same level are independent and execute in parallel when the `parallel` feature is enabled.
+
+```
+Schedule level 0: [node_A, node_B]   ← parallel
+Schedule level 1: [node_C]           ← depends on A + B
+Schedule level 2: [node_D, node_E]   ← parallel
+```
+
+Each node dispatch is a KV lookup: `(op_id, encoded_inputs) → encoded_output`.
+
+## Components
+
+### `eval`
+
+- `Executor` — drives level-by-level execution given a schedule and KV registry
+- `ScheduleBridge` — adapts `hologram-archive` entrypoints to the executor's input format
+
+### `kv`
+
+- `KvRegistry` — maps `(op_id, input_key) → output_value` for all ops in the model
+- `KvStore` — underlying hash map storage for the registry
+
+### `buffer`
+
+- `BufferArena` — bump-allocator arena for intermediate activation buffers; reset between inference calls with no per-call heap allocation
+
+### `mmap`
+
+Helpers for accessing weight tensors via memory-mapped pointers from the archive.
+
+### `parallel`
+
+Rayon thread-pool configuration for parallel level execution (feature-gated `parallel`).
+
+## LUT-GEMM
+
+LUT-based matrix multiplication — no floating-point operations:
+
+- `matmul` — core LUT-GEMM routine
+- `parallel` — Rayon-parallel tile decomposition
+- `PsumBook` — partial sum accumulator for LUT-GEMM
+- `quantize` — weight quantization helpers for GEMM inputs
+
+## Feature Gates
+
+| Feature | Effect |
+|---------|--------|
+| `parallel` | Enables Rayon parallel execution across nodes in a level |
+
+## Example
+
+```rust
+use hologram_exec::eval::Executor;
+
+let executor = Executor::from_entrypoint(entrypoint)?;
+let output = executor.run(&input_buffer)?;
+```

@@ -1,0 +1,61 @@
+---
+title: LUT Tables & Ring Algebra
+description: Precomputed lookup tables, integer ring types, encoding schemes, and element-wise views.
+---
+
+Zero-dependency `no_std` building blocks: precomputed LUT tables, integer ring arithmetic, encoding, and element-wise views.
+
+## Lookup Tables
+
+### `lut`
+
+Precomputed lookup tables for all supported activation functions.
+
+- `LutOp` — enum of all supported operations (relu, sigmoid, tanh, gelu, sin, cos, etc.)
+- `Lut` — wrapper around a `&'static [u8; 256]` table, indexed by `Q0` encoded value
+- `activation/` — tables for basic, math, modern, and scientific activations
+- `arith` — arithmetic operations (add, mul, sub) as LUT wrappers
+- `q0` — stratum lookup (quantization level mapping)
+
+### `view`
+
+`ElementWiseView` — applies a LUT to a slice in-place. SIMD-accelerated when the `simd` feature is enabled.
+
+### `buffer`
+
+`StaticBuf<N>` — fixed-size stack-allocated buffer for zero-alloc hot paths.
+
+## Ring Types
+
+### `q1`
+
+Fixed-point Q1 type — one bit integer, one bit fraction.
+
+- `Q1Datum` — the Q1 value type
+- Ring operations: add, mul, neg
+- Encoding/decoding to/from `u8`
+- Activation functions mirroring the LUT module but operating on Q1
+
+### `ring`
+
+Ring algebra traits and `ByteRing` — the `u8` ring with wraparound arithmetic.
+
+## Encoding
+
+Encoding schemes for mapping float values into integer ring elements.
+
+| Type | Range | Maps to |
+|------|-------|---------|
+| `AngleEncoding` | `[-π, π]` | `[0, 255]` |
+| `SignedEncoding` | `[-128, 127]` | `[0, 255]` |
+| `UnsignedEncoding` | `[0, 255]` | `[0, 255]` |
+| `RawEncoding` | — | Direct `u8` passthrough |
+
+## Primitive Operations
+
+- `op` — `LutOp` (re-export) and `PrimOp` — primitive operation enum used by the graph layer
+- `datum` — `Datum` — unified value type wrapping Q0/Q1 encoded values
+
+## `no_std` Compatibility
+
+Compiles for `wasm32-unknown-unknown` and `no_std + alloc` targets. LUT tables are `static` arrays — no heap allocation occurs in lookup functions.

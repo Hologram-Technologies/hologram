@@ -1,0 +1,60 @@
+---
+title: Expression Graph
+description: Directed acyclic graph construction, fusion passes, and parallel scheduling.
+---
+
+Expression graph, subgraph decomposition, fusion passes, and parallel scheduling.
+
+## Graph Construction
+
+### `graph`
+
+- `HoloGraph` — directed acyclic graph of `Node` and `Edge` values
+- `Node` — wraps a `PrimOp` with input/output shape metadata
+- `Edge` — typed connection between nodes
+- `validate` — structural invariant checks (no cycles, shape compatibility)
+
+### `subgraph`
+
+- `Subgraph` — a named slice of a `HoloGraph`
+- `flatten` — merges nested subgraphs into a single flat graph
+
+### `builder`
+
+Fluent builder for constructing `HoloGraph` programmatically.
+
+```rust
+use hologram_graph::builder::GraphBuilder;
+
+let graph = GraphBuilder::new()
+    .input("x", Shape::scalar())
+    .op(PrimOp::Sigmoid, &["x"], "y")
+    .output("y")
+    .build()?;
+```
+
+### `constant`
+
+`ConstantNode` — a graph node that holds a precomputed value, resolved at compile time.
+
+## Fusion Passes
+
+Optimization passes that rewrite the graph before scheduling:
+
+| Pass | Effect |
+|------|--------|
+| `constant` | Folds compile-time constant nodes |
+| `cse` | Common subexpression elimination |
+| `view_fusion` | Merges adjacent `ElementWiseView` operations into a single pass |
+
+## Scheduling
+
+Converts a fused graph into an execution schedule:
+
+- `toposort` — Kahn's algorithm topological sort
+- `levels` — assigns nodes to parallel execution levels
+- `critical_path` — identifies the longest dependency chain for latency analysis
+
+```rust
+let schedule = graph.schedule()?;
+```

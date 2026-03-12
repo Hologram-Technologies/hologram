@@ -1,9 +1,10 @@
 //! Fluent graph builder for constructing `Graph` instances.
 
 use crate::constant::ConstantData;
+use crate::error::GraphError;
 use crate::graph::edge;
 use crate::graph::node::NodeId;
-use crate::graph::{CustomOpId, Graph, GraphOp};
+use crate::graph::{CustomOpId, Graph, GraphOp, SubgraphId};
 use crate::subgraph::SubgraphDef;
 
 /// Fluent builder for constructing `Graph` instances.
@@ -182,6 +183,57 @@ impl GraphBuilder {
     pub fn subgraph(mut self, def: SubgraphDef) -> Self {
         self.graph.register_subgraph(def);
         self
+    }
+
+    /// Register a subgraph template and return its `SubgraphId`.
+    pub fn subgraph_with_id(&mut self, def: SubgraphDef) -> crate::graph::SubgraphId {
+        self.graph.register_subgraph(def)
+    }
+
+    /// Flatten a registered subgraph into the builder graph.
+    ///
+    /// `input_bindings` maps `(subgraph_input_index, builder_index)`.
+    /// Returns the builder indices of the flattened output nodes.
+    pub fn flatten_registered_subgraph(
+        &mut self,
+        subgraph_id: SubgraphId,
+        input_bindings: &[(u32, usize)],
+    ) -> Result<Vec<usize>, GraphError> {
+        let bindings: Vec<(u32, NodeId)> = input_bindings
+            .iter()
+            .map(|&(sub_idx, builder_idx)| (sub_idx, self.index_to_id[builder_idx]))
+            .collect();
+
+        let result =
+            crate::subgraph::flatten::flatten_subgraph(&mut self.graph, subgraph_id, &bindings)?;
+
+        // Build a NodeId→builder_index lookup for output nodes.
+        // We add all new nodes to our index_to_id tracker.
+        let base = self.index_to_id.len();
+        let new_ids: Vec<NodeId> = result.id_map.values().copied().collect();
+        self.index_to_id.extend(new_ids.iter());
+
+        // Map output NodeIds to builder indices.
+        let output_indices = result
+            .output_ids
+            .iter()
+            .map(|out_id| {
+                // Search from base onwards (these are the newly added nodes).
+                self.index_to_id[base..]
+                    .iter()
+                    .position(|id| *id == *out_id)
+                    .map(|p| base + p)
+                    .unwrap_or_else(|| {
+                        // Might already exist (e.g., if output is a pass-through of an input).
+                        self.index_to_id
+                            .iter()
+                            .position(|id| *id == *out_id)
+                            .expect("flattened output NodeId not found in builder index")
+                    })
+            })
+            .collect();
+
+        Ok(output_indices)
     }
 
     /// Get the NodeId for a builder index.

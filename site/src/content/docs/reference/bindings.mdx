@@ -1,0 +1,73 @@
+---
+title: C & WASM Bindings
+description: C ABI and WebAssembly bindings for Hologram.
+---
+
+C ABI and WebAssembly bindings for integrating Hologram into non-Rust environments.
+
+## C ABI
+
+The C header is generated via `cbindgen` and lives at `include/hologram.h`.
+
+### Handles
+
+All Hologram objects are exposed as opaque `Handle` pointers:
+
+```c
+typedef struct HologramGraph    *HologramGraphHandle;
+typedef struct HologramExecutor *HologramExecutorHandle;
+```
+
+### Key Functions
+
+```c
+HologramGraphHandle hologram_graph_from_bytes(const uint8_t *data, size_t len);
+void                hologram_graph_free(HologramGraphHandle graph);
+
+HologramExecutorHandle hologram_executor_new(HologramGraphHandle graph);
+int  hologram_executor_run(HologramExecutorHandle exec,
+                           const uint8_t *input, size_t input_len,
+                           uint8_t *output, size_t output_len);
+void hologram_executor_free(HologramExecutorHandle exec);
+```
+
+Functions return `0` on success, negative error codes on failure. Use `hologram_last_error()` for a human-readable string.
+
+## WASM
+
+WASM-specific bindings using `wasm-bindgen`. Exposes `HologramSession` as a JavaScript class.
+
+```js
+import init, { HologramSession } from './hologram_ffi.js'
+await init()
+const session = HologramSession.from_bytes(modelBytes)
+const output = session.run(inputBytes)
+```
+
+## Internal Components
+
+### `compiler` / `exec` / `graph`
+
+FFI wrappers around `HoloCompiler` and `Executor`. Accepts raw bytes, returns opaque handles.
+
+### `encoding`
+
+Encoding/decoding helpers exposed to C for converting float arrays to ring-encoded `u8` buffers.
+
+### `handle`
+
+`Handle<T>` — ref-counted wrapper that keeps objects alive across the FFI boundary.
+
+### `error`
+
+Thread-local last-error storage, exposed via `hologram_last_error()`.
+
+## Building
+
+```bash
+# C header
+cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
+
+# WASM bindings
+just wasm
+```
