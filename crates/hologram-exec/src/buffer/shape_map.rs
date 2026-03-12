@@ -44,4 +44,13 @@ impl ShapeMap {
         let es = elem_size.max(1);
         vec![byte_len / es]
     }
+
+    /// Clone all shapes into an owned `HashMap`.
+    ///
+    /// Intended for conformance testing — snapshots the shape state.
+    #[cfg(feature = "profile")]
+    #[must_use]
+    pub fn snapshot(&self) -> HashMap<NodeId, Vec<usize>> {
+        self.shapes.clone()
+    }
 }

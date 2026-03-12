@@ -155,7 +155,8 @@ pub enum FloatOp {
 
     /// General matrix multiply with alpha, beta, transpose flags.
     /// out = alpha * op(A) × op(B) + beta * C.
-    /// Inputs: [A (f32), B (f32), C (f32)].
+    /// Inputs: [A (f32), B (f32/quantized), C (f32 optional)].
+    /// quant_b: 0=none(f32), 1=Q4_0, 2=Q8_0 — applied to B before multiply.
     Gemm {
         m: u32,
         k: u32,
@@ -164,6 +165,7 @@ pub enum FloatOp {
         beta: u32,
         trans_a: bool,
         trans_b: bool,
+        quant_b: u8,
     },
 
     // ── Softmax ───────────────────────────────────────────────────────────
@@ -219,9 +221,10 @@ pub enum FloatOp {
     /// Type cast with source and target dtype.
     Cast { from: FloatDType, to: FloatDType },
 
-    /// Embedding lookup. Inputs: [token_ids (u32), table (f32)].
+    /// Embedding lookup. Inputs: [token_ids (u32), table (f32 or quantized)].
     /// table is [vocab, dim]. Output: [len(ids), dim].
-    Embed { dim: u32 },
+    /// quant: 0=none(f32), 1=Q4_0, 2=Q8_0.
+    Embed { dim: u32, quant: u8 },
 
     /// Conditional selection. Inputs: [cond (u8), x (f32), y (f32)].
     Where,
@@ -250,7 +253,9 @@ pub enum FloatOp {
     FusedSwiGLU,
 
     /// Rotary position embedding (RoPE).
-    RotaryEmbedding { dim: u32, base: u32 },
+    /// n_heads: number of heads per token (hidden_dim / dim).
+    /// Used to compute position = chunk_index / n_heads.
+    RotaryEmbedding { dim: u32, base: u32, n_heads: u32 },
 
     /// Scaled dot-product attention (multi-head / grouped-query).
     /// Inputs: [Q (f32), K (f32), V (f32)].
@@ -411,11 +416,11 @@ impl FloatOp {
             | Self::Embed { .. }
             | Self::Concat { .. }
             | Self::FusedSwiGLU
-            | Self::RotaryEmbedding { .. } => 2,
+            | Self::RotaryEmbedding { .. }
+            | Self::Gemm { .. } => 2, // Gemm C bias is optional (arity 2 or 3)
 
             // Ternary
             Self::LayerNorm { .. }
-            | Self::Gemm { .. }
             | Self::Attention { .. }
             | Self::Where
             | Self::Range
@@ -1135,7 +1140,7 @@ mod tests {
             .arity(),
             3
         );
-        assert_eq!(FloatOp::Embed { dim: 128 }.arity(), 2);
+        assert_eq!(FloatOp::Embed { dim: 128, quant: 0 }.arity(), 2);
         assert_eq!(FloatOp::ReduceMin { size: 10 }.arity(), 1);
         assert_eq!(FloatOp::Dequantize.arity(), 1);
     }
@@ -1202,7 +1207,7 @@ mod tests {
         assert_eq!(FloatOp::Where.output_shape_spec(), ShapeSpec::BroadcastAll);
         // Embed (Custom — output = indices_shape ++ [dim])
         assert_eq!(
-            FloatOp::Embed { dim: 256 }.output_shape_spec(),
+            FloatOp::Embed { dim: 256, quant: 0 }.output_shape_spec(),
             ShapeSpec::Custom
         );
         // Gather (Custom — output = indices_shape ++ [dim])

@@ -51,6 +51,7 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
             beta,
             trans_a,
             trans_b,
+            quant_b,
         } => dispatch_gemm(
             inputs,
             GemmParams {
@@ -62,6 +63,7 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
                 trans_a: *trans_a,
                 trans_b: *trans_b,
             },
+            *quant_b,
         ),
         FloatOp::Softmax { size } => dispatch_softmax(inputs, *size as usize),
         FloatOp::LogSoftmax { size } => dispatch_log_softmax(inputs, *size as usize),
@@ -83,12 +85,12 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
         } => dispatch_concat(inputs, *size_a as usize, *size_b as usize, *dtype),
         FloatOp::Reshape | FloatOp::Transpose { .. } | FloatOp::GatherND => Ok(inputs[0].to_vec()),
         FloatOp::Cast { from, to } => dispatch_cast(inputs, *from, *to),
-        FloatOp::Embed { dim } => dispatch_embed(inputs, *dim as usize),
+        FloatOp::Embed { dim, quant } => dispatch_embed(inputs, *dim as usize, *quant),
         FloatOp::Where => dispatch_where(inputs),
         FloatOp::Range => dispatch_range(inputs),
         FloatOp::Shape { dtype } => dispatch_shape(inputs, *dtype),
-        FloatOp::RotaryEmbedding { dim, base } => {
-            dispatch_rope(inputs, *dim as usize, bits_to_f32(*base))
+        FloatOp::RotaryEmbedding { dim, base, n_heads } => {
+            dispatch_rope(inputs, *dim as usize, bits_to_f32(*base), *n_heads as usize)
         }
         FloatOp::Attention {
             head_dim,
@@ -321,6 +323,27 @@ fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<Vec<u8>> {
     Ok(f32_vec_to_bytes(out))
 }
 
+/// Dispatch a `FloatOp` with shape information for proper N-D broadcasting.
+///
+/// For binary elementwise ops, uses `input_shapes` to perform numpy-style
+/// broadcasting instead of cycling. Falls back to `dispatch_float` for
+/// non-binary ops or when shapes are unavailable.
+pub fn dispatch_float_with_shapes(
+    op: &FloatOp,
+    inputs: &[&[u8]],
+    input_shapes: &[Vec<usize>],
+) -> ExecResult<Vec<u8>> {
+    match op.category() {
+        OpCategory::BinaryElementwise if input_shapes.len() >= 2 => {
+            binary_elementwise_broadcast(inputs, input_shapes, |a, b| op.apply_binary(a, b))
+        }
+        OpCategory::BinaryCompare if input_shapes.len() >= 2 => {
+            binary_compare_broadcast(inputs, input_shapes, |a, b| op.apply_compare(a, b))
+        }
+        _ => dispatch_float(op, inputs),
+    }
+}
+
 // ── Binary ───────────────────────────────────────────────────────────────────
 
 fn binary_elementwise(inputs: &[&[u8]], f: impl Fn(f32, f32) -> f32) -> ExecResult<Vec<u8>> {
@@ -331,6 +354,184 @@ fn binary_elementwise(inputs: &[&[u8]], f: impl Fn(f32, f32) -> f32) -> ExecResu
         .map(|i| f(a[i % a.len()], b[i % b.len()]))
         .collect();
     Ok(f32_vec_to_bytes(out))
+}
+
+/// Binary elementwise with proper N-D broadcasting using input shapes.
+///
+/// Follows numpy broadcasting rules: dimensions are compared right-to-left,
+/// and each dimension must be either equal or 1. A dimension of 1 is broadcast
+/// (repeated) to match the other operand's dimension.
+fn binary_elementwise_broadcast(
+    inputs: &[&[u8]],
+    input_shapes: &[Vec<usize>],
+    f: impl Fn(f32, f32) -> f32,
+) -> ExecResult<Vec<u8>> {
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+    let sa = &input_shapes[0];
+    let sb = &input_shapes[1];
+
+    // Fast path: same shape or one is scalar — cycling is correct.
+    if sa == sb || a.len() == 1 || b.len() == 1 {
+        let out_len = a.len().max(b.len());
+        let out: Vec<f32> = (0..out_len)
+            .map(|i| f(a[i % a.len()], b[i % b.len()]))
+            .collect();
+        return Ok(f32_vec_to_bytes(out));
+    }
+
+    // Validate shapes match data sizes.
+    let a_prod: usize = sa.iter().product();
+    let b_prod: usize = sb.iter().product();
+    if a_prod != a.len() || b_prod != b.len() {
+        // Shape doesn't match data — fall back to cycling.
+        let out_len = a.len().max(b.len());
+        let out: Vec<f32> = (0..out_len)
+            .map(|i| f(a[i % a.len()], b[i % b.len()]))
+            .collect();
+        return Ok(f32_vec_to_bytes(out));
+    }
+
+    // Compute broadcast output shape.
+    let out_shape = broadcast_shapes(sa, sb);
+    let out_len: usize = out_shape.iter().product();
+
+    // Compute strides for index mapping.
+    let a_strides = compute_broadcast_strides(sa, &out_shape);
+    let b_strides = compute_broadcast_strides(sb, &out_shape);
+    let out_strides = compute_strides(&out_shape);
+
+    let out: Vec<f32> = (0..out_len)
+        .map(|flat_idx| {
+            let a_idx = broadcast_flat_index(flat_idx, &out_shape, &out_strides, &a_strides);
+            let b_idx = broadcast_flat_index(flat_idx, &out_shape, &out_strides, &b_strides);
+            f(a[a_idx], b[b_idx])
+        })
+        .collect();
+    Ok(f32_vec_to_bytes(out))
+}
+
+/// Binary compare with proper N-D broadcasting.
+fn binary_compare_broadcast(
+    inputs: &[&[u8]],
+    input_shapes: &[Vec<usize>],
+    f: impl Fn(f32, f32) -> bool,
+) -> ExecResult<Vec<u8>> {
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+    let sa = &input_shapes[0];
+    let sb = &input_shapes[1];
+
+    if sa == sb || a.len() == 1 || b.len() == 1 {
+        let out_len = a.len().max(b.len());
+        let out: Vec<u8> = (0..out_len)
+            .map(|i| {
+                if f(a[i % a.len()], b[i % b.len()]) {
+                    1u8
+                } else {
+                    0u8
+                }
+            })
+            .collect();
+        return Ok(out);
+    }
+
+    let a_prod: usize = sa.iter().product();
+    let b_prod: usize = sb.iter().product();
+    if a_prod != a.len() || b_prod != b.len() {
+        let out_len = a.len().max(b.len());
+        let out: Vec<u8> = (0..out_len)
+            .map(|i| {
+                if f(a[i % a.len()], b[i % b.len()]) {
+                    1u8
+                } else {
+                    0u8
+                }
+            })
+            .collect();
+        return Ok(out);
+    }
+
+    let out_shape = broadcast_shapes(sa, sb);
+    let out_len: usize = out_shape.iter().product();
+    let a_strides = compute_broadcast_strides(sa, &out_shape);
+    let b_strides = compute_broadcast_strides(sb, &out_shape);
+    let out_strides = compute_strides(&out_shape);
+
+    let out: Vec<u8> = (0..out_len)
+        .map(|flat_idx| {
+            let a_idx = broadcast_flat_index(flat_idx, &out_shape, &out_strides, &a_strides);
+            let b_idx = broadcast_flat_index(flat_idx, &out_shape, &out_strides, &b_strides);
+            if f(a[a_idx], b[b_idx]) {
+                1u8
+            } else {
+                0u8
+            }
+        })
+        .collect();
+    Ok(out)
+}
+
+/// Compute numpy-style broadcast output shape.
+fn broadcast_shapes(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let max_len = a.len().max(b.len());
+    let mut result = Vec::with_capacity(max_len);
+    for i in 0..max_len {
+        let da = if i < max_len - a.len() {
+            1
+        } else {
+            a[i - (max_len - a.len())]
+        };
+        let db = if i < max_len - b.len() {
+            1
+        } else {
+            b[i - (max_len - b.len())]
+        };
+        result.push(da.max(db));
+    }
+    result
+}
+
+/// Compute strides for a shape (row-major).
+pub fn compute_strides(shape: &[usize]) -> Vec<usize> {
+    let mut strides = vec![1usize; shape.len()];
+    for i in (0..shape.len().saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+
+/// Compute broadcast strides: for dimensions where `src` has size 1 (broadcast),
+/// the stride is 0 (same element repeated). Otherwise, uses normal strides.
+fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> Vec<usize> {
+    let src_strides = compute_strides(src_shape);
+    let offset = out_shape.len() - src_shape.len();
+    let mut strides = vec![0usize; out_shape.len()];
+    for i in 0..src_shape.len() {
+        if src_shape[i] != 1 {
+            strides[i + offset] = src_strides[i];
+        }
+        // else: stride stays 0 (broadcast dimension)
+    }
+    strides
+}
+
+/// Convert a flat output index to a flat source index using broadcast strides.
+#[inline]
+fn broadcast_flat_index(
+    flat_idx: usize,
+    out_shape: &[usize],
+    out_strides: &[usize],
+    src_strides: &[usize],
+) -> usize {
+    let mut src_idx = 0;
+    let mut remaining = flat_idx;
+    for i in 0..out_shape.len() {
+        let coord = remaining / out_strides[i];
+        remaining %= out_strides[i];
+        src_idx += coord * src_strides[i];
+    }
+    src_idx
 }
 
 // ── MatMul ───────────────────────────────────────────────────────────────────
@@ -652,38 +853,6 @@ fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
             expected: format!("multiple of {size}"),
             actual: format!("{} floats", x.len()),
         });
-    }
-
-    // Diagnostic: detect NaN inputs or all-neg-inf rows that produce NaN output.
-    static SOFTMAX_CALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    static SOFTMAX_NAN_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let call_id = SOFTMAX_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Per-layer score magnitude diagnostic (first 22 layers).
-    if call_id < 22 {
-        // max absolute value among all finite scores (excluding mask values near -FLT_MAX).
-        let max_finite_score = x
-            .iter()
-            .filter(|&&v| v.is_finite() && v > -1e30)
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let has_pos_inf = x.contains(&f32::INFINITY);
-        let pos_inf_count = x.iter().filter(|&&v| v == f32::INFINITY).count();
-        eprintln!("[softmax-layer] call={call_id} max_finite_score={max_finite_score:.4} has_pos_inf={has_pos_inf} pos_inf_count={pos_inf_count}");
-    }
-    let total_rows = x.len() / size;
-    for (row_idx, row) in x.chunks(size).enumerate() {
-        let has_nan_in = row.iter().any(|v| v.is_nan());
-        let all_neg_inf = row.iter().all(|&v| v == f32::NEG_INFINITY);
-        let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        if has_nan_in || all_neg_inf {
-            let prev = SOFTMAX_NAN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if prev < 3 {
-                eprintln!(
-                    "[softmax-nan] call={call_id} row={row_idx}/{total_rows} size={size} has_nan_in={has_nan_in} all_neg_inf={all_neg_inf} max={max_val:.4} first4={:?}",
-                    &row[..row.len().min(4)]
-                );
-            }
-        }
     }
 
     let mut out = x.to_vec();
@@ -1026,10 +1195,14 @@ fn dispatch_isnan(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
 
 // ── Gemm ────────────────────────────────────────────────────────────────
 
-fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams) -> ExecResult<Vec<u8>> {
+fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> ExecResult<Vec<u8>> {
     let a = cast_f32(inputs[0])?;
-    let b = cast_f32(inputs[1])?;
-    let c = cast_f32(inputs[2])?;
+    let b = decode_weights(inputs[1], quant_b)?;
+    let c: std::borrow::Cow<'_, [f32]> = if inputs.len() > 2 {
+        cast_f32(inputs[2])?
+    } else {
+        std::borrow::Cow::Owned(vec![])
+    };
     // Derive m and n from actual inputs — compile-time values may be wrong.
     let k = p.k;
     let n = if k > 0 { b.len() / k } else { 0 };
@@ -1105,24 +1278,104 @@ fn dispatch_log_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
 
 // ── Embed ───────────────────────────────────────────────────────────────
 
-fn dispatch_embed(inputs: &[&[u8]], dim: usize) -> ExecResult<Vec<u8>> {
-    // inputs[0] = token_ids (i64 or u32), inputs[1] = table (f32) [vocab, dim]
+/// Dequantize Q4_0 data: each 18-byte block produces 32 f32 values.
+/// Format: 2-byte f16 scale + 16 bytes of nibble pairs (each nibble - 8).
+fn dequantize_q4_0(data: &[u8]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(data.len() / 18 * 32);
+    for block in data.chunks(18) {
+        if block.len() < 18 {
+            break;
+        }
+        let scale = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        // ggml Q4_0 layout: low nibbles → positions 0..15, high nibbles → 16..31
+        for byte_idx in 0..16 {
+            let lo = (block[2 + byte_idx] & 0x0F) as i8 - 8;
+            out.push(lo as f32 * scale);
+        }
+        for byte_idx in 0..16 {
+            let hi = (block[2 + byte_idx] >> 4) as i8 - 8;
+            out.push(hi as f32 * scale);
+        }
+    }
+    out
+}
+
+/// Dequantize Q6_K data: 256 values per super-block (210 bytes each).
+/// Layout: ql[128] + qh[64] + scales[16] + d(f16)[2] = 210 bytes.
+/// Each value is a 6-bit signed integer (-32..31) scaled by (d * scale_i).
+fn dequantize_q6_k(data: &[u8]) -> Vec<f32> {
+    const QK: usize = 256;
+    const BLOCK_SIZE: usize = QK / 2 + QK / 4 + QK / 16 + 2; // 128 + 64 + 16 + 2 = 210
+
+    let n_blocks = data.len() / BLOCK_SIZE;
+    let mut out = vec![0.0f32; n_blocks * QK];
+
+    for (bi, block_data) in data.chunks(BLOCK_SIZE).enumerate() {
+        if block_data.len() < BLOCK_SIZE {
+            break;
+        }
+        let ql = &block_data[0..128];
+        let qh = &block_data[128..192];
+        let sc = &block_data[192..208];
+        let d = f16_to_f32(u16::from_le_bytes([block_data[208], block_data[209]]));
+        let y = &mut out[bi * QK..];
+
+        // Match ggml's dequantize_row_q6_K exactly:
+        // Two passes of 128 values each, each pass processes 4 groups of 32.
+        let mut ql_off = 0usize;
+        let mut qh_off = 0usize;
+        let mut y_off = 0usize;
+        for n_pass in 0..2u8 {
+            let is = (n_pass as usize) * 8; // scale index base
+            for l in 0..32 {
+                let q1 = ((ql[ql_off + l] & 0xF) | ((qh[qh_off + l] & 3) << 4)) as i8 - 32;
+                let q2 =
+                    ((ql[ql_off + l + 32] & 0xF) | (((qh[qh_off + l] >> 2) & 3) << 4)) as i8 - 32;
+                let q3 = ((ql[ql_off + l] >> 4) | (((qh[qh_off + l] >> 4) & 3) << 4)) as i8 - 32;
+                let q4 =
+                    ((ql[ql_off + l + 32] >> 4) | (((qh[qh_off + l] >> 6) & 3) << 4)) as i8 - 32;
+                y[y_off + l] = d * sc[is] as i8 as f32 * q1 as f32;
+                y[y_off + l + 32] = d * sc[is + 2] as i8 as f32 * q2 as f32;
+                y[y_off + l + 64] = d * sc[is + 4] as i8 as f32 * q3 as f32;
+                y[y_off + l + 96] = d * sc[is + 6] as i8 as f32 * q4 as f32;
+            }
+            ql_off += 64;
+            qh_off += 32;
+            y_off += 128;
+        }
+    }
+    out
+}
+
+/// Decode bytes as f32, applying dequantization if quant != 0.
+/// quant: 0=f32, 1=Q4_0, 2=Q8_0, 3=Q6_K.
+fn decode_weights(data: &[u8], quant: u8) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
+    match quant {
+        1 => Ok(std::borrow::Cow::Owned(dequantize_q4_0(data))),
+        3 => Ok(std::borrow::Cow::Owned(dequantize_q6_k(data))),
+        // TODO: Q8_0 dequantization
+        _ => cast_f32(data),
+    }
+}
+
+fn dispatch_embed(inputs: &[&[u8]], dim: usize, quant: u8) -> ExecResult<Vec<u8>> {
+    // inputs[0] = token_ids (i64 or u32), inputs[1] = table (f32 or quantized) [vocab, dim]
     let raw = inputs[0];
-    let table = cast_f32(inputs[1])?;
+    let table_bytes = inputs[1];
+    let table = decode_weights(table_bytes, quant)?;
+
     let vocab = table.len() / dim;
 
     // Detect token ID dtype: i64 (8 bytes each) or u32 (4 bytes each).
-    // Use alignment-safe byte reads — token buffers may not be f32/i64 aligned.
     let token_ids: Vec<usize> = if raw.len().is_multiple_of(8) {
-        // Prefer i64 — matches the typical INT64 graph input dtype.
         iter_i64(raw).map(|v| v as usize).collect()
     } else {
         iter_i32(raw).map(|v| v as usize).collect()
     };
 
     let mut out = Vec::with_capacity(token_ids.len() * dim);
-    for idx in token_ids {
-        if idx >= vocab {
+    for idx in &token_ids {
+        if *idx >= vocab {
             return Err(ExecError::ShapeMismatch {
                 expected: format!("token id < {vocab}"),
                 actual: format!("token id = {idx}"),
@@ -1266,6 +1519,20 @@ fn dispatch_shape(inputs: &[&[u8]], dtype: FloatDType) -> ExecResult<Vec<u8>> {
 
 // ── Attention ───────────────────────────────────────────────────────────
 
+/// Transpose from [seq, n_heads, head_dim] to [n_heads, seq, head_dim].
+fn transpose_heads(data: &[f32], seq: usize, n_heads: usize, head_dim: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; data.len()];
+    for t in 0..seq {
+        for h in 0..n_heads {
+            for d in 0..head_dim {
+                out[h * seq * head_dim + t * head_dim + d] =
+                    data[t * n_heads * head_dim + h * head_dim + d];
+            }
+        }
+    }
+    out
+}
+
 fn dispatch_attention(
     inputs: &[&[u8]],
     head_dim: usize,
@@ -1274,13 +1541,18 @@ fn dispatch_attention(
     scale: f32,
     causal: bool,
 ) -> ExecResult<Vec<u8>> {
-    // Q: [num_q_heads, seq, head_dim], K/V: [num_kv_heads, seq, head_dim]
-    let q = cast_f32(inputs[0])?;
-    let k = cast_f32(inputs[1])?;
-    let v = cast_f32(inputs[2])?;
+    // Input Q/K/V arrive as [seq, n_heads, head_dim] (interleaved heads per token).
+    // Transpose to [n_heads, seq, head_dim] for per-head attention computation.
+    let q_raw = cast_f32(inputs[0])?;
+    let k_raw = cast_f32(inputs[1])?;
+    let v_raw = cast_f32(inputs[2])?;
 
-    let seq_q = q.len() / (num_q_heads * head_dim);
-    let seq_k = k.len() / (num_kv_heads * head_dim);
+    let seq_q = q_raw.len() / (num_q_heads * head_dim);
+    let seq_k = k_raw.len() / (num_kv_heads * head_dim);
+
+    let q = transpose_heads(&q_raw, seq_q, num_q_heads, head_dim);
+    let k = transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim);
+    let v = transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim);
     let group_size = num_q_heads / num_kv_heads.max(1);
 
     let mut out = vec![0.0f32; num_q_heads * seq_q * head_dim];
@@ -1387,7 +1659,18 @@ fn dispatch_attention(
         }
     }
 
-    Ok(f32_vec_to_bytes(out))
+    // Transpose output back from [n_heads, seq, head_dim] to [seq, n_heads, head_dim]
+    let mut final_out = vec![0.0f32; out.len()];
+    for h in 0..num_q_heads {
+        for t in 0..seq_q {
+            for d in 0..head_dim {
+                final_out[t * num_q_heads * head_dim + h * head_dim + d] =
+                    out[h * seq_q * head_dim + t * head_dim + d];
+            }
+        }
+    }
+
+    Ok(f32_vec_to_bytes(final_out))
 }
 
 // ── Dequantize ──────────────────────────────────────────────────────────
@@ -1446,7 +1729,7 @@ fn f16_to_f32(bits: u16) -> f32 {
 
 // ── RoPE ─────────────────────────────────────────────────────────────────────
 
-fn dispatch_rope(inputs: &[&[u8]], dim: usize, base: f32) -> ExecResult<Vec<u8>> {
+fn dispatch_rope(inputs: &[&[u8]], dim: usize, base: f32, n_heads: usize) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
 
     // Position input: either a single u32 start offset, or absent (sequential from 0).
@@ -1457,20 +1740,23 @@ fn dispatch_rope(inputs: &[&[u8]], dim: usize, base: f32) -> ExecResult<Vec<u8>>
     };
 
     let half = dim / 2;
+    let n_heads = n_heads.max(1);
     let mut out = x.to_vec();
-    // Apply RoPE to each chunk (token position). For full-sequence inference,
-    // each chunk gets its sequential position: start_pos, start_pos+1, ...
-    for (token_idx, chunk) in out.chunks_mut(dim).enumerate() {
-        let pos = (start_pos + token_idx) as f32;
+    // Apply RoPE to each chunk of `dim` elements. Multiple heads per token
+    // share the same position: pos = chunk_index / n_heads.
+    // Uses interleaved convention (ggml): pairs (0,1), (2,3), (4,5), ...
+    for (chunk_idx, chunk) in out.chunks_mut(dim).enumerate() {
+        let token_pos = chunk_idx / n_heads;
+        let pos = (start_pos + token_pos) as f32;
         for i in 0..half {
             let freq = 1.0 / base.powf(2.0 * i as f32 / dim as f32);
             let angle = pos * freq;
             let cos_a = angle.cos();
             let sin_a = angle.sin();
-            let x0 = chunk[i];
-            let x1 = chunk[i + half];
-            chunk[i] = x0 * cos_a - x1 * sin_a;
-            chunk[i + half] = x0 * sin_a + x1 * cos_a;
+            let x0 = chunk[2 * i];
+            let x1 = chunk[2 * i + 1];
+            chunk[2 * i] = x0 * cos_a - x1 * sin_a;
+            chunk[2 * i + 1] = x0 * sin_a + x1 * cos_a;
         }
     }
     Ok(f32_vec_to_bytes(out))
@@ -1600,15 +1886,6 @@ fn broadcast_to(src: &[f32], n_src: usize, target_shape: &[usize]) -> Vec<f32> {
         out.push(src[src_flat]);
     }
     out
-}
-
-/// Compute row-major strides from a shape.
-pub fn compute_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1usize; shape.len()];
-    for i in (0..shape.len().saturating_sub(1)).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
 }
 
 // Shape inference functions (infer_output_shape, infer_custom_output_shape)

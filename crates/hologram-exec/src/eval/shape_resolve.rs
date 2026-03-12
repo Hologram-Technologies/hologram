@@ -220,7 +220,7 @@ fn validate_against_compiled(mut computed: Vec<usize>, compiled: &[usize]) -> Ve
 /// Dispatch to per-op shape resolvers for Custom-spec ops.
 fn resolve_custom(op: &FloatOp, ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
     match op {
-        FloatOp::Gather { dim, .. } | FloatOp::Embed { dim } => resolve_gather(ctx, *dim),
+        FloatOp::Gather { dim, .. } | FloatOp::Embed { dim, .. } => resolve_gather(ctx, *dim),
         FloatOp::Reshape => resolve_reshape(ctx),
         FloatOp::Transpose { perm, ndim } => resolve_transpose(ctx, perm, *ndim),
         FloatOp::MatMul { k, .. } => resolve_matmul(ctx, *k),

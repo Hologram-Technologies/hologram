@@ -58,12 +58,28 @@ impl KvStore {
     /// MatMulLut ops resolve their quantized weights from constants.
     /// Pass a `CustomOpRegistry` to enable custom op dispatch.
     /// `weights` is the raw weight blob for resolving `Deferred` constants.
+    /// `input_shapes` enables N-D broadcasting for binary float ops when provided.
     pub fn dispatch_with_constants(
         op: &GraphOp,
         inputs: &[&[u8]],
         constants: &ConstantStore,
         registry: Option<&CustomOpRegistry>,
         weights: &[u8],
+    ) -> ExecResult<Vec<u8>> {
+        Self::dispatch_with_shapes(op, inputs, constants, registry, weights, &[])
+    }
+
+    /// Dispatch with shape information for N-D broadcasting support.
+    ///
+    /// When `input_shapes` is non-empty and the op is a binary float op,
+    /// uses proper numpy-style broadcasting instead of cycling.
+    pub fn dispatch_with_shapes(
+        op: &GraphOp,
+        inputs: &[&[u8]],
+        constants: &ConstantStore,
+        registry: Option<&CustomOpRegistry>,
+        weights: &[u8],
+        input_shapes: &[Vec<usize>],
     ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
@@ -88,7 +104,13 @@ impl KvStore {
             GraphOp::BatchMatMulLut8(cid) => {
                 dispatch_lut_gemm_8(inputs[0], *cid, constants, weights)
             }
-            GraphOp::Float(ref f) => crate::float_dispatch::dispatch_float(f, inputs),
+            GraphOp::Float(ref f) => {
+                if input_shapes.len() >= 2 {
+                    crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
+                } else {
+                    crate::float_dispatch::dispatch_float(f, inputs)
+                }
+            }
             GraphOp::FusedFloatChain(ref chain) => {
                 crate::float_dispatch::dispatch_fused_chain(chain, inputs)
             }

@@ -274,6 +274,98 @@ impl KvExecutor {
 
         extract_named_outputs(sg, &mut arena)
     }
+
+    /// Execute and capture all intermediate node buffers + shapes.
+    ///
+    /// Returns both the normal `GraphOutputs` and a snapshot of every
+    /// intermediate buffer in the arena. Intended for conformance testing
+    /// only — clones all intermediate data.
+    #[cfg(feature = "profile")]
+    pub fn execute_with_intermediates(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        weights: &[u8],
+    ) -> ExecResult<IntermediateCapture> {
+        let compiled_dtypes = sg.node_dtypes_map();
+        let mut arena = seed_arena(sg, weights, &compiled_dtypes)?;
+        let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
+
+        let dctx = DispatchContext {
+            node_map: build_node_map(sg),
+            compiled_shapes: sg.node_shapes_map(),
+            compiled_dtypes,
+            inputs,
+            constants: &sg.constants,
+            registry: None,
+            weights,
+        };
+
+        let max_level_size = schedule
+            .levels
+            .iter()
+            .map(|l| l.node_ids.len())
+            .max()
+            .unwrap_or(0);
+        let mut results_buf: Vec<(NodeId, Vec<u8>, Vec<usize>)> =
+            Vec::with_capacity(max_level_size);
+
+        let mut prof = crate::profile::PerfProfile::new();
+        prof.start_total();
+
+        for (_i, level) in schedule.levels.iter().enumerate() {
+            let shape_start = std::time::Instant::now();
+            super::shape_propagate::propagate_level_shapes(
+                level,
+                &dctx.node_map,
+                &arena,
+                &mut shape_map,
+                &dctx.compiled_shapes,
+                &dctx.compiled_dtypes,
+            );
+            let shape_elapsed = shape_start.elapsed();
+            let dispatch_start = std::time::Instant::now();
+
+            let count = dispatch_level(
+                level,
+                &dctx,
+                &mut arena,
+                &mut shape_map,
+                &mut results_buf,
+                &mut prof,
+            )?;
+            prof.record_level(shape_elapsed, dispatch_start.elapsed(), count);
+        }
+
+        prof.stop_total();
+        prof.print_summary();
+
+        // Snapshot all intermediates before extracting outputs.
+        let node_buffers = arena.snapshot();
+        let node_shapes = shape_map.snapshot();
+
+        let outputs = extract_named_outputs(sg, &mut arena)?;
+
+        Ok(IntermediateCapture {
+            node_buffers,
+            node_shapes,
+            outputs,
+        })
+    }
+}
+
+/// Captured intermediate state from graph execution.
+///
+/// Contains all node buffers and shapes at the end of execution,
+/// plus the normal graph outputs. Used for conformance testing.
+#[cfg(feature = "profile")]
+pub struct IntermediateCapture {
+    /// All node buffers: `NodeId → (data_bytes, elem_size)`.
+    pub node_buffers: std::collections::HashMap<NodeId, (Vec<u8>, usize)>,
+    /// All node shapes: `NodeId → shape_dims`.
+    pub node_shapes: std::collections::HashMap<NodeId, Vec<usize>>,
+    /// Normal graph outputs.
+    pub outputs: GraphOutputs,
 }
 
 /// Build a `NodeId → &Node` lookup map for the graph.
@@ -658,38 +750,7 @@ fn dispatch_level(
             continue;
         }
 
-        // Trace nodes near the first attention block
-        if node_id.index() >= 320 && node_id.index() <= 340 {
-            let sm = shape_map
-                .get(node_id)
-                .map(|s| format!("{s:?}"))
-                .unwrap_or("None".into());
-            let cs = dctx
-                .compiled_shapes
-                .get(&node_id)
-                .map(|s| format!("{s:?}"))
-                .unwrap_or("None".into());
-            let inp_srcs: Vec<String> = node
-                .inputs
-                .iter()
-                .map(|s| match s.source {
-                    InputSource::Node(id) => {
-                        let sh = shape_map
-                            .get(id)
-                            .map(|s| format!("{s:?}"))
-                            .unwrap_or("?".into());
-                        let bsz = arena.get(id).map(|b| b.len()).unwrap_or(0);
-                        format!("{id:?}(sh={sh},{}B)", bsz)
-                    }
-                    other => format!("{other:?}"),
-                })
-                .collect();
-            eprintln!(
-                "[trace] {node_id:?} {:?}: sm={sm} cs={cs} inputs=[{}]",
-                node.op,
-                inp_srcs.join(", ")
-            );
-        }
+        // Trace disabled for now (was: nodes 320..340).
 
         let input_refs = gather_inputs(node, arena, dctx.inputs)?;
 
@@ -1071,12 +1132,13 @@ fn dispatch_level(
                 let resolved_op =
                     resolve_dynamic_sizes(&node.op, &input_shapes, &input_refs, input0_es);
                 let dispatch_op = resolved_op.as_ref().unwrap_or(&node.op);
-                let result = KvStore::dispatch_with_constants(
+                let result = KvStore::dispatch_with_shapes(
                     dispatch_op,
                     &input_refs,
                     dctx.constants,
                     dctx.registry,
                     dctx.weights,
+                    &input_shapes,
                 )
                 .map_err(|e| ExecError::ShapeMismatch {
                     expected: format!("node {node_id:?} ({:?})", node.op),

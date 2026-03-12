@@ -127,6 +127,24 @@ impl<'a> BufferArena<'a> {
         self.buffers.clear();
         self.elem_sizes.clear();
     }
+
+    /// Snapshot all current buffers as owned copies.
+    ///
+    /// Returns `(data, elem_size)` for each node. This is non-destructive:
+    /// buffers remain available in the arena after snapshotting.
+    ///
+    /// Intended for conformance testing / debugging only — clones all
+    /// intermediate results. Feature-gated behind `profile`.
+    #[cfg(feature = "profile")]
+    pub fn snapshot(&self) -> HashMap<NodeId, (Vec<u8>, usize)> {
+        self.buffers
+            .iter()
+            .map(|(id, cow)| {
+                let es = self.elem_sizes.get(id).copied().unwrap_or(4);
+                (*id, (cow.to_vec(), es))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
