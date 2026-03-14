@@ -503,12 +503,12 @@ fn run_generation(
                 // Extract logits at the last real-token position.
                 let offset = target_pos * bytes_per_pos;
                 let logits_slice = &logit_data[offset..offset + bytes_per_pos];
-                TokenizerSection::argmax_f32(logits_slice)
+                argmax_with_repetition_penalty(logits_slice, &token_ids)
             } else if logit_data.len() >= bytes_per_pos {
                 let last_logits = &logit_data[logit_data.len() - bytes_per_pos..];
-                TokenizerSection::argmax_f32(last_logits)
+                argmax_with_repetition_penalty(last_logits, &token_ids)
             } else {
-                TokenizerSection::argmax_f32(logit_data)
+                argmax_with_repetition_penalty(logit_data, &token_ids)
             };
 
         let next_token = match next_token {
@@ -550,6 +550,47 @@ fn run_generation(
         format_bytes(plan.weights().len() as u64),
     );
     Ok(())
+}
+
+/// Argmax over raw f32 logit bytes with repetition penalty.
+///
+/// Applies a standard repetition penalty (Keskar et al., 2019) to any token
+/// that already appears in `generated`. Tokens with positive logits are divided
+/// by the penalty; tokens with negative logits are multiplied by it. This
+/// discourages the model from looping on previously generated tokens.
+///
+/// Penalty of 1.0 is equivalent to plain argmax. Recommended: 1.2–1.4.
+fn argmax_with_repetition_penalty(logit_bytes: &[u8], generated: &[u32]) -> Option<u32> {
+    const PENALTY: f32 = 1.3;
+    // How far back to look for repeated tokens.
+    const WINDOW: usize = 64;
+
+    if !logit_bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut logits: Vec<f32> = logit_bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().expect("chunk is 4 bytes")))
+        .collect();
+
+    let start = generated.len().saturating_sub(WINDOW);
+    for &tok in &generated[start..] {
+        let idx = tok as usize;
+        if idx < logits.len() {
+            if logits[idx] > 0.0 {
+                logits[idx] /= PENALTY;
+            } else {
+                logits[idx] *= PENALTY;
+            }
+        }
+    }
+
+    logits
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.is_finite())
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i as u32)
 }
 
 /// Resolve the dtype of a named input port from the LayerHeader.

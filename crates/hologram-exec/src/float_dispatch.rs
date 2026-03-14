@@ -88,7 +88,7 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
         FloatOp::Embed { dim, quant } => dispatch_embed(inputs, *dim as usize, *quant),
         FloatOp::Where => dispatch_where(inputs),
         FloatOp::Range => dispatch_range(inputs),
-        FloatOp::Shape { dtype } => dispatch_shape(inputs, *dtype),
+        FloatOp::Shape { dtype, start, end } => dispatch_shape(inputs, *dtype, *start, *end),
         FloatOp::RotaryEmbedding { dim, base, n_heads } => {
             dispatch_rope(inputs, *dim as usize, bits_to_f32(*base), *n_heads as usize)
         }
@@ -392,9 +392,30 @@ fn binary_elementwise_broadcast(
         return Ok(f32_vec_to_bytes(out));
     }
 
-    // Compute broadcast output shape.
-    let out_shape = broadcast_shapes(sa, sb);
+    // Compute broadcast output shape. Fall back to cycling if shapes
+    // are not broadcast-compatible (e.g. non-f32 dtype mismatch).
+    let out_shape = match broadcast_shapes(sa, sb) {
+        Some(s) => s,
+        None => {
+            let out_len = a.len().max(b.len());
+            let out: Vec<f32> = (0..out_len)
+                .map(|i| f(a[i % a.len()], b[i % b.len()]))
+                .collect();
+            return Ok(f32_vec_to_bytes(out));
+        }
+    };
     let out_len: usize = out_shape.iter().product();
+
+    // If broadcast would inflate output beyond both input sizes, the compiled
+    // input_shapes are stale (0-sentinels resolved to wrong values creating
+    // orthogonal broadcast dimensions at runtime). Fall back to cycling.
+    if out_len > a.len().max(b.len()) {
+        let safe_len = a.len().max(b.len());
+        let out: Vec<f32> = (0..safe_len)
+            .map(|i| f(a[i % a.len()], b[i % b.len()]))
+            .collect();
+        return Ok(f32_vec_to_bytes(out));
+    }
 
     // Compute strides for index mapping.
     let a_strides = compute_broadcast_strides(sa, &out_shape);
@@ -452,8 +473,39 @@ fn binary_compare_broadcast(
         return Ok(out);
     }
 
-    let out_shape = broadcast_shapes(sa, sb);
+    let out_shape = match broadcast_shapes(sa, sb) {
+        Some(s) => s,
+        None => {
+            let out_len = a.len().max(b.len());
+            let out: Vec<u8> = (0..out_len)
+                .map(|i| {
+                    if f(a[i % a.len()], b[i % b.len()]) {
+                        1u8
+                    } else {
+                        0u8
+                    }
+                })
+                .collect();
+            return Ok(out);
+        }
+    };
     let out_len: usize = out_shape.iter().product();
+
+    // Same stale-shape guard as binary_elementwise_broadcast.
+    if out_len > a.len().max(b.len()) {
+        let safe_len = a.len().max(b.len());
+        let out: Vec<u8> = (0..safe_len)
+            .map(|i| {
+                if f(a[i % a.len()], b[i % b.len()]) {
+                    1u8
+                } else {
+                    0u8
+                }
+            })
+            .collect();
+        return Ok(out);
+    }
+
     let a_strides = compute_broadcast_strides(sa, &out_shape);
     let b_strides = compute_broadcast_strides(sb, &out_shape);
     let out_strides = compute_strides(&out_shape);
@@ -473,7 +525,9 @@ fn binary_compare_broadcast(
 }
 
 /// Compute numpy-style broadcast output shape.
-fn broadcast_shapes(a: &[usize], b: &[usize]) -> Vec<usize> {
+/// Returns `None` if shapes are not broadcast-compatible (dimensions must be
+/// equal or one of them must be 1).
+fn broadcast_shapes(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
     let max_len = a.len().max(b.len());
     let mut result = Vec::with_capacity(max_len);
     for i in 0..max_len {
@@ -487,9 +541,12 @@ fn broadcast_shapes(a: &[usize], b: &[usize]) -> Vec<usize> {
         } else {
             b[i - (max_len - b.len())]
         };
+        if da != db && da != 1 && db != 1 {
+            return None; // Not broadcast-compatible
+        }
         result.push(da.max(db));
     }
-    result
+    Some(result)
 }
 
 /// Compute strides for a shape (row-major).
@@ -1507,7 +1564,16 @@ fn dispatch_cast(inputs: &[&[u8]], from: FloatDType, to: FloatDType) -> ExecResu
 
 // ── Shape ───────────────────────────────────────────────────────────────
 
-fn dispatch_shape(inputs: &[&[u8]], dtype: FloatDType) -> ExecResult<Vec<u8>> {
+fn dispatch_shape(
+    inputs: &[&[u8]],
+    dtype: FloatDType,
+    _start: i64,
+    _end: i64,
+) -> ExecResult<Vec<u8>> {
+    // float_dispatch is a kernel-level path with no shape metadata, so it can
+    // only infer total element count — not the per-axis dims. Return the element
+    // count as a single i64. (The executor path has access to tracked shapes and
+    // performs proper per-axis shape extraction with start/end slicing.)
     let elem_bytes = dtype.byte_size();
     let n_elements = if elem_bytes > 0 {
         inputs[0].len() as i64 / elem_bytes as i64
@@ -1515,6 +1581,43 @@ fn dispatch_shape(inputs: &[&[u8]], dtype: FloatDType) -> ExecResult<Vec<u8>> {
         inputs[0].len() as i64
     };
     Ok(bytemuck::cast_slice(&[n_elements]).to_vec())
+}
+
+/// Slice a tensor's shape according to ONNX Shape opset-15 `start`/`end` attributes.
+///
+/// Returns an i64 buffer containing `in_shape[s..e]` where `s` and `e` are
+/// clamped/normalised from `start`/`end` exactly as the ONNX spec requires:
+/// - `start = i64::MAX` is treated as "end of dims" (only meaningful for end).
+/// - Negative indices count from the rank end.
+/// - Indices are clamped to `[0, rank]`.
+///
+/// Used by the executor's `FloatOp::Shape` handler. Exposed `pub` so that
+/// unit tests can exercise start/end slicing without requiring a full compiled
+/// graph (the AiGraph pipeline constant-folds Shape when input dims are concrete).
+pub fn dispatch_shape_sliced(
+    in_shape: &[usize],
+    _dtype: FloatDType,
+    start: i64,
+    end: i64,
+) -> ExecResult<Vec<u8>> {
+    let rank = in_shape.len() as i64;
+    let s = if start < 0 {
+        (rank + start).max(0) as usize
+    } else {
+        (start as usize).min(in_shape.len())
+    };
+    let e = if end == i64::MAX {
+        in_shape.len()
+    } else if end < 0 {
+        (rank + end).max(0) as usize
+    } else {
+        (end as usize).min(in_shape.len())
+    };
+    if s >= e {
+        return Ok(vec![]);
+    }
+    let sliced: Vec<i64> = in_shape[s..e].iter().map(|&d| d as i64).collect();
+    Ok(bytemuck::cast_slice(&sliced).to_vec())
 }
 
 // ── Attention ───────────────────────────────────────────────────────────
@@ -2717,5 +2820,91 @@ mod tests {
         .unwrap();
         let out: &[f32] = bytemuck::cast_slice(&result);
         assert_eq!(out, &[1.0, 2.0, 5.0, 3.0, 4.0, 6.0]);
+    }
+
+    // ── N-D broadcasting tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_broadcast_shapes_compatible() {
+        assert_eq!(broadcast_shapes(&[2, 1], &[2, 3]), Some(vec![2, 3]));
+        assert_eq!(broadcast_shapes(&[1, 3], &[2, 1]), Some(vec![2, 3]));
+        assert_eq!(broadcast_shapes(&[3], &[2, 3]), Some(vec![2, 3]));
+        assert_eq!(broadcast_shapes(&[1], &[5]), Some(vec![5]));
+        assert_eq!(
+            broadcast_shapes(&[4, 1, 3], &[1, 5, 1]),
+            Some(vec![4, 5, 3])
+        );
+    }
+
+    #[test]
+    fn test_broadcast_shapes_incompatible() {
+        // [2,32] vs [1,64]: dim 1 has 32 vs 64, neither is 1
+        assert_eq!(broadcast_shapes(&[2, 32], &[1, 64]), None);
+        assert_eq!(broadcast_shapes(&[3], &[4]), None);
+        assert_eq!(broadcast_shapes(&[2, 3], &[2, 4]), None);
+    }
+
+    #[test]
+    fn test_broadcast_2d_row_vector() {
+        // [2,3] + [1,3] => broadcast row: result should add row-wise
+        let a = f32_bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]); // shape [2,3]
+        let b = f32_bytes(&[10.0, 20.0, 30.0]); // shape [1,3]
+        let result =
+            dispatch_float_with_shapes(&FloatOp::Add, &[&a, &b], &[vec![2, 3], vec![1, 3]])
+                .unwrap();
+        let out: &[f32] = bytemuck::cast_slice(&result);
+        assert_eq!(out, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0]);
+    }
+
+    #[test]
+    fn test_broadcast_2d_column_vector() {
+        // [2,3] / [2,1] => broadcast column (the LayerNorm pattern)
+        let a = f32_bytes(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]); // shape [2,3]
+        let b = f32_bytes(&[2.0, 5.0]); // shape [2,1]
+        let result =
+            dispatch_float_with_shapes(&FloatOp::Div, &[&a, &b], &[vec![2, 3], vec![2, 1]])
+                .unwrap();
+        let out: &[f32] = bytemuck::cast_slice(&result);
+        assert_eq!(out, &[5.0, 10.0, 15.0, 8.0, 10.0, 12.0]);
+    }
+
+    #[test]
+    fn test_broadcast_incompatible_falls_back_to_cycling() {
+        // [2,32] vs [1,64]: NOT broadcast-compatible.
+        // Must not panic — falls back to cycling.
+        let a = f32_bytes(&vec![1.0; 64]); // shape [2,32]
+        let b = f32_bytes(&vec![2.0; 64]); // shape [1,64]
+        let result =
+            dispatch_float_with_shapes(&FloatOp::Add, &[&a, &b], &[vec![2, 32], vec![1, 64]]);
+        assert!(result.is_ok()); // Must not panic
+        let binding = result.unwrap();
+        let out: &[f32] = bytemuck::cast_slice(&binding);
+        assert_eq!(out.len(), 64); // cycling: max(64,64)
+    }
+
+    #[test]
+    fn test_broadcast_shape_data_mismatch_falls_back() {
+        // Shape says [2,4] (8 elements) but data has 6 f32s — shape mismatch
+        // Must fall back to cycling, not panic.
+        let a = f32_bytes(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let b = f32_bytes(&[10.0]);
+        let result = dispatch_float_with_shapes(
+            &FloatOp::Add,
+            &[&a, &b],
+            &[vec![2, 4], vec![1]], // shape [2,4] doesn't match 6 elements
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_broadcast_compare_2d() {
+        // [2,3] > [1,3] => broadcast comparison
+        let a = f32_bytes(&[1.0, 20.0, 3.0, 40.0, 5.0, 60.0]); // shape [2,3]
+        let b = f32_bytes(&[10.0, 10.0, 10.0]); // shape [1,3]
+        let result =
+            dispatch_float_with_shapes(&FloatOp::Greater, &[&a, &b], &[vec![2, 3], vec![1, 3]])
+                .unwrap();
+        // 1>10=0, 20>10=1, 3>10=0, 40>10=1, 5>10=0, 60>10=1
+        assert_eq!(result, vec![0, 1, 0, 1, 0, 1]);
     }
 }

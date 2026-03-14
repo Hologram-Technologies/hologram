@@ -78,10 +78,11 @@ site-deploy: site-build
 install:
     cd site && pnpm install
 
-# Install optional dependencies (WASM tooling, benchmark visualization)
+# Install optional dependencies (WASM tooling, benchmark visualization, deployment)
 install-optional:
     cargo install wasm-pack wasm-bindgen-cli
     rustup target add wasm32-unknown-unknown
+    npm install -g wrangler
 
 # Build WASM module for the demo page (uses rustup toolchain to find wasm32 target)
 wasm-demo:

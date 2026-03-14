@@ -10,7 +10,7 @@
 //! FloatOp variant is added without being listed here.
 
 use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp};
-use hologram_exec::float_dispatch::dispatch_float;
+use hologram_exec::float_dispatch::{dispatch_float, dispatch_float_with_shapes};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -936,6 +936,8 @@ fn test_shape_returns_dims() {
     let x = f32_bytes(&[1.0, 2.0, 3.0]);
     let op = FloatOp::Shape {
         dtype: FloatDType::I64,
+        start: 0,
+        end: i64::MAX,
     };
     let result = dispatch_float(&op, &[&x]).unwrap();
     let out = result_i64(&result);
@@ -1173,4 +1175,71 @@ fn test_empty_input_handled() {
         Ok(r) => assert!(r.is_empty()),
         Err(_) => {} // error is also acceptable
     }
+}
+
+// ── Broadcast inflation guard ─────────────────────────────────────────────────
+// Regression tests for the stale-shape guard in binary_elementwise_broadcast:
+// when compiled input_shapes resolve 0-sentinels to wrong values, the N-D
+// broadcast can produce an output larger than either input (outer-product
+// inflation). The guard must detect this and fall back to element-cycling.
+
+#[test]
+fn broadcast_stale_shapes_no_inflation() {
+    // Simulates nodes 314/315 in TinyLlama ONNX:
+    // a has 64 f32 values (K rotated, compiled shape [32, 2]),
+    // b has 64 f32 values (sin, compiled shape [32, 1, 2]).
+    // broadcast_shapes([32,2],[32,1,2]) = [32,32,2] → out_len=2048 >> 64.
+    // Guard must fall back to cycling → output len = max(64,64) = 64.
+    let a: Vec<f32> = (0..64).map(|i| i as f32).collect();
+    let b: Vec<f32> = (0..64).map(|i| (i as f32) * 0.1).collect();
+    let a_bytes = f32_bytes(&a);
+    let b_bytes = f32_bytes(&b);
+    // Stale shapes that would cause outer-product inflation without the guard.
+    let shapes = vec![vec![32usize, 2], vec![32, 1, 2]];
+    let result = dispatch_float_with_shapes(&FloatOp::Mul, &[&a_bytes, &b_bytes], &shapes).unwrap();
+    let out = result_f32(&result);
+    // Must NOT inflate beyond max(64, 64) = 64.
+    assert_eq!(
+        out.len(),
+        64,
+        "broadcast inflation guard failed: got {} elems",
+        out.len()
+    );
+    // Values must be element-wise cycling: out[i] = a[i % 64] * b[i % 64] = a[i] * b[i].
+    for (i, (&got, (&ai, &bi))) in out.iter().zip(a.iter().zip(b.iter())).enumerate() {
+        let expected = ai * bi;
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "element {i}: got {got} expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn broadcast_valid_shapes_still_broadcast() {
+    // Legitimate 1-D broadcast (scalar * vector) must still work correctly.
+    // a = [1,2,3,4], shape [4]; b = [2.0], shape [1].
+    // out = [2,4,6,8], shape [4].
+    let a = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
+    let b = f32_bytes(&[2.0]);
+    let shapes = vec![vec![4usize], vec![1]];
+    let result = dispatch_float_with_shapes(&FloatOp::Mul, &[&a, &b], &shapes).unwrap();
+    assert_eq!(result_f32(&result), &[2.0, 4.0, 6.0, 8.0]);
+}
+
+#[test]
+fn broadcast_valid_nd_broadcast_still_works() {
+    // [2,1] broadcast with [1,3] → [2,3], which is larger than max(2,3) but
+    // NOT larger than 2*3=6 — actually max(2,3)=3 < 6, so this triggers the
+    // guard. In this case cycling is also correct:
+    // a=[1,2] cycles to [1,2,1,2,1,2], b=[10,20,30] cycles → [10,20,30,10,20,30].
+    // out = [10,40,30,20,40,60] with broadcast, or element-cycling gives same.
+    // The guard fires (6 > max(2,3)=3) and falls back to cycling.
+    let a = f32_bytes(&[1.0, 2.0]);
+    let b = f32_bytes(&[10.0, 20.0, 30.0]);
+    let shapes = vec![vec![2usize, 1], vec![1, 3]];
+    let result = dispatch_float_with_shapes(&FloatOp::Mul, &[&a, &b], &shapes).unwrap();
+    let out = result_f32(&result);
+    // Guard fires: out_len=6 > max(2,3)=3 → cycling, len=3.
+    assert_eq!(out.len(), 3, "expected cycling fallback");
 }

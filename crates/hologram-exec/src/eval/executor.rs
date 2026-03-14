@@ -750,8 +750,6 @@ fn dispatch_level(
             continue;
         }
 
-        // Trace disabled for now (was: nodes 320..340).
-
         let input_refs = gather_inputs(node, arena, dctx.inputs)?;
 
         // Gather input shapes for shape-aware ops.
@@ -780,6 +778,21 @@ fn dispatch_level(
                         return resolved;
                     }
                 }
+                // Validate that the tracked shape actually matches the buffer.
+                // If not (e.g. shape was incorrectly corrected by correct_stale_shape),
+                // try the compiled shape with 0-sentinels resolved — which preserves
+                // the true dimensionality (n_heads, head_dim) from the compiler.
+                let n_elems = if es > 0 { buf.len() / es } else { 0 };
+                let raw_prod: usize = raw.iter().product();
+                if n_elems > 0 && raw_prod != n_elems {
+                    if let Some(compiled) = dep_id.and_then(|id| dctx.compiled_shapes.get(&id)) {
+                        let resolved = resolve_compiled_shape(compiled, buf.len(), &[], es);
+                        let resolved_prod: usize = resolved.iter().product();
+                        if !resolved.contains(&0) && resolved_prod == n_elems {
+                            return resolved;
+                        }
+                    }
+                }
                 raw
             })
             .collect();
@@ -791,16 +804,18 @@ fn dispatch_level(
         let op_name = crate::profile::op_name(&node.op);
 
         let (result, out_shape) = match &node.op {
-            GraphOp::Float(FloatOp::Shape { dtype }) => {
-                // Return the input's logical shape as an i64 tensor.
-                // dtype = the input tensor's dtype (not output — output is always I64).
+            GraphOp::Float(FloatOp::Shape { dtype, start, end }) => {
+                // Return (a slice of) the input's logical shape as an i64 tensor.
+                // `start`/`end` implement ONNX opset-15 Shape attributes — they
+                // restrict the output to `dims[start..end]`.  Defaults: start=0,
+                // end=i64::MAX (all dims).  Negative values count from the rank end.
                 let in_shape = &input_shapes[0];
                 let elem_size = dtype.byte_size().max(1);
                 let in_bytes = input_refs[0].len();
 
                 // Resolve input shape: handle 0-sentinels and wrong-dtype inference.
                 let total_elems = in_bytes / elem_size;
-                let shape_i64: Vec<i64> = if !in_shape.is_empty()
+                let mut shape_i64: Vec<i64> = if !in_shape.is_empty()
                     && !in_shape.contains(&0)
                     && in_shape.iter().product::<usize>() == total_elems
                 {
@@ -825,6 +840,23 @@ fn dispatch_level(
                         vec![total_elems as i64]
                     }
                 };
+
+                // Apply start/end slicing (ONNX opset 15 Shape attributes).
+                let rank = shape_i64.len() as i64;
+                let s = if *start < 0 {
+                    (rank + start).max(0) as usize
+                } else {
+                    (*start as usize).min(shape_i64.len())
+                };
+                let e = if *end == i64::MAX {
+                    shape_i64.len()
+                } else if *end < 0 {
+                    (rank + end).max(0) as usize
+                } else {
+                    (*end as usize).min(shape_i64.len())
+                };
+                shape_i64 = shape_i64[s..e].to_vec();
+
                 let data: Vec<u8> = bytemuck::cast_slice(&shape_i64).to_vec();
                 let out_shape = vec![shape_i64.len()];
                 (data, out_shape)
@@ -1179,71 +1211,6 @@ fn dispatch_level(
         #[cfg(feature = "profile")]
         prof.record_op(op_name, op_start.elapsed(), result.len());
 
-        // NaN detector: find first op that produces NaN in f32 output.
-        {
-            use std::sync::atomic::{AtomicBool, Ordering};
-            static NAN_FOUND: AtomicBool = AtomicBool::new(false);
-            if !NAN_FOUND.load(Ordering::Relaxed) && result.len() >= 4 && result.len() % 4 == 0 {
-                let floats: &[f32] = bytemuck::cast_slice(&result);
-                if floats.iter().any(|v| v.is_nan()) {
-                    NAN_FOUND.store(true, Ordering::Relaxed);
-                    let nan_count = floats.iter().filter(|v| v.is_nan()).count();
-                    let first_nan_idx = floats.iter().position(|v| v.is_nan()).unwrap_or(0);
-                    eprintln!(
-                        "[first-nan] node={node_id:?} op={:?} nan={nan_count}/{} first_nan_idx={first_nan_idx}",
-                        node.op, floats.len()
-                    );
-                    // Also check inputs for NaN to find where NaN originates.
-                    for (i, buf) in input_refs.iter().enumerate() {
-                        if buf.len() >= 4 && buf.len() % 4 == 0 {
-                            let inp: &[f32] = bytemuck::cast_slice(buf);
-                            let inp_nan = inp.iter().filter(|v| v.is_nan()).count();
-                            let inp_pos_inf = inp.iter().filter(|&&v| v == f32::INFINITY).count();
-                            let inp_neg_inf =
-                                inp.iter().filter(|&&v| v == f32::NEG_INFINITY).count();
-                            let inp_src = node
-                                .inputs
-                                .get(i)
-                                .map(|s| format!("{:?}", s.source))
-                                .unwrap_or("?".into());
-                            let first8_raw: Vec<u32> = buf
-                                .chunks(4)
-                                .take(8)
-                                .map(|b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])))
-                                .collect();
-                            eprintln!("  input[{i}] src={inp_src} nan={inp_nan}/{} +inf={inp_pos_inf} -inf={inp_neg_inf} first8_raw={first8_raw:08x?}", inp.len());
-                            // For Softmax: find first row (size=2048) that has +inf or all-neg-inf.
-                            if let GraphOp::Float(FloatOp::Softmax { size }) = &node.op {
-                                let sz = *size as usize;
-                                if sz > 0 {
-                                    let mut nan_rows = 0u32;
-                                    let mut pos_inf_rows = 0u32;
-                                    for (row_idx, row) in inp.chunks(sz).enumerate() {
-                                        let has_pos_inf = row.contains(&f32::INFINITY);
-                                        let all_neg_inf =
-                                            row.iter().all(|&v| v == f32::NEG_INFINITY);
-                                        if has_pos_inf {
-                                            if pos_inf_rows < 3 {
-                                                let max_val = row
-                                                    .iter()
-                                                    .cloned()
-                                                    .fold(f32::NEG_INFINITY, f32::max);
-                                                eprintln!("    row[{row_idx}] has +inf: max={max_val:.4} first4={:.4?}", &row[..row.len().min(4)]);
-                                            }
-                                            pos_inf_rows += 1;
-                                        }
-                                        if all_neg_inf {
-                                            nan_rows += 1;
-                                        }
-                                    }
-                                    eprintln!("    softmax_rows_with_pos_inf={pos_inf_rows} softmax_rows_all_neg_inf={nan_rows}");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
         results.push((node_id, result, out_shape));
     }
 

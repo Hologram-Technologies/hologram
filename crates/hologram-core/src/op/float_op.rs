@@ -232,8 +232,18 @@ pub enum FloatOp {
     /// Generate range [start, limit) with step. Inputs: [start, limit, delta (f32)].
     Range,
 
-    /// Extract shape as i64 tensor (returns [n_elements] based on dtype byte size).
-    Shape { dtype: FloatDType },
+    /// Extract shape as i64 tensor.
+    ///
+    /// Opset 15+ `start`/`end` attributes slice the output to `dims[start..end]`.
+    /// Use `start = 0` and `end = i64::MAX` to return all dims (no-op defaults).
+    /// Negative values count from the end of the shape (-1 = last dim).
+    Shape {
+        dtype: FloatDType,
+        /// First dim to include (inclusive). 0 = no start clamp.
+        start: i64,
+        /// One past the last dim to include. `i64::MAX` = no end clamp.
+        end: i64,
+    },
 
     /// Contiguous slice along a single axis.
     /// Extracts elements [start..end) along the specified axis.
