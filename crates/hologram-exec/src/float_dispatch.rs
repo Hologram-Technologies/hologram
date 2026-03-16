@@ -491,21 +491,6 @@ fn binary_compare_broadcast(
     };
     let out_len: usize = out_shape.iter().product();
 
-    // Same stale-shape guard as binary_elementwise_broadcast.
-    if out_len > a.len().max(b.len()) {
-        let safe_len = a.len().max(b.len());
-        let out: Vec<u8> = (0..safe_len)
-            .map(|i| {
-                if f(a[i % a.len()], b[i % b.len()]) {
-                    1u8
-                } else {
-                    0u8
-                }
-            })
-            .collect();
-        return Ok(out);
-    }
-
     let a_strides = compute_broadcast_strides(sa, &out_shape);
     let b_strides = compute_broadcast_strides(sb, &out_shape);
     let out_strides = compute_strides(&out_shape);

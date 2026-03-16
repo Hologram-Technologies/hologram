@@ -6,22 +6,31 @@ depends_on:
 crates:
 - name: hologram-archive
   public: true
+  prism_space: kernel
 - name: hologram-async
   public: true
+  prism_space: bridge
 - name: hologram-bench
   public: true
+  prism_space: user
 - name: hologram-cli
   public: true
+  prism_space: user
 - name: hologram-compiler
   public: true
+  prism_space: bridge
 - name: hologram-core
   public: true
+  prism_space: kernel
 - name: hologram-exec
   public: true
+  prism_space: bridge
 - name: hologram-ffi
   public: true
+  prism_space: user
 - name: hologram-graph
   public: true
+  prism_space: kernel
 registry: ../hologram-architecture/archon-registry
 rules:
 - id: tests-pass

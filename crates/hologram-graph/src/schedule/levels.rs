@@ -7,6 +7,12 @@ use crate::graph::node::NodeId;
 use crate::graph::Graph;
 
 /// A level of nodes that can execute in parallel.
+///
+/// **PL_2 (Lease Disjointness)**: each `ParallelLevel` is a *lease* in Prism terms — a disjoint
+/// partition of the computation budget. The Kahn's-algorithm construction guarantees that no node
+/// appears in more than one level, and that every node in a level has all its predecessors in
+/// strictly earlier levels. This structural disjointness satisfies SR_9 (ContextLease fiber
+/// disjointness) without requiring a runtime check.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct ParallelLevel {
     /// Nodes in this level (no mutual dependencies).

@@ -3,6 +3,18 @@
 ## Backlog
 
 - [ ] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
+- [ ] Prism ontology integration — [plan](plans/004-prism-uor-integration.md)
+
+## Sprint 12: Prism Ontology Integration
+
+- [ ] Annotate `DispatchContext` as SaturatedContext (PP_1, PI_1, PA_4)
+- [ ] Add PX_5 infeasibility taxonomy to hologram-compiler errors
+- [ ] Add PL_2 lease-disjointness citation to hologram-graph `ParallelLevel`
+- [ ] Document PM_5 atomicity contract on KvExecutor
+- [ ] Classify crates as kernel/bridge/user in archon.yaml
+- [ ] Document Prism space model + PP_1 derivation in specs/docs/architecture.md
+
+---
 
 ## Sprint History
 
