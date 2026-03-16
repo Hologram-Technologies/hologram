@@ -1204,13 +1204,22 @@ fn dispatch_concat(
 /// If the buffer is f32-aligned, each 4-byte f32 becomes one bool (nonzero → 1).
 /// Otherwise, each byte is a boolean directly.
 fn to_bools(data: &[u8]) -> Vec<u8> {
+    // If all bytes are 0 or 1 the data is packed boolean (1 byte per element),
+    // which is what binary_compare / IsNaN / Cast-to-bool ops emit.
+    // Checking this FIRST avoids misinterpreting packed bools as f32 when the
+    // length happens to be a multiple of 4 — that would collapse 4 booleans
+    // into one f32 value, corrupting attention masks.
+    if data.iter().all(|&b| b <= 1) {
+        return data.iter().map(|&v| (v != 0) as u8).collect();
+    }
+    // Otherwise, data is f32-encoded (e.g., a float attention mask of 0.0/1.0
+    // from a Cast or Mul — bytes will include values > 1 like 0x3F, 0x80).
     if data.len().is_multiple_of(4) && data.len() >= 4 {
-        // Try interpreting as f32 — common when upstream is a comparison or cast.
         if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>(data) {
             return floats.iter().map(|&v| (v != 0.0) as u8).collect();
         }
     }
-    // Byte-level booleans.
+    // Fallback: byte-level booleans.
     data.iter().map(|&v| (v != 0) as u8).collect()
 }
 
@@ -1470,11 +1479,33 @@ fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
 // ── Range ───────────────────────────────────────────────────────────────
 
 fn dispatch_range(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
-    // inputs: [start (f32), limit (f32), delta (f32)] — each is a scalar
-    let start = cast_f32(inputs[0])?[0];
-    let limit = cast_f32(inputs[1])?[0];
-    let delta = cast_f32(inputs[2])?[0];
-    let n = ((limit - start) / delta).ceil() as usize;
+    // inputs: [start, limit, delta] — each is a scalar, dtype is either f32 or i64.
+    //
+    // ONNX Range supports both f32 and i64 inputs.  When the limit comes from a
+    // Shape op, it is an 8-byte i64 scalar.  Calling cast_f32() on such a scalar
+    // reinterprets the bytes, producing a subnormal ≈0 (e.g. i64(40) in bytes
+    // → f32 ≈5.6e-44) instead of 40.0.  This caused Range(0, seq_len, 1) to
+    // produce [0.0] instead of [0.0, 1.0, ..., seq_len-1.0].
+    //
+    // Fix: detect 8-byte (i64) scalars and read them as i64 before converting to
+    // f32.  Always output f32 so downstream cast_f32 ops see the correct values.
+    let read_scalar = |b: &[u8]| -> f32 {
+        match b.len() {
+            8 => i64::from_le_bytes(b.try_into().unwrap_or([0; 8])) as f32,
+            4 => f32::from_le_bytes(b.try_into().unwrap_or([0; 4])),
+            _ => cast_f32(b)
+                .map(|v| v.first().copied().unwrap_or(0.0))
+                .unwrap_or(0.0),
+        }
+    };
+    let start = read_scalar(inputs[0]);
+    let limit = read_scalar(inputs[1]);
+    let delta = read_scalar(inputs[2]);
+    let n = if delta != 0.0 {
+        ((limit - start) / delta).ceil().max(0.0) as usize
+    } else {
+        0
+    };
     let out: Vec<f32> = (0..n).map(|i| start + i as f32 * delta).collect();
     Ok(f32_vec_to_bytes(out))
 }

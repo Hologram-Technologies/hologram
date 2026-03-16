@@ -36,6 +36,22 @@ specs/
 - **Fast-path first**: the common case is that compiled shapes are correct. All correction logic must be guarded by a cheap identity check (`prod == actual_count`) that short-circuits to a no-op.
 - **Avoid growing shape_resolve.rs**: new op support belongs in the compiler's shape oracle, not in runtime shape inference. If a new op's output shape cannot be expressed via `ShapeSpec`, add a `ShapeSpec` variant rather than a new `resolve_*` function.
 
+## Problem-Solving Philosophy
+
+**Think like a principal systems architect, not a patch author.** When encountering bugs, build failures, or design issues, do not apply narrow band-aid fixes that address only the immediate symptom. Instead:
+
+1. **Diagnose the root cause.** Before writing any fix, understand *why* the problem exists. Trace it back to the underlying design decision, missing abstraction, or architectural gap that allowed it to surface.
+
+2. **Assess the blast radius.** Ask: is this a one-off mistake, or a symptom of a systemic pattern? If the same class of bug could occur elsewhere, the fix must address the class, not just the instance.
+
+3. **Propose a production-ready solution.** Design the fix as if this code will run in production under load, across tenants, for years. Consider concurrency, error propagation, backward compatibility, and operational debuggability. A correct fix that is fragile or hard to reason about is not production-ready.
+
+4. **Refactor when the problem is structural.** If the root cause is that a function does too much, a type doesn't enforce its invariants, or responsibilities are in the wrong module — fix the structure. Moving code, splitting types, introducing a new abstraction, or changing an API boundary are all valid (and often necessary) responses to a bug.
+
+5. **Never play whack-a-mole.** If you find yourself fixing the same kind of issue in multiple places with small, repetitive patches, stop. That pattern means the underlying design needs to change. Propose the holistic fix, not N localized patches.
+
+6. **Validate the fix is complete.** After implementing a solution, check whether the same class of issue exists anywhere else in the codebase. A fix that leaves known instances of the same bug untouched is incomplete.
+
 ---
 
 <!-- ARCHON:MANAGED:BEGIN -->

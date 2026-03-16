@@ -919,6 +919,23 @@ fn test_where_known_answer() {
     assert_eq!(result_f32(&result), &[10.0, 200.0, 30.0, 400.0]);
 }
 
+/// Regression: `to_bools` must NOT reinterpret packed byte-booleans (0/1 per byte,
+/// length divisible by 4) as f32 values. Doing so would collapse 4 bools into 1,
+/// corrupting any attention causal mask that comes from a `binary_compare` op.
+#[test]
+fn test_where_byte_bool_condition_not_misinterpreted_as_f32() {
+    // Condition is byte-encoded booleans (1 byte each, 0=false 1=true).
+    // Length = 4 (divisible by 4) — this previously triggered the f32 misinterpretation.
+    // Bytes [1, 0, 0, 1]: if wrongly cast to f32 → single f32 = 0x01000001 (nonzero=true)
+    // → all 4 output positions would be from x. Correct: positions 0 and 3 from x,
+    // positions 1 and 2 from y.
+    let cond: Vec<u8> = vec![1, 0, 0, 1]; // packed booleans from binary_compare
+    let x = f32_bytes(&[10.0, 20.0, 30.0, 40.0]);
+    let y = f32_bytes(&[100.0, 200.0, 300.0, 400.0]);
+    let result = dispatch_float(&FloatOp::Where, &[&cond, &x, &y]).unwrap();
+    assert_eq!(result_f32(&result), &[10.0, 200.0, 300.0, 40.0]);
+}
+
 #[test]
 fn test_range_known_answer() {
     // Range with start=0, limit=5, delta=1 (encoded as f32 bytes)
