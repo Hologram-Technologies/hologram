@@ -3,6 +3,11 @@
 use std::fmt;
 
 /// Error type for compilation operations.
+///
+/// The `InsufficientKernel` and `ContradictoryConstraint` variants map to the two infeasibility
+/// classes from Prism PX_5:
+/// - **Insufficient** (CB_5 sufficiency failure): a required kernel is absent.
+/// - **Contradictory** (SR_5 ContradictionBoundary): two constraints conflict at the same address.
 #[derive(Debug)]
 pub enum CompileError {
     /// Graph validation failed.
@@ -11,6 +16,24 @@ pub enum CompileError {
     Fusion(String),
     /// Archive emission failed.
     Emission(String),
+    /// No registered kernel for this op/dtype combination.
+    ///
+    /// Corresponds to Prism PX_5 / CB_5 Insufficient infeasibility: the fiber-sufficiency check
+    /// fails because no dispatcher covers the required (op, dtype) pair.
+    InsufficientKernel {
+        /// The operation name.
+        op: String,
+        /// The data type that lacks a kernel.
+        dtype: String,
+    },
+    /// Conflicting type or shape constraints that cannot be simultaneously satisfied.
+    ///
+    /// Corresponds to Prism PX_5 / SR_5 Contradictory infeasibility: a ContradictionBoundary
+    /// fires because two bindings conflict at the same address.
+    ContradictoryConstraint {
+        /// Human-readable description of the conflict.
+        detail: String,
+    },
 }
 
 impl fmt::Display for CompileError {
@@ -19,6 +42,15 @@ impl fmt::Display for CompileError {
             Self::Validation(msg) => write!(f, "validation error: {msg}"),
             Self::Fusion(msg) => write!(f, "fusion error: {msg}"),
             Self::Emission(msg) => write!(f, "emission error: {msg}"),
+            Self::InsufficientKernel { op, dtype } => {
+                write!(
+                    f,
+                    "insufficient kernel: no dispatcher for op '{op}' at dtype '{dtype}'"
+                )
+            }
+            Self::ContradictoryConstraint { detail } => {
+                write!(f, "contradictory constraint: {detail}")
+            }
         }
     }
 }
@@ -83,5 +115,26 @@ mod tests {
         let ce: CompileError = ae.into();
         assert!(matches!(ce, CompileError::Emission(_)));
         assert!(format!("{ce}").contains("magic"));
+    }
+
+    #[test]
+    fn display_insufficient_kernel() {
+        let e = CompileError::InsufficientKernel {
+            op: "MatMul".into(),
+            dtype: "f16".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("MatMul"));
+        assert!(s.contains("f16"));
+    }
+
+    #[test]
+    fn display_contradictory_constraint() {
+        let e = CompileError::ContradictoryConstraint {
+            detail: "shape [2,3] conflicts with [3,2] at node 5".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("contradictory constraint"));
+        assert!(s.contains("node 5"));
     }
 }

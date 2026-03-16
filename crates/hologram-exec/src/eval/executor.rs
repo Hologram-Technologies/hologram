@@ -23,8 +23,18 @@ use hologram_core::op::{FloatOp, ShapeDim, ShapeSpec};
 
 /// Immutable graph-wide context shared across level dispatch and shape propagation.
 ///
-/// Groups the read-only parameters that don't change between levels,
-/// reducing argument counts in `dispatch_level` and `propagate_level_shapes`.
+/// This is the **SaturatedContext** in Prism ontology terms:
+///
+/// - **PP_1 (Pipeline Unification)**: because all shapes, dtypes, and constants are resolved at
+///   compile time and stored here, execution reduces to a single O(1) KV lookup per node. The
+///   composed pipeline `κ(λ_k(α*(ι(s,·))),C)` collapses to `resolve(s,C)`.
+///
+/// - **PA_4 (Base Binding Preservation)**: all fields are populated once at construction and never
+///   mutated during execution. Pinned fibers are never unpinned (SR_1 monotonicity + bitmask OR
+///   irreversibility), so the base state is always recoverable on error (see PM_5).
+///
+/// - **PI_1 (Inference Idempotence)**: repeated execution with the same `GraphInputs` yields the
+///   same `GraphOutputs` — the context carries no mutable state between calls.
 struct DispatchContext<'a> {
     node_map: HashMap<NodeId, &'a Node>,
     compiled_shapes: HashMap<NodeId, Vec<usize>>,
@@ -131,6 +141,11 @@ pub struct KvExecutor;
 
 impl KvExecutor {
     /// Execute a serialized graph according to its schedule.
+    ///
+    /// **PM_5 (Transaction Atomicity)**: `sg` and `schedule` are never mutated. On error, the
+    /// caller's `SerializedGraph` and `ExecutionSchedule` remain valid and unchanged (PA_4 base
+    /// binding preservation makes rollback free). It is safe to retry with different `GraphInputs`
+    /// after a failure.
     pub fn execute(
         sg: &SerializedGraph,
         schedule: &ExecutionSchedule,
@@ -514,8 +529,26 @@ fn resolve_dynamic_sizes(
     match op {
         GraphOp::Float(fop) => {
             let resolved = match fop {
-                FloatOp::Softmax { size: 0 } => FloatOp::Softmax { size: resolve(0) },
-                FloatOp::LogSoftmax { size: 0 } => FloatOp::LogSoftmax { size: resolve(0) },
+                FloatOp::Softmax { size } => {
+                    // Resolve the last-dim size from the actual input shape.
+                    // This handles both the size=0 sentinel (unknown at compile time)
+                    // and the stale size=1 case (when dynamic seq_len was concretized
+                    // to 1 at compile time but the runtime tensor has seq > 1).
+                    let actual = resolve(0);
+                    if actual > 0 && actual != *size {
+                        FloatOp::Softmax { size: actual }
+                    } else {
+                        return None;
+                    }
+                }
+                FloatOp::LogSoftmax { size } => {
+                    let actual = resolve(0);
+                    if actual > 0 && actual != *size {
+                        FloatOp::LogSoftmax { size: actual }
+                    } else {
+                        return None;
+                    }
+                }
                 FloatOp::RmsNorm { size: 0, epsilon } => FloatOp::RmsNorm {
                     size: resolve(0),
                     epsilon: *epsilon,
@@ -1180,13 +1213,58 @@ fn dispatch_level(
                 // Shape: prefer pre-computed from shape_map (set by pre-propagation pass).
                 // Use arena-tracked elem_size (bootstrapped from output_dtype).
                 let node_elem_size = compute_output_elem_size(&node_id, dctx, arena);
+                let n_result_elems = if node_elem_size > 0 {
+                    result.len() / node_elem_size
+                } else {
+                    0
+                };
 
                 let sm_val = shape_map.get(node_id).map(|s| s.to_vec());
                 let shape = sm_val
                     .as_ref()
-                    .filter(|s| !s.contains(&0))
+                    .filter(|s| {
+                        // Accept the pre-propagated shape only when it has no
+                        // 0-sentinels AND its product matches the actual result.
+                        // A product mismatch means the compiled shape was
+                        // concretized with a stale seq sentinel (e.g., seq=1)
+                        // and we need to re-derive from the runtime input shapes.
+                        !s.contains(&0)
+                            && (n_result_elems == 0
+                                || s.iter().product::<usize>() == n_result_elems)
+                    })
                     .cloned()
                     .unwrap_or_else(|| {
+                        // Pre-propagated shape is absent or stale.
+                        // First try to re-derive from the actual runtime input shapes
+                        // using the op's shape spec.  This correctly handles multi-dim
+                        // stale shapes (e.g. [1,32,1,1] → [1,32,2,2] for batched
+                        // matmul Q@Kᵀ at seq=2) where correct_stale_shape can only
+                        // fix a single dimension.
+                        if let GraphOp::Float(fop) = dispatch_op {
+                            let input_elems_0 = input_shapes
+                                .first()
+                                .map(|s| s.iter().product())
+                                .unwrap_or(0);
+                            let input_elem_counts_rt: Vec<usize> =
+                                input_shapes.iter().map(|s| s.iter().product()).collect();
+                            let ctx = shape_resolve::ShapeContext {
+                                input_shapes: &input_shapes,
+                                compiled_shape: dctx.compiled_shapes.get(&node_id),
+                                input_elems: input_elems_0,
+                                input_elem_counts: &input_elem_counts_rt,
+                                shape_tensor_bytes: None,
+                                compiled_dtype: dctx.compiled_dtypes.get(&node_id),
+                            };
+                            if let Some(s) = shape_resolve::resolve_float_shape(fop, &ctx) {
+                                let prod: usize = s.iter().product();
+                                if !s.is_empty()
+                                    && !s.contains(&0)
+                                    && (n_result_elems == 0 || prod == n_result_elems)
+                                {
+                                    return s;
+                                }
+                            }
+                        }
                         // Try to resolve 0-sentinel compiled shape from result buffer.
                         sm_val
                             .as_ref()

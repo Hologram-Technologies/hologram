@@ -1,67 +1,332 @@
 ---
-title: Archive Format
-description: .holo file format, rkyv zero-copy serialization, mmap loading, and execution entrypoints.
+title: Archive Format (.holo)
+description: Deep dive into the .holo binary format — header layout, sections, weight encoding, quantization, execution entrypoints, loading, and writing.
 ---
 
-`.holo` archive format: rkyv zero-copy serialization, mmap loading, and execution entrypoints.
+The `.holo` format is hologram's on-disk representation for compiled models. It combines a fixed binary
+header (parsed with zero-copy [`bytemuck`](https://docs.rs/bytemuck)), an [`rkyv`](https://docs.rs/rkyv)
+zero-copy graph section, raw quantized weight bytes, and an extensible section table. All offsets in the
+header point directly into the file, so memory-mapped access requires no deserialization step for weights.
 
-## Format
+## Binary layout
 
-A `.holo` file has three sections:
+The writer lays out regions in this order. All section boundaries are page-aligned (4096 bytes).
 
 ```
-┌──────────────────┐
-│  Header (fixed)  │  Magic bytes, version, section offsets
-├──────────────────┤
-│  Graph section   │  Serialized HoloGraph (rkyv)
-├──────────────────┤
-│  Weight section  │  Quantized weight tensors (rkyv)
-└──────────────────┘
+┌──────────────────────────────────┐  offset 0
+│  Header (80 bytes, fixed)        │  bytemuck Pod · native byte order
+├──────────────────────────────────┤  offset = graph_offset  (= 4096)
+│  Graph section                   │  rkyv-serialized SerializedGraph
+│  [padded to page boundary]       │
+├──────────────────────────────────┤  offset = section_offsets[0]
+│  Section data[0]                 │  rkyv-serialized · page-aligned
+│  ...                             │
+│  Section data[N-1]               │
+│  [padded to page boundary]       │
+├──────────────────────────────────┤  offset = section_table_offset
+│  Section table                   │  rkyv-serialized SectionTable
+│  [padded to page boundary]       │
+├──────────────────────────────────┤  offset = weights_offset
+│  Weights section                 │  raw quantized bytes
+└──────────────────────────────────┘  offset = total_size
 ```
 
-All persistent types derive `rkyv::{Archive, Serialize, Deserialize}`. Single format version — no backwards compatibility.
+Header offsets (`graph_offset`, `weights_offset`, `section_table_offset`) point directly to each
+region. Code that memory-maps the file can slice directly into any section without traversing the others.
 
-## Components
+---
 
-### `format`
+## Header — `HoloHeader`
 
-- `HoloHeader` — file header with magic, version, and byte offsets for each section
-- `HoloGraph` (archive representation) — rkyv-serialized graph
+The header is a `#[repr(C)]` struct implementing `bytemuck::Pod`. It is always 80 bytes. All multi-byte
+integers use **native byte order** (little-endian on x86/ARM).
 
-### `loader`
+`HoloHeader::from_bytes` uses `pod_read_unaligned`, so the input buffer need not be aligned.
 
-- `MmapLoader` — maps a `.holo` file into virtual memory; zero-copy access to weights
-- `BytesLoader` — loads from an in-memory `&[u8]` slice (useful for WASM)
-- `LoadPipeline` — chains header validation → graph deserialization → weight loading
-- `LoadPlan` — describes which sections to load (lazy loading support)
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 4 | `magic` | Must be `b"HOLO"` (`0x48 0x4F 0x4C 0x4F`) |
+| 4 | 4 | `version` | Format version — currently `1` |
+| 8 | 8 | `graph_offset` | Byte offset of the graph section |
+| 16 | 8 | `graph_size` | Byte length of the graph section |
+| 24 | 8 | `weights_offset` | Byte offset of the weights section |
+| 32 | 8 | `weights_size` | Byte length of the weights section |
+| 40 | 8 | `section_table_offset` | Byte offset of the section table |
+| 48 | 8 | `section_table_size` | Byte length of the rkyv-serialized section table |
+| 56 | 8 | `total_size` | Total archive length in bytes |
+| 64 | 4 | `graph_checksum` | CRC32 of the graph section bytes |
+| 68 | 4 | `weights_checksum` | CRC32 of the weights section bytes |
+| 72 | 4 | `section_count` | Number of entries in the section table |
+| 76 | 4 | `flags` | Compression flags (see below) |
 
-### `writer`
+**Flags:**
 
-- `HoloWriter` — serializes a `HoloGraph` + weights to a `.holo` byte stream
-- `PipelineWriter` — streaming writer for large models
-
-### `section`
-
-- `SectionTable` — index of byte ranges for each section
-
-### `weight`
-
-- `WeightTensor` — rkyv-serialized quantized weight array
-- `quantize` — converts `f32` weights to ring-encoded `u8` arrays
-
-### `checksum`
-
-SHA-256 integrity check on the weight section, verified at load time.
-
-### `entrypoint`
-
-- `ExecutionEntrypoint` — bundles a loaded graph + schedule ready for the executor
-
-## Usage
+| Bit | Constant | Meaning |
+|-----|----------|---------|
+| 0 | `FLAG_GRAPH_COMPRESSED` | Graph section is compressed via `hologram-compression` |
+| 1 | `FLAG_WEIGHTS_COMPRESSED` | Weights section is compressed via `hologram-compression` |
 
 ```rust
-use hologram_archive::loader::MmapLoader;
-
-let loader = MmapLoader::open("model.holo")?;
-let entrypoint = loader.load_entrypoint()?;
+header.is_graph_compressed()    // flags & (1 << 0) != 0
+header.is_weights_compressed()  // flags & (1 << 1) != 0
+header.is_valid_magic()         // magic == b"HOLO"
+header.is_supported_version()   // version == 1
 ```
+
+---
+
+## Graph section
+
+The graph section holds the rkyv-serialized `SerializedGraph` — a snapshot of the hologram expression
+graph (nodes, I/O names, constants). It is serialized with `AlignedVec<16>` to satisfy rkyv's alignment
+requirements for pointer validation.
+
+At load time, the loader verifies `graph_checksum` (CRC32) before deserializing. If the
+`FLAG_GRAPH_COMPRESSED` flag is set, the section bytes are decompressed before verification.
+
+---
+
+## Weights section
+
+The weights section is a flat byte array addressed by `TensorMetadata` entries (stored in the weight
+index section — see [Section kinds](#section-kinds) below). Each tensor's raw bytes sit at
+`weights_offset + tensor.offset` and span `tensor.size` bytes.
+
+`weights_checksum` (CRC32) covers the raw weight bytes after any decompression.
+
+### `TensorMetadata`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `String` | Tensor name, e.g. `"layer0.weight"` |
+| `shape` | `Vec<u64>` | Shape dimensions |
+| `dtype` | `WeightDType` | Element data type |
+| `offset` | `u64` | Byte offset within the weights section |
+| `size` | `u64` | Total byte length of this tensor |
+| `quantization` | `Option<QuantizationParams>` | Quantization parameters, if any |
+| `checksum` | `u32` | CRC32 of this tensor's raw bytes |
+
+### Weight dtypes — `WeightDType`
+
+| Variant | String | Bytes / element |
+|---------|--------|----------------|
+| `F32` | `"f32"` | 4 |
+| `F64` | `"f64"` | 8 |
+| `F16` | `"f16"` | 2 |
+| `BF16` | `"bf16"` | 2 |
+| `I8` | `"i8"` | 1 |
+| `U8` | `"u8"` | 1 |
+| `I16` | `"i16"` | 2 |
+| `I32` | `"i32"` | 4 |
+| `I64` | `"i64"` | 8 |
+| `I4` | `"i4"` | sub-byte (two elements per byte; `byte_size()` returns `0`) |
+
+### Quantization — `QuantizationParams`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `scheme` | `QuantizationScheme` | How the weights were quantized |
+| `scale` | `f64` | Scale factor |
+| `zero_point` | `f64` | Zero-point offset |
+| `min_val` | `f64` | Minimum clamp value |
+| `max_val` | `f64` | Maximum clamp value |
+| `group_size` | `u32` | Group size for per-group schemes (0 = per-tensor) |
+
+**Quantization schemes:**
+
+| Variant | Description |
+|---------|-------------|
+| `None` | No quantization; bytes are raw dtype |
+| `SymmetricLinear` | `x_q = round(x / scale)` |
+| `AsymmetricAffine` | `x_q = round(x / scale) + zero_point` |
+| `PerGroup` | GPTQ/AWQ-style per-group linear quantization |
+| `KMeansClustered { bits }` | LUT-GEMM-style k-means clustering (`bits` = 4 or 8) |
+
+---
+
+## Section table
+
+The section table (`SectionTable`) is an rkyv-serialized vector of `SectionEntry` values located at
+`section_table_offset`. It provides a dynamic, extensible index of named byte regions within the archive.
+
+### `SectionEntry`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | `u32` | Section kind identifier |
+| `offset` | `u64` | Byte offset of this section within the archive |
+| `size` | `u64` | Byte length of this section |
+| `checksum` | `u32` | CRC32 of this section's bytes |
+
+### Section kinds
+
+| ID | Constant | Content |
+|----|----------|---------|
+| `1` | `SECTION_WEIGHT_INDEX` | rkyv-serialized `Vec<TensorMetadata>` weight index |
+| `2` | `SECTION_LAYER_HEADER` | rkyv-serialized `LayerHeader` — execution schedule |
+| `3` | `SECTION_PIPELINE` | rkyv-serialized multi-model pipeline descriptor |
+| `0x1000+` | *(user-defined)* | Custom extension sections |
+
+Use `SectionTable::find(kind)` to look up a section by kind:
+
+```rust
+if let Some(entry) = plan.sections().find(SECTION_LAYER_HEADER) {
+    // entry.offset, entry.size, entry.checksum
+}
+```
+
+---
+
+## Execution entrypoints
+
+When a model needs to expose multiple callable entry points (e.g. encoder + decoder layers or
+pipeline stages), the archive embeds a `LayerHeader` as section kind `2`.
+
+### `LayerHeader`
+
+```rust
+pub struct LayerHeader {
+    pub layers: Vec<LayerDescriptor>,
+    pub schedule: Vec<Vec<LayerId>>,  // parallel level ordering
+}
+```
+
+`schedule` is a level-order execution plan. Each inner `Vec<LayerId>` is a set of layers that can
+run in parallel. Levels are executed sequentially.
+
+```
+schedule[0] = [LayerId(0), LayerId(1)]  // run in parallel
+schedule[1] = [LayerId(2)]              // then run this
+```
+
+`HoloWriter::set_graph` automatically generates a default `LayerHeader` with a single `"main"`
+layer (`LayerEntrypoint::Graph`) if you do not add one explicitly.
+
+### `LayerDescriptor`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `LayerId(u32)` | Unique layer identifier |
+| `name` | `String` | Human-readable name (e.g. `"encoder"`) |
+| `entrypoint` | `LayerEntrypoint` | What to execute (see below) |
+| `inputs` | `Vec<TensorPort>` | Expected input tensor ports |
+| `outputs` | `Vec<TensorPort>` | Expected output tensor ports |
+| `group` | `u32` | Parallel execution group hint |
+| `plan_offset` | `u64` | Byte offset of this layer's sub-plan in the archive |
+| `plan_size` | `u64` | Byte length of this layer's sub-plan |
+
+### `LayerEntrypoint`
+
+| Variant | Meaning |
+|---------|---------|
+| `Graph` | Execute the archive's embedded graph |
+| `Subgraph(u32)` | Execute a named subgraph by index |
+| `External(String)` | External reference (future: network distribution) |
+
+### `TensorPort`
+
+```rust
+pub struct TensorPort {
+    pub name: String,      // e.g. "hidden_state"
+    pub shape: Vec<u64>,   // expected shape dimensions
+    pub dtype: WeightDType,
+}
+```
+
+---
+
+## Loading
+
+Two load paths are provided, differing in environment requirements.
+
+### `load_from_bytes` — no-std / WASM
+
+```rust
+use hologram_archive::load_from_bytes;
+
+let data: Vec<u8> = std::fs::read("model.holo")?;
+let plan = load_from_bytes(&data)?;
+```
+
+Copies sections into owned `Vec`s. Works in `no_std` and WASM environments.
+
+### `HoloLoader` — memory-mapped (requires `std` feature)
+
+```rust
+use hologram_archive::HoloLoader;
+
+let loader = HoloLoader::open("model.holo")?;
+let plan = loader.load()?;
+```
+
+Maps the file into virtual memory with `memmap2`. Weight access is zero-copy — no allocation for
+the weights region.
+
+### `LoadedPlan` accessors
+
+```rust
+plan.header()        // &HoloHeader — parsed fixed header
+plan.graph()         // &SerializedGraph — deserialized expression graph
+plan.weights()       // &[u8] — raw weight bytes
+plan.sections()      // &SectionTable — section index
+plan.layer_header()  // Option<&LayerHeader> — execution schedule, if present
+plan.node_count()    // usize — number of graph nodes
+```
+
+---
+
+## Writing
+
+`HoloWriter` is a builder that constructs a complete `.holo` archive in memory.
+
+```rust
+use hologram_archive::{HoloWriter, LayerHeader};
+
+// Build the archive
+let archive: Vec<u8> = HoloWriter::new()
+    .set_graph(&graph)              // serializes Graph → SerializedGraph → rkyv bytes
+    .set_weights(raw_weight_bytes)  // raw Vec<u8>
+    .add_section(&layer_header)     // any EmbeddableSection impl
+    .build()?;
+
+std::fs::write("model.holo", &archive)?;
+```
+
+Key builder methods:
+
+| Method | Description |
+|--------|-------------|
+| `set_graph(&Graph)` | Serialize a live `hologram_graph::Graph` |
+| `set_graph_bytes(Vec<u8>)` | Embed pre-serialized (already compressed) graph bytes |
+| `set_weights(Vec<u8>)` | Embed raw weight bytes |
+| `add_section(&dyn EmbeddableSection)` | Embed a typed section (e.g. `LayerHeader`) |
+| `add_raw_section(kind, Vec<u8>)` | Embed a section from raw bytes + kind ID |
+| `build()` | Produce the final `Vec<u8>` archive |
+
+When `set_graph` is called and no `LayerHeader` section is added, `build()` auto-generates a
+default one with a single `"main"` layer pointing to `LayerEntrypoint::Graph`.
+
+The `build()` call compresses the graph section (`Generic` mode) and weights section
+(auto-selected mode) via `hologram-compression`, and sets the corresponding header flags.
+
+---
+
+## Error types — `ArchiveError`
+
+| Variant | Meaning |
+|---------|---------|
+| `InvalidMagic` | Magic bytes are not `b"HOLO"` |
+| `UnsupportedVersion(u32)` | Version field is not `1` |
+| `ChecksumMismatch { expected, actual }` | CRC32 does not match stored value |
+| `OutOfBounds { offset, size }` | Section range exceeds archive length |
+| `ValidationFailed(String)` | Generic validation failure with message |
+| `Io(io::Error)` | I/O error (file open, read, mmap) |
+
+---
+
+## Feature flags
+
+| Feature | Default | Effect |
+|---------|---------|--------|
+| `std` | enabled | Enables `HoloLoader` (memory-mapped loading via `memmap2`) |
+| `compression` | enabled | Enables `hologram-compression`; `build()` compresses graph and weights |
