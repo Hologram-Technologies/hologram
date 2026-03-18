@@ -6,39 +6,8 @@ Hologram's core thesis: O(1) per-element dispatch via LUT/KV lookups. **Verified
 
 **Unifying principle**: ALL computation — including orchestration, shape resolution, dispatch routing, and buffer management — should reduce to KV/LUT lookups. The compiler converts decisions into static tables; the runtime reads them. No HashMaps, no pattern matching, no shape inference at runtime. The executor becomes a flat instruction-tape reader where every step is a pre-resolved indexed lookup.
 
-**Scope**: Phases 0-3 implement now. Phases 4-6 roadmap. Phases 7-10 strategic.
+**Scope**: Phases 0-3 implement now. Phases 4-6 roadmap.
 **SIMD targets**: x86_64 AVX2, aarch64 NEON, WASM SIMD (all three).
-
----
-
-## Cache Residency Map
-
-All tables are designed to cascade through the CPU cache hierarchy. The hot core fits in L1; warm tables fit in L2; cold storage streams from L3/RAM.
-
-| Table | Size | Cache Tier | Latency | Access Pattern |
-|---|---|---|---|---|
-| **L1 Hot Core** (~12KB) | | | | |
-| Q0 activation LUTs (21) | 5.4KB | L1 | ~1 cy | Every element |
-| ElementWiseView (per-op) | 256B | L1 | ~1 cy | Every element, cache-line aligned |
-| HLUT page selectors | 256B each | L1 | ~1 cy | Every element (ARE ElementWiseViews) |
-| HLUT hot pages (~6-8 of 256) | ~2KB | L1 | ~1 cy | Correlated access → same pages |
-| Psumbook4 | 64B (1 cache line) | L1/Register | ~0-1 cy | Per output element in LUT-GEMM |
-| Instruction tape | ~1-4KB | L1 | ~1 cy | Sequential, prefetch-friendly |
-| **L2 Warm Layer** (~1MB) | | | | |
-| Psumbook8 | 1024B | L1-L2 | ~1-4 cy | Per output element, 16 cache lines |
-| HLUT all activations (Q2 precision) | ~260KB | L2 | ~5 cy | Smaller than flat Q1 (2.7MB) |
-| Q0×Q0 binary tables (6 ops) | 384KB | L2 | ~5 cy | Per binary element-wise op |
-| Softmax exp Q1 LUT | 128KB | L2 | ~5 cy | Burst access during softmax |
-| Flat arena hot buffers | ~100KB-1MB | L2 | ~5 cy | Current layer's intermediates |
-| **L3 Cold Storage** (~16MB) | | | | |
-| Q1 activation tables (21) | 2.7MB | L2-L3 | ~5-12 cy | Only if HLUT not available |
-| Quantized weight indices (per layer) | 4-32MB | L3 | ~30 cy | Streamed during LUT-GEMM |
-| Flat arena full workspace | ~1-16MB | L2-L3 | ~5-30 cy | Buffer reuse via liveness |
-| **RAM** (~GB) | | | | |
-| KV cache | 0.5-2GB | RAM | ~100+ cy | Per-layer read during attention |
-| Weight blob (all layers) | 1-14GB | RAM/mmap | ~100+ cy | Streamed, one layer at a time |
-
-**Design principle**: The per-element hot path (LUT lookup, Psumbook accumulate, instruction fetch) fits entirely in L1 (~12KB). The per-op warm path (broadcast strides, activation tables, binary tables) fits in L2 (~1MB). The per-layer cold path (weights, KV cache) streams from L3/RAM. This layering ensures that the O(1) lookup cost is genuinely ~1 cycle for the common case.
 
 ---
 
@@ -641,21 +610,21 @@ Entire SwiGLU in byte domain: 2 LUT lookups (silu + mul), zero f32 compute.
 
 ## Theoretical LUT Coverage After All Phases
 
-| Domain | Phase 0-3 | + Phase 7 | + Phase 8 | + Phase 9 | + Phase 10 |
-|---|---|---|---|---|---|
-| Orchestration | 0% LUT → 100% (tape) | 100% | 100% | 100% | 100% |
-| Unary activations | Q0 LUT (byte only) | + Q1 for float domain | + auto-quantize | + auto-quantize | **HLUT Q2 precision** |
-| Transcendentals | Raw f32 | LUT (exp, sin, cos, erf, rsqrt) | LUT | LUT | **HLUT (2.5x faster)** |
-| Binary arithmetic | Raw f32 | Raw f32 | Partial (in Q chains) | **Q0×Q0 tables** | Q0×Q0 tables |
-| MatMul | LUT-GEMM (Q4/Q8) | LUT-GEMM | LUT-GEMM | LUT-GEMM | LUT-GEMM |
-| Reductions | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
-| Norms (per-element) | Raw f32 | LUT rsqrt | Q1 per-element | Q1 per-element | **HLUT Q2 rsqrt** |
-| Norms (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
-| Softmax (exp) | Raw f32 | **Q1 LUT** | Q1 LUT | Q1 LUT | **HLUT (28KB, Q2)** |
-| Softmax (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
-| RoPE | Raw f32 | **Precomputed tables** | Tables | Tables | **HLUT sin/cos** |
-| Attention QK^T | LUT-GEMM or BLAS | LUT-GEMM | LUT-GEMM | LUT-GEMM | LUT-GEMM |
-| Residual add | Raw f32 | Raw f32 | Raw f32 | Raw f32 (precision) | Raw f32 (precision) |
+| Domain | Phase 0-3 | + Phase 7 | + Phase 8 | + Phase 9 |
+|---|---|---|---|---|
+| Orchestration | 0% LUT → 100% (tape) | 100% | 100% | 100% |
+| Unary activations | Q0 LUT (byte only) | + Q1 for float domain | + auto-quantize | + auto-quantize |
+| Transcendentals | Raw f32 | LUT (exp, sin, cos, erf, rsqrt) | LUT | LUT |
+| Binary arithmetic | Raw f32 | Raw f32 | Partial (in Q chains) | **Q0×Q0 tables** |
+| MatMul | LUT-GEMM (Q4/Q8) | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Reductions | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| Norms (per-element) | Raw f32 | LUT rsqrt | Q1 per-element | Q1 per-element |
+| Norms (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| Softmax (exp) | Raw f32 | **Q1 LUT** | Q1 LUT | Q1 LUT |
+| Softmax (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| RoPE | Raw f32 | **Precomputed tables** | Tables | Tables |
+| Attention QK^T | LUT-GEMM or BLAS | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Residual add | Raw f32 | Raw f32 | Raw f32 | Raw f32 (precision) |
 
 **Irreducible f32 (cannot become LUT):**
 1. Reductions (sum, mean, max, min, prod) — each output depends on ALL inputs
@@ -669,168 +638,186 @@ After Phase 9, the only raw f32 compute remaining is ~5 reduction operations and
 
 ---
 
-## Phase 10: Hierarchical Content-Addressable LUT (HLUT)
+## Phases 11-15: Systems-Level Acceleration
 
-### The Scaling Problem
+### Phase 11: Prefetch + Speculative Execution
 
-Flat tables hit cache boundaries at higher quantum levels:
-
-| Level | Entries | Table Size | Cache Tier | Latency |
-|---|---|---|---|---|
-| Q0 (8-bit) | 256 | 256B | **L1** | ~1 cycle |
-| Q1 (16-bit) | 65,536 | 128KB | **L2** | ~5 cycles |
-| Q2 (24-bit) | 16M | ~50MB | L3/RAM | ~30 cycles |
-| Q3 (32-bit) | 4B | ~17GB | Infeasible | N/A |
-
-A flat Q2 table is 1000x slower than Q0 due to cache misses. Q3 doesn't fit in memory at all.
-
-### The Solution: 2-Level Content-Addressable Hierarchy
-
-Instead of a flat table, use a **page-selector** (first level) that routes inputs to **pages** (second level) based on output similarity:
-
-```
-input (16-24 bit)
-  |
-  v
-[Page Selector: ElementWiseView, 256B, L1]
-  input_hi (high 8 bits) → page_id
-  |
-  v
-[Page Table: 256 pages, each variable-size]
-  pages[page_id][input_lo] → output
-```
-
-**Key insight**: The page selector IS an `ElementWiseView` — hologram's existing 256-byte LUT infrastructure. It composes with view fusion via `.then()`. The entire hierarchical lookup is native to the existing architecture.
-
-### Content-Addressable Routing
-
-The page selector is NOT a simple bit-range split. The compiler builds it using **k-means clustering on the function's output surface**:
-
-1. At compile time: evaluate `f(x)` for all x in the input domain
-2. Cluster the 256 output regions by value similarity (k-means, k=256)
-3. Assign each input to the page containing its cluster
-4. Build the page selector `ElementWiseView` that maps `input_hi → page_id`
-
-Inputs that produce **similar outputs** land on the same page. This gives:
-- **Cache locality**: correlated access patterns (e.g., activations in a row) hit the same 2-3 hot pages
-- **Adaptive precision**: flat function regions get tiny pages, curved regions get dense pages
-
-### Adaptive Page Sizes
-
-Not all pages need full 256/65536 entries. The compiler determines per-page granularity based on function curvature in that region:
+The instruction tape knows future inputs at compile time. Use CPU prefetch intrinsics to load the next instruction's arena slots into cache while the current kernel executes.
 
 ```rust
-enum PageKind {
-    Constant(f32),           // Flat region: sigmoid(x) ≈ 1.0 for x > 6
-    Linear { a: f32, b: f32 }, // Near-linear: output = a * input_lo + b
-    Table256([u8; 256]),      // 8-bit resolution within page
-    Table65536(Box<[u16; 65536]>), // 16-bit resolution within page
-}
-```
+fn execute_tape(tape: &[Instruction], arena: &mut FlatArena, weights: &[u8]) {
+    for i in 0..tape.len() {
+        // Prefetch next instruction's inputs into L1
+        if i + 1 < tape.len() {
+            for &slot in &tape[i + 1].input_slots {
+                prefetch_read_l1(arena.get_ptr(slot));
+            }
+            prefetch_read_l2(arena.get_ptr(tape[i + 1].output_slot));
+        }
 
-For sigmoid:
-- ~50 pages are `Constant` (tails where sigmoid ≈ 0 or ≈ 1): **0 bytes**
-- ~100 pages are `Linear` (gentle slope regions): **8 bytes each**
-- ~106 pages need full `Table256` (the steep transition region): **256 bytes each**
-- Total: ~28KB instead of 50MB. **1785x compression vs flat Q2.**
-
-### Performance Analysis
-
-**For Q1 with content-addressable routing (vs flat Q1):**
-- Flat: random access across 128KB → L2 latency (~5 cycles)
-- Hierarchical: selector (L1, ~1 cycle) + hot page (L1 if recently accessed, ~1 cycle) = **~2 cycles**
-- Speedup: **2.5x for correlated access patterns** (typical in transformer activations)
-
-**For Q2 (24-bit precision, currently infeasible):**
-- Flat: 50MB, mostly L3/RAM misses → ~30 cycles average
-- Hierarchical: selector (L1, 1 cycle) + hot pages in L2 (5 cycles) = **~6 cycles**
-- With adaptive pages: total memory 2-5MB (fits in L2), mostly L2 hits
-- Speedup: **5x vs flat Q2, and actually feasible** (50MB → 2-5MB)
-
-**For Q3 (32-bit, f32-equivalent precision):**
-- Flat: 17GB → impossible
-- Hierarchical 2-level: selector (L1) + pages (16MB, L3) = ~30 cycles but **actually possible**
-- With adaptive pages: sigmoid needs ~500KB for full f32 precision. **34,000x compression.**
-
-### Integration with Existing Infrastructure
-
-The hierarchical LUT composes naturally with hologram's architecture:
-
-1. **Page selector = ElementWiseView**: Already exists, already SIMD-accelerated (AVX2 `vpshufb`), already serializable via rkyv, already fuses via `.then()`
-2. **Pages stored as constants in ConstantStore**: The compiler generates pages at quantization time and stores them in the .holo archive
-3. **View fusion extends to hierarchical**: `hlut_sigmoid.then(hlut_relu)` could be compiled into a single hierarchical table at compile time
-4. **Instruction tape integration**: The kernel_id maps to `kernel_hlut_q2` which reads the page selector and page table from the constant blob
-
-### New Data Structure
-
-```rust
-/// Hierarchical LUT with content-addressable page routing.
-pub struct HierarchicalLut {
-    /// First level: maps input high byte → page_id. This IS an ElementWiseView.
-    page_selector: ElementWiseView,
-    /// Second level: variable-size pages indexed by page_id.
-    pages: Vec<PageKind>,
-    /// Input bit split: how many bits go to selector vs page index.
-    selector_bits: u8,  // typically 8
-    /// Total input precision (8=Q0, 16=Q1, 24=Q2).
-    input_bits: u8,
-}
-
-impl HierarchicalLut {
-    /// O(1) lookup: selector + page access.
-    #[inline]
-    pub fn lookup(&self, input: u32) -> f32 {
-        let hi = (input >> (self.input_bits - self.selector_bits)) as u8;
-        let page_id = self.page_selector.apply(hi);
-        let lo = input & ((1 << (self.input_bits - self.selector_bits)) - 1);
-        self.pages[page_id as usize].lookup(lo as u16)
+        // Execute current instruction (inputs already in cache from previous prefetch)
+        let inst = &tape[i];
+        KERNEL_TABLE[inst.kernel_id as usize](...);
     }
 }
 ```
 
-### Compile-Time Construction
+**CPU intrinsics**:
+- x86_64: `_mm_prefetch(ptr, _MM_HINT_T0)` (L1), `_MM_HINT_T1` (L2), `_MM_HINT_NTA` (non-temporal)
+- aarch64: `__prefetch(ptr)` / `PRFM PLDL1KEEP`
+- WASM: no prefetch (skip)
+
+**Weight prefetch**: For LUT-GEMM instructions, prefetch the next layer's weight indices while the current layer executes. The tape knows the constant_offset for future instructions.
+
+**Expected speedup**: 10-20% on memory-bound ops (matmul weight access, attention KV cache reads). Near-zero cost — prefetch is non-blocking.
+
+**Files**:
+- Modify: `crates/hologram-exec/src/eval/tape.rs` — add prefetch to tape executor loop
+- New: `crates/hologram-exec/src/prefetch.rs` — platform-specific prefetch wrappers
+
+### Phase 12: Model-Specific Compilation
+
+The compiler analyzes a specific model's characteristics to generate optimized artifacts:
+
+**12.1: Weight distribution analysis**
+- At quantization time, analyze weight matrix statistics (min, max, variance, sparsity per column)
+- Select optimal quantization encoding per layer (angle vs signed vs unsigned)
+- Choose Q4 vs Q8 per layer based on weight diversity (not globally)
+
+**12.2: Activation range profiling**
+- Run a calibration dataset through the model during compilation
+- Record per-layer activation ranges [min, max] and distributions
+- Use ranges to select optimal HLUT page assignments (Phase 10)
+- Narrow-range layers get tighter quantization (better LUT precision)
+
+**12.3: Graph-specific tile sizes**
+- Analyze per-layer (k, n) dimensions to select optimal tile sizes
+- Embed per-instruction tile parameters in the instruction tape
+- Different layers can use different tile sizes (currently global)
+
+**12.4: Sparsity-aware compilation**
+- Detect weight sparsity patterns (structured or unstructured)
+- For >50% sparse layers, use sparse LUT-GEMM (skip zero-weight accumulations)
+- Prune entire weight groups that fall below a significance threshold
+
+**Expected speedup**: 15-30% on top of generic optimizations. Model-specific tuning captures structure that generic heuristics miss.
+
+**Files**:
+- New: `crates/hologram-compiler/src/profile/mod.rs` — calibration data analysis
+- Modify: `crates/hologram-compiler/src/layout/mod.rs` — per-layer tile/encoding selection
+- Modify: `crates/hologram-exec/src/lut_gemm/quantize.rs` — per-layer encoding choice
+
+### Phase 13: Incremental Delta Computation
+
+For autoregressive decode (seq_q=1), each new token only affects a small slice of the computation. Most intermediate activations are unchanged from the previous step.
+
+**13.1: Activation caching**
+- Cache the output of each layer after the first prefill
+- On decode, mark which layers' inputs actually changed
+- Only re-execute layers in the changed dependency path
+
+**13.2: Sparse change propagation**
+- In attention, only the new token's Q vector changes; cached K/V are appended
+- The norm computation changes for the new position only
+- RoPE rotates only the new position's embedding
+
+**13.3: Skip-if-unchanged**
+- The instruction tape executor checks a dirty bit per arena slot
+- If all inputs to an instruction are clean (unchanged), skip execution entirely
+- Mark the output slot as clean too → propagates through the graph
 
 ```rust
-/// Build HLUT for a given function at specified precision.
-fn build_hlut<F: Fn(f32) -> f32>(
-    f: F,
-    input_range: (f32, f32),
-    input_bits: u8,
-    max_page_error: f32,
-) -> HierarchicalLut {
-    // 1. Evaluate f(x) over full input domain
-    // 2. K-means cluster outputs into 256 groups
-    // 3. Assign each input to its cluster's page
-    // 4. Build page selector ElementWiseView
-    // 5. For each page, determine PageKind:
-    //    - If max(f) - min(f) < epsilon → Constant
-    //    - If linear_fit_error < threshold → Linear
-    //    - Otherwise → Table256 or Table65536
-    // 6. Return HierarchicalLut
+fn execute_tape_incremental(tape: &[Instruction], arena: &mut FlatArena, dirty: &mut BitVec) {
+    for inst in tape {
+        // Skip if all inputs are clean
+        if inst.input_slots.iter().all(|&s| !dirty[s as usize]) {
+            continue;  // Output unchanged from previous execution
+        }
+        KERNEL_TABLE[inst.kernel_id as usize](...);
+        dirty.set(inst.output_slot as usize, true);
+    }
 }
 ```
 
-### Application to Specific Ops
+**Expected speedup**: For a 32-layer model during decode, if the bottom 16 layers produce identical outputs (common for models with residual connections where the new token's influence decays), this skips 50% of computation. Realistic estimate: 20-40% for deep models.
 
-| Op | Input Range | Flat Q2 Size | HLUT Size | Speedup vs Flat Q1 |
-|---|---|---|---|---|
-| Sigmoid | [-16, 16] | 50MB | ~28KB | 2.5x |
-| Exp (softmax) | [-16, 0] | 25MB | ~15KB | 2.5x |
-| Tanh | [-8, 8] | 25MB | ~20KB | 2.5x |
-| Erf | [-4, 4] | 12MB | ~30KB | 2x |
-| Gelu | [-8, 8] | 25MB | ~40KB | 2x |
-| Rsqrt | [0.01, 100] | 50MB | ~50KB | 2.5x |
-| Sin/Cos | [0, 2π] | 10MB | ~80KB | 1.5x (less compressible) |
+**Caveat**: Requires careful validation that skipped layers truly produce identical outputs. The dirty-bit propagation must be conservative (mark as dirty if ANY input changed).
 
-**Total HLUT memory for all ops**: ~260KB — less than flat Q1 (2.7MB), with Q2 precision.
+**Files**:
+- Modify: `crates/hologram-exec/src/eval/tape.rs` — dirty-bit tracking, skip-if-clean
+- New: `crates/hologram-exec/src/eval/incremental.rs` — activation cache, change detection
 
-### Files
-- New: `crates/hologram-core/src/hlut/mod.rs` — HierarchicalLut, PageKind, lookup
-- New: `crates/hologram-core/src/hlut/build.rs` — k-means page construction
-- Modify: `crates/hologram-core/src/view/mod.rs` — integrate HLUT as an alternative to flat view
-- Modify: `crates/hologram-graph/src/graph/mod.rs` — `GraphOp::HLut(HLutId)` variant
-- Modify: `crates/hologram-compiler/src/compiler/mod.rs` — HLUT construction during emit
-- Modify: `crates/hologram-exec/src/kv/store.rs` — dispatch HLut ops
+### Phase 14: Mmap Zero-Copy Execution
+
+Execute directly from a memory-mapped `.holo` archive. Zero heap allocation for model loading.
+
+**14.1: Mmap archive layout**
+- The `.holo` archive is already page-aligned (4KB boundaries)
+- Weight blob section can be mmap'd directly: `&weights[offset..offset+len]` without copying
+- Instruction tape section can be mmap'd and interpreted in-place via rkyv zero-copy access
+
+**14.2: Zero-copy constant access**
+- Constants accessed via `ConstantData::Deferred { source_id, byte_size }` already point into the weight blob
+- With mmap, these are direct pointers into the mmap region — no deserialization
+- The WeightCache (Phase 1.A) becomes unnecessary: quantized weights are read directly from mmap
+
+**14.3: Cold-start optimization**
+- First inference: only pages containing the first layer's weights are faulted in from disk
+- Subsequent layers are faulted in on-demand as the tape executor reaches them
+- OS prefetch heuristics handle most of the sequential access pattern
+- Total cold-start: ~10ms (first page fault) instead of ~500ms (full model load)
+
+```rust
+pub struct MmapExecutor {
+    mmap: Mmap,                          // Memory-mapped .holo file
+    tape: &'static [Instruction],        // Points into mmap (zero-copy)
+    weights: &'static [u8],             // Points into mmap (zero-copy)
+    arena: FlatArena,                    // Only allocation: workspace buffers
+}
+```
+
+**Expected speedup**: Cold-start from ~500ms to ~10ms. Steady-state: eliminates model loading entirely. Memory footprint: shared pages across processes (multiple instances serve the same model without duplicating weights in RAM).
+
+**Files**:
+- New: `crates/hologram-exec/src/mmap/executor.rs` — MmapExecutor
+- Modify: `crates/hologram-archive/src/loader/mmap_loader.rs` — zero-copy section access
+- Modify: `crates/hologram-archive/src/format/header.rs` — mmap compatibility constraints
+
+### Phase 15: Batch-Aware Scheduling
+
+Optimize for serving multiple concurrent requests.
+
+**15.1: Shared KV prefix caching**
+- Multiple requests sharing the same system prompt share a single KV cache prefix
+- Fork-on-write: each request gets its own KV cache tail after the shared prefix
+- Memory savings: N requests with 2K shared prefix → 1 × 2K + N × per-request tail instead of N × full cache
+
+**15.2: Continuous batching**
+- Different requests at different decode positions are batched into a single forward pass
+- The attention kernel processes variable-length sequences in one call
+- The instruction tape executor processes batch slices in parallel
+
+**15.3: Dynamic batch assembly**
+- New requests are added to the batch without waiting for current requests to finish
+- Finished requests are removed and their arena slots recycled
+- The scheduler maximizes GPU/CPU utilization by keeping the batch full
+
+```rust
+pub struct BatchScheduler {
+    active_requests: Vec<RequestState>,
+    shared_prefix_cache: HashMap<PrefixHash, Arc<KvCacheSlice>>,
+    arena: FlatArena,  // Shared workspace, partitioned by request
+    tape: Arc<[Instruction]>,  // Shared instruction tape (all requests run the same model)
+}
+```
+
+**Expected speedup**: Throughput (not latency). For serving: 3-8x throughput improvement via batching. Shared prefix caching saves 50-80% KV memory for common system prompts.
+
+**Files**:
+- New: `crates/hologram-exec/src/batch/mod.rs` — BatchScheduler
+- New: `crates/hologram-exec/src/batch/prefix_cache.rs` — shared KV prefix
+- Modify: `crates/hologram-exec/src/kv_cache.rs` — fork-on-write KV cache
+- Modify: `crates/hologram-exec/src/eval/tape.rs` — batch-aware tape execution
 
 ---
 

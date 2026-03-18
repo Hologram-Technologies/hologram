@@ -5,6 +5,7 @@
 - [ ] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
 - [ ] Prism ontology integration — [plan](plans/004-prism-uor-integration.md)
 - [ ] Compile-time-first acceleration — [plan](plans/005-compile-time-acceleration.md)
+- [ ] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
 
 ## Sprint 13: Compile-Time-First Acceleration
 
@@ -56,6 +57,52 @@
 - [ ] **10.3**: Compile-time k-means page construction (cluster by output similarity)
 - [ ] **10.4**: Q2 (24-bit) HLUT for all activations (~260KB total vs 50MB flat)
 - [ ] **10.5**: HLUT-aware view fusion (compose hierarchical tables at compile time)
+
+### Roadmap: Phases 11-15 (Systems-Level Acceleration)
+- [ ] **11**: Prefetch + speculative execution (CPU prefetch hints in tape executor)
+- [ ] **12.1**: Model-specific weight distribution analysis + per-layer encoding
+- [ ] **12.2**: Activation range profiling via calibration dataset
+- [ ] **12.3**: Graph-specific tile sizes (per-instruction in tape)
+- [ ] **12.4**: Sparsity-aware compilation (sparse LUT-GEMM for >50% sparse layers)
+- [ ] **13**: Incremental delta computation (dirty-bit skip-if-unchanged for decode)
+- [ ] **14**: Mmap zero-copy execution (execute from mmap'd .holo, ~10ms cold-start)
+- [ ] **15**: Batch-aware scheduling (shared KV prefix, continuous batching, dynamic batch assembly)
+
+## Sprint 14: UOR-Based Lossless Compression
+
+**Plan**: [plans/006-uor-compression-implementation.md](plans/006-uor-compression-implementation.md)
+
+### Phase 1: Bootstrap hologram-compression
+- [x] Fix crate structure (lib.rs, Cargo.toml with hologram-core dep)
+- [x] Create module skeleton (codec, stratum, ring_diff, torus_block, entropy, float_plane, permute, pipeline, header)
+
+### Phase 2: Core compression algorithms
+- [x] Codec types (CompressedBlock, CompressionMode, CompressionStats)
+- [x] Header format (HLZC magic, mode, permute_id, original_len)
+- [x] Stratum partition tables + intra-stratum rank codec (SPEC)
+- [x] Ring-differential coding (RDC) with order-0 and order-1 predictors
+- [x] Orbit-torus blocked coding (page/offset split)
+- [x] rANS entropy backend (encoder + decoder)
+- [x] Frequency counting + normalization
+- [x] Float byte-plane transposition (f32/f64)
+- [ ] Bijective pre-transforms (ElementWiseView permutations)
+- [ ] Pipeline orchestration + mode selection
+- [ ] Full end-to-end compress/decompress with all 4 modes
+
+### Phase 3: Archive integration
+- [ ] Add hologram-compression as dependency to hologram-archive
+- [ ] CompressionScheme in TensorMetadata
+- [ ] Compression flag bits in HoloHeader
+- [ ] Default-on compression for weight sections
+- [ ] Transparent decompression on load
+- [ ] Graph section compression (Mode 0)
+
+### Phase 4: WASM FFI + Site demo
+- [ ] New WASM functions (compress, decompress, stats, histogram, ring_algebra, float_plane_transpose)
+- [ ] Site demo page (compression.astro)
+- [ ] Register in site config sidebar
+
+---
 
 ## Sprint 12: Prism Ontology Integration
 
