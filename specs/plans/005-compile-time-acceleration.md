@@ -6,8 +6,39 @@ Hologram's core thesis: O(1) per-element dispatch via LUT/KV lookups. **Verified
 
 **Unifying principle**: ALL computation — including orchestration, shape resolution, dispatch routing, and buffer management — should reduce to KV/LUT lookups. The compiler converts decisions into static tables; the runtime reads them. No HashMaps, no pattern matching, no shape inference at runtime. The executor becomes a flat instruction-tape reader where every step is a pre-resolved indexed lookup.
 
-**Scope**: Phases 0-3 implement now. Phases 4-6 roadmap.
+**Scope**: Phases 0-3 implement now. Phases 4-6 roadmap. Phases 7-10 strategic.
 **SIMD targets**: x86_64 AVX2, aarch64 NEON, WASM SIMD (all three).
+
+---
+
+## Cache Residency Map
+
+All tables are designed to cascade through the CPU cache hierarchy. The hot core fits in L1; warm tables fit in L2; cold storage streams from L3/RAM.
+
+| Table | Size | Cache Tier | Latency | Access Pattern |
+|---|---|---|---|---|
+| **L1 Hot Core** (~12KB) | | | | |
+| Q0 activation LUTs (21) | 5.4KB | L1 | ~1 cy | Every element |
+| ElementWiseView (per-op) | 256B | L1 | ~1 cy | Every element, cache-line aligned |
+| HLUT page selectors | 256B each | L1 | ~1 cy | Every element (ARE ElementWiseViews) |
+| HLUT hot pages (~6-8 of 256) | ~2KB | L1 | ~1 cy | Correlated access → same pages |
+| Psumbook4 | 64B (1 cache line) | L1/Register | ~0-1 cy | Per output element in LUT-GEMM |
+| Instruction tape | ~1-4KB | L1 | ~1 cy | Sequential, prefetch-friendly |
+| **L2 Warm Layer** (~1MB) | | | | |
+| Psumbook8 | 1024B | L1-L2 | ~1-4 cy | Per output element, 16 cache lines |
+| HLUT all activations (Q2 precision) | ~260KB | L2 | ~5 cy | Smaller than flat Q1 (2.7MB) |
+| Q0×Q0 binary tables (6 ops) | 384KB | L2 | ~5 cy | Per binary element-wise op |
+| Softmax exp Q1 LUT | 128KB | L2 | ~5 cy | Burst access during softmax |
+| Flat arena hot buffers | ~100KB-1MB | L2 | ~5 cy | Current layer's intermediates |
+| **L3 Cold Storage** (~16MB) | | | | |
+| Q1 activation tables (21) | 2.7MB | L2-L3 | ~5-12 cy | Only if HLUT not available |
+| Quantized weight indices (per layer) | 4-32MB | L3 | ~30 cy | Streamed during LUT-GEMM |
+| Flat arena full workspace | ~1-16MB | L2-L3 | ~5-30 cy | Buffer reuse via liveness |
+| **RAM** (~GB) | | | | |
+| KV cache | 0.5-2GB | RAM | ~100+ cy | Per-layer read during attention |
+| Weight blob (all layers) | 1-14GB | RAM/mmap | ~100+ cy | Streamed, one layer at a time |
+
+**Design principle**: The per-element hot path (LUT lookup, Psumbook accumulate, instruction fetch) fits entirely in L1 (~12KB). The per-op warm path (broadcast strides, activation tables, binary tables) fits in L2 (~1MB). The per-layer cold path (weights, KV cache) streams from L3/RAM. This layering ensures that the O(1) lookup cost is genuinely ~1 cycle for the common case.
 
 ---
 
