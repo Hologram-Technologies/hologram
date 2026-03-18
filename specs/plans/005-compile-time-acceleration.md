@@ -473,7 +473,7 @@ pub struct ParallelLevel {
 
 ---
 
-## Phases 4-6: Roadmap (Future Work)
+## Phases 4-6: Roadmap (Near-Term)
 
 ### Phase 4: Sliding Window + Quantized K Cache
 - Add `window_size` to Attention op → O(seq × window) instead of O(seq²)
@@ -489,6 +489,152 @@ pub struct ParallelLevel {
 - Pattern-match entire transformer blocks → single `TransformerLayer` op
 - Eliminate per-op dispatch overhead (~20 matches per layer)
 - DQ-GEMM: quantize activations too → integer-only hot loop (research, may not ship)
+
+---
+
+## Phases 7-9: Quantize-Into-LUT-Domain (Strategic — Maximum LUT Coverage)
+
+### The Coverage Gap
+
+| Domain | LUT Coverage | Ops Covered |
+|---|---|---|
+| **Byte (Q0)** | **100%** | 21 activations + 6 arithmetic + bitwise |
+| **Word (Q1)** | **100%** | 21 activations (128KB each, 2.7MB total) |
+| **Float (f32)** | **0%** | 67 ops — all raw CPU compute |
+
+The architectural opportunity: **push the quantization boundary inward** so more of the graph executes in byte/word domain where everything is already a lookup. The principle: **Quantize Early, Dequantize Late (QEDL)**.
+
+### Phase 7: Float-to-LUT Promotion (Per-Op)
+
+Convert individual float ops to use LUT approximation where the input domain is bounded:
+
+#### 7.1: RoPE Frequency Precomputation
+- `freq[i] = 1.0 / base^(2i/dim)` is **static per model** — precompute at compile time
+- Store as constant table: `rope_freqs: [f32; max_dim/2]` (~256 entries = 1KB)
+- `sin(pos * freq)` and `cos(pos * freq)` can use Q1 sin/cos tables (65536 entries)
+- **Eliminates**: powf, division, sin, cos at runtime → all become table lookups
+- **Error**: <0.02% (Q1 precision)
+
+#### 7.2: Softmax exp via Q1 LUT (extends Phase 2.3)
+- Input range for `exp(x - max)` is bounded: [-16, 0] (values below -16 are negligible)
+- Q1 exp table already exists (65536 entries, 128KB)
+- Quantize `(x - max)` to 16-bit index → single table lookup → f32 result
+- Max-finding and sum normalization stay in f32 (irreducible reductions)
+- **Eliminates**: `f32::exp()` (~5 cycles) → table lookup (~1 cycle)
+- **Error**: <0.02%
+
+#### 7.3: RmsNorm rsqrt via Piecewise-Linear LUT
+- `rsqrt(ms + eps)` input domain is [eps, ~100.0] for typical hidden dims
+- Log-scale quantize to 16-bit → Q1 rsqrt table (65536 entries, 128KB)
+- Or: use fast_rsqrt (Quake III) + 1 Newton-Raphson iteration (~1e-4 error, no table needed)
+- **Eliminates**: sqrt + division → single lookup or 3 integer ops
+
+#### 7.4: Erf via Q1 LUT
+- Erf(x) is currently a 7-term polynomial approximation (lines 880-891 in float_op.rs)
+- Input domain is bounded (erf saturates at ±3): quantize [-4, 4] to 16-bit
+- Q1 erf table: 65536 entries, 128KB
+- **Eliminates**: polynomial evaluation (7 multiplies + 4 adds + exp) → single lookup
+
+**Total new table memory**: ~512KB (rope_freqs + rsqrt + erf + softmax_exp), fits comfortably in L2.
+
+### Phase 8: Quantized Intermediate Pipeline (QEDL)
+
+The key architectural shift: instead of operating on f32 tensors between ops, **keep data in quantized form** between consecutive LUT-compatible ops and only dequantize at boundaries that require f32 (reductions, residual additions).
+
+#### Current pipeline (everything in f32):
+```
+f32 → MatMul(f32) → f32 → RmsNorm(f32) → f32 → Gelu(f32) → f32 → MatMul(f32) → f32
+       ↑ expensive      ↑ reduction        ↑ transcendental    ↑ expensive
+```
+
+#### QEDL pipeline (quantized intermediates):
+```
+f32 → LUT-GEMM(Q4) → Q0 → LUT-Gelu(Q0) → Q0 → LUT-GEMM(Q4) → f32
+       ↑ already LUT    ↑ FREE (already exists!)  ↑ already LUT
+```
+
+The insight: **LUT-GEMM already outputs values that could be quantized to Q0** before the next activation. The activation is already a Q0 LUT. The next LUT-GEMM already accepts quantized inputs. The entire chain can stay in byte domain.
+
+#### Where dequantization is forced:
+1. **Residual connections**: `x + sublayer(x)` requires f32 addition for numerical stability
+2. **Reductions in norms**: mean/variance computation needs f32 precision
+3. **Softmax denominator**: sum must be f32 to avoid overflow
+4. **Model outputs**: final logits need f32 for sampling
+
+#### Compiler-driven quantization boundaries:
+The compiler analyzes the graph and inserts `Quantize`/`Dequantize` nodes at optimal positions:
+
+```rust
+GraphOp::Quantize { scheme: QuantScheme, encoding: Encoding }
+GraphOp::Dequantize { scheme: QuantScheme, encoding: Encoding }
+```
+
+The fusion pass recognizes chains like `Dequantize → float_op → Quantize` and replaces them with the byte-domain LUT equivalent when the op has a LUT implementation.
+
+**Expected impact**: For a LLaMA-style transformer, ~60% of element-wise ops could stay in byte domain. The remaining 40% (norms, residuals, softmax) require f32 reductions but their per-element parts can still use LUT.
+
+### Phase 9: Binary Arithmetic LUT Tables (Q0×Q0)
+
+Extend byte-domain coverage to f32 binary element-wise ops:
+
+#### 9.1: Quantized Binary Arithmetic
+For ops where both operands are already in Q0 domain, use 256×256 precomputed tables:
+
+```rust
+// Compile-time: generate table for quantized addition
+// table[a][b] = encode(decode(a) + decode(b))
+static Q0_FLOAT_ADD: [[u8; 256]; 256] = ...;  // 64KB
+
+fn quantized_add(a: u8, b: u8) -> u8 {
+    Q0_FLOAT_ADD[a as usize][b as usize]  // O(1) lookup
+}
+```
+
+Tables needed (64KB each):
+- Q0_FLOAT_ADD, Q0_FLOAT_SUB, Q0_FLOAT_MUL, Q0_FLOAT_DIV
+- Q0_FLOAT_MIN, Q0_FLOAT_MAX
+- Total: 6 × 64KB = 384KB (fits in L2)
+
+**Key constraint**: These tables are **encoding-dependent**. The mapping `byte → float → compute → float → byte` depends on the encoding (angle, signed, unsigned, raw). The compiler selects the encoding per tensor based on value distribution.
+
+#### 9.2: FusedSwiGLU in Byte Domain
+SwiGLU = `silu(gate) * up` is a binary op where:
+- `gate` comes from a linear layer (can be Q0)
+- `up` comes from a linear layer (can be Q0)
+- `silu(gate)` is a Q0 LUT
+- The multiply is a Q0×Q0 table lookup
+
+Entire SwiGLU in byte domain: 2 LUT lookups (silu + mul), zero f32 compute.
+
+---
+
+## Theoretical LUT Coverage After All Phases
+
+| Domain | Phase 0-3 | + Phase 7 | + Phase 8 | + Phase 9 |
+|---|---|---|---|---|
+| Orchestration | 0% LUT → 100% (tape) | 100% | 100% | 100% |
+| Unary activations | Q0 LUT (byte only) | + Q1 for float domain | + auto-quantize | + auto-quantize |
+| Transcendentals | Raw f32 | LUT (exp, sin, cos, erf, rsqrt) | LUT | LUT |
+| Binary arithmetic | Raw f32 | Raw f32 | Partial (in Q chains) | **Q0×Q0 tables** |
+| MatMul | LUT-GEMM (Q4/Q8) | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Reductions | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| Norms (per-element) | Raw f32 | LUT rsqrt | Q1 per-element | Q1 per-element |
+| Norms (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| Softmax (exp) | Raw f32 | **Q1 LUT** | Q1 LUT | Q1 LUT |
+| Softmax (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
+| RoPE | Raw f32 | **Precomputed tables** | Tables | Tables |
+| Attention QK^T | LUT-GEMM or BLAS | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Residual add | Raw f32 | Raw f32 | Raw f32 | Raw f32 (precision) |
+
+**Irreducible f32 (cannot become LUT):**
+1. Reductions (sum, mean, max, min, prod) — each output depends on ALL inputs
+2. Residual additions — f32 accumulation for numerical stability
+3. Softmax denominator — sum over exp values
+4. Norm mean/variance — global statistics
+
+**Everything else → LUT.**
+
+After Phase 9, the only raw f32 compute remaining is ~5 reduction operations and residual additions. All per-element computation is LUT-based.
 
 ---
 

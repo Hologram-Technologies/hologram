@@ -36,6 +36,20 @@
 - [ ] **3.2**: Online-softmax tiled attention kernel (Flash Attention-style)
 - [ ] **3.3**: Per-head parallelism (compile-time planned)
 
+### Roadmap: Phases 4-6 (Near-Term)
+- [ ] **4**: Sliding window attention + quantized K cache (ring buffer, Q4 K)
+- [ ] **5**: Precomputed Scatter Groups for LUT-GEMM (compile-time sorted positions)
+- [ ] **6**: Transformer block fusion + DQ-GEMM (whole-block pattern match)
+
+### Roadmap: Phases 7-9 (Quantize-Into-LUT-Domain)
+- [ ] **7.1**: RoPE frequency precomputation (compile-time static table)
+- [ ] **7.2**: Softmax exp via Q1 LUT (65536-entry, <0.02% error)
+- [ ] **7.3**: RmsNorm rsqrt via Q1 LUT or fast_rsqrt
+- [ ] **7.4**: Erf via Q1 LUT (eliminates 7-term polynomial)
+- [ ] **8**: QEDL pipeline — compiler-inserted Quantize/Dequantize boundaries, 60% ops in byte domain
+- [ ] **9.1**: Q0×Q0 binary arithmetic tables (add, mul, div, min, max — 64KB each)
+- [ ] **9.2**: FusedSwiGLU in byte domain (silu LUT + Q0×Q0 mul)
+
 ## Sprint 12: Prism Ontology Integration
 
 - [ ] Annotate `DispatchContext` as SaturatedContext (PP_1, PI_1, PA_4)
