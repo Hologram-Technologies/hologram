@@ -610,21 +610,21 @@ Entire SwiGLU in byte domain: 2 LUT lookups (silu + mul), zero f32 compute.
 
 ## Theoretical LUT Coverage After All Phases
 
-| Domain | Phase 0-3 | + Phase 7 | + Phase 8 | + Phase 9 |
-|---|---|---|---|---|
-| Orchestration | 0% LUT → 100% (tape) | 100% | 100% | 100% |
-| Unary activations | Q0 LUT (byte only) | + Q1 for float domain | + auto-quantize | + auto-quantize |
-| Transcendentals | Raw f32 | LUT (exp, sin, cos, erf, rsqrt) | LUT | LUT |
-| Binary arithmetic | Raw f32 | Raw f32 | Partial (in Q chains) | **Q0×Q0 tables** |
-| MatMul | LUT-GEMM (Q4/Q8) | LUT-GEMM | LUT-GEMM | LUT-GEMM |
-| Reductions | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
-| Norms (per-element) | Raw f32 | LUT rsqrt | Q1 per-element | Q1 per-element |
-| Norms (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
-| Softmax (exp) | Raw f32 | **Q1 LUT** | Q1 LUT | Q1 LUT |
-| Softmax (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) |
-| RoPE | Raw f32 | **Precomputed tables** | Tables | Tables |
-| Attention QK^T | LUT-GEMM or BLAS | LUT-GEMM | LUT-GEMM | LUT-GEMM |
-| Residual add | Raw f32 | Raw f32 | Raw f32 | Raw f32 (precision) |
+| Domain | Phase 0-3 | + Phase 7 | + Phase 8 | + Phase 9 | + Phase 10 |
+|---|---|---|---|---|---|
+| Orchestration | 0% LUT → 100% (tape) | 100% | 100% | 100% | 100% |
+| Unary activations | Q0 LUT (byte only) | + Q1 for float domain | + auto-quantize | + auto-quantize | **HLUT Q2 precision** |
+| Transcendentals | Raw f32 | LUT (exp, sin, cos, erf, rsqrt) | LUT | LUT | **HLUT (2.5x faster)** |
+| Binary arithmetic | Raw f32 | Raw f32 | Partial (in Q chains) | **Q0×Q0 tables** | Q0×Q0 tables |
+| MatMul | LUT-GEMM (Q4/Q8) | LUT-GEMM | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Reductions | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
+| Norms (per-element) | Raw f32 | LUT rsqrt | Q1 per-element | Q1 per-element | **HLUT Q2 rsqrt** |
+| Norms (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
+| Softmax (exp) | Raw f32 | **Q1 LUT** | Q1 LUT | Q1 LUT | **HLUT (28KB, Q2)** |
+| Softmax (reduction) | Raw f32 | Raw f32 | Raw f32 | Raw f32 (irreducible) | Raw f32 (irreducible) |
+| RoPE | Raw f32 | **Precomputed tables** | Tables | Tables | **HLUT sin/cos** |
+| Attention QK^T | LUT-GEMM or BLAS | LUT-GEMM | LUT-GEMM | LUT-GEMM | LUT-GEMM |
+| Residual add | Raw f32 | Raw f32 | Raw f32 | Raw f32 (precision) | Raw f32 (precision) |
 
 **Irreducible f32 (cannot become LUT):**
 1. Reductions (sum, mean, max, min, prod) — each output depends on ALL inputs
@@ -633,6 +633,175 @@ Entire SwiGLU in byte domain: 2 LUT lookups (silu + mul), zero f32 compute.
 4. Norm mean/variance — global statistics
 
 **Everything else → LUT.**
+
+After Phase 9, the only raw f32 compute remaining is ~5 reduction operations and residual additions. All per-element computation is LUT-based.
+
+---
+
+## Phase 10: Hierarchical Content-Addressable LUT (HLUT)
+
+### The Scaling Problem
+
+Flat tables hit cache boundaries at higher quantum levels:
+
+| Level | Entries | Table Size | Cache Tier | Latency |
+|---|---|---|---|---|
+| Q0 (8-bit) | 256 | 256B | **L1** | ~1 cycle |
+| Q1 (16-bit) | 65,536 | 128KB | **L2** | ~5 cycles |
+| Q2 (24-bit) | 16M | ~50MB | L3/RAM | ~30 cycles |
+| Q3 (32-bit) | 4B | ~17GB | Infeasible | N/A |
+
+A flat Q2 table is 1000x slower than Q0 due to cache misses. Q3 doesn't fit in memory at all.
+
+### The Solution: 2-Level Content-Addressable Hierarchy
+
+Instead of a flat table, use a **page-selector** (first level) that routes inputs to **pages** (second level) based on output similarity:
+
+```
+input (16-24 bit)
+  |
+  v
+[Page Selector: ElementWiseView, 256B, L1]
+  input_hi (high 8 bits) → page_id
+  |
+  v
+[Page Table: 256 pages, each variable-size]
+  pages[page_id][input_lo] → output
+```
+
+**Key insight**: The page selector IS an `ElementWiseView` — hologram's existing 256-byte LUT infrastructure. It composes with view fusion via `.then()`. The entire hierarchical lookup is native to the existing architecture.
+
+### Content-Addressable Routing
+
+The page selector is NOT a simple bit-range split. The compiler builds it using **k-means clustering on the function's output surface**:
+
+1. At compile time: evaluate `f(x)` for all x in the input domain
+2. Cluster the 256 output regions by value similarity (k-means, k=256)
+3. Assign each input to the page containing its cluster
+4. Build the page selector `ElementWiseView` that maps `input_hi → page_id`
+
+Inputs that produce **similar outputs** land on the same page. This gives:
+- **Cache locality**: correlated access patterns (e.g., activations in a row) hit the same 2-3 hot pages
+- **Adaptive precision**: flat function regions get tiny pages, curved regions get dense pages
+
+### Adaptive Page Sizes
+
+Not all pages need full 256/65536 entries. The compiler determines per-page granularity based on function curvature in that region:
+
+```rust
+enum PageKind {
+    Constant(f32),           // Flat region: sigmoid(x) ≈ 1.0 for x > 6
+    Linear { a: f32, b: f32 }, // Near-linear: output = a * input_lo + b
+    Table256([u8; 256]),      // 8-bit resolution within page
+    Table65536(Box<[u16; 65536]>), // 16-bit resolution within page
+}
+```
+
+For sigmoid:
+- ~50 pages are `Constant` (tails where sigmoid ≈ 0 or ≈ 1): **0 bytes**
+- ~100 pages are `Linear` (gentle slope regions): **8 bytes each**
+- ~106 pages need full `Table256` (the steep transition region): **256 bytes each**
+- Total: ~28KB instead of 50MB. **1785x compression vs flat Q2.**
+
+### Performance Analysis
+
+**For Q1 with content-addressable routing (vs flat Q1):**
+- Flat: random access across 128KB → L2 latency (~5 cycles)
+- Hierarchical: selector (L1, ~1 cycle) + hot page (L1 if recently accessed, ~1 cycle) = **~2 cycles**
+- Speedup: **2.5x for correlated access patterns** (typical in transformer activations)
+
+**For Q2 (24-bit precision, currently infeasible):**
+- Flat: 50MB, mostly L3/RAM misses → ~30 cycles average
+- Hierarchical: selector (L1, 1 cycle) + hot pages in L2 (5 cycles) = **~6 cycles**
+- With adaptive pages: total memory 2-5MB (fits in L2), mostly L2 hits
+- Speedup: **5x vs flat Q2, and actually feasible** (50MB → 2-5MB)
+
+**For Q3 (32-bit, f32-equivalent precision):**
+- Flat: 17GB → impossible
+- Hierarchical 2-level: selector (L1) + pages (16MB, L3) = ~30 cycles but **actually possible**
+- With adaptive pages: sigmoid needs ~500KB for full f32 precision. **34,000x compression.**
+
+### Integration with Existing Infrastructure
+
+The hierarchical LUT composes naturally with hologram's architecture:
+
+1. **Page selector = ElementWiseView**: Already exists, already SIMD-accelerated (AVX2 `vpshufb`), already serializable via rkyv, already fuses via `.then()`
+2. **Pages stored as constants in ConstantStore**: The compiler generates pages at quantization time and stores them in the .holo archive
+3. **View fusion extends to hierarchical**: `hlut_sigmoid.then(hlut_relu)` could be compiled into a single hierarchical table at compile time
+4. **Instruction tape integration**: The kernel_id maps to `kernel_hlut_q2` which reads the page selector and page table from the constant blob
+
+### New Data Structure
+
+```rust
+/// Hierarchical LUT with content-addressable page routing.
+pub struct HierarchicalLut {
+    /// First level: maps input high byte → page_id. This IS an ElementWiseView.
+    page_selector: ElementWiseView,
+    /// Second level: variable-size pages indexed by page_id.
+    pages: Vec<PageKind>,
+    /// Input bit split: how many bits go to selector vs page index.
+    selector_bits: u8,  // typically 8
+    /// Total input precision (8=Q0, 16=Q1, 24=Q2).
+    input_bits: u8,
+}
+
+impl HierarchicalLut {
+    /// O(1) lookup: selector + page access.
+    #[inline]
+    pub fn lookup(&self, input: u32) -> f32 {
+        let hi = (input >> (self.input_bits - self.selector_bits)) as u8;
+        let page_id = self.page_selector.apply(hi);
+        let lo = input & ((1 << (self.input_bits - self.selector_bits)) - 1);
+        self.pages[page_id as usize].lookup(lo as u16)
+    }
+}
+```
+
+### Compile-Time Construction
+
+```rust
+/// Build HLUT for a given function at specified precision.
+fn build_hlut<F: Fn(f32) -> f32>(
+    f: F,
+    input_range: (f32, f32),
+    input_bits: u8,
+    max_page_error: f32,
+) -> HierarchicalLut {
+    // 1. Evaluate f(x) over full input domain
+    // 2. K-means cluster outputs into 256 groups
+    // 3. Assign each input to its cluster's page
+    // 4. Build page selector ElementWiseView
+    // 5. For each page, determine PageKind:
+    //    - If max(f) - min(f) < epsilon → Constant
+    //    - If linear_fit_error < threshold → Linear
+    //    - Otherwise → Table256 or Table65536
+    // 6. Return HierarchicalLut
+}
+```
+
+### Application to Specific Ops
+
+| Op | Input Range | Flat Q2 Size | HLUT Size | Speedup vs Flat Q1 |
+|---|---|---|---|---|
+| Sigmoid | [-16, 16] | 50MB | ~28KB | 2.5x |
+| Exp (softmax) | [-16, 0] | 25MB | ~15KB | 2.5x |
+| Tanh | [-8, 8] | 25MB | ~20KB | 2.5x |
+| Erf | [-4, 4] | 12MB | ~30KB | 2x |
+| Gelu | [-8, 8] | 25MB | ~40KB | 2x |
+| Rsqrt | [0.01, 100] | 50MB | ~50KB | 2.5x |
+| Sin/Cos | [0, 2π] | 10MB | ~80KB | 1.5x (less compressible) |
+
+**Total HLUT memory for all ops**: ~260KB — less than flat Q1 (2.7MB), with Q2 precision.
+
+### Files
+- New: `crates/hologram-core/src/hlut/mod.rs` — HierarchicalLut, PageKind, lookup
+- New: `crates/hologram-core/src/hlut/build.rs` — k-means page construction
+- Modify: `crates/hologram-core/src/view/mod.rs` — integrate HLUT as an alternative to flat view
+- Modify: `crates/hologram-graph/src/graph/mod.rs` — `GraphOp::HLut(HLutId)` variant
+- Modify: `crates/hologram-compiler/src/compiler/mod.rs` — HLUT construction during emit
+- Modify: `crates/hologram-exec/src/kv/store.rs` — dispatch HLut ops
+
+---
 
 After Phase 9, the only raw f32 compute remaining is ~5 reduction operations and residual additions. All per-element computation is LUT-based.
 

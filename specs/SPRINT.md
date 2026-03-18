@@ -50,6 +50,13 @@
 - [ ] **9.1**: Q0×Q0 binary arithmetic tables (add, mul, div, min, max — 64KB each)
 - [ ] **9.2**: FusedSwiGLU in byte domain (silu LUT + Q0×Q0 mul)
 
+### Roadmap: Phase 10 (Hierarchical Content-Addressable LUT)
+- [ ] **10.1**: HierarchicalLut struct with content-addressable page selector (ElementWiseView)
+- [ ] **10.2**: Adaptive PageKind (Constant, Linear, Table256, Table65536) for compression
+- [ ] **10.3**: Compile-time k-means page construction (cluster by output similarity)
+- [ ] **10.4**: Q2 (24-bit) HLUT for all activations (~260KB total vs 50MB flat)
+- [ ] **10.5**: HLUT-aware view fusion (compose hierarchical tables at compile time)
+
 ## Sprint 12: Prism Ontology Integration
 
 - [ ] Annotate `DispatchContext` as SaturatedContext (PP_1, PI_1, PA_4)
