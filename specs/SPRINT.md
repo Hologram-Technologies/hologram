@@ -8,18 +8,33 @@
 
 ## Sprint 13: Compile-Time-First Acceleration
 
-- [ ] **Phase 1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
-- [ ] **Phase 1.B**: Compile-time column-major/tiled weight index layout
-- [ ] **Phase 1.3**: Tiled multi-column LUT-GEMM kernels
-- [ ] **Phase 1.4**: SIMD dot products for Psumbook (AVX2, NEON, WASM)
-- [ ] **Phase 1.4b**: ARM NEON + WASM SIMD for ElementWiseView
-- [ ] **Phase 2.1**: Compile-time MatMul+Bias+Activation fusion
-- [ ] **Phase 2.2**: Compile-time Norm+Activation fusion + fast_rsqrt
-- [ ] **Phase 2.3**: LUT-exp for softmax (65536-entry f32 table)
-- [ ] **Phase 2.4**: Compile-time buffer alignment for SIMD
-- [ ] **Phase 3.1**: Attention op with compiler-baked tile sizes
-- [ ] **Phase 3.2**: Online-softmax tiled attention kernel (Flash Attention-style)
-- [ ] **Phase 3.3**: Per-head parallelism (compile-time planned)
+### Phase 0: Execution Orchestration Overhaul (highest ROI)
+- [ ] **0.1**: Flat pre-allocated buffer arena (replace HashMap-based arena)
+- [ ] **0.2**: Output buffer pre-allocation in dispatch (`dispatch_into` API)
+- [ ] **0.3**: Compile-time shape resolution (CompiledNode with pre-resolved shapes)
+- [ ] **0.4**: Embed execution schedule in archive (eliminate O(V+E) load-time rebuild)
+- [ ] **0.5**: SmallVec strides + stride memoization for float dispatch
+- [ ] **0.6**: Adaptive parallel threshold (compiler cost estimates per level)
+- [ ] **0.7**: Instruction tape executor (kernel function pointer table, zero-match dispatch)
+- [ ] **0.8**: System-level: `target-cpu=native`, KV cache lazy init, dense metadata arrays, FFI zero-copy
+
+### Phase 1: Compile-Time Weight Layout + SIMD
+- [ ] **1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
+- [ ] **1.B**: Compile-time column-major/tiled weight index layout
+- [ ] **1.3**: Tiled multi-column LUT-GEMM kernels
+- [ ] **1.4**: SIMD dot products for Psumbook (AVX2, NEON, WASM)
+- [ ] **1.4b**: ARM NEON + WASM SIMD for ElementWiseView
+
+### Phase 2: Compile-Time Fusion
+- [ ] **2.1**: Compile-time MatMul+Bias+Activation fusion
+- [ ] **2.2**: Compile-time Norm+Activation fusion + fast_rsqrt
+- [ ] **2.3**: LUT-exp for softmax (65536-entry f32 table)
+- [ ] **2.4**: Compile-time buffer alignment for SIMD
+
+### Phase 3: Tiled Attention
+- [ ] **3.1**: Attention op with compiler-baked tile sizes
+- [ ] **3.2**: Online-softmax tiled attention kernel (Flash Attention-style)
+- [ ] **3.3**: Per-head parallelism (compile-time planned)
 
 ## Sprint 12: Prism Ontology Integration
 

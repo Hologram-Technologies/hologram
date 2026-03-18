@@ -351,11 +351,12 @@ impl KvExecutor {
                         continue;
                     };
                     if let GraphOp::Float(FloatOp::KvWrite {
-                            layer,
-                            is_key,
-                            n_kv_heads,
-                            head_dim,
-                        }) = &node.op {
+                        layer,
+                        is_key,
+                        n_kv_heads,
+                        head_dim,
+                    }) = &node.op
+                    {
                         // Gather input and copy to release arena borrow.
                         let input_data = {
                             let refs = gather_inputs(node, &arena, dctx.inputs)?;

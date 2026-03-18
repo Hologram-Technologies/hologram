@@ -1,10 +1,12 @@
-# 005: Compile-Time-First Acceleration Plan
+# Hologram Runtime: Compile-Time-First Acceleration Plan (v2)
 
 ## Context
 
 Hologram's core thesis: O(1) per-element dispatch via LUT/KV lookups. **Verified and validated** — unary ops, view fusion, binary ops, and dispatch routing are all genuinely O(1). The remaining bottlenecks (LUT-GEMM stride-N cache misses, per-dispatch weight deserialization, unfused linear layers, scalar softmax/attention) should be attacked by pushing as much work as possible into compile time. The compiler knows weight dimensions, quantization format, and graph structure — runtime should execute pre-planned instructions with zero decision-making.
 
-**Scope**: Phases 1-3 implement now. Phases 4-6 roadmap.
+**Unifying principle**: ALL computation — including orchestration, shape resolution, dispatch routing, and buffer management — should reduce to KV/LUT lookups. The compiler converts decisions into static tables; the runtime reads them. No HashMaps, no pattern matching, no shape inference at runtime. The executor becomes a flat instruction-tape reader where every step is a pre-resolved indexed lookup.
+
+**Scope**: Phases 0-3 implement now. Phases 4-6 roadmap.
 **SIMD targets**: x86_64 AVX2, aarch64 NEON, WASM SIMD (all three).
 
 ---
@@ -15,7 +17,7 @@ Hologram's core thesis: O(1) per-element dispatch via LUT/KV lookups. **Verified
 
 ### Problem A: Weight re-deserialization on every dispatch
 
-In `kv/store.rs:134`, `dispatch_lut_gemm_4` calls `rkyv::from_bytes::<QuantizedWeights4>()` **on every forward pass**. For a 7B model with 64 linear layers, this deserializes all weight matrices every single token. This is likely the single biggest performance bug.
+In [kv/store.rs:134](crates/hologram-exec/src/kv/store.rs#L134), `dispatch_lut_gemm_4` calls `rkyv::from_bytes::<QuantizedWeights4>()` **on every forward pass**. For a 7B model with 64 linear layers, this deserializes all weight matrices every single token. This is likely the single biggest performance bug.
 
 **Fix**: Compile-time weight pinning + runtime cache.
 
@@ -40,14 +42,14 @@ The executor seeds the cache once at load time. All subsequent dispatches are Ha
 
 **Files**:
 - New: `crates/hologram-exec/src/kv/weight_cache.rs`
-- Modify: `crates/hologram-exec/src/kv/store.rs` — `dispatch_lut_gemm_4/8` accept `&WeightCache` instead of raw bytes
-- Modify: `crates/hologram-exec/src/eval/executor.rs` — seed cache in `KvExecutor::new` or `execute`
+- Modify: [kv/store.rs](crates/hologram-exec/src/kv/store.rs) — `dispatch_lut_gemm_4/8` accept `&WeightCache` instead of raw bytes
+- Modify: [eval/executor.rs](crates/hologram-exec/src/eval/executor.rs) — seed cache in `KvExecutor::new` or `execute`
 
 **Expected speedup**: 5-10x reduction in per-call overhead for autoregressive decode.
 
 ### Problem B: Stride-N cache misses in weight index access
 
-In `matmul.rs:25`: `weights.indices[l * n + col as usize]` — stride-N access. For N=4096, this means one useful byte per 4KB cache line fetch. Same problem in `parallel.rs:69`.
+In [matmul.rs:25](crates/hologram-exec/src/lut_gemm/matmul.rs#L25): `weights.indices[l * n + col as usize]` — stride-N access. For N=4096, this means one useful byte per 4KB cache line fetch. Same problem in [parallel.rs:69](crates/hologram-exec/src/lut_gemm/parallel.rs#L69).
 
 **Fix**: Compile-time column-major transpose of weight indices.
 
@@ -82,10 +84,10 @@ pub enum WeightLayout { RowMajor, ColMajor, TiledBlocked { tile_k: u16, tile_j: 
 ```
 
 **Files**:
-- Modify: `crates/hologram-exec/src/lut_gemm/quantize.rs` — add `layout` field to `QuantizedWeights4/8`, add transpose functions
+- Modify: [lut_gemm/quantize.rs](crates/hologram-exec/src/lut_gemm/quantize.rs) — add `layout` field to `QuantizedWeights4/8`, add transpose functions
 - New: `crates/hologram-compiler/src/layout/mod.rs` — layout optimizer stage
-- Modify: `crates/hologram-compiler/src/compiler/mod.rs` — add layout stage between fuse and emit
-- Modify: `crates/hologram-exec/src/lut_gemm/matmul.rs` — add col-major/tiled kernel variants
+- Modify: [compiler/mod.rs](crates/hologram-compiler/src/compiler/mod.rs) — add layout stage between fuse and emit
+- Modify: [lut_gemm/matmul.rs](crates/hologram-exec/src/lut_gemm/matmul.rs) — add col-major/tiled kernel variants
 
 **Expected speedup**: 2-4x for large matrices (K >= 2048). Inner loop goes from ~20 cycles/element (L2 miss) to ~2-3 cycles/element (L1 hit).
 
@@ -115,8 +117,8 @@ fn lut_gemm_8bit_tiled(a_row: &[f32], weights: &QuantizedWeights8, output: &mut 
 **Parallel decomposition** (compile-time planned): The compiler embeds the number of column tiles in the op metadata. The executor parallelizes over tiles via rayon when `num_col_tiles >= 4`.
 
 **Files**:
-- Modify: `crates/hologram-exec/src/lut_gemm/matmul.rs` — tiled kernels
-- Modify: `crates/hologram-exec/src/lut_gemm/parallel.rs` — tile-parallel instead of per-column parallel
+- Modify: [lut_gemm/matmul.rs](crates/hologram-exec/src/lut_gemm/matmul.rs) — tiled kernels
+- Modify: [lut_gemm/parallel.rs](crates/hologram-exec/src/lut_gemm/parallel.rs) — tile-parallel instead of per-column parallel
 
 ### Step 1.4: SIMD Dot Products (All Architectures)
 
@@ -136,12 +138,12 @@ impl Psumbook4 {
 }
 ```
 
-Plus ARM NEON `vtbl`-based ElementWiseView in `view/simd.rs`.
+Plus ARM NEON `vtbl`-based ElementWiseView in [view/simd.rs](crates/hologram-core/src/view/simd.rs).
 
 **Files**:
-- Modify: `crates/hologram-exec/src/lut_gemm/psumbook.rs` — SIMD dot per arch
+- Modify: [lut_gemm/psumbook.rs](crates/hologram-exec/src/lut_gemm/psumbook.rs) — SIMD dot per arch
 - New: `crates/hologram-exec/src/lut_gemm/simd.rs` — shared SIMD helpers
-- Modify: `crates/hologram-core/src/view/simd.rs` — NEON + WASM paths
+- Modify: [view/simd.rs](crates/hologram-core/src/view/simd.rs) — NEON + WASM paths
 
 **Expected additional speedup**: 1.3-1.5x on top of tiling.
 
@@ -185,9 +187,9 @@ Eliminates two full M×N buffer passes per linear layer.
 
 **Files**:
 - New: `crates/hologram-graph/src/fusion/linear_fusion.rs`
-- Modify: `crates/hologram-graph/src/fusion/mod.rs` — integrate linear fusion
+- Modify: [fusion/mod.rs](crates/hologram-graph/src/fusion/mod.rs) — integrate linear fusion
 - Modify graph op enum (in hologram-graph) — add `FusedLinear` variant
-- Modify: `crates/hologram-exec/src/kv/store.rs` — dispatch `FusedLinear`
+- Modify: [kv/store.rs](crates/hologram-exec/src/kv/store.rs) — dispatch `FusedLinear`
 - New: `crates/hologram-exec/src/lut_gemm/fused.rs` — fused kernel
 
 **Expected speedup**: 15-25% per linear layer.
@@ -217,7 +219,7 @@ Also includes `fast_rsqrt` (Quake III + Newton-Raphson) for RmsNorm.
 
 **Files**:
 - New: `crates/hologram-graph/src/fusion/norm_activation_fusion.rs`
-- Modify: `crates/hologram-exec/src/float_dispatch.rs` — fused kernel + fast_rsqrt
+- Modify: [float_dispatch.rs](crates/hologram-exec/src/float_dispatch.rs) — fused kernel + fast_rsqrt
 - Modify float_op.rs — add variant
 
 **Expected speedup**: 1.3-1.5x for norm+activation blocks.
@@ -238,7 +240,7 @@ fn lut_exp(x: f32) -> f32 {
 Max/sum/normalize stay in full f32. Only exp() uses the LUT.
 
 **Files**:
-- Modify: `crates/hologram-exec/src/float_dispatch.rs` — LUT-exp in softmax
+- Modify: [float_dispatch.rs](crates/hologram-exec/src/float_dispatch.rs) — LUT-exp in softmax
 - Feature-gated: `#[cfg(feature = "lut-exp")]`
 
 **Expected speedup**: 1.3x for softmax (exp is ~60% of softmax cost).
@@ -307,14 +309,167 @@ The compiler knows `num_q_heads` and embeds parallelism strategy:
 - `num_q_heads >= 4`: parallel over heads via rayon
 - `num_q_heads < 4`: sequential (avoid rayon overhead)
 
-Currently the per-head loop in `float_dispatch.rs:1698` is always sequential.
+Currently the per-head loop in [float_dispatch.rs:1698](crates/hologram-exec/src/float_dispatch.rs) is always sequential.
 
 **Files**:
-- Modify: `crates/hologram-exec/src/float_dispatch.rs` — new `dispatch_tiled_attention` function
+- Modify: [float_dispatch.rs](crates/hologram-exec/src/float_dispatch.rs) — new `dispatch_tiled_attention` function
 - Modify float_op.rs — add tile_r/tile_c fields to Attention variant
 - Modify compiler fusion pass — select tile sizes during emit
 
 **Expected speedup**: 2-4x for long sequences, plus head-level parallelism.
+
+---
+
+## Phase 0: Execution Orchestration Overhaul (NEW — highest ROI)
+
+**Goal**: Eliminate per-dispatch allocation storm and HashMap overhead. This phase may deliver more speedup than Phases 1-3 combined for graphs with many small ops, because the orchestration overhead currently dominates for anything below ~100μs compute per node.
+
+### Finding: The allocation storm
+
+Every single op dispatch allocates a fresh `Vec<u8>` for output. Every float dispatch allocates strides, broadcast shapes, and intermediate buffers. A single binary broadcast op allocates **5-7 Vecs** (two cast_f32, broadcast_shapes, two compute_broadcast_strides, compute_strides, output). For a transformer layer with ~20 float ops, that's **100+ allocations per layer per token** just for plumbing.
+
+### Finding: HashMap-based arena
+
+`BufferArena` uses `HashMap<NodeId, Cow<[u8]>>` (`buffer/arena.rs:20`). Every input gather does 2-4 HashMap lookups per node input. Shape resolution does 4-8 more. For a 32-node level: **128-256 HashMap operations** before any compute starts. The compiler already plans buffer slots with liveness intervals — the runtime ignores this.
+
+### Finding: Shape resolution repeated per-dispatch
+
+`dispatch_level` (executor.rs:1133-1173) resolves shapes from scratch for every node: 4-8 HashMap lookups + redundant `resolve_compiled_shape()` calls + `resolve_dynamic_sizes()` checking 15+ FloatOp variants. `propagate_level_shapes` runs as a **separate traversal** before dispatch. Two full passes over every level, every execution.
+
+### Step 0.1: Flat Pre-Allocated Buffer Arena
+
+Replace `HashMap<NodeId, Cow<[u8]>>` with a flat `Vec<u8>` workspace where each node's output is at a compile-time-determined offset:
+
+```rust
+pub struct FlatArena {
+    workspace: Vec<u8>,           // Single contiguous allocation
+    offsets: Vec<(u32, u32)>,     // (offset, length) per slot, indexed by slot_id
+    node_to_slot: Vec<u16>,       // node_id → slot_id, dense array
+}
+```
+
+The compiler already computes `BufferSlot` assignments with liveness intervals (`workspace/mod.rs`). Embed slot offsets in the archive. At runtime:
+- `arena.get(node_id)` → `&workspace[offsets[node_to_slot[node_id]]]` — **O(1) array index, no hashing**
+- `arena.set(node_id, data)` → memcpy into pre-allocated slot — **no allocation**
+- Single `vec![0u8; total_workspace_bytes]` at init — **one allocation total**
+
+**Files**:
+- New: `crates/hologram-exec/src/buffer/flat_arena.rs`
+- Modify: `crates/hologram-exec/src/eval/executor.rs` — use FlatArena
+- Modify: `crates/hologram-compiler/src/workspace/mod.rs` — emit slot offsets + sizes
+- Modify archive format — embed workspace layout
+
+**Expected speedup**: Eliminates 960-1,920 HashMap ops per execution cycle. For small ops (LUT/elementwise), this overhead is currently **larger than the compute itself**.
+
+### Step 0.2: Output Buffer Pre-allocation / Reuse in Dispatch
+
+Instead of every `dispatch_float_ctx` returning a fresh `Vec<u8>`, pass a mutable output slice from the flat arena:
+
+```rust
+// Before: allocates per-op
+fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<Vec<u8>> {
+    let out: Vec<f32> = x.iter().map(|&v| f(v)).collect();  // ALLOCATES
+    Ok(f32_vec_to_bytes(out))
+}
+
+// After: writes into pre-allocated buffer
+fn unary_map_into(inputs: &[&[u8]], output: &mut [u8], f: impl Fn(f32) -> f32) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    let out = bytemuck::cast_slice_mut::<u8, f32>(output);
+    for (o, &v) in out.iter_mut().zip(x.iter()) {
+        *o = f(v);
+    }
+    Ok(())
+}
+```
+
+This requires the dispatch API to accept `&mut [u8]` output buffers instead of returning `Vec<u8>`. The flat arena provides the buffer; the dispatch writes into it.
+
+**Eliminates**: 100+ Vec allocations per transformer layer per token.
+
+**Files**:
+- Modify: `crates/hologram-exec/src/kv/store.rs` — `dispatch_into` variant accepting output slice
+- Modify: `crates/hologram-exec/src/float_dispatch.rs` — `_into` variants for all kernels
+- Modify: `crates/hologram-exec/src/eval/executor.rs` — wire dispatch_into with flat arena
+
+### Step 0.3: Compile-Time Shape Resolution
+
+Merge shape propagation into the schedule at compile time. The compiler resolves all shapes that can be determined statically and embeds them per-node:
+
+```rust
+pub struct CompiledNode {
+    op: GraphOp,
+    input_slot_ids: SmallVec<[u16; 4]>,   // direct slot references, no HashMap
+    output_slot_id: u16,
+    output_shape: SmallVec<[u32; 4]>,      // fully resolved if possible, 0 = dynamic
+    output_bytes: u32,                      // pre-computed buffer size
+    elem_size: u8,                          // 1, 2, or 4
+}
+```
+
+At runtime: no shape HashMap lookups, no `resolve_compiled_shape`, no `resolve_dynamic_sizes` for statically-shaped ops. Only dynamic shapes (batch dim, sequence length) need runtime resolution.
+
+**Eliminates**: 5,120+ HashMap ops per execution for shape tracking. Eliminates the separate `propagate_level_shapes` pass.
+
+**Files**:
+- New structure in `crates/hologram-graph/src/schedule/compiled_node.rs`
+- Modify: `crates/hologram-compiler/src/compiler/mod.rs` — emit CompiledNodes
+- Modify: `crates/hologram-exec/src/eval/executor.rs` — use CompiledNode directly
+
+### Step 0.4: Embed Execution Schedule in Archive
+
+Currently `schedule_bridge.rs` re-runs Kahn's algorithm O(V+E) at load time if the schedule isn't embedded. Embed it as a flat instruction tape:
+
+```rust
+pub struct EmbeddedSchedule {
+    node_ids: Vec<u32>,        // flat list of all node IDs in execution order
+    level_starts: Vec<u32>,    // level_starts[i] = first index in node_ids for level i
+}
+```
+
+At load time: zero schedule computation. Direct iteration.
+
+**Files**:
+- Modify: `crates/hologram-archive/src/section/` — new schedule section
+- Modify: `crates/hologram-exec/src/eval/schedule_bridge.rs` — load from archive or fallback to Kahn's
+
+### Step 0.5: Stride Memoization for Float Dispatch
+
+`compute_strides` and `compute_broadcast_strides` allocate `Vec<usize>` on every call (`float_dispatch.rs:564-583`). Use stack-allocated `SmallVec<[usize; 6]>` (6 dims covers 99% of tensors) and cache broadcast stride pairs for repeated same-shape ops:
+
+```rust
+fn compute_strides_inline(shape: &[usize]) -> SmallVec<[usize; 6]> {
+    let mut strides = SmallVec::new();
+    strides.resize(shape.len(), 1);
+    for i in (0..shape.len().saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+```
+
+**Eliminates**: 3-5 heap allocations per binary broadcast op.
+
+**Files**:
+- Modify: `crates/hologram-exec/src/float_dispatch.rs` — SmallVec strides, memoized broadcasts
+
+### Step 0.6: Adaptive Parallel Threshold
+
+Current threshold is fixed at 4 nodes (`parallel/mod.rs:13`). For cheap ops (LUT: ~50ns), rayon overhead dominates. For expensive ops (MatMul: ~100μs), 4 is fine.
+
+**Fix**: The compiler annotates each level with estimated compute cost. The executor uses this to decide parallel vs sequential:
+
+```rust
+pub struct ParallelLevel {
+    pub node_ids: Vec<NodeId>,
+    pub estimated_cost_ns: u64,  // compiler estimate
+}
+// Threshold: parallel if estimated_cost_ns > 10_000 (10μs)
+```
+
+**Files**:
+- Modify: `crates/hologram-graph/src/schedule/levels.rs` — add cost estimate
+- Modify: `crates/hologram-exec/src/parallel/mod.rs` — cost-based threshold
 
 ---
 
@@ -340,22 +495,117 @@ Currently the per-head loop in `float_dispatch.rs:1698` is always sequential.
 ## Implementation Order
 
 ```
-Phase 1.A  Weight cache (eliminate re-deserialization)     → pure runtime, no format change
-Phase 1.B  Column-major weight indices                     → compile-time layout + new kernel
-Phase 1.3  Tiled multi-column kernels                      → builds on 1.B layout
-Phase 1.4  SIMD dot products (AVX2/NEON/WASM)              → orthogonal, can parallel with 1.3
-Phase 2.1  MatMul+Bias+Activation fusion                   → new fusion pass + fused kernel
-Phase 2.2  Norm+Activation fusion + fast_rsqrt             → new fusion pass + fused kernel
-Phase 2.3  LUT-exp for softmax                             → standalone, feature-gated
-Phase 2.4  Buffer alignment                                → workspace planner change
-Phase 3.1  Attention op with baked tile sizes               → graph IR change
-Phase 3.2  Tiled attention kernel                           → new dispatch function
-Phase 3.3  Per-head parallelism                             → rayon in attention dispatch
+Phase 0.1  Flat pre-allocated arena (replace HashMap)       → biggest single win for orchestration
+Phase 0.2  Output buffer pre-allocation in dispatch          → eliminate per-op Vec allocations
+Phase 0.3  Compile-time shape resolution                     → eliminate shape HashMap passes
+Phase 0.4  Embed schedule in archive                         → eliminate O(V+E) at load time
+Phase 0.5  SmallVec strides + stride memoization             → eliminate broadcast allocations
+Phase 0.6  Adaptive parallel threshold                       → cost-based rayon decisions
+Phase 1.A  Weight cache (eliminate re-deserialization)        → pure runtime, no format change
+Phase 1.B  Column-major weight indices                       → compile-time layout + new kernel
+Phase 1.3  Tiled multi-column kernels                        → builds on 1.B layout
+Phase 1.4  SIMD dot products (AVX2/NEON/WASM)                → orthogonal, can parallel with 1.3
+Phase 2.1  MatMul+Bias+Activation fusion                     → new fusion pass + fused kernel
+Phase 2.2  Norm+Activation fusion + fast_rsqrt               → new fusion pass + fused kernel
+Phase 2.3  LUT-exp for softmax                               → standalone, feature-gated
+Phase 2.4  Buffer alignment                                  → workspace planner change
+Phase 3.1  Attention op with baked tile sizes                 → graph IR change
+Phase 3.2  Tiled attention kernel                             → new dispatch function
+Phase 3.3  Per-head parallelism                               → rayon in attention dispatch
 ```
 
-Steps 1.A and 1.4 can be developed in parallel with the rest of Phase 1.
-Steps 2.1-2.4 are independent of each other and can be parallelized.
-Phase 3 depends on Phase 2.3 (LUT-exp is used inside tiled attention softmax).
+### Step 0.7: Instruction Tape Executor (Everything-Is-A-Lookup)
+
+The ultimate expression of the KV/LUT philosophy applied to orchestration. Replace the current executor loop (match on GraphOp, gather inputs via HashMap, resolve shapes) with a flat instruction tape where every step is pre-resolved:
+
+```rust
+/// Compiled instruction — every field is a direct index, no runtime resolution.
+pub struct Instruction {
+    kernel_id: u16,                         // index into kernel function table
+    input_slots: SmallVec<[u16; 4]>,        // direct arena slot indices
+    output_slot: u16,                       // direct arena slot index
+    output_bytes: u32,                      // pre-computed buffer size
+    constant_offset: u32,                   // byte offset into weight blob (0 = no constant)
+    constant_len: u32,                      // constant byte length
+}
+
+/// The kernel table — a dense array of function pointers, one per op type.
+type KernelFn = fn(inputs: &[&[u8]], output: &mut [u8], constant: &[u8]) -> ExecResult<()>;
+static KERNEL_TABLE: &[KernelFn] = &[
+    kernel_lut_sigmoid,      // 0
+    kernel_lut_relu,         // 1
+    kernel_prim_add,         // 2
+    kernel_matmul_lut4,      // 3
+    kernel_float_softmax,    // 4
+    kernel_float_attention,  // 5
+    // ...
+];
+
+/// Execution: pure indexed lookups, zero decisions.
+fn execute_tape(tape: &[Instruction], arena: &mut FlatArena, weights: &[u8]) {
+    for inst in tape {
+        let inputs = inst.input_slots.iter()
+            .map(|&s| arena.get(s))       // O(1) array index
+            .collect::<SmallVec<_>>();
+        let output = arena.get_mut(inst.output_slot);  // O(1) array index
+        let constant = &weights[inst.constant_offset..][..inst.constant_len];
+        KERNEL_TABLE[inst.kernel_id as usize](&inputs, output, constant);  // O(1) table lookup
+    }
+}
+```
+
+This is the compile-time-first philosophy taken to its conclusion:
+- **No `match` on GraphOp** at runtime — the compiler resolves each op to a `kernel_id` index
+- **No HashMap lookups** — all buffer references are slot indices into the flat arena
+- **No shape resolution** — output sizes pre-computed and baked into the instruction
+- **No constant deserialization** — direct byte offset into the weight blob
+- **The dispatch loop IS a KV lookup**: `kernel_id → function pointer`
+
+The compiler emits the instruction tape during the emit stage. Each `GraphOp` + its resolved shapes + its constant references collapse into a single `Instruction`. Parallel levels become ranges in the tape: `levels[i] = (tape_start, tape_end)`.
+
+**Files**:
+- New: `crates/hologram-exec/src/eval/tape.rs` — Instruction struct, tape executor
+- New: `crates/hologram-exec/src/eval/kernel_table.rs` — static kernel function table
+- Modify: `crates/hologram-compiler/src/compiler/mod.rs` — emit instruction tape
+- Modify archive format — embed tape as a flat section
+
+### Step 0.8: System-Level Optimizations
+
+Quick wins that let the LUT/KV core run at maximum throughput:
+
+**a) Cargo release profile** — add to `.cargo/config.toml`:
+```toml
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.release]
+lto = "thin"  # faster compile, ~same perf as fat LTO
+```
+Expected: ~10% free perf from native CPU instruction selection (AVX2 auto-vectorization, BMI2).
+
+**b) KV cache lazy initialization** — replace `vec![0.0f32; cap]` with `Vec::with_capacity(cap)`. Don't zero 2GB of cache memory that will be overwritten during prefill.
+
+**c) Graph metadata dense arrays** — replace 3 HashMaps in `Graph` (`constant_shapes`, `node_shapes`, `node_dtypes`) with `Vec<Option<T>>` indexed by NodeId, matching the existing `slots`/`generations` pattern. Every metadata access becomes an O(1) array index.
+
+**d) Archive decompression into aligned buffer** — decompress directly into `AlignedVec<16>` instead of double-copy (decompress → Vec → AlignedVec).
+
+**e) FFI zero-copy inputs** — accept `&[u8]` slices in FFI instead of copying to `Vec<u8>` per input.
+
+**Files**:
+- New: `.cargo/config.toml`
+- Modify: `crates/hologram-exec/src/kv_cache.rs` — lazy init
+- Modify: `crates/hologram-graph/src/graph/mod.rs` — dense Vec metadata
+- Modify: `crates/hologram-archive/src/loader/bytes.rs` — direct decompress
+- Modify: `crates/hologram-ffi/src/exec/mod.rs` — borrowed inputs
+
+**Phase 0** should be implemented FIRST — it reduces overhead for ALL ops, not just matmul/attention.
+Steps 0.1-0.2 are tightly coupled (arena change enables dispatch_into). Do them together.
+Steps 0.3-0.6 are independent and can be parallelized.
+Step 0.7 (instruction tape) is the capstone of Phase 0 — it subsumes 0.1-0.3 into a unified design.
+  Implement 0.1-0.3 first as incremental steps, then refactor into 0.7 tape format.
+Step 0.8 (system-level) can be done anytime — quick wins, no dependencies.
+Phase 1 builds on Phase 0 (weight cache uses flat arena; tiled kernels use dispatch_into).
+Phases 2-3 are independent of each other but benefit from Phase 0's reduced overhead.
 
 ---
 
@@ -375,13 +625,20 @@ For each step:
 
 ## Composite Speedup Estimate
 
-| Component | Current | After Phase 1 | After Phase 2 | After Phase 3 |
-|---|---|---|---|---|
-| Weight deser | ~100μs/call | ~0 (cached) | ~0 | ~0 |
-| LUT-GEMM per element | ~20 cy (L2 miss) | ~3 cy (L1 + SIMD) | ~2.5 cy (fused bias/act) | ~2.5 cy |
-| Softmax exp | ~5 cy/element | ~5 cy | ~1 cy (LUT) | ~1 cy |
-| Attention scores | O(seq²×d) dense | same | same | O(seq²×d) tiled, 50% causal skip |
-| Norm + activation | 2 passes | 2 passes | 1 pass | 1 pass |
-| Buffer traffic | ~10 intermediates/layer | ~10 | ~6 (fused) | ~4 (fused attention) |
+| Component | Current | After Phase 0 | After Phase 1 | After Phase 2 | After Phase 3 |
+|---|---|---|---|---|---|
+| Arena lookup | ~50ns HashMap | ~2ns array index | ~2ns | ~2ns | ~2ns |
+| Per-op allocation | 1-7 Vecs/op | 0 (pre-allocated) | 0 | 0 | 0 |
+| Shape resolution | 4-8 HashMap/node | 0 (compiled) | 0 | 0 | 0 |
+| Schedule build | O(V+E) at load | 0 (embedded) | 0 | 0 | 0 |
+| Op dispatch | match 22 arms | fn ptr table[id] | table[id] | table[id] | table[id] |
+| Graph metadata | HashMap×3/node | array[id] | array[id] | array[id] | array[id] |
+| Weight deser | ~100μs/call | ~100μs | ~0 (cached) | ~0 | ~0 |
+| LUT-GEMM per elem | ~20 cy (L2 miss) | ~20 cy | ~3 cy (L1+SIMD) | ~2.5 cy (fused) | ~2.5 cy |
+| Softmax exp | ~5 cy/element | ~5 cy | ~5 cy | ~1 cy (LUT) | ~1 cy |
+| Attention scores | O(seq²×d) | O(seq²×d) | O(seq²×d) | O(seq²×d) | tiled, 50% skip |
+| Norm + activation | 2 passes | 2 passes | 2 passes | 1 pass | 1 pass |
 
-**End-to-end estimate**: **3-5x** for a 7B model at seq=2048 after all three phases.
+**End-to-end estimate**: Phase 0 alone delivers **2-3x** for graphs with many small ops (the orchestration overhead is currently >50% of runtime for elementwise-heavy graphs). Step 0.7 (instruction tape) + 0.8 (system flags) adds another ~10-15%. Combined with Phases 1-3: **5-10x** for a 7B model at seq=2048.
+
+The key insight: after all phases, the runtime becomes **a flat loop of indexed lookups** — arena reads are array indices, dispatch is a function pointer table, shapes are pre-resolved, constants are byte offsets. The entire execution path is KV/LUT-native, not just the compute kernels.
