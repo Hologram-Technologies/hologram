@@ -51,8 +51,9 @@ pub use hologram_graph::{
 #[cfg(feature = "std")]
 pub use hologram_exec::execute_file;
 pub use hologram_exec::{
-    execute_bytes, execute_bytes_with_ops, execute_plan, BufferArena, CustomHandler,
-    CustomOpRegistry, GraphInputs, GraphOutputs, KvExecutor, KvStore,
+    execute_bytes, execute_bytes_with_ops, execute_plan, execute_plan_with_kv_state,
+    execute_plan_with_shape_hints, BufferArena, CustomHandler, CustomOpRegistry, GraphInputs,
+    GraphOutputs, KvCacheState, KvExecutor, KvStore,
 };
 
 // Archive

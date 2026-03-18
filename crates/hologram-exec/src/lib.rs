@@ -9,6 +9,7 @@ pub mod error;
 pub mod eval;
 pub mod float_dispatch;
 pub mod kv;
+pub mod kv_cache;
 pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
@@ -21,7 +22,11 @@ pub use error::{ExecError, ExecResult};
 pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
-pub use mmap::{execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress, execute_plan};
+pub use kv_cache::KvCacheState;
+pub use mmap::{
+    execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress, execute_plan,
+    execute_plan_with_kv_state, execute_plan_with_shape_hints,
+};
 
 #[cfg(feature = "std")]
 pub use mmap::execute_file;

@@ -23,6 +23,11 @@ use crate::eval::shape_resolve::{resolve_float_shape, ShapeContext};
 ///
 /// After this pass, `dispatch_level` can read pre-computed shapes from
 /// `shape_map` instead of inferring them from output buffer sizes.
+///
+/// `shape_hints` — optional pre-projected shape map from `walk_shape_context()`.
+/// Maps `NodeId.index → concrete shape`. When a hint is present for a node, it
+/// is used directly without any further inference, ensuring correctness for
+/// variable-length inputs (seq>1, batch>1, etc.).
 pub fn propagate_level_shapes(
     level: &ParallelLevel,
     node_map: &HashMap<NodeId, &Node>,
@@ -30,8 +35,31 @@ pub fn propagate_level_shapes(
     shape_map: &mut ShapeMap,
     compiled_shapes: &HashMap<NodeId, Vec<usize>>,
     compiled_dtypes: &HashMap<NodeId, FloatDType>,
+    shape_hints: Option<&HashMap<u32, Vec<usize>>>,
 ) {
     for &node_id in &level.node_ids {
+        // Pre-projected shape hints from walk_shape_context() take priority.
+        // These are provably correct (projected from actual runtime input shapes
+        // through the ShapeContextGraph) and override both compiled shapes and
+        // inferred shapes.
+        if let Some(hints) = shape_hints {
+            if let Some(hint) = hints.get(&node_id.index()) {
+                if !hint.is_empty() && !hint.contains(&0) {
+                    // Validate: hint rank must match compiled rank (when both
+                    // are available). The ShapeContextGraph walker can produce
+                    // wrong rank for Reshape ops when Concat shape-value chains
+                    // propagate extra i64 elements. Reject rank-mismatched hints
+                    // and fall through to compiled-shape-based inference.
+                    let rank_ok = compiled_shapes
+                        .get(&node_id)
+                        .is_none_or(|cs| cs.len() == hint.len());
+                    if rank_ok {
+                        shape_map.insert(node_id, hint.clone());
+                        continue;
+                    }
+                }
+            }
+        }
         let Some(node) = node_map.get(&node_id) else {
             continue;
         };

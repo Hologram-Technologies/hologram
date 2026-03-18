@@ -4,7 +4,7 @@
 //! gathers inputs from the arena, dispatches via `KvStore`, and
 //! stores outputs back. All mutation is between levels, never during.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use hologram_archive::format::graph::SerializedGraph;
 use hologram_core::op::FloatDType;
@@ -192,6 +192,56 @@ impl KvExecutor {
         Self::execute_core(sg, schedule, inputs, None, weights, |_, _| {})
     }
 
+    /// Execute with pre-projected shape hints from `walk_shape_context()`.
+    ///
+    /// `shape_hints` maps `NodeId.index() → concrete shape` for every node
+    /// whose shape was projected by the `ShapeContextGraph` runtime walker.
+    /// These hints are applied before any compiled-shape or inferred-shape
+    /// resolution, ensuring correctness for variable-length inputs (seq>1).
+    pub fn execute_with_shape_hints(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        weights: &[u8],
+        shape_hints: &HashMap<u32, Vec<usize>>,
+    ) -> ExecResult<GraphOutputs> {
+        Self::execute_core_with_hints(
+            sg,
+            schedule,
+            inputs,
+            None,
+            weights,
+            |_, _| {},
+            Some(shape_hints),
+        )
+    }
+
+    /// Execute with shape hints AND a mutable KV cache state.
+    ///
+    /// `kv_state` is mutated during execution: `FloatOp::KvWrite` nodes
+    /// append K/V data to the cache, and `FloatOp::KvRead` nodes read
+    /// the cached data back. The cache persists across calls for
+    /// autoregressive generation.
+    pub fn execute_with_kv_state(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        weights: &[u8],
+        shape_hints: &HashMap<u32, Vec<usize>>,
+        kv_state: &mut crate::kv_cache::KvCacheState,
+    ) -> ExecResult<GraphOutputs> {
+        Self::execute_core_with_kv(
+            sg,
+            schedule,
+            inputs,
+            None,
+            weights,
+            |_, _| {},
+            Some(shape_hints),
+            Some(kv_state),
+        )
+    }
+
     /// Execute with a custom op registry and archive weight data.
     ///
     /// `weights` is the raw weight blob from the `.holo` archive.
@@ -213,7 +263,282 @@ impl KvExecutor {
         inputs: &GraphInputs,
         registry: Option<&CustomOpRegistry>,
         weights: &[u8],
+        on_level: F,
+    ) -> ExecResult<GraphOutputs>
+    where
+        F: FnMut(usize, usize),
+    {
+        Self::execute_core_with_hints(sg, schedule, inputs, registry, weights, on_level, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_core_with_kv<F>(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        registry: Option<&CustomOpRegistry>,
+        weights: &[u8],
         mut on_level: F,
+        shape_hints: Option<&HashMap<u32, Vec<usize>>>,
+        mut kv_state: Option<&mut crate::kv_cache::KvCacheState>,
+    ) -> ExecResult<GraphOutputs>
+    where
+        F: FnMut(usize, usize),
+    {
+        use hologram_core::op::FloatOp;
+
+        let compiled_dtypes = sg.node_dtypes_map();
+        let mut arena = seed_arena(sg, weights, &compiled_dtypes)?;
+        let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
+
+        let dctx = DispatchContext {
+            node_map: build_node_map(sg),
+            compiled_shapes: sg.node_shapes_map(),
+            compiled_dtypes,
+            inputs,
+            constants: &sg.constants,
+            registry,
+            weights,
+        };
+
+        let max_level_size = schedule
+            .levels
+            .iter()
+            .map(|l| l.node_ids.len())
+            .max()
+            .unwrap_or(0);
+        let mut results_buf: Vec<(NodeId, Vec<u8>, Vec<usize>)> =
+            Vec::with_capacity(max_level_size);
+
+        // Track seq_len for KV cache advance (inferred from first KvWrite input).
+        let mut kv_seq_len: Option<usize> = None;
+        // Node IDs handled by KV cache — skip in dispatch_level.
+        let mut kv_handled: HashSet<NodeId> = HashSet::new();
+
+        for (i, level) in schedule.levels.iter().enumerate() {
+            super::shape_propagate::propagate_level_shapes(
+                level,
+                &dctx.node_map,
+                &arena,
+                &mut shape_map,
+                &dctx.compiled_shapes,
+                &dctx.compiled_dtypes,
+                shape_hints,
+            );
+
+            // Check for KvWrite/KvRead nodes in this level and handle them
+            // before the normal dispatch loop.
+            if let Some(kv) = kv_state.as_deref_mut() {
+                for &node_id in &level.node_ids {
+                    let Some(node) = dctx.node_map.get(&node_id) else {
+                        continue;
+                    };
+                    match &node.op {
+                        GraphOp::Float(FloatOp::RotaryEmbedding { .. }) if kv.write_pos() > 0 => {
+                            // Decode mode: inject start_pos so RoPE applies
+                            // the correct positional encoding for token at
+                            // position write_pos (not 0).
+                            let pos = kv.write_pos() as u32;
+                            // RoPE position offset applied for decode token.
+                            let pos_bytes = pos.to_le_bytes().to_vec();
+                            // Store the position as a synthetic tensor that
+                            // the RoPE dispatch reads as input[1].
+                            // We use a dedicated arena slot for this — the node's
+                            // own ID offset by a large constant to avoid collision.
+                            let pos_node_id = NodeId::new(node_id.index() + 100_000, 0);
+                            arena.insert(pos_node_id, pos_bytes);
+
+                            // Gather the real input (the tensor to rotate).
+                            let input_refs = gather_inputs(node, &arena, dctx.inputs)?;
+                            let tensor_data = input_refs.first().copied().unwrap_or(&[]);
+
+                            // Call RoPE dispatch with [tensor, pos_bytes].
+                            let pos_ref = arena.get(pos_node_id).expect("just inserted pos bytes");
+                            let rope_inputs = [tensor_data, pos_ref];
+                            let result = crate::float_dispatch::dispatch_float(
+                                match &node.op {
+                                    GraphOp::Float(fop) => fop,
+                                    _ => unreachable!(),
+                                },
+                                &rope_inputs,
+                            )
+                            .map_err(|e| ExecError::ShapeMismatch {
+                                expected: format!("RoPE with start_pos={pos}"),
+                                actual: e.to_string(),
+                            })?;
+
+                            let out_shape = shape_map
+                                .get(node_id)
+                                .map(|s| s.to_vec())
+                                .unwrap_or_else(|| vec![result.len() / 4]);
+                            arena.insert(node_id, result);
+                            shape_map.insert(node_id, out_shape);
+                            kv_handled.insert(node_id);
+                        }
+                        GraphOp::Float(FloatOp::KvWrite { layer, is_key, .. }) => {
+                            // KV cache write for layer.
+                            // Gather input and copy to release arena borrow.
+                            let input_data = {
+                                let refs = gather_inputs(node, &arena, dctx.inputs)?;
+                                refs.first().map(|d| d.to_vec()).unwrap_or_default()
+                            };
+                            if !input_data.is_empty() {
+                                let floats: &[f32] = if input_data.len() % 4 == 0 {
+                                    bytemuck::cast_slice(&input_data)
+                                } else {
+                                    &[]
+                                };
+
+                                // Write new K or V to the cache buffer.
+                                if *is_key {
+                                    kv.write_layer(*layer, floats, &[]);
+                                } else {
+                                    kv.write_layer(*layer, &[], floats);
+                                }
+
+                                // Infer seq_len for the advance() call.
+                                // The input shape from shape_map tells us the
+                                // tensor dimensions including seq.
+                                if kv_seq_len.is_none() && *is_key {
+                                    // Input shape might be [batch, seq, kv_dim] or [seq, kv_dim] or flat.
+                                    // Use the input node's shape to extract seq.
+                                    let in_shape =
+                                        node.inputs.first().and_then(|slot| match slot.source {
+                                            InputSource::Node(id) => {
+                                                shape_map.get(id).map(|s| s.to_vec())
+                                            }
+                                            _ => None,
+                                        });
+                                    let seq = if let Some(s) = in_shape {
+                                        if s.len() >= 3 {
+                                            s[1]
+                                        }
+                                        // [batch, seq, dim]
+                                        else if s.len() == 2 {
+                                            s[0]
+                                        }
+                                        // [seq, dim]
+                                        else {
+                                            1
+                                        }
+                                    } else {
+                                        1
+                                    };
+                                    kv_seq_len = Some(seq.max(1));
+                                }
+
+                                // Output: full cached data (previous + new).
+                                // cache[0..write_pos] has previous tokens' data.
+                                // The new data was written at write_pos..write_pos+seq.
+                                // Concatenate to give attention the full K/V history.
+                                // Output: full cached K/V (previous + new).
+                                let previous = if *is_key {
+                                    kv.read_k(*layer)
+                                } else {
+                                    kv.read_v(*layer)
+                                };
+
+                                if previous.is_empty() {
+                                    // Prefill: no cache yet, pass through.
+                                    let out_shape = shape_map
+                                        .get(node_id)
+                                        .map(|s| s.to_vec())
+                                        .unwrap_or_else(|| vec![floats.len()]);
+                                    arena.insert(node_id, input_data.clone());
+                                    shape_map.insert(node_id, out_shape);
+                                } else {
+                                    // Decode: cache[0..write_pos] ++ new_data.
+                                    // Compute shape before moving data into arena.
+                                    let prev_len = previous.len(); // in f32s
+                                    let new_len = floats.len(); // in f32s
+                                    let total_f32 = prev_len + new_len;
+
+                                    let prev_bytes: &[u8] = bytemuck::cast_slice(previous);
+                                    let mut full =
+                                        Vec::with_capacity(prev_bytes.len() + input_data.len());
+                                    full.extend_from_slice(prev_bytes);
+                                    full.extend_from_slice(&input_data);
+                                    arena.insert(node_id, full);
+
+                                    // Compute proper 3D shape [total_seq, n_kv_heads, head_dim]
+                                    // so downstream Attention gets the right dimensions.
+                                    if let GraphOp::Float(FloatOp::KvWrite {
+                                        n_kv_heads,
+                                        head_dim,
+                                        ..
+                                    }) = &node.op
+                                    {
+                                        let stride = *n_kv_heads as usize * *head_dim as usize;
+                                        let total_seq = if stride > 0 {
+                                            total_f32 / stride
+                                        } else {
+                                            total_f32
+                                        };
+                                        shape_map.insert(
+                                            node_id,
+                                            vec![
+                                                total_seq,
+                                                *n_kv_heads as usize,
+                                                *head_dim as usize,
+                                            ],
+                                        );
+                                    } else {
+                                        shape_map.insert(node_id, vec![total_f32]);
+                                    }
+                                }
+                                kv_handled.insert(node_id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // If KV cache handled some nodes, create a filtered level
+            // that excludes them (they're already in the arena).
+            let effective_level = if kv_handled.is_empty() {
+                level.clone()
+            } else {
+                let filtered_ids: Vec<NodeId> = level
+                    .node_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !kv_handled.contains(id))
+                    .collect();
+                ParallelLevel {
+                    node_ids: filtered_ids,
+                }
+            };
+
+            let count = dispatch_level(
+                &effective_level,
+                &dctx,
+                &mut arena,
+                &mut shape_map,
+                &mut results_buf,
+                #[cfg(feature = "profile")]
+                &mut { crate::profile::PerfProfile::new() },
+            )?;
+
+            on_level(i, count);
+        }
+
+        // Advance KV cache position after all layers have been written.
+        if let (Some(kv), Some(seq)) = (kv_state, kv_seq_len) {
+            kv.advance(seq);
+        }
+
+        extract_named_outputs(sg, &mut arena)
+    }
+
+    pub(crate) fn execute_core_with_hints<F>(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        registry: Option<&CustomOpRegistry>,
+        weights: &[u8],
+        mut on_level: F,
+        shape_hints: Option<&HashMap<u32, Vec<usize>>>,
     ) -> ExecResult<GraphOutputs>
     where
         F: FnMut(usize, usize),
@@ -258,6 +583,7 @@ impl KvExecutor {
                 &mut shape_map,
                 &dctx.compiled_shapes,
                 &dctx.compiled_dtypes,
+                shape_hints,
             );
 
             #[cfg(feature = "profile")]
@@ -337,6 +663,7 @@ impl KvExecutor {
                 &mut shape_map,
                 &dctx.compiled_shapes,
                 &dctx.compiled_dtypes,
+                None,
             );
             let shape_elapsed = shape_start.elapsed();
             let dispatch_start = std::time::Instant::now();
@@ -507,19 +834,28 @@ fn resolve_dynamic_sizes(
     elem_size: usize,
 ) -> Option<GraphOp> {
     let resolve = |input_idx: usize| -> u32 {
-        let shape_last = input_shapes
-            .get(input_idx)
-            .and_then(|s| s.last().copied())
-            .unwrap_or(0);
+        let shape = input_shapes.get(input_idx);
+        let shape_rank = shape.map(|s| s.len()).unwrap_or(0);
+        let shape_last = shape.and_then(|s| s.last().copied()).unwrap_or(0);
         // Validate: the last dim must divide the actual buffer size.
         let buf_floats = input_refs
             .get(input_idx)
             .map(|b| b.len() / elem_size)
             .unwrap_or(0);
-        if shape_last > 0 && buf_floats > 0 && buf_floats.is_multiple_of(shape_last) {
+        // Guard: a 1-D shape `[total_elems]` means shape tracking fell back to
+        // flat — `last()` is the total element count, not the row width. Using it
+        // as a Softmax/RmsNorm `size` would normalize across the entire tensor
+        // instead of per-row. Only trust `shape_last` when rank >= 2.
+        if shape_rank >= 2
+            && shape_last > 0
+            && buf_floats > 0
+            && buf_floats.is_multiple_of(shape_last)
+        {
             shape_last as u32
+        } else if buf_floats > 0 && shape_rank < 2 {
+            // 1-D fallback: don't override — return 0 so the compiled size is kept.
+            0
         } else if buf_floats > 0 {
-            // Shape tracking failed — use full buffer (single-row softmax).
             buf_floats as u32
         } else {
             0
@@ -561,6 +897,93 @@ fn resolve_dynamic_sizes(
                 FloatOp::ReduceMean { size: 0 } => FloatOp::ReduceMean { size: resolve(0) },
                 FloatOp::ReduceMax { size: 0 } => FloatOp::ReduceMax { size: resolve(0) },
                 FloatOp::ReduceMin { size: 0 } => FloatOp::ReduceMin { size: resolve(0) },
+                FloatOp::ReduceProd { size: 0 } => FloatOp::ReduceProd { size: resolve(0) },
+                FloatOp::InstanceNorm { size: 0, epsilon } => FloatOp::InstanceNorm {
+                    size: resolve(0),
+                    epsilon: *epsilon,
+                },
+                // Embed: infer embedding dim from weight table shape[-1] when dim=0.
+                FloatOp::Embed { dim: 0, quant } => {
+                    let dim = input_shapes
+                        .get(1)
+                        .and_then(|s| s.last())
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    if dim > 0 {
+                        FloatOp::Embed { dim, quant: *quant }
+                    } else {
+                        return None;
+                    }
+                }
+                // Gather: infer row width from weight table shape[-1] when dim=0.
+                FloatOp::Gather { dim: 0, dtype } => {
+                    let dim = input_shapes
+                        .get(1)
+                        .and_then(|s| s.last())
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    if dim > 0 {
+                        FloatOp::Gather { dim, dtype: *dtype }
+                    } else {
+                        return None;
+                    }
+                }
+                // Concat: infer row sizes from input shapes when both are 0-sentinels.
+                FloatOp::Concat {
+                    size_a: 0,
+                    size_b: 0,
+                    dtype,
+                } => {
+                    let size_a = input_shapes
+                        .first()
+                        .and_then(|s| s.last())
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    let size_b = input_shapes
+                        .get(1)
+                        .and_then(|s| s.last())
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    if size_a > 0 && size_b > 0 {
+                        FloatOp::Concat {
+                            size_a,
+                            size_b,
+                            dtype: *dtype,
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                // Attention: infer head_dim from Q shape when head_dim=0.
+                FloatOp::Attention {
+                    head_dim: 0,
+                    num_q_heads,
+                    num_kv_heads,
+                    scale,
+                    causal,
+                } if *num_q_heads > 0 => {
+                    let q_last = input_shapes
+                        .first()
+                        .and_then(|s| s.last())
+                        .copied()
+                        .unwrap_or(0);
+                    let head_dim = if q_last > 0 {
+                        (q_last / *num_q_heads as usize) as u32
+                    } else {
+                        0
+                    };
+                    if head_dim > 0 {
+                        FloatOp::Attention {
+                            head_dim,
+                            num_q_heads: *num_q_heads,
+                            num_kv_heads: *num_kv_heads,
+                            scale: *scale,
+                            causal: *causal,
+                        }
+                    } else {
+                        return None;
+                    }
+                }
                 _ => return None,
             };
             Some(GraphOp::Float(resolved))
@@ -868,6 +1291,26 @@ fn dispatch_level(
                         .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == total_elems);
                     if let Some(good) = resolved {
                         good.iter().map(|&d| d as i64).collect()
+                    } else if !in_shape.is_empty() && in_shape.len() > 1 && in_shape.contains(&0) {
+                        // Shape has 0-sentinels for dynamic dims but rank is known.
+                        // Resolve what we can from the actual buffer size: fill 0-sentinel
+                        // dims by dividing total_elems by the product of known dims.
+                        // This preserves the tensor's rank so downstream Gather/Slice
+                        // ops on the shape output don't fail with wrong element count.
+                        let known_product: usize = in_shape
+                            .iter()
+                            .filter(|&&d| d > 0)
+                            .product::<usize>()
+                            .max(1);
+                        let inferred = if total_elems > 0 && total_elems >= known_product {
+                            total_elems / known_product
+                        } else {
+                            0
+                        };
+                        in_shape
+                            .iter()
+                            .map(|&d| if d == 0 { inferred as i64 } else { d as i64 })
+                            .collect()
                     } else {
                         // Last resort: flatten to 1-D with correct element count.
                         vec![total_elems as i64]
@@ -1234,34 +1677,28 @@ fn dispatch_level(
                     })
                     .cloned()
                     .unwrap_or_else(|| {
-                        // Pre-propagated shape is absent or stale.
-                        // First try to re-derive from the actual runtime input shapes
-                        // using the op's shape spec.  This correctly handles multi-dim
-                        // stale shapes (e.g. [1,32,1,1] → [1,32,2,2] for batched
-                        // matmul Q@Kᵀ at seq=2) where correct_stale_shape can only
-                        // fix a single dimension.
+                        // Pre-propagated shape is absent or stale (product mismatch).
+                        //
+                        // For shape-preserving ops (ShapeSpec::SameAs — Softmax,
+                        // LayerNorm, elementwise unary, etc.) output shape == input
+                        // shape.  When the compiled shape is stale (concretized at
+                        // seq=1) use input_shapes[0] as the authoritative output shape.
+                        //
+                        // Limiting to SameAs ops is intentional: for Gemm/Reduce/Embed
+                        // the output rank/dims differ from the input, so using
+                        // resolve_float_shape would produce wrong dimensionality
+                        // (e.g. [2,2048] for a [1,2,2048] output) that cascades into
+                        // downstream batched MatMul with wrong strides.
                         if let GraphOp::Float(fop) = dispatch_op {
-                            let input_elems_0 = input_shapes
-                                .first()
-                                .map(|s| s.iter().product())
-                                .unwrap_or(0);
-                            let input_elem_counts_rt: Vec<usize> =
-                                input_shapes.iter().map(|s| s.iter().product()).collect();
-                            let ctx = shape_resolve::ShapeContext {
-                                input_shapes: &input_shapes,
-                                compiled_shape: dctx.compiled_shapes.get(&node_id),
-                                input_elems: input_elems_0,
-                                input_elem_counts: &input_elem_counts_rt,
-                                shape_tensor_bytes: None,
-                                compiled_dtype: dctx.compiled_dtypes.get(&node_id),
-                            };
-                            if let Some(s) = shape_resolve::resolve_float_shape(fop, &ctx) {
-                                let prod: usize = s.iter().product();
-                                if !s.is_empty()
-                                    && !s.contains(&0)
-                                    && (n_result_elems == 0 || prod == n_result_elems)
-                                {
-                                    return s;
+                            if matches!(fop.output_shape_spec(), ShapeSpec::SameAs(_)) {
+                                if let Some(in_shape) = input_shapes.first() {
+                                    let prod: usize = in_shape.iter().product();
+                                    if !in_shape.is_empty()
+                                        && !in_shape.contains(&0)
+                                        && (n_result_elems == 0 || prod == n_result_elems)
+                                    {
+                                        return in_shape.clone();
+                                    }
                                 }
                             }
                         }
@@ -1878,5 +2315,92 @@ mod tests {
         let result =
             KvExecutor::execute_with_plan(&sg, &sched, &GraphInputs::new(), &weights).unwrap();
         assert_eq!(result.by_name("out").unwrap(), &[10, 20, 30]);
+    }
+
+    /// Shape op with 0-sentinel dims preserves rank instead of flattening to 1-D.
+    ///
+    /// Regression test for TinyLlama NodeId(498): when the input shape has a
+    /// 0-sentinel for a dynamic dim (e.g. `[1, 4, 0, 8]`), the Shape op must
+    /// output 4 i64 values (preserving the rank), not 1 value (flat element count).
+    /// Otherwise, a downstream Gather on the shape tensor fails with
+    /// "expected i64 index < 1, got index = 2".
+    #[test]
+    fn shape_op_preserves_rank_with_zero_sentinel() {
+        // Graph: Input(0) → Shape(1) → Gather(2, index_const) → Output(3)
+        //
+        // Input: f32 data with compiled shape [1, 4, 0, 8] (seq=0 sentinel).
+        // Shape output should be 4 i64 values, not 1.
+        // Gather picks element at index 2 → the resolved seq value.
+
+        let mut constants = ConstantStore::new();
+        // Index constant: i64 scalar = 2
+        let index_data: Vec<u8> = 2i64.to_le_bytes().to_vec();
+        let index_cid = constants.insert(ConstantData::Bytes(index_data));
+
+        let sg = SerializedGraph {
+            nodes: vec![
+                node(0, GraphOp::Input, vec![InputSlot::from_graph_input(0)]),
+                node(
+                    1,
+                    GraphOp::Float(FloatOp::Shape {
+                        dtype: FloatDType::F32,
+                        start: 0,
+                        end: i64::MAX,
+                    }),
+                    vec![InputSlot::from_node(nid(0))],
+                ),
+                node(2, GraphOp::Constant(index_cid), vec![]),
+                node(
+                    3,
+                    GraphOp::Float(FloatOp::Gather {
+                        dim: 1,
+                        dtype: FloatDType::I64,
+                    }),
+                    // Gather inputs: (indices, data) — swapped from ONNX order
+                    vec![
+                        InputSlot::from_node(nid(2)), // indices = constant [2]
+                        InputSlot::from_node(nid(1)), // data = Shape output
+                    ],
+                ),
+                node(4, GraphOp::Output, vec![InputSlot::from_node(nid(3))]),
+            ],
+            input_names: vec!["X".into()],
+            output_names: vec!["dim_val".into()],
+            output_node_ids: vec![nid(4)],
+            constants,
+            constant_shapes: Vec::new(),
+            // Compiled shape for node 0: [1, 4, 0, 8] (0-sentinel for seq)
+            node_shapes: vec![(nid(0), vec![1, 4, 0, 8])],
+            // Node 0 is F32, node 1 Shape output is I64
+            node_dtypes: vec![
+                (nid(0), FloatDType::F32),
+                (nid(1), FloatDType::I64),
+                (nid(2), FloatDType::I64),
+                (nid(3), FloatDType::I64),
+            ],
+        };
+
+        let sched = build_schedule(&sg).expect("schedule");
+
+        // Provide actual input: [1, 4, 3, 8] (seq=3) → 96 f32 elements → 384 bytes
+        let mut inputs = GraphInputs::new();
+        let data: Vec<f32> = (0..96).map(|i| i as f32).collect();
+        let bytes: Vec<u8> = bytemuck::cast_slice(&data).to_vec();
+        inputs.set_with_shape(0, bytes, vec![1, 4, 3, 8]);
+
+        let result = KvExecutor::execute(&sg, &sched, &inputs).expect(
+            "Shape op with 0-sentinel should preserve rank, not flatten to 1-D. \
+             If this fails with 'expected i64 index < 1', the Shape handler is \
+             falling back to [total_elems] instead of [1, 4, 3, 8].",
+        );
+
+        let out = result.by_name("dim_val").expect("output not found");
+        // Gather picked element at index 2 from Shape output [1, 4, 3, 8] → value 3
+        let val = i64::from_le_bytes(out.try_into().expect("expected 8 bytes"));
+        assert_eq!(
+            val, 3,
+            "Gather(Shape([1,4,3,8]), idx=2) should be 3 (the seq dim), got {val}. \
+             Shape op likely flattened to [96] instead of preserving rank."
+        );
     }
 }

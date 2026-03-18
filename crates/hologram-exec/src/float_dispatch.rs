@@ -217,6 +217,11 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
             batch_axis,
             time_axis,
         } => dispatch_reverse_sequence(inputs, *batch_axis as usize, *time_axis as usize),
+        // ── KV cache ops ───────────────────────────────────────────────
+        // Pass-through when no KvCacheState is available (non-pipeline execution).
+        // When KvCacheState is wired in, the executor handles these before dispatch.
+        FloatOp::KvWrite { .. } => Ok(inputs[0].to_vec()),
+        FloatOp::KvRead { .. } => Ok(inputs.first().map(|b| b.to_vec()).unwrap_or_default()),
         _ => unreachable!("non-custom op {:?} routed to dispatch_custom", op),
     }
 }
@@ -1707,9 +1712,11 @@ fn dispatch_attention(
                 &mut scores,
             );
             // Apply causal mask after BLAS.
+            // When seq_q < seq_k (KV cache decode), use absolute positions.
             if causal {
                 for i in 0..seq_q {
-                    for j in (i + 1)..seq_k {
+                    let abs_pos = seq_k - seq_q + i;
+                    for j in (abs_pos + 1)..seq_k {
                         scores[i * seq_k + j] = f32::NEG_INFINITY;
                     }
                 }
@@ -1718,8 +1725,15 @@ fn dispatch_attention(
         #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
         {
             // Fused QK^T with causal mask: skip upper triangle entirely.
+            // When seq_q < seq_k (KV cache decode), Q position i maps to
+            // absolute position (seq_k - seq_q + i) in the full sequence.
             for i in 0..seq_q {
-                let limit = if causal { (i + 1).min(seq_k) } else { seq_k };
+                let abs_pos = seq_k - seq_q + i;
+                let limit = if causal {
+                    (abs_pos + 1).min(seq_k)
+                } else {
+                    seq_k
+                };
                 for j in 0..limit {
                     let mut dot = 0.0f32;
                     for d in 0..head_dim {

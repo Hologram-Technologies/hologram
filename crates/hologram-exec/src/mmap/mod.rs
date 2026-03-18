@@ -4,6 +4,8 @@
 //! providing one-call entry points for the common case. Dispatches
 //! execution via the archive's `LayerHeader` entrypoints when present.
 
+use std::collections::HashMap;
+
 use hologram_archive::loader::plan::LoadedPlan;
 use hologram_archive::LayerEntrypoint;
 
@@ -56,6 +58,53 @@ fn dispatch_layers(
 fn execute_graph_entrypoint(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
     KvExecutor::execute_with_plan(plan.graph(), &schedule, inputs, plan.weights())
+}
+
+/// Execute a loaded plan with pre-projected shape hints from `walk_shape_context()`.
+///
+/// `shape_hints` maps `NodeId.index() → concrete shape` for every node projected
+/// by the `ShapeContextGraph` walker. Hints override compiled shapes and inferred
+/// shapes, ensuring correct execution for variable-length inputs (seq>1, batch>1).
+///
+/// Typical call pattern:
+/// ```rust,ignore
+/// let hints = walk_shape_context(&ctx_graph, &input_shapes, &shape_values, &mut map);
+/// let outputs = execute_plan_with_shape_hints(&plan, &inputs, &hints)?;
+/// ```
+pub fn execute_plan_with_shape_hints(
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    shape_hints: &HashMap<u32, Vec<usize>>,
+) -> ExecResult<GraphOutputs> {
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_shape_hints(
+        plan.graph(),
+        &schedule,
+        inputs,
+        plan.weights(),
+        shape_hints,
+    )
+}
+
+/// Execute a loaded plan with shape hints and a mutable KV cache state.
+///
+/// Like [`execute_plan_with_shape_hints`] but also threads a `KvCacheState`
+/// through the dispatch loop for `FloatOp::KvWrite`/`KvRead` ops.
+pub fn execute_plan_with_kv_state(
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    shape_hints: &HashMap<u32, Vec<usize>>,
+    kv_state: &mut crate::kv_cache::KvCacheState,
+) -> ExecResult<GraphOutputs> {
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_kv_state(
+        plan.graph(),
+        &schedule,
+        inputs,
+        plan.weights(),
+        shape_hints,
+        kv_state,
+    )
 }
 
 /// Execute a .holo archive from raw bytes.

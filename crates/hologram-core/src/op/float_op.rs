@@ -360,6 +360,25 @@ pub enum FloatOp {
     Compress { axis: u32 },
     /// ReverseSequence along time/batch axes.
     ReverseSequence { batch_axis: u32, time_axis: u32 },
+
+    // ── KV cache ─────────────────────────────────────────────────────────
+    /// Write a K or V tensor into the KV cache for a transformer layer.
+    /// Input: [tensor (f32)]. Output: pass-through (or full cached tensor in decode).
+    /// `is_key`: true for K tensor, false for V tensor.
+    KvWrite {
+        layer: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+        is_key: bool,
+    },
+    /// Read cached K and V tensors from the KV cache for a transformer layer.
+    /// Inputs: none (state-only). Outputs: [K_cached (f32), V_cached (f32)].
+    /// Returns the full cached K/V from position 0 to the current write position.
+    KvRead {
+        layer: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+    },
 }
 
 impl FloatOp {
@@ -454,6 +473,10 @@ impl FloatOp {
             Self::NonZero => 1,
             Self::Compress { .. } => 2, // data, condition
             Self::ReverseSequence { .. } => 1,
+
+            // KV cache
+            Self::KvWrite { .. } => 2, // K, V
+            Self::KvRead { .. } => 0,  // reads from state, no tensor inputs
         }
     }
 
@@ -539,6 +562,8 @@ impl FloatOp {
             Self::NonZero => "float.nonzero",
             Self::Compress { .. } => "float.compress",
             Self::ReverseSequence { .. } => "float.reverse_sequence",
+            Self::KvWrite { .. } => "float.kv_write",
+            Self::KvRead { .. } => "float.kv_read",
         }
     }
 }
@@ -657,6 +682,10 @@ impl FloatOp {
             | Self::NonZero
             | Self::Compress { .. }
             | Self::ReverseSequence { .. } => ShapeSpec::Custom,
+
+            // KV cache: KvWrite passes K through, KvRead shape is runtime-determined.
+            Self::KvWrite { .. } => ShapeSpec::SameAs(0),
+            Self::KvRead { .. } => ShapeSpec::Custom,
         }
     }
 
@@ -775,6 +804,9 @@ impl FloatOp {
 
             // NonZero produces I64 indices
             Self::NonZero => FloatDType::I64,
+
+            // KV cache: passes through f32 K/V data.
+            Self::KvWrite { .. } | Self::KvRead { .. } => FloatDType::F32,
         }
     }
 
@@ -1090,6 +1122,8 @@ impl FloatOp {
             Self::NonZero => "NonZero",
             Self::Compress { .. } => "Compress",
             Self::ReverseSequence { .. } => "ReverseSequence",
+            Self::KvWrite { .. } => "KvWrite",
+            Self::KvRead { .. } => "KvRead",
         }
     }
 }

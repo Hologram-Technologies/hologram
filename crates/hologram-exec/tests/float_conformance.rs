@@ -9,7 +9,7 @@
 //! The `ensure_all_ops_covered` test will fail to compile if a new
 //! FloatOp variant is added without being listed here.
 
-use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp};
+use hologram_core::op::{f32_to_bits, FloatDType, FloatOp};
 use hologram_exec::float_dispatch::{dispatch_float, dispatch_float_with_shapes};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -20,14 +20,6 @@ fn f32_bytes(data: &[f32]) -> Vec<u8> {
 
 fn i64_bytes(data: &[i64]) -> Vec<u8> {
     bytemuck::cast_slice(data).to_vec()
-}
-
-fn i32_bytes(data: &[i32]) -> Vec<u8> {
-    bytemuck::cast_slice(data).to_vec()
-}
-
-fn u8_bytes(data: &[u8]) -> Vec<u8> {
-    data.to_vec()
 }
 
 fn result_f32(result: &[u8]) -> Vec<f32> {
@@ -69,6 +61,7 @@ fn gelu(x: f32) -> f32 {
     0.5 * x * (1.0 + (k * (x + 0.044715 * x * x * x)).tanh())
 }
 
+#[allow(clippy::excessive_precision)]
 fn erf_ref(x: f32) -> f32 {
     // Abramowitz & Stegun approximation (same as kernel)
     let a1 = 0.254829592f32;
@@ -171,6 +164,8 @@ fn ensure_all_ops_covered() {
         FloatOp::NonZero => {}
         FloatOp::Compress { .. } => {}
         FloatOp::ReverseSequence { .. } => {}
+        FloatOp::KvWrite { .. } => {}
+        FloatOp::KvRead { .. } => {}
     }
 }
 
@@ -1188,9 +1183,8 @@ fn test_empty_input_handled() {
     let empty: Vec<u8> = vec![];
     let result = dispatch_float(&FloatOp::Relu, &[&empty]);
     // Should either succeed with empty output or return an error — not panic
-    match result {
-        Ok(r) => assert!(r.is_empty()),
-        Err(_) => {} // error is also acceptable
+    if let Ok(r) = result {
+        assert!(r.is_empty());
     }
 }
 
