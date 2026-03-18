@@ -6,6 +6,7 @@
 use hologram_core::op::{bits_to_f32, FloatDType, FloatOp, OpCategory};
 
 use crate::error::{ExecError, ExecResult};
+use crate::eval::executor::ExecutionContext;
 
 /// Parameters for a GEMM (General Matrix Multiply) operation:
 /// `C = alpha * op(A) * op(B) + beta * C`
@@ -26,6 +27,15 @@ pub struct GemmParams {
 /// byte-bool) are handled by `OpCategory`, while ops needing dedicated logic
 /// are dispatched individually via `dispatch_custom`.
 pub fn dispatch_float(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+    dispatch_float_ctx(op, inputs, None)
+}
+
+/// Dispatch with optional execution context (carries position offset for RoPE etc.).
+pub fn dispatch_float_ctx(
+    op: &FloatOp,
+    inputs: &[&[u8]],
+    ctx: Option<&ExecutionContext>,
+) -> ExecResult<Vec<u8>> {
     match op.category() {
         OpCategory::UnaryElementwise => unary_map(inputs, |v| op.apply_unary(v)),
         OpCategory::BinaryElementwise => binary_elementwise(inputs, |a, b| op.apply_binary(a, b)),
@@ -33,12 +43,16 @@ pub fn dispatch_float(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
         OpCategory::BinaryByteBool => binary_byte_bool(inputs, |a, b| op.apply_byte_bool(a, b)),
         OpCategory::UnaryByteBool => unary_byte_bool(inputs, |a| if a != 0 { 0 } else { 1 }),
         OpCategory::UnaryToU8 => dispatch_isnan(inputs),
-        OpCategory::Custom => dispatch_custom(op, inputs),
+        OpCategory::Custom => dispatch_custom(op, inputs, ctx),
     }
 }
 
 /// Dispatch ops that need dedicated kernel logic.
-fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+fn dispatch_custom(
+    op: &FloatOp,
+    inputs: &[&[u8]],
+    ctx: Option<&ExecutionContext>,
+) -> ExecResult<Vec<u8>> {
     match op {
         FloatOp::MatMul { m, k, n } => {
             dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize)
@@ -90,7 +104,14 @@ fn dispatch_custom(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
         FloatOp::Range => dispatch_range(inputs),
         FloatOp::Shape { dtype, start, end } => dispatch_shape(inputs, *dtype, *start, *end),
         FloatOp::RotaryEmbedding { dim, base, n_heads } => {
-            dispatch_rope(inputs, *dim as usize, bits_to_f32(*base), *n_heads as usize)
+            let start_pos = ctx.map(|c| c.position_offset as usize).unwrap_or(0);
+            dispatch_rope(
+                inputs,
+                *dim as usize,
+                bits_to_f32(*base),
+                *n_heads as usize,
+                start_pos,
+            )
         }
         FloatOp::Attention {
             head_dim,
@@ -1862,15 +1883,14 @@ fn f16_to_f32(bits: u16) -> f32 {
 
 // ── RoPE ─────────────────────────────────────────────────────────────────────
 
-fn dispatch_rope(inputs: &[&[u8]], dim: usize, base: f32, n_heads: usize) -> ExecResult<Vec<u8>> {
+fn dispatch_rope(
+    inputs: &[&[u8]],
+    dim: usize,
+    base: f32,
+    n_heads: usize,
+    start_pos: usize,
+) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
-
-    // Position input: either a single u32 start offset, or absent (sequential from 0).
-    let start_pos: usize = if inputs.len() >= 2 && inputs[1].len() == 4 {
-        u32::from_le_bytes([inputs[1][0], inputs[1][1], inputs[1][2], inputs[1][3]]) as usize
-    } else {
-        0
-    };
 
     let half = dim / 2;
     let n_heads = n_heads.max(1);

@@ -4,6 +4,22 @@
 
 - [ ] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
 - [ ] Prism ontology integration — [plan](plans/004-prism-uor-integration.md)
+- [ ] Compile-time-first acceleration — [plan](plans/005-compile-time-acceleration.md)
+
+## Sprint 13: Compile-Time-First Acceleration
+
+- [ ] **Phase 1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
+- [ ] **Phase 1.B**: Compile-time column-major/tiled weight index layout
+- [ ] **Phase 1.3**: Tiled multi-column LUT-GEMM kernels
+- [ ] **Phase 1.4**: SIMD dot products for Psumbook (AVX2, NEON, WASM)
+- [ ] **Phase 1.4b**: ARM NEON + WASM SIMD for ElementWiseView
+- [ ] **Phase 2.1**: Compile-time MatMul+Bias+Activation fusion
+- [ ] **Phase 2.2**: Compile-time Norm+Activation fusion + fast_rsqrt
+- [ ] **Phase 2.3**: LUT-exp for softmax (65536-entry f32 table)
+- [ ] **Phase 2.4**: Compile-time buffer alignment for SIMD
+- [ ] **Phase 3.1**: Attention op with compiler-baked tile sizes
+- [ ] **Phase 3.2**: Online-softmax tiled attention kernel (Flash Attention-style)
+- [ ] **Phase 3.3**: Per-head parallelism (compile-time planned)
 
 ## Sprint 12: Prism Ontology Integration
 

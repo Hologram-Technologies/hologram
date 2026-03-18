@@ -66,7 +66,7 @@ impl KvStore {
         registry: Option<&CustomOpRegistry>,
         weights: &[u8],
     ) -> ExecResult<Vec<u8>> {
-        Self::dispatch_with_shapes(op, inputs, constants, registry, weights, &[])
+        Self::dispatch_with_shapes(op, inputs, constants, registry, weights, &[], None)
     }
 
     /// Dispatch with shape information for N-D broadcasting support.
@@ -80,6 +80,7 @@ impl KvStore {
         registry: Option<&CustomOpRegistry>,
         weights: &[u8],
         input_shapes: &[Vec<usize>],
+        ctx: Option<&crate::eval::executor::ExecutionContext>,
     ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
@@ -106,9 +107,10 @@ impl KvStore {
             }
             GraphOp::Float(ref f) => {
                 if input_shapes.len() >= 2 {
+                    // dispatch_float_with_shapes doesn't need ctx (only binary broadcast ops)
                     crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
                 } else {
-                    crate::float_dispatch::dispatch_float(f, inputs)
+                    crate::float_dispatch::dispatch_float_ctx(f, inputs, ctx)
                 }
             }
             GraphOp::FusedFloatChain(ref chain) => {

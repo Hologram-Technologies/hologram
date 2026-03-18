@@ -45,6 +45,12 @@ pub struct ModelMetaSection {
     pub max_seq_len: u32,
     /// Whether `--prompt` autoregressive generation is supported.
     pub supports_prompt: bool,
+    /// Number of transformer layers (0 if not applicable / no KV cache).
+    pub n_layers: u32,
+    /// Number of KV attention heads (0 if not applicable).
+    pub n_kv_heads: u32,
+    /// Dimension per attention head (0 if not applicable).
+    pub head_dim: u32,
 }
 
 impl ModelMetaSection {
@@ -83,6 +89,9 @@ mod tests {
             description: "TinyLlama 1.1B".into(),
             max_seq_len: 2048,
             supports_prompt: true,
+            n_layers: 22,
+            n_kv_heads: 4,
+            head_dim: 64,
         };
         let bytes = section.to_bytes();
         let deserialized = ModelMetaSection::deserialize_from(&bytes).unwrap();
@@ -100,6 +109,9 @@ mod tests {
             description: "ViT-B/16".into(),
             max_seq_len: 0,
             supports_prompt: false,
+            n_layers: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
         };
         let bytes = section.to_bytes();
         let archived = ModelMetaSection::from_bytes(&bytes).unwrap();
@@ -115,6 +127,9 @@ mod tests {
             description: String::new(),
             max_seq_len: 0,
             supports_prompt: false,
+            n_layers: 0,
+            n_kv_heads: 0,
+            head_dim: 0,
         };
         assert_eq!(section.section_kind(), SECTION_MODEL_META);
         assert_eq!(SECTION_MODEL_META, 0x1002);
@@ -140,6 +155,9 @@ mod tests {
                 description: String::new(),
                 max_seq_len: 0,
                 supports_prompt: false,
+                n_layers: 0,
+                n_kv_heads: 0,
+                head_dim: 0,
             };
             let bytes = section.to_bytes();
             let de = ModelMetaSection::deserialize_from(&bytes).unwrap();

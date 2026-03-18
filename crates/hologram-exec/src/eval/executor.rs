@@ -21,6 +21,18 @@ use crate::float_dispatch;
 use crate::kv::{CustomOpRegistry, KvStore};
 use hologram_core::op::{FloatOp, ShapeDim, ShapeSpec};
 
+/// Runtime context passed to dispatch during execution.
+///
+/// Carries execution-time state that cannot be baked into the compiled graph
+/// (e.g., the current token position for RoPE during KV cache decode).
+/// Non-KV execution passes `None` — zero overhead.
+pub struct ExecutionContext {
+    /// Position offset for positional encodings (RoPE).
+    /// Set from `KvCacheState::write_pos()` at the start of each call.
+    /// 0 during prefill, N during decode (N = tokens already cached).
+    pub position_offset: u32,
+}
+
 /// Immutable graph-wide context shared across level dispatch and shape propagation.
 ///
 /// This is the **SaturatedContext** in Prism ontology terms:
@@ -315,6 +327,11 @@ impl KvExecutor {
         // Node IDs handled by KV cache — skip in dispatch_level.
         let mut kv_handled: HashSet<NodeId> = HashSet::new();
 
+        // ExecutionContext carries position offset for RoPE during KV cache decode.
+        let exec_ctx = kv_state.as_deref().map(|kv| ExecutionContext {
+            position_offset: kv.write_pos() as u32,
+        });
+
         for (i, level) in schedule.levels.iter().enumerate() {
             super::shape_propagate::propagate_level_shapes(
                 level,
@@ -333,163 +350,61 @@ impl KvExecutor {
                     let Some(node) = dctx.node_map.get(&node_id) else {
                         continue;
                     };
-                    match &node.op {
-                        GraphOp::Float(FloatOp::RotaryEmbedding { .. }) if kv.write_pos() > 0 => {
-                            // Decode mode: inject start_pos so RoPE applies
-                            // the correct positional encoding for token at
-                            // position write_pos (not 0).
-                            let pos = kv.write_pos() as u32;
-                            // RoPE position offset applied for decode token.
-                            let pos_bytes = pos.to_le_bytes().to_vec();
-                            // Store the position as a synthetic tensor that
-                            // the RoPE dispatch reads as input[1].
-                            // We use a dedicated arena slot for this — the node's
-                            // own ID offset by a large constant to avoid collision.
-                            let pos_node_id = NodeId::new(node_id.index() + 100_000, 0);
-                            arena.insert(pos_node_id, pos_bytes);
+                    if let GraphOp::Float(FloatOp::KvWrite {
+                            layer,
+                            is_key,
+                            n_kv_heads,
+                            head_dim,
+                        }) = &node.op {
+                        // Gather input and copy to release arena borrow.
+                        let input_data = {
+                            let refs = gather_inputs(node, &arena, dctx.inputs)?;
+                            refs.first().map(|d| d.to_vec()).unwrap_or_default()
+                        };
+                        if !input_data.is_empty() {
+                            let floats: &[f32] = if input_data.len() % 4 == 0 {
+                                bytemuck::cast_slice(&input_data)
+                            } else {
+                                &[]
+                            };
 
-                            // Gather the real input (the tensor to rotate).
-                            let input_refs = gather_inputs(node, &arena, dctx.inputs)?;
-                            let tensor_data = input_refs.first().copied().unwrap_or(&[]);
+                            // Write new K or V to the cache buffer.
+                            if *is_key {
+                                kv.write_layer(*layer, floats, &[]);
+                            } else {
+                                kv.write_layer(*layer, &[], floats);
+                            }
 
-                            // Call RoPE dispatch with [tensor, pos_bytes].
-                            let pos_ref = arena.get(pos_node_id).expect("just inserted pos bytes");
-                            let rope_inputs = [tensor_data, pos_ref];
-                            let result = crate::float_dispatch::dispatch_float(
-                                match &node.op {
-                                    GraphOp::Float(fop) => fop,
-                                    _ => unreachable!(),
-                                },
-                                &rope_inputs,
-                            )
-                            .map_err(|e| ExecError::ShapeMismatch {
-                                expected: format!("RoPE with start_pos={pos}"),
-                                actual: e.to_string(),
-                            })?;
+                            // Infer seq_len from input shape (first K write).
+                            let stride = *n_kv_heads as usize * *head_dim as usize;
+                            let seq = if stride > 0 { floats.len() / stride } else { 1 };
+                            if kv_seq_len.is_none() && *is_key {
+                                kv_seq_len = Some(seq.max(1));
+                            }
 
-                            let out_shape = shape_map
-                                .get(node_id)
-                                .map(|s| s.to_vec())
-                                .unwrap_or_else(|| vec![result.len() / 4]);
-                            arena.insert(node_id, result);
-                            shape_map.insert(node_id, out_shape);
+                            // Output: full cache including just-written data.
+                            if kv.write_pos() == 0 {
+                                // Prefill: pass through raw bytes (preserves shape).
+                                arena.insert(node_id, input_data);
+                            } else {
+                                // Decode: read full cache (previous + new).
+                                let full = if *is_key {
+                                    kv.read_k_through(*layer, seq)
+                                } else {
+                                    kv.read_v_through(*layer, seq)
+                                };
+                                arena.insert(
+                                    node_id,
+                                    bytemuck::cast_slice::<f32, u8>(full).to_vec(),
+                                );
+                                let total_seq = kv.write_pos() + seq;
+                                shape_map.insert(
+                                    node_id,
+                                    vec![total_seq, *n_kv_heads as usize, *head_dim as usize],
+                                );
+                            }
                             kv_handled.insert(node_id);
                         }
-                        GraphOp::Float(FloatOp::KvWrite { layer, is_key, .. }) => {
-                            // KV cache write for layer.
-                            // Gather input and copy to release arena borrow.
-                            let input_data = {
-                                let refs = gather_inputs(node, &arena, dctx.inputs)?;
-                                refs.first().map(|d| d.to_vec()).unwrap_or_default()
-                            };
-                            if !input_data.is_empty() {
-                                let floats: &[f32] = if input_data.len() % 4 == 0 {
-                                    bytemuck::cast_slice(&input_data)
-                                } else {
-                                    &[]
-                                };
-
-                                // Write new K or V to the cache buffer.
-                                if *is_key {
-                                    kv.write_layer(*layer, floats, &[]);
-                                } else {
-                                    kv.write_layer(*layer, &[], floats);
-                                }
-
-                                // Infer seq_len for the advance() call.
-                                // The input shape from shape_map tells us the
-                                // tensor dimensions including seq.
-                                if kv_seq_len.is_none() && *is_key {
-                                    // Input shape might be [batch, seq, kv_dim] or [seq, kv_dim] or flat.
-                                    // Use the input node's shape to extract seq.
-                                    let in_shape =
-                                        node.inputs.first().and_then(|slot| match slot.source {
-                                            InputSource::Node(id) => {
-                                                shape_map.get(id).map(|s| s.to_vec())
-                                            }
-                                            _ => None,
-                                        });
-                                    let seq = if let Some(s) = in_shape {
-                                        if s.len() >= 3 {
-                                            s[1]
-                                        }
-                                        // [batch, seq, dim]
-                                        else if s.len() == 2 {
-                                            s[0]
-                                        }
-                                        // [seq, dim]
-                                        else {
-                                            1
-                                        }
-                                    } else {
-                                        1
-                                    };
-                                    kv_seq_len = Some(seq.max(1));
-                                }
-
-                                // Output: full cached data (previous + new).
-                                // cache[0..write_pos] has previous tokens' data.
-                                // The new data was written at write_pos..write_pos+seq.
-                                // Concatenate to give attention the full K/V history.
-                                // Output: full cached K/V (previous + new).
-                                let previous = if *is_key {
-                                    kv.read_k(*layer)
-                                } else {
-                                    kv.read_v(*layer)
-                                };
-
-                                if previous.is_empty() {
-                                    // Prefill: no cache yet, pass through.
-                                    let out_shape = shape_map
-                                        .get(node_id)
-                                        .map(|s| s.to_vec())
-                                        .unwrap_or_else(|| vec![floats.len()]);
-                                    arena.insert(node_id, input_data.clone());
-                                    shape_map.insert(node_id, out_shape);
-                                } else {
-                                    // Decode: cache[0..write_pos] ++ new_data.
-                                    // Compute shape before moving data into arena.
-                                    let prev_len = previous.len(); // in f32s
-                                    let new_len = floats.len(); // in f32s
-                                    let total_f32 = prev_len + new_len;
-
-                                    let prev_bytes: &[u8] = bytemuck::cast_slice(previous);
-                                    let mut full =
-                                        Vec::with_capacity(prev_bytes.len() + input_data.len());
-                                    full.extend_from_slice(prev_bytes);
-                                    full.extend_from_slice(&input_data);
-                                    arena.insert(node_id, full);
-
-                                    // Compute proper 3D shape [total_seq, n_kv_heads, head_dim]
-                                    // so downstream Attention gets the right dimensions.
-                                    if let GraphOp::Float(FloatOp::KvWrite {
-                                        n_kv_heads,
-                                        head_dim,
-                                        ..
-                                    }) = &node.op
-                                    {
-                                        let stride = *n_kv_heads as usize * *head_dim as usize;
-                                        let total_seq = if stride > 0 {
-                                            total_f32 / stride
-                                        } else {
-                                            total_f32
-                                        };
-                                        shape_map.insert(
-                                            node_id,
-                                            vec![
-                                                total_seq,
-                                                *n_kv_heads as usize,
-                                                *head_dim as usize,
-                                            ],
-                                        );
-                                    } else {
-                                        shape_map.insert(node_id, vec![total_f32]);
-                                    }
-                                }
-                                kv_handled.insert(node_id);
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -516,6 +431,7 @@ impl KvExecutor {
                 &mut arena,
                 &mut shape_map,
                 &mut results_buf,
+                exec_ctx.as_ref(),
                 #[cfg(feature = "profile")]
                 &mut { crate::profile::PerfProfile::new() },
             )?;
@@ -597,6 +513,7 @@ impl KvExecutor {
                 &mut arena,
                 &mut shape_map,
                 &mut results_buf,
+                None, // No execution context for non-KV path
                 #[cfg(feature = "profile")]
                 &mut prof,
             )?;
@@ -674,6 +591,7 @@ impl KvExecutor {
                 &mut arena,
                 &mut shape_map,
                 &mut results_buf,
+                None,
                 &mut prof,
             )?;
             prof.record_level(shape_elapsed, dispatch_start.elapsed(), count);
@@ -1192,6 +1110,7 @@ fn dispatch_level(
     arena: &mut BufferArena,
     shape_map: &mut ShapeMap,
     results: &mut Vec<(NodeId, Vec<u8>, Vec<usize>)>,
+    ctx: Option<&ExecutionContext>,
     #[cfg(feature = "profile")] prof: &mut crate::profile::PerfProfile,
 ) -> ExecResult<usize> {
     results.clear();
@@ -1647,6 +1566,7 @@ fn dispatch_level(
                     dctx.registry,
                     dctx.weights,
                     &input_shapes,
+                    ctx,
                 )
                 .map_err(|e| ExecError::ShapeMismatch {
                     expected: format!("node {node_id:?} ({:?})", node.op),

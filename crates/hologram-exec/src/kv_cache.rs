@@ -122,6 +122,34 @@ impl KvCacheState {
         &self.v_buffers[layer][..end]
     }
 
+    /// Read cached K including pending (just-written, pre-advance) data.
+    ///
+    /// Returns `[0..(write_pos + pending_seq) * stride]` — includes both
+    /// previously cached tokens and the new tokens written in this step.
+    /// This enables a unified code path for prefill and decode.
+    #[must_use]
+    pub fn read_k_through(&self, layer: u32, pending_seq: usize) -> &[f32] {
+        let layer = layer as usize;
+        if layer >= self.k_buffers.len() {
+            return &[];
+        }
+        let stride = self.n_kv_heads as usize * self.head_dim as usize;
+        let end = (self.write_pos + pending_seq) * stride;
+        &self.k_buffers[layer][..end]
+    }
+
+    /// Read cached V including pending (just-written, pre-advance) data.
+    #[must_use]
+    pub fn read_v_through(&self, layer: u32, pending_seq: usize) -> &[f32] {
+        let layer = layer as usize;
+        if layer >= self.v_buffers.len() {
+            return &[];
+        }
+        let stride = self.n_kv_heads as usize * self.head_dim as usize;
+        let end = (self.write_pos + pending_seq) * stride;
+        &self.v_buffers[layer][..end]
+    }
+
     /// Reset the cache for a new sequence.
     pub fn reset(&mut self) {
         self.write_pos = 0;

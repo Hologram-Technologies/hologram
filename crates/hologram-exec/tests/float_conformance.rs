@@ -10,7 +10,10 @@
 //! FloatOp variant is added without being listed here.
 
 use hologram_core::op::{f32_to_bits, FloatDType, FloatOp};
-use hologram_exec::float_dispatch::{dispatch_float, dispatch_float_with_shapes};
+use hologram_exec::eval::executor::ExecutionContext;
+use hologram_exec::float_dispatch::{
+    dispatch_float, dispatch_float_ctx, dispatch_float_with_shapes,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -984,13 +987,12 @@ fn test_rope_known_answer() {
     // 4-element vector (dim=4, half=2), position 0, 1 head
     // At pos=0, all angles are 0, so cos=1 sin=0 → identity
     let x = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
-    let pos = bytemuck::cast_slice::<u32, u8>(&[0u32]).to_vec();
     let op = FloatOp::RotaryEmbedding {
         dim: 4,
         base: f32_to_bits(10000.0),
         n_heads: 1,
     };
-    let result = dispatch_float(&op, &[&x, &pos]).unwrap();
+    let result = dispatch_float(&op, &[&x]).expect("dispatch_float failed");
     let out = result_f32(&result);
     // At position 0, rotation angle = 0 for all frequencies → identity
     assert_close(&out, &[1.0, 2.0, 3.0, 4.0], 1e-5, 1e-4);
@@ -1000,13 +1002,13 @@ fn test_rope_known_answer() {
 fn test_rope_position_1() {
     // At position 1, verify rotation is applied
     let x = f32_bytes(&[1.0, 0.0, 1.0, 0.0]); // dim=4
-    let pos = bytemuck::cast_slice::<u32, u8>(&[1u32]).to_vec();
+    let ctx = ExecutionContext { position_offset: 1 };
     let op = FloatOp::RotaryEmbedding {
         dim: 4,
         base: f32_to_bits(10000.0),
         n_heads: 1,
     };
-    let result = dispatch_float(&op, &[&x, &pos]).unwrap();
+    let result = dispatch_float_ctx(&op, &[&x], Some(&ctx)).expect("dispatch_float_ctx failed");
     let out = result_f32(&result);
     // Interleaved convention: pairs (0,1) and (2,3)
     // freq_0 = 1/10000^(0/4) = 1.0, angle = 1.0
