@@ -28,12 +28,13 @@ pub struct KvCacheState {
 impl KvCacheState {
     /// Create a new KV cache for the given model architecture.
     ///
-    /// Allocates `n_layers` pairs of K/V buffers, each sized for `max_seq` tokens.
+    /// Buffers are lazily allocated on first write — construction is O(n_layers)
+    /// with zero data allocation, enabling fast cache creation for models where
+    /// not all layers may be used (e.g., early exit, speculative decode).
     #[must_use]
     pub fn new(n_layers: u32, n_kv_heads: u32, head_dim: u32, max_seq: usize) -> Self {
-        let cap = max_seq * n_kv_heads as usize * head_dim as usize;
-        let k_buffers = (0..n_layers).map(|_| vec![0.0f32; cap]).collect();
-        let v_buffers = (0..n_layers).map(|_| vec![0.0f32; cap]).collect();
+        let k_buffers = (0..n_layers).map(|_| Vec::new()).collect();
+        let v_buffers = (0..n_layers).map(|_| Vec::new()).collect();
         Self {
             k_buffers,
             v_buffers,
@@ -76,6 +77,13 @@ impl KvCacheState {
         let seq_len = data.len() / stride;
         let start = self.write_pos * stride;
         let end = start + seq_len * stride;
+
+        let cap = self.max_seq * stride;
+        // Lazy allocation: allocate on first write to this layer.
+        if self.k_buffers[layer].is_empty() && cap > 0 {
+            self.k_buffers[layer] = vec![0.0f32; cap];
+            self.v_buffers[layer] = vec![0.0f32; cap];
+        }
 
         if end > self.k_buffers[layer].len() {
             return 0; // would overflow max_seq

@@ -17,7 +17,7 @@
 - [x] **0.5**: SmallVec strides + stride memoization for float dispatch
 - [x] **0.6**: Adaptive parallel threshold (compiler cost estimates per level)
 - [ ] **0.7**: Instruction tape executor (kernel function pointer table, zero-match dispatch)
-- [ ] **0.8**: System-level: `target-cpu=native`, KV cache lazy init, dense metadata arrays, FFI zero-copy
+- [x] **0.8**: System-level: `target-cpu=native` build flag, KV cache lazy init, dense metadata arrays
 
 ### Phase 0b: float_dispatch Kernel Optimization
 - [x] **0b.1**: Split `float_dispatch.rs` (3095 lines) into directory module with 14 sub-files
