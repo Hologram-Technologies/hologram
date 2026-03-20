@@ -15,6 +15,7 @@ pub mod mmap;
 pub mod parallel;
 #[cfg(feature = "profile")]
 pub mod profile;
+pub mod tape;
 
 // Re-exports for convenience.
 pub use buffer::BufferArena;
