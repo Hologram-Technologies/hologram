@@ -15,7 +15,7 @@
 - [ ] **0.3**: Compile-time shape resolution (CompiledNode with pre-resolved shapes)
 - [ ] **0.4**: Embed execution schedule in archive (eliminate O(V+E) load-time rebuild)
 - [x] **0.5**: SmallVec strides + stride memoization for float dispatch
-- [ ] **0.6**: Adaptive parallel threshold (compiler cost estimates per level)
+- [x] **0.6**: Adaptive parallel threshold (compiler cost estimates per level)
 - [ ] **0.7**: Instruction tape executor (kernel function pointer table, zero-match dispatch)
 - [ ] **0.8**: System-level: `target-cpu=native`, KV cache lazy init, dense metadata arrays, FFI zero-copy
 
