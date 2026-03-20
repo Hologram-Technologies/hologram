@@ -60,7 +60,8 @@ pub(super) fn dispatch_attention(
     let group_size = num_q_heads / num_kv_heads.max(1);
 
     let mut out = vec![0.0f32; num_q_heads * seq_q * head_dim];
-    // Allocate scores buffer once, reuse across all heads.
+    // Scores buffer only needed for BLAS path (non-BLAS uses online softmax).
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
     let mut scores = vec![0.0f32; seq_q * seq_k];
 
     // Per-head attention: iterate over Q heads, map to KV head via group_size.
@@ -119,7 +120,12 @@ pub(super) fn dispatch_attention(
         }
         #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
         {
-            // Fused QK^T with mask support.
+            // Online softmax attention (Flash Attention-style).
+            // Fuses QK^T, softmax, and score×V into a single pass per query row.
+            // Avoids materializing the full [seq_q, seq_k] scores matrix.
+            let out_head = &mut out[o_off..o_off + seq_q * head_dim];
+            out_head.fill(0.0);
+
             for i in 0..seq_q {
                 let abs_pos = seq_k - seq_q + i;
                 let limit = if causal && mask.is_none() {
@@ -128,65 +134,77 @@ pub(super) fn dispatch_attention(
                     seq_k
                 };
                 let q_row = &q_head[i * head_dim..(i + 1) * head_dim];
+                let o_row = &mut out_head[i * head_dim..(i + 1) * head_dim];
+
+                let mut row_max = f32::NEG_INFINITY;
+                let mut row_sum = 0.0f32;
+
                 for j in 0..limit {
                     let k_row = &k_head[j * head_dim..(j + 1) * head_dim];
-                    // Slice-based dot product enables autovectorization.
                     let dot: f32 = q_row.iter().zip(k_row).map(|(a, b)| a * b).sum();
                     let mut score = dot * scale;
-                    // Apply additive mask if present.
                     if let Some(ref m) = mask {
                         let mask_idx = i * seq_k + j;
                         score += m[mask_idx % m.len()];
                     }
-                    scores[i * seq_k + j] = score;
+
+                    // Online softmax update: if new score exceeds running max,
+                    // rescale the accumulated output and sum.
+                    if score > row_max {
+                        let correction = (row_max - score).exp();
+                        // Rescale running sum and accumulated output.
+                        row_sum *= correction;
+                        for val in o_row.iter_mut().take(head_dim) {
+                            *val *= correction;
+                        }
+                        row_max = score;
+                    }
+
+                    let w = (score - row_max).exp();
+                    row_sum += w;
+
+                    // Accumulate weighted V into output.
+                    let v_row = &v_head[j * head_dim..(j + 1) * head_dim];
+                    for (o, &v) in o_row.iter_mut().zip(v_row.iter()) {
+                        *o += w * v;
+                    }
                 }
-                if causal && mask.is_none() {
-                    for j in limit..seq_k {
-                        scores[i * seq_k + j] = f32::NEG_INFINITY;
+
+                // Normalize by sum.
+                if row_sum > 0.0 {
+                    let inv = 1.0 / row_sum;
+                    for val in o_row.iter_mut().take(head_dim) {
+                        *val *= inv;
                     }
                 }
             }
         }
 
-        // Softmax each row (2-pass: max+exp+sum, then divide).
-        for row in scores.chunks_mut(seq_k) {
-            let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let mut sum = 0.0f32;
-            for val in row.iter_mut() {
-                *val = (*val - max).exp();
-                sum += *val;
-            }
-            if sum > 0.0 {
-                let inv = 1.0 / sum;
-                for val in row.iter_mut() {
-                    *val *= inv;
-                }
-            }
-        }
-
-        // out_head = scores × V_head → [seq_q, head_dim]
-        // ikj loop order for cache-friendly access to V.
-        let out_head = &mut out[o_off..o_off + seq_q * head_dim];
+        // BLAS path: use the existing 3-phase approach with score buffer.
         #[cfg(all(feature = "accelerate", target_os = "macos"))]
         {
-            super::matmul::blas::sgemm(seq_q, head_dim, seq_k, &scores, v_head, out_head);
-        }
-        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-        {
-            out_head.fill(0.0);
-            for i in 0..seq_q {
-                for j in 0..seq_k {
-                    let s = scores[i * seq_k + j];
-                    if s == 0.0 {
-                        continue;
-                    }
-                    let v_row = &v_head[j * head_dim..(j + 1) * head_dim];
-                    let o_row = &mut out_head[i * head_dim..(i + 1) * head_dim];
-                    for d in 0..head_dim {
-                        o_row[d] += s * v_row[d];
+            // scores = Q_head × K_head^T * scale → [seq_q, seq_k]
+            // (BLAS sgemm already computed scores above.)
+
+            // Softmax each row (2-pass: max+exp+sum, then divide).
+            for row in scores.chunks_mut(seq_k) {
+                let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let mut sum = 0.0f32;
+                for val in row.iter_mut() {
+                    *val = (*val - max).exp();
+                    sum += *val;
+                }
+                if sum > 0.0 {
+                    let inv = 1.0 / sum;
+                    for val in row.iter_mut() {
+                        *val *= inv;
                     }
                 }
             }
+
+            // out_head = scores × V_head → [seq_q, head_dim]
+            let out_head = &mut out[o_off..o_off + seq_q * head_dim];
+            super::matmul::blas::sgemm(seq_q, head_dim, seq_k, &scores, v_head, out_head);
         }
     }
 

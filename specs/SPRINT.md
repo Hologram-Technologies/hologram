@@ -26,7 +26,7 @@
 - [x] **0b.4**: Flatten `conv_transpose` 7-level scatter loops → 2-level (flat outer + flat kernel)
 - [x] **0b.5**: Extract `dot_f32` helper for attention (enables autovectorization)
 - [x] **0b.6**: im2col + GEMM for `conv2d` (replace 8-level nested loops, unify two conv2d variants via shared `conv2d_core`)
-- [ ] **0b.7**: Online softmax (Flash Attention-style) for fused attention kernel
+- [x] **0b.7**: Online softmax (Flash Attention-style) for fused attention kernel
 - [ ] **0b.8**: Pre-computed KV offsets in instruction tape (eliminate per-head offset arithmetic)
 - [x] **0b.9**: ~~Flatten `conv2d` loops~~ (superseded by 0b.6 im2col)
 
