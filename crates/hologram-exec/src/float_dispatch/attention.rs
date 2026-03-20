@@ -64,16 +64,21 @@ pub(super) fn dispatch_attention(
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     let mut scores = vec![0.0f32; seq_q * seq_k];
 
-    // Per-head attention: iterate over Q heads, map to KV head via group_size.
-    for qh in 0..num_q_heads {
-        let kh = qh / group_size;
-        let q_off = qh * seq_q * head_dim;
-        let k_off = kh * seq_k * head_dim;
-        let o_off = qh * seq_q * head_dim;
+    // Pre-compute per-head offsets: avoids repeated division/multiplication
+    // in the per-head loop. For GQA, multiple Q heads map to the same KV head.
+    let q_stride = seq_q * head_dim;
+    let k_stride = seq_k * head_dim;
+    let head_offsets: Vec<(usize, usize, usize)> = (0..num_q_heads)
+        .map(|qh| {
+            let kh = qh / group_size;
+            (qh * q_stride, kh * k_stride, qh * q_stride)
+        })
+        .collect();
 
-        let q_head = &q[q_off..q_off + seq_q * head_dim];
-        let k_head = &k[k_off..k_off + seq_k * head_dim];
-        let v_head = &v[k_off..k_off + seq_k * head_dim];
+    for &(q_off, k_off, o_off) in &head_offsets {
+        let q_head = &q[q_off..q_off + q_stride];
+        let k_head = &k[k_off..k_off + k_stride];
+        let v_head = &v[k_off..k_off + k_stride];
 
         // scores = Q_head × K_head^T * scale → [seq_q, seq_k]
         #[cfg(all(feature = "accelerate", target_os = "macos"))]
