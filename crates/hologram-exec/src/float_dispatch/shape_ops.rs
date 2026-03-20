@@ -49,9 +49,9 @@ pub fn dispatch_transpose(
         return Ok((input.to_vec(), input_shape.to_vec()));
     }
 
-    let strides = compute_strides(input_shape);
+    let strides = compute_strides_small(input_shape);
     let out_shape: Vec<usize> = perm.iter().map(|&p| input_shape[p as usize]).collect();
-    let out_strides = compute_strides(&out_shape);
+    let out_strides = compute_strides_small(&out_shape);
 
     let total = src.len();
     // Verify shape matches data length.
@@ -106,8 +106,8 @@ pub(super) fn broadcast_to(src: &[f32], n_src: usize, target_shape: &[usize]) ->
         }
     }
 
-    let src_strides = compute_strides(&src_shape);
-    let tgt_strides = compute_strides(target_shape);
+    let src_strides = compute_strides_small(&src_shape);
+    let tgt_strides = compute_strides_small(target_shape);
 
     let mut out = Vec::with_capacity(target_elems);
     for flat_idx in 0..target_elems {

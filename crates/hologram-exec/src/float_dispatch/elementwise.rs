@@ -84,7 +84,7 @@ pub(super) fn binary_elementwise_broadcast(
     // Compute strides for index mapping.
     let a_strides = compute_broadcast_strides(sa, &out_shape);
     let b_strides = compute_broadcast_strides(sb, &out_shape);
-    let out_strides = compute_strides(&out_shape);
+    let out_strides = compute_strides_small(&out_shape);
 
     let out: Vec<f32> = (0..out_len)
         .map(|flat_idx| {
@@ -157,7 +157,7 @@ pub(super) fn binary_compare_broadcast(
 
     let a_strides = compute_broadcast_strides(sa, &out_shape);
     let b_strides = compute_broadcast_strides(sb, &out_shape);
-    let out_strides = compute_strides(&out_shape);
+    let out_strides = compute_strides_small(&out_shape);
 
     let out: Vec<u8> = (0..out_len)
         .map(|flat_idx| {

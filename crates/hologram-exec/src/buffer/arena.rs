@@ -1,13 +1,16 @@
 //! Arena-based buffer storage for graph execution intermediates.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use hologram_graph::graph::node::NodeId;
 
 use crate::error::{ExecError, ExecResult};
 
 /// Arena that stores output buffers keyed by `NodeId`.
+///
+/// Uses flat `Vec` indexing by `NodeId::index()` instead of `HashMap` for
+/// O(1) lookup without hashing overhead. This is safe because node indices
+/// are dense sequential integers assigned by the graph builder.
 ///
 /// Buffers are either borrowed (zero-copy from mmap'd weights or
 /// inline constants) or owned (computed dispatch results). Reading
@@ -17,10 +20,12 @@ use crate::error::{ExecError, ExecResult};
 /// 1 for bool/u8). This eliminates all hardcoded `/4` assumptions in shape
 /// validation — the arena is the single source of truth for element sizes.
 pub struct BufferArena<'a> {
-    buffers: HashMap<NodeId, Cow<'a, [u8]>>,
-    /// Element size in bytes per node. Used for `data.len() / elem_size`
-    /// to convert byte counts to element counts during shape validation.
-    elem_sizes: HashMap<NodeId, usize>,
+    /// Flat buffer storage indexed by NodeId::index().
+    buffers: Vec<Option<Cow<'a, [u8]>>>,
+    /// Element size in bytes per node. 0 means "use default (4)".
+    elem_sizes: Vec<u8>,
+    /// Number of populated slots.
+    count: usize,
 }
 
 impl Default for BufferArena<'_> {
@@ -34,51 +39,98 @@ impl<'a> BufferArena<'a> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            buffers: HashMap::new(),
-            elem_sizes: HashMap::new(),
+            buffers: Vec::new(),
+            elem_sizes: Vec::new(),
+            count: 0,
         }
     }
 
-    /// Create an arena with pre-allocated capacity.
+    /// Create an arena with pre-allocated capacity for `cap` node slots.
     #[must_use]
     pub fn with_capacity(cap: usize) -> Self {
+        let mut buffers = Vec::with_capacity(cap);
+        buffers.resize_with(cap, || None);
+        let elem_sizes = vec![0u8; cap];
         Self {
-            buffers: HashMap::with_capacity(cap),
-            elem_sizes: HashMap::with_capacity(cap),
+            buffers,
+            elem_sizes,
+            count: 0,
+        }
+    }
+
+    /// Ensure the arena has room for the given index.
+    #[inline]
+    fn ensure_capacity(&mut self, idx: usize) {
+        if idx >= self.buffers.len() {
+            let new_len = (idx + 1).max(self.buffers.len() * 2);
+            self.buffers.resize_with(new_len, || None);
+            self.elem_sizes.resize(new_len, 0);
         }
     }
 
     /// Insert an owned buffer for the given node.
     pub fn insert(&mut self, id: NodeId, data: Vec<u8>) {
-        self.buffers.insert(id, Cow::Owned(data));
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        self.buffers[idx] = Some(Cow::Owned(data));
     }
 
     /// Insert an owned buffer with a known element size.
     pub fn insert_with_elem_size(&mut self, id: NodeId, data: Vec<u8>, elem_size: usize) {
-        self.buffers.insert(id, Cow::Owned(data));
-        self.elem_sizes.insert(id, elem_size);
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        self.buffers[idx] = Some(Cow::Owned(data));
+        self.elem_sizes[idx] = elem_size as u8;
     }
 
     /// Insert a borrowed buffer for the given node (zero-copy).
     pub fn insert_borrowed(&mut self, id: NodeId, data: &'a [u8]) {
-        self.buffers.insert(id, Cow::Borrowed(data));
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        self.buffers[idx] = Some(Cow::Borrowed(data));
     }
 
     /// Insert a borrowed buffer with a known element size.
     pub fn insert_borrowed_with_elem_size(&mut self, id: NodeId, data: &'a [u8], elem_size: usize) {
-        self.buffers.insert(id, Cow::Borrowed(data));
-        self.elem_sizes.insert(id, elem_size);
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        self.buffers[idx] = Some(Cow::Borrowed(data));
+        self.elem_sizes[idx] = elem_size as u8;
     }
 
     /// Set the element size for a node (without changing its buffer).
     pub fn set_elem_size(&mut self, id: NodeId, elem_size: usize) {
-        self.elem_sizes.insert(id, elem_size);
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        self.elem_sizes[idx] = elem_size as u8;
     }
 
     /// Get the element size for a node. Returns 4 (f32) as the default.
     #[must_use]
     pub fn elem_size(&self, id: NodeId) -> usize {
-        self.elem_sizes.get(&id).copied().unwrap_or(4)
+        let idx = id.index() as usize;
+        if idx < self.elem_sizes.len() {
+            let es = self.elem_sizes[idx] as usize;
+            if es > 0 {
+                es
+            } else {
+                4
+            }
+        } else {
+            4
+        }
     }
 
     /// Get the element count for a node: `data.len() / elem_size`.
@@ -89,43 +141,57 @@ impl<'a> BufferArena<'a> {
     }
 
     /// Get the buffer for the given node.
+    #[inline]
     pub fn get(&self, id: NodeId) -> ExecResult<&[u8]> {
-        self.buffers
-            .get(&id)
-            .map(|v| v.as_ref())
-            .ok_or(ExecError::BufferNotReady(id))
+        let idx = id.index() as usize;
+        if idx < self.buffers.len() {
+            if let Some(ref cow) = self.buffers[idx] {
+                return Ok(cow.as_ref());
+            }
+        }
+        Err(ExecError::BufferNotReady(id))
     }
 
     /// Whether a buffer exists for the given node.
     #[must_use]
     pub fn contains(&self, id: NodeId) -> bool {
-        self.buffers.contains_key(&id)
+        let idx = id.index() as usize;
+        idx < self.buffers.len() && self.buffers[idx].is_some()
     }
 
     /// Remove and return the buffer for the given node as owned bytes.
     pub fn take(&mut self, id: NodeId) -> ExecResult<Vec<u8>> {
-        self.buffers
-            .remove(&id)
-            .map(|cow| cow.into_owned())
-            .ok_or(ExecError::BufferNotReady(id))
+        let idx = id.index() as usize;
+        if idx < self.buffers.len() {
+            if let Some(cow) = self.buffers[idx].take() {
+                self.count -= 1;
+                return Ok(cow.into_owned());
+            }
+        }
+        Err(ExecError::BufferNotReady(id))
     }
 
     /// Number of stored buffers.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.buffers.len()
+        self.count
     }
 
     /// Whether the arena is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.buffers.is_empty()
+        self.count == 0
     }
 
     /// Remove all buffers.
     pub fn clear(&mut self) {
-        self.buffers.clear();
-        self.elem_sizes.clear();
+        for slot in &mut self.buffers {
+            *slot = None;
+        }
+        for es in &mut self.elem_sizes {
+            *es = 0;
+        }
+        self.count = 0;
     }
 
     /// Snapshot all current buffers as owned copies.
@@ -136,14 +202,20 @@ impl<'a> BufferArena<'a> {
     /// Intended for conformance testing / debugging only — clones all
     /// intermediate results. Feature-gated behind `profile`.
     #[cfg(feature = "profile")]
-    pub fn snapshot(&self) -> HashMap<NodeId, (Vec<u8>, usize)> {
-        self.buffers
-            .iter()
-            .map(|(id, cow)| {
-                let es = self.elem_sizes.get(id).copied().unwrap_or(4);
-                (*id, (cow.to_vec(), es))
-            })
-            .collect()
+    pub fn snapshot(&self) -> std::collections::HashMap<NodeId, (Vec<u8>, usize)> {
+        let mut map = std::collections::HashMap::new();
+        for (idx, slot) in self.buffers.iter().enumerate() {
+            if let Some(cow) = slot {
+                let id = NodeId::new(idx as u32, 0);
+                let es = if idx < self.elem_sizes.len() && self.elem_sizes[idx] > 0 {
+                    self.elem_sizes[idx] as usize
+                } else {
+                    4
+                };
+                map.insert(id, (cow.to_vec(), es));
+            }
+        }
+        map
     }
 }
 

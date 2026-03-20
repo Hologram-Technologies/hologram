@@ -10,11 +10,11 @@
 ## Sprint 13: Compile-Time-First Acceleration
 
 ### Phase 0: Execution Orchestration Overhaul (highest ROI)
-- [ ] **0.1**: Flat pre-allocated buffer arena (replace HashMap-based arena)
+- [x] **0.1**: Flat pre-allocated buffer arena (replace HashMap-based arena)
 - [ ] **0.2**: Output buffer pre-allocation in dispatch (`dispatch_into` API)
 - [ ] **0.3**: Compile-time shape resolution (CompiledNode with pre-resolved shapes)
 - [ ] **0.4**: Embed execution schedule in archive (eliminate O(V+E) load-time rebuild)
-- [ ] **0.5**: SmallVec strides + stride memoization for float dispatch
+- [x] **0.5**: SmallVec strides + stride memoization for float dispatch
 - [ ] **0.6**: Adaptive parallel threshold (compiler cost estimates per level)
 - [ ] **0.7**: Instruction tape executor (kernel function pointer table, zero-match dispatch)
 - [ ] **0.8**: System-level: `target-cpu=native`, KV cache lazy init, dense metadata arrays, FFI zero-copy
@@ -28,7 +28,7 @@
 - [x] **0b.6**: im2col + GEMM for `conv2d` (replace 8-level nested loops, unify two conv2d variants via shared `conv2d_core`)
 - [ ] **0b.7**: Online softmax (Flash Attention-style) for fused attention kernel
 - [ ] **0b.8**: Pre-computed KV offsets in instruction tape (eliminate per-head offset arithmetic)
-- [ ] **0b.9**: Flatten `conv2d` loops with flat output + flat kernel (interim before im2col)
+- [x] **0b.9**: ~~Flatten `conv2d` loops~~ (superseded by 0b.6 im2col)
 
 ### Phase 1: Compile-Time Weight Layout + SIMD
 - [ ] **1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization

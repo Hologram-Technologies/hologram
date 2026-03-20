@@ -74,21 +74,31 @@ pub(super) fn silu(x: f32) -> f32 {
     x * sigmoid(x)
 }
 
-/// Compute strides for a shape (row-major).
-pub fn compute_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1usize; shape.len()];
+use smallvec::SmallVec;
+
+/// Most tensors have ≤6 dimensions; SmallVec avoids heap allocation for common cases.
+pub(super) type StrideVec = SmallVec<[usize; 6]>;
+
+/// Compute strides for a shape (row-major). Stack-allocated for ≤6 dims.
+pub(super) fn compute_strides_small(shape: &[usize]) -> StrideVec {
+    let mut strides = SmallVec::from_elem(1usize, shape.len());
     for i in (0..shape.len().saturating_sub(1)).rev() {
         strides[i] = strides[i + 1] * shape[i + 1];
     }
     strides
 }
 
+/// Compute strides for a shape (row-major). Public API (returns Vec).
+pub fn compute_strides(shape: &[usize]) -> Vec<usize> {
+    compute_strides_small(shape).to_vec()
+}
+
 /// Compute broadcast strides: for dimensions where `src` has size 1 (broadcast),
 /// the stride is 0 (same element repeated). Otherwise, uses normal strides.
-pub(super) fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> Vec<usize> {
-    let src_strides = compute_strides(src_shape);
+pub(super) fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> StrideVec {
+    let src_strides = compute_strides_small(src_shape);
     let offset = out_shape.len() - src_shape.len();
-    let mut strides = vec![0usize; out_shape.len()];
+    let mut strides = SmallVec::from_elem(0usize, out_shape.len());
     for i in 0..src_shape.len() {
         if src_shape[i] != 1 {
             strides[i + offset] = src_strides[i];
