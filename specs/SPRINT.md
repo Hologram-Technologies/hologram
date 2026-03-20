@@ -25,7 +25,7 @@
 - [x] **0b.3**: Flatten pool ops (max_pool_2d, avg_pool_2d) 6-level → 2-level with generic `pool_2d<A>` kernel
 - [x] **0b.4**: Flatten `conv_transpose` 7-level scatter loops → 2-level (flat outer + flat kernel)
 - [x] **0b.5**: Extract `dot_f32` helper for attention (enables autovectorization)
-- [ ] **0b.6**: im2col + GEMM for `conv2d` (replace 8-level nested loops, unify two conv2d variants)
+- [x] **0b.6**: im2col + GEMM for `conv2d` (replace 8-level nested loops, unify two conv2d variants via shared `conv2d_core`)
 - [ ] **0b.7**: Online softmax (Flash Attention-style) for fused attention kernel
 - [ ] **0b.8**: Pre-computed KV offsets in instruction tape (eliminate per-head offset arithmetic)
 - [ ] **0b.9**: Flatten `conv2d` loops with flat output + flat kernel (interim before im2col)
