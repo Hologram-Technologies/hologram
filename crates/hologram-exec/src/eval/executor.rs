@@ -33,21 +33,89 @@ pub struct ExecutionContext {
     pub position_offset: u32,
 }
 
+/// Pre-resolved per-node metadata, indexed by `NodeId::index()`.
+/// Eliminates HashMap lookups in the hot dispatch path.
+struct CompiledNodeTable<'a> {
+    nodes: Vec<Option<&'a Node>>,
+    shapes: Vec<Option<Vec<usize>>>,
+    dtypes: Vec<Option<FloatDType>>,
+}
+
+impl<'a> CompiledNodeTable<'a> {
+    fn from_graph(sg: &'a SerializedGraph) -> Self {
+        let max_idx = sg
+            .nodes
+            .iter()
+            .map(|n| n.id.index() as usize)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+
+        let mut nodes = vec![None; max_idx];
+        for n in &sg.nodes {
+            let idx = n.id.index() as usize;
+            nodes[idx] = Some(n);
+        }
+
+        let mut shapes = vec![None; max_idx];
+        for (id, shape) in &sg.node_shapes {
+            let idx = id.index() as usize;
+            if idx < max_idx {
+                shapes[idx] = Some(shape.clone());
+            }
+        }
+
+        let mut dtypes = vec![None; max_idx];
+        for (id, dtype) in &sg.node_dtypes {
+            let idx = id.index() as usize;
+            if idx < max_idx {
+                dtypes[idx] = Some(*dtype);
+            }
+        }
+
+        Self {
+            nodes,
+            shapes,
+            dtypes,
+        }
+    }
+
+    #[inline]
+    fn get_node(&self, id: NodeId) -> Option<&'a Node> {
+        let idx = id.index() as usize;
+        if idx < self.nodes.len() {
+            self.nodes[idx]
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn get_compiled_shape(&self, id: NodeId) -> Option<&Vec<usize>> {
+        let idx = id.index() as usize;
+        if idx < self.shapes.len() {
+            self.shapes[idx].as_ref()
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn get_compiled_dtype(&self, id: NodeId) -> Option<&FloatDType> {
+        let idx = id.index() as usize;
+        if idx < self.dtypes.len() {
+            self.dtypes[idx].as_ref()
+        } else {
+            None
+        }
+    }
+}
+
 /// Immutable graph-wide context shared across level dispatch and shape propagation.
-///
-/// This is the **SaturatedContext** in Prism ontology terms:
-///
-/// - **PP_1 (Pipeline Unification)**: because all shapes, dtypes, and constants are resolved at
-///   compile time and stored here, execution reduces to a single O(1) KV lookup per node. The
-///   composed pipeline `κ(λ_k(α*(ι(s,·))),C)` collapses to `resolve(s,C)`.
-///
-/// - **PA_4 (Base Binding Preservation)**: all fields are populated once at construction and never
-///   mutated during execution. Pinned fibers are never unpinned (SR_1 monotonicity + bitmask OR
-///   irreversibility), so the base state is always recoverable on error (see PM_5).
-///
-/// - **PI_1 (Inference Idempotence)**: repeated execution with the same `GraphInputs` yields the
-///   same `GraphOutputs` — the context carries no mutable state between calls.
 struct DispatchContext<'a> {
+    table: CompiledNodeTable<'a>,
+    // HashMap views for callers that need HashMap interface (shape_propagate).
+    // These are built once at construction and shared via reference.
     node_map: HashMap<NodeId, &'a Node>,
     compiled_shapes: HashMap<NodeId, Vec<usize>>,
     compiled_dtypes: HashMap<NodeId, FloatDType>,
@@ -304,6 +372,7 @@ impl KvExecutor {
         let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
 
         let dctx = DispatchContext {
+            table: CompiledNodeTable::from_graph(sg),
             node_map: build_node_map(sg),
             compiled_shapes: sg.node_shapes_map(),
             compiled_dtypes,
@@ -473,6 +542,7 @@ impl KvExecutor {
         let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
 
         let dctx = DispatchContext {
+            table: CompiledNodeTable::from_graph(sg),
             node_map: build_node_map(sg),
             compiled_shapes: sg.node_shapes_map(),
             compiled_dtypes,
@@ -1257,9 +1327,10 @@ fn dispatch_level(
     results.clear();
 
     for &node_id in &level.node_ids {
+        // Use flat table for O(1) lookup without hashing in the hot dispatch path.
         let node = dctx
-            .node_map
-            .get(&node_id)
+            .table
+            .get_node(node_id)
             .ok_or(ExecError::NodeNotFound(node_id))?;
 
         if matches!(node.op, GraphOp::Constant(_)) {
@@ -1776,7 +1847,7 @@ fn dispatch_level(
                 // dim doesn't match (e.g., hint [64, 1, 64] vs compiled [32, 0, 64]
                 // — dim 0 is 64≠32). This catches broken walk_shape_context
                 // projections that produce wrong shapes with correct products.
-                let compiled_shape = dctx.compiled_shapes.get(&node_id);
+                let compiled_shape = dctx.table.get_compiled_shape(node_id);
                 let shape = sm_val
                     .as_ref()
                     .filter(|s| {
@@ -1933,12 +2004,12 @@ fn compute_output_elem_size(
     dctx: &DispatchContext<'_>,
     arena: &BufferArena<'_>,
 ) -> usize {
-    let node = match dctx.node_map.get(node_id) {
+    let node = match dctx.table.get_node(*node_id) {
         Some(n) => n,
         None => {
             return dctx
-                .compiled_dtypes
-                .get(node_id)
+                .table
+                .get_compiled_dtype(*node_id)
                 .map(|d| d.byte_size())
                 .unwrap_or(4);
         }
