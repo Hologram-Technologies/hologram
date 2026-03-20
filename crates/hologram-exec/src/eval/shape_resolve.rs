@@ -227,7 +227,27 @@ fn resolve_custom(op: &FloatOp, ctx: &ShapeContext<'_>) -> Option<Vec<usize>> {
         FloatOp::Gemm { k, .. } => resolve_gemm(ctx, *k),
         FloatOp::Concat { .. } => resolve_concat(ctx),
         FloatOp::Shape { .. } => ctx.input_shapes.first().map(|s| vec![s.len()]),
-        FloatOp::Attention { .. } => ctx.input_shapes.first().cloned(),
+        FloatOp::Attention {
+            head_dim,
+            num_q_heads,
+            ..
+        } => {
+            // Output shape: [num_q_heads, seq_q, head_dim].
+            // seq_q = total Q elements / (num_q_heads * head_dim).
+            let q_elems: usize = ctx
+                .input_shapes
+                .first()
+                .map(|s| s.iter().product())
+                .unwrap_or(0);
+            let hd = *head_dim as usize;
+            let nq = *num_q_heads as usize;
+            let seq_q = if hd > 0 && nq > 0 {
+                q_elems / (nq * hd)
+            } else {
+                1
+            };
+            Some(vec![nq, seq_q, hd])
+        }
         FloatOp::Slice {
             axis_from_end,
             start,

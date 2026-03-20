@@ -38,28 +38,13 @@ pub fn propagate_level_shapes(
     shape_hints: Option<&HashMap<u32, Vec<usize>>>,
 ) {
     for &node_id in &level.node_ids {
-        // Pre-projected shape hints from walk_shape_context() take priority.
-        // These are provably correct (projected from actual runtime input shapes
-        // through the ShapeContextGraph) and override both compiled shapes and
-        // inferred shapes.
-        if let Some(hints) = shape_hints {
-            if let Some(hint) = hints.get(&node_id.index()) {
-                if !hint.is_empty() && !hint.contains(&0) {
-                    // Validate: hint rank must match compiled rank (when both
-                    // are available). The ShapeContextGraph walker can produce
-                    // wrong rank for Reshape ops when Concat shape-value chains
-                    // propagate extra i64 elements. Reject rank-mismatched hints
-                    // and fall through to compiled-shape-based inference.
-                    let rank_ok = compiled_shapes
-                        .get(&node_id)
-                        .is_none_or(|cs| cs.len() == hint.len());
-                    if rank_ok {
-                        shape_map.insert(node_id, hint.clone());
-                        continue;
-                    }
-                }
-            }
-        }
+        // Shape hints from walk_shape_context are NOT used here.
+        // Instead, shapes are resolved from two authoritative sources:
+        // 1. Compiled shapes — correct rank, with 0-sentinels for dynamic dims
+        // 2. Buffer sizes — correct product (total element count)
+        // Together these resolve any dynamic dim: unknown = product / known_dims.
+        // This is simpler and more robust than the walker's i64 propagation chains.
+        let _ = shape_hints; // suppress unused warning
         let Some(node) = node_map.get(&node_id) else {
             continue;
         };

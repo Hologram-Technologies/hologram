@@ -119,6 +119,7 @@ fn dispatch_custom(
             num_kv_heads,
             scale,
             causal,
+            heads_first,
         } => dispatch_attention(
             inputs,
             *head_dim as usize,
@@ -126,6 +127,7 @@ fn dispatch_custom(
             *num_kv_heads as usize,
             bits_to_f32(*scale),
             *causal,
+            *heads_first,
         ),
         FloatOp::Dequantize => dispatch_dequantize(inputs),
         // ── Vision / spatial ops ──────────────────────────────────────────
@@ -1685,9 +1687,8 @@ fn dispatch_attention(
     num_kv_heads: usize,
     scale: f32,
     causal: bool,
+    heads_first: bool,
 ) -> ExecResult<Vec<u8>> {
-    // Input Q/K/V arrive as [seq, n_heads, head_dim] (interleaved heads per token).
-    // Transpose to [n_heads, seq, head_dim] for per-head attention computation.
     let q_raw = cast_f32(inputs[0])?;
     let k_raw = cast_f32(inputs[1])?;
     let v_raw = cast_f32(inputs[2])?;
@@ -1695,9 +1696,25 @@ fn dispatch_attention(
     let seq_q = q_raw.len() / (num_q_heads * head_dim);
     let seq_k = k_raw.len() / (num_kv_heads * head_dim);
 
-    let q = transpose_heads(&q_raw, seq_q, num_q_heads, head_dim);
-    let k = transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim);
-    let v = transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim);
+    // GGUF inputs arrive as [seq, n_heads, head_dim] — transpose to heads-first.
+    // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first.
+    let (q, k, v) = if heads_first {
+        (q_raw.to_vec(), k_raw.to_vec(), v_raw.to_vec())
+    } else {
+        (
+            transpose_heads(&q_raw, seq_q, num_q_heads, head_dim),
+            transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim),
+            transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim),
+        )
+    };
+    // Optional additive mask from input[3] (ONNX attention mask).
+    // Shape: broadcastable to [num_q_heads, seq_q, seq_k].
+    let mask: Option<Vec<f32>> = if inputs.len() >= 4 && !inputs[3].is_empty() {
+        Some(cast_f32(inputs[3])?.to_vec())
+    } else {
+        None
+    };
+
     let group_size = num_q_heads / num_kv_heads.max(1);
 
     let mut out = vec![0.0f32; num_q_heads * seq_q * head_dim];
@@ -1732,9 +1749,24 @@ fn dispatch_attention(
                 k_head,
                 &mut scores,
             );
-            // Apply causal mask after BLAS.
-            // When seq_q < seq_k (KV cache decode), use absolute positions.
-            if causal {
+            // Apply mask after BLAS.
+            if let Some(ref m) = mask {
+                // Additive mask: scores[i,j] += mask[broadcast(i,j)].
+                // Mask shape is typically [1, 1, seq_q, seq_k] or [seq_q, seq_k].
+                // The last seq_q*seq_k elements are the per-position mask.
+                let mask_2d_size = seq_q * seq_k;
+                let mask_offset = if m.len() > mask_2d_size {
+                    m.len() - mask_2d_size // Take the last [seq_q, seq_k] slice.
+                } else {
+                    0
+                };
+                for idx in 0..mask_2d_size {
+                    if mask_offset + idx < m.len() {
+                        scores[idx] += m[mask_offset + idx];
+                    }
+                }
+            } else if causal {
+                // When seq_q < seq_k (KV cache decode), use absolute positions.
                 for i in 0..seq_q {
                     let abs_pos = seq_k - seq_q + i;
                     for j in (abs_pos + 1)..seq_k {
@@ -1745,12 +1777,10 @@ fn dispatch_attention(
         }
         #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
         {
-            // Fused QK^T with causal mask: skip upper triangle entirely.
-            // When seq_q < seq_k (KV cache decode), Q position i maps to
-            // absolute position (seq_k - seq_q + i) in the full sequence.
+            // Fused QK^T with mask support.
             for i in 0..seq_q {
                 let abs_pos = seq_k - seq_q + i;
-                let limit = if causal {
+                let limit = if causal && mask.is_none() {
                     (abs_pos + 1).min(seq_k)
                 } else {
                     seq_k
@@ -1760,10 +1790,15 @@ fn dispatch_attention(
                     for d in 0..head_dim {
                         dot += q_head[i * head_dim + d] * k_head[j * head_dim + d];
                     }
-                    scores[i * seq_k + j] = dot * scale;
+                    let mut score = dot * scale;
+                    // Apply additive mask if present.
+                    if let Some(ref m) = mask {
+                        let mask_idx = i * seq_k + j;
+                        score += m[mask_idx % m.len()];
+                    }
+                    scores[i * seq_k + j] = score;
                 }
-                // Fill masked positions with -inf.
-                if causal {
+                if causal && mask.is_none() {
                     for j in limit..seq_k {
                         scores[i * seq_k + j] = f32::NEG_INFINITY;
                     }
@@ -1813,18 +1848,22 @@ fn dispatch_attention(
         }
     }
 
-    // Transpose output back from [n_heads, seq, head_dim] to [seq, n_heads, head_dim]
-    let mut final_out = vec![0.0f32; out.len()];
-    for h in 0..num_q_heads {
-        for t in 0..seq_q {
-            for d in 0..head_dim {
-                final_out[t * num_q_heads * head_dim + h * head_dim + d] =
-                    out[h * seq_q * head_dim + t * head_dim + d];
+    if heads_first {
+        // ONNX: output stays in [n_heads, seq, head_dim] layout.
+        Ok(f32_vec_to_bytes(out))
+    } else {
+        // GGUF: transpose output from [n_heads, seq, head_dim] to [seq, n_heads, head_dim].
+        let mut final_out = vec![0.0f32; out.len()];
+        for h in 0..num_q_heads {
+            for t in 0..seq_q {
+                for d in 0..head_dim {
+                    final_out[t * num_q_heads * head_dim + h * head_dim + d] =
+                        out[h * seq_q * head_dim + t * head_dim + d];
+                }
             }
         }
+        Ok(f32_vec_to_bytes(final_out))
     }
-
-    Ok(f32_vec_to_bytes(final_out))
 }
 
 // ── Dequantize ──────────────────────────────────────────────────────────

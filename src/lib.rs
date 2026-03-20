@@ -55,6 +55,11 @@ pub use hologram_exec::{
     execute_plan_with_shape_hints, BufferArena, CustomHandler, CustomOpRegistry, GraphInputs,
     GraphOutputs, KvCacheState, KvExecutor, KvStore,
 };
+#[cfg(feature = "profile")]
+pub use hologram_exec::{
+    execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints,
+    IntermediateCapture,
+};
 
 // Archive
 #[cfg(feature = "std")]

@@ -277,6 +277,9 @@ pub enum FloatOp {
         num_kv_heads: u32,
         scale: u32,
         causal: bool,
+        /// If true, inputs are `[n_heads, seq, head_dim]` (ONNX: already transposed).
+        /// If false, inputs are `[seq, n_heads, head_dim]` (GGUF: needs transpose).
+        heads_first: bool,
     },
 
     // ── Quantization ─────────────────────────────────────────────────────
@@ -1179,7 +1182,8 @@ mod tests {
                 num_q_heads: 8,
                 num_kv_heads: 2,
                 scale: f32_to_bits(0.125),
-                causal: true
+                causal: true,
+                heads_first: true,
             }
             .arity(),
             3
@@ -1202,7 +1206,8 @@ mod tests {
                 num_q_heads: 8,
                 num_kv_heads: 2,
                 scale: f32_to_bits(0.125),
-                causal: true
+                causal: true,
+                heads_first: true,
             }
             .name(),
             "float.attention"

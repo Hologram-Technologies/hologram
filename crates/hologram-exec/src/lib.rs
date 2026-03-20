@@ -19,6 +19,8 @@ pub mod profile;
 // Re-exports for convenience.
 pub use buffer::BufferArena;
 pub use error::{ExecError, ExecResult};
+#[cfg(feature = "profile")]
+pub use eval::executor::IntermediateCapture;
 pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
@@ -27,6 +29,8 @@ pub use mmap::{
     execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress, execute_plan,
     execute_plan_with_kv_state, execute_plan_with_shape_hints,
 };
+#[cfg(feature = "profile")]
+pub use mmap::{execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints};
 
 #[cfg(feature = "std")]
 pub use mmap::execute_file;

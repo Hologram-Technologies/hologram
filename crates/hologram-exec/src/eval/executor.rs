@@ -369,40 +369,48 @@ impl KvExecutor {
                                 &[]
                             };
 
-                            // Write new K or V to the cache buffer.
+                            let nkv = *n_kv_heads as usize;
+                            let hd = *head_dim as usize;
+                            let stride = nkv * hd;
+                            let seq = if stride > 0 { floats.len() / stride } else { 1 };
+
+                            // KV data arrives from ONNX attention in heads-first layout:
+                            //   [heads, seq, dim]
+                            // The cache stores in seq-first layout:
+                            //   [seq, heads, dim]
+                            // Transpose before writing.
+                            let seq_first = transpose_heads_to_seq_first(floats, nkv, seq, hd);
+
                             if *is_key {
-                                kv.write_layer(*layer, floats, &[]);
+                                kv.write_layer(*layer, &seq_first, &[]);
                             } else {
-                                kv.write_layer(*layer, &[], floats);
+                                kv.write_layer(*layer, &[], &seq_first);
                             }
 
-                            // Infer seq_len from input shape (first K write).
-                            let stride = *n_kv_heads as usize * *head_dim as usize;
-                            let seq = if stride > 0 { floats.len() / stride } else { 1 };
                             if kv_seq_len.is_none() && *is_key {
                                 kv_seq_len = Some(seq.max(1));
                             }
 
-                            // Output: full cache including just-written data.
+                            // Output for downstream attention node.
                             if kv.write_pos() == 0 {
-                                // Prefill: pass through raw bytes (preserves shape).
+                                // Prefill: pass through original heads-first data.
                                 arena.insert(node_id, input_data);
                             } else {
-                                // Decode: read full cache (previous + new).
+                                // Decode: read full cache (seq-first) and transpose
+                                // back to heads-first for the attention kernel.
+                                let total_seq = kv.write_pos() + seq;
                                 let full = if *is_key {
                                     kv.read_k_through(*layer, seq)
                                 } else {
                                     kv.read_v_through(*layer, seq)
                                 };
+                                let heads_first =
+                                    transpose_seq_first_to_heads(full, nkv, total_seq, hd);
                                 arena.insert(
                                     node_id,
-                                    bytemuck::cast_slice::<f32, u8>(full).to_vec(),
+                                    bytemuck::cast_slice::<f32, u8>(&heads_first).to_vec(),
                                 );
-                                let total_seq = kv.write_pos() + seq;
-                                shape_map.insert(
-                                    node_id,
-                                    vec![total_seq, *n_kv_heads as usize, *head_dim as usize],
-                                );
+                                shape_map.insert(node_id, vec![nkv, total_seq, hd]);
                             }
                             kv_handled.insert(node_id);
                         }
@@ -613,6 +621,88 @@ impl KvExecutor {
             outputs,
         })
     }
+
+    /// Execute with shape hints and capture all intermediate node buffers.
+    ///
+    /// Combines [`execute_with_shape_hints`] (correct shapes at seq>1) with
+    /// [`execute_with_intermediates`] (capture all node buffers for debugging).
+    /// This is the correct way to do node-by-node conformance testing for
+    /// models with dynamic shapes (0-sentinel parameters).
+    #[cfg(feature = "profile")]
+    pub fn execute_with_intermediates_and_shape_hints(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        inputs: &GraphInputs,
+        weights: &[u8],
+        shape_hints: &HashMap<u32, Vec<usize>>,
+    ) -> ExecResult<IntermediateCapture> {
+        let compiled_dtypes = sg.node_dtypes_map();
+        let mut arena = seed_arena(sg, weights, &compiled_dtypes)?;
+        let mut shape_map = seed_shape_map(sg, &arena, inputs, &compiled_dtypes);
+
+        let dctx = DispatchContext {
+            node_map: build_node_map(sg),
+            compiled_shapes: sg.node_shapes_map(),
+            compiled_dtypes,
+            inputs,
+            constants: &sg.constants,
+            registry: None,
+            weights,
+        };
+
+        let max_level_size = schedule
+            .levels
+            .iter()
+            .map(|l| l.node_ids.len())
+            .max()
+            .unwrap_or(0);
+        let mut results_buf: Vec<(NodeId, Vec<u8>, Vec<usize>)> =
+            Vec::with_capacity(max_level_size);
+
+        let mut prof = crate::profile::PerfProfile::new();
+        prof.start_total();
+
+        for (_i, level) in schedule.levels.iter().enumerate() {
+            let shape_start = std::time::Instant::now();
+            super::shape_propagate::propagate_level_shapes(
+                level,
+                &dctx.node_map,
+                &arena,
+                &mut shape_map,
+                &dctx.compiled_shapes,
+                &dctx.compiled_dtypes,
+                Some(shape_hints),
+            );
+            let shape_elapsed = shape_start.elapsed();
+            let dispatch_start = std::time::Instant::now();
+
+            let count = dispatch_level(
+                level,
+                &dctx,
+                &mut arena,
+                &mut shape_map,
+                &mut results_buf,
+                None,
+                &mut prof,
+            )?;
+            prof.record_level(shape_elapsed, dispatch_start.elapsed(), count);
+        }
+
+        prof.stop_total();
+        prof.print_summary();
+
+        // Snapshot all intermediates before extracting outputs.
+        let node_buffers = arena.snapshot();
+        let node_shapes = shape_map.snapshot();
+
+        let outputs = extract_named_outputs(sg, &mut arena)?;
+
+        Ok(IntermediateCapture {
+            node_buffers,
+            node_shapes,
+            outputs,
+        })
+    }
 }
 
 /// Captured intermediate state from graph execution.
@@ -630,6 +720,54 @@ pub struct IntermediateCapture {
 }
 
 /// Build a `NodeId → &Node` lookup map for the graph.
+/// Transpose KV data from heads-first `[heads, seq, dim]` to seq-first `[seq, heads, dim]`.
+///
+/// Used when writing ONNX attention output (heads-first) to the KV cache (seq-first).
+fn transpose_heads_to_seq_first(
+    data: &[f32],
+    n_heads: usize,
+    seq: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let total = n_heads * seq * head_dim;
+    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
+        return data.to_vec();
+    }
+    let mut out = vec![0.0f32; total];
+    for h in 0..n_heads {
+        for s in 0..seq {
+            let src = (h * seq + s) * head_dim;
+            let dst = (s * n_heads + h) * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+        }
+    }
+    out
+}
+
+/// Transpose KV data from seq-first `[seq, heads, dim]` to heads-first `[heads, seq, dim]`.
+///
+/// Used when reading from the KV cache (seq-first) for the attention kernel (heads-first).
+fn transpose_seq_first_to_heads(
+    data: &[f32],
+    n_heads: usize,
+    seq: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let total = n_heads * seq * head_dim;
+    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
+        return data.to_vec();
+    }
+    let mut out = vec![0.0f32; total];
+    for s in 0..seq {
+        for h in 0..n_heads {
+            let src = (s * n_heads + h) * head_dim;
+            let dst = (h * seq + s) * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+        }
+    }
+    out
+}
+
 fn build_node_map(sg: &SerializedGraph) -> HashMap<NodeId, &Node> {
     sg.nodes.iter().map(|n| (n.id, n)).collect()
 }
@@ -880,6 +1018,7 @@ fn resolve_dynamic_sizes(
                     num_kv_heads,
                     scale,
                     causal,
+                    heads_first,
                 } if *num_q_heads > 0 => {
                     let q_last = input_shapes
                         .first()
@@ -898,6 +1037,7 @@ fn resolve_dynamic_sizes(
                             num_kv_heads: *num_kv_heads,
                             scale: *scale,
                             causal: *causal,
+                            heads_first: *heads_first,
                         }
                     } else {
                         return None;
@@ -1189,24 +1329,44 @@ fn dispatch_level(
                 let elem_size = dtype.byte_size().max(1);
                 let in_bytes = input_refs[0].len();
 
-                // Resolve input shape: handle 0-sentinels and wrong-dtype inference.
+                // Resolve input shape for the Shape op's i64 output.
+                // The walker's shape_map may have wrong RANK (e.g., 5-dim instead
+                // of 4-dim) due to broken i64 propagation chains in Reshape targets.
+                // Prefer the compiled shape's rank (authoritative) and resolve
+                // 0-sentinel dims from the actual buffer size.
                 let total_elems = in_bytes / elem_size;
-                let mut shape_i64: Vec<i64> = if !in_shape.is_empty()
+                let input_nid = node.inputs.first().and_then(|s| match s.source {
+                    InputSource::Node(id) => Some(id),
+                    _ => None,
+                });
+                let compiled_input_shape = input_nid.and_then(|id| dctx.compiled_shapes.get(&id));
+
+                let mut shape_i64: Vec<i64> = if let Some(cs) = compiled_input_shape {
+                    // Compiled shape has authoritative rank. Resolve 0-sentinels.
+                    let resolved = resolve_compiled_shape(cs, in_bytes, &input_shapes, elem_size);
+                    if !resolved.contains(&0) && resolved.iter().product::<usize>() == total_elems {
+                        resolved.iter().map(|&d| d as i64).collect()
+                    } else if !in_shape.is_empty()
+                        && !in_shape.contains(&0)
+                        && in_shape.len() == cs.len()
+                        && in_shape.iter().product::<usize>() == total_elems
+                    {
+                        // Walker shape has matching rank and product — use it.
+                        in_shape.iter().map(|&d| d as i64).collect()
+                    } else {
+                        // Can't resolve — fall back to flat.
+                        vec![total_elems as i64]
+                    }
+                } else if !in_shape.is_empty()
                     && !in_shape.contains(&0)
                     && in_shape.iter().product::<usize>() == total_elems
                 {
-                    // Tracked shape is consistent with actual data — use it.
+                    // No compiled shape — trust the walker.
                     in_shape.iter().map(|&d| d as i64).collect()
                 } else {
-                    // Tracked shape has 0-sentinels or is inconsistent with
-                    // byte count (e.g. was inferred with wrong element size).
-                    // Try the input node's compiled shape first, resolving sentinels.
-                    let input_nid = node.inputs.first().and_then(|s| match s.source {
-                        InputSource::Node(id) => Some(id),
-                        _ => None,
-                    });
-                    let resolved = input_nid
-                        .and_then(|id| dctx.compiled_shapes.get(&id))
+                    // Tracked shape has 0-sentinels or is inconsistent.
+                    // Try compiled shape, resolving sentinels.
+                    let resolved = compiled_input_shape
                         .map(|cs| resolve_compiled_shape(cs, in_bytes, &input_shapes, elem_size))
                         .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == total_elems);
                     if let Some(good) = resolved {
@@ -1291,26 +1451,44 @@ fn dispatch_level(
                 };
 
                 // Priority for output shape:
-                // 1. Compiled shape with exact match — most reliable (ONNX inference)
-                // 2. Shape tensor with exact match — may be stale/wrong from compiler
-                // 3. Shape map resolved (0-sentinels filled) with exact match
+                // 1. **Shape tensor** with exact match — authoritative runtime truth
+                //    (computed by the graph's Shape→Gather→Concat chain at runtime).
+                //    This takes priority over compiled shapes because compiled shapes
+                //    may have 0-sentinels or stale concretized values.
+                // 2. Compiled shape with exact match (no 0-sentinels)
+                // 3. Shape map (from walker, validated against compiled fixed dims)
                 // 4. Shape tensor with expansion (broadcast/GQA key repeat)
                 // 5. Flat fallback
                 let (data, shape) = {
+                    let tensor_exact = tensor_shape
+                        .as_ref()
+                        .filter(|s| s.iter().product::<usize>() == n_elems);
                     let cs_exact = dctx
                         .compiled_shapes
                         .get(&node_id)
                         .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == n_elems);
-                    let tensor_exact = tensor_shape
-                        .as_ref()
-                        .filter(|s| s.iter().product::<usize>() == n_elems);
-                    let sm_exact = shape_map
-                        .get(node_id)
-                        .filter(|s| !s.contains(&0) && s.iter().product::<usize>() == n_elems);
+                    let reshape_cs = dctx.compiled_shapes.get(&node_id);
+                    let sm_exact = shape_map.get(node_id).filter(|s| {
+                        if s.contains(&0) || s.iter().product::<usize>() != n_elems {
+                            return false;
+                        }
+                        // Validate fixed dims against compiled shape.
+                        if let Some(cs) = reshape_cs {
+                            if cs.len() != s.len() {
+                                return false;
+                            }
+                            for (ci, si) in cs.iter().zip(s.iter()) {
+                                if *ci > 0 && *ci != *si {
+                                    return false;
+                                }
+                            }
+                        }
+                        true
+                    });
 
-                    if let Some(s) = cs_exact {
+                    if let Some(s) = tensor_exact {
                         (input_refs[0].to_vec(), s.to_vec())
-                    } else if let Some(s) = tensor_exact {
+                    } else if let Some(s) = cs_exact {
                         (input_refs[0].to_vec(), s.to_vec())
                     } else if let Some(s) = sm_exact {
                         (input_refs[0].to_vec(), s.to_vec())
@@ -1554,6 +1732,14 @@ fn dispatch_level(
                     .unwrap_or_else(|| vec![out.len()]);
                 (result, shape)
             }
+            // Cast I64→F32: detect when input data is already f32 (from hologram's
+            // f32-domain lowering). If the input's arena elem_size is 4 (f32) but
+            // the Cast says from=I64 (8 bytes), the data was already converted.
+            // Pass through as-is to avoid reinterpreting f32 bytes as i64.
+            //
+            // TEMPORARILY DISABLED — investigating hang.
+            // GraphOp::Float(FloatOp::Cast { from: FloatDType::I64, to: FloatDType::F32 })
+            // | GraphOp::Float(FloatOp::Cast { from: FloatDType::I32, to: FloatDType::F32 }) => { ... }
             _ => {
                 // Resolve size=0 sentinel in FloatOps using the input's last shape dim.
                 let input0_es = input_elem_size(&node.inputs, 0, arena);
@@ -1584,17 +1770,34 @@ fn dispatch_level(
                 };
 
                 let sm_val = shape_map.get(node_id).map(|s| s.to_vec());
+                // Validate walker shape hints against compiled shapes.
+                // The compiled shape has correct fixed dims (e.g., [32, 0, 64])
+                // where 0 = dynamic seq. Reject hints where a non-zero compiled
+                // dim doesn't match (e.g., hint [64, 1, 64] vs compiled [32, 0, 64]
+                // — dim 0 is 64≠32). This catches broken walk_shape_context
+                // projections that produce wrong shapes with correct products.
+                let compiled_shape = dctx.compiled_shapes.get(&node_id);
                 let shape = sm_val
                     .as_ref()
                     .filter(|s| {
-                        // Accept the pre-propagated shape only when it has no
-                        // 0-sentinels AND its product matches the actual result.
-                        // A product mismatch means the compiled shape was
-                        // concretized with a stale seq sentinel (e.g., seq=1)
-                        // and we need to re-derive from the runtime input shapes.
-                        !s.contains(&0)
-                            && (n_result_elems == 0
-                                || s.iter().product::<usize>() == n_result_elems)
+                        if s.contains(&0) {
+                            return false;
+                        }
+                        if n_result_elems > 0 && s.iter().product::<usize>() != n_result_elems {
+                            return false;
+                        }
+                        // Check fixed dims match compiled shape.
+                        if let Some(cs) = compiled_shape {
+                            if cs.len() != s.len() {
+                                return false;
+                            }
+                            for (ci, si) in cs.iter().zip(s.iter()) {
+                                if *ci > 0 && *ci != *si {
+                                    return false; // Fixed dim mismatch
+                                }
+                            }
+                        }
+                        true
                     })
                     .cloned()
                     .unwrap_or_else(|| {

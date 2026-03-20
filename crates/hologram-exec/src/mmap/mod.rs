@@ -107,6 +107,41 @@ pub fn execute_plan_with_kv_state(
     )
 }
 
+/// Execute a loaded plan and capture ALL intermediate node outputs.
+///
+/// Requires the `profile` feature. Returns `IntermediateCapture` containing
+/// every node's output buffer, shape, and the normal graph outputs.
+/// Used for node-by-node conformance testing against ORT.
+#[cfg(feature = "profile")]
+pub fn execute_plan_with_intermediates(
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+) -> ExecResult<crate::eval::executor::IntermediateCapture> {
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_intermediates(plan.graph(), &schedule, inputs, plan.weights())
+}
+
+/// Execute a loaded plan with shape hints and capture ALL intermediate outputs.
+///
+/// Combines shape-aware execution (correct for variable-length inputs) with
+/// intermediate capture (for node-by-node conformance testing against ORT).
+/// Requires the `profile` feature.
+#[cfg(feature = "profile")]
+pub fn execute_plan_with_intermediates_and_shape_hints(
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    shape_hints: &std::collections::HashMap<u32, Vec<usize>>,
+) -> ExecResult<crate::eval::executor::IntermediateCapture> {
+    let schedule = build_schedule(plan.graph())?;
+    KvExecutor::execute_with_intermediates_and_shape_hints(
+        plan.graph(),
+        &schedule,
+        inputs,
+        plan.weights(),
+        shape_hints,
+    )
+}
+
 /// Execute a .holo archive from raw bytes.
 ///
 /// Parses the archive, dispatches via entrypoints, and runs the graph.
