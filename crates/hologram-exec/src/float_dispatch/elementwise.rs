@@ -7,6 +7,16 @@ pub(super) fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<
     Ok(f32_vec_to_bytes(out))
 }
 
+/// Unary map into a pre-allocated output buffer (avoids per-call allocation).
+pub(super) fn unary_map_into(inputs: &[&[u8]], f: impl Fn(f32) -> f32, out_buf: &mut Vec<u8>) {
+    let x = cast_f32(inputs[0]).unwrap_or_default();
+    out_buf.clear();
+    out_buf.reserve(x.len() * 4);
+    for &v in x.iter() {
+        out_buf.extend_from_slice(&f(v).to_le_bytes());
+    }
+}
+
 pub(super) fn binary_elementwise(
     inputs: &[&[u8]],
     f: impl Fn(f32, f32) -> f32,
@@ -18,6 +28,22 @@ pub(super) fn binary_elementwise(
         .map(|i| f(a[i % a.len()], b[i % b.len()]))
         .collect();
     Ok(f32_vec_to_bytes(out))
+}
+
+/// Binary elementwise into a pre-allocated output buffer.
+pub(super) fn binary_elementwise_into(
+    inputs: &[&[u8]],
+    f: impl Fn(f32, f32) -> f32,
+    out_buf: &mut Vec<u8>,
+) {
+    let a = cast_f32(inputs[0]).unwrap_or_default();
+    let b = cast_f32(inputs[1]).unwrap_or_default();
+    let out_len = a.len().max(b.len());
+    out_buf.clear();
+    out_buf.reserve(out_len * 4);
+    for i in 0..out_len {
+        out_buf.extend_from_slice(&f(a[i % a.len()], b[i % b.len()]).to_le_bytes());
+    }
 }
 
 /// Binary elementwise with proper N-D broadcasting using input shapes.

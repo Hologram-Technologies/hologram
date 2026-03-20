@@ -11,7 +11,7 @@
 
 ### Phase 0: Execution Orchestration Overhaul (highest ROI)
 - [x] **0.1**: Flat pre-allocated buffer arena (replace HashMap-based arena)
-- [ ] **0.2**: Output buffer pre-allocation in dispatch (`dispatch_into` API)
+- [x] **0.2**: Output buffer pre-allocation in dispatch (`dispatch_into` API)
 - [ ] **0.3**: Compile-time shape resolution (CompiledNode with pre-resolved shapes)
 - [ ] **0.4**: Embed execution schedule in archive (eliminate O(V+E) load-time rebuild)
 - [x] **0.5**: SmallVec strides + stride memoization for float dispatch

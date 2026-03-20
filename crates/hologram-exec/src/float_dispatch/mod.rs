@@ -119,6 +119,36 @@ pub fn dispatch_float_with_shapes(
     }
 }
 
+/// Dispatch a `FloatOp` into a pre-allocated output buffer.
+///
+/// The output buffer is cleared and reused — its backing allocation persists
+/// across calls, eliminating repeated heap allocation in the hot path.
+/// Falls back to `dispatch_float_ctx` for ops that don't yet support in-place output.
+pub fn dispatch_float_into(
+    op: &FloatOp,
+    inputs: &[&[u8]],
+    ctx: Option<&ExecutionContext>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    match op.category() {
+        OpCategory::UnaryElementwise => {
+            elementwise::unary_map_into(inputs, |v| op.apply_unary(v), out_buf);
+            Ok(())
+        }
+        OpCategory::BinaryElementwise => {
+            elementwise::binary_elementwise_into(inputs, |a, b| op.apply_binary(a, b), out_buf);
+            Ok(())
+        }
+        _ => {
+            // Fall back to allocating dispatch for ops not yet converted.
+            let result = dispatch_float_ctx(op, inputs, ctx)?;
+            out_buf.clear();
+            out_buf.extend_from_slice(&result);
+            Ok(())
+        }
+    }
+}
+
 /// Dispatch a fused chain of unary element-wise f32 ops.
 ///
 /// Applies each op in sequence to every element, avoiding intermediate buffers.
