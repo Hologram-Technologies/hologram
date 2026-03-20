@@ -37,16 +37,17 @@ impl Psumbook4 {
     }
 
     /// Dot product of accumulated sums with centroids.
+    ///
+    /// Uses iterator zip+map+sum pattern which LLVM reliably autovectorizes
+    /// to SIMD (SSE/AVX2/NEON) at opt-level ≥ 2.
     #[inline]
     #[must_use]
     pub fn dot(&self, centroids: &[f32; Q4_LEVELS]) -> f32 {
-        let mut sum = 0.0f32;
-        let mut i = 0;
-        while i < Q4_LEVELS {
-            sum += self.sums[i] * centroids[i];
-            i += 1;
-        }
-        sum
+        self.sums
+            .iter()
+            .zip(centroids.iter())
+            .map(|(&s, &c)| s * c)
+            .sum()
     }
 
     /// Reset all sums to zero for reuse.
@@ -89,16 +90,18 @@ impl Psumbook8 {
     }
 
     /// Dot product of accumulated sums with centroids.
+    ///
+    /// Uses iterator zip+map+sum pattern which LLVM reliably autovectorizes
+    /// to SIMD (SSE/AVX2/NEON) at opt-level ≥ 2. For Q8 (256 slots),
+    /// this processes 8 f32s per SIMD lane on AVX2.
     #[inline]
     #[must_use]
     pub fn dot(&self, centroids: &[f32; Q8_LEVELS]) -> f32 {
-        let mut sum = 0.0f32;
-        let mut i = 0;
-        while i < Q8_LEVELS {
-            sum += self.sums[i] * centroids[i];
-            i += 1;
-        }
-        sum
+        self.sums
+            .iter()
+            .zip(centroids.iter())
+            .map(|(&s, &c)| s * c)
+            .sum()
     }
 
     /// Reset all sums to zero for reuse.

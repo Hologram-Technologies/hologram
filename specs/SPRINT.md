@@ -31,10 +31,10 @@
 - [x] **0b.9**: ~~Flatten `conv2d` loops~~ (superseded by 0b.6 im2col)
 
 ### Phase 1: Compile-Time Weight Layout + SIMD
-- [ ] **1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
+- [x] **1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
 - [ ] **1.B**: Compile-time column-major/tiled weight index layout
 - [ ] **1.3**: Tiled multi-column LUT-GEMM kernels
-- [ ] **1.4**: SIMD dot products for Psumbook (AVX2, NEON, WASM)
+- [x] **1.4**: SIMD dot products for Psumbook (autovectorization-friendly patterns)
 - [ ] **1.4b**: ARM NEON + WASM SIMD for ElementWiseView
 
 ### Phase 2: Compile-Time Fusion

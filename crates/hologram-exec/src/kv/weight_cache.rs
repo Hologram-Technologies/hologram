@@ -1,0 +1,121 @@
+//! Weight cache: avoids repeated rkyv deserialization per LUT-GEMM dispatch.
+//!
+//! The first time a quantized weight constant is accessed, it's deserialized
+//! and stored. Subsequent dispatches reuse the cached version.
+
+use std::collections::HashMap;
+
+use hologram_graph::constant::{ConstantData, ConstantId, ConstantStore};
+
+use crate::error::{ExecError, ExecResult};
+use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
+
+/// Cached quantized weight variants.
+enum CachedWeight {
+    Q4(QuantizedWeights4),
+    Q8(Box<QuantizedWeights8>),
+}
+
+/// Cache for deserialized quantized weights.
+///
+/// Keyed by `ConstantId`. Populated lazily on first access.
+/// Eliminates repeated `rkyv::from_bytes()` calls in the LUT-GEMM hot path.
+pub struct WeightCache {
+    entries: HashMap<u32, CachedWeight>,
+}
+
+impl WeightCache {
+    /// Create an empty weight cache.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Get or deserialize a Q4 weight constant.
+    pub fn get_q4(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&QuantizedWeights4> {
+        let key = cid.raw();
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
+            let bytes = resolve_constant_bytes(cid, constants, weights)?;
+            let qw = rkyv::from_bytes::<QuantizedWeights4, rkyv::rancor::Error>(bytes)
+                .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+            e.insert(CachedWeight::Q4(qw));
+        }
+        match self.entries.get(&key) {
+            Some(CachedWeight::Q4(qw)) => Ok(qw),
+            _ => Err(ExecError::InvalidQuantization(
+                "weight type mismatch".to_string(),
+            )),
+        }
+    }
+
+    /// Get or deserialize a Q8 weight constant.
+    pub fn get_q8(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&QuantizedWeights8> {
+        let key = cid.raw();
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
+            let bytes = resolve_constant_bytes(cid, constants, weights)?;
+            let qw = rkyv::from_bytes::<QuantizedWeights8, rkyv::rancor::Error>(bytes)
+                .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+            e.insert(CachedWeight::Q8(Box::new(qw)));
+        }
+        match self.entries.get(&key) {
+            Some(CachedWeight::Q8(qw)) => Ok(qw),
+            _ => Err(ExecError::InvalidQuantization(
+                "weight type mismatch".to_string(),
+            )),
+        }
+    }
+}
+
+impl Default for WeightCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Resolve a constant ID to its raw bytes.
+fn resolve_constant_bytes<'a>(
+    cid: ConstantId,
+    constants: &'a ConstantStore,
+    weights: &'a [u8],
+) -> ExecResult<&'a [u8]> {
+    let data = constants
+        .get(cid)
+        .ok_or(ExecError::ConstantNotFound(cid.raw()))?;
+    match data {
+        ConstantData::Bytes(bytes) => Ok(bytes),
+        ConstantData::Deferred {
+            byte_size,
+            source_id,
+        } => {
+            let start = *source_id as usize;
+            let end = start + *byte_size as usize;
+            if end > weights.len() {
+                return Err(ExecError::ConstantNotFound(cid.raw()));
+            }
+            Ok(&weights[start..end])
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_default_is_empty() {
+        let cache = WeightCache::new();
+        assert!(cache.entries.is_empty());
+    }
+}
