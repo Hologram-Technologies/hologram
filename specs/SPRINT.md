@@ -19,6 +19,17 @@
 - [ ] **0.7**: Instruction tape executor (kernel function pointer table, zero-match dispatch)
 - [ ] **0.8**: System-level: `target-cpu=native`, KV cache lazy init, dense metadata arrays, FFI zero-copy
 
+### Phase 0b: float_dispatch Kernel Optimization
+- [x] **0b.1**: Split `float_dispatch.rs` (3095 lines) into directory module with 14 sub-files
+- [x] **0b.2**: Flatten `transpose_heads` triple loop → single flat loop with index decomposition
+- [x] **0b.3**: Flatten pool ops (max_pool_2d, avg_pool_2d) 6-level → 2-level with generic `pool_2d<A>` kernel
+- [x] **0b.4**: Flatten `conv_transpose` 7-level scatter loops → 2-level (flat outer + flat kernel)
+- [x] **0b.5**: Extract `dot_f32` helper for attention (enables autovectorization)
+- [ ] **0b.6**: im2col + GEMM for `conv2d` (replace 8-level nested loops, unify two conv2d variants)
+- [ ] **0b.7**: Online softmax (Flash Attention-style) for fused attention kernel
+- [ ] **0b.8**: Pre-computed KV offsets in instruction tape (eliminate per-head offset arithmetic)
+- [ ] **0b.9**: Flatten `conv2d` loops with flat output + flat kernel (interim before im2col)
+
 ### Phase 1: Compile-Time Weight Layout + SIMD
 - [ ] **1.A**: Weight cache — eliminate per-dispatch `rkyv::from_bytes` re-deserialization
 - [ ] **1.B**: Compile-time column-major/tiled weight index layout
@@ -85,9 +96,9 @@
 - [x] rANS entropy backend (encoder + decoder)
 - [x] Frequency counting + normalization
 - [x] Float byte-plane transposition (f32/f64)
-- [ ] Bijective pre-transforms (ElementWiseView permutations)
-- [ ] Pipeline orchestration + mode selection
-- [ ] Full end-to-end compress/decompress with all 4 modes
+- [x] Bijective pre-transforms (ElementWiseView permutations)
+- [x] Pipeline orchestration + mode selection
+- [x] Full end-to-end compress/decompress with all 4 modes
 
 ### Phase 3: Archive integration
 - [ ] Add hologram-compression as dependency to hologram-archive

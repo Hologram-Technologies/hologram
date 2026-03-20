@@ -1,0 +1,244 @@
+use super::helpers::*;
+#[cfg(all(feature = "accelerate", target_os = "macos"))]
+use super::matmul::GemmParams;
+use crate::error::ExecResult;
+
+/// Transpose from [seq, n_heads, head_dim] to [n_heads, seq, head_dim].
+///
+/// Single flat loop with index decomposition — avoids triple-nested loops
+/// that defeat autovectorization and harm cache locality.
+fn transpose_heads(data: &[f32], seq: usize, n_heads: usize, head_dim: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; data.len()];
+    let nh_hd = n_heads * head_dim;
+    let s_hd = seq * head_dim;
+    for (flat, &val) in data.iter().enumerate() {
+        // Decompose flat index in source layout [seq, n_heads, head_dim]
+        let t = flat / nh_hd;
+        let h = (flat % nh_hd) / head_dim;
+        let d = flat % head_dim;
+        // Write to dest layout [n_heads, seq, head_dim]
+        out[h * s_hd + t * head_dim + d] = val;
+    }
+    out
+}
+
+pub(super) fn dispatch_attention(
+    inputs: &[&[u8]],
+    head_dim: usize,
+    num_q_heads: usize,
+    num_kv_heads: usize,
+    scale: f32,
+    causal: bool,
+    heads_first: bool,
+) -> ExecResult<Vec<u8>> {
+    let q_raw = cast_f32(inputs[0])?;
+    let k_raw = cast_f32(inputs[1])?;
+    let v_raw = cast_f32(inputs[2])?;
+
+    let seq_q = q_raw.len() / (num_q_heads * head_dim);
+    let seq_k = k_raw.len() / (num_kv_heads * head_dim);
+
+    // GGUF inputs arrive as [seq, n_heads, head_dim] — transpose to heads-first.
+    // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first.
+    let (q, k, v) = if heads_first {
+        (q_raw.to_vec(), k_raw.to_vec(), v_raw.to_vec())
+    } else {
+        (
+            transpose_heads(&q_raw, seq_q, num_q_heads, head_dim),
+            transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim),
+            transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim),
+        )
+    };
+    // Optional additive mask from input[3] (ONNX attention mask).
+    // Shape: broadcastable to [num_q_heads, seq_q, seq_k].
+    let mask: Option<Vec<f32>> = if inputs.len() >= 4 && !inputs[3].is_empty() {
+        Some(cast_f32(inputs[3])?.to_vec())
+    } else {
+        None
+    };
+
+    let group_size = num_q_heads / num_kv_heads.max(1);
+
+    let mut out = vec![0.0f32; num_q_heads * seq_q * head_dim];
+    // Allocate scores buffer once, reuse across all heads.
+    let mut scores = vec![0.0f32; seq_q * seq_k];
+
+    // Per-head attention: iterate over Q heads, map to KV head via group_size.
+    for qh in 0..num_q_heads {
+        let kh = qh / group_size;
+        let q_off = qh * seq_q * head_dim;
+        let k_off = kh * seq_k * head_dim;
+        let o_off = qh * seq_q * head_dim;
+
+        let q_head = &q[q_off..q_off + seq_q * head_dim];
+        let k_head = &k[k_off..k_off + seq_k * head_dim];
+        let v_head = &v[k_off..k_off + seq_k * head_dim];
+
+        // scores = Q_head × K_head^T * scale → [seq_q, seq_k]
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            super::matmul::blas::sgemm_full(
+                GemmParams {
+                    m: seq_q,
+                    n: seq_k,
+                    k: head_dim,
+                    alpha: scale,
+                    beta: 0.0,
+                    trans_a: false,
+                    trans_b: true,
+                },
+                q_head,
+                k_head,
+                &mut scores,
+            );
+            // Apply mask after BLAS.
+            if let Some(ref m) = mask {
+                // Additive mask: scores[i,j] += mask[broadcast(i,j)].
+                // Mask shape is typically [1, 1, seq_q, seq_k] or [seq_q, seq_k].
+                // The last seq_q*seq_k elements are the per-position mask.
+                let mask_2d_size = seq_q * seq_k;
+                let mask_offset = if m.len() > mask_2d_size {
+                    m.len() - mask_2d_size // Take the last [seq_q, seq_k] slice.
+                } else {
+                    0
+                };
+                for idx in 0..mask_2d_size {
+                    if mask_offset + idx < m.len() {
+                        scores[idx] += m[mask_offset + idx];
+                    }
+                }
+            } else if causal {
+                // When seq_q < seq_k (KV cache decode), use absolute positions.
+                for i in 0..seq_q {
+                    let abs_pos = seq_k - seq_q + i;
+                    for j in (abs_pos + 1)..seq_k {
+                        scores[i * seq_k + j] = f32::NEG_INFINITY;
+                    }
+                }
+            }
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            // Fused QK^T with mask support.
+            for i in 0..seq_q {
+                let abs_pos = seq_k - seq_q + i;
+                let limit = if causal && mask.is_none() {
+                    (abs_pos + 1).min(seq_k)
+                } else {
+                    seq_k
+                };
+                let q_row = &q_head[i * head_dim..(i + 1) * head_dim];
+                for j in 0..limit {
+                    let k_row = &k_head[j * head_dim..(j + 1) * head_dim];
+                    // Slice-based dot product enables autovectorization.
+                    let dot: f32 = q_row.iter().zip(k_row).map(|(a, b)| a * b).sum();
+                    let mut score = dot * scale;
+                    // Apply additive mask if present.
+                    if let Some(ref m) = mask {
+                        let mask_idx = i * seq_k + j;
+                        score += m[mask_idx % m.len()];
+                    }
+                    scores[i * seq_k + j] = score;
+                }
+                if causal && mask.is_none() {
+                    for j in limit..seq_k {
+                        scores[i * seq_k + j] = f32::NEG_INFINITY;
+                    }
+                }
+            }
+        }
+
+        // Softmax each row (2-pass: max+exp+sum, then divide).
+        for row in scores.chunks_mut(seq_k) {
+            let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum = 0.0f32;
+            for val in row.iter_mut() {
+                *val = (*val - max).exp();
+                sum += *val;
+            }
+            if sum > 0.0 {
+                let inv = 1.0 / sum;
+                for val in row.iter_mut() {
+                    *val *= inv;
+                }
+            }
+        }
+
+        // out_head = scores × V_head → [seq_q, head_dim]
+        // ikj loop order for cache-friendly access to V.
+        let out_head = &mut out[o_off..o_off + seq_q * head_dim];
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            super::matmul::blas::sgemm(seq_q, head_dim, seq_k, &scores, v_head, out_head);
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            out_head.fill(0.0);
+            for i in 0..seq_q {
+                for j in 0..seq_k {
+                    let s = scores[i * seq_k + j];
+                    if s == 0.0 {
+                        continue;
+                    }
+                    let v_row = &v_head[j * head_dim..(j + 1) * head_dim];
+                    let o_row = &mut out_head[i * head_dim..(i + 1) * head_dim];
+                    for d in 0..head_dim {
+                        o_row[d] += s * v_row[d];
+                    }
+                }
+            }
+        }
+    }
+
+    if heads_first {
+        // ONNX: output stays in [n_heads, seq, head_dim] layout.
+        Ok(f32_vec_to_bytes(out))
+    } else {
+        // GGUF: transpose output from [n_heads, seq, head_dim] to [seq, n_heads, head_dim].
+        // Single flat loop with index decomposition.
+        let mut final_out = vec![0.0f32; out.len()];
+        let s_hd = seq_q * head_dim;
+        let nh_hd = num_q_heads * head_dim;
+        for (flat, &val) in out.iter().enumerate() {
+            // Decompose flat index in source layout [n_heads, seq, head_dim]
+            let h = flat / s_hd;
+            let t = (flat % s_hd) / head_dim;
+            let d = flat % head_dim;
+            // Write to dest layout [seq, n_heads, head_dim]
+            final_out[t * nh_hd + h * head_dim + d] = val;
+        }
+        Ok(f32_vec_to_bytes(final_out))
+    }
+}
+
+pub(super) fn dispatch_rope(
+    inputs: &[&[u8]],
+    dim: usize,
+    base: f32,
+    n_heads: usize,
+    start_pos: usize,
+) -> ExecResult<Vec<u8>> {
+    let x = cast_f32(inputs[0])?;
+
+    let half = dim / 2;
+    let n_heads = n_heads.max(1);
+    let mut out = x.to_vec();
+    // Apply RoPE to each chunk of `dim` elements. Multiple heads per token
+    // share the same position: pos = chunk_index / n_heads.
+    // Uses interleaved convention (ggml): pairs (0,1), (2,3), (4,5), ...
+    for (chunk_idx, chunk) in out.chunks_mut(dim).enumerate() {
+        let token_pos = chunk_idx / n_heads;
+        let pos = (start_pos + token_pos) as f32;
+        for i in 0..half {
+            let freq = 1.0 / base.powf(2.0 * i as f32 / dim as f32);
+            let angle = pos * freq;
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+            let x0 = chunk[2 * i];
+            let x1 = chunk[2 * i + 1];
+            chunk[2 * i] = x0 * cos_a - x1 * sin_a;
+            chunk[2 * i + 1] = x0 * sin_a + x1 * cos_a;
+        }
+    }
+    Ok(f32_vec_to_bytes(out))
+}
