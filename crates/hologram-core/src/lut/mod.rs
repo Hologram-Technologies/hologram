@@ -6,6 +6,7 @@
 
 pub mod activation;
 pub mod arith;
+pub mod hlut;
 pub mod q0;
 
 // Re-export all public items for ergonomic access.

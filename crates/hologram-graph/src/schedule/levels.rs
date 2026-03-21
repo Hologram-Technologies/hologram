@@ -8,6 +8,8 @@ use crate::graph::Graph;
 
 /// A level of nodes that can execute in parallel.
 ///
+/// PL_2 lease-disjointness: nodes within a level hold non-overlapping buffer leases.
+///
 /// **PL_2 (Lease Disjointness)**: each `ParallelLevel` is a *lease* in Prism terms — a disjoint
 /// partition of the computation budget. The Kahn's-algorithm construction guarantees that no node
 /// appears in more than one level, and that every node in a level has all its predecessors in

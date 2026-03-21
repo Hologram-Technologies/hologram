@@ -11,9 +11,25 @@ use hologram_graph::graph::validate;
 use hologram_graph::graph::Graph;
 use hologram_graph::schedule::ExecutionSchedule;
 
+use hologram_graph::graph::node::NodeId;
+
 use crate::error::{CompileError, CompileResult};
 use crate::liveness;
 use crate::workspace;
+
+/// QEDL pipeline boundary marker.
+///
+/// Marks nodes where the pipeline transitions between quantized (byte-domain)
+/// and dequantized (float-domain) execution. The actual insertion of
+/// quantize/dequantize ops is handled by a later pass — this enum provides
+/// the metadata structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QedlBoundary {
+    /// Dequantize: byte-domain → float-domain (before a float op).
+    Dequantize,
+    /// Quantize: float-domain → byte-domain (after a float op).
+    Quantize,
+}
 
 /// Statistics from the compilation process.
 #[derive(Debug, Clone, Default)]
@@ -39,6 +55,9 @@ pub struct CompilationOutput {
     pub stats: CompilationStats,
     /// The execution schedule.
     pub schedule: ExecutionSchedule,
+    /// QEDL pipeline boundaries: nodes where quantize/dequantize transitions occur.
+    /// Empty until the QEDL insertion pass is implemented.
+    pub qedl_boundaries: Vec<(NodeId, QedlBoundary)>,
 }
 
 /// Builder for configuring and running the compilation pipeline.
@@ -108,6 +127,7 @@ fn emit_stage(graph: &Graph, fusion_stats: FusionStats) -> CompileResult<Compila
         archive,
         stats,
         schedule,
+        qedl_boundaries: Vec::new(),
     })
 }
 

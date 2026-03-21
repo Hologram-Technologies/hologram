@@ -5,6 +5,7 @@
 //! all dependencies satisfied and can run concurrently (via rayon when enabled).
 
 pub mod buffer;
+pub mod dirty_bits;
 pub mod error;
 pub mod eval;
 pub mod float_dispatch;

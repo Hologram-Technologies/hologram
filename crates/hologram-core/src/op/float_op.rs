@@ -1145,6 +1145,8 @@ pub const fn bits_to_f32(bits: u32) -> f32 {
     f32::from_bits(bits)
 }
 
+/// Fast approximation of `exp(-a*a)` using the Schraudolph bit trick.
+///
 #[cfg(test)]
 mod tests {
     use super::*;

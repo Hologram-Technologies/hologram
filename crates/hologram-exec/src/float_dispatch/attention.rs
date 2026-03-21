@@ -246,14 +246,20 @@ pub(super) fn dispatch_rope(
     let half = dim / 2;
     let n_heads = n_heads.max(1);
     let mut out = x.to_vec();
+
+    // Pre-compute frequency table: freq[i] = 1.0 / base^(2i/dim).
+    // Avoids calling powf() per element in the inner loop.
+    let freqs: Vec<f32> = (0..half)
+        .map(|i| 1.0 / base.powf(2.0 * i as f32 / dim as f32))
+        .collect();
+
     // Apply RoPE to each chunk of `dim` elements. Multiple heads per token
     // share the same position: pos = chunk_index / n_heads.
     // Uses interleaved convention (ggml): pairs (0,1), (2,3), (4,5), ...
     for (chunk_idx, chunk) in out.chunks_mut(dim).enumerate() {
         let token_pos = chunk_idx / n_heads;
         let pos = (start_pos + token_pos) as f32;
-        for i in 0..half {
-            let freq = 1.0 / base.powf(2.0 * i as f32 / dim as f32);
+        for (i, &freq) in freqs.iter().enumerate() {
             let angle = pos * freq;
             let cos_a = angle.cos();
             let sin_a = angle.sin();

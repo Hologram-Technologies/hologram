@@ -219,6 +219,63 @@ impl<'a> BufferArena<'a> {
     }
 }
 
+/// Running activation-range profile for a buffer.
+///
+/// Records min, max, mean and sample count from buffer data interpreted as f32.
+/// Used for profiling activation ranges to guide quantization decisions.
+#[derive(Debug, Clone, Copy)]
+pub struct ActivationProfile {
+    /// Minimum observed f32 value.
+    pub min: f32,
+    /// Maximum observed f32 value.
+    pub max: f32,
+    /// Running mean of observed f32 values.
+    pub mean: f32,
+    /// Total number of f32 samples recorded.
+    pub n_samples: usize,
+}
+
+impl Default for ActivationProfile {
+    fn default() -> Self {
+        Self {
+            min: f32::MAX,
+            max: f32::MIN,
+            mean: 0.0,
+            n_samples: 0,
+        }
+    }
+}
+
+impl ActivationProfile {
+    /// Create a new empty profile.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Update running statistics from a `&[u8]` buffer interpreted as f32.
+    ///
+    /// Bytes must be f32-aligned (length divisible by 4). Non-aligned
+    /// trailing bytes are silently ignored.
+    pub fn record_buffer(&mut self, buf: &[u8]) {
+        let floats: &[f32] = match bytemuck::try_cast_slice(buf) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        for &v in floats {
+            if v < self.min {
+                self.min = v;
+            }
+            if v > self.max {
+                self.max = v;
+            }
+            // Incremental mean update: mean += (v - mean) / n
+            self.n_samples += 1;
+            self.mean += (v - self.mean) / self.n_samples as f32;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

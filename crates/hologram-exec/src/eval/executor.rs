@@ -33,6 +33,21 @@ pub struct ExecutionContext {
     pub position_offset: u32,
 }
 
+/// Configuration for batch-aware scheduling.
+///
+/// Supports continuous batching: multiple sequences share a KV cache prefix
+/// and diverge at `shared_prefix_len`. The scheduler can overlap prefill of
+/// new sequences with decode of in-flight sequences, amortizing attention
+/// cost over the shared prefix region.
+#[derive(Debug, Clone, Copy)]
+pub struct BatchConfig {
+    /// Number of sequences in the batch.
+    pub batch_size: usize,
+    /// Number of tokens in the shared KV cache prefix.
+    /// Tokens `0..shared_prefix_len` are computed once and reused.
+    pub shared_prefix_len: usize,
+}
+
 /// Pre-resolved per-node metadata, indexed by `NodeId::index()`.
 /// Eliminates HashMap lookups in the hot dispatch path.
 struct CompiledNodeTable<'a> {
@@ -112,6 +127,7 @@ impl<'a> CompiledNodeTable<'a> {
 }
 
 /// Immutable graph-wide context shared across level dispatch and shape propagation.
+/// (PP_1, PI_1, PA_4 — see Prism ontology)
 struct DispatchContext<'a> {
     table: CompiledNodeTable<'a>,
     // HashMap views for callers that need HashMap interface (shape_propagate).
@@ -217,6 +233,7 @@ impl GraphOutputs {
 }
 
 /// Stateless graph executor using KV-lookup dispatch.
+/// PM_5 atomicity: execution is atomic per level — partial level results are never visible.
 pub struct KvExecutor;
 
 impl KvExecutor {
