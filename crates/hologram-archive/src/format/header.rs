@@ -52,6 +52,9 @@ pub const FLAG_GRAPH_COMPRESSED: u32 = 1 << 0;
 /// Flag bit: weights section is compressed via hologram-compression.
 pub const FLAG_WEIGHTS_COMPRESSED: u32 = 1 << 1;
 
+/// Flag bit: archive contains compression metadata per tensor.
+pub const COMPRESSION_FLAG: u32 = 0x0010;
+
 impl HoloHeader {
     /// Whether the graph section is compressed.
     #[must_use]

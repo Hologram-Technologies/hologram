@@ -271,6 +271,91 @@ fn get_q4_flat_index(indices: &[u8], flat: usize) -> u8 {
     }
 }
 
+/// Basic statistics for a weight slice.
+#[derive(Debug, Clone, Copy)]
+pub struct WeightStats {
+    /// Arithmetic mean.
+    pub mean: f32,
+    /// Standard deviation.
+    pub stddev: f32,
+    /// Minimum value.
+    pub min: f32,
+    /// Maximum value.
+    pub max: f32,
+    /// Fraction of values that are exactly zero.
+    pub sparsity: f32,
+}
+
+/// Compute mean, stddev, min, max, and sparsity ratio for a weight slice.
+#[must_use]
+pub fn weight_stats(weights: &[f32]) -> WeightStats {
+    if weights.is_empty() {
+        return WeightStats {
+            mean: 0.0,
+            stddev: 0.0,
+            min: 0.0,
+            max: 0.0,
+            sparsity: 0.0,
+        };
+    }
+    let n = weights.len() as f32;
+    let mut sum = 0.0f32;
+    let mut sum_sq = 0.0f32;
+    let mut lo = f32::MAX;
+    let mut hi = f32::MIN;
+    let mut zeros = 0u32;
+    for &w in weights {
+        sum += w;
+        sum_sq += w * w;
+        if w < lo {
+            lo = w;
+        }
+        if w > hi {
+            hi = w;
+        }
+        if w == 0.0 {
+            zeros += 1;
+        }
+    }
+    let mean = sum / n;
+    let variance = (sum_sq / n) - (mean * mean);
+    let stddev = if variance > 0.0 { variance.sqrt() } else { 0.0 };
+    WeightStats {
+        mean,
+        stddev,
+        min: lo,
+        max: hi,
+        sparsity: zeros as f32 / n,
+    }
+}
+
+/// Count zero-valued centroids in a `QuantizedWeights` and return the fraction.
+///
+/// A centroid is considered "zero" if its absolute value is below `f32::EPSILON`.
+/// High sparsity ratios indicate the weight matrix may benefit from sparse
+/// representations.
+#[must_use]
+pub fn sparsity_ratio(qw: &QuantizedWeights) -> f32 {
+    match qw {
+        QuantizedWeights::Q4(w) => {
+            let zeros = w
+                .centroids
+                .iter()
+                .filter(|&&c| c.abs() < f32::EPSILON)
+                .count();
+            zeros as f32 / w.centroids.len() as f32
+        }
+        QuantizedWeights::Q8(w) => {
+            let zeros = w
+                .centroids
+                .iter()
+                .filter(|&&c| c.abs() < f32::EPSILON)
+                .count();
+            zeros as f32 / w.centroids.len() as f32
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

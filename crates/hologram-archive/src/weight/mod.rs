@@ -77,6 +77,8 @@ pub struct TensorMetadata {
     pub quantization: Option<quantize::QuantizationParams>,
     /// CRC32 of this tensor's raw bytes.
     pub checksum: u32,
+    /// Compression scheme: 0 = none, 1 = stratum, 2 = ring_diff, 3 = orbit_torus.
+    pub compression_scheme: u8,
 }
 
 impl TensorMetadata {
@@ -114,6 +116,7 @@ mod tests {
             size: 0,
             quantization: None,
             checksum: 0,
+            compression_scheme: 0,
         };
         assert_eq!(m.num_elements(), 1);
     }
@@ -128,6 +131,7 @@ mod tests {
             size: 48,
             quantization: None,
             checksum: 0,
+            compression_scheme: 0,
         };
         assert_eq!(m.num_elements(), 12);
     }
@@ -150,6 +154,7 @@ mod tests {
             size: 512,
             quantization: None,
             checksum: 0xABCD,
+            compression_scheme: 0,
         };
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&m).unwrap();
         let archived =

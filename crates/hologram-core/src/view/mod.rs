@@ -114,6 +114,11 @@ impl ElementWiseView {
             return simd::apply_sse42(self, data);
         }
 
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        if data.len() >= 16 {
+            return simd::apply_neon(self, data);
+        }
+
         for byte in data {
             *byte = self.apply(*byte);
         }

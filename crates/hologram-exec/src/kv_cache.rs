@@ -23,6 +23,9 @@ pub struct KvCacheState {
     head_dim: u32,
     /// Maximum sequence length (context window).
     max_seq: usize,
+    /// Sliding window size. When set, reads only return the last `window_size`
+    /// tokens instead of the full cache. `None` = full context (no windowing).
+    window_size: Option<usize>,
 }
 
 impl KvCacheState {
@@ -42,7 +45,25 @@ impl KvCacheState {
             n_kv_heads,
             head_dim,
             max_seq,
+            window_size: None,
         }
+    }
+
+    /// Create a KV cache with a sliding window (bounded context).
+    ///
+    /// When `window_size` is set, reads return at most the last `window_size`
+    /// tokens — older tokens are still in the buffer but not exposed.
+    #[must_use]
+    pub fn with_window(
+        n_layers: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+        max_seq: usize,
+        window_size: usize,
+    ) -> Self {
+        let mut s = Self::new(n_layers, n_kv_heads, head_dim, max_seq);
+        s.window_size = Some(window_size);
+        s
     }
 
     /// Current write position (tokens cached so far).
@@ -104,9 +125,23 @@ impl KvCacheState {
         self.write_pos = (self.write_pos + seq_len).min(self.max_seq);
     }
 
-    /// Read cached K data for a layer from position 0 to current write_pos.
+    /// Effective number of visible tokens (respects sliding window).
+    fn visible_tokens(&self) -> usize {
+        match self.window_size {
+            Some(w) => self.write_pos.min(w),
+            None => self.write_pos,
+        }
+    }
+
+    /// Start position for reads (skips tokens outside the window).
+    fn read_start(&self) -> usize {
+        self.write_pos - self.visible_tokens()
+    }
+
+    /// Read cached K data for a layer.
     ///
-    /// Returns a slice of `write_pos * n_kv_heads * head_dim` f32 elements.
+    /// With sliding window, returns only the last `window_size` tokens.
+    /// Without windowing, returns all tokens from position 0 to write_pos.
     #[must_use]
     pub fn read_k(&self, layer: u32) -> &[f32] {
         let layer = layer as usize;
@@ -114,11 +149,12 @@ impl KvCacheState {
             return &[];
         }
         let stride = self.n_kv_heads as usize * self.head_dim as usize;
+        let start = self.read_start() * stride;
         let end = self.write_pos * stride;
-        &self.k_buffers[layer][..end]
+        &self.k_buffers[layer][start..end]
     }
 
-    /// Read cached V data for a layer from position 0 to current write_pos.
+    /// Read cached V data for a layer (respects sliding window).
     #[must_use]
     pub fn read_v(&self, layer: u32) -> &[f32] {
         let layer = layer as usize;
@@ -126,8 +162,9 @@ impl KvCacheState {
             return &[];
         }
         let stride = self.n_kv_heads as usize * self.head_dim as usize;
+        let start = self.read_start() * stride;
         let end = self.write_pos * stride;
-        &self.v_buffers[layer][..end]
+        &self.v_buffers[layer][start..end]
     }
 
     /// Read cached K including pending (just-written, pre-advance) data.

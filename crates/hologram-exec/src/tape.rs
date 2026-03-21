@@ -28,6 +28,9 @@ pub struct Instruction {
     pub input_indices: Vec<u32>,
     /// Element size of the output (for arena metadata).
     pub output_elem_size: u8,
+    /// Graph-specific tile size hint (Phase 12.3). 0 = no hint.
+    /// Used by tiled kernels (LUT-GEMM, conv2d) to select tile dimensions.
+    pub tile_hint: u16,
 }
 
 /// Pre-compiled execution tape.
@@ -93,7 +96,19 @@ impl Tape {
         // Scratch buffer for gathering inputs (reused across instructions).
         let mut input_bufs: Vec<Vec<u8>> = Vec::with_capacity(4);
 
-        for instr in &self.instructions {
+        for (i, instr) in self.instructions.iter().enumerate() {
+            // Prefetch next instruction's input data into cache.
+            if i + 1 < self.instructions.len() {
+                let next = &self.instructions[i + 1];
+                for &idx in &next.input_indices {
+                    let id = NodeId::new(idx, 0);
+                    if let Ok(data) = arena.get(id) {
+                        // Touch first cache line of next input to trigger hardware prefetch.
+                        std::hint::black_box(data.first());
+                    }
+                }
+            }
+
             // Gather inputs: copy from arena into scratch buffers.
             input_bufs.clear();
             for &idx in &instr.input_indices {
@@ -171,6 +186,7 @@ mod tests {
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,
+            tile_hint: 0,
         });
         tape.end_level();
 
@@ -196,6 +212,7 @@ mod tests {
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 1,
+            tile_hint: 0,
         });
         tape.end_level();
         tape.push(Instruction {
@@ -203,6 +220,7 @@ mod tests {
             output_idx: 2,
             input_indices: vec![1],
             output_elem_size: 1,
+            tile_hint: 0,
         });
         tape.end_level();
 
@@ -225,12 +243,14 @@ mod tests {
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,
+            tile_hint: 0,
         });
         tape.push(Instruction {
             kernel: identity_kernel,
             output_idx: 2,
             input_indices: vec![0],
             output_elem_size: 4,
+            tile_hint: 0,
         });
         tape.end_level();
         tape.push(Instruction {
@@ -238,6 +258,7 @@ mod tests {
             output_idx: 3,
             input_indices: vec![1],
             output_elem_size: 4,
+            tile_hint: 0,
         });
         tape.end_level();
 

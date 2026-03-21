@@ -16,6 +16,30 @@ use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
 /// zero-sized and provides only static methods.
 pub struct KvStore;
 
+/// Byte-domain FusedSwiGLU: `SiLU(gate) * up` using SILU_256 LUT + byte_mul.
+///
+/// When both inputs are byte-domain (length not a multiple of 4, i.e. not f32),
+/// this avoids dequantizing to f32 and computes entirely in the byte ring.
+/// Each gate byte is mapped through SILU_256, then multiplied with the
+/// corresponding up byte via byte_mul.
+pub fn byte_domain_fused_swiglu(gate: &[u8], up: &[u8]) -> ExecResult<Vec<u8>> {
+    use hologram_core::lut::activation::SILU_256;
+    use hologram_core::lut::arith::byte_mul;
+
+    if gate.len() != up.len() {
+        return Err(ExecError::LengthMismatch {
+            expected: gate.len(),
+            actual: up.len(),
+        });
+    }
+    let out: Vec<u8> = gate
+        .iter()
+        .zip(up.iter())
+        .map(|(&g, &u)| byte_mul(SILU_256[g as usize], u))
+        .collect();
+    Ok(out)
+}
+
 impl KvStore {
     /// Apply a unary operation via `ElementWiseView`.
     #[must_use]

@@ -196,6 +196,20 @@ pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<
     execute_plan(&plan, inputs)
 }
 
+/// Execute a loaded plan with zero-copy semantics.
+///
+/// This is functionally identical to [`execute_plan`] — the arena's
+/// `insert_borrowed` path already achieves zero-copy for constant weights
+/// from mmap'd memory. Constant tensor data from the archive's weight section
+/// is borrowed directly into the `BufferArena` without copying, and the mmap
+/// keeps the underlying pages resident for the lifetime of the `LoadedPlan`.
+///
+/// This function exists as an explicit entry point for callers who want to
+/// document zero-copy intent.
+pub fn execute_plan_zero_copy(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
+    execute_plan(plan, inputs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

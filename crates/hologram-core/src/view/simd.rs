@@ -185,6 +185,49 @@ pub fn apply_to_sse42(view: &ElementWiseView, input: &[u8], output: &mut [u8]) {
     }
 }
 
+/// ARM NEON in-place apply: process 16 bytes at a time via `vqtbl1q_u8`.
+///
+/// Uses the same subtable strategy as SSE4.2: split the 256-byte table into
+/// 16 subtables of 16 bytes. For each input chunk, extract high/low nibbles,
+/// lookup via `vqtbl1q_u8`, mask-select by high nibble, and OR into result.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub fn apply_neon(view: &super::ElementWiseView, data: &mut [u8]) {
+    use core::arch::aarch64::*;
+
+    let table = view.table();
+    let len = data.len();
+    let chunks = len / 16;
+    let remainder = chunks * 16;
+
+    unsafe {
+        let low_mask = vdupq_n_u8(0x0F);
+
+        for chunk in 0..chunks {
+            let ptr = data.as_mut_ptr().add(chunk * 16);
+            let input = vld1q_u8(ptr);
+            let lo = vandq_u8(input, low_mask);
+            let hi = vandq_u8(vshrq_n_u8(input, 4), low_mask);
+            let mut result = vdupq_n_u8(0);
+
+            for sub in 0..16u8 {
+                let base = (sub as usize) * 16;
+                let subtable = vld1q_u8(table.as_ptr().add(base));
+                let match_val = vdupq_n_u8(sub);
+                let mask = vceqq_u8(hi, match_val);
+                let shuffled = vqtbl1q_u8(subtable, lo);
+                result = vorrq_u8(result, vandq_u8(mask, shuffled));
+            }
+
+            vst1q_u8(ptr, result);
+        }
+    }
+
+    // Scalar remainder
+    for byte in &mut data[remainder..] {
+        *byte = view.apply(*byte);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(any(

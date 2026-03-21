@@ -51,13 +51,67 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
 /// `weights`: K×N quantized weight matrix.
 /// `output`: row-major M×N output buffer (f32).
 pub fn lut_gemm_8bit(activations: &[f32], weights: &QuantizedWeights8, output: &mut [f32]) {
+    let n = weights.cols as usize;
+    // Use tiled kernel when output is wide enough to benefit from column tiling.
+    if n >= 4 {
+        lut_gemm_8bit_tiled(activations, weights, output);
+    } else {
+        let k = weights.rows as usize;
+        let m = activations.len() / k;
+        for i in 0..m {
+            let a_row = &activations[i * k..(i + 1) * k];
+            for j in 0..n {
+                output[i * n + j] = compute_element_q8(a_row, weights, j as u32);
+            }
+        }
+    }
+}
+
+/// Tiled LUT-GEMM for Q8: process TILE_N output columns simultaneously.
+///
+/// For each activation row, reads the activation value once and scatters it
+/// into TILE_N Psumbooks simultaneously. This shares the activation cache line
+/// across multiple columns, improving L1 hit rate vs. the column-at-a-time kernel.
+pub fn lut_gemm_8bit_tiled(activations: &[f32], weights: &QuantizedWeights8, output: &mut [f32]) {
+    const TILE_N: usize = 4;
     let k = weights.rows as usize;
     let n = weights.cols as usize;
     let m = activations.len() / k;
+
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
-        for j in 0..n {
-            output[i * n + j] = compute_element_q8(a_row, weights, j as u32);
+        let o_row = &mut output[i * n..(i + 1) * n];
+
+        // Process columns in tiles of TILE_N.
+        let mut j = 0;
+        while j + TILE_N <= n {
+            let mut books = [
+                Psumbook8::new(),
+                Psumbook8::new(),
+                Psumbook8::new(),
+                Psumbook8::new(),
+            ];
+
+            // Share each activation value across all TILE_N columns.
+            for (l, &a_val) in a_row.iter().enumerate().take(k) {
+                let base = l * n + j;
+                books[0].accumulate(weights.indices[base], a_val);
+                books[1].accumulate(weights.indices[base + 1], a_val);
+                books[2].accumulate(weights.indices[base + 2], a_val);
+                books[3].accumulate(weights.indices[base + 3], a_val);
+            }
+
+            o_row[j] = books[0].dot(&weights.centroids);
+            o_row[j + 1] = books[1].dot(&weights.centroids);
+            o_row[j + 2] = books[2].dot(&weights.centroids);
+            o_row[j + 3] = books[3].dot(&weights.centroids);
+            j += TILE_N;
+        }
+
+        // Handle remaining columns.
+        while j < n {
+            o_row[j] = compute_element_q8(a_row, weights, j as u32);
+            j += 1;
         }
     }
 }
