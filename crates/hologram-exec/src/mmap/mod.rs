@@ -196,6 +196,102 @@ pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<
     execute_plan(&plan, inputs)
 }
 
+// ── Tape-based execution ──────────────────────────────────────────────────
+
+/// Build a pre-compiled [`BoxedTape`] from a loaded plan.
+///
+/// The tape pre-resolves kernel function pointers and output element sizes
+/// for every node, eliminating the per-node `match op` and HashMap lookups
+/// at execution time. Built once at model load time, reused per inference.
+///
+/// Returns `Err` if the graph contains ops not yet supported by the tape
+/// builder (e.g., LUT-GEMM with weight constants).
+pub fn build_tape_from_plan(plan: &LoadedPlan) -> ExecResult<crate::tape::BoxedTape> {
+    let schedule = build_schedule(plan.graph())?;
+    crate::tape_builder::build_tape(plan.graph(), &schedule)
+}
+
+/// Execute a pre-compiled tape against a loaded plan.
+///
+/// Seeds the arena with constants and graph inputs, then runs the tape's
+/// pre-resolved kernels. Faster than [`execute_plan`] because the tape
+/// avoids per-node op matching and dtype lookups.
+pub fn execute_tape(
+    tape: &crate::tape::BoxedTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+) -> ExecResult<GraphOutputs> {
+    use hologram_graph::constant::ConstantData;
+    use hologram_graph::graph::GraphOp;
+
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+
+    // Seed arena with constants and graph inputs.
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    for node in &sg.nodes {
+        match &node.op {
+            GraphOp::Constant(cid) => {
+                let data = match sg.constants.get(*cid) {
+                    Some(ConstantData::Bytes(bytes)) => bytes.as_slice(),
+                    Some(ConstantData::Deferred {
+                        byte_size,
+                        source_id,
+                    }) => {
+                        let start = *source_id as usize;
+                        let end = start + *byte_size as usize;
+                        if end > weights.len() {
+                            return Err(ExecError::ConstantNotFound(cid.raw()));
+                        }
+                        &weights[start..end]
+                    }
+                    None => return Err(ExecError::ConstantNotFound(cid.raw())),
+                };
+                let es = compiled_dtypes
+                    .get(&node.id)
+                    .map(|d| d.byte_size())
+                    .unwrap_or(4);
+                arena.insert_borrowed_with_elem_size(node.id, data, es);
+            }
+            GraphOp::Input => {
+                // Find which graph input index this Input node corresponds to.
+                let input_idx = sg
+                    .nodes
+                    .iter()
+                    .filter(|n| matches!(n.op, GraphOp::Input))
+                    .position(|n| n.id == node.id);
+                if let Some(idx) = input_idx {
+                    if let Some(data) = inputs.get(idx as u32) {
+                        let es = compiled_dtypes
+                            .get(&node.id)
+                            .map(|d| d.byte_size())
+                            .unwrap_or(8); // Graph inputs are typically i64
+                        arena.insert_borrowed_with_elem_size(node.id, data, es);
+                    }
+                }
+            }
+            _ => {
+                // Seed elem_size from compiled_dtypes for non-constant/input nodes.
+                if let Some(dtype) = compiled_dtypes.get(&node.id) {
+                    arena.set_elem_size(node.id, dtype.byte_size());
+                }
+            }
+        }
+    }
+
+    // Execute the tape.
+    tape.execute(&mut arena, None)?;
+
+    // Extract outputs.
+    let mut outputs = Vec::with_capacity(sg.output_names.len());
+    for (i, name) in sg.output_names.iter().enumerate() {
+        let node_id = sg.output_node_ids[i];
+        outputs.push((name.clone(), arena.take(node_id)?));
+    }
+    Ok(GraphOutputs::from_named(outputs))
+}
+
 /// Execute a loaded plan with zero-copy semantics.
 ///
 /// This is functionally identical to [`execute_plan`] — the arena's

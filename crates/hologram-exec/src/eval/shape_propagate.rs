@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use hologram_core::op::{FloatDType, FloatOp};
+use hologram_core::op::{FloatDType, FloatOp, ShapeSpec};
 use hologram_graph::graph::node::{InputSource, Node, NodeId};
 use hologram_graph::graph::GraphOp;
 use hologram_graph::schedule::levels::ParallelLevel;
@@ -60,6 +60,26 @@ pub fn propagate_level_shapes(
             }
             _ => continue,
         };
+
+        // ── Fast path: SameAs(0) ops just copy input[0]'s shape ──────────
+        // Skips the expensive input_elem_counts + resolve_float_shape() path
+        // for ~60-70% of nodes (all unary elementwise, norms, softmax, etc.).
+        if matches!(fop.output_shape_spec(), ShapeSpec::SameAs(0)) {
+            if let Some(src_id) = node.inputs.first().and_then(|s| match s.source {
+                InputSource::Node(id) => Some(id),
+                _ => None,
+            }) {
+                if let Some(shape) = shape_map.get(src_id) {
+                    let s = shape.to_vec();
+                    if !s.is_empty() && !s.contains(&0) {
+                        shape_map.insert(node_id, s);
+                        continue;
+                    }
+                }
+            }
+            // Fall through to full resolution if input shape is unavailable
+            // or contains 0-sentinels.
+        }
 
         // Gather input shapes from shape_map (may be stale compiled shapes).
         let input_shapes: Vec<Vec<usize>> = node

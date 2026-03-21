@@ -19,7 +19,7 @@ use crate::error::{ExecError, ExecResult};
 use crate::eval::shape_resolve;
 use crate::float_dispatch;
 use crate::kv::{CustomOpRegistry, KvStore};
-use hologram_core::op::{FloatOp, ShapeDim, ShapeSpec};
+use hologram_core::op::{FloatOp, OpCategory, ShapeDim, ShapeSpec};
 
 /// Runtime context passed to dispatch during execution.
 ///
@@ -229,6 +229,12 @@ impl GraphOutputs {
     #[must_use]
     pub fn into_inner(self) -> Vec<(String, Vec<u8>)> {
         self.outputs
+    }
+
+    /// Create from named output pairs.
+    #[must_use]
+    pub fn from_named(outputs: Vec<(String, Vec<u8>)>) -> Self {
+        Self { outputs }
     }
 }
 
@@ -1356,50 +1362,75 @@ fn dispatch_level(
 
         let input_refs = gather_inputs(node, arena, dctx.inputs)?;
 
+        // ── Fast path: skip input_shapes for ops that don't need them ────
+        // Unary elementwise/bytebool ops never use shapes in dispatch.
+        // Binary elementwise ops only need shapes when broadcasting
+        // (different-sized inputs). This eliminates per-input HashMap
+        // lookups for the majority of nodes.
+        let op_category = match &node.op {
+            GraphOp::Float(fop) => Some(fop.category()),
+            _ => None,
+        };
+        let skip_shapes = match op_category {
+            Some(
+                OpCategory::UnaryElementwise | OpCategory::UnaryByteBool | OpCategory::UnaryToU8,
+            ) => true,
+            Some(
+                OpCategory::BinaryElementwise
+                | OpCategory::BinaryCompare
+                | OpCategory::BinaryByteBool,
+            ) if input_refs.len() >= 2 && input_refs[0].len() == input_refs[1].len() => true,
+            _ => false,
+        };
+
         // Gather input shapes for shape-aware ops.
         // When compiled shapes contain 0-sentinels (dynamic dims like seq_len),
         // resolve them from the actual input buffer sizes.
-        let input_shapes: Vec<Vec<usize>> = node
-            .inputs
-            .iter()
-            .zip(input_refs.iter())
-            .map(|(slot, buf)| {
-                let dep_id = match slot.source {
-                    InputSource::Node(id) => Some(id),
-                    _ => None,
-                };
-                let es = dep_id
-                    .and_then(|id| dctx.compiled_dtypes.get(&id))
-                    .map(|d| d.byte_size())
-                    .unwrap_or(4);
-                let raw = dep_id
-                    .and_then(|id| shape_map.get(id).map(|s| s.to_vec()))
-                    .unwrap_or_else(|| ShapeMap::infer_1d_with_elem_size(buf.len(), es));
-                // Resolve 0-sentinel dims from actual buffer size.
-                if raw.contains(&0) {
-                    let resolved = resolve_compiled_shape(&raw, buf.len(), &[], es);
-                    if !resolved.contains(&0) {
-                        return resolved;
-                    }
-                }
-                // Validate that the tracked shape actually matches the buffer.
-                // If not (e.g. shape was incorrectly corrected by correct_stale_shape),
-                // try the compiled shape with 0-sentinels resolved — which preserves
-                // the true dimensionality (n_heads, head_dim) from the compiler.
-                let n_elems = if es > 0 { buf.len() / es } else { 0 };
-                let raw_prod: usize = raw.iter().product();
-                if n_elems > 0 && raw_prod != n_elems {
-                    if let Some(compiled) = dep_id.and_then(|id| dctx.compiled_shapes.get(&id)) {
-                        let resolved = resolve_compiled_shape(compiled, buf.len(), &[], es);
-                        let resolved_prod: usize = resolved.iter().product();
-                        if !resolved.contains(&0) && resolved_prod == n_elems {
+        let input_shapes: Vec<Vec<usize>> = if skip_shapes {
+            Vec::new()
+        } else {
+            node.inputs
+                .iter()
+                .zip(input_refs.iter())
+                .map(|(slot, buf)| {
+                    let dep_id = match slot.source {
+                        InputSource::Node(id) => Some(id),
+                        _ => None,
+                    };
+                    let es = dep_id
+                        .and_then(|id| dctx.compiled_dtypes.get(&id))
+                        .map(|d| d.byte_size())
+                        .unwrap_or(4);
+                    let raw = dep_id
+                        .and_then(|id| shape_map.get(id).map(|s| s.to_vec()))
+                        .unwrap_or_else(|| ShapeMap::infer_1d_with_elem_size(buf.len(), es));
+                    // Resolve 0-sentinel dims from actual buffer size.
+                    if raw.contains(&0) {
+                        let resolved = resolve_compiled_shape(&raw, buf.len(), &[], es);
+                        if !resolved.contains(&0) {
                             return resolved;
                         }
                     }
-                }
-                raw
-            })
-            .collect();
+                    // Validate that the tracked shape actually matches the buffer.
+                    // If not (e.g. shape was incorrectly corrected by correct_stale_shape),
+                    // try the compiled shape with 0-sentinels resolved — which preserves
+                    // the true dimensionality (n_heads, head_dim) from the compiler.
+                    let n_elems = if es > 0 { buf.len() / es } else { 0 };
+                    let raw_prod: usize = raw.iter().product();
+                    if n_elems > 0 && raw_prod != n_elems {
+                        if let Some(compiled) = dep_id.and_then(|id| dctx.compiled_shapes.get(&id))
+                        {
+                            let resolved = resolve_compiled_shape(compiled, buf.len(), &[], es);
+                            let resolved_prod: usize = resolved.iter().product();
+                            if !resolved.contains(&0) && resolved_prod == n_elems {
+                                return resolved;
+                            }
+                        }
+                    }
+                    raw
+                })
+                .collect()
+        };
 
         // Handle shape-aware ops (Reshape, Transpose, Shape) specially.
         #[cfg(feature = "profile")]

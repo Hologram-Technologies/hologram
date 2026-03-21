@@ -163,6 +163,102 @@ pub fn resolve_boxed_kernel(op: &FloatOp) -> BoxedKernel {
     Box::new(move |inputs, ctx| float_dispatch::dispatch_float_ctx(&op, inputs, ctx))
 }
 
+/// Pre-compiled execution tape using boxed kernels.
+///
+/// Like [`Tape`] but uses [`BoxedInstruction`] (closures that capture op
+/// parameters) instead of bare function pointers. Built by [`crate::tape_builder::build_tape`].
+pub struct BoxedTape {
+    /// Flat instruction array in execution order.
+    pub instructions: Vec<BoxedInstruction>,
+    /// Level boundaries: `level_offsets[i]..level_offsets[i+1]` is the range
+    /// of instructions for level `i`.
+    pub level_offsets: Vec<usize>,
+}
+
+impl BoxedTape {
+    /// Create an empty boxed tape.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            level_offsets: vec![0],
+        }
+    }
+
+    /// Create a boxed tape with pre-allocated capacity.
+    #[must_use]
+    pub fn with_capacity(n_instructions: usize, n_levels: usize) -> Self {
+        let mut level_offsets = Vec::with_capacity(n_levels + 1);
+        level_offsets.push(0);
+        Self {
+            instructions: Vec::with_capacity(n_instructions),
+            level_offsets,
+        }
+    }
+
+    /// Add an instruction and return its index.
+    pub fn push(&mut self, instr: BoxedInstruction) -> usize {
+        let idx = self.instructions.len();
+        self.instructions.push(instr);
+        idx
+    }
+
+    /// Mark the end of the current level.
+    pub fn end_level(&mut self) {
+        self.level_offsets.push(self.instructions.len());
+    }
+
+    /// Number of levels in the tape.
+    #[must_use]
+    pub fn n_levels(&self) -> usize {
+        self.level_offsets.len().saturating_sub(1)
+    }
+
+    /// Execute the boxed tape sequentially against the given arena.
+    pub fn execute(
+        &self,
+        arena: &mut BufferArena<'_>,
+        ctx: Option<&ExecutionContext>,
+    ) -> ExecResult<()> {
+        let mut input_bufs: Vec<Vec<u8>> = Vec::with_capacity(4);
+
+        for (i, instr) in self.instructions.iter().enumerate() {
+            // Prefetch next instruction's input data.
+            if i + 1 < self.instructions.len() {
+                let next = &self.instructions[i + 1];
+                for &idx in &next.input_indices {
+                    let id = NodeId::new(idx, 0);
+                    if let Ok(data) = arena.get(id) {
+                        std::hint::black_box(data.first());
+                    }
+                }
+            }
+
+            // Gather inputs.
+            input_bufs.clear();
+            for &idx in &instr.input_indices {
+                let id = NodeId::new(idx, 0);
+                let data = arena.get(id)?;
+                input_bufs.push(data.to_vec());
+            }
+
+            let input_refs: Vec<&[u8]> = input_bufs.iter().map(|b| b.as_slice()).collect();
+            let result = (instr.kernel)(&input_refs, ctx)?;
+
+            let out_id = NodeId::new(instr.output_idx, 0);
+            arena.insert_with_elem_size(out_id, result, instr.output_elem_size as usize);
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for BoxedTape {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

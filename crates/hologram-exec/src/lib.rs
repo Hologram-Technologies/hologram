@@ -17,6 +17,7 @@ pub mod parallel;
 #[cfg(feature = "profile")]
 pub mod profile;
 pub mod tape;
+pub mod tape_builder;
 
 // Re-exports for convenience.
 pub use buffer::BufferArena;
@@ -28,8 +29,8 @@ pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
 pub use kv_cache::KvCacheState;
 pub use mmap::{
-    execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress, execute_plan,
-    execute_plan_with_kv_state, execute_plan_with_shape_hints,
+    build_tape_from_plan, execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress,
+    execute_plan, execute_plan_with_kv_state, execute_plan_with_shape_hints, execute_tape,
 };
 #[cfg(feature = "profile")]
 pub use mmap::{execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints};
