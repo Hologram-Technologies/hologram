@@ -26,6 +26,11 @@ pub struct KvCacheState {
     /// Sliding window size. When set, reads only return the last `window_size`
     /// tokens instead of the full cache. `None` = full context (no windowing).
     window_size: Option<usize>,
+    /// Override for the next advance. When `Some(n)`, the executor advances by
+    /// `n` instead of the auto-inferred seq_len. Consumed (reset to `None`)
+    /// after each advance. Used for padded prefill where only `actual_len`
+    /// tokens are real.
+    advance_override: Option<usize>,
 }
 
 impl KvCacheState {
@@ -46,6 +51,7 @@ impl KvCacheState {
             head_dim,
             max_seq,
             window_size: None,
+            advance_override: None,
         }
     }
 
@@ -121,8 +127,21 @@ impl KvCacheState {
 
     /// Advance the write position by `seq_len` tokens.
     /// Call after writing all layers for a step.
+    ///
+    /// If `set_advance_override` was called, uses that value instead of `seq_len`
+    /// (then clears the override).
     pub fn advance(&mut self, seq_len: usize) {
-        self.write_pos = (self.write_pos + seq_len).min(self.max_seq);
+        let n = self.advance_override.take().unwrap_or(seq_len);
+        self.write_pos = (self.write_pos + n).min(self.max_seq);
+    }
+
+    /// Set an override for the next `advance` call.
+    ///
+    /// For padded prefill: the model processes `padded_len` tokens but only
+    /// `actual_len` are real. Call `set_advance_override(actual_len)` before
+    /// execution so the cache only records real token positions.
+    pub fn set_advance_override(&mut self, n: usize) {
+        self.advance_override = Some(n);
     }
 
     /// Effective number of visible tokens (respects sliding window).
@@ -179,7 +198,8 @@ impl KvCacheState {
             return &[];
         }
         let stride = self.n_kv_heads as usize * self.head_dim as usize;
-        let end = (self.write_pos + pending_seq) * stride;
+        let total_seq = (self.write_pos + pending_seq).min(self.max_seq);
+        let end = (total_seq * stride).min(self.k_buffers[layer].len());
         &self.k_buffers[layer][..end]
     }
 
@@ -191,7 +211,8 @@ impl KvCacheState {
             return &[];
         }
         let stride = self.n_kv_heads as usize * self.head_dim as usize;
-        let end = (self.write_pos + pending_seq) * stride;
+        let total_seq = (self.write_pos + pending_seq).min(self.max_seq);
+        let end = (total_seq * stride).min(self.v_buffers[layer].len());
         &self.v_buffers[layer][..end]
     }
 

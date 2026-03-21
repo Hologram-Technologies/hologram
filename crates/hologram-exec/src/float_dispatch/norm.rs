@@ -1,18 +1,6 @@
 use super::helpers::*;
 use crate::error::{ExecError, ExecResult};
 
-/// Fast approximate exp(x) using Schraudolph's bit-manipulation trick.
-///
-/// Max relative error ~1.5% in the range [-87, 0] (softmax's exp(x-max) range).
-/// ~4x faster than `f32::exp()` — the dominant cost in softmax.
-#[inline]
-fn fast_exp(x: f32) -> f32 {
-    // Clamp to avoid overflow/underflow in bit conversion.
-    let x = x.clamp(-87.0, 88.0);
-    let i = ((x * (1 << 23) as f32 / core::f32::consts::LN_2) as i32 + 0x3F80_0000) as u32;
-    f32::from_bits(i)
-}
-
 /// Fast approximate inverse square root (Quake III-style with two Newton-Raphson steps).
 ///
 /// Two NR iterations give ~0.001% max relative error — sufficient for
@@ -65,7 +53,7 @@ pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<
         }
         let mut sum = 0.0f32;
         for v in row.iter_mut() {
-            *v = fast_exp(*v - max);
+            *v = (*v - max).exp();
             sum += *v;
         }
         if sum > 0.0 {

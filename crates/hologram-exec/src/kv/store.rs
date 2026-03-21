@@ -1,6 +1,6 @@
 //! KV-lookup dispatch: routes `GraphOp` to the correct O(1) kernel.
 
-use hologram_core::op::PrimOp;
+use hologram_core::op::{FloatOp, PrimOp};
 use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantData, ConstantStore};
 use hologram_graph::graph::GraphOp;
@@ -131,8 +131,12 @@ impl KvStore {
             }
             GraphOp::Float(ref f) => {
                 if input_shapes.len() >= 2 {
-                    // dispatch_float_with_shapes doesn't need ctx (only binary broadcast ops)
                     crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
+                } else if matches!(f, FloatOp::GlobalAvgPool) && !input_shapes.is_empty() {
+                    crate::float_dispatch::pool::dispatch_global_avg_pool_with_shapes(
+                        inputs,
+                        input_shapes,
+                    )
                 } else {
                     crate::float_dispatch::dispatch_float_ctx(f, inputs, ctx)
                 }

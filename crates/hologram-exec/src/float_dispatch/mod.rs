@@ -12,7 +12,7 @@ mod helpers;
 pub mod matmul;
 mod misc;
 mod norm;
-mod pool;
+pub(crate) mod pool;
 mod reduce;
 mod shape_ops;
 mod spatial;

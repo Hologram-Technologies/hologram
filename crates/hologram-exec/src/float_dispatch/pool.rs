@@ -1,5 +1,5 @@
 use super::helpers::*;
-use crate::error::ExecResult;
+use crate::error::{ExecError, ExecResult};
 
 /// Generic 2D pooling with flattened outer loop.
 ///
@@ -159,6 +159,36 @@ pub(super) fn dispatch_global_avg_pool(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> 
         if start < data.len() {
             let sum: f32 = data[start..end].iter().sum();
             out.push(sum / spatial as f32);
+        }
+    }
+    Ok(f32_vec_to_bytes(out))
+}
+
+/// GlobalAvgPool with explicit input shapes (no heuristic guessing).
+pub(crate) fn dispatch_global_avg_pool_with_shapes(
+    inputs: &[&[u8]],
+    input_shapes: &[Vec<usize>],
+) -> ExecResult<Vec<u8>> {
+    let data = cast_f32(inputs[0])?;
+    let (n, c, h, w) = match input_shapes.first().map(|s| s.as_slice()) {
+        Some(&[n, c, h, w]) => (n, c, h, w),
+        _ => {
+            return Err(ExecError::UnsupportedOp(format!(
+                "GlobalAvgPool: expected 4D input shape, got {:?}",
+                input_shapes.first()
+            )))
+        }
+    };
+    let spatial = h * w;
+    let mut out = Vec::with_capacity(n * c);
+    for batch in 0..n {
+        for ch in 0..c {
+            let start = (batch * c + ch) * spatial;
+            let end = start + spatial;
+            if end <= data.len() {
+                let sum: f32 = data[start..end].iter().sum();
+                out.push(sum / spatial as f32);
+            }
         }
     }
     Ok(f32_vec_to_bytes(out))
