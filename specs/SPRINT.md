@@ -5,7 +5,7 @@
 - [x] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
 - [x] Prism ontology integration — [plan](plans/004-prism-uor-integration.md)
 - [x] Compile-time-first acceleration — [plan](plans/005-compile-time-acceleration.md)
-- [ ] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
+- [x] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
 
 ## Sprint 13: Compile-Time-First Acceleration
 
@@ -104,14 +104,14 @@
 - [x] Add hologram-compression as optional dependency to hologram-archive
 - [x] CompressionScheme field in TensorMetadata (compression_scheme: u8)
 - [x] Compression flag bits in HoloHeader (COMPRESSION_FLAG = 0x0010)
-- [ ] Default-on compression for weight sections
-- [ ] Transparent decompression on load
-- [ ] Graph section compression (Mode 0)
+- [x] Default-on compression for weight sections (auto_select_mode in HoloWriter::build)
+- [x] Transparent decompression on load (extract_weights + deserialize_graph decompress paths)
+- [x] Graph section compression (Mode 0 via FLAG_GRAPH_COMPRESSED)
 
 ### Phase 4: WASM FFI + Site demo
-- [ ] New WASM functions (compress, decompress, stats, histogram, ring_algebra, float_plane_transpose)
-- [ ] Site demo page (compression.astro)
-- [ ] Register in site config sidebar
+- [x] New WASM functions (compress, decompress, stats, histogram, ring_algebra, float_plane_transpose)
+- [x] Site demo page (compression.astro)
+- [x] Register in site config sidebar
 
 ---
 
