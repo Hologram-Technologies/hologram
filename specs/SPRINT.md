@@ -242,12 +242,18 @@
 - [x] **3.6**: Size threshold (4MB) — CPU SIMD for small buffers, Metal for large
 - [x] **3.7**: Metal conformance test (1.5M float relu, spot-check correctness)
 
-### Phase 4: Remaining GPU Work (TODO — future sprints)
-- [ ] **4.1**: Metal tiled SGEMM matmul (biggest inference impact)
-- [ ] **4.2**: Metal softmax + RmsNorm (parallel reductions)
-- [ ] **4.3**: CUDA kernel implementations
-- [ ] **4.4**: WebGPU/wgpu compute shader path
-- [ ] **4.5**: MTLBuffer-backed arena (zero-copy unified memory)
+### Phase 4: Metal SGEMM Matmul
+- [x] **4.1**: Metal SGEMM compute shader (C[M,N] = A[M,K] × B[K,N], 2D grid dispatch)
+- [x] **4.2**: `dispatch_matmul` wired — FloatOp::MatMul routed through dispatch_float → Metal
+- [x] **4.3**: Size threshold (128×128 output) — CPU Accelerate BLAS for small matrices
+- [x] **4.4**: Metal matmul conformance test (128×64 × 64×128, verified row correctness)
+
+### Phase 5: Remaining GPU Work (TODO — future sprints)
+- [ ] **5.1**: Metal tiled SGEMM with shared memory (current naive kernel is bandwidth-bound)
+- [ ] **5.2**: Metal softmax + RmsNorm (parallel reductions)
+- [ ] **5.3**: CUDA kernel implementations
+- [ ] **5.4**: WebGPU/wgpu compute shader path
+- [ ] **5.5**: MTLBuffer-backed arena (zero-copy unified memory)
 
 ---
 

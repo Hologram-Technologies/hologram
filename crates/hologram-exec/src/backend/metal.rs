@@ -167,6 +167,30 @@ kernel void div_op(
     uint out_len = max(count_a, count_b);
     if (gid < out_len) { output[gid] = a[gid % count_a] / b[gid % count_b]; }
 }
+
+// ── SGEMM: C[M,N] = A[M,K] × B[K,N] ──────────────────────────────────
+// Each thread computes one element of the output matrix.
+// For large matrices, this is memory-bound on Apple Silicon — the GPU's
+// bandwidth (200+ GB/s on M-series) far exceeds CPU (60-80 GB/s).
+kernel void sgemm(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& K [[buffer(4)]],
+    constant uint& N [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint col = gid.x;
+    if (row >= M || col >= N) return;
+
+    float sum = 0.0f;
+    for (uint p = 0; p < K; p++) {
+        sum += A[row * K + p] * B[p * N + col];
+    }
+    C[row * N + col] = sum;
+}
 "#;
 
 /// Metal GPU backend for Apple Silicon / macOS.
@@ -204,6 +228,7 @@ impl MetalBackend {
             "mul_op",
             "sub_op",
             "div_op",
+            "sgemm",
         ];
 
         let mut pipelines = HashMap::new();
@@ -367,6 +392,11 @@ impl ComputeBackend for MetalBackend {
         inputs: &[&[u8]],
         out_buf: &mut Vec<u8>,
     ) -> ExecResult<bool> {
+        // MatMul: route to dispatch_matmul (separate size threshold).
+        if let FloatOp::MatMul { m, k, n } = op {
+            return self.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf);
+        }
+
         // Skip Metal for small buffers — CPU SIMD is faster.
         let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
         if input_bytes < METAL_MIN_BYTES {
@@ -376,7 +406,7 @@ impl ComputeBackend for MetalBackend {
         // Look up kernel name and pipeline.
         let name = match Self::kernel_name(op) {
             Some(n) => n,
-            None => return Ok(false), // No Metal kernel for this op.
+            None => return Ok(false),
         };
         let pipeline = match self.pipelines.get(name) {
             Some(p) => p,
@@ -398,14 +428,86 @@ impl ComputeBackend for MetalBackend {
 
     fn dispatch_matmul(
         &self,
-        _inputs: &[&[u8]],
-        _m: usize,
-        _k: usize,
-        _n: usize,
-        _out_buf: &mut Vec<u8>,
+        inputs: &[&[u8]],
+        m: usize,
+        k: usize,
+        n: usize,
+        out_buf: &mut Vec<u8>,
     ) -> ExecResult<bool> {
-        // TODO: Metal tiled SGEMM or MPS matmul.
-        Ok(false)
+        // Metal matmul only worthwhile for large matrices.
+        // Crossover vs Accelerate BLAS is ~128×128 on M-series.
+        let out_elements = m * n;
+        if out_elements < 128 * 128 {
+            return Ok(false);
+        }
+
+        let pipeline = match self.pipelines.get("sgemm") {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+
+        if inputs.len() < 2 {
+            return Ok(false);
+        }
+
+        let byte_len = out_elements * 4;
+        let m_u32 = m as u32;
+        let k_u32 = k as u32;
+        let n_u32 = n as u32;
+
+        let buf_a = self.device.new_buffer_with_data(
+            inputs[0].as_ptr() as *const _,
+            inputs[0].len() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_b = self.device.new_buffer_with_data(
+            inputs[1].as_ptr() as *const _,
+            inputs[1].len() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_c = self
+            .device
+            .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        let buf_m = self.device.new_buffer_with_data(
+            &m_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_k = self.device.new_buffer_with_data(
+            &k_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_n = self.device.new_buffer_with_data(
+            &n_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let cmd_buf = self.queue.new_command_buffer();
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&buf_a), 0);
+        encoder.set_buffer(1, Some(&buf_b), 0);
+        encoder.set_buffer(2, Some(&buf_c), 0);
+        encoder.set_buffer(3, Some(&buf_m), 0);
+        encoder.set_buffer(4, Some(&buf_k), 0);
+        encoder.set_buffer(5, Some(&buf_n), 0);
+
+        // 2D grid: (N, M) — each thread computes C[row, col].
+        let threadgroup_size = metal::MTLSize::new(16, 16, 1);
+        let grid_size = metal::MTLSize::new(n as u64, m as u64, 1);
+        encoder.dispatch_threads(grid_size, threadgroup_size);
+        encoder.end_encoding();
+
+        cmd_buf.commit();
+        cmd_buf.wait_until_completed();
+
+        let output_ptr = buf_c.contents() as *const u8;
+        let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, byte_len) };
+        out_buf.extend_from_slice(output_slice);
+
+        Ok(true)
     }
 
     fn name(&self) -> &'static str {

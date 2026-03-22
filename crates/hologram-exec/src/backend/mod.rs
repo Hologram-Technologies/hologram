@@ -210,6 +210,56 @@ mod tests {
 
     #[cfg(has_metal)]
     #[test]
+    fn metal_dispatch_matmul() {
+        let b = BackendSelector::Metal.resolve();
+
+        // 128×64 × 64×128 matmul (above Metal's 128×128 output threshold).
+        let m = 128usize;
+        let k = 64usize;
+        let n = 128usize;
+
+        // A = identity-like (1s on diagonal, 0s elsewhere — simplified as all 1s)
+        let mut a_floats: Vec<f32> = vec![0.0; m * k];
+        // Set first row to all 1.0s
+        for j in 0..k {
+            a_floats[j] = 1.0;
+        }
+        let a: Vec<u8> = bytemuck::cast_slice(&a_floats).to_vec();
+
+        // B = all 2.0s
+        let b_data: Vec<f32> = vec![2.0; k * n];
+        let b_bytes: Vec<u8> = bytemuck::cast_slice(&b_data).to_vec();
+
+        let inputs: Vec<&[u8]> = vec![&a, &b_bytes];
+        let mut out_buf = Vec::new();
+        let handled = b
+            .dispatch_matmul(&inputs, m, k, n, &mut out_buf)
+            .expect("Metal matmul dispatch failed");
+        assert!(handled, "Metal should handle 128×64 × 64×128 matmul");
+        assert_eq!(out_buf.len(), m * n * 4);
+
+        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        // First row of C: sum(A[0,:] * B[:,j]) = sum(1.0 * 2.0, k times) = 2*k = 128.0
+        for j in 0..n {
+            assert!(
+                (out_floats[j] - (2.0 * k as f32)).abs() < 0.1,
+                "matmul C[0,{j}]: got {}, expected {}",
+                out_floats[j],
+                2.0 * k as f32,
+            );
+        }
+        // Second row should be all 0s (A[1,:] = 0)
+        for j in 0..n {
+            assert!(
+                out_floats[n + j].abs() < 0.1,
+                "matmul C[1,{j}]: got {}, expected 0",
+                out_floats[n + j],
+            );
+        }
+    }
+
+    #[cfg(has_metal)]
+    #[test]
     fn metal_dispatch_relu() {
         use hologram_core::op::FloatOp;
 
