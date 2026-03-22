@@ -498,6 +498,11 @@ pub struct TapeInstruction {
     pub output_elem_size: u8,
     /// Pre-computed output byte size hint (0 = unknown/dynamic).
     pub output_byte_hint: u32,
+    /// Byte offset into the weight archive for LUT-GEMM constants.
+    /// 0 = no weight prefetch needed (non-LUT-GEMM ops).
+    /// When non-zero, the executor prefetches this address in the weight
+    /// archive while the previous instruction executes.
+    pub weight_offset_hint: u32,
 }
 
 /// Pre-compiled execution tape using enum dispatch.
@@ -563,13 +568,20 @@ impl EnumTape {
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
         for (i, instr) in self.instructions.iter().enumerate() {
-            // Prefetch next instruction's input data.
+            // Prefetch next instruction's input data and weight pages.
             if i + 1 < self.instructions.len() {
                 let next = &self.instructions[i + 1];
                 for &idx in &next.input_indices {
                     let id = NodeId::new(idx, 0);
                     if let Ok(data) = arena.get(id) {
                         prefetch_read(data.as_ptr());
+                    }
+                }
+                // Prefetch weight pages for LUT-GEMM ops.
+                if next.weight_offset_hint > 0 {
+                    let offset = next.weight_offset_hint as usize;
+                    if offset < tape_ctx.weights.len() {
+                        prefetch_read(tape_ctx.weights[offset..].as_ptr());
                     }
                 }
             }
@@ -748,6 +760,7 @@ mod tests {
             input_indices: vec![0],
             output_elem_size: 1,
             output_byte_hint: 0,
+            weight_offset_hint: 0,
         });
         tape.end_level();
 
@@ -770,6 +783,7 @@ mod tests {
             input_indices: vec![0],
             output_elem_size: 4,
             output_byte_hint: 8, // 2 floats × 4 bytes
+            weight_offset_hint: 0,
         });
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
@@ -777,6 +791,7 @@ mod tests {
             input_indices: vec![1],
             output_elem_size: 4,
             output_byte_hint: 0,
+            weight_offset_hint: 0,
         });
         tape.end_level();
 
@@ -806,6 +821,7 @@ mod tests {
             input_indices: vec![0],
             output_elem_size: 1,
             output_byte_hint: 3,
+            weight_offset_hint: 0,
         });
         tape.end_level();
 
@@ -832,6 +848,7 @@ mod tests {
             input_indices: vec![0],
             output_elem_size: 4,
             output_byte_hint: 0,
+            weight_offset_hint: 0,
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -840,6 +857,7 @@ mod tests {
             input_indices: vec![1],
             output_elem_size: 4,
             output_byte_hint: 0,
+            weight_offset_hint: 0,
         });
         tape.end_level();
 
@@ -868,6 +886,7 @@ mod tests {
             input_indices: vec![0],
             output_elem_size: 4,
             output_byte_hint: 4,
+            weight_offset_hint: 0,
         });
         tape.end_level();
 

@@ -497,4 +497,53 @@ mod tests {
             "softmax sum = {sum}, expected 1.0"
         );
     }
+
+    /// LUT-GEMM Q4 executed via the tape path end-to-end.
+    #[test]
+    fn tape_lut_gemm_q4() {
+        use hologram_graph::constant::ConstantData;
+
+        let k = 4usize;
+        let n = 4usize;
+        let weights = vec![1.0f32; k * n];
+        let qw = crate::lut_gemm::quantize_4bit(&weights, k as u32, n as u32);
+        let qw_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&qw).unwrap().to_vec();
+
+        // Input → MatMulLut4 → Output
+        let g = hologram_graph::builder::GraphBuilder::new()
+            .input("a")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .matmul_lut_4bit(ConstantData::Bytes(qw_bytes), &[0])
+            .node_with_inputs(GraphOp::Output, &[1])
+            .output("c", 2)
+            .build();
+
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+
+        // 2×4 activation matrix (identity-ish)
+        let activations = [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let act_bytes: Vec<u8> = bytemuck::cast_slice(&activations).to_vec();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, act_bytes);
+
+        let result = execute_tape(&tape, &plan, &inputs).unwrap();
+        let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
+        assert_eq!(
+            output.len(),
+            2 * n,
+            "expected 2×{n} output, got {}",
+            output.len()
+        );
+
+        // All weights are 1.0, so each row should sum to ~1.0
+        // (quantization introduces small error).
+        for &v in &output[..n] {
+            assert!(
+                (v - 1.0).abs() < 0.5,
+                "Q4 tape matmul row0: got {v}, expected ~1.0"
+            );
+        }
+    }
 }

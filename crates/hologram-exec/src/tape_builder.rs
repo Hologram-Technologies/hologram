@@ -88,12 +88,16 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
             // Pre-compute output byte size hint from compiled shapes.
             let output_byte_hint = compute_output_byte_hint(node_id, &shapes, output_elem_size);
 
+            // Pre-compute weight offset for LUT-GEMM prefetching.
+            let weight_offset_hint = compute_weight_offset(&kernel, &sg.constants);
+
             tape.push(TapeInstruction {
                 kernel,
                 output_idx: node_id.index(),
                 input_indices,
                 output_elem_size,
                 output_byte_hint,
+                weight_offset_hint,
             });
         }
         tape.end_level();
@@ -216,6 +220,25 @@ fn compute_output_byte_hint(
         0
     } else {
         byte_size as u32
+    }
+}
+
+/// Compute the byte offset into the weight archive for LUT-GEMM constant prefetch.
+///
+/// Returns 0 for non-LUT-GEMM ops (no weight prefetch needed).
+fn compute_weight_offset(
+    kernel: &TapeKernel,
+    constants: &hologram_graph::constant::ConstantStore,
+) -> u32 {
+    let cid = match kernel {
+        TapeKernel::MatMulLut4(cid) | TapeKernel::MatMulLut8(cid) => *cid,
+        _ => return 0,
+    };
+    match constants.get(cid) {
+        Some(hologram_graph::constant::ConstantData::Deferred { source_id, .. }) => {
+            *source_id as u32
+        }
+        _ => 0,
     }
 }
 
