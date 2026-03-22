@@ -1096,6 +1096,8 @@ impl EnumTape {
     ///
     /// Uses swap-insert for zero-allocation buffer recycling after warmup.
     /// Enum dispatch replaces vtable indirection with a direct match.
+    /// Processes instructions level-by-level, flushing GPU work at level
+    /// boundaries (Phase 8.2: command buffer batching).
     pub fn execute(
         &self,
         arena: &mut BufferArena<'_>,
@@ -1105,128 +1107,147 @@ impl EnumTape {
         let backend = tape_ctx.backend.resolve();
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
-        for (i, instr) in self.instructions.iter().enumerate() {
-            // Prefetch next instruction's input data and weight pages.
-            if i + 1 < self.instructions.len() {
-                let next = &self.instructions[i + 1];
-                for &idx in &next.input_indices {
-                    let id = NodeId::new(idx, 0);
-                    if let Ok(data) = arena.get(id) {
-                        prefetch_read(data.as_ptr());
+        for level_idx in 0..self.n_levels() {
+            let start = self.level_offsets[level_idx];
+            let end = self.level_offsets[level_idx + 1];
+            let level_instrs = &self.instructions[start..end];
+
+            for (i, instr) in level_instrs.iter().enumerate() {
+                let global_i = start + i;
+                // Prefetch next instruction's input data and weight pages.
+                if global_i + 1 < self.instructions.len() {
+                    let next = &self.instructions[global_i + 1];
+                    for &idx in &next.input_indices {
+                        let id = NodeId::new(idx, 0);
+                        if let Ok(data) = arena.get(id) {
+                            prefetch_read(data.as_ptr());
+                        }
+                    }
+                    // Prefetch weight pages for LUT-GEMM ops.
+                    if next.weight_offset_hint > 0 {
+                        let offset = next.weight_offset_hint as usize;
+                        if offset < tape_ctx.weights.len() {
+                            prefetch_read(tape_ctx.weights[offset..].as_ptr());
+                        }
                     }
                 }
-                // Prefetch weight pages for LUT-GEMM ops.
-                if next.weight_offset_hint > 0 {
-                    let offset = next.weight_offset_hint as usize;
-                    if offset < tape_ctx.weights.len() {
-                        prefetch_read(tape_ctx.weights[offset..].as_ptr());
+
+                // ── Fast path: Output passthrough (zero-copy move) ──
+                if instr.passthrough {
+                    if let Some(&src_idx) = instr.input_indices.first() {
+                        arena.move_slot(NodeId::new(src_idx, 0), NodeId::new(instr.output_idx, 0));
+                        continue;
                     }
                 }
-            }
 
-            // ── Fast path: Output passthrough (zero-copy move) ──
-            if instr.passthrough {
-                if let Some(&src_idx) = instr.input_indices.first() {
-                    arena.move_slot(NodeId::new(src_idx, 0), NodeId::new(instr.output_idx, 0));
-                    continue;
+                // ── Fast path: In-place unary op (typed f32, reuse input buffer) ──
+                if instr.can_reuse_input {
+                    let src_id = NodeId::new(instr.input_indices[0], 0);
+                    let out_id = NodeId::new(instr.output_idx, 0);
+                    if let Ok(floats) = arena.get_mut_f32(src_id) {
+                        dispatch_inplace(&instr.kernel, floats);
+                        arena.move_slot(src_id, out_id);
+                        continue;
+                    }
                 }
-            }
 
-            // ── Fast path: In-place unary op (typed f32, reuse input buffer) ──
-            if instr.can_reuse_input {
-                let src_id = NodeId::new(instr.input_indices[0], 0);
-                let out_id = NodeId::new(instr.output_idx, 0);
-                if let Ok(floats) = arena.get_mut_f32(src_id) {
-                    dispatch_inplace(&instr.kernel, floats);
-                    arena.move_slot(src_id, out_id);
-                    continue;
-                }
-            }
-
-            // ── Fast path: Inline unary (direct f32 arena access, no SmallVec) ──
-            if let Some(1) = instr.kernel.inline_arity() {
-                // SAFETY (release): tape builder guarantees input_indices[0] exists
-                // and the arena slot is populated by a prior instruction or seed.
-                #[cfg(debug_assertions)]
-                let input = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
-                #[cfg(not(debug_assertions))]
-                let input = unsafe {
-                    arena.get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(0), 0))
-                };
-                out_buf.clear();
-                dispatch_inline_unary(&instr.kernel, input, &mut out_buf);
-                let out_id = NodeId::new(instr.output_idx, 0);
-                arena.swap_insert_with_elem_size(
-                    out_id,
-                    &mut out_buf,
-                    instr.output_elem_size as usize,
-                );
-                continue;
-            }
-
-            // ── Fast path: Inline binary (direct f32 arena access, no SmallVec) ──
-            if let Some(2) = instr.kernel.inline_arity() {
-                #[cfg(debug_assertions)]
-                let (a, b) = {
-                    let a = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
-                    let b = arena.get_f32(NodeId::new(instr.input_indices[1], 0))?;
-                    (a, b)
-                };
-                #[cfg(not(debug_assertions))]
-                let (a, b) = unsafe {
-                    let a = arena
-                        .get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(0), 0));
-                    let b = arena
-                        .get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(1), 0));
-                    (a, b)
-                };
-                out_buf.clear();
-                dispatch_inline_binary(&instr.kernel, a, b, &mut out_buf);
-                let out_id = NodeId::new(instr.output_idx, 0);
-                arena.swap_insert_with_elem_size(
-                    out_id,
-                    &mut out_buf,
-                    instr.output_elem_size as usize,
-                );
-                continue;
-            }
-
-            // ── General path: SmallVec collection + dispatch_kernel ──
-            let dispatch_result = {
-                let input_refs: SmallVec<[&[u8]; 4]> = instr
-                    .input_indices
-                    .iter()
-                    .map(|&idx| arena.get(NodeId::new(idx, 0)))
-                    .collect::<ExecResult<SmallVec<_>>>()?;
-                out_buf.clear();
-                if instr.output_byte_hint > 0 {
-                    out_buf.reserve(instr.output_byte_hint as usize);
-                }
-                dispatch_kernel(
-                    &instr.kernel,
-                    &input_refs,
-                    tape_ctx,
-                    &*backend,
-                    &mut out_buf,
-                )?
-            };
-
-            // Store output based on dispatch result.
-            let out_id = NodeId::new(instr.output_idx, 0);
-            match dispatch_result {
-                DispatchResult::InOutBuf => {
+                // ── Fast path: Inline unary (direct f32 arena access, no SmallVec) ──
+                if let Some(1) = instr.kernel.inline_arity() {
+                    // SAFETY (release): tape builder guarantees input_indices[0] exists
+                    // and the arena slot is populated by a prior instruction or seed.
+                    #[cfg(debug_assertions)]
+                    let input = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                    #[cfg(not(debug_assertions))]
+                    let input = unsafe {
+                        arena.get_f32_unchecked(NodeId::new(
+                            *instr.input_indices.get_unchecked(0),
+                            0,
+                        ))
+                    };
+                    out_buf.clear();
+                    dispatch_inline_unary(&instr.kernel, input, &mut out_buf);
+                    let out_id = NodeId::new(instr.output_idx, 0);
                     arena.swap_insert_with_elem_size(
                         out_id,
                         &mut out_buf,
                         instr.output_elem_size as usize,
                     );
+                    continue;
                 }
-                #[cfg(has_metal)]
-                DispatchResult::MetalBuffer(metal_buf) => {
-                    arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
+
+                // ── Fast path: Inline binary (direct f32 arena access, no SmallVec) ──
+                if let Some(2) = instr.kernel.inline_arity() {
+                    #[cfg(debug_assertions)]
+                    let (a, b) = {
+                        let a = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                        let b = arena.get_f32(NodeId::new(instr.input_indices[1], 0))?;
+                        (a, b)
+                    };
+                    #[cfg(not(debug_assertions))]
+                    let (a, b) = unsafe {
+                        let a = arena.get_f32_unchecked(NodeId::new(
+                            *instr.input_indices.get_unchecked(0),
+                            0,
+                        ));
+                        let b = arena.get_f32_unchecked(NodeId::new(
+                            *instr.input_indices.get_unchecked(1),
+                            0,
+                        ));
+                        (a, b)
+                    };
+                    out_buf.clear();
+                    dispatch_inline_binary(&instr.kernel, a, b, &mut out_buf);
+                    let out_id = NodeId::new(instr.output_idx, 0);
+                    arena.swap_insert_with_elem_size(
+                        out_id,
+                        &mut out_buf,
+                        instr.output_elem_size as usize,
+                    );
+                    continue;
                 }
-            }
-        }
+
+                // ── General path: SmallVec collection + dispatch_kernel ──
+                let dispatch_result = {
+                    let input_refs: SmallVec<[&[u8]; 4]> = instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| arena.get(NodeId::new(idx, 0)))
+                        .collect::<ExecResult<SmallVec<_>>>()?;
+                    out_buf.clear();
+                    if instr.output_byte_hint > 0 {
+                        out_buf.reserve(instr.output_byte_hint as usize);
+                    }
+                    dispatch_kernel(
+                        &instr.kernel,
+                        &input_refs,
+                        tape_ctx,
+                        &*backend,
+                        &mut out_buf,
+                    )?
+                };
+
+                // Store output based on dispatch result.
+                let out_id = NodeId::new(instr.output_idx, 0);
+                match dispatch_result {
+                    DispatchResult::InOutBuf => {
+                        arena.swap_insert_with_elem_size(
+                            out_id,
+                            &mut out_buf,
+                            instr.output_elem_size as usize,
+                        );
+                    }
+                    #[cfg(has_metal)]
+                    DispatchResult::MetalBuffer(metal_buf) => {
+                        arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
+                    }
+                }
+            } // end inner instruction loop
+
+            // Flush pending GPU work at level boundary (Phase 8.2).
+            // This commits all Metal kernels encoded during this level
+            // and waits for completion before the next level reads outputs.
+            backend.flush();
+        } // end level loop
 
         Ok(())
     }
@@ -1398,6 +1419,9 @@ impl EnumTape {
                     );
                 }
             }
+
+            // Flush pending GPU work at level boundary (Phase 8.2).
+            backend.flush();
         }
 
         Ok(())

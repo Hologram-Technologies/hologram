@@ -11,6 +11,7 @@
 //! reads/writes the same physical RAM as the CPU.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use hologram_core::op::{FloatOp, OpCategory};
 use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions};
@@ -295,10 +296,24 @@ kernel void rms_norm(
 "#;
 
 /// Metal GPU backend for Apple Silicon / macOS.
+///
+/// Phase 8.2: Command buffer batching. Multiple kernel dispatches are encoded
+/// into a single command buffer without committing. Call `flush()` at level
+/// boundaries to commit + wait for all pending GPU work. This amortizes the
+/// ~10-50µs per-commit overhead across multiple kernels.
+///
+/// On Apple Silicon (unified memory), output buffers allocated via `new_buffer()`
+/// are CPU-addressable immediately — the GPU writes to them asynchronously after
+/// commit. The `flush()` call ensures all writes are complete before CPU reads.
 pub struct MetalBackend {
     device: Device,
     queue: metal::CommandQueue,
     pipelines: HashMap<&'static str, ComputePipelineState>,
+    /// Pending command buffer for batch encoding. `None` when no work is queued.
+    /// Created lazily on first dispatch, committed+waited on `flush()`.
+    /// Uses `Mutex` for interior mutability — the backend is shared via Arc
+    /// and must implement `Sync` for `ComputeBackend: Send + Sync`.
+    pending: Mutex<Option<metal::CommandBuffer>>,
 }
 
 impl MetalBackend {
@@ -347,7 +362,30 @@ impl MetalBackend {
             device,
             queue,
             pipelines,
+            pending: Mutex::new(None),
         })
+    }
+
+    /// Get or create the pending command buffer for batch encoding.
+    fn get_or_create_cmd_buf(&self) -> std::sync::MutexGuard<'_, Option<metal::CommandBuffer>> {
+        let mut pending = self.pending.lock().unwrap();
+        if pending.is_none() {
+            *pending = Some(self.queue.new_command_buffer().to_owned());
+        }
+        pending
+    }
+
+    /// Commit and wait for all pending GPU work.
+    ///
+    /// Called at level boundaries by the tape executor. After flush,
+    /// all output MetalBuffers returned by previous dispatch calls
+    /// contain valid data readable by CPU.
+    pub fn flush(&self) {
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(cmd_buf) = pending.take() {
+            cmd_buf.commit();
+            cmd_buf.wait_until_completed();
+        }
     }
 
     /// Map a FloatOp to a Metal kernel function name.
@@ -396,7 +434,8 @@ impl MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let cmd_buf = self.queue.new_command_buffer();
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(&input_buf), 0);
@@ -408,9 +447,7 @@ impl MetalBackend {
         let grid_size = metal::MTLSize::new(n_floats as u64, 1, 1);
         encoder.dispatch_threads(grid_size, threadgroup_size);
         encoder.end_encoding();
-
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+        drop(pending);
 
         Ok(output_buf)
     }
@@ -452,7 +489,8 @@ impl MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let cmd_buf = self.queue.new_command_buffer();
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(&buf_a), 0);
@@ -466,9 +504,7 @@ impl MetalBackend {
         let grid_size = metal::MTLSize::new(n_out as u64, 1, 1);
         encoder.dispatch_threads(grid_size, threadgroup_size);
         encoder.end_encoding();
-
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+        drop(pending);
 
         Ok(output_buf)
     }
@@ -504,7 +540,8 @@ impl MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let cmd_buf = self.queue.new_command_buffer();
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(&input_buf), 0);
@@ -516,9 +553,7 @@ impl MetalBackend {
         let grid = metal::MTLSize::new(n_floats as u64, 1, 1);
         encoder.dispatch_threads(grid, tg);
         encoder.end_encoding();
-
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+        drop(pending);
 
         Ok(output_buf)
     }
@@ -570,7 +605,8 @@ impl MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let cmd_buf = self.queue.new_command_buffer();
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(&input_buf), 0);
@@ -584,9 +620,7 @@ impl MetalBackend {
         let grid = metal::MTLSize::new(n_floats as u64, 1, 1);
         encoder.dispatch_threads(grid, tg);
         encoder.end_encoding();
-
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+        drop(pending);
 
         Ok(output_buf)
     }
@@ -716,7 +750,8 @@ impl ComputeBackend for MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        let cmd_buf = self.queue.new_command_buffer();
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(&buf_a), 0);
@@ -731,9 +766,7 @@ impl ComputeBackend for MetalBackend {
         let grid_size = metal::MTLSize::new(n as u64, m as u64, 1);
         encoder.dispatch_threads(grid_size, threadgroup_size);
         encoder.end_encoding();
-
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+        drop(pending);
 
         Ok(super::KernelOutput::MetalBuffer(buf_c))
     }

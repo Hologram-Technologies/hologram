@@ -88,6 +88,13 @@ pub trait ComputeBackend: Send + Sync {
 
     /// Backend name for diagnostics and logging.
     fn name(&self) -> &'static str;
+
+    /// Flush pending GPU work (commit + wait for all encoded commands).
+    ///
+    /// Called at level boundaries by the tape executor. After flush,
+    /// all MetalBuffers returned by previous dispatch calls contain
+    /// valid GPU-written data. No-op for CPU backends.
+    fn flush(&self) {}
 }
 
 /// Runtime backend selector.
@@ -200,6 +207,9 @@ impl ComputeBackend for CachedMetalBackend {
     fn name(&self) -> &'static str {
         "metal"
     }
+    fn flush(&self) {
+        self.0.flush();
+    }
 }
 
 /// List all backends available in this build.
@@ -282,6 +292,7 @@ mod tests {
             result.handled(),
             "Metal should handle 128×64 × 64×128 matmul"
         );
+        b.flush(); // Commit batched GPU work before reading output.
         let output_bytes = result.extract_bytes(out_buf);
         assert_eq!(output_bytes.len(), m * n * 4);
 
@@ -334,6 +345,7 @@ mod tests {
             result.handled(),
             "Metal should handle softmax on large buffer"
         );
+        b.flush(); // Commit batched GPU work before reading output.
         let output_bytes = result.extract_bytes(out_buf);
         assert_eq!(output_bytes.len(), input.len());
 
@@ -366,6 +378,7 @@ mod tests {
             .dispatch_float(&FloatOp::Relu, &inputs, &mut out_buf)
             .expect("Metal dispatch failed");
         assert!(result.handled(), "Metal should handle Relu on 6MB buffer");
+        b.flush(); // Commit batched GPU work before reading output.
 
         // Extract output bytes — may be in out_buf (Bytes) or Metal buffer.
         let output_bytes: Vec<u8> = match result {

@@ -269,7 +269,7 @@
 
 ### Phase 8: Remaining GPU Work
 - [x] **8.1**: Metal binary/matmul/softmax/rmsnorm all return MetalBuffer (full zero-copy path)
-- [ ] **8.2**: Async command buffer batching (per-level, amortize launch overhead)
+- [x] **8.2**: Async command buffer batching — `Mutex<Option<CommandBuffer>>` on MetalBackend, encode without commit per dispatch, `flush()` at level boundaries via `ComputeBackend::flush()` trait method
 - [ ] **8.3**: WebGPU/wgpu compute shader path (cross-platform GPU, browser + native)
 - [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
 
