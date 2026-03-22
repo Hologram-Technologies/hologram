@@ -7,3 +7,4 @@
 .holoarch/
 .mypy_cache
 .playwright-mcp/
+**/target
