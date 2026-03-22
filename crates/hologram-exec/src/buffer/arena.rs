@@ -1,10 +1,54 @@
 //! Arena-based buffer storage for graph execution intermediates.
 
-use std::borrow::Cow;
-
 use hologram_graph::graph::node::NodeId;
 
 use crate::error::{ExecError, ExecResult};
+
+/// Buffer storage variant — supports CPU-owned, borrowed, and GPU-backed buffers.
+///
+/// On Apple Silicon (unified memory), `Metal` buffers are CPU-accessible via
+/// `contents()` — the GPU and CPU share the same physical RAM. This enables
+/// zero-copy between arena storage and Metal compute kernels.
+enum ArenaBuffer<'a> {
+    /// CPU-allocated owned buffer (computed dispatch results).
+    Owned(Vec<u8>),
+    /// Borrowed reference to external memory (mmap'd weights, constants).
+    Borrowed(&'a [u8]),
+    /// Metal GPU buffer (shared memory on Apple Silicon).
+    /// CPU-readable via `contents()` pointer — zero-copy for both directions.
+    #[cfg(has_metal)]
+    Metal(metal::Buffer),
+}
+
+impl<'a> ArenaBuffer<'a> {
+    /// Get a byte slice view of the buffer contents.
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            ArenaBuffer::Owned(v) => v,
+            ArenaBuffer::Borrowed(s) => s,
+            #[cfg(has_metal)]
+            ArenaBuffer::Metal(buf) => {
+                let ptr = buf.contents() as *const u8;
+                unsafe { std::slice::from_raw_parts(ptr, buf.length() as usize) }
+            }
+        }
+    }
+
+    /// Convert to owned bytes (copies borrowed/Metal data).
+    fn into_owned(self) -> Vec<u8> {
+        match self {
+            ArenaBuffer::Owned(v) => v,
+            ArenaBuffer::Borrowed(s) => s.to_vec(),
+            #[cfg(has_metal)]
+            ArenaBuffer::Metal(buf) => {
+                let ptr = buf.contents() as *const u8;
+                let len = buf.length() as usize;
+                unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
+            }
+        }
+    }
+}
 
 /// Arena that stores output buffers keyed by `NodeId`.
 ///
@@ -12,16 +56,16 @@ use crate::error::{ExecError, ExecResult};
 /// O(1) lookup without hashing overhead. This is safe because node indices
 /// are dense sequential integers assigned by the graph builder.
 ///
-/// Buffers are either borrowed (zero-copy from mmap'd weights or
-/// inline constants) or owned (computed dispatch results). Reading
-/// always returns `&[u8]` regardless of ownership.
+/// Buffers can be owned (CPU `Vec<u8>`), borrowed (mmap'd `&[u8]`), or
+/// Metal GPU buffers (shared memory on Apple Silicon). Reading always
+/// returns `&[u8]` regardless of backing storage.
 ///
 /// Each buffer also tracks its element size in bytes (4 for f32, 8 for i64,
 /// 1 for bool/u8). This eliminates all hardcoded `/4` assumptions in shape
 /// validation — the arena is the single source of truth for element sizes.
 pub struct BufferArena<'a> {
     /// Flat buffer storage indexed by NodeId::index().
-    buffers: Vec<Option<Cow<'a, [u8]>>>,
+    buffers: Vec<Option<ArenaBuffer<'a>>>,
     /// Element size in bytes per node. 0 means "use default (4)".
     elem_sizes: Vec<u8>,
     /// Number of populated slots.
@@ -75,7 +119,7 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(Cow::Owned(data));
+        self.buffers[idx] = Some(ArenaBuffer::Owned(data));
     }
 
     /// Insert an owned buffer with a known element size.
@@ -85,7 +129,7 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(Cow::Owned(data));
+        self.buffers[idx] = Some(ArenaBuffer::Owned(data));
         self.elem_sizes[idx] = elem_size as u8;
     }
 
@@ -103,9 +147,9 @@ impl<'a> BufferArena<'a> {
         }
         // Take buf's data, give it to the arena.
         let new_data = std::mem::take(buf);
-        let old = self.buffers[idx].replace(Cow::Owned(new_data));
+        let old = self.buffers[idx].replace(ArenaBuffer::Owned(new_data));
         // Recycle the old buffer's allocation into buf (if it was owned).
-        if let Some(Cow::Owned(mut old_vec)) = old {
+        if let Some(ArenaBuffer::Owned(mut old_vec)) = old {
             old_vec.clear();
             *buf = old_vec;
         }
@@ -119,7 +163,7 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(Cow::Borrowed(data));
+        self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
     }
 
     /// Insert a borrowed buffer with a known element size.
@@ -129,7 +173,19 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(Cow::Borrowed(data));
+        self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
+        self.elem_sizes[idx] = elem_size as u8;
+    }
+
+    /// Insert a Metal GPU buffer (zero-copy on Apple Silicon unified memory).
+    #[cfg(has_metal)]
+    pub fn insert_metal(&mut self, id: NodeId, buffer: metal::Buffer, elem_size: usize) {
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        self.buffers[idx] = Some(ArenaBuffer::Metal(buffer));
         self.elem_sizes[idx] = elem_size as u8;
     }
 
@@ -168,8 +224,8 @@ impl<'a> BufferArena<'a> {
     pub fn get(&self, id: NodeId) -> ExecResult<&[u8]> {
         let idx = id.index() as usize;
         if idx < self.buffers.len() {
-            if let Some(ref cow) = self.buffers[idx] {
-                return Ok(cow.as_ref());
+            if let Some(ref buf) = self.buffers[idx] {
+                return Ok(buf.as_bytes());
             }
         }
         Err(ExecError::BufferNotReady(id))
@@ -186,9 +242,9 @@ impl<'a> BufferArena<'a> {
     pub fn take(&mut self, id: NodeId) -> ExecResult<Vec<u8>> {
         let idx = id.index() as usize;
         if idx < self.buffers.len() {
-            if let Some(cow) = self.buffers[idx].take() {
+            if let Some(buf) = self.buffers[idx].take() {
                 self.count -= 1;
-                return Ok(cow.into_owned());
+                return Ok(buf.into_owned());
             }
         }
         Err(ExecError::BufferNotReady(id))
@@ -228,14 +284,14 @@ impl<'a> BufferArena<'a> {
     pub fn snapshot(&self) -> std::collections::HashMap<NodeId, (Vec<u8>, usize)> {
         let mut map = std::collections::HashMap::new();
         for (idx, slot) in self.buffers.iter().enumerate() {
-            if let Some(cow) = slot {
+            if let Some(buf) = slot {
                 let id = NodeId::new(idx as u32, 0);
                 let es = if idx < self.elem_sizes.len() && self.elem_sizes[idx] > 0 {
                     self.elem_sizes[idx] as usize
                 } else {
                     4
                 };
-                map.insert(id, (cow.to_vec(), es));
+                map.insert(id, (buf.as_bytes().to_vec(), es));
             }
         }
         map

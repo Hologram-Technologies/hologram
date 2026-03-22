@@ -255,11 +255,17 @@
 - [x] **5.4**: Softmax + RmsNorm routed through `dispatch_float` with size threshold
 - [x] **5.5**: Metal softmax conformance test (1M floats, row sums to 1.0)
 
-### Phase 6: Remaining GPU Work (TODO — future sprints)
-- [ ] **6.1**: Async command buffer batching (per-level, amortize launch overhead)
-- [ ] **6.2**: MTLBuffer-backed arena (zero-copy unified memory)
-- [ ] **6.3**: CUDA kernel implementations
-- [ ] **6.4**: WebGPU/wgpu compute shader path
+### Phase 6: MTLBuffer-Backed Arena
+- [x] **6.1**: `ArenaBuffer` enum replacing `Cow<[u8]>` — supports Owned, Borrowed, and Metal variants
+- [x] **6.2**: `as_bytes()` returns `&[u8]` for all variants (Metal via `contents()` pointer)
+- [x] **6.3**: `insert_metal(id, metal::Buffer, elem_size)` — store GPU buffers directly in arena
+- [x] **6.4**: `into_owned()` for take() — copies Metal buffer to Vec only when needed
+
+### Phase 7: Remaining GPU Work (TODO — future sprints)
+- [ ] **7.1**: Metal dispatch uses `insert_metal` for output (skip Vec copy)
+- [ ] **7.2**: Async command buffer batching (per-level, amortize launch overhead)
+- [ ] **7.3**: CUDA kernel implementations
+- [ ] **7.4**: WebGPU/wgpu compute shader path
 
 ---
 
