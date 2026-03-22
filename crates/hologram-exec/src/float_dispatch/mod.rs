@@ -212,6 +212,56 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             norm::dispatch_layer_norm_into(inputs, actual, f32::from_bits(*epsilon), out_buf)?;
             Ok(true)
         }
+        FloatOp::Attention {
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            scale,
+            causal,
+            heads_first,
+        } => {
+            let result = attention::dispatch_attention(
+                inputs,
+                *head_dim as usize,
+                *num_q_heads as usize,
+                *num_kv_heads as usize,
+                bits_to_f32(*scale),
+                *causal,
+                *heads_first,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(true)
+        }
+        FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+        } => {
+            let result = conv::dispatch_conv2d(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(true)
+        }
+        FloatOp::RotaryEmbedding { .. } => {
+            // RoPE needs position offset from ctx — fall back to allocating dispatch.
+            Ok(false)
+        }
         _ => Ok(false),
     }
 }

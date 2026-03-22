@@ -195,9 +195,10 @@
 - [x] **12.1b**: `dispatch_kernel_par` — Sync-safe dispatch (skips RefCell ops: LUT-GEMM, KvCache)
 - [x] **12.1c**: Adaptive threshold — falls back to sequential for small levels or shared-state ops
 
-### Phase 13: Remaining Optimizations (TODO)
-- [ ] **13.1**: Native `_into` for Attention (extend `dispatch_custom_into`)
-- [ ] **13.2**: Native `_into` for Conv2d (extend `dispatch_custom_into`)
+### Phase 13: Attention + Conv2d Dispatch Coverage
+- [x] **13.1**: Attention routed through `dispatch_custom_into` (avoids generic fallback overhead)
+- [x] **13.2**: Conv2d routed through `dispatch_custom_into`
+- [x] **13.3**: RoPE explicitly falls back (needs position offset from ctx)
 
 ---
 
