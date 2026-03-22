@@ -40,9 +40,12 @@ impl EmbeddableSection for PipelineHeader {
 /// Builder for multi-model pipeline archives.
 ///
 /// Each model is a complete .holo archive. The pipeline wraps them
-/// with a `PipelineHeader` section for indexed access.
+/// with a `PipelineHeader` section for indexed access. Additional
+/// metadata sections (e.g., component roles, connections) can be
+/// embedded in the wrapper via [`add_section`](Self::add_section).
 pub struct PipelineWriter {
     models: Vec<(String, Vec<u8>)>,
+    extra_sections: Vec<(u32, Vec<u8>)>,
 }
 
 impl Default for PipelineWriter {
@@ -55,13 +58,27 @@ impl PipelineWriter {
     /// Create a new empty pipeline writer.
     #[must_use]
     pub fn new() -> Self {
-        Self { models: Vec::new() }
+        Self {
+            models: Vec::new(),
+            extra_sections: Vec::new(),
+        }
     }
 
     /// Add a named model (as a complete .holo archive).
     #[must_use]
     pub fn add_model(mut self, name: impl Into<String>, archive: Vec<u8>) -> Self {
         self.models.push((name.into(), archive));
+        self
+    }
+
+    /// Add a raw section to the pipeline wrapper archive.
+    ///
+    /// These sections are embedded in the outer `.holo` wrapper alongside
+    /// the `PipelineHeader`. Use this for pipeline-level metadata like
+    /// component roles, weight deduplication indices, etc.
+    #[must_use]
+    pub fn add_section(mut self, kind: u32, bytes: Vec<u8>) -> Self {
+        self.extra_sections.push((kind, bytes));
         self
     }
 
@@ -97,12 +114,17 @@ impl PipelineWriter {
 
         let pipeline_header = PipelineHeader { models: entries };
 
-        // Build wrapper archive with pipeline header as section
+        // Build wrapper archive with pipeline header + extra sections
         use crate::writer::holo_writer::HoloWriter;
-        HoloWriter::new()
+        let mut writer = HoloWriter::new()
             .set_weights(combined)
-            .add_section(&pipeline_header)
-            .build()
+            .add_section(&pipeline_header);
+
+        for (kind, bytes) in self.extra_sections {
+            writer = writer.add_raw_section(kind, bytes);
+        }
+
+        writer.build()
     }
 }
 

@@ -141,9 +141,46 @@ Mirror Metal tests: `webgpu_dispatch_matmul`, `webgpu_dispatch_softmax`
 
 ---
 
-## Phase 8.3d: Batching (optional, deferred if sync path is fast enough)
+## Phase 8.3d: Command Encoder Batching
 
-Encode multiple compute passes into a single `CommandEncoder`, defer `queue.submit()` to `flush()`, batch all staging readbacks. This mirrors Metal's Phase 8.2 pattern.
+Encode multiple compute passes into a single `CommandEncoder`, defer `queue.submit()` to `flush()`, batch all staging readbacks. This mirrors Metal's Phase 8.2 pattern and saves ~10-50µs of submit overhead per GPU dispatch.
+
+### What batching means
+
+**Without batching** (current 8.3a-c):
+```
+Instr 1: create encoder → encode relu → submit → wait → readback
+Instr 2: create encoder → encode add  → submit → wait → readback
+Instr 3: create encoder → encode mul  → submit → wait → readback
+```
+Each `queue.submit()` has ~10-50µs overhead (GPU scheduling + fence sync).
+
+**With batching**:
+```
+Instr 1: encode relu into shared CommandEncoder
+Instr 2: encode add  into shared CommandEncoder
+Instr 3: encode mul  into shared CommandEncoder
+--- level boundary ---
+flush(): submit once → wait once → map all staging buffers → readback all
+```
+One submit instead of three. GPU processes kernels back-to-back.
+
+### Design
+
+Unlike Metal (unified memory, output readable immediately), wgpu requires explicit staging buffer readback. The batching design:
+
+1. **`Mutex<PendingWork>`** on `WebGpuBackend` — holds shared `CommandEncoder` + pending staging entries
+2. **dispatch_* methods**: encode compute pass + copy_buffer_to_buffer into shared encoder. Store `(staging_buf, byte_len, out_buf_ptr)` in pending list. Return `KernelOutput::Bytes` but do NOT populate `out_buf` yet.
+3. **`flush()`**: `queue.submit(encoder.finish())` → `device.poll(Wait)` → iterate pending staging buffers → `map_async` + copy to each `out_buf`
+4. **Safety**: `out_buf` is a `&mut Vec<u8>` with limited lifetime. Between dispatch and flush, the caller must not read `out_buf`. This is guaranteed by the tape executor's flow: dispatch → swap_insert (stores empty buf) → flush at level end.
+
+### Alternative: deferred-write pattern
+Instead of storing `out_buf` pointers (which has lifetime issues), dispatch methods can store results in an internal `Vec<Vec<u8>>`. After flush, a `drain_results()` method returns the results. The tape executor calls `drain_results()` in instruction order to populate arena slots. This is safer but requires changing the execute loop.
+
+### Files to modify
+- `crates/hologram-exec/src/backend/webgpu.rs` — add `PendingWork` struct, refactor dispatch methods
+- `crates/hologram-exec/src/backend/mod.rs` — no changes (flush already on trait)
+- `crates/hologram-exec/src/tape.rs` — no changes (flush already called at level boundaries)
 
 ---
 
