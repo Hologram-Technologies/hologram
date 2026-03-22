@@ -125,7 +125,9 @@ impl BackendSelector {
 
 /// Returns the best available backend for the current build.
 ///
-/// Priority: CUDA > Metal > WebGPU > CPU.
+/// Priority: Metal > WebGPU > CUDA > CPU.
+/// Metal is preferred on macOS (Apple Silicon native). WebGPU is preferred
+/// over CUDA because it's cross-platform (browser + native via wgpu).
 /// The returned backend is cached — repeated calls return the same instance.
 #[must_use]
 pub fn default_backend() -> Box<dyn ComputeBackend> {
@@ -141,14 +143,14 @@ pub fn default_backend() -> Box<dyn ComputeBackend> {
         }
     }
 
-    #[cfg(has_cuda)]
-    {
-        return Box::new(cuda::CudaBackend);
-    }
-
     #[cfg(has_webgpu)]
     {
         return Box::new(webgpu::WebGpuBackend);
+    }
+
+    #[cfg(has_cuda)]
+    {
+        return Box::new(cuda::CudaBackend);
     }
 
     #[allow(unreachable_code)]

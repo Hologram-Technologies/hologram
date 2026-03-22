@@ -270,8 +270,8 @@
 ### Phase 8: Remaining GPU Work (TODO — future sprints)
 - [ ] **8.1**: Metal binary/matmul/softmax/rmsnorm also return MetalBuffer (extend zero-copy)
 - [ ] **8.2**: Async command buffer batching (per-level, amortize launch overhead)
-- [ ] **8.3**: CUDA kernel implementations
-- [ ] **8.4**: WebGPU/wgpu compute shader path
+- [ ] **8.3**: WebGPU/wgpu compute shader path (cross-platform GPU, browser + native)
+- [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
 
 ---
 
