@@ -313,12 +313,12 @@ fn build_transformer_layer() -> (Vec<u8>, Vec<u8>) {
         vec![0x3f; rows * cols * 4] // ~0.75 as f32 bytes (approximate)
     };
 
-    let norm_weight = make_weight(1, hidden);          // [hidden]
-    let qkv_weight = make_weight(hidden, hidden);      // [hidden, hidden] (simplified: Q only)
-    let out_weight = make_weight(hidden, hidden);       // [hidden, hidden]
-    let gate_weight = make_weight(hidden, ffn);         // [hidden, ffn]
-    let up_weight = make_weight(hidden, ffn);           // [hidden, ffn]
-    let down_weight = make_weight(ffn, hidden);         // [ffn, hidden]
+    let norm_weight = make_weight(1, hidden); // [hidden]
+    let qkv_weight = make_weight(hidden, hidden); // [hidden, hidden] (simplified: Q only)
+    let out_weight = make_weight(hidden, hidden); // [hidden, hidden]
+    let gate_weight = make_weight(hidden, ffn); // [hidden, ffn]
+    let up_weight = make_weight(hidden, ffn); // [hidden, ffn]
+    let down_weight = make_weight(ffn, hidden); // [ffn, hidden]
 
     // Node indices:
     // 0: Input
@@ -344,26 +344,73 @@ fn build_transformer_layer() -> (Vec<u8>, Vec<u8>) {
 
     let g = GraphBuilder::new()
         .input("x")
-        .node_from_graph_input(GraphOp::Input, 0)                           // 0: Input
-        .constant_with_shape(ConstantData::Bytes(norm_weight.clone()), vec![hidden])  // 1: norm_w1
-        .node_with_inputs(GraphOp::Float(FloatOp::RmsNorm { size: hidden as u32, epsilon }), &[0, 1])  // 2: RmsNorm
-        .constant_with_shape(ConstantData::Bytes(qkv_weight), vec![hidden, hidden])  // 3: qkv_w
-        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: hidden as u32 }), &[2, 3])  // 4: Q MatMul
-        .constant_with_shape(ConstantData::Bytes(out_weight), vec![hidden, hidden])  // 5: out_w
-        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: hidden as u32 }), &[4, 5])  // 6: out MatMul
-        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[0, 6])            // 7: Add residual
+        .node_from_graph_input(GraphOp::Input, 0) // 0: Input
+        .constant_with_shape(ConstantData::Bytes(norm_weight.clone()), vec![hidden]) // 1: norm_w1
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::RmsNorm {
+                size: hidden as u32,
+                epsilon,
+            }),
+            &[0, 1],
+        ) // 2: RmsNorm
+        .constant_with_shape(ConstantData::Bytes(qkv_weight), vec![hidden, hidden]) // 3: qkv_w
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::MatMul {
+                m: 1,
+                k: hidden as u32,
+                n: hidden as u32,
+            }),
+            &[2, 3],
+        ) // 4: Q MatMul
+        .constant_with_shape(ConstantData::Bytes(out_weight), vec![hidden, hidden]) // 5: out_w
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::MatMul {
+                m: 1,
+                k: hidden as u32,
+                n: hidden as u32,
+            }),
+            &[4, 5],
+        ) // 6: out MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[0, 6]) // 7: Add residual
         .constant_with_shape(ConstantData::Bytes(norm_weight), vec![hidden]) // 8: norm_w2
-        .node_with_inputs(GraphOp::Float(FloatOp::RmsNorm { size: hidden as u32, epsilon }), &[7, 8])  // 9: RmsNorm FFN
-        .constant_with_shape(ConstantData::Bytes(gate_weight), vec![hidden, ffn])  // 10: gate_w
-        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: ffn as u32 }), &[9, 10])  // 11: gate MatMul
-        .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[11])             // 12: Silu
-        .constant_with_shape(ConstantData::Bytes(up_weight), vec![hidden, ffn])  // 13: up_w
-        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: ffn as u32 }), &[9, 13])  // 14: up MatMul
-        .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[12, 14])          // 15: Mul gate*up
-        .constant_with_shape(ConstantData::Bytes(down_weight), vec![ffn, hidden])  // 16: down_w
-        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: ffn as u32, n: hidden as u32 }), &[15, 16])  // 17: down MatMul
-        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[7, 17])           // 18: Add residual
-        .node_with_inputs(GraphOp::Output, &[18])                            // 19: Output
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::RmsNorm {
+                size: hidden as u32,
+                epsilon,
+            }),
+            &[7, 8],
+        ) // 9: RmsNorm FFN
+        .constant_with_shape(ConstantData::Bytes(gate_weight), vec![hidden, ffn]) // 10: gate_w
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::MatMul {
+                m: 1,
+                k: hidden as u32,
+                n: ffn as u32,
+            }),
+            &[9, 10],
+        ) // 11: gate MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[11]) // 12: Silu
+        .constant_with_shape(ConstantData::Bytes(up_weight), vec![hidden, ffn]) // 13: up_w
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::MatMul {
+                m: 1,
+                k: hidden as u32,
+                n: ffn as u32,
+            }),
+            &[9, 13],
+        ) // 14: up MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[12, 14]) // 15: Mul gate*up
+        .constant_with_shape(ConstantData::Bytes(down_weight), vec![ffn, hidden]) // 16: down_w
+        .node_with_inputs(
+            GraphOp::Float(FloatOp::MatMul {
+                m: 1,
+                k: ffn as u32,
+                n: hidden as u32,
+            }),
+            &[15, 16],
+        ) // 17: down MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[7, 17]) // 18: Add residual
+        .node_with_inputs(GraphOp::Output, &[18]) // 19: Output
         .output("y", 19)
         .build();
 

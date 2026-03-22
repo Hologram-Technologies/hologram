@@ -231,6 +231,55 @@ impl<'a> BufferArena<'a> {
         Err(ExecError::BufferNotReady(id))
     }
 
+    /// Get the buffer for the given node as a typed f32 slice.
+    ///
+    /// Single bytemuck cast localized at the arena layer — callers work
+    /// with native `&[f32]` without per-call casts in hot kernel loops.
+    #[inline]
+    pub fn get_f32(&self, id: NodeId) -> ExecResult<&[f32]> {
+        Ok(bytemuck::cast_slice(self.get(id)?))
+    }
+
+    /// Get a mutable f32 slice for in-place ops (only works on `Owned` buffers).
+    ///
+    /// Returns an error for `Borrowed` or `Metal` buffers since those
+    /// cannot be modified in-place.
+    #[inline]
+    pub fn get_mut_f32(&mut self, id: NodeId) -> ExecResult<&mut [f32]> {
+        let idx = id.index() as usize;
+        if idx < self.buffers.len() {
+            if let Some(ArenaBuffer::Owned(ref mut v)) = self.buffers[idx] {
+                return Ok(bytemuck::cast_slice_mut(v.as_mut_slice()));
+            }
+        }
+        Err(ExecError::BufferNotReady(id))
+    }
+
+    /// Get buffer bytes without bounds checking.
+    ///
+    /// # Safety
+    /// Caller must ensure `id.index()` is within the arena's capacity and
+    /// the slot at that index is populated (`Some`). This is guaranteed when
+    /// the tape builder has validated that all input indices reference nodes
+    /// in the graph, and the arena has been seeded with all constants and inputs.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self, id: NodeId) -> &[u8] {
+        self.buffers
+            .get_unchecked(id.index() as usize)
+            .as_ref()
+            .unwrap_unchecked()
+            .as_bytes()
+    }
+
+    /// Typed f32 unchecked access — combines `get_unchecked` + `cast_slice`.
+    ///
+    /// # Safety
+    /// Same requirements as [`get_unchecked`].
+    #[inline(always)]
+    pub unsafe fn get_f32_unchecked(&self, id: NodeId) -> &[f32] {
+        bytemuck::cast_slice(self.get_unchecked(id))
+    }
+
     /// Whether a buffer exists for the given node.
     #[must_use]
     pub fn contains(&self, id: NodeId) -> bool {

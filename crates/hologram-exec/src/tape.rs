@@ -308,6 +308,30 @@ pub enum TapeKernel {
     InlineRmsNorm { size: u32, epsilon: u32 },
 }
 
+impl TapeKernel {
+    /// Returns the inline arity if this is an inline unary (1) or binary (2) op.
+    /// Returns `None` for all other kernels (Float, Lut, MatMul, KvCache, etc.).
+    #[inline]
+    fn inline_arity(&self) -> Option<u8> {
+        match self {
+            TapeKernel::InlineRelu
+            | TapeKernel::InlineNeg
+            | TapeKernel::InlineAbs
+            | TapeKernel::InlineSigmoid
+            | TapeKernel::InlineSilu
+            | TapeKernel::InlineTanh
+            | TapeKernel::InlineGelu
+            | TapeKernel::InlineExp
+            | TapeKernel::InlineReciprocal => Some(1),
+            TapeKernel::InlineAdd
+            | TapeKernel::InlineMul
+            | TapeKernel::InlineSub
+            | TapeKernel::InlineDiv => Some(2),
+            _ => None,
+        }
+    }
+}
+
 /// Result of kernel dispatch — tells the execute loop how to store the output.
 enum DispatchResult {
     /// Output written to `out_buf`. Store via swap_insert.
@@ -553,19 +577,88 @@ fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32)
     }
 }
 
-/// Apply a unary inline op in-place on an owned buffer.
+/// Typed unary kernel — input already cast to `&[f32]` by caller.
+/// Eliminates input-side bytemuck cast per kernel call.
+#[inline(always)]
+fn inline_unary_f32(input: &[f32], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
+    let byte_len = input.len() * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (d, &s) in dst.iter_mut().zip(input.iter()) {
+        *d = f(s);
+    }
+}
+
+/// Typed binary kernel — inputs already cast to `&[f32]` by caller.
+#[inline(always)]
+fn inline_binary_f32(a: &[f32], b: &[f32], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32) -> f32) {
+    let out_len = a.len().max(b.len());
+    let byte_len = out_len * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (i, d) in dst.iter_mut().enumerate() {
+        *d = f(a[i % a.len()], b[i % b.len()]);
+    }
+}
+
+/// Apply a unary inline op in-place on an owned f32 buffer.
 /// Avoids allocation — the kernel overwrites the input data directly.
 #[inline(always)]
-fn inline_unary_inplace(buf: &mut [u8], f: impl Fn(f32) -> f32) {
-    let floats: &mut [f32] = bytemuck::cast_slice_mut(buf);
-    for v in floats.iter_mut() {
+fn inline_unary_inplace(buf: &mut [f32], f: impl Fn(f32) -> f32) {
+    for v in buf.iter_mut() {
         *v = f(*v);
     }
 }
 
-/// Try to dispatch a unary inline op in-place. Returns `true` if handled.
+/// Dispatch an inline unary op with typed `&[f32]` input (Phase 9d).
+/// Caller casts once via `arena.get_f32()`, kernel works with native types.
 #[inline]
-fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [u8]) -> bool {
+fn dispatch_inline_unary(kernel: &TapeKernel, input: &[f32], out_buf: &mut Vec<u8>) {
+    match kernel {
+        TapeKernel::InlineRelu => inline_unary_f32(input, out_buf, |v| v.max(0.0)),
+        TapeKernel::InlineNeg => inline_unary_f32(input, out_buf, |v| -v),
+        TapeKernel::InlineAbs => inline_unary_f32(input, out_buf, |v| v.abs()),
+        TapeKernel::InlineSigmoid => {
+            inline_unary_f32(input, out_buf, |v| 1.0 / (1.0 + (-v).exp()));
+        }
+        TapeKernel::InlineSilu => {
+            inline_unary_f32(input, out_buf, |v| v * (1.0 / (1.0 + (-v).exp())));
+        }
+        TapeKernel::InlineTanh => inline_unary_f32(input, out_buf, |v| v.tanh()),
+        TapeKernel::InlineGelu => {
+            inline_unary_f32(input, out_buf, |v| {
+                0.5 * v
+                    * (1.0
+                        + (std::f32::consts::FRAC_2_SQRT_PI
+                            * std::f32::consts::FRAC_1_SQRT_2
+                            * (v + 0.044715 * v * v * v))
+                            .tanh())
+            });
+        }
+        TapeKernel::InlineExp => inline_unary_f32(input, out_buf, |v| v.exp()),
+        TapeKernel::InlineReciprocal => inline_unary_f32(input, out_buf, |v| 1.0 / v),
+        _ => unreachable!("dispatch_inline_unary called for non-unary kernel"),
+    }
+}
+
+/// Dispatch an inline binary op with typed `&[f32]` inputs (Phase 9d).
+#[inline]
+fn dispatch_inline_binary(kernel: &TapeKernel, a: &[f32], b: &[f32], out_buf: &mut Vec<u8>) {
+    match kernel {
+        TapeKernel::InlineAdd => inline_binary_f32(a, b, out_buf, |x, y| x + y),
+        TapeKernel::InlineMul => inline_binary_f32(a, b, out_buf, |x, y| x * y),
+        TapeKernel::InlineSub => inline_binary_f32(a, b, out_buf, |x, y| x - y),
+        TapeKernel::InlineDiv => inline_binary_f32(a, b, out_buf, |x, y| x / y),
+        _ => unreachable!("dispatch_inline_binary called for non-binary kernel"),
+    }
+}
+
+/// Try to dispatch a unary inline op in-place on typed f32 data.
+/// Returns `true` if handled.
+#[inline]
+fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
     match kernel {
         TapeKernel::InlineRelu => {
             inline_unary_inplace(buf, |v| v.max(0.0));
@@ -1039,27 +1132,66 @@ impl EnumTape {
                 }
             }
 
-            // ── Fast path: In-place unary op (reuse input buffer) ──
+            // ── Fast path: In-place unary op (typed f32, reuse input buffer) ──
             if instr.can_reuse_input {
-                if let Some(&src_idx) = instr.input_indices.first() {
-                    let src_id = NodeId::new(src_idx, 0);
-                    let out_id = NodeId::new(instr.output_idx, 0);
-                    if let Ok(mut buf) = arena.take(src_id) {
-                        if dispatch_inplace(&instr.kernel, &mut buf) {
-                            arena.insert_with_elem_size(
-                                out_id,
-                                buf,
-                                instr.output_elem_size as usize,
-                            );
-                            continue;
-                        }
-                        // Fallback: put buffer back and use normal path.
-                        arena.insert_with_elem_size(src_id, buf, instr.output_elem_size as usize);
-                    }
+                let src_id = NodeId::new(instr.input_indices[0], 0);
+                let out_id = NodeId::new(instr.output_idx, 0);
+                if let Ok(floats) = arena.get_mut_f32(src_id) {
+                    dispatch_inplace(&instr.kernel, floats);
+                    arena.move_slot(src_id, out_id);
+                    continue;
                 }
             }
 
-            // Gather input refs and execute kernel in a scoped block.
+            // ── Fast path: Inline unary (direct f32 arena access, no SmallVec) ──
+            if let Some(1) = instr.kernel.inline_arity() {
+                // SAFETY (release): tape builder guarantees input_indices[0] exists
+                // and the arena slot is populated by a prior instruction or seed.
+                #[cfg(debug_assertions)]
+                let input = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                #[cfg(not(debug_assertions))]
+                let input = unsafe {
+                    arena.get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(0), 0))
+                };
+                out_buf.clear();
+                dispatch_inline_unary(&instr.kernel, input, &mut out_buf);
+                let out_id = NodeId::new(instr.output_idx, 0);
+                arena.swap_insert_with_elem_size(
+                    out_id,
+                    &mut out_buf,
+                    instr.output_elem_size as usize,
+                );
+                continue;
+            }
+
+            // ── Fast path: Inline binary (direct f32 arena access, no SmallVec) ──
+            if let Some(2) = instr.kernel.inline_arity() {
+                #[cfg(debug_assertions)]
+                let (a, b) = {
+                    let a = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                    let b = arena.get_f32(NodeId::new(instr.input_indices[1], 0))?;
+                    (a, b)
+                };
+                #[cfg(not(debug_assertions))]
+                let (a, b) = unsafe {
+                    let a = arena
+                        .get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(0), 0));
+                    let b = arena
+                        .get_f32_unchecked(NodeId::new(*instr.input_indices.get_unchecked(1), 0));
+                    (a, b)
+                };
+                out_buf.clear();
+                dispatch_inline_binary(&instr.kernel, a, b, &mut out_buf);
+                let out_id = NodeId::new(instr.output_idx, 0);
+                arena.swap_insert_with_elem_size(
+                    out_id,
+                    &mut out_buf,
+                    instr.output_elem_size as usize,
+                );
+                continue;
+            }
+
+            // ── General path: SmallVec collection + dispatch_kernel ──
             let dispatch_result = {
                 let input_refs: SmallVec<[&[u8]; 4]> = instr
                     .input_indices
@@ -1192,29 +1324,53 @@ impl EnumTape {
                         }
                     }
 
-                    // Fast path: In-place unary op.
+                    // Fast path: In-place unary op (typed f32).
                     if instr.can_reuse_input {
-                        if let Some(&src_idx) = instr.input_indices.first() {
-                            let src_id = NodeId::new(src_idx, 0);
-                            let out_id = NodeId::new(instr.output_idx, 0);
-                            if let Ok(mut buf) = arena.take(src_id) {
-                                if dispatch_inplace(&instr.kernel, &mut buf) {
-                                    arena.insert_with_elem_size(
-                                        out_id,
-                                        buf,
-                                        instr.output_elem_size as usize,
-                                    );
-                                    continue;
-                                }
-                                arena.insert_with_elem_size(
-                                    src_id,
-                                    buf,
-                                    instr.output_elem_size as usize,
-                                );
-                            }
+                        let src_id = NodeId::new(instr.input_indices[0], 0);
+                        let out_id = NodeId::new(instr.output_idx, 0);
+                        if let Ok(floats) = arena.get_mut_f32(src_id) {
+                            dispatch_inplace(&instr.kernel, floats);
+                            arena.move_slot(src_id, out_id);
+                            continue;
                         }
                     }
 
+                    // Fast path: Inline unary (direct f32 access).
+                    if let Some(1) = instr.kernel.inline_arity() {
+                        let input = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                        out_buf.clear();
+                        if instr.output_byte_hint > 0 {
+                            out_buf.reserve(instr.output_byte_hint as usize);
+                        }
+                        dispatch_inline_unary(&instr.kernel, input, &mut out_buf);
+                        let out_id = NodeId::new(instr.output_idx, 0);
+                        arena.swap_insert_with_elem_size(
+                            out_id,
+                            &mut out_buf,
+                            instr.output_elem_size as usize,
+                        );
+                        continue;
+                    }
+
+                    // Fast path: Inline binary (direct f32 access).
+                    if let Some(2) = instr.kernel.inline_arity() {
+                        let a = arena.get_f32(NodeId::new(instr.input_indices[0], 0))?;
+                        let b = arena.get_f32(NodeId::new(instr.input_indices[1], 0))?;
+                        out_buf.clear();
+                        if instr.output_byte_hint > 0 {
+                            out_buf.reserve(instr.output_byte_hint as usize);
+                        }
+                        dispatch_inline_binary(&instr.kernel, a, b, &mut out_buf);
+                        let out_id = NodeId::new(instr.output_idx, 0);
+                        arena.swap_insert_with_elem_size(
+                            out_id,
+                            &mut out_buf,
+                            instr.output_elem_size as usize,
+                        );
+                        continue;
+                    }
+
+                    // General path: SmallVec + dispatch_kernel.
                     {
                         let input_refs: SmallVec<[&[u8]; 4]> = instr
                             .input_indices

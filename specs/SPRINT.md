@@ -289,6 +289,12 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **9a.8**: `InlineAbs` / `InlineReciprocal` — complete unary inline coverage
 - [x] **9a.9**: Visibility: `pub(crate) mod norm`, `pub(crate) fn resolve_size`, `pub(crate) fn dispatch_softmax_into/dispatch_rms_norm_into`
 
+### Benchmark Results (Phase 9a+9b)
+- EnumTape Relu 64KB: **4.23 µs → 2.54 µs** (40% faster — inline dispatch + in-place unary + output passthrough)
+- KvExecutor same graph: 44.4 µs (unchanged)
+- Tape vs KvExecutor: **17.5x faster**
+- Tape linear chain (4 nodes, 256B): **1.11 µs**
+
 #### 9b: Zero-Copy Arena Path (eliminate out_buf round-trip)
 - [x] **9b.1**: Output passthrough — `arena.move_slot(src, dst)` when input has single consumer
 - [x] **9b.2**: Pre-allocated arena output slots — `prewarm_arena()` pre-allocates with `output_byte_hint`
@@ -296,19 +302,23 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **9b.4**: `apply_reuse_flags()` post-pass in tape_builder — consumer count analysis, sets `passthrough` and `can_reuse_input`
 
 #### 9c: Typed Arena Access (eliminate per-call bytemuck cast)
-- [ ] **9c.1**: `arena.get_f32(id)` — returns `&[f32]` directly, caches alignment validation
-- [ ] **9c.2**: `arena.get_f32_mut(id)` — mutable f32 slice for in-place ops
-- [ ] **9c.3**: Typed `ArenaBuffer::F32(Vec<f32>)` variant — skip byte↔float conversion entirely
+- [x] **9c.1**: `arena.get_f32(id)` — returns `&[f32]` directly via localized `cast_slice`
+- [x] **9c.2**: `arena.get_mut_f32(id)` — mutable f32 slice for in-place ops on `Owned` buffers
+- [x] **9c.3**: `inline_unary_f32` / `inline_binary_f32` — typed kernel signatures, caller casts once
+- [x] **9c.4**: In-place path refactored: `get_mut_f32` + `dispatch_inplace` + `move_slot` (no take+insert dance)
 
 #### 9d: Direct Input Access (eliminate SmallVec collection for known arity)
-- [ ] **9d.1**: Unary ops — `arena.get(input_indices[0])` directly, no SmallVec
-- [ ] **9d.2**: Binary ops — `arena.get(a), arena.get(b)` directly
-- [ ] **9d.3**: Arity encoded in TapeKernel variant — compiler proves single input at build time
+- [x] **9d.1**: `TapeKernel::inline_arity()` — returns `Some(1)` / `Some(2)` / `None`
+- [x] **9d.2**: Unary inline fast path — `arena.get_f32(input_indices[0])` directly, skip SmallVec
+- [x] **9d.3**: Binary inline fast path — two direct `arena.get_f32` calls, skip SmallVec
+- [x] **9d.4**: `dispatch_inline_unary` / `dispatch_inline_binary` — typed match wrappers
+- [x] **9d.5**: Same restructuring applied to `execute_parallel` sequential fallback
 
 #### 9e: Unsafe Fast Path (eliminate bounds checks in hot loop)
-- [ ] **9e.1**: `out_buf.set_len()` instead of `resize()` (skip memory zeroing)
-- [ ] **9e.2**: Unchecked arena access for tape-validated indices (tape builder guarantees valid)
-- [ ] **9e.3**: `get_unchecked` for SmallVec input refs when arity is known
+- [x] **9e.1**: `set_len()` instead of `resize()` in `inline_unary_f32` / `inline_binary_f32` (skip zero-fill)
+- [x] **9e.2**: `arena.get_unchecked()` / `arena.get_f32_unchecked()` — skip bounds check
+- [x] **9e.3**: Unchecked `input_indices` access when arity is known via `get_unchecked(0)`/`get_unchecked(1)`
+- [x] **9e.4**: All unsafe gated with `#[cfg(not(debug_assertions))]` — debug builds use checked paths
 
 ### Performance Budget (per instruction)
 | Layer | Current | After Phase 9 | Savings |
