@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use smallvec::SmallVec;
+
 use hologram_archive::format::graph::SerializedGraph;
 use hologram_core::op::FloatDType;
 use hologram_graph::constant::{ConstantData, ConstantId};
@@ -2088,12 +2090,15 @@ fn compute_output_elem_size(
 }
 
 /// Gather input buffers for a node as borrowed slices (zero-copy).
+///
+/// Returns a `SmallVec<[&[u8]; 4]>` to avoid heap allocation for ops
+/// with ≤4 inputs (covers unary, binary, ternary, and most variadic ops).
 fn gather_inputs<'a>(
     node: &Node,
     arena: &'a BufferArena,
     graph_inputs: &'a GraphInputs,
-) -> ExecResult<Vec<&'a [u8]>> {
-    let mut bufs = Vec::with_capacity(node.inputs.len());
+) -> ExecResult<SmallVec<[&'a [u8]; 4]>> {
+    let mut bufs = SmallVec::with_capacity(node.inputs.len());
     for (slot_idx, slot) in node.inputs.iter().enumerate() {
         match slot.source {
             InputSource::Node(dep_id) => {
@@ -2161,7 +2166,7 @@ mod tests {
         Node {
             id: nid(id),
             op,
-            inputs,
+            inputs: inputs.into_iter().collect(),
             num_outputs: 1,
         }
     }

@@ -138,6 +138,51 @@ fn bench_schedule_build(c: &mut Criterion) {
     });
 }
 
+fn bench_page_faults(c: &mut Criterion) {
+    use std::io::Write;
+
+    // Build a moderately large archive to trigger measurable page faults.
+    let g = GraphBuilder::new()
+        .input("x")
+        .node_from_graph_input(GraphOp::Input, 0)
+        .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+        .node_with_inputs(GraphOp::Output, &[1])
+        .output("y", 2)
+        .build();
+    let weights = vec![0u8; 256 * 1024]; // 256KB weights section
+    let archive = HoloWriter::new()
+        .set_graph(&g)
+        .set_weights(weights)
+        .build()
+        .unwrap();
+
+    // Write to a temp file for mmap-based loading.
+    let dir = std::env::temp_dir();
+    let path = dir.join("hologram_bench_pagefault.holo");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&archive).unwrap();
+    }
+
+    let mut inputs = GraphInputs::new();
+    inputs.set(0, vec![128u8; 256]);
+
+    // Benchmark mmap load + execute cycle.
+    // To measure page faults, run with:
+    //   perf stat -e major-faults,minor-faults cargo bench --bench executor -- page_faults
+    // or on macOS:
+    //   /usr/bin/time -l cargo bench --bench executor -- page_faults
+    c.bench_function("exec::mmap_load_execute(256KB_weights)", |b| {
+        b.iter(|| {
+            let loader = hologram_archive::HoloLoader::open(&path).unwrap();
+            let plan = loader.load().unwrap();
+            black_box(hologram_exec::mmap::execute_plan(&plan, &inputs))
+        })
+    });
+
+    std::fs::remove_file(&path).ok();
+}
+
 criterion_group!(
     benches,
     bench_executor_linear,
@@ -145,5 +190,6 @@ criterion_group!(
     bench_executor_wide_parallel,
     bench_executor_large_buffer,
     bench_schedule_build,
+    bench_page_faults,
 );
 criterion_main!(benches);

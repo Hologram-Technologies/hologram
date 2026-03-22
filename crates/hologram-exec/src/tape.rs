@@ -8,6 +8,8 @@
 //! The tape is built once per model load and executed per inference call.
 //! This is Phase 0.7 of the Compile-Time-First Acceleration plan.
 
+use smallvec::SmallVec;
+
 use hologram_core::op::FloatOp;
 use hologram_graph::graph::node::NodeId;
 
@@ -15,8 +17,35 @@ use crate::buffer::BufferArena;
 use crate::error::ExecResult;
 use crate::eval::executor::ExecutionContext;
 
-/// A kernel function: takes input byte slices, optional context, returns output bytes.
-pub type KernelFn = fn(&[&[u8]], Option<&ExecutionContext>) -> ExecResult<Vec<u8>>;
+/// Non-blocking prefetch of a cache line into L1 for reading.
+///
+/// Uses platform-specific intrinsics where available:
+/// - x86_64: `_mm_prefetch(..., _MM_HINT_T0)` (L1 temporal)
+/// - aarch64: `PRFM PLDL1KEEP` via inline asm
+/// - Other: no-op (rely on hardware prefetcher)
+#[inline(always)]
+fn prefetch_read(ptr: *const u8) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[cfg(target_feature = "sse")]
+        unsafe {
+            core::arch::x86_64::_mm_prefetch(ptr as *const i8, core::arch::x86_64::_MM_HINT_T0);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("prfm pldl1keep, [{ptr}]", ptr = in(reg) ptr, options(nostack, preserves_flags));
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = ptr;
+    }
+}
+
+/// A kernel function: takes input byte slices, optional context, writes output
+/// into a pre-provided buffer. The buffer is cleared before each call but
+/// retains its heap allocation across instructions.
+pub type KernelFn = fn(&[&[u8]], Option<&ExecutionContext>, &mut Vec<u8>) -> ExecResult<()>;
 
 /// A single instruction in the execution tape.
 pub struct Instruction {
@@ -86,15 +115,15 @@ impl Tape {
 
     /// Execute the tape sequentially against the given arena.
     ///
-    /// Input data is copied into a scratch buffer before each kernel call
-    /// to avoid borrowing the arena immutably while also mutating it.
+    /// A single reusable output buffer is swapped between the kernel and the
+    /// arena via [`BufferArena::swap_insert_with_elem_size`]. After warmup,
+    /// this eliminates per-instruction heap allocation entirely.
     pub fn execute(
         &self,
         arena: &mut BufferArena<'_>,
         ctx: Option<&ExecutionContext>,
     ) -> ExecResult<()> {
-        // Scratch buffer for gathering inputs (reused across instructions).
-        let mut input_bufs: Vec<Vec<u8>> = Vec::with_capacity(4);
+        let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
         for (i, instr) in self.instructions.iter().enumerate() {
             // Prefetch next instruction's input data into cache.
@@ -103,27 +132,26 @@ impl Tape {
                 for &idx in &next.input_indices {
                     let id = NodeId::new(idx, 0);
                     if let Ok(data) = arena.get(id) {
-                        // Touch first cache line of next input to trigger hardware prefetch.
-                        std::hint::black_box(data.first());
+                        prefetch_read(data.as_ptr());
                     }
                 }
             }
 
-            // Gather inputs: copy from arena into scratch buffers.
-            input_bufs.clear();
-            for &idx in &instr.input_indices {
-                let id = NodeId::new(idx, 0);
-                let data = arena.get(id)?;
-                input_bufs.push(data.to_vec());
+            // Gather input refs and execute kernel in a scoped block.
+            // The immutable borrow of `arena` is released when the block ends.
+            {
+                let input_refs: SmallVec<[&[u8]; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| arena.get(NodeId::new(idx, 0)))
+                    .collect::<ExecResult<SmallVec<_>>>()?;
+                out_buf.clear();
+                (instr.kernel)(&input_refs, ctx, &mut out_buf)?;
             }
 
-            // Build refs from owned bufs and execute kernel.
-            let input_refs: Vec<&[u8]> = input_bufs.iter().map(|b| b.as_slice()).collect();
-            let result = (instr.kernel)(&input_refs, ctx)?;
-
-            // Store output.
+            // Swap output into arena — recycles the old buffer's allocation.
             let out_id = NodeId::new(instr.output_idx, 0);
-            arena.insert_with_elem_size(out_id, result, instr.output_elem_size as usize);
+            arena.swap_insert_with_elem_size(out_id, &mut out_buf, instr.output_elem_size as usize);
         }
 
         Ok(())
@@ -141,8 +169,11 @@ impl Default for Tape {
 /// Used for ops that need baked-in parameters (e.g., Softmax with size,
 /// MatMul with m/k/n). The Box<dyn Fn> has one indirection but eliminates
 /// the `match op` at execution time — the parameters are pre-resolved.
+///
+/// Writes output into a pre-provided `&mut Vec<u8>` instead of returning
+/// a new allocation. The buffer is cleared before each call.
 pub type BoxedKernel =
-    Box<dyn Fn(&[&[u8]], Option<&ExecutionContext>) -> ExecResult<Vec<u8>> + Send + Sync>;
+    Box<dyn Fn(&[&[u8]], Option<&ExecutionContext>, &mut Vec<u8>) -> ExecResult<()> + Send + Sync>;
 
 /// Instruction variant that uses a boxed kernel (captures op parameters).
 pub struct BoxedInstruction {
@@ -150,6 +181,12 @@ pub struct BoxedInstruction {
     pub output_idx: u32,
     pub input_indices: Vec<u32>,
     pub output_elem_size: u8,
+    /// Pre-computed output byte size hint (0 = unknown/dynamic).
+    ///
+    /// When non-zero, the executor pre-reserves this many bytes in the output
+    /// buffer before calling the kernel, reducing reallocation pressure.
+    /// Computed from compiled node shapes + dtypes at tape build time.
+    pub output_byte_hint: u32,
 }
 
 /// Resolve a FloatOp to a boxed kernel that captures its parameters.
@@ -160,7 +197,9 @@ pub fn resolve_boxed_kernel(op: &FloatOp) -> BoxedKernel {
     use crate::float_dispatch;
 
     let op = *op;
-    Box::new(move |inputs, ctx| float_dispatch::dispatch_float_ctx(&op, inputs, ctx))
+    Box::new(move |inputs, ctx, out_buf| {
+        float_dispatch::dispatch_float_into(&op, inputs, ctx, out_buf)
+    })
 }
 
 /// Pre-compiled execution tape using boxed kernels.
@@ -215,12 +254,14 @@ impl BoxedTape {
     }
 
     /// Execute the boxed tape sequentially against the given arena.
+    ///
+    /// Uses swap-insert for zero-allocation buffer recycling after warmup.
     pub fn execute(
         &self,
         arena: &mut BufferArena<'_>,
         ctx: Option<&ExecutionContext>,
     ) -> ExecResult<()> {
-        let mut input_bufs: Vec<Vec<u8>> = Vec::with_capacity(4);
+        let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
         for (i, instr) in self.instructions.iter().enumerate() {
             // Prefetch next instruction's input data.
@@ -229,24 +270,27 @@ impl BoxedTape {
                 for &idx in &next.input_indices {
                     let id = NodeId::new(idx, 0);
                     if let Ok(data) = arena.get(id) {
-                        std::hint::black_box(data.first());
+                        prefetch_read(data.as_ptr());
                     }
                 }
             }
 
-            // Gather inputs.
-            input_bufs.clear();
-            for &idx in &instr.input_indices {
-                let id = NodeId::new(idx, 0);
-                let data = arena.get(id)?;
-                input_bufs.push(data.to_vec());
+            // Gather input refs and execute kernel in a scoped block.
+            {
+                let input_refs: SmallVec<[&[u8]; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| arena.get(NodeId::new(idx, 0)))
+                    .collect::<ExecResult<SmallVec<_>>>()?;
+                out_buf.clear();
+                if instr.output_byte_hint > 0 {
+                    out_buf.reserve(instr.output_byte_hint as usize);
+                }
+                (instr.kernel)(&input_refs, ctx, &mut out_buf)?;
             }
 
-            let input_refs: Vec<&[u8]> = input_bufs.iter().map(|b| b.as_slice()).collect();
-            let result = (instr.kernel)(&input_refs, ctx)?;
-
             let out_id = NodeId::new(instr.output_idx, 0);
-            arena.insert_with_elem_size(out_id, result, instr.output_elem_size as usize);
+            arena.swap_insert_with_elem_size(out_id, &mut out_buf, instr.output_elem_size as usize);
         }
 
         Ok(())
@@ -263,8 +307,13 @@ impl Default for BoxedTape {
 mod tests {
     use super::*;
 
-    fn identity_kernel(inputs: &[&[u8]], _ctx: Option<&ExecutionContext>) -> ExecResult<Vec<u8>> {
-        Ok(inputs[0].to_vec())
+    fn identity_kernel(
+        inputs: &[&[u8]],
+        _ctx: Option<&ExecutionContext>,
+        out: &mut Vec<u8>,
+    ) -> ExecResult<()> {
+        out.extend_from_slice(inputs[0]);
+        Ok(())
     }
 
     #[test]
@@ -297,9 +346,15 @@ mod tests {
 
     #[test]
     fn two_level_chain() {
-        fn double_kernel(inputs: &[&[u8]], _ctx: Option<&ExecutionContext>) -> ExecResult<Vec<u8>> {
-            let data: Vec<u8> = inputs[0].iter().map(|&b| b.wrapping_mul(2)).collect();
-            Ok(data)
+        fn double_kernel(
+            inputs: &[&[u8]],
+            _ctx: Option<&ExecutionContext>,
+            out: &mut Vec<u8>,
+        ) -> ExecResult<()> {
+            for &b in inputs[0] {
+                out.push(b.wrapping_mul(2));
+            }
+            Ok(())
         }
 
         let mut tape = Tape::new();

@@ -1,7 +1,7 @@
 //! Node, NodeId, InputSlot types for the compute graph.
 
 extern crate alloc;
-use alloc::vec::Vec;
+use tinyvec::TinyVec;
 
 /// Generational node identifier for safe arena access.
 ///
@@ -142,8 +142,10 @@ pub struct Node {
     pub id: NodeId,
     /// The operation this node performs.
     pub op: GraphOp,
-    /// Input connections (SmallVec avoids heap for ≤4 inputs).
-    pub inputs: Vec<InputSlot>,
+    /// Input connections. `TinyVec<[InputSlot; 2]>` inlines up to 2 inputs
+    /// (covers unary + binary ops — the common case) without heap allocation.
+    /// Spills to heap for variadic ops (Concat, etc.).
+    pub inputs: TinyVec<[InputSlot; 2]>,
     /// Number of output ports.
     pub num_outputs: u32,
 }
@@ -156,7 +158,7 @@ impl Node {
         Self {
             id,
             op,
-            inputs: Vec::new(),
+            inputs: TinyVec::new(),
             num_outputs: 1,
         }
     }

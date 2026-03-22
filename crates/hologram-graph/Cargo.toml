@@ -9,3 +9,4 @@ description = "Expression graph, subgraphs, fusion engine, parallel scheduling"
 hologram-core = { workspace = true }
 rkyv = { workspace = true }
 smallvec = { workspace = true }
+tinyvec = { workspace = true }

@@ -121,7 +121,7 @@ mod tests {
         Node {
             id: nid(id),
             op,
-            inputs,
+            inputs: inputs.into_iter().collect(),
             num_outputs: 1,
         }
     }

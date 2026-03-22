@@ -89,6 +89,29 @@ impl<'a> BufferArena<'a> {
         self.elem_sizes[idx] = elem_size as u8;
     }
 
+    /// Swap-insert: take ownership of `buf`'s allocation and recycle the
+    /// previously stored buffer back into `buf`.
+    ///
+    /// After warmup, this enables zero-allocation tape execution: the kernel
+    /// writes into `buf`, the arena takes it, and `buf` receives the old
+    /// occupant's allocation for the next instruction.
+    pub fn swap_insert_with_elem_size(&mut self, id: NodeId, buf: &mut Vec<u8>, elem_size: usize) {
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        // Take buf's data, give it to the arena.
+        let new_data = std::mem::take(buf);
+        let old = self.buffers[idx].replace(Cow::Owned(new_data));
+        // Recycle the old buffer's allocation into buf (if it was owned).
+        if let Some(Cow::Owned(mut old_vec)) = old {
+            old_vec.clear();
+            *buf = old_vec;
+        }
+        self.elem_sizes[idx] = elem_size as u8;
+    }
+
     /// Insert a borrowed buffer for the given node (zero-copy).
     pub fn insert_borrowed(&mut self, id: NodeId, data: &'a [u8]) {
         let idx = id.index() as usize;

@@ -6,6 +6,7 @@
 - [x] Prism ontology integration — [plan](plans/004-prism-uor-integration.md)
 - [x] Compile-time-first acceleration — [plan](plans/005-compile-time-acceleration.md)
 - [x] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
+- [x] Graph & mmap performance hardening — [plan](plans/007-graph-mmap-performance.md)
 
 ## Sprint 13: Compile-Time-First Acceleration
 
@@ -112,6 +113,50 @@
 - [x] New WASM functions (compress, decompress, stats, histogram, ring_algebra, float_plane_transpose)
 - [x] Site demo page (compression.astro)
 - [x] Register in site config sidebar
+
+---
+
+## Sprint 15: Graph & mmap Performance Hardening
+
+**Plan**: [plans/007-graph-mmap-performance.md](plans/007-graph-mmap-performance.md)
+
+### Phase 1: Hot-Path Allocation Elimination (P0)
+- [x] **1.1**: Eliminate `to_vec()` copies in tape execute loop (scoped borrow instead of cloning)
+- [x] **1.2**: Upgrade prefetch from `black_box` load to `_mm_prefetch` / `PRFM PLDL1KEEP` intrinsics
+
+### Phase 2: mmap Page Discipline (P1)
+- [x] **2.1**: Add `madvise` hints for mmap'd weight regions (MADV_RANDOM for LUT-GEMM, MADV_SEQUENTIAL for graph)
+- [ ] **2.2**: Weight-page prefetch for next instruction's constants (deferred — LUT-GEMM not yet wired into tape)
+- [x] **2.3**: Audit tape builder for eager weight-page touching (CLEAN — no weight data accessed)
+
+### Phase 3: Graph Edge Efficiency (P2)
+- [x] **3.1**: Reverse-edge index for O(degree) `successors()` (`build_successor_index` + `successors_from_index`)
+- [x] **3.2**: TinyVec<[InputSlot; 2]> for node inputs (rkyv `tinyvec-1` feature, inlines unary+binary ops)
+
+### Phase 4: Observability (P3)
+- [x] **4.1**: Page-fault tracking benchmark (`mmap_load_execute` + perf stat integration docs)
+
+### Phase 5: Dispatch Allocation Reduction
+- [x] **5.1**: SmallVec<[&[u8]; 4]> for tape input_refs (stack-allocate for ≤4 inputs per instruction)
+- [x] **5.2**: SmallVec<[&[u8]; 4]> for `gather_inputs` in KvExecutor (stack-allocate per-node input gathering)
+- [x] **5.3**: Eliminate redundant data copy in reshape (defer `to_vec()` to return, skip intermediate allocation)
+- [x] **5.4**: Identity transpose short-circuit + deferred `cast_f32` (skip cast for no-op/error paths)
+
+### Phase 6: Zero-Allocation Tape Execution
+- [x] **6.1**: `swap_insert_with_elem_size` on BufferArena (kernel/arena trade buffer allocations)
+- [x] **6.2**: `KernelFn`/`BoxedKernel` signature → `_into` pattern (write to `&mut Vec<u8>` instead of returning `Vec<u8>`)
+- [x] **6.3**: `Tape::execute`/`BoxedTape::execute` reusable output buffer with swap-insert loop
+- [x] **6.4**: `dispatch_fused_chain_into` helper for fused unary chains
+- [x] **6.5**: All 19 tape_builder kernel closures updated to `_into` pattern
+
+### Phase 7: Output Size Hints + Native _into for Hot Ops
+- [x] **7.1**: `output_byte_hint` field on `BoxedInstruction` (pre-computed from compiled shapes+dtypes)
+- [x] **7.2**: `compute_output_byte_hint` in tape_builder (product of shape dims × elem_size, 0 for dynamic)
+- [x] **7.3**: `reserve(output_byte_hint)` in execute loop before kernel call
+- [x] **7.4**: `dispatch_matmul_into` — native in-place matmul (avoids alloc+copy fallback)
+- [x] **7.5**: `dispatch_softmax_into` — native in-place softmax
+- [x] **7.6**: `dispatch_rms_norm_into` — native in-place RmsNorm
+- [x] **7.7**: `dispatch_custom_into` router in `dispatch_float_into` (MatMul, Softmax, RmsNorm)
 
 ---
 

@@ -25,7 +25,7 @@ hologram-compression = { path = "crates/hologram-compression" }
 uor-foundation = { git = "https://github.com/UOR-Foundation/UOR-Framework", rev = "bfe21f4" }
 
 # Serialization (rkyv only)
-rkyv = { version = "0.8" }
+rkyv = { version = "0.8", features = ["tinyvec-1"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 
 # Parallelism
@@ -37,6 +37,7 @@ crc32fast = "1.4"
 
 # Data structures
 smallvec = "1.13"
+tinyvec = { version = "1.10", features = ["alloc"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

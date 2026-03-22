@@ -46,7 +46,7 @@ pub fn flatten_subgraph(
     // Phase 2: rewire inputs using id_map and binding_map.
     for node in template.nodes() {
         let new_id = id_map[&node.id];
-        let remapped: Vec<InputSlot> = node
+        let remapped: tinyvec::TinyVec<[InputSlot; 2]> = node
             .inputs
             .iter()
             .map(|slot| remap_input(slot, &id_map, &binding_map))

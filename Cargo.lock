@@ -478,6 +478,7 @@ dependencies = [
  "hologram-core",
  "rkyv",
  "smallvec",
+ "tinyvec",
 ]
 
 [[package]]

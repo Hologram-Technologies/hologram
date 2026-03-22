@@ -119,6 +119,102 @@ pub(super) fn dispatch_rms_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
+/// Softmax writing directly into a pre-allocated output buffer.
+pub(super) fn dispatch_softmax_into(
+    inputs: &[&[u8]],
+    size: usize,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    if x.len() % size != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("multiple of {size}"),
+            actual: format!("{} floats", x.len()),
+        });
+    }
+
+    let mut out = x.to_vec();
+    let uniform = 1.0f32 / size as f32;
+    for row in out.chunks_mut(size) {
+        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if max == f32::INFINITY {
+            let inf_count = row.iter().filter(|&&v| v == f32::INFINITY).count();
+            let w = if inf_count > 0 {
+                1.0f32 / inf_count as f32
+            } else {
+                uniform
+            };
+            for v in row.iter_mut() {
+                *v = if *v == f32::INFINITY { w } else { 0.0 };
+            }
+            continue;
+        }
+        if !max.is_finite() {
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
+            continue;
+        }
+        let mut sum = 0.0f32;
+        for v in row.iter_mut() {
+            *v = (*v - max).exp();
+            sum += *v;
+        }
+        if sum > 0.0 {
+            for v in row.iter_mut() {
+                *v /= sum;
+            }
+        } else {
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
+        }
+    }
+
+    out_buf.reserve(out.len() * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
+/// RmsNorm writing directly into a pre-allocated output buffer.
+pub(super) fn dispatch_rms_norm_into(
+    inputs: &[&[u8]],
+    size: usize,
+    epsilon: f32,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    let weight = cast_f32(inputs[1])?;
+    if weight.len() != size {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("weight: [{size}]"),
+            actual: format!("{} floats", weight.len()),
+        });
+    }
+    if x.len() % size != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("multiple of {size}"),
+            actual: format!("{} floats", x.len()),
+        });
+    }
+    let mut out = x.to_vec();
+    for row in out.chunks_mut(size) {
+        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
+        let inv_rms = fast_rsqrt(ms + epsilon);
+        for (v, &w) in row.iter_mut().zip(weight.iter()) {
+            *v = *v * inv_rms * w;
+        }
+    }
+
+    out_buf.reserve(out.len() * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
 pub(super) fn dispatch_layer_norm(
     inputs: &[&[u8]],
     size: usize,

@@ -140,12 +140,44 @@ pub fn dispatch_float_into(
             Ok(())
         }
         _ => {
-            // Fall back to allocating dispatch for ops not yet converted.
+            // Try dedicated _into dispatch for hot custom ops before falling back.
+            if dispatch_custom_into(op, inputs, out_buf)? {
+                return Ok(());
+            }
+            // Fall back to allocating dispatch for remaining ops.
             let result = dispatch_float_ctx(op, inputs, ctx)?;
-            out_buf.clear();
             out_buf.extend_from_slice(&result);
             Ok(())
         }
+    }
+}
+
+/// Attempt in-place dispatch for high-frequency custom ops.
+///
+/// Returns `Ok(true)` if handled, `Ok(false)` to fall back to allocating dispatch.
+fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -> ExecResult<bool> {
+    match op {
+        // MatMul: output = M×N floats. Write directly into out_buf.
+        FloatOp::MatMul { m, k, n } => {
+            matmul::dispatch_matmul_into(inputs, *m as usize, *k as usize, *n as usize, out_buf)?;
+            Ok(true)
+        }
+        // Softmax/LogSoftmax: output size == input size (element-preserving).
+        FloatOp::Softmax { size } => {
+            norm::dispatch_softmax_into(inputs, *size as usize, out_buf)?;
+            Ok(true)
+        }
+        // RmsNorm/LayerNorm: output size == input size.
+        FloatOp::RmsNorm { size, epsilon } => {
+            norm::dispatch_rms_norm_into(
+                inputs,
+                *size as usize,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -165,6 +197,25 @@ pub fn dispatch_fused_chain(chain: &[FloatOp], inputs: &[&[u8]]) -> ExecResult<V
         })
         .collect();
     Ok(helpers::f32_vec_to_bytes(out))
+}
+
+/// Dispatch a fused chain into a pre-allocated output buffer.
+pub fn dispatch_fused_chain_into(
+    chain: &[FloatOp],
+    inputs: &[&[u8]],
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = helpers::cast_f32(inputs[0])?;
+    out_buf.clear();
+    out_buf.reserve(x.len() * 4);
+    for &v in x.iter() {
+        let mut val = v;
+        for op in chain {
+            val = op.apply_unary(val);
+        }
+        out_buf.extend_from_slice(&val.to_le_bytes());
+    }
+    Ok(())
 }
 
 /// Dispatch ops that need dedicated kernel logic.

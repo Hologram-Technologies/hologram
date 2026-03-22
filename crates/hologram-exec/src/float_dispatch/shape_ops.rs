@@ -3,30 +3,33 @@ use crate::error::ExecResult;
 
 /// Reshape: data passes through, shape is read from the shape tensor (inputs[1]).
 /// Returns `(data_bytes, new_shape)`.
+///
+/// Avoids copying the data buffer when the reshape is a pure metadata change
+/// (shape product matches element count). Only copies when broadcast expansion
+/// is needed.
 pub fn dispatch_reshape_with_shape(inputs: &[&[u8]]) -> ExecResult<(Vec<u8>, Vec<usize>)> {
-    let data = inputs[0].to_vec();
-    if inputs.len() >= 2 && !inputs[1].is_empty() {
-        let n_elems = data.len() / 4; // assume f32
+    let n_elems = inputs[0].len() / 4; // assume f32
 
+    if inputs.len() >= 2 && !inputs[1].is_empty() {
         let shape = crate::eval::shape_resolve::parse_shape_values(inputs[1], n_elems)
             .unwrap_or_else(|| vec![n_elems]);
 
         let shape_product: usize = shape.iter().product();
         if shape_product == n_elems {
-            Ok((data, shape))
+            // Pure reshape — data passes through unchanged. Copy only the bytes.
+            Ok((inputs[0].to_vec(), shape))
         } else if shape_product > n_elems && n_elems > 0 && shape_product <= n_elems * 1024 {
             // Broadcast expansion (e.g. GQA key repeat): replicate data.
-            let src = cast_f32(&data)?;
+            let src = cast_f32(inputs[0])?;
             let expanded = broadcast_to(&src, n_elems, &shape);
             Ok((f32_vec_to_bytes(expanded), shape))
         } else {
             // Can't match — fall back to 1-D.
-            Ok((data, vec![n_elems]))
+            Ok((inputs[0].to_vec(), vec![n_elems]))
         }
     } else {
         // No shape tensor — return 1D.
-        let n = data.len() / 4;
-        Ok((data, vec![n]))
+        Ok((inputs[0].to_vec(), vec![n_elems]))
     }
 }
 
@@ -37,18 +40,23 @@ pub fn dispatch_transpose(
     perm: &[u8],
     input_shape: &[usize],
 ) -> ExecResult<(Vec<u8>, Vec<usize>)> {
-    let src = cast_f32(input)?;
     let ndim = perm.len();
 
+    // Early returns before any allocation or cast.
     if ndim == 0 || input_shape.is_empty() {
         return Ok((input.to_vec(), input_shape.to_vec()));
     }
-
-    // Guard: perm must not reference dims beyond the input shape.
     if perm.iter().any(|&p| (p as usize) >= input_shape.len()) {
         return Ok((input.to_vec(), input_shape.to_vec()));
     }
 
+    // Check if perm is identity (no-op transpose).
+    let is_identity = perm.iter().enumerate().all(|(i, &p)| p as usize == i);
+    if is_identity {
+        return Ok((input.to_vec(), input_shape.to_vec()));
+    }
+
+    let src = cast_f32(input)?;
     let strides = compute_strides_small(input_shape);
     let out_shape: Vec<usize> = perm.iter().map(|&p| input_shape[p as usize]).collect();
     let out_strides = compute_strides_small(&out_shape);

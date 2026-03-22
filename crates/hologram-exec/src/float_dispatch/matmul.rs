@@ -156,6 +156,60 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
     Ok(f32_vec_to_bytes(out))
 }
 
+/// MatMul writing directly into a pre-allocated output buffer.
+pub fn dispatch_matmul_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+
+    let actual_k = infer_matmul_k(k, m, n, a.len(), b.len())?;
+    let actual_m = a.len() / actual_k;
+    let actual_n = b.len() / actual_k;
+
+    let out_size = actual_m.saturating_mul(actual_n);
+    if out_size > 256 * 1024 * 1024 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("matmul output < 1GB (compiled k={k})"),
+            actual: format!(
+                "[{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {} floats",
+                out_size
+            ),
+        });
+    }
+
+    let mut out = vec![0.0f32; out_size];
+
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    {
+        blas::sgemm(actual_m, actual_n, actual_k, &a, &b, &mut out);
+    }
+
+    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+    {
+        for i in 0..actual_m {
+            for p in 0..actual_k {
+                let a_val = a[i * actual_k + p];
+                let b_row = &b[p * actual_n..(p + 1) * actual_n];
+                let o_row = &mut out[i * actual_n..(i + 1) * actual_n];
+                for j in 0..actual_n {
+                    o_row[j] += a_val * b_row[j];
+                }
+            }
+        }
+    }
+
+    out_buf.reserve(out_size * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
 /// Batched matmul: A[batch, M, K] × B[batch, K, N] → C[batch, M, N].
 ///
 /// Each batch independently computes a 2D matrix multiply. This is required

@@ -333,6 +333,10 @@ impl Graph {
     }
 
     /// Successor NodeIds of a node (nodes that use this node as input).
+    ///
+    /// This performs a full graph scan — O(V+E). For multiple lookups,
+    /// use [`build_successor_index`] to build the index once, then
+    /// call [`successors_from_index`] for O(degree) per lookup.
     pub fn successors(&self, id: NodeId) -> Vec<NodeId> {
         let mut result = Vec::new();
         for node in self.nodes() {
@@ -341,6 +345,41 @@ impl Graph {
             }
         }
         result
+    }
+
+    /// Build a reverse-edge index: for each node, the list of its successors.
+    ///
+    /// Built in O(V+E) via a single pass over all edges. Returns a flat
+    /// Vec indexed by `NodeId::index()`. Use [`successors_from_index`]
+    /// for O(degree) successor lookups after building this once.
+    #[must_use]
+    pub fn build_successor_index(&self) -> Vec<Vec<NodeId>> {
+        let len = self.slots.len();
+        let mut index: Vec<Vec<NodeId>> = Vec::with_capacity(len);
+        index.resize_with(len, Vec::new);
+        for node in self.nodes() {
+            for dep in node.dependencies() {
+                let dep_idx = dep.index() as usize;
+                if dep_idx < len {
+                    index[dep_idx].push(node.id);
+                }
+            }
+        }
+        index
+    }
+
+    /// Look up successors from a pre-built reverse-edge index. O(degree).
+    ///
+    /// The index must have been built by [`build_successor_index`] on the
+    /// same graph state. Returns an empty slice for unknown or out-of-range IDs.
+    #[must_use]
+    pub fn successors_from_index(id: NodeId, index: &[Vec<NodeId>]) -> &[NodeId] {
+        let idx = id.index() as usize;
+        if idx < index.len() {
+            &index[idx]
+        } else {
+            &[]
+        }
     }
 
     /// All edges as (source, target) pairs.
@@ -424,10 +463,13 @@ impl Graph {
     }
 
     /// Sink nodes (nodes with no successors).
+    ///
+    /// Uses a pre-built reverse-edge index for O(V+E) total instead of O(V^2).
     pub fn sinks(&self) -> Vec<NodeId> {
-        let ids: Vec<NodeId> = self.node_ids();
-        ids.into_iter()
-            .filter(|&id| self.successors(id).is_empty())
+        let succ_index = self.build_successor_index();
+        self.nodes()
+            .filter(|n| Self::successors_from_index(n.id, &succ_index).is_empty())
+            .map(|n| n.id)
             .collect()
     }
 
@@ -663,6 +705,21 @@ mod tests {
         let id = g.add_node(GraphOp::Lut(LutOp::Relu));
         assert!(g.replace_op(id, GraphOp::Lut(LutOp::Sigmoid)));
         assert_eq!(g.get(id).unwrap().op, GraphOp::Lut(LutOp::Sigmoid));
+    }
+
+    #[test]
+    fn successor_index() {
+        let mut g = Graph::new();
+        let a = g.add_node(GraphOp::Input);
+        let b = g.add_node(GraphOp::Lut(LutOp::Relu));
+        let c = g.add_node(GraphOp::Output);
+        g.add_edge(a, b);
+        g.add_edge(b, c);
+
+        let index = g.build_successor_index();
+        assert_eq!(Graph::successors_from_index(a, &index), &[b]);
+        assert_eq!(Graph::successors_from_index(b, &index), &[c]);
+        assert!(Graph::successors_from_index(c, &index).is_empty());
     }
 
     #[test]

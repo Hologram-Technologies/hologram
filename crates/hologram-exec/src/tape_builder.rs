@@ -44,6 +44,7 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
     }
 
     let dtypes: HashMap<NodeId, FloatDType> = sg.node_dtypes_map();
+    let shapes: HashMap<NodeId, Vec<usize>> = sg.node_shapes_map();
 
     let total_nodes: usize = schedule.levels.iter().map(|l| l.node_ids.len()).sum();
     let mut tape = BoxedTape::with_capacity(total_nodes, schedule.levels.len());
@@ -84,11 +85,15 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
                 })
                 .collect();
 
+            // Pre-compute output byte size hint from compiled shapes.
+            let output_byte_hint = compute_output_byte_hint(node_id, &shapes, output_elem_size);
+
             tape.push(BoxedInstruction {
                 kernel,
                 output_idx: node_id.index(),
                 input_indices,
                 output_elem_size,
+                output_byte_hint,
             });
         }
         tape.end_level();
@@ -98,24 +103,31 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
 }
 
 /// Resolve a `GraphOp` to a boxed kernel that captures its parameters.
+///
+/// Every closure writes into `out_buf` (pre-allocated, cleared before call).
 fn resolve_kernel(op: &GraphOp) -> ExecResult<BoxedKernel> {
     match op {
         GraphOp::Float(fop) => resolve_float_kernel(fop),
         GraphOp::FusedFloatChain(chain) => {
             let chain = chain.clone();
-            Ok(Box::new(move |inputs, _ctx| {
-                crate::float_dispatch::dispatch_fused_chain(&chain, inputs)
+            Ok(Box::new(move |inputs, _ctx, out_buf| {
+                crate::float_dispatch::dispatch_fused_chain_into(&chain, inputs, out_buf)
             }))
         }
-        GraphOp::Output => Ok(Box::new(|inputs, _ctx| {
-            Ok(inputs.first().map(|b| b.to_vec()).unwrap_or_default())
+        GraphOp::Output => Ok(Box::new(|inputs: &[&[u8]], _ctx, out_buf: &mut Vec<u8>| {
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
+            Ok(())
         })),
         GraphOp::Lut(_) | GraphOp::FusedView(_) => {
             let view = op
                 .to_view()
                 .ok_or_else(|| ExecError::UnsupportedOp("Lut/FusedView without view".into()))?;
-            Ok(Box::new(move |inputs, _ctx| {
-                Ok(crate::kv::KvStore::apply_unary(&view, inputs[0]))
+            Ok(Box::new(move |inputs, _ctx, out_buf: &mut Vec<u8>| {
+                let result = crate::kv::KvStore::apply_unary(&view, inputs[0]);
+                out_buf.extend_from_slice(&result);
+                Ok(())
             }))
         }
         GraphOp::Prim(p) => {
@@ -124,20 +136,22 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<BoxedKernel> {
                 let view = op
                     .to_view()
                     .ok_or_else(|| ExecError::UnsupportedOp("Prim without view".into()))?;
-                Ok(Box::new(move |inputs, _ctx| {
-                    Ok(crate::kv::KvStore::apply_unary(&view, inputs[0]))
+                Ok(Box::new(move |inputs, _ctx, out_buf: &mut Vec<u8>| {
+                    let result = crate::kv::KvStore::apply_unary(&view, inputs[0]);
+                    out_buf.extend_from_slice(&result);
+                    Ok(())
                 }))
             } else {
-                Ok(Box::new(move |inputs, _ctx| {
-                    crate::kv::KvStore::apply_binary(p, inputs[0], inputs[1])
+                Ok(Box::new(move |inputs, _ctx, out_buf: &mut Vec<u8>| {
+                    let result = crate::kv::KvStore::apply_binary(p, inputs[0], inputs[1])?;
+                    out_buf.extend_from_slice(&result);
+                    Ok(())
                 }))
             }
         }
         GraphOp::MatMulLut4(cid) | GraphOp::BatchMatMulLut4(cid) => {
             let cid = *cid;
-            Ok(Box::new(move |inputs, _ctx| {
-                // LUT-GEMM: constants/weights not available in tape kernel context yet.
-                // Will be wired via WeightCache in a future iteration.
+            Ok(Box::new(move |inputs, _ctx, _out_buf| {
                 let _ = (inputs, cid);
                 Err(ExecError::UnsupportedOp(
                     "LUT-GEMM Q4 requires WeightCache (not yet wired into tape)".into(),
@@ -146,7 +160,7 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<BoxedKernel> {
         }
         GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
             let cid = *cid;
-            Ok(Box::new(move |inputs, _ctx| {
+            Ok(Box::new(move |inputs, _ctx, _out_buf| {
                 let _ = (inputs, cid);
                 Err(ExecError::UnsupportedOp(
                     "LUT-GEMM Q8 requires WeightCache (not yet wired into tape)".into(),
@@ -166,22 +180,16 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<BoxedKernel> {
 /// parameter may be stale (compiled at one seq_len but executed at another),
 /// the kernel infers the correct size from the input buffer at runtime.
 /// This eliminates the need for the executor's `resolve_dynamic_sizes` pass.
+///
+/// All closures write into `out_buf` via `dispatch_float_into`.
 fn resolve_float_kernel(fop: &FloatOp) -> ExecResult<BoxedKernel> {
     use crate::float_dispatch;
 
     match fop {
-        // Softmax/LogSoftmax: size may be stale — infer from input[0] buffer.
-        // The correct size is input_floats, which for a [batch, seq, hidden]
-        // tensor is the last dim (hidden_size). Since we don't have shapes,
-        // we use the full element count as fallback (works for 1-D and 2-D
-        // when batch*seq=1, which covers decode-step execution).
         FloatOp::Softmax { size } => {
             let compiled_size = *size;
-            Ok(Box::new(move |inputs, _ctx| {
+            Ok(Box::new(move |inputs, _ctx, out_buf| {
                 let n_floats = inputs[0].len() / 4;
-                // If compiled size divides evenly into the buffer, use it.
-                // Otherwise infer: if it doesn't divide, the compiled size is
-                // stale and we fall back to the full buffer (1-D softmax).
                 let actual_size = if compiled_size > 0
                     && n_floats > 0
                     && n_floats % (compiled_size as usize) == 0
@@ -190,16 +198,17 @@ fn resolve_float_kernel(fop: &FloatOp) -> ExecResult<BoxedKernel> {
                 } else {
                     n_floats as u32
                 };
-                float_dispatch::dispatch_float_ctx(
+                float_dispatch::dispatch_float_into(
                     &FloatOp::Softmax { size: actual_size },
                     inputs,
                     None,
+                    out_buf,
                 )
             }))
         }
         FloatOp::LogSoftmax { size } => {
             let compiled_size = *size;
-            Ok(Box::new(move |inputs, _ctx| {
+            Ok(Box::new(move |inputs, _ctx, out_buf| {
                 let n_floats = inputs[0].len() / 4;
                 let actual_size = if compiled_size > 0
                     && n_floats > 0
@@ -209,68 +218,94 @@ fn resolve_float_kernel(fop: &FloatOp) -> ExecResult<BoxedKernel> {
                 } else {
                     n_floats as u32
                 };
-                float_dispatch::dispatch_float_ctx(
+                float_dispatch::dispatch_float_into(
                     &FloatOp::LogSoftmax { size: actual_size },
                     inputs,
                     None,
+                    out_buf,
                 )
             }))
         }
-        // RmsNorm/LayerNorm with size=0 sentinel: infer from buffer.
         FloatOp::RmsNorm { size: 0, epsilon } => {
             let eps = *epsilon;
-            Ok(Box::new(move |inputs, _ctx| {
+            Ok(Box::new(move |inputs, _ctx, out_buf| {
                 let n_floats = (inputs[0].len() / 4) as u32;
-                float_dispatch::dispatch_float_ctx(
+                float_dispatch::dispatch_float_into(
                     &FloatOp::RmsNorm {
                         size: n_floats,
                         epsilon: eps,
                     },
                     inputs,
                     None,
+                    out_buf,
                 )
             }))
         }
         FloatOp::LayerNorm { size: 0, epsilon } => {
             let eps = *epsilon;
-            Ok(Box::new(move |inputs, _ctx| {
+            Ok(Box::new(move |inputs, _ctx, out_buf| {
                 let n_floats = (inputs[0].len() / 4) as u32;
-                float_dispatch::dispatch_float_ctx(
+                float_dispatch::dispatch_float_into(
                     &FloatOp::LayerNorm {
                         size: n_floats,
                         epsilon: eps,
                     },
                     inputs,
                     None,
+                    out_buf,
                 )
             }))
         }
-        // Reduce* with size=0: infer from buffer.
-        FloatOp::ReduceSum { size: 0 } => Ok(Box::new(move |inputs, _ctx| {
+        FloatOp::ReduceSum { size: 0 } => Ok(Box::new(move |inputs, _ctx, out_buf| {
             let n = (inputs[0].len() / 4) as u32;
-            float_dispatch::dispatch_float_ctx(&FloatOp::ReduceSum { size: n }, inputs, None)
+            float_dispatch::dispatch_float_into(
+                &FloatOp::ReduceSum { size: n },
+                inputs,
+                None,
+                out_buf,
+            )
         })),
-        FloatOp::ReduceMean { size: 0 } => Ok(Box::new(move |inputs, _ctx| {
+        FloatOp::ReduceMean { size: 0 } => Ok(Box::new(move |inputs, _ctx, out_buf| {
             let n = (inputs[0].len() / 4) as u32;
-            float_dispatch::dispatch_float_ctx(&FloatOp::ReduceMean { size: n }, inputs, None)
+            float_dispatch::dispatch_float_into(
+                &FloatOp::ReduceMean { size: n },
+                inputs,
+                None,
+                out_buf,
+            )
         })),
-        FloatOp::ReduceMax { size: 0 } => Ok(Box::new(move |inputs, _ctx| {
+        FloatOp::ReduceMax { size: 0 } => Ok(Box::new(move |inputs, _ctx, out_buf| {
             let n = (inputs[0].len() / 4) as u32;
-            float_dispatch::dispatch_float_ctx(&FloatOp::ReduceMax { size: n }, inputs, None)
+            float_dispatch::dispatch_float_into(
+                &FloatOp::ReduceMax { size: n },
+                inputs,
+                None,
+                out_buf,
+            )
         })),
-        FloatOp::ReduceMin { size: 0 } => Ok(Box::new(move |inputs, _ctx| {
+        FloatOp::ReduceMin { size: 0 } => Ok(Box::new(move |inputs, _ctx, out_buf| {
             let n = (inputs[0].len() / 4) as u32;
-            float_dispatch::dispatch_float_ctx(&FloatOp::ReduceMin { size: n }, inputs, None)
+            float_dispatch::dispatch_float_into(
+                &FloatOp::ReduceMin { size: n },
+                inputs,
+                None,
+                out_buf,
+            )
         })),
-        FloatOp::ReduceProd { size: 0 } => Ok(Box::new(move |inputs, _ctx| {
+        FloatOp::ReduceProd { size: 0 } => Ok(Box::new(move |inputs, _ctx, out_buf| {
             let n = (inputs[0].len() / 4) as u32;
-            float_dispatch::dispatch_float_ctx(&FloatOp::ReduceProd { size: n }, inputs, None)
+            float_dispatch::dispatch_float_into(
+                &FloatOp::ReduceProd { size: n },
+                inputs,
+                None,
+                out_buf,
+            )
         })),
         // Default: capture the op as-is (parameters are correct at compile time).
         _ => {
             let fop = *fop;
-            Ok(Box::new(move |inputs, ctx| {
-                float_dispatch::dispatch_float_ctx(&fop, inputs, ctx)
+            Ok(Box::new(move |inputs, ctx, out_buf| {
+                float_dispatch::dispatch_float_into(&fop, inputs, ctx, out_buf)
             }))
         }
     }
@@ -297,6 +332,35 @@ fn compute_elem_size(node_id: NodeId, op: &GraphOp, dtypes: &HashMap<NodeId, Flo
         }
     }
     4 // f32 default
+}
+
+/// Pre-compute the total output byte size for a node from compiled shapes.
+///
+/// Returns the product of shape dimensions × element size, or 0 if the
+/// shape is unknown or contains a 0-sentinel (dynamic dimension).
+fn compute_output_byte_hint(
+    node_id: NodeId,
+    shapes: &HashMap<NodeId, Vec<usize>>,
+    elem_size: u8,
+) -> u32 {
+    let Some(shape) = shapes.get(&node_id) else {
+        return 0;
+    };
+    if shape.is_empty() {
+        return 0;
+    }
+    // 0-sentinels mean "dynamic dimension" — can't predict size.
+    if shape.contains(&0) {
+        return 0;
+    }
+    let n_elements: usize = shape.iter().product();
+    let byte_size = n_elements.saturating_mul(elem_size as usize);
+    // Cap at u32::MAX to avoid overflow; 0 means "unknown".
+    if byte_size > u32::MAX as usize {
+        0
+    } else {
+        byte_size as u32
+    }
 }
 
 #[cfg(test)]
