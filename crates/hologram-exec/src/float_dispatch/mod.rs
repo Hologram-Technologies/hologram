@@ -152,9 +152,31 @@ pub fn dispatch_float_into(
     }
 }
 
+/// Resolve a size=0 sentinel to the actual element count from the input buffer.
+///
+/// The 0 sentinel means "infer at runtime". For ops like Softmax and RmsNorm,
+/// the correct size is the number of f32 elements in the first input.
+#[inline]
+fn resolve_size(compiled_size: u32, inputs: &[&[u8]]) -> usize {
+    let n_floats = inputs.first().map(|b| b.len() / 4).unwrap_or(0);
+    if compiled_size == 0 || n_floats == 0 {
+        n_floats
+    } else {
+        let cs = compiled_size as usize;
+        // Use compiled size if it divides evenly; otherwise infer.
+        if n_floats.is_multiple_of(cs) {
+            cs
+        } else {
+            n_floats
+        }
+    }
+}
+
 /// Attempt in-place dispatch for high-frequency custom ops.
 ///
 /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to allocating dispatch.
+///
+/// Handles size=0 sentinels by inferring from input buffer length at runtime.
 fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -> ExecResult<bool> {
     match op {
         // MatMul: output = M×N floats. Write directly into out_buf.
@@ -163,27 +185,31 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             Ok(true)
         }
         // Softmax/LogSoftmax: output size == input size (element-preserving).
+        // size=0 sentinel → infer from input buffer (full 1-D softmax).
         FloatOp::Softmax { size } => {
-            norm::dispatch_softmax_into(inputs, *size as usize, out_buf)?;
+            let actual = resolve_size(*size, inputs);
+            norm::dispatch_softmax_into(inputs, actual, out_buf)?;
+            Ok(true)
+        }
+        FloatOp::LogSoftmax { size } => {
+            let actual = resolve_size(*size, inputs);
+            norm::dispatch_log_softmax_into(inputs, actual, out_buf)?;
             Ok(true)
         }
         // RmsNorm/LayerNorm: output size == input size.
         FloatOp::RmsNorm { size, epsilon } => {
-            norm::dispatch_rms_norm_into(
-                inputs,
-                *size as usize,
-                f32::from_bits(*epsilon),
-                out_buf,
-            )?;
+            let actual = resolve_size(*size, inputs);
+            norm::dispatch_rms_norm_into(inputs, actual, f32::from_bits(*epsilon), out_buf)?;
             Ok(true)
         }
         FloatOp::AddRmsNorm { size, epsilon } => {
-            norm::dispatch_add_rms_norm_into(
-                inputs,
-                *size as usize,
-                f32::from_bits(*epsilon),
-                out_buf,
-            )?;
+            let actual = resolve_size(*size, inputs);
+            norm::dispatch_add_rms_norm_into(inputs, actual, f32::from_bits(*epsilon), out_buf)?;
+            Ok(true)
+        }
+        FloatOp::LayerNorm { size, epsilon } => {
+            let actual = resolve_size(*size, inputs);
+            norm::dispatch_layer_norm_into(inputs, actual, f32::from_bits(*epsilon), out_buf)?;
             Ok(true)
         }
         _ => Ok(false),

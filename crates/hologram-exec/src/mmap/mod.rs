@@ -396,4 +396,55 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
     }
+
+    /// Build a float graph, run through both KvExecutor and EnumTape,
+    /// and verify outputs match byte-for-byte.
+    #[test]
+    fn tape_vs_kvexecutor_conformance() {
+        use hologram_core::op::FloatOp;
+
+        // Input → Relu → Neg → Output
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+            .node_with_inputs(GraphOp::Float(FloatOp::Neg), &[1])
+            .node_with_inputs(GraphOp::Output, &[2])
+            .output("y", 3)
+            .build();
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+        // f32 input with mix of positive and negative values.
+        let input_f32: Vec<u8> = [
+            (-3.0f32).to_le_bytes(),
+            (0.0f32).to_le_bytes(),
+            (2.5f32).to_le_bytes(),
+            (-0.1f32).to_le_bytes(),
+        ]
+        .concat();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, input_f32);
+
+        // Path 1: KvExecutor
+        let kv_result = execute_bytes(&archive, &inputs).unwrap();
+        let kv_out = kv_result.by_name("y").unwrap();
+
+        // Path 2: EnumTape
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+        let tape_result = execute_tape(&tape, &plan, &inputs).unwrap();
+        let tape_out = tape_result.by_name("y").unwrap();
+
+        // Byte-for-byte match.
+        assert_eq!(
+            kv_out, tape_out,
+            "KvExecutor and EnumTape outputs differ:\n  kv:   {:?}\n  tape: {:?}",
+            kv_out, tape_out,
+        );
+
+        // Sanity: relu(-3)=0 → neg(0)=0; relu(2.5)=2.5 → neg(2.5)=-2.5
+        let floats: &[f32] = bytemuck::cast_slice(tape_out);
+        assert_eq!(floats[0], -0.0); // neg(relu(-3)) = neg(0) = -0
+        assert_eq!(floats[2], -2.5); // neg(relu(2.5)) = -2.5
+    }
 }

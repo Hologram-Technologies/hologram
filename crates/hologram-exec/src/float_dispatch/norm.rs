@@ -333,6 +333,69 @@ pub(super) fn dispatch_layer_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
+/// LogSoftmax writing directly into a pre-allocated output buffer.
+pub(super) fn dispatch_log_softmax_into(
+    inputs: &[&[u8]],
+    size: usize,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    if size > 0 && x.len() % size != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("multiple of {size}"),
+            actual: format!("{} floats", x.len()),
+        });
+    }
+    let actual_size = if size == 0 { x.len() } else { size };
+    let mut out = x.to_vec();
+    for row in out.chunks_mut(actual_size) {
+        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let log_sum_exp = row.iter().map(|&v| (v - max).exp()).sum::<f32>().ln() + max;
+        for v in row.iter_mut() {
+            *v -= log_sum_exp;
+        }
+    }
+    out_buf.reserve(out.len() * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
+/// LayerNorm writing directly into a pre-allocated output buffer.
+pub(super) fn dispatch_layer_norm_into(
+    inputs: &[&[u8]],
+    size: usize,
+    epsilon: f32,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    let weight = cast_f32(inputs[1])?;
+    let bias = cast_f32(inputs[2])?;
+    let actual_size = if size == 0 { x.len() } else { size };
+    if weight.len() != actual_size || bias.len() != actual_size {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("weight/bias: [{actual_size}]"),
+            actual: format!("weight={}, bias={}", weight.len(), bias.len()),
+        });
+    }
+    let mut out = x.to_vec();
+    for row in out.chunks_mut(actual_size) {
+        let mean: f32 = row.iter().sum::<f32>() / actual_size as f32;
+        let var: f32 =
+            row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / actual_size as f32;
+        let inv_std = fast_rsqrt(var + epsilon);
+        for (i, v) in row.iter_mut().enumerate() {
+            *v = (*v - mean) * inv_std * weight[i] + bias[i];
+        }
+    }
+    out_buf.reserve(out.len() * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
 pub(super) fn dispatch_instance_norm(
     inputs: &[&[u8]],
     size: usize,

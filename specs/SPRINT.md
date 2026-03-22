@@ -177,14 +177,18 @@
 - [x] **8b.2**: `dispatch_add_rms_norm` + `dispatch_add_rms_norm_into` in norm.rs
 - [x] **8b.3**: Wired into `dispatch_custom_into` router + `dispatch_custom` fallback
 
-### Phase 9: Next Optimizations (TODO)
-- [ ] **9.1**: Weight-page prefetch for LUT-GEMM tape instructions (unblocked by Phase 8.5)
-- [ ] **9.2**: Parallel level execution for EnumTape (Rayon within levels, matching KvExecutor)
-- [ ] **9.3**: Native `_into` for LayerNorm, Conv2d, Attention (extend `dispatch_custom_into`)
-- [ ] **9.4**: LUT-GEMM tape integration test (build graph with quantized weight constants, execute via tape)
-- [ ] **9.5**: Dynamic size inference in tape dispatch (Softmax/RmsNorm size=0 sentinel handling)
-- [ ] **9.6**: KvCache ops wired into tape (KvWrite/KvRead via TapeContext)
-- [ ] **9.7**: Tape-path conformance test vs KvExecutor (same graph, compare outputs byte-for-byte)
+### Phase 9: Tape Correctness + Dispatch Coverage
+- [x] **9.3**: Native `_into` for LayerNorm + LogSoftmax (extend `dispatch_custom_into`)
+- [x] **9.5**: Dynamic size inference via `resolve_size` (Softmax/RmsNorm/LayerNorm size=0 sentinel → infer from input)
+- [x] **9.7**: Tape-path conformance test vs KvExecutor (Relu→Neg chain, byte-for-byte output match)
+
+### Phase 10: Next Optimizations (TODO)
+- [ ] **10.1**: Weight-page prefetch for LUT-GEMM tape instructions (unblocked by Phase 8.5)
+- [ ] **10.2**: Parallel level execution for EnumTape (Rayon within levels, matching KvExecutor)
+- [ ] **10.3**: Native `_into` for Conv2d, Attention (extend `dispatch_custom_into`)
+- [ ] **10.4**: LUT-GEMM tape integration test (build graph with quantized weight constants, execute via tape)
+- [ ] **10.5**: KvCache ops wired into tape (KvWrite/KvRead via TapeContext)
+- [ ] **10.6**: Multi-op conformance test (Softmax, MatMul, RmsNorm chains through both paths)
 
 ---
 
