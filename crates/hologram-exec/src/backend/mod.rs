@@ -260,6 +260,43 @@ mod tests {
 
     #[cfg(has_metal)]
     #[test]
+    fn metal_dispatch_softmax() {
+        use hologram_core::op::FloatOp;
+
+        let b = BackendSelector::Metal.resolve();
+        // 1M floats in rows of 1024 = 6MB (above threshold)
+        let row_size = 1024usize;
+        let n_rows = 1024usize;
+        let n_floats = row_size * n_rows;
+        let input: Vec<u8> = (0..n_floats)
+            .flat_map(|i| ((i % row_size) as f32 * 0.01).to_le_bytes())
+            .collect();
+        let inputs: Vec<&[u8]> = vec![&input];
+
+        let mut out_buf = Vec::new();
+        let handled = b
+            .dispatch_float(
+                &FloatOp::Softmax {
+                    size: row_size as u32,
+                },
+                &inputs,
+                &mut out_buf,
+            )
+            .expect("Metal softmax dispatch failed");
+        assert!(handled, "Metal should handle softmax on large buffer");
+        assert_eq!(out_buf.len(), input.len());
+
+        // Each row should sum to ~1.0
+        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        let row_sum: f32 = out_floats[..row_size].iter().sum();
+        assert!(
+            (row_sum - 1.0).abs() < 1e-3,
+            "Metal softmax row sum = {row_sum}, expected 1.0"
+        );
+    }
+
+    #[cfg(has_metal)]
+    #[test]
     fn metal_dispatch_relu() {
         use hologram_core::op::FloatOp;
 

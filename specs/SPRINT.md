@@ -248,12 +248,18 @@
 - [x] **4.3**: Size threshold (128×128 output) — CPU Accelerate BLAS for small matrices
 - [x] **4.4**: Metal matmul conformance test (128×64 × 64×128, verified row correctness)
 
-### Phase 5: Remaining GPU Work (TODO — future sprints)
-- [ ] **5.1**: Metal tiled SGEMM with shared memory (current naive kernel is bandwidth-bound)
-- [ ] **5.2**: Metal softmax + RmsNorm (parallel reductions)
-- [ ] **5.3**: CUDA kernel implementations
-- [ ] **5.4**: WebGPU/wgpu compute shader path
-- [ ] **5.5**: MTLBuffer-backed arena (zero-copy unified memory)
+### Phase 5: Tiled SGEMM + Softmax + RmsNorm
+- [x] **5.1**: Tiled SGEMM with threadgroup shared memory (16×16 tiles, barrier sync)
+- [x] **5.2**: Metal softmax kernel (per-element row-wise with max/sum scan)
+- [x] **5.3**: Metal RmsNorm kernel (per-element with mean-of-squares + rsqrt)
+- [x] **5.4**: Softmax + RmsNorm routed through `dispatch_float` with size threshold
+- [x] **5.5**: Metal softmax conformance test (1M floats, row sums to 1.0)
+
+### Phase 6: Remaining GPU Work (TODO — future sprints)
+- [ ] **6.1**: Async command buffer batching (per-level, amortize launch overhead)
+- [ ] **6.2**: MTLBuffer-backed arena (zero-copy unified memory)
+- [ ] **6.3**: CUDA kernel implementations
+- [ ] **6.4**: WebGPU/wgpu compute shader path
 
 ---
 
