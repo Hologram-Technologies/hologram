@@ -291,15 +291,17 @@ pub fn dispatch_fused_chain_into(
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     let x = helpers::cast_f32(inputs[0])?;
-    out_buf.clear();
-    out_buf.reserve(x.len() * 4);
-    for &v in x.iter() {
-        let mut val = v;
-        for op in chain {
-            val = op.apply_unary(val);
-        }
-        out_buf.extend_from_slice(&val.to_le_bytes());
-    }
+    let out: Vec<f32> = x
+        .iter()
+        .map(|&v| {
+            let mut val = v;
+            for op in chain {
+                val = op.apply_unary(val);
+            }
+            val
+        })
+        .collect();
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
@@ -335,28 +337,30 @@ fn dispatch_custom(
             },
             *quant_b,
         ),
-        FloatOp::Softmax { size } => norm::dispatch_softmax(inputs, *size as usize),
-        FloatOp::LogSoftmax { size } => norm::dispatch_log_softmax(inputs, *size as usize),
+        FloatOp::Softmax { size } => norm::dispatch_softmax(inputs, resolve_size(*size, inputs)),
+        FloatOp::LogSoftmax { size } => {
+            norm::dispatch_log_softmax(inputs, resolve_size(*size, inputs))
+        }
         FloatOp::RmsNorm { size, epsilon } => {
-            norm::dispatch_rms_norm(inputs, *size as usize, bits_to_f32(*epsilon))
+            norm::dispatch_rms_norm(inputs, resolve_size(*size, inputs), bits_to_f32(*epsilon))
         }
         FloatOp::AddRmsNorm { size, epsilon } => {
-            norm::dispatch_add_rms_norm(inputs, *size as usize, bits_to_f32(*epsilon))
+            norm::dispatch_add_rms_norm(inputs, resolve_size(*size, inputs), bits_to_f32(*epsilon))
         }
         FloatOp::LayerNorm { size, epsilon } => {
-            norm::dispatch_layer_norm(inputs, *size as usize, bits_to_f32(*epsilon))
+            norm::dispatch_layer_norm(inputs, resolve_size(*size, inputs), bits_to_f32(*epsilon))
         }
         FloatOp::ReduceSum { size } => {
-            reduce::dispatch_reduce(inputs, *size as usize, reduce::reduce_sum)
+            reduce::dispatch_reduce(inputs, resolve_size(*size, inputs), reduce::reduce_sum)
         }
         FloatOp::ReduceMean { size } => {
-            reduce::dispatch_reduce(inputs, *size as usize, reduce::reduce_mean)
+            reduce::dispatch_reduce(inputs, resolve_size(*size, inputs), reduce::reduce_mean)
         }
         FloatOp::ReduceMax { size } => {
-            reduce::dispatch_reduce(inputs, *size as usize, reduce::reduce_max)
+            reduce::dispatch_reduce(inputs, resolve_size(*size, inputs), reduce::reduce_max)
         }
         FloatOp::ReduceMin { size } => {
-            reduce::dispatch_reduce(inputs, *size as usize, reduce::reduce_min)
+            reduce::dispatch_reduce(inputs, resolve_size(*size, inputs), reduce::reduce_min)
         }
         FloatOp::Gather { dim, dtype } => {
             gather_concat::dispatch_gather(inputs, *dim as usize, *dtype)
@@ -486,7 +490,7 @@ fn dispatch_custom(
         FloatOp::Resize { mode } => spatial::dispatch_resize(inputs, *mode),
         FloatOp::PadOp { mode } => spatial::dispatch_pad(inputs, *mode),
         FloatOp::InstanceNorm { size, epsilon } => {
-            norm::dispatch_instance_norm(inputs, *size as usize, bits_to_f32(*epsilon))
+            norm::dispatch_instance_norm(inputs, resolve_size(*size, inputs), bits_to_f32(*epsilon))
         }
         FloatOp::LRN {
             size,

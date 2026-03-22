@@ -8,12 +8,20 @@ pub(super) fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<
 }
 
 /// Unary map into a pre-allocated output buffer (avoids per-call allocation).
+///
+/// Pre-sizes the buffer and writes f32 results contiguously, avoiding both
+/// per-element extend_from_slice and intermediate Vec<f32> allocation.
 pub(super) fn unary_map_into(inputs: &[&[u8]], f: impl Fn(f32) -> f32, out_buf: &mut Vec<u8>) {
     let x = cast_f32(inputs[0]).unwrap_or_default();
-    out_buf.clear();
-    out_buf.reserve(x.len() * 4);
-    for &v in x.iter() {
-        out_buf.extend_from_slice(&f(v).to_le_bytes());
+    let byte_len = x.len() * 4;
+    out_buf.reserve(byte_len);
+    // SAFETY: we reserve byte_len bytes above, write exactly byte_len bytes below,
+    // and f32 le_bytes are always valid u8 sequences.
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (dst_v, &src_v) in dst.iter_mut().zip(x.iter()) {
+        *dst_v = f(src_v);
     }
 }
 
@@ -31,6 +39,8 @@ pub(super) fn binary_elementwise(
 }
 
 /// Binary elementwise into a pre-allocated output buffer.
+///
+/// Writes directly into out_buf as f32 via bytemuck cast, zero intermediate allocation.
 pub(super) fn binary_elementwise_into(
     inputs: &[&[u8]],
     f: impl Fn(f32, f32) -> f32,
@@ -39,10 +49,13 @@ pub(super) fn binary_elementwise_into(
     let a = cast_f32(inputs[0]).unwrap_or_default();
     let b = cast_f32(inputs[1]).unwrap_or_default();
     let out_len = a.len().max(b.len());
-    out_buf.clear();
-    out_buf.reserve(out_len * 4);
-    for i in 0..out_len {
-        out_buf.extend_from_slice(&f(a[i % a.len()], b[i % b.len()]).to_le_bytes());
+    let byte_len = out_len * 4;
+    out_buf.reserve(byte_len);
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (i, dst_v) in dst.iter_mut().enumerate() {
+        *dst_v = f(a[i % a.len()], b[i % b.len()]);
     }
 }
 

@@ -203,10 +203,7 @@ pub fn dispatch_matmul_into(
         }
     }
 
-    out_buf.reserve(out_size * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 

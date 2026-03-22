@@ -204,10 +204,7 @@ pub(super) fn dispatch_add_rms_norm_into(
             *v = *v * inv_rms * w;
         }
     }
-    out_buf.reserve(out.len() * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
@@ -263,10 +260,7 @@ pub(super) fn dispatch_softmax_into(
         }
     }
 
-    out_buf.reserve(out.len() * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
@@ -300,10 +294,7 @@ pub(super) fn dispatch_rms_norm_into(
         }
     }
 
-    out_buf.reserve(out.len() * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
@@ -355,10 +346,7 @@ pub(super) fn dispatch_log_softmax_into(
             *v -= log_sum_exp;
         }
     }
-    out_buf.reserve(out.len() * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
@@ -389,10 +377,7 @@ pub(super) fn dispatch_layer_norm_into(
             *v = (*v - mean) * inv_std * weight[i] + bias[i];
         }
     }
-    out_buf.reserve(out.len() * 4);
-    for &v in &out {
-        out_buf.extend_from_slice(&v.to_le_bytes());
-    }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
