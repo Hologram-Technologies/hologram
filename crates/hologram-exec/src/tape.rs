@@ -318,6 +318,48 @@ fn dispatch_kernel(
     }
 }
 
+/// Sync-safe dispatch for parallelizable ops (no RefCell access).
+///
+/// Only handles Float, FusedChain, Output, LutView, PrimUnary, PrimBinary.
+/// LUT-GEMM and KvCache ops are excluded from parallel levels.
+#[cfg(feature = "parallel")]
+#[inline]
+fn dispatch_kernel_par(
+    kernel: &TapeKernel,
+    inputs: &[&[u8]],
+    ctx: Option<&ExecutionContext>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    use crate::float_dispatch;
+    use crate::kv::KvStore;
+
+    match kernel {
+        TapeKernel::Float(op) => float_dispatch::dispatch_float_into(op, inputs, ctx, out_buf),
+        TapeKernel::FusedFloatChain(chain) => {
+            float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)
+        }
+        TapeKernel::Output => {
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
+            Ok(())
+        }
+        TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
+            out_buf.extend_from_slice(&KvStore::apply_unary(view, inputs[0]));
+            Ok(())
+        }
+        TapeKernel::PrimBinary(p) => {
+            let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
+            out_buf.extend_from_slice(&r);
+            Ok(())
+        }
+        // These should never appear in parallel levels (filtered by needs_shared_state).
+        _ => Err(crate::error::ExecError::UnsupportedOp(
+            "non-parallelizable op in parallel level".into(),
+        )),
+    }
+}
+
 /// LUT-GEMM Q4 dispatch for tape kernels.
 fn dispatch_lut_gemm_4(
     inputs: &[&[u8]],
@@ -602,6 +644,113 @@ impl EnumTape {
 
             let out_id = NodeId::new(instr.output_idx, 0);
             arena.swap_insert_with_elem_size(out_id, &mut out_buf, instr.output_elem_size as usize);
+        }
+
+        Ok(())
+    }
+
+    /// Execute the tape with adaptive parallelism within levels.
+    ///
+    /// Levels with ≥4 instructions are dispatched in parallel via rayon.
+    /// Smaller levels use sequential execution to avoid thread-pool overhead.
+    /// Falls back to sequential on all levels when the `parallel` feature
+    /// is disabled.
+    #[cfg(feature = "parallel")]
+    pub fn execute_parallel(
+        &self,
+        arena: &mut BufferArena<'_>,
+        tape_ctx: &TapeContext<'_>,
+    ) -> ExecResult<()> {
+        use rayon::prelude::*;
+
+        const PAR_THRESHOLD: usize = 4;
+
+        for level_idx in 0..self.n_levels() {
+            let start = self.level_offsets[level_idx];
+            let end = self.level_offsets[level_idx + 1];
+            let level_instrs = &self.instructions[start..end];
+
+            // Check if any instruction needs shared mutable state (RefCell).
+            // LUT-GEMM and KvCache ops cannot be parallelized.
+            let needs_shared_state = level_instrs.iter().any(|instr| {
+                matches!(
+                    instr.kernel,
+                    TapeKernel::MatMulLut4(_)
+                        | TapeKernel::MatMulLut8(_)
+                        | TapeKernel::KvWrite { .. }
+                        | TapeKernel::KvRead { .. }
+                )
+            });
+
+            if level_instrs.len() >= PAR_THRESHOLD && !needs_shared_state {
+                // Parallel: each instruction independently gathers inputs and dispatches.
+                // For parallel dispatch, we pass only the execution context ref (Sync-safe)
+                // since parallel levels never contain LUT-GEMM or KvCache ops.
+                let exec_ctx = tape_ctx.ctx.as_ref();
+                let results: ExecResult<Vec<(u32, Vec<u8>, u8)>> = level_instrs
+                    .par_iter()
+                    .map(|instr| {
+                        let input_refs: SmallVec<[&[u8]; 4]> = instr
+                            .input_indices
+                            .iter()
+                            .map(|&idx| arena.get(NodeId::new(idx, 0)))
+                            .collect::<ExecResult<SmallVec<_>>>()?;
+                        let mut out_buf = Vec::with_capacity(if instr.output_byte_hint > 0 {
+                            instr.output_byte_hint as usize
+                        } else {
+                            256
+                        });
+                        dispatch_kernel_par(&instr.kernel, &input_refs, exec_ctx, &mut out_buf)?;
+                        Ok((instr.output_idx, out_buf, instr.output_elem_size))
+                    })
+                    .collect();
+
+                for (output_idx, data, elem_size) in results? {
+                    let out_id = NodeId::new(output_idx, 0);
+                    arena.insert_with_elem_size(out_id, data, elem_size as usize);
+                }
+            } else {
+                // Sequential: reuse single output buffer with swap-insert.
+                let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
+                for (i, instr) in level_instrs.iter().enumerate() {
+                    // Prefetch next instruction in this level.
+                    if i + 1 < level_instrs.len() {
+                        let next = &level_instrs[i + 1];
+                        for &idx in &next.input_indices {
+                            let id = NodeId::new(idx, 0);
+                            if let Ok(data) = arena.get(id) {
+                                prefetch_read(data.as_ptr());
+                            }
+                        }
+                        if next.weight_offset_hint > 0 {
+                            let offset = next.weight_offset_hint as usize;
+                            if offset < tape_ctx.weights.len() {
+                                prefetch_read(tape_ctx.weights[offset..].as_ptr());
+                            }
+                        }
+                    }
+
+                    {
+                        let input_refs: SmallVec<[&[u8]; 4]> = instr
+                            .input_indices
+                            .iter()
+                            .map(|&idx| arena.get(NodeId::new(idx, 0)))
+                            .collect::<ExecResult<SmallVec<_>>>()?;
+                        out_buf.clear();
+                        if instr.output_byte_hint > 0 {
+                            out_buf.reserve(instr.output_byte_hint as usize);
+                        }
+                        dispatch_kernel(&instr.kernel, &input_refs, tape_ctx, &mut out_buf)?;
+                    }
+
+                    let out_id = NodeId::new(instr.output_idx, 0);
+                    arena.swap_insert_with_elem_size(
+                        out_id,
+                        &mut out_buf,
+                        instr.output_elem_size as usize,
+                    );
+                }
+            }
         }
 
         Ok(())

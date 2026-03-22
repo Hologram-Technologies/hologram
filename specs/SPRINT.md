@@ -190,9 +190,14 @@
 - [x] **11.1**: `weight_offset_hint` on TapeInstruction + prefetch in execute loop for LUT-GEMM constants
 - [x] **11.4**: LUT-GEMM Q4 tape integration test (build graph with quantized weights, execute via tape)
 
-### Phase 12: Next Optimizations (TODO)
-- [ ] **12.1**: Parallel level execution for EnumTape (Rayon within levels, matching KvExecutor)
-- [ ] **12.2**: Native `_into` for Conv2d, Attention (extend `dispatch_custom_into`)
+### Phase 12: Parallel Tape Execution
+- [x] **12.1**: `execute_parallel` on EnumTape — Rayon within levels for ≥4 independent instructions
+- [x] **12.1b**: `dispatch_kernel_par` — Sync-safe dispatch (skips RefCell ops: LUT-GEMM, KvCache)
+- [x] **12.1c**: Adaptive threshold — falls back to sequential for small levels or shared-state ops
+
+### Phase 13: Remaining Optimizations (TODO)
+- [ ] **13.1**: Native `_into` for Attention (extend `dispatch_custom_into`)
+- [ ] **13.2**: Native `_into` for Conv2d (extend `dispatch_custom_into`)
 
 ---
 
