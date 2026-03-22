@@ -227,11 +227,17 @@
 - [x] **1.9**: `build.rs` auto-detection + `cargo::rustc-check-cfg` registration
 - [x] **1.10**: `TapeContext.backend` field with `BackendSelector::Auto` default
 
-### Phase 2: GPU Kernel Implementations (TODO — future sprints)
-- [ ] **2.1**: Metal compute shaders (matmul, elementwise, softmax, attention)
-- [ ] **2.2**: CUDA kernel implementations
-- [ ] **2.3**: WebGPU/wgpu compute shader path
-- [ ] **2.4**: GPU buffer management (upload/download, buffer pooling)
+### Phase 2: Backend Wiring + Monomorphized Binary Dispatch
+- [x] **2.1**: `dispatch_kernel` queries `backend.dispatch_float()` before CPU fallback
+- [x] **2.2**: Backend resolved once at `execute()` start via `BackendSelector::resolve()`
+- [x] **2.3**: Monomorphized binary elementwise (Add, Sub, Mul, Div, Min, Max — enables SIMD)
+
+### Phase 3: GPU Kernel Implementations (TODO — future sprints)
+**Plan**: [plans/010-metal-compute-kernels.md](plans/010-metal-compute-kernels.md)
+- [ ] **3.1**: Metal compute shaders (matmul, elementwise, softmax, attention)
+- [ ] **3.2**: CUDA kernel implementations
+- [ ] **3.3**: WebGPU/wgpu compute shader path
+- [ ] **3.4**: GPU buffer management (MTLBuffer pool, zero-copy unified memory)
 
 ---
 
