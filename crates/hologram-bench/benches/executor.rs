@@ -293,6 +293,118 @@ fn bench_inline_vs_generic(c: &mut Criterion) {
     });
 }
 
+/// Build a synthetic single-layer transformer graph (TinyLlama-scale).
+///
+/// Graph structure: Input → RmsNorm → Q/K/V MatMul → Add (residual)
+///   → RmsNorm → FFN gate MatMul → Silu → FFN up MatMul → Mul → FFN down MatMul → Add → Output
+///
+/// Simplified from the full spec: omits Attention (which requires specific head layouts)
+/// and uses the FFN + norm chain that dominates real inference time.
+fn build_transformer_layer() -> (Vec<u8>, Vec<u8>) {
+    use hologram_core::op::FloatOp;
+    use hologram_graph::constant::ConstantData;
+
+    let hidden = 2048usize;
+    let ffn = 5632usize;
+    let epsilon = f32::to_bits(1e-5);
+
+    // Random weight data (f32 bytes). Content doesn't matter for benchmarking.
+    let make_weight = |rows: usize, cols: usize| -> Vec<u8> {
+        vec![0x3f; rows * cols * 4] // ~0.75 as f32 bytes (approximate)
+    };
+
+    let norm_weight = make_weight(1, hidden);          // [hidden]
+    let qkv_weight = make_weight(hidden, hidden);      // [hidden, hidden] (simplified: Q only)
+    let out_weight = make_weight(hidden, hidden);       // [hidden, hidden]
+    let gate_weight = make_weight(hidden, ffn);         // [hidden, ffn]
+    let up_weight = make_weight(hidden, ffn);           // [hidden, ffn]
+    let down_weight = make_weight(ffn, hidden);         // [ffn, hidden]
+
+    // Node indices:
+    // 0: Input
+    // 1: norm_w1 (constant)
+    // 2: RmsNorm (attention)
+    // 3: qkv_w (constant)
+    // 4: MatMul Q projection
+    // 5: out_w (constant)
+    // 6: MatMul output projection
+    // 7: Add (residual 1)
+    // 8: norm_w2 (constant)
+    // 9: RmsNorm (FFN)
+    // 10: gate_w (constant)
+    // 11: MatMul gate
+    // 12: Silu
+    // 13: up_w (constant)
+    // 14: MatMul up
+    // 15: Mul (gate * up)
+    // 16: down_w (constant)
+    // 17: MatMul down
+    // 18: Add (residual 2)
+    // 19: Output
+
+    let g = GraphBuilder::new()
+        .input("x")
+        .node_from_graph_input(GraphOp::Input, 0)                           // 0: Input
+        .constant_with_shape(ConstantData::Bytes(norm_weight.clone()), vec![hidden])  // 1: norm_w1
+        .node_with_inputs(GraphOp::Float(FloatOp::RmsNorm { size: hidden as u32, epsilon }), &[0, 1])  // 2: RmsNorm
+        .constant_with_shape(ConstantData::Bytes(qkv_weight), vec![hidden, hidden])  // 3: qkv_w
+        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: hidden as u32 }), &[2, 3])  // 4: Q MatMul
+        .constant_with_shape(ConstantData::Bytes(out_weight), vec![hidden, hidden])  // 5: out_w
+        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: hidden as u32 }), &[4, 5])  // 6: out MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[0, 6])            // 7: Add residual
+        .constant_with_shape(ConstantData::Bytes(norm_weight), vec![hidden]) // 8: norm_w2
+        .node_with_inputs(GraphOp::Float(FloatOp::RmsNorm { size: hidden as u32, epsilon }), &[7, 8])  // 9: RmsNorm FFN
+        .constant_with_shape(ConstantData::Bytes(gate_weight), vec![hidden, ffn])  // 10: gate_w
+        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: ffn as u32 }), &[9, 10])  // 11: gate MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[11])             // 12: Silu
+        .constant_with_shape(ConstantData::Bytes(up_weight), vec![hidden, ffn])  // 13: up_w
+        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: hidden as u32, n: ffn as u32 }), &[9, 13])  // 14: up MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[12, 14])          // 15: Mul gate*up
+        .constant_with_shape(ConstantData::Bytes(down_weight), vec![ffn, hidden])  // 16: down_w
+        .node_with_inputs(GraphOp::Float(FloatOp::MatMul { m: 1, k: ffn as u32, n: hidden as u32 }), &[15, 16])  // 17: down MatMul
+        .node_with_inputs(GraphOp::Float(FloatOp::Add), &[7, 17])           // 18: Add residual
+        .node_with_inputs(GraphOp::Output, &[18])                            // 19: Output
+        .output("y", 19)
+        .build();
+
+    let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+    // f32 input: [1, 1, 2048] = 8KB
+    let input_f32: Vec<u8> = (0..hidden)
+        .flat_map(|i| ((i as f32) * 0.001).to_le_bytes())
+        .collect();
+
+    (archive, input_f32)
+}
+
+fn bench_transformer_layer(c: &mut Criterion) {
+    let (archive, input_f32) = build_transformer_layer();
+
+    let mut inputs = GraphInputs::new();
+    inputs.set(0, input_f32);
+
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+    let tape = hologram_exec::mmap::build_tape_from_plan(&plan).unwrap();
+
+    let mut group = c.benchmark_group("transformer");
+
+    group.bench_function("kvexecutor(decode_step)", |b| {
+        b.iter(|| execute_bytes(black_box(&archive), black_box(&inputs)))
+    });
+
+    group.bench_function("enum_tape(decode_step)", |b| {
+        b.iter(|| {
+            hologram_exec::mmap::execute_tape(
+                black_box(&tape),
+                black_box(&plan),
+                black_box(&inputs),
+            )
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_executor_linear,
@@ -304,5 +416,6 @@ criterion_group!(
     bench_enum_tape_linear,
     bench_enum_tape_vs_kvexecutor,
     bench_inline_vs_generic,
+    bench_transformer_layer,
 );
 criterion_main!(benches);

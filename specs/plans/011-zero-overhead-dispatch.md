@@ -146,6 +146,96 @@ Add `inline_unary_inplace(buf, f)` helper and `dispatch_inplace(kernel, buf)` ma
 
 ---
 
+---
+
+## Phase 9c: Typed Arena Access (eliminate per-call bytemuck cast)
+
+### Step 9c.1: `arena.get_f32(id)` → `&[f32]`
+Add to `BufferArena` in `arena.rs`:
+```rust
+pub fn get_f32(&self, id: NodeId) -> ExecResult<&[f32]> {
+    Ok(bytemuck::cast_slice(self.get(id)?))
+}
+```
+
+### Step 9c.2: `arena.get_mut_f32(id)` → `&mut [f32]`
+For in-place ops. Only works on `Owned` buffers:
+```rust
+pub fn get_mut_f32(&mut self, id: NodeId) -> ExecResult<&mut [f32]> {
+    // return mutable f32 view into Owned(Vec<u8>)
+}
+```
+
+### Step 9c.3: Typed kernel signatures
+Add `inline_unary_f32(input: &[f32], out_buf, f)` and `inline_binary_f32(a: &[f32], b: &[f32], out_buf, f)`. These skip the input-side `cast_slice` — caller does it once. Output-side cast remains (out_buf is `Vec<u8>` for swap_insert compatibility).
+
+### Step 9c.4: Update dispatch call sites
+All InlineRelu..InlineDiv arms in `dispatch_kernel` cast once then call `_f32` variant.
+
+### Step 9c.5: In-place path via `get_mut_f32`
+Replace `take` + `insert` dance with `arena.get_mut_f32(src_id)` → modify in-place → `arena.move_slot(src, dst)`.
+
+---
+
+## Phase 9d: Direct Input Access (eliminate SmallVec for known arity)
+
+### Step 9d.1: `TapeKernel::inline_arity()` method
+Returns `Some(1)` for unary inline ops, `Some(2)` for binary, `None` for others.
+
+### Step 9d.2: Restructure execute loop
+New flow in `EnumTape::execute`:
+1. Check passthrough → continue
+2. Check can_reuse_input → continue
+3. **If inline unary**: `arena.get_f32(input_indices[0])` directly → `dispatch_inline_unary` → swap_insert → continue (no SmallVec)
+4. **If inline binary**: two direct `arena.get_f32` calls → `dispatch_inline_binary` → swap_insert → continue
+5. Fallback: collect SmallVec, call `dispatch_kernel` (Float, Lut, KV, MatMul, etc.)
+
+### Step 9d.3: `dispatch_inline_unary` / `dispatch_inline_binary`
+Thin match wrappers that call `inline_unary_f32` / `inline_binary_f32` with the correct closure per variant.
+
+### Step 9d.4: Update `execute_parallel`
+Same restructuring for the sequential fallback path within `execute_parallel`.
+
+### Step 9d.5: Remove inline arms from `dispatch_kernel`
+InlineRelu..InlineDiv arms become unreachable for the normal execute path. Keep them as safety net initially, remove once tests pass.
+
+---
+
+## Phase 9e: Unsafe Fast Path (eliminate bounds checks in hot loop)
+
+### Step 9e.1: `set_len` instead of `resize` in inline kernels
+In `inline_unary_f32` / `inline_binary_f32`, replace `out_buf.resize(base + byte_len, 0)` with `unsafe { out_buf.set_len(base + byte_len) }` after `reserve`. SAFETY: the kernel loop writes every f32 element before return.
+
+### Step 9e.2: Unchecked arena access
+Add to `BufferArena`:
+```rust
+pub unsafe fn get_unchecked(&self, id: NodeId) -> &[u8]
+pub unsafe fn get_f32_unchecked(&self, id: NodeId) -> &[f32]
+```
+SAFETY: tape builder guarantees all input_indices reference valid nodes; arena seeded with all constants/inputs before execute.
+
+### Step 9e.3: Use unchecked access in execute loop
+Replace `arena.get_f32(id)?` with `unsafe { arena.get_f32_unchecked(id) }` in inline fast paths.
+
+### Step 9e.4: Unchecked `input_indices` access
+For inline unary: `*unsafe { instr.input_indices.get_unchecked(0) }`.
+SAFETY: `inline_arity()` returned `Some(1)`, so `input_indices.len() >= 1`.
+
+### Step 9e.5: Debug-mode validation gate
+All unsafe paths gated with `#[cfg(not(debug_assertions))]` — debug builds use checked paths.
+
+---
+
+## Commit Sequence
+
+1. **9c**: Arena typed accessors + refactored kernel signatures
+2. **9d**: Execute loop restructure — direct arena access, skip SmallVec
+3. **9e**: Unsafe fast paths + debug-mode gates
+
+Each commit independently passes `cargo test` and conformance tests.
+
+---
+
 ## Verification
 
 1. `cargo test --workspace` — all existing tests pass
