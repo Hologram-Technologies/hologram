@@ -172,13 +172,15 @@ use hologram_core::op::PrimOp;
 use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 
+use crate::backend::BackendSelector;
 use crate::kv::weight_cache::WeightCache;
 use crate::kv_cache::KvCacheState;
 
 /// Execution context for the enum-dispatch tape.
 ///
 /// Carries weight archive access, a lazily-populated weight cache
-/// for LUT-GEMM ops, and an optional KV cache for autoregressive generation.
+/// for LUT-GEMM ops, an optional KV cache for autoregressive generation,
+/// and a backend selector for multi-backend dispatch (CPU/Metal/CUDA/WebGPU).
 pub struct TapeContext<'a> {
     /// Optional per-inference execution state (position offset, etc.).
     pub ctx: Option<ExecutionContext>,
@@ -189,12 +191,15 @@ pub struct TapeContext<'a> {
     /// Lazily-populated cache for deserialized quantized weights.
     pub weight_cache: RefCell<WeightCache>,
     /// Optional KV cache for autoregressive generation (KvWrite/KvRead ops).
-    /// `None` for non-autoregressive execution (prefill-only, non-LLM models).
     pub kv_state: Option<RefCell<KvCacheState>>,
+    /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
+    /// Resolved to a concrete `&dyn ComputeBackend` once at execute start.
+    pub backend: BackendSelector,
 }
 
 impl<'a> TapeContext<'a> {
     /// Create a context from a constant store and weight archive.
+    /// Uses `BackendSelector::Auto` (best available backend).
     #[must_use]
     pub fn new(constants: &'a ConstantStore, weights: &'a [u8]) -> Self {
         TapeContext {
@@ -203,6 +208,7 @@ impl<'a> TapeContext<'a> {
             weights,
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: None,
+            backend: BackendSelector::Auto,
         }
     }
 
@@ -219,6 +225,7 @@ impl<'a> TapeContext<'a> {
             weights,
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: Some(RefCell::new(kv)),
+            backend: BackendSelector::Auto,
         }
     }
 }

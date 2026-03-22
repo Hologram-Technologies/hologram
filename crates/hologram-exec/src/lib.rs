@@ -4,6 +4,7 @@
 //! Graphs are executed level-by-level, where nodes within a level have
 //! all dependencies satisfied and can run concurrently (via rayon when enabled).
 
+pub mod backend;
 pub mod buffer;
 pub mod dirty_bits;
 pub mod error;

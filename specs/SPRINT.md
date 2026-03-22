@@ -211,6 +211,30 @@
 
 ---
 
+## Sprint 16: Multi-Backend Dispatch Architecture
+
+**Plan**: [plans/009-multi-backend-dispatch.md](plans/009-multi-backend-dispatch.md)
+
+### Phase 1: Backend Abstraction + Auto-Detection
+- [x] **1.1**: `ComputeBackend` trait (dispatch_float, dispatch_matmul, name)
+- [x] **1.2**: `CpuBackend` wrapping existing monomorphized SIMD dispatch
+- [x] **1.3**: `MetalBackend` stub (auto-detected on macOS via build.rs `has_metal`)
+- [x] **1.4**: `CudaBackend` stub (auto-detected via CUDA_HOME / nvcc)
+- [x] **1.5**: `WebGpuBackend` stub (auto-detected on wasm32 targets)
+- [x] **1.6**: `BackendSelector` enum (Auto/Cpu/Metal/Cuda/WebGpu) with `resolve()`
+- [x] **1.7**: `default_backend()` priority: CUDA > Metal > WebGPU > CPU
+- [x] **1.8**: `available_backends()` introspection
+- [x] **1.9**: `build.rs` auto-detection + `cargo::rustc-check-cfg` registration
+- [x] **1.10**: `TapeContext.backend` field with `BackendSelector::Auto` default
+
+### Phase 2: GPU Kernel Implementations (TODO — future sprints)
+- [ ] **2.1**: Metal compute shaders (matmul, elementwise, softmax, attention)
+- [ ] **2.2**: CUDA kernel implementations
+- [ ] **2.3**: WebGPU/wgpu compute shader path
+- [ ] **2.4**: GPU buffer management (upload/download, buffer pooling)
+
+---
+
 ## Sprint 12: Prism Ontology Integration
 
 - [x] Annotate `DispatchContext` as SaturatedContext (PP_1, PI_1, PA_4)
