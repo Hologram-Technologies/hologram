@@ -261,11 +261,17 @@
 - [x] **6.3**: `insert_metal(id, metal::Buffer, elem_size)` — store GPU buffers directly in arena
 - [x] **6.4**: `into_owned()` for take() — copies Metal buffer to Vec only when needed
 
-### Phase 7: Remaining GPU Work (TODO — future sprints)
-- [ ] **7.1**: Metal dispatch uses `insert_metal` for output (skip Vec copy)
-- [ ] **7.2**: Async command buffer batching (per-level, amortize launch overhead)
-- [ ] **7.3**: CUDA kernel implementations
-- [ ] **7.4**: WebGPU/wgpu compute shader path
+### Phase 7: Zero-Copy Metal Output Path
+- [x] **7.1**: `KernelOutput` enum (Skipped / Bytes / MetalBuffer) — dispatch tells executor how to store result
+- [x] **7.2**: `DispatchResult` in tape.rs — execute loop handles Metal buffers via `insert_metal`
+- [x] **7.3**: Metal unary dispatch returns `MetalBuffer` directly (skip Vec copy on output)
+- [x] **7.4**: `ComputeBackend` trait updated — all backends return `KernelOutput` instead of `bool`
+
+### Phase 8: Remaining GPU Work (TODO — future sprints)
+- [ ] **8.1**: Metal binary/matmul/softmax/rmsnorm also return MetalBuffer (extend zero-copy)
+- [ ] **8.2**: Async command buffer batching (per-level, amortize launch overhead)
+- [ ] **8.3**: CUDA kernel implementations
+- [ ] **8.4**: WebGPU/wgpu compute shader path
 
 ---
 

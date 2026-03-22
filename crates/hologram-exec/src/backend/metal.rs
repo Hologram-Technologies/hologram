@@ -371,28 +371,24 @@ impl MetalBackend {
     }
 
     /// Dispatch a unary elementwise op on the GPU.
+    /// Returns the output Metal buffer directly — zero-copy into arena.
     fn dispatch_unary(
         &self,
         pipeline: &ComputePipelineState,
         input: &[u8],
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    ) -> ExecResult<metal::Buffer> {
         let n_floats = input.len() / 4;
         let byte_len = n_floats * 4;
 
-        // Create input buffer (shared memory — no copy on Apple Silicon).
         let input_buf = self.device.new_buffer_with_data(
             input.as_ptr() as *const _,
             input.len() as u64,
             MTLResourceOptions::StorageModeShared,
         );
-
-        // Create output buffer.
         let output_buf = self
             .device
             .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
 
-        // Count buffer.
         let count = n_floats as u32;
         let count_buf = self.device.new_buffer_with_data(
             &count as *const u32 as *const _,
@@ -400,7 +396,6 @@ impl MetalBackend {
             MTLResourceOptions::StorageModeShared,
         );
 
-        // Encode + dispatch.
         let cmd_buf = self.queue.new_command_buffer();
         let encoder = cmd_buf.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
@@ -417,12 +412,7 @@ impl MetalBackend {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        // Copy output to out_buf.
-        let output_ptr = output_buf.contents() as *const u8;
-        let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, byte_len) };
-        out_buf.extend_from_slice(output_slice);
-
-        Ok(())
+        Ok(output_buf)
     }
 
     /// Dispatch a binary elementwise op on the GPU.
@@ -622,7 +612,7 @@ impl ComputeBackend for MetalBackend {
         op: &FloatOp,
         inputs: &[&[u8]],
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<super::KernelOutput> {
         // MatMul: route to dispatch_matmul (separate size threshold).
         if let FloatOp::MatMul { m, k, n } = op {
             return self.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf);
@@ -633,9 +623,9 @@ impl ComputeBackend for MetalBackend {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= METAL_MIN_BYTES && *size > 0 {
                 self.dispatch_softmax(inputs[0], *size as usize, out_buf)?;
-                return Ok(true);
+                return Ok(super::KernelOutput::Bytes);
             }
-            return Ok(false);
+            return Ok(super::KernelOutput::Skipped);
         }
 
         // RmsNorm: route with row_size + epsilon parameters.
@@ -649,37 +639,37 @@ impl ComputeBackend for MetalBackend {
                     f32::from_bits(*epsilon),
                     out_buf,
                 )?;
-                return Ok(true);
+                return Ok(super::KernelOutput::Bytes);
             }
-            return Ok(false);
+            return Ok(super::KernelOutput::Skipped);
         }
 
         // Skip Metal for small buffers — CPU SIMD is faster.
         let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
         if input_bytes < METAL_MIN_BYTES {
-            return Ok(false);
+            return Ok(super::KernelOutput::Skipped);
         }
 
         // Look up kernel name and pipeline.
         let name = match Self::kernel_name(op) {
             Some(n) => n,
-            None => return Ok(false),
+            None => return Ok(super::KernelOutput::Skipped),
         };
         let pipeline = match self.pipelines.get(name) {
             Some(p) => p,
-            None => return Ok(false),
+            None => return Ok(super::KernelOutput::Skipped),
         };
 
         match op.category() {
             OpCategory::UnaryElementwise => {
-                self.dispatch_unary(pipeline, inputs[0], out_buf)?;
-                Ok(true)
+                let metal_buf = self.dispatch_unary(pipeline, inputs[0])?;
+                Ok(super::KernelOutput::MetalBuffer(metal_buf))
             }
             OpCategory::BinaryElementwise if inputs.len() >= 2 => {
                 self.dispatch_binary(pipeline, inputs[0], inputs[1], out_buf)?;
-                Ok(true)
+                Ok(super::KernelOutput::Bytes)
             }
-            _ => Ok(false),
+            _ => Ok(super::KernelOutput::Skipped),
         }
     }
 
@@ -690,21 +680,21 @@ impl ComputeBackend for MetalBackend {
         k: usize,
         n: usize,
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<super::KernelOutput> {
         // Metal matmul only worthwhile for large matrices.
         // Crossover vs Accelerate BLAS is ~128×128 on M-series.
         let out_elements = m * n;
         if out_elements < 128 * 128 {
-            return Ok(false);
+            return Ok(super::KernelOutput::Skipped);
         }
 
         let pipeline = match self.pipelines.get("sgemm") {
             Some(p) => p,
-            None => return Ok(false),
+            None => return Ok(super::KernelOutput::Skipped),
         };
 
         if inputs.len() < 2 {
-            return Ok(false);
+            return Ok(super::KernelOutput::Skipped);
         }
 
         let byte_len = out_elements * 4;
@@ -764,7 +754,7 @@ impl ComputeBackend for MetalBackend {
         let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, byte_len) };
         out_buf.extend_from_slice(output_slice);
 
-        Ok(true)
+        Ok(super::KernelOutput::Bytes)
     }
 
     fn name(&self) -> &'static str {

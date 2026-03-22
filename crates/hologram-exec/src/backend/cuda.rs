@@ -18,8 +18,8 @@ impl ComputeBackend for CudaBackend {
         _op: &FloatOp,
         _inputs: &[&[u8]],
         _out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
-        Ok(false)
+    ) -> ExecResult<super::KernelOutput> {
+        Ok(super::KernelOutput::Skipped)
     }
 
     fn dispatch_matmul(
@@ -29,8 +29,8 @@ impl ComputeBackend for CudaBackend {
         _k: usize,
         _n: usize,
         _out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
-        Ok(false)
+    ) -> ExecResult<super::KernelOutput> {
+        Ok(super::KernelOutput::Skipped)
     }
 
     fn name(&self) -> &'static str {

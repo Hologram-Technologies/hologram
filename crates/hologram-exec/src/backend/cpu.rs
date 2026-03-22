@@ -8,12 +8,12 @@ use hologram_core::op::FloatOp;
 
 use crate::error::ExecResult;
 
-use super::ComputeBackend;
+use super::{ComputeBackend, KernelOutput};
 
 /// CPU backend using monomorphized SIMD dispatch.
 ///
 /// This is always available and serves as the fallback for GPU backends
-/// that return `Ok(false)` (not yet implemented).
+/// that return `Skipped`.
 pub struct CpuBackend;
 
 impl ComputeBackend for CpuBackend {
@@ -22,9 +22,9 @@ impl ComputeBackend for CpuBackend {
         op: &FloatOp,
         inputs: &[&[u8]],
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<KernelOutput> {
         crate::float_dispatch::dispatch_float_into(op, inputs, None, out_buf)?;
-        Ok(true)
+        Ok(KernelOutput::Bytes)
     }
 
     fn dispatch_matmul(
@@ -34,9 +34,9 @@ impl ComputeBackend for CpuBackend {
         k: usize,
         n: usize,
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<KernelOutput> {
         crate::float_dispatch::matmul::dispatch_matmul_into(inputs, m, k, n, out_buf)?;
-        Ok(true)
+        Ok(KernelOutput::Bytes)
     }
 
     fn name(&self) -> &'static str {

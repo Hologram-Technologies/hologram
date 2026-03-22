@@ -268,10 +268,19 @@ pub enum TapeKernel {
     },
 }
 
-/// Dispatch a `TapeKernel` into a pre-allocated output buffer.
+/// Result of kernel dispatch — tells the execute loop how to store the output.
+enum DispatchResult {
+    /// Output written to `out_buf`. Store via swap_insert.
+    InOutBuf,
+    /// Output stored in a Metal GPU buffer. Insert directly into arena.
+    #[cfg(has_metal)]
+    MetalBuffer(metal::Buffer),
+}
+
+/// Dispatch a `TapeKernel`, returning how the output should be stored.
 ///
 /// For `Float` and `MatMul` ops, tries the selected backend first.
-/// Falls back to CPU dispatch if the backend returns `Ok(false)`.
+/// Falls back to CPU dispatch if the backend returns `Skipped`.
 #[inline]
 fn dispatch_kernel(
     kernel: &TapeKernel,
@@ -279,58 +288,78 @@ fn dispatch_kernel(
     tape_ctx: &TapeContext<'_>,
     backend: &dyn crate::backend::ComputeBackend,
     out_buf: &mut Vec<u8>,
-) -> ExecResult<()> {
+) -> ExecResult<DispatchResult> {
+    use crate::backend::KernelOutput;
     use crate::float_dispatch;
     use crate::kv::KvStore;
 
     match kernel {
         TapeKernel::Float(op) => {
             // Try selected backend (GPU/accelerator) first.
-            if backend.dispatch_float(op, inputs, out_buf)? {
-                return Ok(());
+            match backend.dispatch_float(op, inputs, out_buf)? {
+                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
+                #[cfg(has_metal)]
+                KernelOutput::MetalBuffer(buf) => {
+                    return Ok(DispatchResult::MetalBuffer(buf));
+                }
+                KernelOutput::Skipped => {}
             }
             // Fallback to CPU dispatch.
-            float_dispatch::dispatch_float_into(op, inputs, tape_ctx.ctx.as_ref(), out_buf)
+            float_dispatch::dispatch_float_into(op, inputs, tape_ctx.ctx.as_ref(), out_buf)?;
+            Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::FusedFloatChain(chain) => {
-            float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)
+            float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::Output => {
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
-            Ok(())
+            Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
             out_buf.extend_from_slice(&KvStore::apply_unary(view, inputs[0]));
-            Ok(())
+            Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::PrimBinary(p) => {
             let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
             out_buf.extend_from_slice(&r);
-            Ok(())
+            Ok(DispatchResult::InOutBuf)
         }
-        TapeKernel::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf),
-        TapeKernel::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf),
+        TapeKernel::MatMulLut4(cid) => {
+            dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut8(cid) => {
+            dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
         TapeKernel::KvWrite {
             layer,
             n_kv_heads,
             head_dim,
             is_key,
-        } => dispatch_kv_write(
-            inputs,
-            *layer,
-            *n_kv_heads,
-            *head_dim,
-            *is_key,
-            tape_ctx,
-            out_buf,
-        ),
+        } => {
+            dispatch_kv_write(
+                inputs,
+                *layer,
+                *n_kv_heads,
+                *head_dim,
+                *is_key,
+                tape_ctx,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
         TapeKernel::KvRead {
             layer,
             n_kv_heads,
             head_dim,
-        } => dispatch_kv_read(*layer, *n_kv_heads, *head_dim, tape_ctx, out_buf),
+        } => {
+            dispatch_kv_read(*layer, *n_kv_heads, *head_dim, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
     }
 }
 
@@ -647,7 +676,7 @@ impl EnumTape {
             }
 
             // Gather input refs and execute kernel in a scoped block.
-            {
+            let dispatch_result = {
                 let input_refs: SmallVec<[&[u8]; 4]> = instr
                     .input_indices
                     .iter()
@@ -663,11 +692,24 @@ impl EnumTape {
                     tape_ctx,
                     &*backend,
                     &mut out_buf,
-                )?;
-            }
+                )?
+            };
 
+            // Store output based on dispatch result.
             let out_id = NodeId::new(instr.output_idx, 0);
-            arena.swap_insert_with_elem_size(out_id, &mut out_buf, instr.output_elem_size as usize);
+            match dispatch_result {
+                DispatchResult::InOutBuf => {
+                    arena.swap_insert_with_elem_size(
+                        out_id,
+                        &mut out_buf,
+                        instr.output_elem_size as usize,
+                    );
+                }
+                #[cfg(has_metal)]
+                DispatchResult::MetalBuffer(metal_buf) => {
+                    arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
+                }
+            }
         }
 
         Ok(())

@@ -22,20 +22,45 @@ use hologram_core::op::FloatOp;
 
 use crate::error::ExecResult;
 
+/// Result of a backend kernel dispatch.
+///
+/// Tells the tape executor HOW to store the result:
+/// - `Skipped`: backend didn't handle this op → fall back to CPU
+/// - `Bytes`: result written to `out_buf` (CPU path, or GPU→copy path)
+/// - `MetalBuffer`: result stored in a GPU buffer → insert directly into arena
+pub enum KernelOutput {
+    /// Backend did not handle this op. Fall back to CPU dispatch.
+    Skipped,
+    /// Result written to the provided `out_buf`. Store via swap_insert.
+    Bytes,
+    /// Result stored in a Metal GPU buffer. Insert directly into arena (zero-copy).
+    #[cfg(has_metal)]
+    MetalBuffer(::metal::Buffer),
+}
+
+impl KernelOutput {
+    /// Whether the backend handled the op (not Skipped).
+    #[inline]
+    #[must_use]
+    pub fn handled(&self) -> bool {
+        !matches!(self, KernelOutput::Skipped)
+    }
+}
+
 /// Compute backend for tape kernel dispatch.
 ///
 /// Each backend implements dispatch for the op types it supports.
-/// Methods return `Ok(true)` if handled, `Ok(false)` to fall back to CPU.
+/// Returns `KernelOutput` indicating how the result should be stored.
 pub trait ComputeBackend: Send + Sync {
-    /// Dispatch a float op into the output buffer.
+    /// Dispatch a float op. Writes to `out_buf` or returns a Metal buffer.
     fn dispatch_float(
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool>;
+    ) -> ExecResult<KernelOutput>;
 
-    /// Dispatch a matmul (M×K × K×N) into the output buffer.
+    /// Dispatch a matmul (M×K × K×N). Writes to `out_buf` or returns a Metal buffer.
     fn dispatch_matmul(
         &self,
         inputs: &[&[u8]],
@@ -43,7 +68,7 @@ pub trait ComputeBackend: Send + Sync {
         k: usize,
         n: usize,
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool>;
+    ) -> ExecResult<KernelOutput>;
 
     /// Backend name for diagnostics and logging.
     fn name(&self) -> &'static str;
@@ -141,7 +166,7 @@ impl ComputeBackend for CachedMetalBackend {
         op: &FloatOp,
         inputs: &[&[u8]],
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<KernelOutput> {
         self.0.dispatch_float(op, inputs, out_buf)
     }
     fn dispatch_matmul(
@@ -151,7 +176,7 @@ impl ComputeBackend for CachedMetalBackend {
         k: usize,
         n: usize,
         out_buf: &mut Vec<u8>,
-    ) -> ExecResult<bool> {
+    ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
     }
     fn name(&self) -> &'static str {
@@ -235,7 +260,10 @@ mod tests {
         let handled = b
             .dispatch_matmul(&inputs, m, k, n, &mut out_buf)
             .expect("Metal matmul dispatch failed");
-        assert!(handled, "Metal should handle 128×64 × 64×128 matmul");
+        assert!(
+            handled.handled(),
+            "Metal should handle 128×64 × 64×128 matmul"
+        );
         assert_eq!(out_buf.len(), m * n * 4);
 
         let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
@@ -283,7 +311,10 @@ mod tests {
                 &mut out_buf,
             )
             .expect("Metal softmax dispatch failed");
-        assert!(handled, "Metal should handle softmax on large buffer");
+        assert!(
+            handled.handled(),
+            "Metal should handle softmax on large buffer"
+        );
         assert_eq!(out_buf.len(), input.len());
 
         // Each row should sum to ~1.0
@@ -311,14 +342,25 @@ mod tests {
         let inputs: Vec<&[u8]> = vec![&input];
 
         let mut out_buf = Vec::new();
-        let handled = b
+        let result = b
             .dispatch_float(&FloatOp::Relu, &inputs, &mut out_buf)
             .expect("Metal dispatch failed");
-        assert!(handled, "Metal should handle Relu on 8KB buffer");
-        assert_eq!(out_buf.len(), input.len());
+        assert!(result.handled(), "Metal should handle Relu on 6MB buffer");
+
+        // Extract output bytes — may be in out_buf (Bytes) or Metal buffer.
+        let output_bytes: Vec<u8> = match result {
+            KernelOutput::Bytes => out_buf,
+            #[cfg(has_metal)]
+            KernelOutput::MetalBuffer(buf) => {
+                let ptr = buf.contents() as *const u8;
+                unsafe { std::slice::from_raw_parts(ptr, buf.length() as usize) }.to_vec()
+            }
+            KernelOutput::Skipped => panic!("expected handled"),
+        };
+        assert_eq!(output_bytes.len(), input.len());
 
         // Verify: negative values → 0, positive values unchanged.
-        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        let out_floats: &[f32] = bytemuck::cast_slice(&output_bytes);
         // Spot-check a few values instead of all 1.5M.
         let check_indices = [0, 1000, 750_000, 1_000_000, 1_499_999];
         for &i in &check_indices {
