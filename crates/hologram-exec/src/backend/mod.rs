@@ -77,7 +77,16 @@ impl BackendSelector {
             Self::Auto => default_backend(),
             Self::Cpu => Box::new(cpu::CpuBackend),
             #[cfg(has_metal)]
-            Self::Metal => Box::new(metal::MetalBackend),
+            Self::Metal => {
+                // Reuse the process-global cached Metal backend.
+                use std::sync::{Arc, OnceLock};
+                static METAL_SEL: OnceLock<Option<Arc<metal::MetalBackend>>> = OnceLock::new();
+                let cached = METAL_SEL.get_or_init(|| metal::MetalBackend::new().map(Arc::new));
+                match cached {
+                    Some(b) => Box::new(CachedMetalBackend(Arc::clone(b))),
+                    None => Box::new(cpu::CpuBackend),
+                }
+            }
             #[cfg(has_cuda)]
             Self::Cuda => Box::new(cuda::CudaBackend),
             #[cfg(has_webgpu)]
@@ -92,16 +101,24 @@ impl BackendSelector {
 /// Returns the best available backend for the current build.
 ///
 /// Priority: CUDA > Metal > WebGPU > CPU.
+/// The returned backend is cached — repeated calls return the same instance.
 #[must_use]
 pub fn default_backend() -> Box<dyn ComputeBackend> {
+    // Use a process-global cached Metal backend to avoid re-compiling
+    // shaders on every resolve() call.
+    #[cfg(has_metal)]
+    {
+        use std::sync::{Arc, OnceLock};
+        static METAL: OnceLock<Option<Arc<metal::MetalBackend>>> = OnceLock::new();
+        let cached = METAL.get_or_init(|| metal::MetalBackend::new().map(Arc::new));
+        if let Some(backend) = cached {
+            return Box::new(CachedMetalBackend(Arc::clone(backend)));
+        }
+    }
+
     #[cfg(has_cuda)]
     {
         return Box::new(cuda::CudaBackend);
-    }
-
-    #[cfg(has_metal)]
-    {
-        return Box::new(metal::MetalBackend);
     }
 
     #[cfg(has_webgpu)]
@@ -111,6 +128,35 @@ pub fn default_backend() -> Box<dyn ComputeBackend> {
 
     #[allow(unreachable_code)]
     Box::new(cpu::CpuBackend)
+}
+
+/// Wrapper that delegates to a shared MetalBackend via Arc.
+#[cfg(has_metal)]
+struct CachedMetalBackend(std::sync::Arc<metal::MetalBackend>);
+
+#[cfg(has_metal)]
+impl ComputeBackend for CachedMetalBackend {
+    fn dispatch_float(
+        &self,
+        op: &FloatOp,
+        inputs: &[&[u8]],
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<bool> {
+        self.0.dispatch_float(op, inputs, out_buf)
+    }
+    fn dispatch_matmul(
+        &self,
+        inputs: &[&[u8]],
+        m: usize,
+        k: usize,
+        n: usize,
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<bool> {
+        self.0.dispatch_matmul(inputs, m, k, n, out_buf)
+    }
+    fn name(&self) -> &'static str {
+        "metal"
+    }
 }
 
 /// List all backends available in this build.
@@ -151,5 +197,51 @@ mod tests {
     fn cpu_selector_forces_cpu() {
         let b = BackendSelector::Cpu.resolve();
         assert_eq!(b.name(), "cpu");
+    }
+
+    #[cfg(has_metal)]
+    #[test]
+    fn metal_backend_available_on_macos() {
+        assert!(available_backends().contains(&"metal"));
+        let b = BackendSelector::Auto.resolve();
+        // On macOS, Auto should pick Metal (higher priority than CPU).
+        assert_eq!(b.name(), "metal");
+    }
+
+    #[cfg(has_metal)]
+    #[test]
+    fn metal_dispatch_relu() {
+        use hologram_core::op::FloatOp;
+
+        let b = BackendSelector::Metal.resolve();
+        // Create f32 input: 1.5M floats = 6MB (above Metal threshold of 4MB)
+        let input: Vec<u8> = (0..1_500_000u32)
+            .flat_map(|i| {
+                let v = (i as f32 - 750_000.0) * 0.001;
+                v.to_le_bytes()
+            })
+            .collect();
+        let inputs: Vec<&[u8]> = vec![&input];
+
+        let mut out_buf = Vec::new();
+        let handled = b
+            .dispatch_float(&FloatOp::Relu, &inputs, &mut out_buf)
+            .expect("Metal dispatch failed");
+        assert!(handled, "Metal should handle Relu on 8KB buffer");
+        assert_eq!(out_buf.len(), input.len());
+
+        // Verify: negative values → 0, positive values unchanged.
+        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        // Spot-check a few values instead of all 1.5M.
+        let check_indices = [0, 1000, 750_000, 1_000_000, 1_499_999];
+        for &i in &check_indices {
+            let src = (i as f32 - 750_000.0) * 0.001;
+            let expected = src.max(0.0);
+            let got = out_floats[i];
+            assert!(
+                (got - expected).abs() < 1e-4,
+                "Relu mismatch at {i}: got {got}, expected {expected}"
+            );
+        }
     }
 }

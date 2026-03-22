@@ -232,12 +232,22 @@
 - [x] **2.2**: Backend resolved once at `execute()` start via `BackendSelector::resolve()`
 - [x] **2.3**: Monomorphized binary elementwise (Add, Sub, Mul, Div, Min, Max — enables SIMD)
 
-### Phase 3: GPU Kernel Implementations (TODO — future sprints)
+### Phase 3: Metal Compute Shader Kernels
 **Plan**: [plans/010-metal-compute-kernels.md](plans/010-metal-compute-kernels.md)
-- [ ] **3.1**: Metal compute shaders (matmul, elementwise, softmax, attention)
-- [ ] **3.2**: CUDA kernel implementations
-- [ ] **3.3**: WebGPU/wgpu compute shader path
-- [ ] **3.4**: GPU buffer management (MTLBuffer pool, zero-copy unified memory)
+- [x] **3.1**: `metal` crate (0.33) dependency, auto-linked on macOS
+- [x] **3.2**: MetalBackend with shader compilation + pipeline caching (9 unary + 4 binary kernels)
+- [x] **3.3**: Process-global cached backend via `OnceLock<Arc<MetalBackend>>` (shader compiled once)
+- [x] **3.4**: Unary dispatch (relu, neg, abs, sigmoid, silu, tanh, exp, reciprocal, gelu)
+- [x] **3.5**: Binary dispatch (add, sub, mul, div) with broadcasting
+- [x] **3.6**: Size threshold (4MB) — CPU SIMD for small buffers, Metal for large
+- [x] **3.7**: Metal conformance test (1.5M float relu, spot-check correctness)
+
+### Phase 4: Remaining GPU Work (TODO — future sprints)
+- [ ] **4.1**: Metal tiled SGEMM matmul (biggest inference impact)
+- [ ] **4.2**: Metal softmax + RmsNorm (parallel reductions)
+- [ ] **4.3**: CUDA kernel implementations
+- [ ] **4.4**: WebGPU/wgpu compute shader path
+- [ ] **4.5**: MTLBuffer-backed arena (zero-copy unified memory)
 
 ---
 

@@ -3,9 +3,9 @@
 //! Similar to `ElementWiseView` (Q0, 256 bytes, stack) but for Q1 (65536 entries,
 //! 128 KB, heap-allocated). Not `Copy` due to size.
 
-#[cfg(feature = "std")]
-extern crate std;
+extern crate alloc;
 
+use alloc::{boxed::Box, vec};
 use core::fmt;
 
 /// A 65536-entry u16-to-u16 lookup table for O(1) function application at Q1.
@@ -13,39 +13,39 @@ use core::fmt;
 /// Heap-allocated (128 KB) — too large for stack. Not `Copy`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ElementWiseView16 {
-    table: std::boxed::Box<[u16; 65536]>,
+    table: Box<[u16; 65536]>,
 }
 
 impl ElementWiseView16 {
     /// Create from a precomputed table.
     #[inline]
     #[must_use]
-    pub fn from_table(table: std::boxed::Box<[u16; 65536]>) -> Self {
+    pub fn from_table(table: Box<[u16; 65536]>) -> Self {
         Self { table }
     }
 
     /// Create from a static table reference (clones into a heap allocation).
     #[must_use]
     pub fn from_static(table: &[u16; 65536]) -> Self {
-        let mut boxed = std::vec![0u16; 65536].into_boxed_slice();
+        let mut boxed = vec![0u16; 65536].into_boxed_slice();
         boxed.copy_from_slice(table);
         // SAFETY: boxed slice has exactly 65536 elements.
-        let ptr = std::boxed::Box::into_raw(boxed) as *mut [u16; 65536];
+        let ptr = Box::into_raw(boxed) as *mut [u16; 65536];
         Self {
-            table: unsafe { std::boxed::Box::from_raw(ptr) },
+            table: unsafe { Box::from_raw(ptr) },
         }
     }
 
     /// Create by applying `f` to all 65536 u16 values.
     #[must_use]
     pub fn from_fn<F: Fn(u16) -> u16>(f: F) -> Self {
-        let mut table = std::vec![0u16; 65536].into_boxed_slice();
+        let mut table = vec![0u16; 65536].into_boxed_slice();
         for i in 0..65536u32 {
             table[i as usize] = f(i as u16);
         }
-        let ptr = std::boxed::Box::into_raw(table) as *mut [u16; 65536];
+        let ptr = Box::into_raw(table) as *mut [u16; 65536];
         Self {
-            table: unsafe { std::boxed::Box::from_raw(ptr) },
+            table: unsafe { Box::from_raw(ptr) },
         }
     }
 
@@ -58,10 +58,10 @@ impl ElementWiseView16 {
     /// Constant view (maps every u16 to `value`).
     #[must_use]
     pub fn constant(value: u16) -> Self {
-        let v = std::vec![value; 65536].into_boxed_slice();
-        let ptr = std::boxed::Box::into_raw(v) as *mut [u16; 65536];
+        let v = vec![value; 65536].into_boxed_slice();
+        let ptr = Box::into_raw(v) as *mut [u16; 65536];
         Self {
-            table: unsafe { std::boxed::Box::from_raw(ptr) },
+            table: unsafe { Box::from_raw(ptr) },
         }
     }
 
@@ -81,7 +81,7 @@ impl ElementWiseView16 {
     /// Check if this view is bijective (a permutation).
     #[must_use]
     pub fn is_bijective(&self) -> bool {
-        let mut seen = std::vec![false; 65536];
+        let mut seen = vec![false; 65536];
         for &output in self.table.iter() {
             if seen[output as usize] {
                 return false;
@@ -97,13 +97,13 @@ impl ElementWiseView16 {
         if !self.is_bijective() {
             return None;
         }
-        let mut inv = std::vec![0u16; 65536].into_boxed_slice();
+        let mut inv = vec![0u16; 65536].into_boxed_slice();
         for input in 0..65536u32 {
             inv[self.table[input as usize] as usize] = input as u16;
         }
-        let ptr = std::boxed::Box::into_raw(inv) as *mut [u16; 65536];
+        let ptr = Box::into_raw(inv) as *mut [u16; 65536];
         Some(Self {
-            table: unsafe { std::boxed::Box::from_raw(ptr) },
+            table: unsafe { Box::from_raw(ptr) },
         })
     }
 

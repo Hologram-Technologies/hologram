@@ -862,21 +862,22 @@ impl FloatOp {
             Self::Gelu => {
                 0.5 * x
                     * (1.0
-                        + (std::f32::consts::FRAC_2_SQRT_PI
-                            * (x + 0.044715 * x * x * x)
-                            * std::f32::consts::FRAC_1_SQRT_2)
-                            .tanh())
+                        + libm::tanhf(
+                            core::f32::consts::FRAC_2_SQRT_PI
+                                * (x + 0.044715 * x * x * x)
+                                * core::f32::consts::FRAC_1_SQRT_2,
+                        ))
             }
-            Self::Silu => x * (1.0 / (1.0 + (-x).exp())),
-            Self::Tanh => x.tanh(),
-            Self::Sigmoid => 1.0 / (1.0 + (-x).exp()),
-            Self::Exp => x.exp(),
-            Self::Log => x.ln(),
-            Self::Sqrt => x.sqrt(),
-            Self::Abs => x.abs(),
+            Self::Silu => x * (1.0 / (1.0 + libm::expf(-x))),
+            Self::Tanh => libm::tanhf(x),
+            Self::Sigmoid => 1.0 / (1.0 + libm::expf(-x)),
+            Self::Exp => libm::expf(x),
+            Self::Log => libm::logf(x),
+            Self::Sqrt => libm::sqrtf(x),
+            Self::Abs => libm::fabsf(x),
             Self::Reciprocal => 1.0 / x,
-            Self::Cos => x.cos(),
-            Self::Sin => x.sin(),
+            Self::Cos => libm::cosf(x),
+            Self::Sin => libm::sinf(x),
             Self::Sign => {
                 if x > 0.0 {
                     1.0
@@ -886,19 +887,19 @@ impl FloatOp {
                     0.0
                 }
             }
-            Self::Floor => x.floor(),
-            Self::Ceil => x.ceil(),
-            Self::Round => x.round(),
+            Self::Floor => libm::floorf(x),
+            Self::Ceil => libm::ceilf(x),
+            Self::Round => libm::roundf(x),
             Self::Erf => {
                 let sign = if x >= 0.0 { 1.0 } else { -1.0 };
-                let a = x.abs();
+                let a = libm::fabsf(x);
                 let t = 1.0 / (1.0 + 0.327_591_1 * a);
                 let y = 1.0
                     - (((((1.061_405_4 * t - 1.453_152) * t) + 1.421_413_7) * t - 0.284_496_74)
                         * t
                         + 0.254_829_6)
                         * t
-                        * (-a * a).exp();
+                        * libm::expf(-a * a);
                 sign * y
             }
             Self::Clip { min, max } => x.clamp(bits_to_f32(*min), bits_to_f32(*max)),
@@ -1007,13 +1008,13 @@ impl FloatOp {
             Self::Sub => a - b,
             Self::Mul => a * b,
             Self::Div => a / b,
-            Self::Pow => a.powf(b),
+            Self::Pow => libm::powf(a, b),
             Self::Mod => a % b,
             Self::Min => a.min(b),
             Self::Max => a.max(b),
             Self::FusedSwiGLU => {
                 // silu(gate) * up  where gate=a, up=b
-                let silu_a = a * (1.0 / (1.0 + (-a).exp()));
+                let silu_a = a * (1.0 / (1.0 + libm::expf(-a)));
                 silu_a * b
             }
             _ => panic!(

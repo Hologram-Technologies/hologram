@@ -8,6 +8,7 @@ description = "Core LUT tables, views, ring, encoding for O(1) computation"
 [dependencies]
 uor-foundation = { workspace = true }
 bytemuck = { workspace = true }
+libm = { workspace = true }
 # rkyv is optional: only enabled when the 'serialize' feature is on.
 # This allows wasm32/embedded builds to compile without rkyv's std-only deps.
 rkyv = { version = "0.8", default-features = false, optional = true }

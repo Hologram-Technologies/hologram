@@ -165,10 +165,10 @@ impl HierarchicalLut {
 /// This is the ~260 byte metric: all 21 activation LUTs compressed via HLUT
 /// typically use ~260 bytes total (vs 5376 bytes flat = 21 * 256).
 #[must_use]
-pub fn build_all_hluts() -> (std::vec::Vec<HierarchicalLut>, usize) {
+pub fn build_all_hluts() -> (alloc::vec::Vec<HierarchicalLut>, usize) {
     use crate::lut::activation::{LUT_TABLES, LUT_TABLE_COUNT};
 
-    let mut hluts = std::vec::Vec::with_capacity(LUT_TABLE_COUNT);
+    let mut hluts = alloc::vec::Vec::with_capacity(LUT_TABLE_COUNT);
     let mut total_bytes = 0usize;
     for &table in &LUT_TABLES {
         let hlut = HierarchicalLut::from_flat(table);
