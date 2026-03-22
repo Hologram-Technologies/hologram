@@ -267,13 +267,14 @@
 - [x] **7.3**: Metal unary dispatch returns `MetalBuffer` directly (skip Vec copy on output)
 - [x] **7.4**: `ComputeBackend` trait updated — all backends return `KernelOutput` instead of `bool`
 
-### Phase 8: Remaining GPU Work (TODO)
-- [ ] **8.1**: Metal binary/matmul/softmax/rmsnorm also return MetalBuffer (extend zero-copy)
+### Phase 8: Remaining GPU Work
+- [x] **8.1**: Metal binary/matmul/softmax/rmsnorm all return MetalBuffer (full zero-copy path)
 - [ ] **8.2**: Async command buffer batching (per-level, amortize launch overhead)
 - [ ] **8.3**: WebGPU/wgpu compute shader path (cross-platform GPU, browser + native)
 - [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
 
-### Phase 9: Zero-Overhead Dispatch — Flatten Abstraction Layers (TODO)
+### Phase 9: Zero-Overhead Dispatch — Flatten Abstraction Layers
+**Plan**: [plans/011-zero-overhead-dispatch.md](plans/011-zero-overhead-dispatch.md)
 
 Goal: eliminate all per-instruction overhead between the execute loop and the kernel compute. Target: O(1) constant-time dispatch with zero memory copies for the CPU path.
 
@@ -283,17 +284,16 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **9a.3**: tape_builder maps hot FloatOps to Inline variants at build time
 - [x] **9a.4**: `inline_unary` / `inline_binary` helper functions (direct bytemuck cast, no dispatch_float_into)
 - [x] **9a.5**: 3 inline conformance tests + inline benchmark
-- [ ] **9a.6**: `InlineMatMul { m, k, n }` — direct BLAS/loop call (future)
-- [ ] **9a.7**: `InlineSoftmax/RmsNorm` — direct norm kernels (future)
-
-### Benchmark Results (Phase 9a)
-- Tape Relu 64KB: **5.1 µs → 3.3 µs** (36% improvement from inlining)
-- Tape vs KvExecutor: **4.9 µs vs 45.6 µs** (9.3x faster)
+- [x] **9a.6**: `InlineMatMul { m, k, n }` — direct matmul_into call, backend GPU first then CPU fallback
+- [x] **9a.7**: `InlineSoftmax { size }` / `InlineRmsNorm { size, epsilon }` — direct norm kernels, backend first
+- [x] **9a.8**: `InlineAbs` / `InlineReciprocal` — complete unary inline coverage
+- [x] **9a.9**: Visibility: `pub(crate) mod norm`, `pub(crate) fn resolve_size`, `pub(crate) fn dispatch_softmax_into/dispatch_rms_norm_into`
 
 #### 9b: Zero-Copy Arena Path (eliminate out_buf round-trip)
-- [ ] **9b.1**: Output/Reshape passthrough — arena pointer swap, no data copy
-- [ ] **9b.2**: Pre-allocated arena output slots — kernel writes directly into arena memory
-- [ ] **9b.3**: In-place unary ops — overwrite input buffer when it has no other consumers (liveness analysis)
+- [x] **9b.1**: Output passthrough — `arena.move_slot(src, dst)` when input has single consumer
+- [x] **9b.2**: Pre-allocated arena output slots — `prewarm_arena()` pre-allocates with `output_byte_hint`
+- [x] **9b.3**: In-place unary ops — `dispatch_inplace()` + `inline_unary_inplace()` when `can_reuse_input` flag set
+- [x] **9b.4**: `apply_reuse_flags()` post-pass in tape_builder — consumer count analysis, sets `passthrough` and `can_reuse_input`
 
 #### 9c: Typed Arena Access (eliminate per-call bytemuck cast)
 - [ ] **9c.1**: `arena.get_f32(id)` — returns `&[f32]` directly, caches alignment validation

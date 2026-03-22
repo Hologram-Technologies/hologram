@@ -209,7 +209,7 @@ pub(super) fn dispatch_add_rms_norm_into(
 }
 
 /// Softmax writing directly into a pre-allocated output buffer.
-pub(super) fn dispatch_softmax_into(
+pub(crate) fn dispatch_softmax_into(
     inputs: &[&[u8]],
     size: usize,
     out_buf: &mut Vec<u8>,
@@ -265,7 +265,7 @@ pub(super) fn dispatch_softmax_into(
 }
 
 /// RmsNorm writing directly into a pre-allocated output buffer.
-pub(super) fn dispatch_rms_norm_into(
+pub(crate) fn dispatch_rms_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,

@@ -45,6 +45,22 @@ impl KernelOutput {
     pub fn handled(&self) -> bool {
         !matches!(self, KernelOutput::Skipped)
     }
+
+    /// Extract output bytes — from out_buf for Bytes, from Metal buffer for MetalBuffer.
+    /// For testing: copies Metal buffer contents to Vec.
+    #[cfg(test)]
+    pub fn extract_bytes(self, out_buf: Vec<u8>) -> Vec<u8> {
+        match self {
+            KernelOutput::Skipped => Vec::new(),
+            KernelOutput::Bytes => out_buf,
+            #[cfg(has_metal)]
+            KernelOutput::MetalBuffer(buf) => {
+                let ptr = buf.contents() as *const u8;
+                let len = buf.length() as usize;
+                unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
+            }
+        }
+    }
 }
 
 /// Compute backend for tape kernel dispatch.
@@ -259,16 +275,17 @@ mod tests {
 
         let inputs: Vec<&[u8]> = vec![&a, &b_bytes];
         let mut out_buf = Vec::new();
-        let handled = b
+        let result = b
             .dispatch_matmul(&inputs, m, k, n, &mut out_buf)
             .expect("Metal matmul dispatch failed");
         assert!(
-            handled.handled(),
+            result.handled(),
             "Metal should handle 128×64 × 64×128 matmul"
         );
-        assert_eq!(out_buf.len(), m * n * 4);
+        let output_bytes = result.extract_bytes(out_buf);
+        assert_eq!(output_bytes.len(), m * n * 4);
 
-        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        let out_floats: &[f32] = bytemuck::cast_slice(&output_bytes);
         // First row of C: sum(A[0,:] * B[:,j]) = sum(1.0 * 2.0, k times) = 2*k = 128.0
         for j in 0..n {
             assert!(
@@ -304,7 +321,7 @@ mod tests {
         let inputs: Vec<&[u8]> = vec![&input];
 
         let mut out_buf = Vec::new();
-        let handled = b
+        let result = b
             .dispatch_float(
                 &FloatOp::Softmax {
                     size: row_size as u32,
@@ -314,13 +331,14 @@ mod tests {
             )
             .expect("Metal softmax dispatch failed");
         assert!(
-            handled.handled(),
+            result.handled(),
             "Metal should handle softmax on large buffer"
         );
-        assert_eq!(out_buf.len(), input.len());
+        let output_bytes = result.extract_bytes(out_buf);
+        assert_eq!(output_bytes.len(), input.len());
 
         // Each row should sum to ~1.0
-        let out_floats: &[f32] = bytemuck::cast_slice(&out_buf);
+        let out_floats: &[f32] = bytemuck::cast_slice(&output_bytes);
         let row_sum: f32 = out_floats[..row_size].iter().sum();
         assert!(
             (row_sum - 1.0).abs() < 1e-3,

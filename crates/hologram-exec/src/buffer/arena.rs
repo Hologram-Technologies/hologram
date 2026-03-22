@@ -238,6 +238,29 @@ impl<'a> BufferArena<'a> {
         idx < self.buffers.len() && self.buffers[idx].is_some()
     }
 
+    /// Move a buffer from one slot to another without copying data.
+    ///
+    /// Used by Output passthrough: when the input has a single consumer,
+    /// the buffer can be moved directly instead of copying through `out_buf`.
+    pub fn move_slot(&mut self, src: NodeId, dst: NodeId) {
+        let src_idx = src.index() as usize;
+        let dst_idx = dst.index() as usize;
+        self.ensure_capacity(dst_idx);
+        if src_idx < self.buffers.len() {
+            let buf = self.buffers[src_idx].take();
+            if buf.is_some() {
+                if dst_idx >= self.buffers.len() || self.buffers[dst_idx].is_none() {
+                    self.count += 1;
+                }
+                self.buffers[dst_idx] = buf;
+                let es = self.elem_sizes[src_idx];
+                self.elem_sizes[dst_idx] = es;
+                // src slot is now empty.
+                self.count -= 1;
+            }
+        }
+    }
+
     /// Remove and return the buffer for the given node as owned bytes.
     pub fn take(&mut self, id: NodeId) -> ExecResult<Vec<u8>> {
         let idx = id.index() as usize;

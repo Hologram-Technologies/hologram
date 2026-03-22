@@ -98,12 +98,67 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
                 output_elem_size,
                 output_byte_hint,
                 weight_offset_hint,
+                passthrough: false,
+                can_reuse_input: false,
             });
         }
         tape.end_level();
     }
 
+    // ── Post-pass: compute consumer counts and set optimization flags ──
+    apply_reuse_flags(&mut tape);
+
     Ok(tape)
+}
+
+/// Scan instructions to compute per-node consumer counts, then set
+/// `passthrough` (for Output ops with single-consumer inputs) and
+/// `can_reuse_input` (for unary inline ops with single-consumer inputs).
+fn apply_reuse_flags(tape: &mut EnumTape) {
+    // Count how many instructions consume each node index.
+    let mut consumer_counts: Vec<u32> = Vec::new();
+    for instr in &tape.instructions {
+        for &idx in &instr.input_indices {
+            let i = idx as usize;
+            if i >= consumer_counts.len() {
+                consumer_counts.resize(i + 1, 0);
+            }
+            consumer_counts[i] += 1;
+        }
+    }
+
+    let is_single_consumer = |idx: u32| -> bool {
+        let i = idx as usize;
+        i < consumer_counts.len() && consumer_counts[i] == 1
+    };
+
+    for instr in &mut tape.instructions {
+        match &instr.kernel {
+            // Output passthrough: move buffer directly if input has one consumer.
+            TapeKernel::Output if instr.input_indices.len() == 1 => {
+                if is_single_consumer(instr.input_indices[0]) {
+                    instr.passthrough = true;
+                }
+            }
+            // Unary inline ops: reuse input buffer in-place if single consumer.
+            TapeKernel::InlineRelu
+            | TapeKernel::InlineNeg
+            | TapeKernel::InlineAbs
+            | TapeKernel::InlineSigmoid
+            | TapeKernel::InlineSilu
+            | TapeKernel::InlineTanh
+            | TapeKernel::InlineGelu
+            | TapeKernel::InlineExp
+            | TapeKernel::InlineReciprocal
+                if instr.input_indices.len() == 1 =>
+            {
+                if is_single_consumer(instr.input_indices[0]) {
+                    instr.can_reuse_input = true;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Resolve a `GraphOp` to a [`TapeKernel`] enum variant.
@@ -163,6 +218,20 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
         FloatOp::Mul => TapeKernel::InlineMul,
         FloatOp::Sub => TapeKernel::InlineSub,
         FloatOp::Div => TapeKernel::InlineDiv,
+        FloatOp::Abs => TapeKernel::InlineAbs,
+        FloatOp::Reciprocal => TapeKernel::InlineReciprocal,
+
+        // Inline custom ops — bake dimensions/parameters at build time.
+        FloatOp::MatMul { m, k, n } => TapeKernel::InlineMatMul {
+            m: *m,
+            k: *k,
+            n: *n,
+        },
+        FloatOp::Softmax { size } => TapeKernel::InlineSoftmax { size: *size },
+        FloatOp::RmsNorm { size, epsilon } => TapeKernel::InlineRmsNorm {
+            size: *size,
+            epsilon: *epsilon,
+        },
 
         FloatOp::KvWrite {
             layer,

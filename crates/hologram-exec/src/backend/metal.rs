@@ -416,13 +416,13 @@ impl MetalBackend {
     }
 
     /// Dispatch a binary elementwise op on the GPU.
+    /// Returns the output Metal buffer directly — zero-copy into arena.
     fn dispatch_binary(
         &self,
         pipeline: &ComputePipelineState,
         input_a: &[u8],
         input_b: &[u8],
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    ) -> ExecResult<metal::Buffer> {
         let n_a = (input_a.len() / 4) as u32;
         let n_b = (input_b.len() / 4) as u32;
         let n_out = n_a.max(n_b) as usize;
@@ -470,20 +470,11 @@ impl MetalBackend {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        let output_ptr = output_buf.contents() as *const u8;
-        let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, byte_len) };
-        out_buf.extend_from_slice(output_slice);
-
-        Ok(())
+        Ok(output_buf)
     }
 
-    /// Dispatch softmax on the GPU. Inputs: [x]. Parameters: row_size.
-    fn dispatch_softmax(
-        &self,
-        input: &[u8],
-        row_size: usize,
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    /// Dispatch softmax on the GPU. Returns Metal buffer directly.
+    fn dispatch_softmax(&self, input: &[u8], row_size: usize) -> ExecResult<metal::Buffer> {
         let pipeline = self
             .pipelines
             .get("softmax")
@@ -529,20 +520,17 @@ impl MetalBackend {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        let ptr = output_buf.contents() as *const u8;
-        out_buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, byte_len) });
-        Ok(())
+        Ok(output_buf)
     }
 
-    /// Dispatch RmsNorm on the GPU. Inputs: [x, weight]. Parameters: row_size, epsilon.
+    /// Dispatch RmsNorm on the GPU. Returns Metal buffer directly.
     fn dispatch_rms_norm(
         &self,
         input: &[u8],
         weight: &[u8],
         row_size: usize,
         epsilon: f32,
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    ) -> ExecResult<metal::Buffer> {
         let pipeline = self
             .pipelines
             .get("rms_norm")
@@ -600,9 +588,7 @@ impl MetalBackend {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        let ptr = output_buf.contents() as *const u8;
-        out_buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, byte_len) });
-        Ok(())
+        Ok(output_buf)
     }
 }
 
@@ -618,28 +604,27 @@ impl ComputeBackend for MetalBackend {
             return self.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf);
         }
 
-        // Softmax: route with row_size parameter.
+        // Softmax: route with row_size parameter — zero-copy Metal buffer.
         if let FloatOp::Softmax { size } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= METAL_MIN_BYTES && *size > 0 {
-                self.dispatch_softmax(inputs[0], *size as usize, out_buf)?;
-                return Ok(super::KernelOutput::Bytes);
+                let buf = self.dispatch_softmax(inputs[0], *size as usize)?;
+                return Ok(super::KernelOutput::MetalBuffer(buf));
             }
             return Ok(super::KernelOutput::Skipped);
         }
 
-        // RmsNorm: route with row_size + epsilon parameters.
+        // RmsNorm: route with row_size + epsilon — zero-copy Metal buffer.
         if let FloatOp::RmsNorm { size, epsilon } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= METAL_MIN_BYTES && inputs.len() >= 2 && *size > 0 {
-                self.dispatch_rms_norm(
+                let buf = self.dispatch_rms_norm(
                     inputs[0],
                     inputs[1],
                     *size as usize,
                     f32::from_bits(*epsilon),
-                    out_buf,
                 )?;
-                return Ok(super::KernelOutput::Bytes);
+                return Ok(super::KernelOutput::MetalBuffer(buf));
             }
             return Ok(super::KernelOutput::Skipped);
         }
@@ -666,8 +651,8 @@ impl ComputeBackend for MetalBackend {
                 Ok(super::KernelOutput::MetalBuffer(metal_buf))
             }
             OpCategory::BinaryElementwise if inputs.len() >= 2 => {
-                self.dispatch_binary(pipeline, inputs[0], inputs[1], out_buf)?;
-                Ok(super::KernelOutput::Bytes)
+                let metal_buf = self.dispatch_binary(pipeline, inputs[0], inputs[1])?;
+                Ok(super::KernelOutput::MetalBuffer(metal_buf))
             }
             _ => Ok(super::KernelOutput::Skipped),
         }
@@ -679,7 +664,7 @@ impl ComputeBackend for MetalBackend {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
         // Metal matmul only worthwhile for large matrices.
         // Crossover vs Accelerate BLAS is ~128×128 on M-series.
@@ -750,11 +735,7 @@ impl ComputeBackend for MetalBackend {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        let output_ptr = buf_c.contents() as *const u8;
-        let output_slice = unsafe { std::slice::from_raw_parts(output_ptr, byte_len) };
-        out_buf.extend_from_slice(output_slice);
-
-        Ok(super::KernelOutput::Bytes)
+        Ok(super::KernelOutput::MetalBuffer(buf_c))
     }
 
     fn name(&self) -> &'static str {

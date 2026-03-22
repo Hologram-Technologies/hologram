@@ -276,6 +276,9 @@ pub fn execute_tape(
         }
     }
 
+    // Pre-warm arena with output slot allocations (first-inference optimization).
+    tape.prewarm_arena(&mut arena);
+
     // Build tape context with weight access for LUT-GEMM ops.
     let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
 

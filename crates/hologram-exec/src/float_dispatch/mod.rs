@@ -11,7 +11,7 @@ mod gather_concat;
 mod helpers;
 pub mod matmul;
 mod misc;
-mod norm;
+pub(crate) mod norm;
 pub(crate) mod pool;
 mod reduce;
 mod shape_ops;
@@ -197,7 +197,7 @@ pub fn dispatch_float_into(
 /// The 0 sentinel means "infer at runtime". For ops like Softmax and RmsNorm,
 /// the correct size is the number of f32 elements in the first input.
 #[inline]
-fn resolve_size(compiled_size: u32, inputs: &[&[u8]]) -> usize {
+pub(crate) fn resolve_size(compiled_size: u32, inputs: &[&[u8]]) -> usize {
     let n_floats = inputs.first().map(|b| b.len() / 4).unwrap_or(0);
     if compiled_size == 0 || n_floats == 0 {
         n_floats

@@ -292,6 +292,20 @@ pub enum TapeKernel {
     InlineSub,
     /// Inline binary Div.
     InlineDiv,
+    /// Inline Abs: v.abs().
+    InlineAbs,
+    /// Inline Reciprocal: 1.0 / v.
+    InlineReciprocal,
+
+    // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────────
+    // Skip dispatch_float_into → dispatch_custom_into indirection.
+    // Still try backend (Metal GPU) first, then direct CPU kernel call.
+    /// Inline MatMul with baked dimensions.
+    InlineMatMul { m: u32, k: u32, n: u32 },
+    /// Inline Softmax with baked row size.
+    InlineSoftmax { size: u32 },
+    /// Inline RmsNorm with baked row size and epsilon (as f32::to_bits()).
+    InlineRmsNorm { size: u32, epsilon: u32 },
 }
 
 /// Result of kernel dispatch — tells the execute loop how to store the output.
@@ -440,6 +454,73 @@ fn dispatch_kernel(
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
             Ok(DispatchResult::InOutBuf)
         }
+        TapeKernel::InlineAbs => {
+            inline_unary(inputs[0], out_buf, |v| v.abs());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReciprocal => {
+            inline_unary(inputs[0], out_buf, |v| 1.0 / v);
+            Ok(DispatchResult::InOutBuf)
+        }
+
+        // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
+        // Try backend (GPU) first, then direct CPU kernel call.
+        TapeKernel::InlineMatMul { m, k, n } => {
+            match backend.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf)? {
+                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
+                #[cfg(has_metal)]
+                KernelOutput::MetalBuffer(buf) => {
+                    return Ok(DispatchResult::MetalBuffer(buf));
+                }
+                KernelOutput::Skipped => {}
+            }
+            crate::float_dispatch::matmul::dispatch_matmul_into(
+                inputs,
+                *m as usize,
+                *k as usize,
+                *n as usize,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSoftmax { size } => {
+            match backend.dispatch_float(&FloatOp::Softmax { size: *size }, inputs, out_buf)? {
+                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
+                #[cfg(has_metal)]
+                KernelOutput::MetalBuffer(buf) => {
+                    return Ok(DispatchResult::MetalBuffer(buf));
+                }
+                KernelOutput::Skipped => {}
+            }
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineRmsNorm { size, epsilon } => {
+            match backend.dispatch_float(
+                &FloatOp::RmsNorm {
+                    size: *size,
+                    epsilon: *epsilon,
+                },
+                inputs,
+                out_buf,
+            )? {
+                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
+                #[cfg(has_metal)]
+                KernelOutput::MetalBuffer(buf) => {
+                    return Ok(DispatchResult::MetalBuffer(buf));
+                }
+                KernelOutput::Skipped => {}
+            }
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_rms_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
     }
 }
 
@@ -469,6 +550,67 @@ fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32)
     let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
     for (i, d) in dst.iter_mut().enumerate() {
         *d = f(a[i % a.len()], b[i % b.len()]);
+    }
+}
+
+/// Apply a unary inline op in-place on an owned buffer.
+/// Avoids allocation — the kernel overwrites the input data directly.
+#[inline(always)]
+fn inline_unary_inplace(buf: &mut [u8], f: impl Fn(f32) -> f32) {
+    let floats: &mut [f32] = bytemuck::cast_slice_mut(buf);
+    for v in floats.iter_mut() {
+        *v = f(*v);
+    }
+}
+
+/// Try to dispatch a unary inline op in-place. Returns `true` if handled.
+#[inline]
+fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [u8]) -> bool {
+    match kernel {
+        TapeKernel::InlineRelu => {
+            inline_unary_inplace(buf, |v| v.max(0.0));
+            true
+        }
+        TapeKernel::InlineNeg => {
+            inline_unary_inplace(buf, |v| -v);
+            true
+        }
+        TapeKernel::InlineAbs => {
+            inline_unary_inplace(buf, |v| v.abs());
+            true
+        }
+        TapeKernel::InlineSigmoid => {
+            inline_unary_inplace(buf, |v| 1.0 / (1.0 + (-v).exp()));
+            true
+        }
+        TapeKernel::InlineSilu => {
+            inline_unary_inplace(buf, |v| v * (1.0 / (1.0 + (-v).exp())));
+            true
+        }
+        TapeKernel::InlineTanh => {
+            inline_unary_inplace(buf, |v| v.tanh());
+            true
+        }
+        TapeKernel::InlineGelu => {
+            inline_unary_inplace(buf, |v| {
+                0.5 * v
+                    * (1.0
+                        + (std::f32::consts::FRAC_2_SQRT_PI
+                            * std::f32::consts::FRAC_1_SQRT_2
+                            * (v + 0.044715 * v * v * v))
+                            .tanh())
+            });
+            true
+        }
+        TapeKernel::InlineExp => {
+            inline_unary_inplace(buf, |v| v.exp());
+            true
+        }
+        TapeKernel::InlineReciprocal => {
+            inline_unary_inplace(buf, |v| 1.0 / v);
+            true
+        }
+        _ => false,
     }
 }
 
@@ -558,6 +700,37 @@ fn dispatch_kernel_par(
         TapeKernel::InlineDiv => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
             Ok(())
+        }
+        TapeKernel::InlineAbs => {
+            inline_unary(inputs[0], out_buf, |v| v.abs());
+            Ok(())
+        }
+        TapeKernel::InlineReciprocal => {
+            inline_unary(inputs[0], out_buf, |v| 1.0 / v);
+            Ok(())
+        }
+        // Inline custom ops — CPU-only in parallel context (no backend).
+        TapeKernel::InlineMatMul { m, k, n } => {
+            crate::float_dispatch::matmul::dispatch_matmul_into(
+                inputs,
+                *m as usize,
+                *k as usize,
+                *n as usize,
+                out_buf,
+            )
+        }
+        TapeKernel::InlineSoftmax { size } => {
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)
+        }
+        TapeKernel::InlineRmsNorm { size, epsilon } => {
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_rms_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )
         }
         // These should never appear in parallel levels (filtered by needs_shared_state).
         _ => Err(crate::error::ExecError::UnsupportedOp(
@@ -751,6 +924,13 @@ pub struct TapeInstruction {
     /// When non-zero, the executor prefetches this address in the weight
     /// archive while the previous instruction executes.
     pub weight_offset_hint: u32,
+    /// If true, this Output instruction can move the input buffer directly
+    /// instead of copying through `out_buf`. Set when the input has exactly
+    /// one consumer (this instruction).
+    pub passthrough: bool,
+    /// If true, a unary inline op can overwrite its input buffer in place.
+    /// Set when the input has exactly one consumer and the op preserves size.
+    pub can_reuse_input: bool,
 }
 
 /// Pre-compiled execution tape using enum dispatch.
@@ -804,6 +984,21 @@ impl EnumTape {
         self.level_offsets.len().saturating_sub(1)
     }
 
+    /// Pre-allocate output slots in the arena so `swap_insert` has buffers
+    /// to recycle from the very first instruction (eliminates first-inference
+    /// allocation overhead).
+    pub fn prewarm_arena(&self, arena: &mut BufferArena<'_>) {
+        for instr in &self.instructions {
+            if instr.output_byte_hint > 0 && !instr.passthrough {
+                let id = NodeId::new(instr.output_idx, 0);
+                if !arena.contains(id) {
+                    let buf = Vec::with_capacity(instr.output_byte_hint as usize);
+                    arena.insert_with_elem_size(id, buf, instr.output_elem_size as usize);
+                }
+            }
+        }
+    }
+
     /// Execute the tape against the given arena and context.
     ///
     /// Uses swap-insert for zero-allocation buffer recycling after warmup.
@@ -832,6 +1027,34 @@ impl EnumTape {
                     let offset = next.weight_offset_hint as usize;
                     if offset < tape_ctx.weights.len() {
                         prefetch_read(tape_ctx.weights[offset..].as_ptr());
+                    }
+                }
+            }
+
+            // ── Fast path: Output passthrough (zero-copy move) ──
+            if instr.passthrough {
+                if let Some(&src_idx) = instr.input_indices.first() {
+                    arena.move_slot(NodeId::new(src_idx, 0), NodeId::new(instr.output_idx, 0));
+                    continue;
+                }
+            }
+
+            // ── Fast path: In-place unary op (reuse input buffer) ──
+            if instr.can_reuse_input {
+                if let Some(&src_idx) = instr.input_indices.first() {
+                    let src_id = NodeId::new(src_idx, 0);
+                    let out_id = NodeId::new(instr.output_idx, 0);
+                    if let Ok(mut buf) = arena.take(src_id) {
+                        if dispatch_inplace(&instr.kernel, &mut buf) {
+                            arena.insert_with_elem_size(
+                                out_id,
+                                buf,
+                                instr.output_elem_size as usize,
+                            );
+                            continue;
+                        }
+                        // Fallback: put buffer back and use normal path.
+                        arena.insert_with_elem_size(src_id, buf, instr.output_elem_size as usize);
                     }
                 }
             }
@@ -954,6 +1177,40 @@ impl EnumTape {
                             let offset = next.weight_offset_hint as usize;
                             if offset < tape_ctx.weights.len() {
                                 prefetch_read(tape_ctx.weights[offset..].as_ptr());
+                            }
+                        }
+                    }
+
+                    // Fast path: Output passthrough.
+                    if instr.passthrough {
+                        if let Some(&src_idx) = instr.input_indices.first() {
+                            arena.move_slot(
+                                NodeId::new(src_idx, 0),
+                                NodeId::new(instr.output_idx, 0),
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Fast path: In-place unary op.
+                    if instr.can_reuse_input {
+                        if let Some(&src_idx) = instr.input_indices.first() {
+                            let src_id = NodeId::new(src_idx, 0);
+                            let out_id = NodeId::new(instr.output_idx, 0);
+                            if let Ok(mut buf) = arena.take(src_id) {
+                                if dispatch_inplace(&instr.kernel, &mut buf) {
+                                    arena.insert_with_elem_size(
+                                        out_id,
+                                        buf,
+                                        instr.output_elem_size as usize,
+                                    );
+                                    continue;
+                                }
+                                arena.insert_with_elem_size(
+                                    src_id,
+                                    buf,
+                                    instr.output_elem_size as usize,
+                                );
                             }
                         }
                     }
@@ -1144,6 +1401,8 @@ mod tests {
             output_elem_size: 1,
             output_byte_hint: 0,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
@@ -1167,6 +1426,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 8, // 2 floats × 4 bytes
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
@@ -1175,6 +1436,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
@@ -1205,6 +1468,8 @@ mod tests {
             output_elem_size: 1,
             output_byte_hint: 3,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
@@ -1232,6 +1497,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -1241,6 +1508,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
@@ -1270,6 +1539,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
@@ -1310,6 +1581,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -1326,6 +1599,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape2.end_level();
         let mut arena2 = BufferArena::new();
@@ -1355,6 +1630,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -1382,6 +1659,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -1391,6 +1670,8 @@ mod tests {
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
         });
         tape.end_level();
 
