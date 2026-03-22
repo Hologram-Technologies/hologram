@@ -20,9 +20,18 @@ optional = true
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
 
+[dependencies.wgpu]
+workspace = true
+optional = true
+
+[dependencies.pollster]
+workspace = true
+optional = true
+
 [features]
 default = ["std"]
 std = ["hologram-archive/std"]
 parallel = ["rayon"]
 accelerate = []
 profile = []
+webgpu = ["wgpu", "pollster"]

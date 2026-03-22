@@ -138,7 +138,15 @@ impl BackendSelector {
             #[cfg(has_cuda)]
             Self::Cuda => Box::new(cuda::CudaBackend),
             #[cfg(has_webgpu)]
-            Self::WebGpu => Box::new(webgpu::WebGpuBackend),
+            Self::WebGpu => {
+                use std::sync::{Arc, OnceLock};
+                static WEBGPU_SEL: OnceLock<Option<Arc<webgpu::WebGpuBackend>>> = OnceLock::new();
+                let cached = WEBGPU_SEL.get_or_init(|| webgpu::WebGpuBackend::new().map(Arc::new));
+                match cached {
+                    Some(b) => Box::new(CachedWebGpuBackend(Arc::clone(b))),
+                    None => Box::new(cpu::CpuBackend),
+                }
+            }
             // Requested backend not compiled in — fall back to CPU.
             #[allow(unreachable_patterns)]
             _ => Box::new(cpu::CpuBackend),
@@ -168,7 +176,12 @@ pub fn default_backend() -> Box<dyn ComputeBackend> {
 
     #[cfg(has_webgpu)]
     {
-        return Box::new(webgpu::WebGpuBackend);
+        use std::sync::{Arc, OnceLock};
+        static WEBGPU: OnceLock<Option<Arc<webgpu::WebGpuBackend>>> = OnceLock::new();
+        let cached = WEBGPU.get_or_init(|| webgpu::WebGpuBackend::new().map(Arc::new));
+        if let Some(backend) = cached {
+            return Box::new(CachedWebGpuBackend(Arc::clone(backend)));
+        }
     }
 
     #[cfg(has_cuda)]
@@ -209,6 +222,35 @@ impl ComputeBackend for CachedMetalBackend {
     }
     fn flush(&self) {
         self.0.flush();
+    }
+}
+
+/// Wrapper that delegates to a shared WebGpuBackend via Arc.
+#[cfg(has_webgpu)]
+struct CachedWebGpuBackend(std::sync::Arc<webgpu::WebGpuBackend>);
+
+#[cfg(has_webgpu)]
+impl ComputeBackend for CachedWebGpuBackend {
+    fn dispatch_float(
+        &self,
+        op: &FloatOp,
+        inputs: &[&[u8]],
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_float(op, inputs, out_buf)
+    }
+    fn dispatch_matmul(
+        &self,
+        inputs: &[&[u8]],
+        m: usize,
+        k: usize,
+        n: usize,
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_matmul(inputs, m, k, n, out_buf)
+    }
+    fn name(&self) -> &'static str {
+        "webgpu"
     }
 }
 

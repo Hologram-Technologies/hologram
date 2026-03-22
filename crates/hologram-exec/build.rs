@@ -34,8 +34,11 @@ fn main() {
         println!("cargo:rustc-cfg=has_cuda");
     }
 
-    // WebGPU: available on wasm32 targets.
-    if std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "wasm32" {
+    // WebGPU: available when the `webgpu` feature is active (native via wgpu),
+    // or on wasm32 targets (browser WebGPU).
+    if std::env::var("CARGO_FEATURE_WEBGPU").is_ok()
+        || std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "wasm32"
+    {
         println!("cargo:rustc-cfg=has_webgpu");
     }
 }
