@@ -142,11 +142,33 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<TapeKernel> {
 
 /// Resolve a `FloatOp` to a [`TapeKernel`] variant.
 ///
-/// For ops with dynamic size parameters (Softmax, RmsNorm, etc.),
-/// the size inference happens at dispatch time inside `dispatch_float_into`.
-/// The tape just stores the op as-is.
+/// KvWrite/KvRead are intercepted and mapped to dedicated TapeKernel variants.
+/// All other ops are stored as `TapeKernel::Float(op)` — size inference
+/// happens at dispatch time inside `dispatch_float_into`.
 fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
-    TapeKernel::Float(*fop)
+    match fop {
+        FloatOp::KvWrite {
+            layer,
+            n_kv_heads,
+            head_dim,
+            is_key,
+        } => TapeKernel::KvWrite {
+            layer: *layer,
+            n_kv_heads: *n_kv_heads,
+            head_dim: *head_dim,
+            is_key: *is_key,
+        },
+        FloatOp::KvRead {
+            layer,
+            n_kv_heads,
+            head_dim,
+        } => TapeKernel::KvRead {
+            layer: *layer,
+            n_kv_heads: *n_kv_heads,
+            head_dim: *head_dim,
+        },
+        _ => TapeKernel::Float(*fop),
+    }
 }
 
 /// Pre-compute the output element size for a node.

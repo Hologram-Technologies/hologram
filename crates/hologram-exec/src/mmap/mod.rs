@@ -447,4 +447,54 @@ mod tests {
         assert_eq!(floats[0], -0.0); // neg(relu(-3)) = neg(0) = -0
         assert_eq!(floats[2], -2.5); // neg(relu(2.5)) = -2.5
     }
+
+    /// Multi-op conformance: Softmax through both paths.
+    #[test]
+    fn tape_vs_kvexecutor_softmax_conformance() {
+        use hologram_core::op::FloatOp;
+
+        // Input → Softmax(size=4) → Output
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Float(FloatOp::Softmax { size: 4 }), &[0])
+            .node_with_inputs(GraphOp::Output, &[1])
+            .output("y", 2)
+            .build();
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+        // 4 f32 values: softmax([1, 2, 3, 4])
+        let input_f32: Vec<u8> = [
+            1.0f32.to_le_bytes(),
+            2.0f32.to_le_bytes(),
+            3.0f32.to_le_bytes(),
+            4.0f32.to_le_bytes(),
+        ]
+        .concat();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, input_f32);
+
+        // KvExecutor
+        let kv_result = execute_bytes(&archive, &inputs).unwrap();
+        let kv_out = kv_result.by_name("y").unwrap();
+
+        // EnumTape
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+        let tape_result = execute_tape(&tape, &plan, &inputs).unwrap();
+        let tape_out = tape_result.by_name("y").unwrap();
+
+        assert_eq!(
+            kv_out, tape_out,
+            "Softmax conformance: KvExecutor vs EnumTape differ"
+        );
+
+        // Sanity: softmax sums to 1.0
+        let floats: &[f32] = bytemuck::cast_slice(tape_out);
+        let sum: f32 = floats.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "softmax sum = {sum}, expected 1.0"
+        );
+    }
 }

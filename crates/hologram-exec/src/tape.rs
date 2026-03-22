@@ -173,11 +173,12 @@ use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 
 use crate::kv::weight_cache::WeightCache;
+use crate::kv_cache::KvCacheState;
 
 /// Execution context for the enum-dispatch tape.
 ///
-/// Carries weight archive access and a lazily-populated weight cache
-/// for LUT-GEMM ops. Float-only tapes can use [`TapeContext::empty`].
+/// Carries weight archive access, a lazily-populated weight cache
+/// for LUT-GEMM ops, and an optional KV cache for autoregressive generation.
 pub struct TapeContext<'a> {
     /// Optional per-inference execution state (position offset, etc.).
     pub ctx: Option<ExecutionContext>,
@@ -186,8 +187,10 @@ pub struct TapeContext<'a> {
     /// Raw weight archive bytes for deferred constants.
     pub weights: &'a [u8],
     /// Lazily-populated cache for deserialized quantized weights.
-    /// `RefCell` provides interior mutability from within immutable dispatch.
     pub weight_cache: RefCell<WeightCache>,
+    /// Optional KV cache for autoregressive generation (KvWrite/KvRead ops).
+    /// `None` for non-autoregressive execution (prefill-only, non-LLM models).
+    pub kv_state: Option<RefCell<KvCacheState>>,
 }
 
 impl<'a> TapeContext<'a> {
@@ -199,6 +202,23 @@ impl<'a> TapeContext<'a> {
             constants,
             weights,
             weight_cache: RefCell::new(WeightCache::new()),
+            kv_state: None,
+        }
+    }
+
+    /// Create a context with a KV cache for autoregressive generation.
+    #[must_use]
+    pub fn with_kv_cache(
+        constants: &'a ConstantStore,
+        weights: &'a [u8],
+        kv: KvCacheState,
+    ) -> Self {
+        TapeContext {
+            ctx: None,
+            constants,
+            weights,
+            weight_cache: RefCell::new(WeightCache::new()),
+            kv_state: Some(RefCell::new(kv)),
         }
     }
 }
@@ -226,6 +246,19 @@ pub enum TapeKernel {
     MatMulLut4(ConstantId),
     /// 8-bit quantized LUT-GEMM matmul.
     MatMulLut8(ConstantId),
+    /// KV cache write (autoregressive generation).
+    KvWrite {
+        layer: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+        is_key: bool,
+    },
+    /// KV cache read (autoregressive generation).
+    KvRead {
+        layer: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+    },
 }
 
 /// Dispatch a `TapeKernel` into a pre-allocated output buffer.
@@ -263,6 +296,25 @@ fn dispatch_kernel(
         }
         TapeKernel::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf),
         TapeKernel::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf),
+        TapeKernel::KvWrite {
+            layer,
+            n_kv_heads,
+            head_dim,
+            is_key,
+        } => dispatch_kv_write(
+            inputs,
+            *layer,
+            *n_kv_heads,
+            *head_dim,
+            *is_key,
+            tape_ctx,
+            out_buf,
+        ),
+        TapeKernel::KvRead {
+            layer,
+            n_kv_heads,
+            head_dim,
+        } => dispatch_kv_read(*layer, *n_kv_heads, *head_dim, tape_ctx, out_buf),
     }
 }
 
@@ -306,6 +358,132 @@ fn dispatch_lut_gemm_8(
     crate::lut_gemm::lut_gemm_8bit(activations, qw, &mut output);
     out_buf.extend_from_slice(bytemuck::cast_slice(&output));
     Ok(())
+}
+
+/// KvWrite dispatch: transpose heads→seq, write to cache, output for downstream attention.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_kv_write(
+    inputs: &[&[u8]],
+    layer: u32,
+    n_kv_heads: u32,
+    head_dim: u32,
+    is_key: bool,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let Some(kv_cell) = &tape_ctx.kv_state else {
+        return Err(crate::error::ExecError::UnsupportedOp(
+            "KvWrite requires TapeContext with kv_state".into(),
+        ));
+    };
+    let input = inputs.first().copied().unwrap_or(&[]);
+    if input.is_empty() || input.len() % 4 != 0 {
+        out_buf.extend_from_slice(input);
+        return Ok(());
+    }
+    let floats: &[f32] = bytemuck::cast_slice(input);
+    let nkv = n_kv_heads as usize;
+    let hd = head_dim as usize;
+    let stride = nkv * hd;
+    let seq = if stride > 0 { floats.len() / stride } else { 1 };
+
+    // Transpose from heads-first [heads, seq, dim] to seq-first [seq, heads, dim].
+    let seq_first = transpose_heads_to_seq_first(floats, nkv, seq, hd);
+
+    let mut kv = kv_cell.borrow_mut();
+    if is_key {
+        kv.write_layer(layer, &seq_first, &[]);
+    } else {
+        kv.write_layer(layer, &[], &seq_first);
+    }
+
+    if kv.write_pos() == 0 {
+        // Prefill: pass through original heads-first data.
+        out_buf.extend_from_slice(input);
+    } else {
+        // Decode: read full cache and transpose back to heads-first.
+        let total_seq = kv.write_pos() + seq;
+        let full = if is_key {
+            kv.read_k_through(layer, seq)
+        } else {
+            kv.read_v_through(layer, seq)
+        };
+        let heads_first = transpose_seq_first_to_heads(full, nkv, total_seq, hd);
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads_first));
+    }
+    Ok(())
+}
+
+/// KvRead dispatch: read full cached K/V from the KV cache.
+fn dispatch_kv_read(
+    layer: u32,
+    n_kv_heads: u32,
+    head_dim: u32,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let Some(kv_cell) = &tape_ctx.kv_state else {
+        return Err(crate::error::ExecError::UnsupportedOp(
+            "KvRead requires TapeContext with kv_state".into(),
+        ));
+    };
+    let kv = kv_cell.borrow();
+    let nkv = n_kv_heads as usize;
+    let hd = head_dim as usize;
+    let total_seq = kv.write_pos();
+    let k = kv.read_k(layer);
+    let v = kv.read_v(layer);
+    // Transpose to heads-first for attention kernel.
+    let k_heads = transpose_seq_first_to_heads(k, nkv, total_seq, hd);
+    let v_heads = transpose_seq_first_to_heads(v, nkv, total_seq, hd);
+    // Concatenate K and V as output (downstream Attention op expects both).
+    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&k_heads));
+    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&v_heads));
+    Ok(())
+}
+
+/// Transpose KV data from heads-first `[heads, seq, dim]` to seq-first `[seq, heads, dim]`.
+fn transpose_heads_to_seq_first(
+    data: &[f32],
+    n_heads: usize,
+    seq: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let total = n_heads * seq * head_dim;
+    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
+        return data.to_vec();
+    }
+    let mut out = vec![0.0f32; total];
+    for h in 0..n_heads {
+        for s in 0..seq {
+            let src = (h * seq + s) * head_dim;
+            let dst = (s * n_heads + h) * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+        }
+    }
+    out
+}
+
+/// Transpose KV data from seq-first `[seq, heads, dim]` to heads-first `[heads, seq, dim]`.
+fn transpose_seq_first_to_heads(
+    data: &[f32],
+    n_heads: usize,
+    seq: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let total = n_heads * seq * head_dim;
+    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
+        return data.to_vec();
+    }
+    let mut out = vec![0.0f32; total];
+    for s in 0..seq {
+        for h in 0..n_heads {
+            let src = (s * n_heads + h) * head_dim;
+            let dst = (h * seq + s) * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+        }
+    }
+    out
 }
 
 /// A single instruction in the enum-dispatch tape.
