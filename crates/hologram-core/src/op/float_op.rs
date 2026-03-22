@@ -285,6 +285,14 @@ pub enum FloatOp {
         /// If true, inputs are `[n_heads, seq, head_dim]` (ONNX: already transposed).
         /// If false, inputs are `[seq, n_heads, head_dim]` (GGUF: needs transpose).
         heads_first: bool,
+        /// If true, apply RMSNorm to Q and K before computing attention scores.
+        /// Used by Qwen-style models with QK normalization.
+        qk_norm: bool,
+        /// If true, apply RoPE to Q and K before attention. Fuses the separate
+        /// RotaryEmbedding nodes into the attention kernel.
+        rope: bool,
+        /// RoPE base frequency stored as f32 bits. Only used when `rope` is true.
+        rope_base: u32,
     },
 
     // ── Quantization ─────────────────────────────────────────────────────
@@ -1197,6 +1205,9 @@ mod tests {
                 scale: f32_to_bits(0.125),
                 causal: true,
                 heads_first: true,
+                qk_norm: false,
+                rope: false,
+                rope_base: 0,
             }
             .arity(),
             3
@@ -1221,6 +1232,9 @@ mod tests {
                 scale: f32_to_bits(0.125),
                 causal: true,
                 heads_first: true,
+                qk_norm: false,
+                rope: false,
+                rope_base: 0,
             }
             .name(),
             "float.attention"

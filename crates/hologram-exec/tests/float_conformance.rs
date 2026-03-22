@@ -1034,6 +1034,9 @@ fn test_attention_basic() {
         scale: f32_to_bits(1.0 / 2.0f32.sqrt()),
         causal: false,
         heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
     };
     let result = dispatch_float(&op, &[&q, &k, &v]).unwrap();
     let out = result_f32(&result);

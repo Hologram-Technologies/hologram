@@ -1114,6 +1114,7 @@ fn resolve_dynamic_sizes(
                     scale,
                     causal,
                     heads_first,
+                    ..
                 } if *num_q_heads > 0 => {
                     let q_last = input_shapes
                         .first()
@@ -1133,6 +1134,9 @@ fn resolve_dynamic_sizes(
                             scale: *scale,
                             causal: *causal,
                             heads_first: *heads_first,
+                            qk_norm: false,
+                            rope: false,
+                            rope_base: 0,
                         }
                     } else {
                         return None;

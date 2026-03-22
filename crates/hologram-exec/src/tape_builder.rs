@@ -151,6 +151,19 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<TapeKernel> {
 /// happens at dispatch time inside `dispatch_float_into`.
 fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
     match fop {
+        // Inline hot ops — skip backend + dispatch_float_into entirely.
+        FloatOp::Relu => TapeKernel::InlineRelu,
+        FloatOp::Neg => TapeKernel::InlineNeg,
+        FloatOp::Sigmoid => TapeKernel::InlineSigmoid,
+        FloatOp::Silu => TapeKernel::InlineSilu,
+        FloatOp::Tanh => TapeKernel::InlineTanh,
+        FloatOp::Gelu => TapeKernel::InlineGelu,
+        FloatOp::Exp => TapeKernel::InlineExp,
+        FloatOp::Add => TapeKernel::InlineAdd,
+        FloatOp::Mul => TapeKernel::InlineMul,
+        FloatOp::Sub => TapeKernel::InlineSub,
+        FloatOp::Div => TapeKernel::InlineDiv,
+
         FloatOp::KvWrite {
             layer,
             n_kv_heads,
@@ -291,7 +304,7 @@ mod tests {
         // Verify the Relu instruction is a Float variant (not a Box).
         for instr in &tape.instructions {
             match &instr.kernel {
-                TapeKernel::Float(FloatOp::Relu) | TapeKernel::Output => {}
+                TapeKernel::InlineRelu | TapeKernel::Output => {}
                 other => panic!(
                     "unexpected kernel variant: {:?}",
                     std::mem::discriminant(other)

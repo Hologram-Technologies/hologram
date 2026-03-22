@@ -267,11 +267,60 @@
 - [x] **7.3**: Metal unary dispatch returns `MetalBuffer` directly (skip Vec copy on output)
 - [x] **7.4**: `ComputeBackend` trait updated — all backends return `KernelOutput` instead of `bool`
 
-### Phase 8: Remaining GPU Work (TODO — future sprints)
+### Phase 8: Remaining GPU Work (TODO)
 - [ ] **8.1**: Metal binary/matmul/softmax/rmsnorm also return MetalBuffer (extend zero-copy)
 - [ ] **8.2**: Async command buffer batching (per-level, amortize launch overhead)
 - [ ] **8.3**: WebGPU/wgpu compute shader path (cross-platform GPU, browser + native)
 - [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
+
+### Phase 9: Zero-Overhead Dispatch — Flatten Abstraction Layers (TODO)
+
+Goal: eliminate all per-instruction overhead between the execute loop and the kernel compute. Target: O(1) constant-time dispatch with zero memory copies for the CPU path.
+
+#### 9a: Inline Hot Ops (eliminate backend vtable + double match)
+- [x] **9a.1**: 7 unary inline variants (InlineRelu, InlineNeg, InlineSigmoid, InlineSilu, InlineTanh, InlineGelu, InlineExp)
+- [x] **9a.2**: 4 binary inline variants (InlineAdd, InlineMul, InlineSub, InlineDiv)
+- [x] **9a.3**: tape_builder maps hot FloatOps to Inline variants at build time
+- [x] **9a.4**: `inline_unary` / `inline_binary` helper functions (direct bytemuck cast, no dispatch_float_into)
+- [x] **9a.5**: 3 inline conformance tests + inline benchmark
+- [ ] **9a.6**: `InlineMatMul { m, k, n }` — direct BLAS/loop call (future)
+- [ ] **9a.7**: `InlineSoftmax/RmsNorm` — direct norm kernels (future)
+
+### Benchmark Results (Phase 9a)
+- Tape Relu 64KB: **5.1 µs → 3.3 µs** (36% improvement from inlining)
+- Tape vs KvExecutor: **4.9 µs vs 45.6 µs** (9.3x faster)
+
+#### 9b: Zero-Copy Arena Path (eliminate out_buf round-trip)
+- [ ] **9b.1**: Output/Reshape passthrough — arena pointer swap, no data copy
+- [ ] **9b.2**: Pre-allocated arena output slots — kernel writes directly into arena memory
+- [ ] **9b.3**: In-place unary ops — overwrite input buffer when it has no other consumers (liveness analysis)
+
+#### 9c: Typed Arena Access (eliminate per-call bytemuck cast)
+- [ ] **9c.1**: `arena.get_f32(id)` — returns `&[f32]` directly, caches alignment validation
+- [ ] **9c.2**: `arena.get_f32_mut(id)` — mutable f32 slice for in-place ops
+- [ ] **9c.3**: Typed `ArenaBuffer::F32(Vec<f32>)` variant — skip byte↔float conversion entirely
+
+#### 9d: Direct Input Access (eliminate SmallVec collection for known arity)
+- [ ] **9d.1**: Unary ops — `arena.get(input_indices[0])` directly, no SmallVec
+- [ ] **9d.2**: Binary ops — `arena.get(a), arena.get(b)` directly
+- [ ] **9d.3**: Arity encoded in TapeKernel variant — compiler proves single input at build time
+
+#### 9e: Unsafe Fast Path (eliminate bounds checks in hot loop)
+- [ ] **9e.1**: `out_buf.set_len()` instead of `resize()` (skip memory zeroing)
+- [ ] **9e.2**: Unchecked arena access for tape-validated indices (tape builder guarantees valid)
+- [ ] **9e.3**: `get_unchecked` for SmallVec input refs when arity is known
+
+### Performance Budget (per instruction)
+| Layer | Current | After Phase 9 | Savings |
+|-------|---------|---------------|---------|
+| Backend vtable + Skipped check | ~60ns | 0ns (inline) | 60ns |
+| Double match (category + op) | ~20ns | 0ns (inline) | 20ns |
+| SmallVec collection for unary | ~30ns | 0ns (direct access) | 30ns |
+| bytemuck cast_f32 per call | ~15ns | 0ns (typed arena) | 15ns |
+| out_buf round-trip for passthrough | ~50ns | 0ns (pointer swap) | 50ns |
+| out_buf.resize zeroes memory | ~30ns | 0ns (set_len) | 30ns |
+| **Total per instruction** | **~205ns** | **~0ns** | **~205ns** |
+| **150-op transformer layer** | **~30µs** | **~0µs** | **~30µs** |
 
 ---
 

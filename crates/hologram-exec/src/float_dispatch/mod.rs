@@ -259,6 +259,7 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             scale,
             causal,
             heads_first,
+            ..
         } => {
             let result = attention::dispatch_attention(
                 inputs,
@@ -435,6 +436,7 @@ fn dispatch_custom(
             scale,
             causal,
             heads_first,
+            ..
         } => attention::dispatch_attention(
             inputs,
             *head_dim as usize,

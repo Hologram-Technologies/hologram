@@ -258,6 +258,41 @@ fn bench_enum_tape_vs_kvexecutor(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_inline_vs_generic(c: &mut Criterion) {
+    // Compare inline dispatch (Phase 9a) vs generic Float dispatch on same op.
+    use hologram_core::op::FloatOp;
+
+    let mut g = GraphBuilder::new()
+        .input("x")
+        .node_from_graph_input(GraphOp::Input, 0)
+        .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+        .node_with_inputs(GraphOp::Output, &[1])
+        .output("y", 2)
+        .build();
+    let _ = hologram_graph::fusion::fuse(&mut g);
+    let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+
+    // Tape builder now maps Relu → InlineRelu automatically.
+    let tape = hologram_exec::mmap::build_tape_from_plan(&plan).unwrap();
+
+    let input_f32: Vec<u8> = (0..16384) // 64KB
+        .flat_map(|i| ((i as f32) * 0.001).to_le_bytes())
+        .collect();
+    let mut inputs = GraphInputs::new();
+    inputs.set(0, input_f32);
+
+    c.bench_function("inline::relu(64KB)", |b| {
+        b.iter(|| {
+            hologram_exec::mmap::execute_tape(
+                black_box(&tape),
+                black_box(&plan),
+                black_box(&inputs),
+            )
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_executor_linear,
@@ -268,5 +303,6 @@ criterion_group!(
     bench_page_faults,
     bench_enum_tape_linear,
     bench_enum_tape_vs_kvexecutor,
+    bench_inline_vs_generic,
 );
 criterion_main!(benches);

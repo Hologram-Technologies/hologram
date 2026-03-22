@@ -23,3 +23,7 @@ MTLBuffer-backed arena (zero-copy GPU path — requires BufferArena refactor)
 Async command buffer batching (requires MTLBuffer arena)
 CUDA + WebGPU backends (same trait, different implementations)
 Metal attention kernel (multi-head attention with tiled QK^T + softmax + score×V)
+
+---
+
+Keep track of those as well in the @specs/SPRINT.md. Can we reduce the amount of memory copying, hopefully to zero-copy and have the execution be O(1) constant-time lookup as much as possible?

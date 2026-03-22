@@ -266,6 +266,32 @@ pub enum TapeKernel {
         n_kv_heads: u32,
         head_dim: u32,
     },
+
+    // ── Inline hot ops (Phase 9a) ─────────────────────────────────────
+    // Skip backend vtable + dispatch_float_into entirely.
+    // The execute loop calls the kernel function directly.
+    /// Inline Relu: v.max(0.0). Zero dispatch overhead.
+    InlineRelu,
+    /// Inline Neg: -v.
+    InlineNeg,
+    /// Inline Sigmoid: 1/(1+exp(-v)).
+    InlineSigmoid,
+    /// Inline Silu: v * sigmoid(v).
+    InlineSilu,
+    /// Inline Tanh.
+    InlineTanh,
+    /// Inline Gelu (approximate).
+    InlineGelu,
+    /// Inline Exp.
+    InlineExp,
+    /// Inline binary Add.
+    InlineAdd,
+    /// Inline binary Mul.
+    InlineMul,
+    /// Inline binary Sub.
+    InlineSub,
+    /// Inline binary Div.
+    InlineDiv,
 }
 
 /// Result of kernel dispatch — tells the execute loop how to store the output.
@@ -360,6 +386,89 @@ fn dispatch_kernel(
             dispatch_kv_read(*layer, *n_kv_heads, *head_dim, tape_ctx, out_buf)?;
             Ok(DispatchResult::InOutBuf)
         }
+
+        // ── Inline hot ops (Phase 9a) ─────────────────────────────────
+        // Direct kernel call — no backend, no dispatch_float_into, no category match.
+        TapeKernel::InlineRelu => {
+            inline_unary(inputs[0], out_buf, |v| v.max(0.0));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineNeg => {
+            inline_unary(inputs[0], out_buf, |v| -v);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSigmoid => {
+            inline_unary(inputs[0], out_buf, |v| 1.0 / (1.0 + (-v).exp()));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSilu => {
+            inline_unary(inputs[0], out_buf, |v| v * (1.0 / (1.0 + (-v).exp())));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineTanh => {
+            inline_unary(inputs[0], out_buf, |v| v.tanh());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGelu => {
+            inline_unary(inputs[0], out_buf, |v| {
+                0.5 * v
+                    * (1.0
+                        + (std::f32::consts::FRAC_2_SQRT_PI
+                            * std::f32::consts::FRAC_1_SQRT_2
+                            * (v + 0.044715 * v * v * v))
+                            .tanh())
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineExp => {
+            inline_unary(inputs[0], out_buf, |v| v.exp());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAdd => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a + b);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineMul => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a * b);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSub => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a - b);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineDiv => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
+            Ok(DispatchResult::InOutBuf)
+        }
+    }
+}
+
+/// Inline unary kernel — writes directly to out_buf as f32 via bytemuck cast.
+/// No dispatch overhead, no intermediate allocation.
+#[inline(always)]
+fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
+    let x: &[f32] = bytemuck::cast_slice(input);
+    let byte_len = x.len() * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (d, &s) in dst.iter_mut().zip(x.iter()) {
+        *d = f(s);
+    }
+}
+
+/// Inline binary kernel — writes directly to out_buf as f32 via bytemuck cast.
+#[inline(always)]
+fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32) -> f32) {
+    let a: &[f32] = bytemuck::cast_slice(a);
+    let b: &[f32] = bytemuck::cast_slice(b);
+    let out_len = a.len().max(b.len());
+    let byte_len = out_len * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + byte_len, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (i, d) in dst.iter_mut().enumerate() {
+        *d = f(a[i % a.len()], b[i % b.len()]);
     }
 }
 
@@ -396,6 +505,58 @@ fn dispatch_kernel_par(
         TapeKernel::PrimBinary(p) => {
             let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
             out_buf.extend_from_slice(&r);
+            Ok(())
+        }
+        // Inline hot ops — fully parallelizable.
+        TapeKernel::InlineRelu => {
+            inline_unary(inputs[0], out_buf, |v| v.max(0.0));
+            Ok(())
+        }
+        TapeKernel::InlineNeg => {
+            inline_unary(inputs[0], out_buf, |v| -v);
+            Ok(())
+        }
+        TapeKernel::InlineSigmoid => {
+            inline_unary(inputs[0], out_buf, |v| 1.0 / (1.0 + (-v).exp()));
+            Ok(())
+        }
+        TapeKernel::InlineSilu => {
+            inline_unary(inputs[0], out_buf, |v| v * (1.0 / (1.0 + (-v).exp())));
+            Ok(())
+        }
+        TapeKernel::InlineTanh => {
+            inline_unary(inputs[0], out_buf, |v| v.tanh());
+            Ok(())
+        }
+        TapeKernel::InlineGelu => {
+            inline_unary(inputs[0], out_buf, |v| {
+                0.5 * v
+                    * (1.0
+                        + (std::f32::consts::FRAC_2_SQRT_PI
+                            * std::f32::consts::FRAC_1_SQRT_2
+                            * (v + 0.044715 * v * v * v))
+                            .tanh())
+            });
+            Ok(())
+        }
+        TapeKernel::InlineExp => {
+            inline_unary(inputs[0], out_buf, |v| v.exp());
+            Ok(())
+        }
+        TapeKernel::InlineAdd => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a + b);
+            Ok(())
+        }
+        TapeKernel::InlineMul => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a * b);
+            Ok(())
+        }
+        TapeKernel::InlineSub => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a - b);
+            Ok(())
+        }
+        TapeKernel::InlineDiv => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
             Ok(())
         }
         // These should never appear in parallel levels (filtered by needs_shared_state).
@@ -1130,5 +1291,117 @@ mod tests {
         let f2: f32 = f32::from_le_bytes(out2[..4].try_into().unwrap());
         assert_eq!(f1, 1.0);
         assert_eq!(f2, 2.0);
+    }
+
+    // ── Inline hot op tests (Phase 9a) ────────────────────────────
+
+    #[test]
+    fn inline_relu_matches_generic() {
+        let input: Vec<u8> = [(-2.0f32).to_le_bytes(), 3.0f32.to_le_bytes()].concat();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+
+        // Inline path
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineRelu,
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 8,
+            weight_offset_hint: 0,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), input.clone());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let inline_out = arena.get(NodeId::new(1, 0)).unwrap().to_vec();
+
+        // Generic Float path
+        let mut tape2 = EnumTape::new();
+        tape2.push(TapeInstruction {
+            kernel: TapeKernel::Float(FloatOp::Relu),
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 8,
+            weight_offset_hint: 0,
+        });
+        tape2.end_level();
+        let mut arena2 = BufferArena::new();
+        arena2.insert(NodeId::new(0, 0), input);
+        tape2.execute(&mut arena2, &ctx).unwrap();
+        let generic_out = arena2.get(NodeId::new(1, 0)).unwrap().to_vec();
+
+        // Byte-for-byte match.
+        assert_eq!(inline_out, generic_out, "InlineRelu must match Float(Relu)");
+        let floats: &[f32] = bytemuck::cast_slice(&inline_out);
+        assert_eq!(floats, &[0.0, 3.0]);
+    }
+
+    #[test]
+    fn inline_add_matches_generic() {
+        let a: Vec<u8> = [1.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat();
+        let b: Vec<u8> = [10.0f32.to_le_bytes(), 20.0f32.to_le_bytes()].concat();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+
+        // Inline path
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineAdd,
+            output_idx: 2,
+            input_indices: vec![0, 1],
+            output_elem_size: 4,
+            output_byte_hint: 8,
+            weight_offset_hint: 0,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), a.clone());
+        arena.insert(NodeId::new(1, 0), b.clone());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats, &[11.0, 22.0]);
+    }
+
+    #[test]
+    fn inline_mul_sigmoid_chain() {
+        // Test chaining inline ops: Input → InlineSigmoid → InlineMul → Output
+        let input: Vec<u8> = [0.0f32.to_le_bytes()].concat(); // sigmoid(0) = 0.5
+        let two: Vec<u8> = [2.0f32.to_le_bytes()].concat();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineSigmoid,
+            output_idx: 2,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 4,
+            weight_offset_hint: 0,
+        });
+        tape.end_level();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineMul,
+            output_idx: 3,
+            input_indices: vec![2, 1],
+            output_elem_size: 4,
+            output_byte_hint: 4,
+            weight_offset_hint: 0,
+        });
+        tape.end_level();
+
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), input);
+        arena.insert(NodeId::new(1, 0), two);
+        tape.execute(&mut arena, &ctx).unwrap();
+
+        let out = arena.get(NodeId::new(3, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        // sigmoid(0) * 2 = 0.5 * 2 = 1.0
+        assert!((floats[0] - 1.0).abs() < 1e-5, "got {}", floats[0]);
     }
 }
