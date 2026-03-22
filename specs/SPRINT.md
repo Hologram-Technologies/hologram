@@ -126,7 +126,7 @@
 
 ### Phase 2: mmap Page Discipline (P1)
 - [x] **2.1**: Add `madvise` hints for mmap'd weight regions (MADV_RANDOM for LUT-GEMM, MADV_SEQUENTIAL for graph)
-- [ ] **2.2**: Weight-page prefetch for next instruction's constants (deferred — LUT-GEMM not yet wired into tape)
+- [ ] **2.2**: Weight-page prefetch for next instruction's constants (unblocked — LUT-GEMM wired in Phase 8)
 - [x] **2.3**: Audit tape builder for eager weight-page touching (CLEAN — no weight data accessed)
 
 ### Phase 3: Graph Edge Efficiency (P2)
@@ -157,6 +157,34 @@
 - [x] **7.5**: `dispatch_softmax_into` — native in-place softmax
 - [x] **7.6**: `dispatch_rms_norm_into` — native in-place RmsNorm
 - [x] **7.7**: `dispatch_custom_into` router in `dispatch_float_into` (MatMul, Softmax, RmsNorm)
+
+### Phase 8: Enum Dispatch + LUT-GEMM Tape Wiring
+- [x] **8.1**: `TapeKernel` enum — replaces `Box<dyn Fn>` with 8 inline variants (no vtable, no heap alloc)
+- [x] **8.2**: `TapeContext` struct — carries ConstantStore + weights + RefCell\<WeightCache\> for LUT-GEMM
+- [x] **8.3**: `TapeInstruction` / `EnumTape` — replaces `BoxedInstruction` / `BoxedTape`
+- [x] **8.4**: `dispatch_kernel` match function — inlinable enum dispatch for all kernel types
+- [x] **8.5**: LUT-GEMM Q4/Q8 wired into tape via `dispatch_lut_gemm_4` / `dispatch_lut_gemm_8`
+- [x] **8.6**: `tape_builder.rs` rewritten — `resolve_kernel` returns enum variants, no closures
+- [x] **8.7**: `execute_tape` in mmap/mod.rs builds `TapeContext` with weight access
+- [x] **8.8**: 6 new EnumTape unit tests + tape vs KvExecutor benchmark (30% faster confirmed)
+
+### Benchmark Results (Phase 8)
+- Tape vs KvExecutor on Relu 64KB: **36.4 µs vs 47.2 µs** (1.30x faster)
+- Tape linear chain (4 float nodes, 256B): **706 ns**
+
+### Phase 8b: Fused Ops
+- [x] **8b.1**: `FloatOp::AddRmsNorm` — fused Add + RmsNorm (eliminates intermediate residual buffer)
+- [x] **8b.2**: `dispatch_add_rms_norm` + `dispatch_add_rms_norm_into` in norm.rs
+- [x] **8b.3**: Wired into `dispatch_custom_into` router + `dispatch_custom` fallback
+
+### Phase 9: Next Optimizations (TODO)
+- [ ] **9.1**: Weight-page prefetch for LUT-GEMM tape instructions (unblocked by Phase 8.5)
+- [ ] **9.2**: Parallel level execution for EnumTape (Rayon within levels, matching KvExecutor)
+- [ ] **9.3**: Native `_into` for LayerNorm, Conv2d, Attention (extend `dispatch_custom_into`)
+- [ ] **9.4**: LUT-GEMM tape integration test (build graph with quantized weight constants, execute via tape)
+- [ ] **9.5**: Dynamic size inference in tape dispatch (Softmax/RmsNorm size=0 sentinel handling)
+- [ ] **9.6**: KvCache ops wired into tape (KvWrite/KvRead via TapeContext)
+- [ ] **9.7**: Tape-path conformance test vs KvExecutor (same graph, compare outputs byte-for-byte)
 
 ---
 

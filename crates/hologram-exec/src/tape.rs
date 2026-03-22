@@ -164,58 +164,178 @@ impl Default for Tape {
     }
 }
 
-/// A boxed kernel: like `KernelFn` but can capture op parameters.
-///
-/// Used for ops that need baked-in parameters (e.g., Softmax with size,
-/// MatMul with m/k/n). The Box<dyn Fn> has one indirection but eliminates
-/// the `match op` at execution time — the parameters are pre-resolved.
-///
-/// Writes output into a pre-provided `&mut Vec<u8>` instead of returning
-/// a new allocation. The buffer is cleared before each call.
-pub type BoxedKernel =
-    Box<dyn Fn(&[&[u8]], Option<&ExecutionContext>, &mut Vec<u8>) -> ExecResult<()> + Send + Sync>;
+// ── Enum-dispatch tape (Phase 8) ──────────────────────────────────────────────
 
-/// Instruction variant that uses a boxed kernel (captures op parameters).
-pub struct BoxedInstruction {
-    pub kernel: BoxedKernel,
+use std::cell::RefCell;
+
+use hologram_core::op::PrimOp;
+use hologram_core::view::ElementWiseView;
+use hologram_graph::constant::{ConstantId, ConstantStore};
+
+use crate::kv::weight_cache::WeightCache;
+
+/// Execution context for the enum-dispatch tape.
+///
+/// Carries weight archive access and a lazily-populated weight cache
+/// for LUT-GEMM ops. Float-only tapes can use [`TapeContext::empty`].
+pub struct TapeContext<'a> {
+    /// Optional per-inference execution state (position offset, etc.).
+    pub ctx: Option<ExecutionContext>,
+    /// Constant store for resolving `ConstantId` → raw bytes.
+    pub constants: &'a ConstantStore,
+    /// Raw weight archive bytes for deferred constants.
+    pub weights: &'a [u8],
+    /// Lazily-populated cache for deserialized quantized weights.
+    /// `RefCell` provides interior mutability from within immutable dispatch.
+    pub weight_cache: RefCell<WeightCache>,
+}
+
+impl<'a> TapeContext<'a> {
+    /// Create a context from a constant store and weight archive.
+    #[must_use]
+    pub fn new(constants: &'a ConstantStore, weights: &'a [u8]) -> Self {
+        TapeContext {
+            ctx: None,
+            constants,
+            weights,
+            weight_cache: RefCell::new(WeightCache::new()),
+        }
+    }
+}
+
+/// Pre-resolved kernel variant — replaces `Box<dyn Fn>` with a small enum.
+///
+/// Each variant captures only the op parameters needed for dispatch.
+/// The `dispatch_kernel` function matches on this enum and calls the
+/// appropriate dispatch function directly, enabling inlining and
+/// eliminating vtable indirection.
+pub enum TapeKernel {
+    /// Float op dispatched via `dispatch_float_into`.
+    Float(FloatOp),
+    /// Fused chain of unary float ops.
+    FusedFloatChain(Vec<FloatOp>),
+    /// Graph output passthrough.
+    Output,
+    /// Byte-domain LUT (256-byte table).
+    LutView(ElementWiseView),
+    /// Byte-domain unary prim via LUT.
+    PrimUnary(ElementWiseView),
+    /// Byte-domain binary prim.
+    PrimBinary(PrimOp),
+    /// 4-bit quantized LUT-GEMM matmul.
+    MatMulLut4(ConstantId),
+    /// 8-bit quantized LUT-GEMM matmul.
+    MatMulLut8(ConstantId),
+}
+
+/// Dispatch a `TapeKernel` into a pre-allocated output buffer.
+#[inline]
+fn dispatch_kernel(
+    kernel: &TapeKernel,
+    inputs: &[&[u8]],
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    use crate::float_dispatch;
+    use crate::kv::KvStore;
+
+    match kernel {
+        TapeKernel::Float(op) => {
+            float_dispatch::dispatch_float_into(op, inputs, tape_ctx.ctx.as_ref(), out_buf)
+        }
+        TapeKernel::FusedFloatChain(chain) => {
+            float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)
+        }
+        TapeKernel::Output => {
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
+            Ok(())
+        }
+        TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
+            out_buf.extend_from_slice(&KvStore::apply_unary(view, inputs[0]));
+            Ok(())
+        }
+        TapeKernel::PrimBinary(p) => {
+            let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
+            out_buf.extend_from_slice(&r);
+            Ok(())
+        }
+        TapeKernel::MatMulLut4(cid) => dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf),
+        TapeKernel::MatMulLut8(cid) => dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf),
+    }
+}
+
+/// LUT-GEMM Q4 dispatch for tape kernels.
+fn dispatch_lut_gemm_4(
+    inputs: &[&[u8]],
+    cid: ConstantId,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
+    let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+        crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
+    })?;
+    let k = qw.rows as usize;
+    let n = qw.cols as usize;
+    let m = if k > 0 { activations.len() / k } else { 0 };
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    Ok(())
+}
+
+/// LUT-GEMM Q8 dispatch for tape kernels.
+fn dispatch_lut_gemm_8(
+    inputs: &[&[u8]],
+    cid: ConstantId,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
+    let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+        crate::error::ExecError::UnsupportedOp("Q8: activation not f32-aligned".into())
+    })?;
+    let k = qw.rows as usize;
+    let n = qw.cols as usize;
+    let m = if k > 0 { activations.len() / k } else { 0 };
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_8bit(activations, qw, &mut output);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    Ok(())
+}
+
+/// A single instruction in the enum-dispatch tape.
+pub struct TapeInstruction {
+    /// The kernel to execute (enum variant, no heap allocation).
+    pub kernel: TapeKernel,
+    /// Output node index (where to store the result in the arena).
     pub output_idx: u32,
+    /// Input node indices (where to gather inputs from the arena).
     pub input_indices: Vec<u32>,
+    /// Element size of the output (for arena metadata).
     pub output_elem_size: u8,
     /// Pre-computed output byte size hint (0 = unknown/dynamic).
-    ///
-    /// When non-zero, the executor pre-reserves this many bytes in the output
-    /// buffer before calling the kernel, reducing reallocation pressure.
-    /// Computed from compiled node shapes + dtypes at tape build time.
     pub output_byte_hint: u32,
 }
 
-/// Resolve a FloatOp to a boxed kernel that captures its parameters.
+/// Pre-compiled execution tape using enum dispatch.
 ///
-/// This is the "compile" step: bakes op-specific parameters into the closure,
-/// eliminating the match dispatch at execution time.
-pub fn resolve_boxed_kernel(op: &FloatOp) -> BoxedKernel {
-    use crate::float_dispatch;
-
-    let op = *op;
-    Box::new(move |inputs, ctx, out_buf| {
-        float_dispatch::dispatch_float_into(&op, inputs, ctx, out_buf)
-    })
-}
-
-/// Pre-compiled execution tape using boxed kernels.
-///
-/// Like [`Tape`] but uses [`BoxedInstruction`] (closures that capture op
-/// parameters) instead of bare function pointers. Built by [`crate::tape_builder::build_tape`].
-pub struct BoxedTape {
+/// Each instruction carries a [`TapeKernel`] enum variant instead of a
+/// boxed closure. This eliminates vtable indirection, enables inlining
+/// of small kernels, and removes per-kernel heap allocation.
+pub struct EnumTape {
     /// Flat instruction array in execution order.
-    pub instructions: Vec<BoxedInstruction>,
-    /// Level boundaries: `level_offsets[i]..level_offsets[i+1]` is the range
-    /// of instructions for level `i`.
+    pub instructions: Vec<TapeInstruction>,
+    /// Level boundaries: `level_offsets[i]..level_offsets[i+1]`.
     pub level_offsets: Vec<usize>,
 }
 
-impl BoxedTape {
-    /// Create an empty boxed tape.
+impl EnumTape {
+    /// Create an empty tape.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -224,7 +344,7 @@ impl BoxedTape {
         }
     }
 
-    /// Create a boxed tape with pre-allocated capacity.
+    /// Create a tape with pre-allocated capacity.
     #[must_use]
     pub fn with_capacity(n_instructions: usize, n_levels: usize) -> Self {
         let mut level_offsets = Vec::with_capacity(n_levels + 1);
@@ -236,7 +356,7 @@ impl BoxedTape {
     }
 
     /// Add an instruction and return its index.
-    pub fn push(&mut self, instr: BoxedInstruction) -> usize {
+    pub fn push(&mut self, instr: TapeInstruction) -> usize {
         let idx = self.instructions.len();
         self.instructions.push(instr);
         idx
@@ -253,13 +373,14 @@ impl BoxedTape {
         self.level_offsets.len().saturating_sub(1)
     }
 
-    /// Execute the boxed tape sequentially against the given arena.
+    /// Execute the tape against the given arena and context.
     ///
     /// Uses swap-insert for zero-allocation buffer recycling after warmup.
+    /// Enum dispatch replaces vtable indirection with a direct match.
     pub fn execute(
         &self,
         arena: &mut BufferArena<'_>,
-        ctx: Option<&ExecutionContext>,
+        tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
@@ -286,7 +407,7 @@ impl BoxedTape {
                 if instr.output_byte_hint > 0 {
                     out_buf.reserve(instr.output_byte_hint as usize);
                 }
-                (instr.kernel)(&input_refs, ctx, &mut out_buf)?;
+                dispatch_kernel(&instr.kernel, &input_refs, tape_ctx, &mut out_buf)?;
             }
 
             let out_id = NodeId::new(instr.output_idx, 0);
@@ -297,11 +418,19 @@ impl BoxedTape {
     }
 }
 
-impl Default for BoxedTape {
+impl Default for EnumTape {
     fn default() -> Self {
         Self::new()
     }
 }
+
+// ── Backward-compat aliases ──────────────────────────────────────────────────
+
+/// Backward-compatible alias for [`TapeInstruction`].
+pub type BoxedInstruction = TapeInstruction;
+
+/// Backward-compatible alias for [`EnumTape`].
+pub type BoxedTape = EnumTape;
 
 #[cfg(test)]
 mod tests {
@@ -415,5 +544,172 @@ mod tests {
 
         assert_eq!(tape.n_levels(), 2);
         assert_eq!(tape.level_offsets, vec![0, 2, 3]);
+    }
+
+    // ── EnumTape tests ────────────────────────────────────────────────
+
+    fn empty_constants() -> ConstantStore {
+        ConstantStore::new()
+    }
+
+    #[test]
+    fn enum_tape_empty_executes() {
+        let tape = EnumTape::new();
+        let mut arena = BufferArena::new();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        assert!(tape.execute(&mut arena, &ctx).is_ok());
+    }
+
+    #[test]
+    fn enum_tape_output_passthrough() {
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Output,
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 1,
+            output_byte_hint: 0,
+        });
+        tape.end_level();
+
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), vec![10, 20, 30]);
+
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+
+        assert_eq!(arena.get(NodeId::new(1, 0)).unwrap(), &[10, 20, 30]);
+    }
+
+    #[test]
+    fn enum_tape_float_relu() {
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Float(FloatOp::Relu),
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 8, // 2 floats × 4 bytes
+        });
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Output,
+            output_idx: 2,
+            input_indices: vec![1],
+            output_elem_size: 4,
+            output_byte_hint: 0,
+        });
+        tape.end_level();
+
+        // Input: two f32 values [-1.0, 2.0]
+        let input_bytes: Vec<u8> = [(-1.0f32).to_le_bytes(), 2.0f32.to_le_bytes()].concat();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), input_bytes);
+
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats, &[0.0, 2.0]); // relu(-1)=0, relu(2)=2
+    }
+
+    #[test]
+    fn enum_tape_lut_view() {
+        use hologram_core::op::LutOp;
+        let view = hologram_core::view::ElementWiseView::from_table(*LutOp::Relu.table());
+
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::LutView(view),
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 1,
+            output_byte_hint: 3,
+        });
+        tape.end_level();
+
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), vec![0, 128, 255]);
+
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+
+        let out = arena.get(NodeId::new(1, 0)).unwrap();
+        assert_eq!(out[0], LutOp::Relu.apply(0));
+        assert_eq!(out[1], LutOp::Relu.apply(128));
+        assert_eq!(out[2], LutOp::Relu.apply(255));
+    }
+
+    #[test]
+    fn enum_tape_two_level_chain() {
+        // Input(0) → Relu(1) → Output(2)
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Float(FloatOp::Relu),
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 0,
+        });
+        tape.end_level();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Output,
+            output_idx: 2,
+            input_indices: vec![1],
+            output_elem_size: 4,
+            output_byte_hint: 0,
+        });
+        tape.end_level();
+
+        assert_eq!(tape.n_levels(), 2);
+
+        let input: Vec<u8> = [(-3.0f32).to_le_bytes(), 5.0f32.to_le_bytes()].concat();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), input);
+
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats, &[0.0, 5.0]);
+    }
+
+    #[test]
+    fn enum_tape_swap_insert_recycles_buffers() {
+        // Run the same tape twice — second run should reuse allocations.
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::Float(FloatOp::Relu),
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 4,
+        });
+        tape.end_level();
+
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+
+        // Run 1
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), 1.0f32.to_le_bytes().to_vec());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out1 = arena.get(NodeId::new(1, 0)).unwrap().to_vec();
+
+        // Run 2 (reuse arena)
+        arena.insert(NodeId::new(0, 0), 2.0f32.to_le_bytes().to_vec());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out2 = arena.get(NodeId::new(1, 0)).unwrap().to_vec();
+
+        let f1: f32 = f32::from_le_bytes(out1[..4].try_into().unwrap());
+        let f2: f32 = f32::from_le_bytes(out2[..4].try_into().unwrap());
+        assert_eq!(f1, 1.0);
+        assert_eq!(f2, 2.0);
     }
 }

@@ -119,6 +119,98 @@ pub(super) fn dispatch_rms_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
+/// Fused Add + RMS normalization: rmsnorm(x + residual, weight, epsilon).
+/// Inputs: [x (f32), residual (f32), weight (f32)].
+/// Avoids materializing the intermediate x + residual buffer.
+pub(super) fn dispatch_add_rms_norm(
+    inputs: &[&[u8]],
+    size: usize,
+    epsilon: f32,
+) -> ExecResult<Vec<u8>> {
+    let x = cast_f32(inputs[0])?;
+    let residual = cast_f32(inputs[1])?;
+    let weight = cast_f32(inputs[2])?;
+    if weight.len() != size {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("weight: [{size}]"),
+            actual: format!("{} floats", weight.len()),
+        });
+    }
+    if x.len() != residual.len() {
+        return Err(ExecError::ShapeMismatch {
+            expected: "x and residual same length".to_string(),
+            actual: format!("x={}, residual={}", x.len(), residual.len()),
+        });
+    }
+    if x.len() % size != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("multiple of {size}"),
+            actual: format!("{} floats", x.len()),
+        });
+    }
+    // Compute x + residual in-place, then normalize
+    let mut out: Vec<f32> = x
+        .iter()
+        .zip(residual.iter())
+        .map(|(&a, &b)| a + b)
+        .collect();
+    for row in out.chunks_mut(size) {
+        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
+        let inv_rms = fast_rsqrt(ms + epsilon);
+        for (v, &w) in row.iter_mut().zip(weight.iter()) {
+            *v = *v * inv_rms * w;
+        }
+    }
+    Ok(f32_vec_to_bytes(out))
+}
+
+/// Fused Add + RMS normalization writing directly into a pre-allocated output buffer.
+pub(super) fn dispatch_add_rms_norm_into(
+    inputs: &[&[u8]],
+    size: usize,
+    epsilon: f32,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let x = cast_f32(inputs[0])?;
+    let residual = cast_f32(inputs[1])?;
+    let weight = cast_f32(inputs[2])?;
+    if weight.len() != size {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("weight: [{size}]"),
+            actual: format!("{} floats", weight.len()),
+        });
+    }
+    if x.len() != residual.len() {
+        return Err(ExecError::ShapeMismatch {
+            expected: "x and residual same length".to_string(),
+            actual: format!("x={}, residual={}", x.len(), residual.len()),
+        });
+    }
+    if x.len() % size != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("multiple of {size}"),
+            actual: format!("{} floats", x.len()),
+        });
+    }
+    let mut out: Vec<f32> = x
+        .iter()
+        .zip(residual.iter())
+        .map(|(&a, &b)| a + b)
+        .collect();
+    for row in out.chunks_mut(size) {
+        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
+        let inv_rms = fast_rsqrt(ms + epsilon);
+        for (v, &w) in row.iter_mut().zip(weight.iter()) {
+            *v = *v * inv_rms * w;
+        }
+    }
+    out_buf.reserve(out.len() * 4);
+    for &v in &out {
+        out_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    Ok(())
+}
+
 /// Softmax writing directly into a pre-allocated output buffer.
 pub(super) fn dispatch_softmax_into(
     inputs: &[&[u8]],

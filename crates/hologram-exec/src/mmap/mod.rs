@@ -198,15 +198,13 @@ pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<
 
 // ── Tape-based execution ──────────────────────────────────────────────────
 
-/// Build a pre-compiled [`BoxedTape`] from a loaded plan.
+/// Build a pre-compiled [`EnumTape`] from a loaded plan.
 ///
-/// The tape pre-resolves kernel function pointers and output element sizes
-/// for every node, eliminating the per-node `match op` and HashMap lookups
-/// at execution time. Built once at model load time, reused per inference.
-///
-/// Returns `Err` if the graph contains ops not yet supported by the tape
-/// builder (e.g., LUT-GEMM with weight constants).
-pub fn build_tape_from_plan(plan: &LoadedPlan) -> ExecResult<crate::tape::BoxedTape> {
+/// The tape pre-resolves kernel enum variants and output element sizes
+/// for every node, eliminating per-node op matching, HashMap lookups,
+/// and vtable indirection at execution time.
+/// Built once at model load time, reused per inference.
+pub fn build_tape_from_plan(plan: &LoadedPlan) -> ExecResult<crate::tape::EnumTape> {
     let schedule = build_schedule(plan.graph())?;
     crate::tape_builder::build_tape(plan.graph(), &schedule)
 }
@@ -214,10 +212,10 @@ pub fn build_tape_from_plan(plan: &LoadedPlan) -> ExecResult<crate::tape::BoxedT
 /// Execute a pre-compiled tape against a loaded plan.
 ///
 /// Seeds the arena with constants and graph inputs, then runs the tape's
-/// pre-resolved kernels. Faster than [`execute_plan`] because the tape
-/// avoids per-node op matching and dtype lookups.
+/// pre-resolved enum-dispatch kernels. Faster than [`execute_plan`] because
+/// the tape avoids per-node op matching, dtype lookups, and vtable indirection.
 pub fn execute_tape(
-    tape: &crate::tape::BoxedTape,
+    tape: &crate::tape::EnumTape,
     plan: &LoadedPlan,
     inputs: &GraphInputs,
 ) -> ExecResult<GraphOutputs> {
@@ -255,7 +253,6 @@ pub fn execute_tape(
                 arena.insert_borrowed_with_elem_size(node.id, data, es);
             }
             GraphOp::Input => {
-                // Find which graph input index this Input node corresponds to.
                 let input_idx = sg
                     .nodes
                     .iter()
@@ -266,13 +263,12 @@ pub fn execute_tape(
                         let es = compiled_dtypes
                             .get(&node.id)
                             .map(|d| d.byte_size())
-                            .unwrap_or(8); // Graph inputs are typically i64
+                            .unwrap_or(8);
                         arena.insert_borrowed_with_elem_size(node.id, data, es);
                     }
                 }
             }
             _ => {
-                // Seed elem_size from compiled_dtypes for non-constant/input nodes.
                 if let Some(dtype) = compiled_dtypes.get(&node.id) {
                     arena.set_elem_size(node.id, dtype.byte_size());
                 }
@@ -280,8 +276,11 @@ pub fn execute_tape(
         }
     }
 
+    // Build tape context with weight access for LUT-GEMM ops.
+    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
+
     // Execute the tape.
-    tape.execute(&mut arena, None)?;
+    tape.execute(&mut arena, &tape_ctx)?;
 
     // Extract outputs.
     let mut outputs = Vec::with_capacity(sg.output_names.len());

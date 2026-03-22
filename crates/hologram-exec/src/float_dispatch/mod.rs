@@ -177,6 +177,15 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             )?;
             Ok(true)
         }
+        FloatOp::AddRmsNorm { size, epsilon } => {
+            norm::dispatch_add_rms_norm_into(
+                inputs,
+                *size as usize,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -254,6 +263,9 @@ fn dispatch_custom(
         FloatOp::LogSoftmax { size } => norm::dispatch_log_softmax(inputs, *size as usize),
         FloatOp::RmsNorm { size, epsilon } => {
             norm::dispatch_rms_norm(inputs, *size as usize, bits_to_f32(*epsilon))
+        }
+        FloatOp::AddRmsNorm { size, epsilon } => {
+            norm::dispatch_add_rms_norm(inputs, *size as usize, bits_to_f32(*epsilon))
         }
         FloatOp::LayerNorm { size, epsilon } => {
             norm::dispatch_layer_norm(inputs, *size as usize, bits_to_f32(*epsilon))

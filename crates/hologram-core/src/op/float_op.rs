@@ -179,6 +179,11 @@ pub enum FloatOp {
     /// RMS normalization. Inputs: [x (f32), weight (f32)].
     RmsNorm { size: u32, epsilon: u32 },
 
+    /// Fused Add + RMS normalization. Inputs: [x (f32), residual (f32), weight (f32)].
+    /// Computes: rmsnorm(x + residual, weight, epsilon).
+    /// Eliminates intermediate residual buffer vs separate Add + RmsNorm.
+    AddRmsNorm { size: u32, epsilon: u32 },
+
     /// Layer normalization. Inputs: [x (f32), weight (f32), bias (f32)].
     LayerNorm { size: u32, epsilon: u32 },
 
@@ -452,7 +457,8 @@ impl FloatOp {
             | Self::Gemm { .. } => 2, // Gemm C bias is optional (arity 2 or 3)
 
             // Ternary
-            Self::LayerNorm { .. }
+            Self::AddRmsNorm { .. }
+            | Self::LayerNorm { .. }
             | Self::Attention { .. }
             | Self::Where
             | Self::Range
@@ -529,6 +535,7 @@ impl FloatOp {
             Self::Softmax { .. } => "float.softmax",
             Self::LogSoftmax { .. } => "float.log_softmax",
             Self::RmsNorm { .. } => "float.rms_norm",
+            Self::AddRmsNorm { .. } => "float.add_rms_norm",
             Self::LayerNorm { .. } => "float.layer_norm",
             Self::ReduceSum { .. } => "float.reduce_sum",
             Self::ReduceMean { .. } => "float.reduce_mean",
@@ -616,6 +623,7 @@ impl FloatOp {
             Self::Softmax { .. }
             | Self::LogSoftmax { .. }
             | Self::RmsNorm { .. }
+            | Self::AddRmsNorm { .. }
             | Self::LayerNorm { .. }
             | Self::RotaryEmbedding { .. } => ShapeSpec::SameAs(0),
 
@@ -779,6 +787,7 @@ impl FloatOp {
             | Self::Softmax { .. }
             | Self::LogSoftmax { .. }
             | Self::RmsNorm { .. }
+            | Self::AddRmsNorm { .. }
             | Self::LayerNorm { .. }
             | Self::Embed { .. }
             | Self::Range
@@ -1089,6 +1098,7 @@ impl FloatOp {
             Self::Softmax { .. } => "Softmax",
             Self::LogSoftmax { .. } => "LogSoftmax",
             Self::RmsNorm { .. } => "RmsNorm",
+            Self::AddRmsNorm { .. } => "AddRmsNorm",
             Self::LayerNorm { .. } => "LayerNorm",
             Self::ReduceSum { .. } => "ReduceSum",
             Self::ReduceMean { .. } => "ReduceMean",

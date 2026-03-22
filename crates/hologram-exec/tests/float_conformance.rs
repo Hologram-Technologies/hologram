@@ -131,6 +131,7 @@ fn ensure_all_ops_covered() {
         FloatOp::Softmax { .. } => {}
         FloatOp::LogSoftmax { .. } => {}
         FloatOp::RmsNorm { .. } => {}
+        FloatOp::AddRmsNorm { .. } => {}
         FloatOp::LayerNorm { .. } => {}
         FloatOp::ReduceSum { .. } => {}
         FloatOp::ReduceMean { .. } => {}

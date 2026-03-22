@@ -183,6 +183,81 @@ fn bench_page_faults(c: &mut Criterion) {
     std::fs::remove_file(&path).ok();
 }
 
+fn bench_enum_tape_linear(c: &mut Criterion) {
+    // Same linear chain as bench_executor_linear, but via the enum-dispatch tape path.
+    use hologram_core::op::FloatOp;
+
+    let mut g = GraphBuilder::new()
+        .input("x")
+        .node_from_graph_input(GraphOp::Input, 0)
+        .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+        .node_with_inputs(GraphOp::Float(FloatOp::Sigmoid), &[1])
+        .node_with_inputs(GraphOp::Float(FloatOp::Tanh), &[2])
+        .node_with_inputs(GraphOp::Output, &[3])
+        .output("y", 4)
+        .build();
+    let _ = hologram_graph::fusion::fuse(&mut g);
+    let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+    let tape = hologram_exec::mmap::build_tape_from_plan(&plan).unwrap();
+
+    // Build f32 input: 64 floats = 256 bytes
+    let input_f32: Vec<u8> = (0..64)
+        .flat_map(|i| ((i as f32) * 0.1).to_le_bytes())
+        .collect();
+    let mut inputs = GraphInputs::new();
+    inputs.set(0, input_f32);
+
+    c.bench_function("tape::linear_chain(4_float_nodes, 256B)", |b| {
+        b.iter(|| {
+            hologram_exec::mmap::execute_tape(
+                black_box(&tape),
+                black_box(&plan),
+                black_box(&inputs),
+            )
+        })
+    });
+}
+
+fn bench_enum_tape_vs_kvexecutor(c: &mut Criterion) {
+    // Compare tape path vs KvExecutor path on the same graph.
+    use hologram_core::op::FloatOp;
+
+    let mut g = GraphBuilder::new()
+        .input("x")
+        .node_from_graph_input(GraphOp::Input, 0)
+        .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+        .node_with_inputs(GraphOp::Output, &[1])
+        .output("y", 2)
+        .build();
+    let _ = hologram_graph::fusion::fuse(&mut g);
+    let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+    let input_f32: Vec<u8> = (0..16384) // 64KB of f32
+        .flat_map(|i| ((i as f32) * 0.001).to_le_bytes())
+        .collect();
+    let mut inputs = GraphInputs::new();
+    inputs.set(0, input_f32);
+
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+    let tape = hologram_exec::mmap::build_tape_from_plan(&plan).unwrap();
+
+    let mut group = c.benchmark_group("tape_vs_kv");
+    group.bench_function("kvexecutor(relu, 64KB)", |b| {
+        b.iter(|| execute_bytes(black_box(&archive), black_box(&inputs)))
+    });
+    group.bench_function("enum_tape(relu, 64KB)", |b| {
+        b.iter(|| {
+            hologram_exec::mmap::execute_tape(
+                black_box(&tape),
+                black_box(&plan),
+                black_box(&inputs),
+            )
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_executor_linear,
@@ -191,5 +266,7 @@ criterion_group!(
     bench_executor_large_buffer,
     bench_schedule_build,
     bench_page_faults,
+    bench_enum_tape_linear,
+    bench_enum_tape_vs_kvexecutor,
 );
 criterion_main!(benches);
