@@ -269,11 +269,15 @@ pub enum TapeKernel {
 }
 
 /// Dispatch a `TapeKernel` into a pre-allocated output buffer.
+///
+/// For `Float` and `MatMul` ops, tries the selected backend first.
+/// Falls back to CPU dispatch if the backend returns `Ok(false)`.
 #[inline]
 fn dispatch_kernel(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
     tape_ctx: &TapeContext<'_>,
+    backend: &dyn crate::backend::ComputeBackend,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     use crate::float_dispatch;
@@ -281,6 +285,11 @@ fn dispatch_kernel(
 
     match kernel {
         TapeKernel::Float(op) => {
+            // Try selected backend (GPU/accelerator) first.
+            if backend.dispatch_float(op, inputs, out_buf)? {
+                return Ok(());
+            }
+            // Fallback to CPU dispatch.
             float_dispatch::dispatch_float_into(op, inputs, tape_ctx.ctx.as_ref(), out_buf)
         }
         TapeKernel::FusedFloatChain(chain) => {
@@ -614,6 +623,8 @@ impl EnumTape {
         arena: &mut BufferArena<'_>,
         tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
+        // Resolve backend once (not per-instruction).
+        let backend = tape_ctx.backend.resolve();
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
 
         for (i, instr) in self.instructions.iter().enumerate() {
@@ -646,7 +657,13 @@ impl EnumTape {
                 if instr.output_byte_hint > 0 {
                     out_buf.reserve(instr.output_byte_hint as usize);
                 }
-                dispatch_kernel(&instr.kernel, &input_refs, tape_ctx, &mut out_buf)?;
+                dispatch_kernel(
+                    &instr.kernel,
+                    &input_refs,
+                    tape_ctx,
+                    &*backend,
+                    &mut out_buf,
+                )?;
             }
 
             let out_id = NodeId::new(instr.output_idx, 0);
@@ -671,6 +688,7 @@ impl EnumTape {
         use rayon::prelude::*;
 
         const PAR_THRESHOLD: usize = 4;
+        let backend = tape_ctx.backend.resolve();
 
         for level_idx in 0..self.n_levels() {
             let start = self.level_offsets[level_idx];
@@ -747,7 +765,13 @@ impl EnumTape {
                         if instr.output_byte_hint > 0 {
                             out_buf.reserve(instr.output_byte_hint as usize);
                         }
-                        dispatch_kernel(&instr.kernel, &input_refs, tape_ctx, &mut out_buf)?;
+                        dispatch_kernel(
+                            &instr.kernel,
+                            &input_refs,
+                            tape_ctx,
+                            &*backend,
+                            &mut out_buf,
+                        )?;
                     }
 
                     let out_id = NodeId::new(instr.output_idx, 0);

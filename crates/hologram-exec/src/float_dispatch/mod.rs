@@ -157,7 +157,26 @@ pub fn dispatch_float_into(
             Ok(())
         }
         OpCategory::BinaryElementwise => {
-            elementwise::binary_elementwise_into(inputs, |a, b| op.apply_binary(a, b), out_buf);
+            // Monomorphized dispatch for common binary ops — enables autovectorization.
+            match op {
+                FloatOp::Add => elementwise::binary_elementwise_into(inputs, |a, b| a + b, out_buf),
+                FloatOp::Sub => elementwise::binary_elementwise_into(inputs, |a, b| a - b, out_buf),
+                FloatOp::Mul => elementwise::binary_elementwise_into(inputs, |a, b| a * b, out_buf),
+                FloatOp::Div => elementwise::binary_elementwise_into(inputs, |a, b| a / b, out_buf),
+                FloatOp::Min => {
+                    elementwise::binary_elementwise_into(inputs, |a, b| a.min(b), out_buf);
+                }
+                FloatOp::Max => {
+                    elementwise::binary_elementwise_into(inputs, |a, b| a.max(b), out_buf);
+                }
+                _ => {
+                    elementwise::binary_elementwise_into(
+                        inputs,
+                        |a, b| op.apply_binary(a, b),
+                        out_buf,
+                    );
+                }
+            }
             Ok(())
         }
         _ => {

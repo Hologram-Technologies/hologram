@@ -70,3 +70,7 @@ harness = false
 [[bench]]
 name = "calculator"
 harness = false
+
+[[bench]]
+name = "softmax"
+harness = false
