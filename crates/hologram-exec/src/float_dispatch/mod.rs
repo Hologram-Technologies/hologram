@@ -132,7 +132,28 @@ pub fn dispatch_float_into(
 ) -> ExecResult<()> {
     match op.category() {
         OpCategory::UnaryElementwise => {
-            elementwise::unary_map_into(inputs, |v| op.apply_unary(v), out_buf);
+            // Fast path: monomorphized dispatch for common ops enables autovectorization.
+            // The compiler can SIMD-ize x.max(0.0) for Relu, -x for Neg, etc. when the
+            // operation is known at compile time instead of hidden behind a closure.
+            match op {
+                FloatOp::Relu => elementwise::unary_map_into(inputs, |v| v.max(0.0), out_buf),
+                FloatOp::Neg => elementwise::unary_map_into(inputs, |v| -v, out_buf),
+                FloatOp::Abs => elementwise::unary_map_into(inputs, |v| v.abs(), out_buf),
+                FloatOp::Sigmoid => {
+                    elementwise::unary_map_into(inputs, |v| 1.0 / (1.0 + (-v).exp()), out_buf);
+                }
+                FloatOp::Silu => {
+                    elementwise::unary_map_into(
+                        inputs,
+                        |v| v * (1.0 / (1.0 + (-v).exp())),
+                        out_buf,
+                    );
+                }
+                FloatOp::Tanh => elementwise::unary_map_into(inputs, |v| v.tanh(), out_buf),
+                FloatOp::Exp => elementwise::unary_map_into(inputs, |v| v.exp(), out_buf),
+                FloatOp::Reciprocal => elementwise::unary_map_into(inputs, |v| 1.0 / v, out_buf),
+                _ => elementwise::unary_map_into(inputs, |v| op.apply_unary(v), out_buf),
+            }
             Ok(())
         }
         OpCategory::BinaryElementwise => {

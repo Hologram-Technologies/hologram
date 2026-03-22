@@ -200,6 +200,15 @@
 - [x] **13.2**: Conv2d routed through `dispatch_custom_into`
 - [x] **13.3**: RoPE explicitly falls back (needs position offset from ctx)
 
+### Phase 14: Monomorphized SIMD Dispatch + Zero-Copy Output Write
+- [x] **14.1**: Monomorphized unary dispatch for Relu, Neg, Abs, Sigmoid, Silu, Tanh, Exp, Reciprocal
+- [x] **14.2**: Direct f32 write via `bytemuck::cast_slice_mut` (no intermediate Vec, no per-element extend)
+- [x] **14.3**: Same pattern for binary elementwise, fused chain, norm, and matmul _into variants
+
+### Benchmark Results (Phase 14)
+- EnumTape Relu 64KB: **36.5 µs → 4.3 µs** (8.5x faster, autovectorization enabled)
+- KvExecutor same graph: 44.6 µs (unchanged — still uses closure dispatch)
+
 ---
 
 ## Sprint 12: Prism Ontology Integration
