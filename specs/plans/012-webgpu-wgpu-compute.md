@@ -165,22 +165,173 @@ flush(): submit once → wait once → map all staging buffers → readback all
 ```
 One submit instead of three. GPU processes kernels back-to-back.
 
-### Design
+### Why Metal batching is simpler
 
-Unlike Metal (unified memory, output readable immediately), wgpu requires explicit staging buffer readback. The batching design:
+Metal returns `MetalBuffer` — stored directly in the arena via `insert_metal`. On Apple Silicon unified memory, the CPU can read `buf.contents()` after `flush()`. No explicit readback needed.
 
-1. **`Mutex<PendingWork>`** on `WebGpuBackend` — holds shared `CommandEncoder` + pending staging entries
-2. **dispatch_* methods**: encode compute pass + copy_buffer_to_buffer into shared encoder. Store `(staging_buf, byte_len, out_buf_ptr)` in pending list. Return `KernelOutput::Bytes` but do NOT populate `out_buf` yet.
-3. **`flush()`**: `queue.submit(encoder.finish())` → `device.poll(Wait)` → iterate pending staging buffers → `map_async` + copy to each `out_buf`
-4. **Safety**: `out_buf` is a `&mut Vec<u8>` with limited lifetime. Between dispatch and flush, the caller must not read `out_buf`. This is guaranteed by the tape executor's flow: dispatch → swap_insert (stores empty buf) → flush at level end.
+WebGPU buffers require explicit `map_async` + `device.poll` + `get_mapped_range` to read on CPU. So we can't just store a wgpu buffer in the arena — we need a deferred readback mechanism.
 
-### Alternative: deferred-write pattern
-Instead of storing `out_buf` pointers (which has lifetime issues), dispatch methods can store results in an internal `Vec<Vec<u8>>`. After flush, a `drain_results()` method returns the results. The tape executor calls `drain_results()` in instruction order to populate arena slots. This is safer but requires changing the execute loop.
+### Key insight: level independence
+
+Instructions within a level are **independent** — they never read each other's outputs. They only read outputs from previous levels (which were flushed). So we can safely defer ALL GPU results within a level and populate them in bulk at flush time.
+
+### Design: `KernelOutput::WgpuDeferred` + `flush_deferred()`
+
+#### New types
+
+```rust
+// webgpu.rs
+struct DeferredEntry {
+    staging_buf: wgpu::Buffer,
+    byte_len: usize,
+}
+
+struct PendingWork {
+    encoder: wgpu::CommandEncoder,
+    entries: Vec<DeferredEntry>,
+    kept_alive: Vec<wgpu::Buffer>,  // input/output/param buffers referenced by encoder
+}
+```
+
+#### New KernelOutput variant (cfg-gated)
+
+```rust
+// mod.rs
+pub enum KernelOutput {
+    Skipped,
+    Bytes,
+    #[cfg(has_metal)]   MetalBuffer(::metal::Buffer),
+    #[cfg(has_webgpu)]  WgpuDeferred,  // result available after flush_deferred()
+}
+```
+
+#### New DispatchResult variant (cfg-gated)
+
+```rust
+// tape.rs
+enum DispatchResult {
+    InOutBuf,
+    #[cfg(has_metal)]   MetalBuffer(metal::Buffer),
+    #[cfg(has_webgpu)]  WgpuDeferred,  // skip swap_insert; flush will populate arena
+}
+```
+
+#### New ComputeBackend method
+
+```rust
+// mod.rs
+pub trait ComputeBackend: Send + Sync {
+    // ... existing ...
+    fn flush(&self) {}
+
+    /// Flush deferred GPU work. Returns readback data in dispatch order.
+    /// Called at level boundaries. Default: calls flush(), returns empty.
+    fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {
+        self.flush();
+        Ok(Vec::new())
+    }
+}
+```
+
+Metal and CPU get the default (flush + empty vec). Only WebGPU overrides.
+
+#### Refactored dispatch_* methods (webgpu.rs)
+
+Each dispatch method changes from synchronous to deferred:
+1. Get or create shared encoder from `self.pending`
+2. Create input/output/params/staging buffers
+3. Encode compute pass + `copy_buffer_to_buffer(output → staging)`
+4. Push `DeferredEntry { staging_buf, byte_len }` to pending entries
+5. Push input/output/params buffers to `kept_alive` (prevent drop before GPU executes)
+6. Return — no submit, no poll, no readback
+
+#### `WebGpuBackend::flush_deferred()` implementation
+
+```rust
+fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {
+    let work = match self.pending.lock().unwrap().take() {
+        Some(w) => w,
+        None => return Ok(Vec::new()),
+    };
+
+    // Single submit for ALL dispatches in this level.
+    self.queue.submit(std::iter::once(work.encoder.finish()));
+    self.device.poll(wgpu::Maintain::Wait);
+
+    // Issue all map_async calls at once.
+    let channels: Vec<_> = work.entries.iter().map(|entry| {
+        let slice = entry.staging_buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+        rx
+    }).collect();
+
+    // Single poll satisfies all pending maps.
+    self.device.poll(wgpu::Maintain::Wait);
+
+    // Read back all staging buffers.
+    let mut results = Vec::with_capacity(work.entries.len());
+    for (entry, rx) in work.entries.iter().zip(channels) {
+        rx.recv().map_err(|_| ExecError::UnsupportedOp("wgpu channel".into()))?
+          .map_err(|e| ExecError::UnsupportedOp(format!("wgpu map: {e:?}")))?;
+        let data = entry.staging_buf.slice(..).get_mapped_range();
+        let mut buf = Vec::with_capacity(entry.byte_len);
+        buf.extend_from_slice(&data[..entry.byte_len]);
+        results.push(buf);
+        drop(data);
+        entry.staging_buf.unmap();
+    }
+
+    Ok(results)
+}
+```
+
+#### Execute loop changes (tape.rs)
+
+In both `execute()` and `execute_parallel()`, at level boundary:
+
+```rust
+// Before (current):
+backend.flush();
+
+// After:
+let deferred_data = backend.flush_deferred()?;
+for (data, &(out_idx, elem_size)) in deferred_data.into_iter().zip(&deferred_slots) {
+    arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
+}
+deferred_slots.clear();
+```
+
+In the dispatch result handling, add:
+
+```rust
+#[cfg(has_webgpu)]
+DispatchResult::WgpuDeferred => {
+    deferred_slots.push((instr.output_idx, instr.output_elem_size));
+    // Don't swap_insert — data comes from flush_deferred
+}
+```
+
+`deferred_slots: Vec<(u32, u8)>` allocated once before the level loop.
+
+### Implementation sequence
+
+1. Add `PendingWork` struct + `pending: Mutex<Option<PendingWork>>` to WebGpuBackend
+2. Add `KernelOutput::WgpuDeferred` + `DispatchResult::WgpuDeferred` (cfg-gated)
+3. Add `flush_deferred()` to ComputeBackend trait (default: flush + empty vec)
+4. Refactor WebGPU dispatch methods to encode-only (no submit)
+5. Implement `WebGpuBackend::flush_deferred()` (batch submit + batch readback)
+6. Update execute loop: deferred_slots + flush_deferred at level boundaries
+7. Update CachedWebGpuBackend to delegate flush_deferred
+8. Remove `submit_and_readback` (dead code)
 
 ### Files to modify
-- `crates/hologram-exec/src/backend/webgpu.rs` — add `PendingWork` struct, refactor dispatch methods
-- `crates/hologram-exec/src/backend/mod.rs` — no changes (flush already on trait)
-- `crates/hologram-exec/src/tape.rs` — no changes (flush already called at level boundaries)
+- `crates/hologram-exec/src/backend/webgpu.rs` — PendingWork, refactored dispatches, flush_deferred
+- `crates/hologram-exec/src/backend/mod.rs` — WgpuDeferred variant, flush_deferred trait method, CachedWebGpuBackend
+- `crates/hologram-exec/src/tape.rs` — WgpuDeferred dispatch result, deferred_slots, flush_deferred call
+
+### Buffer lifetime safety
+All wgpu buffers (input, output, params) must live until after `flush_deferred()` reads from staging. `PendingWork.kept_alive: Vec<wgpu::Buffer>` holds references. wgpu buffers are internally `Arc`-counted, so the encoder's command buffer also retains them — but explicit `kept_alive` ensures correctness regardless of wgpu internals.
 
 ---
 
