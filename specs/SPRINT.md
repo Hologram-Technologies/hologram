@@ -322,6 +322,11 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 | **Total per instruction** | **~205ns** | **~0ns** | **~205ns** |
 | **150-op transformer layer** | **~30µs** | **~0µs** | **~30µs** |
 
+### Documentation (Sprint 16)
+- [x] **D.1**: Transformer benchmark specification — [specs/docs/transformer-benchmark-spec.md](docs/transformer-benchmark-spec.md)
+- [x] **D.2**: hologram-ai integration guide — [specs/docs/hologram-ai-integration.md](docs/hologram-ai-integration.md)
+- [x] **D.3**: Feature matrix updated with backends, tape dispatch levels, Metal GPU thresholds — [specs/feature-matrix.md](../specs/feature-matrix.md)
+
 ---
 
 ## Sprint 12: Prism Ontology Integration
