@@ -88,6 +88,8 @@ pub fn dispatch_float_with_shapes(
         dilation_h,
         dilation_w,
         group,
+        input_h: _,
+        input_w: _,
     } = op
     {
         return conv::dispatch_conv2d_with_shapes(
@@ -283,8 +285,10 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             dilation_h,
             dilation_w,
             group,
+            input_h,
+            input_w,
         } => {
-            let result = conv::dispatch_conv2d(
+            let result = conv::dispatch_conv2d_direct(
                 inputs,
                 *kernel_h as usize,
                 *kernel_w as usize,
@@ -295,6 +299,8 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
                 *dilation_h as usize,
                 *dilation_w as usize,
                 *group as usize,
+                *input_h as usize,
+                *input_w as usize,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(true)
@@ -458,7 +464,9 @@ fn dispatch_custom(
             dilation_h,
             dilation_w,
             group,
-        } => conv::dispatch_conv2d(
+            input_h,
+            input_w,
+        } => conv::dispatch_conv2d_direct(
             inputs,
             *kernel_h as usize,
             *kernel_w as usize,
@@ -469,6 +477,8 @@ fn dispatch_custom(
             *dilation_h as usize,
             *dilation_w as usize,
             *group as usize,
+            *input_h as usize,
+            *input_w as usize,
         ),
         FloatOp::ConvTranspose {
             kernel_h,
@@ -482,6 +492,8 @@ fn dispatch_custom(
             group,
             output_pad_h,
             output_pad_w,
+            input_h,
+            input_w,
         } => conv::dispatch_conv_transpose(
             inputs,
             *kernel_h as usize,
@@ -495,6 +507,8 @@ fn dispatch_custom(
             *group as usize,
             *output_pad_h as usize,
             *output_pad_w as usize,
+            *input_h as usize,
+            *input_w as usize,
         ),
         FloatOp::MaxPool2d {
             kernel_h,

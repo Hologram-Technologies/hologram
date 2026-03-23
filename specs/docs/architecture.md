@@ -83,6 +83,107 @@ hologram-core (kernel)
 
 ---
 
+## Tape Execution Pipeline
+
+Hologram compiles a dataflow graph into a flat, pre-resolved instruction tape where every data path
+is an integer index into a buffer arena. This eliminates per-node op matching, HashMap lookups, and
+vtable indirection at execution time — realising the PP_1 O(1) resolution claim.
+
+### Stage 1: Graph — Edges Define Data Paths
+
+Each `Node` in the graph connects to its inputs via `InputSlot`, which names a source `NodeId` and
+an `output_port`. The graph exposes `predecessors()` and `successors()` for traversal, plus
+`build_successor_index()` for O(1) reverse-edge lookups used by the fusion and scheduling passes.
+
+**Key types**: `Node`, `InputSlot`, `InputSource` (`hologram-graph/src/graph/node.rs`)
+
+### Stage 2: Schedule — Paths Become Parallel Levels
+
+A modified Kahn's topological sort partitions the graph into `ParallelLevel`s. Nodes within a level
+have no mutual dependencies and can execute concurrently. This satisfies **PL_2 (lease
+disjointness)**: nodes in a level hold non-overlapping buffer leases, and all predecessors reside in
+strictly earlier levels.
+
+Critical-path analysis (DP over the topological order) computes the longest dependency chain, giving
+the parallelism ratio `total_nodes / critical_path_length`.
+
+**Key types**: `ExecutionSchedule`, `ParallelLevel` (`hologram-graph/src/schedule/`)
+
+### Stage 3: Tape Compilation — Paths Become Arena Indices
+
+`build_tape()` compiles the schedule into a flat `EnumTape`:
+
+```
+EnumTape {
+    instructions: Vec<TapeInstruction>,   // flat array in execution order
+    level_offsets: Vec<usize>,            // boundaries between parallel levels
+}
+```
+
+Each `TapeInstruction` pre-resolves all data routing:
+
+| Field | Purpose |
+|-------|---------|
+| `kernel: TapeKernel` | Operation as an enum variant (not boxed trait) |
+| `input_indices: Vec<u32>` | Arena slots to read inputs from |
+| `output_idx: u32` | Arena slot to store the result |
+| `passthrough: bool` | Zero-copy move (identity/reshape ops) |
+| `can_reuse_input: bool` | In-place mutation for single-consumer unary ops |
+| `weight_offset_hint: u32` | Prefetch hint for LUT-GEMM weight pages |
+| `output_byte_hint: u32` | Pre-computed output size for arena pre-warming |
+
+All graph edges are resolved to integer indices at this stage. No graph traversal occurs at runtime.
+
+**Key types**: `EnumTape`, `TapeInstruction`, `TapeKernel` (`hologram-exec/src/tape.rs`),
+`build_tape()` (`hologram-exec/src/tape_builder.rs`)
+
+### Stage 4: Execution — Index-Based Data Routing
+
+`BufferArena` is a flat `Vec<Option<ArenaBuffer>>` indexed by `NodeId::index()`, giving O(1) lookup
+without hashing. The executor processes instructions level-by-level, selecting one of four fast
+paths per instruction:
+
+| Fast Path | Condition | Mechanism |
+|-----------|-----------|-----------|
+| Passthrough | `passthrough = true` | `arena.move_slot(src → dst)` — zero-copy |
+| In-place unary | `can_reuse_input = true` | Mutate input buffer, then move slot |
+| Inline dispatch | Simple unary/binary ops | Direct f32 access, compute into recycled buffer |
+| General dispatch | Everything else | Gather input refs into SmallVec, dispatch to backend |
+
+After arena pre-warming (`prewarm_arena()`), steady-state execution is **zero-allocation**: the
+`swap_insert_with_elem_size()` method exchanges output buffers with the arena's existing allocation,
+so the kernel writes into a recycled `Vec<u8>` and the arena reclaims the old one.
+
+The executor also **prefetches ahead**: while instruction N executes, instruction N+1's input data
+and weight pages are prefetched into cache.
+
+**Key types**: `BufferArena`, `ArenaBuffer` (`hologram-exec/src/buffer/arena.rs`)
+
+### Fusion — Path Shortening
+
+Before tape compilation, optimisation passes shorten the graph:
+
+- **View fusion**: chains of unary ops (e.g. Sigmoid → Relu) are composed into a single 256-byte
+  LUT via `fuse_unary_chains()`, replacing multiple nodes with one `FusedView` node.
+- **CSE**: duplicate subexpressions are merged, eliminating redundant computation paths.
+
+These reduce both the instruction count and the critical path length.
+
+**Key types**: `fuse_unary_chains()` (`hologram-graph/src/fusion/view_fusion.rs`)
+
+### Prism Grounding
+
+The tape pipeline realises several Prism identities:
+
+- **PP_1** — Pre-resolution of all paths at compile time means execution is a single O(1) lookup
+  per instruction on the saturated context (the arena + tape).
+- **PL_2** — Level boundaries in `level_offsets` guarantee buffer-lease disjointness within each
+  level.
+- **PA_1** — Accumulation associativity means the order of operations within a level does not affect
+  the final result, enabling safe parallelism.
+
+---
+
 ## Quantum Level Strategy
 
 Hologram implements UOR's quantum level hierarchy for ring-arithmetic acceleration:

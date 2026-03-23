@@ -51,6 +51,16 @@ pub fn build_tape(
     let dtypes: HashMap<NodeId, FloatDType> = sg.node_dtypes_map();
     let shapes: HashMap<NodeId, Vec<usize>> = sg.node_shapes_map();
 
+    // Build lookup from graph-input index → Input node's NodeId.
+    // Graph inputs are seeded into the arena at their node's index; compute ops
+    // connected via InputSource::GraphInput need to reference that index.
+    let graph_input_node_ids: Vec<NodeId> = sg
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op, GraphOp::Input))
+        .map(|n| n.id)
+        .collect();
+
     let total_nodes: usize = schedule.levels.iter().map(|l| l.node_ids.len()).sum();
     let mut tape = EnumTape::with_capacity(total_nodes, schedule.levels.len());
 
@@ -79,13 +89,15 @@ pub fn build_tape(
             // Pre-compute output elem_size.
             let output_elem_size = compute_elem_size(node_id, &node.op, &dtypes);
 
-            // Collect input indices.
+            // Collect input indices — resolve both Node and GraphInput sources.
             let input_indices: Vec<u32> = node
                 .inputs
                 .iter()
                 .filter_map(|slot| match slot.source {
                     InputSource::Node(id) => Some(id.index()),
-                    InputSource::GraphInput { .. } => None,
+                    InputSource::GraphInput { index } => graph_input_node_ids
+                        .get(index as usize)
+                        .map(|id| id.index()),
                     InputSource::None => None,
                 })
                 .collect();
@@ -402,5 +414,111 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// Helper: build tape, seed arena, execute, and collect outputs.
+    fn execute_graph(
+        sg: &SerializedGraph,
+        schedule: &ExecutionSchedule,
+        input_data: &[u8],
+    ) -> Vec<(String, Vec<u8>)> {
+        use crate::buffer::BufferArena;
+        use crate::tape::TapeContext;
+        use hologram_graph::constant::ConstantStore;
+
+        let tape = build_tape(sg, schedule, None).expect("build_tape should succeed");
+        let mut arena = BufferArena::with_capacity(sg.nodes.len());
+        for node in &sg.nodes {
+            if matches!(node.op, GraphOp::Input) {
+                arena.insert_borrowed_with_elem_size(node.id, input_data, 4);
+            }
+        }
+        tape.prewarm_arena(&mut arena);
+        let constants = ConstantStore::default();
+        let tape_ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &tape_ctx)
+            .expect("tape execution should succeed");
+
+        let mut outputs = Vec::new();
+        for (i, name) in sg.output_names.iter().enumerate() {
+            let node_id = sg.output_node_ids[i];
+            let data = arena.take(node_id).unwrap_or_else(|_| {
+                panic!("output '{}' at {:?} should be in arena", name, node_id)
+            });
+            outputs.push((name.clone(), data));
+        }
+        outputs
+    }
+
+    fn to_f32_bytes(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    fn from_f32_bytes(data: &[u8]) -> Vec<f32> {
+        data.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    /// End-to-end: graph input → Relu → output, verify data flows through.
+    #[test]
+    fn tape_execute_and_collect_outputs() {
+        let (sg, schedule) = make_simple_graph();
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let outputs = execute_graph(&sg, &schedule, &input_data);
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].0, "y");
+        assert!(!outputs[0].1.is_empty(), "output should not be empty");
+        assert_eq!(from_f32_bytes(&outputs[0].1), vec![0.0, 2.0, 0.0, 4.0]);
+    }
+
+    /// Multi-op chain: Input → Relu → Neg → Output.
+    /// Tests that data propagates through multiple ops.
+    #[test]
+    fn tape_execute_multi_op_chain() {
+        let mut graph = Graph::new();
+        let _input_id = graph.add_node(GraphOp::Input);
+        let input_idx = graph.add_input("x");
+
+        let relu_id = graph.add_node(GraphOp::Float(FloatOp::Relu));
+        edge::connect_graph_input(&mut graph, input_idx, relu_id, 0);
+
+        let neg_id = graph.add_node(GraphOp::Float(FloatOp::Neg));
+        edge::connect(&mut graph, relu_id, neg_id, 0);
+
+        let out_id = graph.add_node(GraphOp::Output);
+        edge::connect(&mut graph, neg_id, out_id, 0);
+        graph.add_output("y", out_id);
+
+        let sg = SerializedGraph::from_graph(&graph);
+        let schedule = ExecutionSchedule::build(&graph).expect("schedule should build");
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let outputs = execute_graph(&sg, &schedule, &input_data);
+
+        assert_eq!(outputs.len(), 1);
+        // Relu([-1, 2, -3, 4]) = [0, 2, 0, 4]; Neg → [0, -2, 0, -4]
+        assert_eq!(from_f32_bytes(&outputs[0].1), vec![0.0, -2.0, 0.0, -4.0]);
+    }
+
+    /// Output directly from graph input (identity pass-through).
+    /// Tests that InputSource::GraphInput is correctly resolved.
+    #[test]
+    fn tape_execute_graph_input_passthrough() {
+        let mut graph = Graph::new();
+        let _input_id = graph.add_node(GraphOp::Input);
+        let input_idx = graph.add_input("x");
+
+        let out_id = graph.add_node(GraphOp::Output);
+        edge::connect_graph_input(&mut graph, input_idx, out_id, 0);
+        graph.add_output("y", out_id);
+
+        let sg = SerializedGraph::from_graph(&graph);
+        let schedule = ExecutionSchedule::build(&graph).expect("schedule should build");
+        let input_data = to_f32_bytes(&[1.0, 2.0, 3.0]);
+        let outputs = execute_graph(&sg, &schedule, &input_data);
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(from_f32_bytes(&outputs[0].1), vec![1.0, 2.0, 3.0]);
     }
 }

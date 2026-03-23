@@ -312,6 +312,8 @@ pub enum FloatOp {
         dilation_h: u32,
         dilation_w: u32,
         group: u32,
+        input_h: u32,
+        input_w: u32,
     },
     /// 2-D transposed convolution.
     ConvTranspose {
@@ -326,6 +328,8 @@ pub enum FloatOp {
         group: u32,
         output_pad_h: u32,
         output_pad_w: u32,
+        input_h: u32,
+        input_w: u32,
     },
     /// 2-D max pooling.
     MaxPool2d {

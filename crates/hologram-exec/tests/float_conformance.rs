@@ -1062,6 +1062,8 @@ fn test_conv2d_smoke() {
         dilation_h: 1,
         dilation_w: 1,
         group: 1,
+        input_h: 3,
+        input_w: 3,
     };
     let result = dispatch_float(&op, &[&input, &kernel]);
     // May be unimplemented (stub); just check it doesn't panic unexpectedly
@@ -1069,6 +1071,155 @@ fn test_conv2d_smoke() {
         let out = result_f32(&r);
         // kernel [1,0; 0,1] is identity-like: output[i,j] = input[i,j] + input[i+1,j+1]
         assert_close(&out, &[6.0, 8.0, 12.0, 14.0], 1e-5, 1e-4);
+    }
+}
+
+#[test]
+fn test_conv2d_non_square() {
+    // 1x1x4x3 input (non-square!), 1x1x3x3 kernel, stride=1, pad=1
+    // This is the exact pattern that caused the overflow panic with sqrt guessing.
+    // Output shape: h_out = (4 + 2*1 - 1*(3-1) - 1)/1 + 1 = 4
+    //               w_out = (3 + 2*1 - 1*(3-1) - 1)/1 + 1 = 3
+    let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
+    let input = f32_bytes(&input);
+    // All-ones 1x1x3x3 kernel → each output pixel = sum of its 3x3 neighbourhood (with zero-pad)
+    let kernel = f32_bytes(&vec![1.0; 9]);
+    let op = FloatOp::Conv2d {
+        kernel_h: 3,
+        kernel_w: 3,
+        stride_h: 1,
+        stride_w: 1,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+        input_h: 4,
+        input_w: 3,
+    };
+    let result =
+        dispatch_float(&op, &[&input, &kernel]).expect("non-square conv2d should not panic");
+    let out = result_f32(&result);
+    // Output should be 4x3 = 12 elements
+    assert_eq!(out.len(), 12, "non-square conv2d output size mismatch");
+}
+
+#[test]
+fn test_conv2d_non_square_via_dispatch_into() {
+    // Same non-square conv through dispatch_float_into (the tape executor path).
+    use hologram_exec::float_dispatch::dispatch_float_into;
+
+    let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
+    let input = f32_bytes(&input);
+    let kernel = f32_bytes(&vec![1.0; 9]);
+    let op = FloatOp::Conv2d {
+        kernel_h: 3,
+        kernel_w: 3,
+        stride_h: 1,
+        stride_w: 1,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+        input_h: 4,
+        input_w: 3,
+    };
+    let mut out_buf = Vec::new();
+    dispatch_float_into(&op, &[&input, &kernel], None, &mut out_buf)
+        .expect("dispatch_float_into with non-square conv2d should not panic");
+    let out = result_f32(&out_buf);
+    assert_eq!(
+        out.len(),
+        12,
+        "dispatch_into non-square conv2d output size mismatch"
+    );
+}
+
+#[test]
+fn test_conv2d_strided_non_square() {
+    // 1x1x7x5 input, 3x3 kernel, stride=2, pad=1
+    // h_out = (7 + 2 - 3)/2 + 1 = 4
+    // w_out = (5 + 2 - 3)/2 + 1 = 3
+    let input: Vec<f32> = (1..=35).map(|x| x as f32).collect();
+    let input = f32_bytes(&input);
+    let kernel = f32_bytes(&vec![1.0; 9]);
+    let op = FloatOp::Conv2d {
+        kernel_h: 3,
+        kernel_w: 3,
+        stride_h: 2,
+        stride_w: 2,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+        input_h: 7,
+        input_w: 5,
+    };
+    let result = dispatch_float(&op, &[&input, &kernel]).expect("strided non-square conv2d failed");
+    let out = result_f32(&result);
+    assert_eq!(out.len(), 4 * 3, "strided non-square conv2d output size");
+}
+
+#[test]
+fn test_conv2d_with_shapes_non_square() {
+    // Test the dispatch_float_with_shapes path with non-square input.
+    let input: Vec<f32> = (1..=21).map(|x| x as f32).collect();
+    let input = f32_bytes(&input);
+    let kernel = f32_bytes(&vec![1.0; 9]); // 1x1x3x3
+    let op = FloatOp::Conv2d {
+        kernel_h: 3,
+        kernel_w: 3,
+        stride_h: 1,
+        stride_w: 1,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+        input_h: 7,
+        input_w: 3,
+    };
+    let input_shapes = vec![vec![1, 1, 7, 3], vec![1, 1, 3, 3]];
+    let result = dispatch_float_with_shapes(&op, &[&input, &kernel], &input_shapes)
+        .expect("with_shapes non-square conv2d failed");
+    let out = result_f32(&result);
+    assert_eq!(
+        out.len(),
+        7 * 3,
+        "with_shapes non-square conv2d output size"
+    );
+}
+
+#[test]
+fn test_conv_transpose_non_square() {
+    // 1x1x4x3 input, 1x1x3x3 kernel, stride=1, pad=1, output_pad=0
+    // h_out = (4-1)*1 + 1*(3-1) + 0 + 1 - 2*1 = 3 + 2 + 1 - 2 = 4
+    // w_out = (3-1)*1 + 1*(3-1) + 0 + 1 - 2*1 = 2 + 2 + 1 - 2 = 3
+    let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
+    let input = f32_bytes(&input);
+    let kernel = f32_bytes(&vec![1.0; 9]); // 1x1x3x3
+    let op = FloatOp::ConvTranspose {
+        kernel_h: 3,
+        kernel_w: 3,
+        stride_h: 1,
+        stride_w: 1,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+        output_pad_h: 0,
+        output_pad_w: 0,
+        input_h: 4,
+        input_w: 3,
+    };
+    let result = dispatch_float(&op, &[&input, &kernel]);
+    // Should not panic — that's the key assertion.
+    if let Ok(r) = result {
+        let out = result_f32(&r);
+        assert_eq!(out.len(), 4 * 3, "conv_transpose non-square output size");
     }
 }
 

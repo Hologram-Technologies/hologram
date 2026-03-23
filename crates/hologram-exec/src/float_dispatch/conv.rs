@@ -110,7 +110,77 @@ fn conv2d_core(
     out
 }
 
-/// Conv2d with explicit input shapes (avoids ambiguous shape inference).
+/// Conv2d with explicit spatial dimensions from the op fields.
+///
+/// All dispatch paths route through this function — no shape guessing needed.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dispatch_conv2d_direct(
+    inputs: &[&[u8]],
+    kh: usize,
+    kw: usize,
+    sh: usize,
+    sw: usize,
+    ph: usize,
+    pw: usize,
+    dh: usize,
+    dw: usize,
+    group: usize,
+    h_in: usize,
+    w_in: usize,
+) -> ExecResult<Vec<u8>> {
+    let data = cast_f32(inputs[0])?;
+    let weight = cast_f32(inputs[1])?;
+    let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
+    let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
+        Some(cast_f32(bias_bytes)?.to_vec())
+    } else {
+        None
+    };
+
+    // Derive N, OC, IC/group from buffer lengths + known spatial dims.
+    let ic = if h_in > 0 && w_in > 0 {
+        data.len() / (h_in * w_in)
+    } else {
+        1
+    };
+    let n = if ic > 0 && h_in > 0 && w_in > 0 {
+        data.len() / (ic * h_in * w_in)
+    } else {
+        1
+    };
+    let oc = weight.len() / (kh * kw).max(1) / (ic / group.max(1)).max(1);
+    let ic_per_group = (ic / group.max(1)).max(1);
+
+    let h_out = (h_in + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
+    let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
+
+    let out = conv2d_core(
+        &data,
+        &weight,
+        bias.as_deref(),
+        n,
+        ic_per_group,
+        h_in,
+        w_in,
+        oc,
+        h_out,
+        w_out,
+        kh,
+        kw,
+        sh,
+        sw,
+        ph,
+        pw,
+        dh,
+        dw,
+        group,
+    );
+    Ok(f32_vec_to_bytes(out))
+}
+
+/// Conv2d with explicit input shapes from shape vectors (used by KvStore path).
+///
+/// Delegates to `dispatch_conv2d_direct` after extracting H/W from shapes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_conv2d_with_shapes(
     inputs: &[&[u8]],
@@ -125,120 +195,21 @@ pub(super) fn dispatch_conv2d_with_shapes(
     dw: usize,
     group: usize,
 ) -> ExecResult<Vec<u8>> {
-    let data = cast_f32(inputs[0])?;
-    let weight = cast_f32(inputs[1])?;
-    let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
-    let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
-        Some(cast_f32(bias_bytes)?.to_vec())
-    } else {
-        None
-    };
-
     let ds = input_shapes.first().cloned().unwrap_or_default();
-    let ws = input_shapes.get(1).cloned().unwrap_or_default();
-
-    let (n, _ic, h_in, w_in) = if ds.len() == 4 {
-        (ds[0], ds[1], ds[2], ds[3])
-    } else {
+    if ds.len() != 4 {
         return Err(crate::error::ExecError::UnsupportedOp(format!(
             "Conv2d: expected 4D input shape, got {:?}",
             ds
         )));
-    };
-    let oc = ws.first().copied().unwrap_or(1);
-    let ic_per_group = ws.get(1).copied().unwrap_or(1);
-
-    let h_out = (h_in + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
-    let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
-
-    let out = conv2d_core(
-        &data,
-        &weight,
-        bias.as_deref(),
-        n,
-        ic_per_group,
-        h_in,
-        w_in,
-        oc,
-        h_out,
-        w_out,
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
-        dh,
-        dw,
-        group,
-    );
-    Ok(f32_vec_to_bytes(out))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_conv2d(
-    inputs: &[&[u8]],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
-) -> ExecResult<Vec<u8>> {
-    let data = cast_f32(inputs[0])?;
-    let weight = cast_f32(inputs[1])?;
-    let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
-    let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
-        Some(cast_f32(bias_bytes)?.to_vec())
-    } else {
-        None
-    };
-
-    // Infer shapes: data=[N,C,H,W], weight=[OC,IC/group,KH,KW]
-    let oc = weight.len() / (kh * kw * (weight.len() / (kh * kw))).max(1);
-    let ic_per_group = if oc > 0 {
-        weight.len() / (oc * kh * kw)
-    } else {
-        1
-    };
-    let ic = ic_per_group * group;
-    let spatial = data.len() / ic.max(1);
-    let h_in = (spatial as f32).sqrt() as usize;
-    let w_in = if h_in > 0 { spatial / h_in } else { 1 };
-    let n = data.len() / (ic * h_in * w_in).max(1);
-
-    let h_out = (h_in + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
-    let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
-
-    let out = conv2d_core(
-        &data,
-        &weight,
-        bias.as_deref(),
-        n,
-        ic_per_group,
-        h_in,
-        w_in,
-        oc,
-        h_out,
-        w_out,
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
-        dh,
-        dw,
-        group,
-    );
-    Ok(f32_vec_to_bytes(out))
+    }
+    let h_in = ds[2];
+    let w_in = ds[3];
+    dispatch_conv2d_direct(inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in)
 }
 
 // ── ConvTranspose ────────────────────────────────────────────────────────────
 
+/// Transposed 2-D convolution with explicit spatial dimensions.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_conv_transpose(
     inputs: &[&[u8]],
@@ -253,41 +224,17 @@ pub(super) fn dispatch_conv_transpose(
     group: usize,
     output_pad_h: usize,
     output_pad_w: usize,
+    h_in: usize,
+    w_in: usize,
 ) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
     let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
     let has_bias = !bias_bytes.is_empty() && bias_bytes.len() >= 4;
 
-    let weight_per_filter = kh * kw;
-    let ic = if weight_per_filter > 0 {
-        weight.len() / weight_per_filter
-    } else {
-        return Ok(vec![]);
-    };
-    let data_channels = if data.is_empty() {
-        1
-    } else {
-        let total_spatial = ic * weight_per_filter;
-        let oc_per_group = ic / group.max(1);
-        let _ = total_spatial;
-        let _ = oc_per_group;
-        group
-    };
-    let _ = data_channels;
-
-    let total = data.len();
-    let ic_actual = weight.len() / (kh * kw);
+    let ic_actual = weight.len() / (kh * kw).max(1);
     let oc_per_group = if ic_actual > 0 {
         ic_actual / group.max(1)
-    } else {
-        1
-    };
-    let in_channels = group;
-    let spatial_per_channel = total / in_channels.max(1);
-    let h_in = (spatial_per_channel as f32).sqrt() as usize;
-    let w_in = if h_in > 0 {
-        spatial_per_channel / h_in
     } else {
         1
     };
