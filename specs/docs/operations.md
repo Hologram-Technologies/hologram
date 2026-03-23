@@ -269,6 +269,98 @@ Skip the `dispatch_float_into` → `dispatch_custom_into` indirection. Still try
 
 ---
 
+## Dispatch Architecture
+
+### FloatOp → TapeKernel resolution
+
+At tape build time, `resolve_float_kernel()` (`tape_builder.rs`) maps each `FloatOp` to
+a `TapeKernel` variant. The mapping determines which dispatch tier handles each op at
+execution time:
+
+```
+FloatOp variant
+    │
+    ▼
+resolve_float_kernel()
+    ├──▶ Inline hot ops (13)      ──▶ direct kernel call, no backend
+    ├──▶ Inline custom ops (3)    ──▶ try GPU backend, then CPU kernel
+    ├──▶ KvWrite / KvRead (2)     ──▶ dedicated KV cache dispatch
+    └──▶ Float(op) catch-all (60+)──▶ backend → dispatch_float_into → category dispatch
+```
+
+### Tier 1: Inline hot ops (13 ops)
+
+Skip the backend vtable and `dispatch_float_into` entirely. The execute loop calls the
+kernel closure directly — zero dispatch overhead.
+
+| FloatOp | TapeKernel | Type |
+|---------|-----------|------|
+| `Relu` | `InlineRelu` | unary |
+| `Neg` | `InlineNeg` | unary |
+| `Abs` | `InlineAbs` | unary |
+| `Sigmoid` | `InlineSigmoid` | unary |
+| `Silu` | `InlineSilu` | unary |
+| `Tanh` | `InlineTanh` | unary |
+| `Gelu` | `InlineGelu` | unary |
+| `Exp` | `InlineExp` | unary |
+| `Reciprocal` | `InlineReciprocal` | unary |
+| `Add` | `InlineAdd` | binary |
+| `Mul` | `InlineMul` | binary |
+| `Sub` | `InlineSub` | binary |
+| `Div` | `InlineDiv` | binary |
+
+These are the most frequent ops in transformer inference — they appear hundreds of times
+per forward pass. Phase 9a benchmarks showed ~36% speedup on Relu (5.1µs → 3.3µs for
+64KB buffers).
+
+### Tier 2: Inline custom ops (3 ops)
+
+Bake parameters at build time to skip `dispatch_float_into` → `dispatch_custom_into`
+indirection, but still try the GPU backend (Metal/WebGPU) first before falling back to
+the CPU kernel.
+
+| FloatOp | TapeKernel |
+|---------|-----------|
+| `MatMul { m, k, n }` | `InlineMatMul { m, k, n }` |
+| `Softmax { size }` | `InlineSoftmax { size }` |
+| `RmsNorm { size, epsilon }` | `InlineRmsNorm { size, epsilon }` |
+
+These ops are hot (multiple times per transformer layer) but benefit from GPU
+acceleration for large tensors, so the backend check is preserved.
+
+### Tier 3: Generic `Float(op)` (~60+ ops)
+
+All remaining `FloatOp` variants use the catch-all `_ => TapeKernel::Float(*fop)`. At
+execution time, this path:
+
+1. Tries the GPU backend (`backend.dispatch_float()`)
+2. Falls back to `dispatch_float_into()`, which routes by category:
+   - `UnaryElementwise` → `elementwise::unary_map()` with monomorphic fast paths
+   - `BinaryElementwise` → `elementwise::binary_elementwise()` with broadcast
+   - `BinaryCompare` / `BinaryByteBool` / `UnaryByteBool` → comparison kernels
+   - `Custom` → dedicated dispatch functions (Gemm, Attention, Conv2d, etc.)
+3. Ultimate fallback: `op.apply_unary(v)` / `op.apply_binary(a, b)`
+
+**Every FloatOp variant is handled** — the catch-all ensures no op is ever unhandled or
+panics at dispatch time.
+
+### Why only 16 ops are inlined
+
+Adding inline variants for the remaining ~60 ops would not help and could hurt:
+
+- **Enum bloat**: More `TapeKernel` variants increase match table size, degrading
+  instruction cache performance in the hot dispatch loop.
+- **Complex ops need GPU**: Conv2d, Attention, and Gemm *must* try the GPU backend —
+  skipping it would be a major regression on Metal/WebGPU-capable hardware.
+- **Shape ops are near-zero-cost**: Reshape is a no-op (metadata only). Transpose,
+  Gather, and Cast are memory moves — dispatch overhead is noise compared to actual
+  data movement.
+- **Rare ops have negligible total impact**: Cos, Sign, Erf, and similar math ops
+  appear at most once per layer. Even saving 2µs per call yields < 2µs total per
+  forward pass — not worth the enum bloat.
+
+---
+
 ## FloatDType — Element types
 
 Used by dtype-aware ops (`Cast`, `Shape`, `Gather`, `Concat`). Stored in `.holo` archives

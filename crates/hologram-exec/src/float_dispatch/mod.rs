@@ -542,7 +542,16 @@ fn dispatch_custom(
             *pad_h as usize,
             *pad_w as usize,
         ),
-        FloatOp::GlobalAvgPool => pool::dispatch_global_avg_pool(inputs),
+        FloatOp::GlobalAvgPool {
+            channels,
+            spatial_h,
+            spatial_w,
+        } => pool::dispatch_global_avg_pool_direct(
+            inputs,
+            *channels as usize,
+            *spatial_h as usize,
+            *spatial_w as usize,
+        ),
         FloatOp::Resize { mode } => spatial::dispatch_resize(inputs, *mode),
         FloatOp::PadOp { mode } => spatial::dispatch_pad(inputs, *mode),
         FloatOp::InstanceNorm { size, epsilon } => {

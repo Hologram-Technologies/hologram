@@ -156,7 +156,7 @@ fn ensure_all_ops_covered() {
         FloatOp::ConvTranspose { .. } => {}
         FloatOp::MaxPool2d { .. } => {}
         FloatOp::AvgPool2d { .. } => {}
-        FloatOp::GlobalAvgPool => {}
+        FloatOp::GlobalAvgPool { .. } => {}
         FloatOp::Resize { .. } => {}
         FloatOp::PadOp { .. } => {}
         FloatOp::InstanceNorm { .. } => {}
@@ -1227,7 +1227,14 @@ fn test_conv_transpose_non_square() {
 fn test_global_avg_pool_smoke() {
     // 1x1x2x2 input -> global average = 2.5
     let input = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
-    let result = dispatch_float(&FloatOp::GlobalAvgPool, &[&input]);
+    let result = dispatch_float(
+        &FloatOp::GlobalAvgPool {
+            channels: 1,
+            spatial_h: 2,
+            spatial_w: 2,
+        },
+        &[&input],
+    );
     if let Ok(r) = result {
         let out = result_f32(&r);
         if !out.is_empty() {

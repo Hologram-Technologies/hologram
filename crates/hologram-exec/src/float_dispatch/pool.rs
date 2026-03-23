@@ -145,20 +145,32 @@ pub(super) fn dispatch_avg_pool_2d(
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_global_avg_pool(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+/// GlobalAvgPool with explicit channel and spatial dimensions from the op fields.
+///
+/// All dispatch paths route through this function — no shape guessing needed.
+pub(super) fn dispatch_global_avg_pool_direct(
+    inputs: &[&[u8]],
+    channels: usize,
+    spatial_h: usize,
+    spatial_w: usize,
+) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
-    // GlobalAvgPool: [N,C,H,W] → [N,C,1,1]
-    let total = data.len();
-    let (channels, h, w) = infer_nchw(total, 1);
-    let spatial = h * w;
+    let spatial = spatial_h * spatial_w;
+    let n = if channels > 0 && spatial > 0 {
+        data.len() / (channels * spatial)
+    } else {
+        1
+    };
 
-    let mut out = Vec::with_capacity(channels);
-    for c in 0..channels {
-        let start = c * spatial;
-        let end = (start + spatial).min(data.len());
-        if start < data.len() {
-            let sum: f32 = data[start..end].iter().sum();
-            out.push(sum / spatial as f32);
+    let mut out = Vec::with_capacity(n * channels);
+    for batch in 0..n {
+        for c in 0..channels {
+            let start = (batch * channels + c) * spatial;
+            let end = (start + spatial).min(data.len());
+            if start < data.len() {
+                let sum: f32 = data[start..end].iter().sum();
+                out.push(sum / spatial as f32);
+            }
         }
     }
     Ok(f32_vec_to_bytes(out))

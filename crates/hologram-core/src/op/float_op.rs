@@ -350,7 +350,13 @@ pub enum FloatOp {
         pad_w: u32,
     },
     /// Global average pool: spatial dims → 1.
-    GlobalAvgPool,
+    /// `channels`, `spatial_h`, `spatial_w` encode the input [N,C,H,W] layout
+    /// so the dispatcher doesn't need to guess from buffer length.
+    GlobalAvgPool {
+        channels: u32,
+        spatial_h: u32,
+        spatial_w: u32,
+    },
     /// Resize (nearest/linear/cubic). Mode encoded as u8.
     Resize { mode: u8 },
     /// N-D padding. Mode: 0=constant, 1=reflect, 2=edge.
@@ -481,7 +487,7 @@ impl FloatOp {
             Self::ConvTranspose { .. } => 3,
             Self::MaxPool2d { .. } => 1,
             Self::AvgPool2d { .. } => 1,
-            Self::GlobalAvgPool => 1,
+            Self::GlobalAvgPool { .. } => 1,
             Self::Resize { .. } => 2,       // data, scales/sizes
             Self::PadOp { .. } => 2,        // data, pads
             Self::InstanceNorm { .. } => 3, // data, scale, bias
@@ -572,7 +578,7 @@ impl FloatOp {
             Self::ConvTranspose { .. } => "float.conv_transpose",
             Self::MaxPool2d { .. } => "float.max_pool_2d",
             Self::AvgPool2d { .. } => "float.avg_pool_2d",
-            Self::GlobalAvgPool => "float.global_avg_pool",
+            Self::GlobalAvgPool { .. } => "float.global_avg_pool",
             Self::Resize { .. } => "float.resize",
             Self::PadOp { .. } => "float.pad",
             Self::InstanceNorm { .. } => "float.instance_norm",
@@ -689,7 +695,7 @@ impl FloatOp {
             | Self::ConvTranspose { .. }
             | Self::MaxPool2d { .. }
             | Self::AvgPool2d { .. }
-            | Self::GlobalAvgPool
+            | Self::GlobalAvgPool { .. }
             | Self::Resize { .. }
             | Self::PadOp { .. }
             | Self::LRN { .. } => ShapeSpec::Custom,
@@ -810,7 +816,7 @@ impl FloatOp {
             | Self::ConvTranspose { .. }
             | Self::MaxPool2d { .. }
             | Self::AvgPool2d { .. }
-            | Self::GlobalAvgPool
+            | Self::GlobalAvgPool { .. }
             | Self::Resize { .. }
             | Self::PadOp { .. }
             | Self::InstanceNorm { .. }
@@ -992,7 +998,7 @@ impl FloatOp {
             | Self::ConvTranspose { .. }
             | Self::MaxPool2d { .. }
             | Self::AvgPool2d { .. }
-            | Self::GlobalAvgPool
+            | Self::GlobalAvgPool { .. }
             | Self::Resize { .. }
             | Self::PadOp { .. }
             | Self::InstanceNorm { .. }
@@ -1136,7 +1142,7 @@ impl FloatOp {
             Self::ConvTranspose { .. } => "ConvTranspose",
             Self::MaxPool2d { .. } => "MaxPool2d",
             Self::AvgPool2d { .. } => "AvgPool2d",
-            Self::GlobalAvgPool => "GlobalAvgPool",
+            Self::GlobalAvgPool { .. } => "GlobalAvgPool",
             Self::Resize { .. } => "Resize",
             Self::PadOp { .. } => "Pad",
             Self::InstanceNorm { .. } => "InstanceNorm",

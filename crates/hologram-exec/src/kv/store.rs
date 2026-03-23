@@ -132,7 +132,7 @@ impl KvStore {
             GraphOp::Float(ref f) => {
                 if input_shapes.len() >= 2 {
                     crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
-                } else if matches!(f, FloatOp::GlobalAvgPool) && !input_shapes.is_empty() {
+                } else if matches!(f, FloatOp::GlobalAvgPool { .. }) && !input_shapes.is_empty() {
                     crate::float_dispatch::pool::dispatch_global_avg_pool_with_shapes(
                         inputs,
                         input_shapes,
