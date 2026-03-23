@@ -15,6 +15,7 @@ use hologram_graph::graph::GraphOp;
 use hologram_graph::schedule::ExecutionSchedule;
 
 use crate::error::{ExecError, ExecResult};
+use crate::kv::CustomOpRegistry;
 use crate::tape::{EnumTape, TapeInstruction, TapeKernel};
 
 /// Build an [`EnumTape`] from a serialized graph and its execution schedule.
@@ -26,7 +27,11 @@ use crate::tape::{EnumTape, TapeInstruction, TapeKernel};
 ///
 /// Constants and graph inputs are skipped (they are seeded into the arena
 /// before tape execution).
-pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecResult<EnumTape> {
+pub fn build_tape(
+    sg: &SerializedGraph,
+    schedule: &ExecutionSchedule,
+    registry: Option<&CustomOpRegistry>,
+) -> ExecResult<EnumTape> {
     // Build flat lookup tables for O(1) access by node index.
     let max_idx = sg
         .nodes
@@ -69,7 +74,7 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
             }
 
             // Resolve kernel enum variant.
-            let kernel = resolve_kernel(&node.op)?;
+            let kernel = resolve_kernel(&node.op, registry)?;
 
             // Pre-compute output elem_size.
             let output_elem_size = compute_elem_size(node_id, &node.op, &dtypes);
@@ -116,14 +121,19 @@ pub fn build_tape(sg: &SerializedGraph, schedule: &ExecutionSchedule) -> ExecRes
 /// `can_reuse_input` (for unary inline ops with single-consumer inputs).
 fn apply_reuse_flags(tape: &mut EnumTape) {
     // Count how many instructions consume each node index.
-    let mut consumer_counts: Vec<u32> = Vec::new();
+    let max_idx = tape
+        .instructions
+        .iter()
+        .map(|i| i.output_idx as usize)
+        .max()
+        .unwrap_or(0);
+    let mut consumer_counts = vec![0u32; max_idx + 1];
     for instr in &tape.instructions {
         for &idx in &instr.input_indices {
             let i = idx as usize;
-            if i >= consumer_counts.len() {
-                consumer_counts.resize(i + 1, 0);
+            if i < consumer_counts.len() {
+                consumer_counts[i] += 1;
             }
-            consumer_counts[i] += 1;
         }
     }
 
@@ -165,7 +175,7 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
 ///
 /// No closures, no heap allocation — just selects the right variant
 /// and captures the op parameters inline.
-fn resolve_kernel(op: &GraphOp) -> ExecResult<TapeKernel> {
+fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResult<TapeKernel> {
     match op {
         GraphOp::Float(fop) => Ok(resolve_float_kernel(fop)),
         GraphOp::FusedFloatChain(chain) => Ok(TapeKernel::FusedFloatChain(chain.clone())),
@@ -191,6 +201,18 @@ fn resolve_kernel(op: &GraphOp) -> ExecResult<TapeKernel> {
         }
         GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
             Ok(TapeKernel::MatMulLut8(*cid))
+        }
+        GraphOp::Custom { id, arity: _ } => {
+            let reg = registry.ok_or_else(|| {
+                ExecError::UnsupportedOp(format!(
+                    "custom op {} requires a CustomOpRegistry",
+                    id.raw()
+                ))
+            })?;
+            let handler = reg.get_handler(*id).ok_or_else(|| {
+                ExecError::UnsupportedOp(format!("custom op {} not registered", id.raw()))
+            })?;
+            Ok(TapeKernel::Custom(handler.clone()))
         }
         _ => Err(ExecError::UnsupportedOp(format!(
             "tape builder: unsupported op {:?}",
@@ -350,7 +372,7 @@ mod tests {
     #[test]
     fn build_tape_from_simple_graph() {
         let (sg, schedule) = make_simple_graph();
-        let tape = build_tape(&sg, &schedule).expect("build_tape should succeed");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
         assert!(
             !tape.instructions.is_empty(),
             "expected at least 1 instruction, got 0",
@@ -360,7 +382,7 @@ mod tests {
     #[test]
     fn tape_elem_size_defaults_to_f32() {
         let (sg, schedule) = make_simple_graph();
-        let tape = build_tape(&sg, &schedule).expect("build_tape should succeed");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
         for instr in &tape.instructions {
             assert_eq!(instr.output_elem_size, 4);
         }
@@ -369,7 +391,7 @@ mod tests {
     #[test]
     fn tape_kernel_is_enum_not_boxed() {
         let (sg, schedule) = make_simple_graph();
-        let tape = build_tape(&sg, &schedule).expect("build_tape should succeed");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
         // Verify the Relu instruction is a Float variant (not a Box).
         for instr in &tape.instructions {
             match &instr.kernel {

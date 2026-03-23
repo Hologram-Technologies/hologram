@@ -68,6 +68,14 @@ impl CustomOpRegistry {
     pub fn len(&self) -> usize {
         self.handlers.len()
     }
+
+    /// Look up a handler by id without dispatching.
+    ///
+    /// Returns `None` if the id is not registered.
+    #[must_use]
+    pub fn get_handler(&self, id: CustomOpId) -> Option<&CustomHandler> {
+        self.handlers.get(&id.raw())
+    }
 }
 
 #[cfg(test)]

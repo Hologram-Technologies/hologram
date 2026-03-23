@@ -6,7 +6,6 @@
 
 pub mod backend;
 pub mod buffer;
-pub mod dirty_bits;
 pub mod error;
 pub mod eval;
 pub mod float_dispatch;
@@ -15,8 +14,6 @@ pub mod kv_cache;
 pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
-#[cfg(feature = "profile")]
-pub mod profile;
 pub mod tape;
 pub mod tape_builder;
 
@@ -27,7 +24,9 @@ pub use eval::{build_schedule, GraphInputs, GraphOutputs};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
 pub use kv_cache::KvCacheState;
-pub use mmap::{build_tape_from_plan, execute_tape, execute_tape_with_kv};
+pub use mmap::{
+    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
+};
 
 /// Register a custom op handler in a `CustomOpRegistry`.
 ///

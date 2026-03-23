@@ -348,10 +348,10 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **dep.2**: `#[deprecated]` on mmap wrappers (`execute_plan`, `execute_plan_with_shape_hints`, `execute_plan_with_kv_state`, `execute_bytes`, `execute_bytes_with_ops`, `execute_bytes_with_progress`, `execute_file`)
 - [x] **dep.3**: `#[allow(deprecated)]` on internal impl blocks and profile functions
 - [x] **dep.4**: Deprecation roadmap documented in handoff spec (Section 8)
-- [ ] **dep.5**: Migrate CLI `run_cmd.rs` generation loop to tape path
-- [ ] **dep.6**: Add intermediate capture to EnumTape (tape profiling)
-- [ ] **dep.7**: Migrate remaining KvExecutor-based tests to tape
-- [ ] **dep.8**: Remove KvExecutor (struct, impl, mmap wrappers, re-exports)
+- [x] **dep.5**: Migrate CLI `run_cmd.rs` generation loop to tape path (Sprint 17)
+- [ ] **dep.6**: Add intermediate capture to EnumTape (tape profiling) — deferred
+- [x] **dep.7**: Migrate remaining KvExecutor-based tests to tape (Sprint 17)
+- [x] **dep.8**: Remove KvExecutor (struct, impl, mmap wrappers, re-exports) (Sprint 17)
 
 ### Documentation (Sprint 16)
 - [x] **D.1**: Transformer benchmark specification — [specs/docs/transformer-benchmark-spec.md](docs/transformer-benchmark-spec.md)
@@ -620,6 +620,22 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **3.7**: Remove deprecated mmap convenience functions (execute_plan, execute_bytes, execute_file, etc.)
 - [x] **3.8**: Clean up re-exports and #[allow(deprecated)] annotations
 - [x] **3.9**: Migrate calculator example to tape path
+
+### Phase 4: Dead Code Removal (Plan 015)
+- [x] **4.1**: Remove shape_propagate.rs + shape_resolve.rs (1066 lines)
+- [x] **4.2**: Remove dirty_bits.rs + profile.rs (385 lines)
+- [x] **4.3**: Remove old Tape/Instruction/KernelFn + their tests
+- [x] **4.4**: Inline `parse_shape_values` into float_dispatch/shape_ops.rs
+
+### Phase 5: Tape-Compatible Custom Ops (Plan 015)
+- [x] **5.1**: `TapeKernel::Custom` variant + dispatch in `dispatch_kernel` / `dispatch_kernel_par`
+- [x] **5.2**: Wire `CustomOpRegistry` into tape_builder (`resolve_kernel` accepts registry)
+- [x] **5.3**: `build_tape_from_plan_with_ops` entry point
+- [x] **5.4**: Custom op E2E test (passthrough handler via tape path)
+
+### Phase 6: Tape Hot Path Optimization (Plan 015)
+- [x] **6.1**: `binary_broadcast` helper — eliminate modulo for same-size/scalar cases
+- [x] **6.2**: Pre-size `consumer_counts` in `apply_reuse_flags`
 
 ### Benchmark Results (Phase 1+2)
 - fusion::fuse(1000_nodes): **1.91 ms → 290 µs** (6.6x faster)

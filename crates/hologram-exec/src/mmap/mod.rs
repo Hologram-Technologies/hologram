@@ -8,6 +8,7 @@ use hologram_archive::loader::plan::LoadedPlan;
 use crate::error::{ExecError, ExecResult};
 use crate::eval::executor::{GraphInputs, GraphOutputs};
 use crate::eval::schedule_bridge::build_schedule;
+use crate::kv::CustomOpRegistry;
 use crate::kv_cache::KvCacheState;
 
 // ── Tape-based execution ──────────────────────────────────────────────────
@@ -20,7 +21,20 @@ use crate::kv_cache::KvCacheState;
 /// Built once at model load time, reused per inference.
 pub fn build_tape_from_plan(plan: &LoadedPlan) -> ExecResult<crate::tape::EnumTape> {
     let schedule = build_schedule(plan.graph())?;
-    crate::tape_builder::build_tape(plan.graph(), &schedule)
+    crate::tape_builder::build_tape(plan.graph(), &schedule, None)
+}
+
+/// Build a pre-compiled [`EnumTape`] from a loaded plan with a custom op registry.
+///
+/// Custom ops (`GraphOp::Custom`) are resolved at tape build time by looking up
+/// handlers in the registry. The handler closures are baked into the tape as
+/// `TapeKernel::Custom` variants — zero-overhead dispatch at inference time.
+pub fn build_tape_from_plan_with_ops(
+    plan: &LoadedPlan,
+    registry: &CustomOpRegistry,
+) -> ExecResult<crate::tape::EnumTape> {
+    let schedule = build_schedule(plan.graph())?;
+    crate::tape_builder::build_tape(plan.graph(), &schedule, Some(registry))
 }
 
 /// Execute a pre-compiled tape against a loaded plan.
@@ -382,5 +396,43 @@ mod tests {
         assert_eq!(result.by_name("y").unwrap(), &[LutOp::Sigmoid.apply(100)]);
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn tape_custom_op_passthrough() {
+        use hologram_graph::graph::CustomOpId;
+        use std::sync::Arc;
+
+        // Build a graph: Input → Custom(id=1, arity=1) → Output
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(
+                GraphOp::Custom {
+                    id: CustomOpId(1),
+                    arity: 1,
+                },
+                &[0],
+            )
+            .node_with_inputs(GraphOp::Output, &[1])
+            .output("y", 2)
+            .build();
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+
+        // Register a passthrough handler
+        let mut registry = CustomOpRegistry::new();
+        registry.register(
+            CustomOpId(1),
+            1,
+            Arc::new(|inputs, _| Ok(inputs[0].to_vec())),
+        );
+
+        let tape = build_tape_from_plan_with_ops(&plan, &registry).unwrap();
+
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, vec![42, 43, 44]);
+        let result = execute_tape(&tape, &plan, &inputs).unwrap();
+        assert_eq!(result.by_name("y").unwrap(), &[42, 43, 44]);
     }
 }

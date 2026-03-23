@@ -11,8 +11,7 @@ pub fn dispatch_reshape_with_shape(inputs: &[&[u8]]) -> ExecResult<(Vec<u8>, Vec
     let n_elems = inputs[0].len() / 4; // assume f32
 
     if inputs.len() >= 2 && !inputs[1].is_empty() {
-        let shape = crate::eval::shape_resolve::parse_shape_values(inputs[1], n_elems)
-            .unwrap_or_else(|| vec![n_elems]);
+        let shape = parse_shape_values(inputs[1], n_elems).unwrap_or_else(|| vec![n_elems]);
 
         let shape_product: usize = shape.iter().product();
         if shape_product == n_elems {
@@ -131,4 +130,66 @@ pub(super) fn broadcast_to(src: &[f32], n_src: usize, target_shape: &[usize]) ->
         out.push(src[src_flat]);
     }
     out
+}
+
+/// Parse shape values from a shape tensor's raw bytes.
+///
+/// Handles both i64 and i32 encoded shapes with alignment-safe reads.
+/// Resolves a single -1/0 dimension from the element count.
+fn parse_shape_values(shape_bytes: &[u8], n_elems: usize) -> Option<Vec<usize>> {
+    if shape_bytes.is_empty() {
+        return None;
+    }
+
+    let shape_vals: Vec<i64> = if shape_bytes.len().is_multiple_of(8) {
+        let vals: Vec<i64> = shape_bytes
+            .chunks_exact(8)
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let reasonable = vals.iter().all(|&v| v >= -1 && v <= n_elems as i64 + 1);
+        if reasonable {
+            vals
+        } else if shape_bytes.len().is_multiple_of(4) {
+            shape_bytes
+                .chunks_exact(4)
+                .map(|c| i32::from_le_bytes(c.try_into().unwrap()) as i64)
+                .collect()
+        } else {
+            vals
+        }
+    } else if shape_bytes.len().is_multiple_of(4) {
+        shape_bytes
+            .chunks_exact(4)
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()) as i64)
+            .collect()
+    } else {
+        return None;
+    };
+
+    let shape: Vec<usize> = shape_vals
+        .iter()
+        .map(|&v| {
+            if v == -1 || v == 0 {
+                0
+            } else if v < 0 {
+                1
+            } else {
+                v as usize
+            }
+        })
+        .collect();
+
+    let zero_count = shape.iter().filter(|&&d| d == 0).count();
+    if zero_count == 1 {
+        let known: usize = shape.iter().filter(|&&d| d > 0).product::<usize>().max(1);
+        let unknown = if known > 0 { n_elems / known } else { n_elems };
+        Some(
+            shape
+                .iter()
+                .map(|&d| if d == 0 { unknown } else { d })
+                .collect(),
+        )
+    } else {
+        Some(shape)
+    }
 }

@@ -42,128 +42,6 @@ fn prefetch_read(ptr: *const u8) {
     }
 }
 
-/// A kernel function: takes input byte slices, optional context, writes output
-/// into a pre-provided buffer. The buffer is cleared before each call but
-/// retains its heap allocation across instructions.
-pub type KernelFn = fn(&[&[u8]], Option<&ExecutionContext>, &mut Vec<u8>) -> ExecResult<()>;
-
-/// A single instruction in the execution tape.
-pub struct Instruction {
-    /// The kernel to execute.
-    pub kernel: KernelFn,
-    /// Output node index (where to store the result in the arena).
-    pub output_idx: u32,
-    /// Input node indices (where to gather inputs from the arena).
-    pub input_indices: Vec<u32>,
-    /// Element size of the output (for arena metadata).
-    pub output_elem_size: u8,
-    /// Graph-specific tile size hint (Phase 12.3). 0 = no hint.
-    /// Used by tiled kernels (LUT-GEMM, conv2d) to select tile dimensions.
-    pub tile_hint: u16,
-}
-
-/// Pre-compiled execution tape.
-///
-/// Built once from a graph + schedule, then executed repeatedly per inference.
-/// Each execution reuses the same tape with different arena contents.
-pub struct Tape {
-    /// Flat instruction array in execution order (level-by-level, sequential within level).
-    pub instructions: Vec<Instruction>,
-    /// Level boundaries: `level_offsets[i]..level_offsets[i+1]` is the range of
-    /// instructions for level `i`. Used for parallel execution of levels.
-    pub level_offsets: Vec<usize>,
-}
-
-impl Tape {
-    /// Create an empty tape.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            instructions: Vec::new(),
-            level_offsets: vec![0],
-        }
-    }
-
-    /// Create a tape with pre-allocated instruction capacity.
-    #[must_use]
-    pub fn with_capacity(n_instructions: usize, n_levels: usize) -> Self {
-        let mut level_offsets = Vec::with_capacity(n_levels + 1);
-        level_offsets.push(0);
-        Self {
-            instructions: Vec::with_capacity(n_instructions),
-            level_offsets,
-        }
-    }
-
-    /// Add an instruction and return its index.
-    pub fn push(&mut self, instr: Instruction) -> usize {
-        let idx = self.instructions.len();
-        self.instructions.push(instr);
-        idx
-    }
-
-    /// Mark the end of the current level.
-    pub fn end_level(&mut self) {
-        self.level_offsets.push(self.instructions.len());
-    }
-
-    /// Number of levels in the tape.
-    #[must_use]
-    pub fn n_levels(&self) -> usize {
-        self.level_offsets.len().saturating_sub(1)
-    }
-
-    /// Execute the tape sequentially against the given arena.
-    ///
-    /// A single reusable output buffer is swapped between the kernel and the
-    /// arena via [`BufferArena::swap_insert_with_elem_size`]. After warmup,
-    /// this eliminates per-instruction heap allocation entirely.
-    pub fn execute(
-        &self,
-        arena: &mut BufferArena<'_>,
-        ctx: Option<&ExecutionContext>,
-    ) -> ExecResult<()> {
-        let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
-
-        for (i, instr) in self.instructions.iter().enumerate() {
-            // Prefetch next instruction's input data into cache.
-            if i + 1 < self.instructions.len() {
-                let next = &self.instructions[i + 1];
-                for &idx in &next.input_indices {
-                    let id = NodeId::new(idx, 0);
-                    if let Ok(data) = arena.get(id) {
-                        prefetch_read(data.as_ptr());
-                    }
-                }
-            }
-
-            // Gather input refs and execute kernel in a scoped block.
-            // The immutable borrow of `arena` is released when the block ends.
-            {
-                let input_refs: SmallVec<[&[u8]; 4]> = instr
-                    .input_indices
-                    .iter()
-                    .map(|&idx| arena.get(NodeId::new(idx, 0)))
-                    .collect::<ExecResult<SmallVec<_>>>()?;
-                out_buf.clear();
-                (instr.kernel)(&input_refs, ctx, &mut out_buf)?;
-            }
-
-            // Swap output into arena — recycles the old buffer's allocation.
-            let out_id = NodeId::new(instr.output_idx, 0);
-            arena.swap_insert_with_elem_size(out_id, &mut out_buf, instr.output_elem_size as usize);
-        }
-
-        Ok(())
-    }
-}
-
-impl Default for Tape {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ── Enum-dispatch tape (Phase 8) ──────────────────────────────────────────────
 
 use std::cell::RefCell;
@@ -306,6 +184,9 @@ pub enum TapeKernel {
     InlineSoftmax { size: u32 },
     /// Inline RmsNorm with baked row size and epsilon (as f32::to_bits()).
     InlineRmsNorm { size: u32, epsilon: u32 },
+
+    /// Custom op — handler baked at tape build time from registry.
+    Custom(crate::kv::CustomHandler),
 }
 
 impl TapeKernel {
@@ -556,6 +437,35 @@ fn dispatch_kernel(
             )?;
             Ok(DispatchResult::InOutBuf)
         }
+        TapeKernel::Custom(handler) => {
+            let result = handler(inputs, tape_ctx.constants)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+    }
+}
+
+/// Binary elementwise with broadcasting. Fast paths avoid per-element modulo.
+#[inline(always)]
+fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) -> f32) {
+    if a.len() == b.len() {
+        for (d, (&x, &y)) in dst.iter_mut().zip(a.iter().zip(b.iter())) {
+            *d = f(x, y);
+        }
+    } else if b.len() == 1 {
+        let bv = b[0];
+        for (d, &x) in dst.iter_mut().zip(a.iter()) {
+            *d = f(x, bv);
+        }
+    } else if a.len() == 1 {
+        let av = a[0];
+        for (d, &y) in dst.iter_mut().zip(b.iter()) {
+            *d = f(av, y);
+        }
+    } else {
+        for (i, d) in dst.iter_mut().enumerate() {
+            *d = f(a[i % a.len()], b[i % b.len()]);
+        }
     }
 }
 
@@ -583,9 +493,7 @@ fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32)
     let base = out_buf.len();
     out_buf.resize(base + byte_len, 0);
     let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
-    for (i, d) in dst.iter_mut().enumerate() {
-        *d = f(a[i % a.len()], b[i % b.len()]);
-    }
+    binary_broadcast(a, b, dst, f);
 }
 
 /// Typed unary kernel — input already cast to `&[f32]` by caller.
@@ -609,9 +517,7 @@ fn inline_binary_f32(a: &[f32], b: &[f32], out_buf: &mut Vec<u8>, f: impl Fn(f32
     let base = out_buf.len();
     out_buf.resize(base + byte_len, 0);
     let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
-    for (i, d) in dst.iter_mut().enumerate() {
-        *d = f(a[i % a.len()], b[i % b.len()]);
-    }
+    binary_broadcast(a, b, dst, f);
 }
 
 /// Apply a unary inline op in-place on an owned f32 buffer.
@@ -728,6 +634,7 @@ fn dispatch_kernel_par(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
     ctx: Option<&ExecutionContext>,
+    constants: &ConstantStore,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     use crate::float_dispatch;
@@ -835,6 +742,11 @@ fn dispatch_kernel_par(
                 f32::from_bits(*epsilon),
                 out_buf,
             )
+        }
+        TapeKernel::Custom(handler) => {
+            let result = handler(inputs, constants)?;
+            out_buf.extend_from_slice(&result);
+            Ok(())
         }
         // These should never appear in parallel levels (filtered by needs_shared_state).
         _ => Err(crate::error::ExecError::UnsupportedOp(
@@ -1327,7 +1239,13 @@ impl EnumTape {
                         } else {
                             256
                         });
-                        dispatch_kernel_par(&instr.kernel, &input_refs, exec_ctx, &mut out_buf)?;
+                        dispatch_kernel_par(
+                            &instr.kernel,
+                            &input_refs,
+                            exec_ctx,
+                            tape_ctx.constants,
+                            &mut out_buf,
+                        )?;
                         Ok((instr.output_idx, out_buf, instr.output_elem_size))
                     })
                     .collect();
@@ -1486,118 +1404,6 @@ pub type BoxedTape = EnumTape;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn identity_kernel(
-        inputs: &[&[u8]],
-        _ctx: Option<&ExecutionContext>,
-        out: &mut Vec<u8>,
-    ) -> ExecResult<()> {
-        out.extend_from_slice(inputs[0]);
-        Ok(())
-    }
-
-    #[test]
-    fn empty_tape_executes() {
-        let tape = Tape::new();
-        let mut arena = BufferArena::new();
-        assert!(tape.execute(&mut arena, None).is_ok());
-    }
-
-    #[test]
-    fn single_instruction() {
-        let mut tape = Tape::new();
-        tape.push(Instruction {
-            kernel: identity_kernel,
-            output_idx: 1,
-            input_indices: vec![0],
-            output_elem_size: 4,
-            tile_hint: 0,
-        });
-        tape.end_level();
-
-        let mut arena = BufferArena::new();
-        arena.insert(NodeId::new(0, 0), vec![1, 2, 3, 4]);
-
-        tape.execute(&mut arena, None).unwrap();
-
-        let out = arena.get(NodeId::new(1, 0)).unwrap();
-        assert_eq!(out, &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn two_level_chain() {
-        fn double_kernel(
-            inputs: &[&[u8]],
-            _ctx: Option<&ExecutionContext>,
-            out: &mut Vec<u8>,
-        ) -> ExecResult<()> {
-            for &b in inputs[0] {
-                out.push(b.wrapping_mul(2));
-            }
-            Ok(())
-        }
-
-        let mut tape = Tape::new();
-        tape.push(Instruction {
-            kernel: double_kernel,
-            output_idx: 1,
-            input_indices: vec![0],
-            output_elem_size: 1,
-            tile_hint: 0,
-        });
-        tape.end_level();
-        tape.push(Instruction {
-            kernel: double_kernel,
-            output_idx: 2,
-            input_indices: vec![1],
-            output_elem_size: 1,
-            tile_hint: 0,
-        });
-        tape.end_level();
-
-        assert_eq!(tape.n_levels(), 2);
-
-        let mut arena = BufferArena::new();
-        arena.insert(NodeId::new(0, 0), vec![5]);
-
-        tape.execute(&mut arena, None).unwrap();
-
-        let out = arena.get(NodeId::new(2, 0)).unwrap();
-        assert_eq!(out, &[20]); // 5 * 2 * 2
-    }
-
-    #[test]
-    fn level_offsets_correct() {
-        let mut tape = Tape::with_capacity(4, 2);
-        tape.push(Instruction {
-            kernel: identity_kernel,
-            output_idx: 1,
-            input_indices: vec![0],
-            output_elem_size: 4,
-            tile_hint: 0,
-        });
-        tape.push(Instruction {
-            kernel: identity_kernel,
-            output_idx: 2,
-            input_indices: vec![0],
-            output_elem_size: 4,
-            tile_hint: 0,
-        });
-        tape.end_level();
-        tape.push(Instruction {
-            kernel: identity_kernel,
-            output_idx: 3,
-            input_indices: vec![1],
-            output_elem_size: 4,
-            tile_hint: 0,
-        });
-        tape.end_level();
-
-        assert_eq!(tape.n_levels(), 2);
-        assert_eq!(tape.level_offsets, vec![0, 2, 3]);
-    }
-
-    // ── EnumTape tests ────────────────────────────────────────────────
 
     fn empty_constants() -> ConstantStore {
         ConstantStore::new()
@@ -1905,5 +1711,35 @@ mod tests {
         let floats: &[f32] = bytemuck::cast_slice(out);
         // sigmoid(0) * 2 = 0.5 * 2 = 1.0
         assert!((floats[0] - 1.0).abs() < 1e-5, "got {}", floats[0]);
+    }
+
+    // ── binary_broadcast tests ──────────────────────────────────────
+
+    #[test]
+    fn broadcast_same_size() {
+        let mut dst = vec![0.0f32; 2];
+        binary_broadcast(&[1.0, 2.0], &[3.0, 4.0], &mut dst, |a, b| a + b);
+        assert_eq!(dst, vec![4.0, 6.0]);
+    }
+
+    #[test]
+    fn broadcast_scalar_b() {
+        let mut dst = vec![0.0f32; 3];
+        binary_broadcast(&[1.0, 2.0, 3.0], &[10.0], &mut dst, |a, b| a + b);
+        assert_eq!(dst, vec![11.0, 12.0, 13.0]);
+    }
+
+    #[test]
+    fn broadcast_scalar_a() {
+        let mut dst = vec![0.0f32; 2];
+        binary_broadcast(&[10.0], &[1.0, 2.0], &mut dst, |a, b| a + b);
+        assert_eq!(dst, vec![11.0, 12.0]);
+    }
+
+    #[test]
+    fn broadcast_general() {
+        let mut dst = vec![0.0f32; 3];
+        binary_broadcast(&[1.0, 2.0], &[10.0, 20.0, 30.0], &mut dst, |a, b| a + b);
+        assert_eq!(dst, vec![11.0, 22.0, 31.0]);
     }
 }

@@ -49,8 +49,8 @@ pub use hologram_graph::{
 
 // Execution
 pub use hologram_exec::{
-    build_tape_from_plan, execute_tape, execute_tape_with_kv, BufferArena, CustomHandler,
-    CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState, KvStore,
+    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
+    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState, KvStore,
 };
 
 // Archive
