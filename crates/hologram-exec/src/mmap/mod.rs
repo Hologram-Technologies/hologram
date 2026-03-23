@@ -10,15 +10,23 @@ use hologram_archive::loader::plan::LoadedPlan;
 use hologram_archive::LayerEntrypoint;
 
 use crate::error::{ExecError, ExecResult};
+#[allow(deprecated)]
 use crate::eval::executor::{GraphInputs, GraphOutputs, KvExecutor};
 use crate::eval::schedule_bridge::build_schedule;
 use crate::kv::CustomOpRegistry;
+use crate::kv_cache::KvCacheState;
 
 /// Execute a loaded plan using its `LayerHeader` entrypoints.
 ///
 /// If the archive contains a `LayerHeader`, walks the layer schedule
 /// and dispatches each layer by entrypoint type. Falls back to direct
 /// graph execution if no `LayerHeader` is present (backward compat).
+///
+/// **Deprecated**: Use [`build_tape_from_plan`] + [`execute_tape`] instead.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_plan(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     match plan.layer_header() {
         Some(lh) => dispatch_layers(lh, plan, inputs),
@@ -55,6 +63,7 @@ fn dispatch_layers(
 }
 
 /// Execute the archive's embedded graph with weights.
+#[allow(deprecated)]
 fn execute_graph_entrypoint(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
     KvExecutor::execute_with_plan(plan.graph(), &schedule, inputs, plan.weights())
@@ -71,12 +80,17 @@ fn execute_graph_entrypoint(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResu
 /// let hints = walk_shape_context(&ctx_graph, &input_shapes, &shape_values, &mut map);
 /// let outputs = execute_plan_with_shape_hints(&plan, &inputs, &hints)?;
 /// ```
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_plan_with_shape_hints(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
     shape_hints: &HashMap<u32, Vec<usize>>,
 ) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
+    #[allow(deprecated)]
     KvExecutor::execute_with_shape_hints(
         plan.graph(),
         &schedule,
@@ -90,6 +104,10 @@ pub fn execute_plan_with_shape_hints(
 ///
 /// Like [`execute_plan_with_shape_hints`] but also threads a `KvCacheState`
 /// through the dispatch loop for `FloatOp::KvWrite`/`KvRead` ops.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_plan_with_kv_state(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
@@ -97,6 +115,7 @@ pub fn execute_plan_with_kv_state(
     kv_state: &mut crate::kv_cache::KvCacheState,
 ) -> ExecResult<GraphOutputs> {
     let schedule = build_schedule(plan.graph())?;
+    #[allow(deprecated)]
     KvExecutor::execute_with_kv_state(
         plan.graph(),
         &schedule,
@@ -113,6 +132,7 @@ pub fn execute_plan_with_kv_state(
 /// every node's output buffer, shape, and the normal graph outputs.
 /// Used for node-by-node conformance testing against ORT.
 #[cfg(feature = "profile")]
+#[allow(deprecated)]
 pub fn execute_plan_with_intermediates(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
@@ -127,6 +147,7 @@ pub fn execute_plan_with_intermediates(
 /// intermediate capture (for node-by-node conformance testing against ORT).
 /// Requires the `profile` feature.
 #[cfg(feature = "profile")]
+#[allow(deprecated)]
 pub fn execute_plan_with_intermediates_and_shape_hints(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
@@ -145,14 +166,23 @@ pub fn execute_plan_with_intermediates_and_shape_hints(
 /// Execute a .holo archive from raw bytes.
 ///
 /// Parses the archive, dispatches via entrypoints, and runs the graph.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_bytes(data: &[u8], inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let plan = hologram_archive::load_from_bytes(data)?;
+    #[allow(deprecated)]
     execute_plan(&plan, inputs)
 }
 
 /// Execute a .holo archive with a custom op registry.
 ///
 /// Enables graphs containing `GraphOp::Custom` nodes.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_bytes_with_ops(
     data: &[u8],
     inputs: &GraphInputs,
@@ -160,12 +190,17 @@ pub fn execute_bytes_with_ops(
 ) -> ExecResult<GraphOutputs> {
     let plan = hologram_archive::load_from_bytes(data)?;
     let schedule = build_schedule(plan.graph())?;
+    #[allow(deprecated)]
     KvExecutor::execute_with_weights(plan.graph(), &schedule, inputs, registry, plan.weights())
 }
 
 /// Execute a .holo archive with a per-level progress callback.
 ///
 /// `on_level(level_index, nodes_executed)` fires after each schedule level completes.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_bytes_with_progress<F>(
     data: &[u8],
     inputs: &GraphInputs,
@@ -176,6 +211,7 @@ where
 {
     let plan = hologram_archive::load_from_bytes(data)?;
     let schedule = build_schedule(plan.graph())?;
+    #[allow(deprecated)]
     KvExecutor::execute_core(
         plan.graph(),
         &schedule,
@@ -190,9 +226,14 @@ where
 ///
 /// Memory-maps the file, parses, dispatches via entrypoints, and runs.
 #[cfg(feature = "std")]
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_file(path: &std::path::Path, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
     let loader = hologram_archive::HoloLoader::open(path)?;
     let plan = loader.load()?;
+    #[allow(deprecated)]
     execute_plan(&plan, inputs)
 }
 
@@ -294,6 +335,92 @@ pub fn execute_tape(
     Ok(GraphOutputs::from_named(outputs))
 }
 
+/// Execute a tape with KV cache state for autoregressive generation.
+///
+/// Identical to [`execute_tape`] but seeds the `TapeContext` with an
+/// external `KvCacheState`. KvWrite/KvRead tape instructions will
+/// read/write from this cache.
+pub fn execute_tape_with_kv(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+) -> ExecResult<GraphOutputs> {
+    use hologram_graph::constant::ConstantData;
+    use hologram_graph::graph::GraphOp;
+
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    for node in &sg.nodes {
+        match &node.op {
+            GraphOp::Constant(cid) => {
+                let data = match sg.constants.get(*cid) {
+                    Some(ConstantData::Bytes(bytes)) => bytes.as_slice(),
+                    Some(ConstantData::Deferred {
+                        byte_size,
+                        source_id,
+                    }) => {
+                        let start = *source_id as usize;
+                        let end = start + *byte_size as usize;
+                        if end > weights.len() {
+                            return Err(ExecError::ConstantNotFound(cid.raw()));
+                        }
+                        &weights[start..end]
+                    }
+                    None => return Err(ExecError::ConstantNotFound(cid.raw())),
+                };
+                let es = compiled_dtypes
+                    .get(&node.id)
+                    .map(|d| d.byte_size())
+                    .unwrap_or(4);
+                arena.insert_borrowed_with_elem_size(node.id, data, es);
+            }
+            GraphOp::Input => {
+                let input_idx = sg
+                    .nodes
+                    .iter()
+                    .filter(|n| matches!(n.op, GraphOp::Input))
+                    .position(|n| n.id == node.id);
+                if let Some(idx) = input_idx {
+                    if let Some(data) = inputs.get(idx as u32) {
+                        let es = compiled_dtypes
+                            .get(&node.id)
+                            .map(|d| d.byte_size())
+                            .unwrap_or(8);
+                        arena.insert_borrowed_with_elem_size(node.id, data, es);
+                    }
+                }
+            }
+            _ => {
+                if let Some(dtype) = compiled_dtypes.get(&node.id) {
+                    arena.set_elem_size(node.id, dtype.byte_size());
+                }
+            }
+        }
+    }
+
+    tape.prewarm_arena(&mut arena);
+
+    // Swap the KV state into the tape context (takes ownership via RefCell).
+    let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
+    let tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
+
+    tape.execute(&mut arena, &tape_ctx)?;
+
+    // Swap the updated KV state back out.
+    *kv_state = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+
+    let mut outputs = Vec::with_capacity(sg.output_names.len());
+    for (i, name) in sg.output_names.iter().enumerate() {
+        let node_id = sg.output_node_ids[i];
+        outputs.push((name.clone(), arena.take(node_id)?));
+    }
+    Ok(GraphOutputs::from_named(outputs))
+}
+
 /// Execute a loaded plan with zero-copy semantics.
 ///
 /// This is functionally identical to [`execute_plan`] — the arena's
@@ -304,7 +431,12 @@ pub fn execute_tape(
 ///
 /// This function exists as an explicit entry point for callers who want to
 /// document zero-copy intent.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use build_tape_from_plan() + execute_tape() instead"
+)]
 pub fn execute_plan_zero_copy(plan: &LoadedPlan, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
+    #[allow(deprecated)]
     execute_plan(plan, inputs)
 }
 

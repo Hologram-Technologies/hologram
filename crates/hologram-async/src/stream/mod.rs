@@ -1,5 +1,6 @@
 //! Streaming execution: emits a `LevelResult` per schedule level via mpsc.
 
+#[allow(deprecated)]
 use hologram_exec::{execute_bytes_with_progress, ExecResult, GraphInputs, GraphOutputs};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -20,6 +21,7 @@ pub struct LevelResult {
 ///
 /// Dropping the receiver does **not** cancel execution; the blocking task
 /// runs to completion and the channel send is silently ignored.
+#[allow(deprecated)]
 pub fn execute_stream(
     archive: Vec<u8>,
     inputs: GraphInputs,

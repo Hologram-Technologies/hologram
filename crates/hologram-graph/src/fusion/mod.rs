@@ -47,6 +47,7 @@ impl FusionStats {
 pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
     let order = toposort::toposort(graph)?;
     let mut stats = FusionStats::default();
+    let succ_index = graph.build_successor_index();
 
     for &id in &order {
         if graph.get(id).is_none() {
@@ -60,12 +61,12 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
         }
 
         // 2. View fusion (backward chain walk)
-        while view_fusion::try_fuse_unary_backward(graph, id) {
+        while view_fusion::try_fuse_unary_backward(graph, id, &succ_index) {
             stats.views_fused += 1;
         }
 
         // 3. Float chain fusion (f32-domain backward chain walk)
-        while float_fusion::try_fuse_float_unary(graph, id) {
+        while float_fusion::try_fuse_float_unary(graph, id, &succ_index) {
             stats.float_chains_fused += 1;
         }
     }

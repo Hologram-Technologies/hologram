@@ -1,5 +1,6 @@
 //! Async wrapper for archive execution.
 
+#[allow(deprecated)]
 use hologram_exec::{execute_bytes, ExecResult, GraphInputs, GraphOutputs};
 use tokio::task::JoinHandle;
 
@@ -11,6 +12,7 @@ pub struct AsyncExecutor;
 
 impl AsyncExecutor {
     /// Execute a `.holo` archive on a blocking thread.
+    #[allow(deprecated)]
     pub fn execute(archive: Vec<u8>, inputs: GraphInputs) -> JoinHandle<ExecResult<GraphOutputs>> {
         tokio::task::spawn_blocking(move || execute_bytes(&archive, &inputs))
     }

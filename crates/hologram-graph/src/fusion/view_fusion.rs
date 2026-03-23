@@ -13,7 +13,7 @@ use crate::graph::{Graph, GraphOp};
 /// and remove the predecessor (if it has no other successors).
 ///
 /// Returns `true` if fusion occurred.
-pub fn try_fuse_unary_backward(graph: &mut Graph, id: NodeId) -> bool {
+pub fn try_fuse_unary_backward(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]) -> bool {
     let node = match graph.get(id) {
         Some(n) => n,
         None => return false,
@@ -42,7 +42,7 @@ pub fn try_fuse_unary_backward(graph: &mut Graph, id: NodeId) -> bool {
     };
 
     // Only fuse if predecessor has exactly one successor (this node).
-    let pred_succs = graph.successors(pred_id);
+    let pred_succs = Graph::successors_from_index(pred_id, succ_index);
     if pred_succs.len() != 1 {
         return false;
     }
@@ -64,11 +64,12 @@ pub fn try_fuse_unary_backward(graph: &mut Graph, id: NodeId) -> bool {
 /// Fuse all unary chains in topological order. Returns nodes fused count.
 pub fn fuse_unary_chains(graph: &mut Graph, order: &[NodeId]) -> usize {
     let mut fused = 0;
+    let succ_index = graph.build_successor_index();
     for &id in order {
         if graph.get(id).is_none() {
             continue;
         }
-        while try_fuse_unary_backward(graph, id) {
+        while try_fuse_unary_backward(graph, id, &succ_index) {
             fused += 1;
         }
     }

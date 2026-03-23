@@ -242,8 +242,18 @@ impl GraphOutputs {
 
 /// Stateless graph executor using KV-lookup dispatch.
 /// PM_5 atomicity: execution is atomic per level — partial level results are never visible.
+///
+/// **Deprecated**: Use [`EnumTape`](crate::tape::EnumTape) via
+/// [`build_tape_from_plan`](crate::mmap::build_tape_from_plan) +
+/// [`execute_tape`](crate::mmap::execute_tape) instead. The tape path is
+/// 17–140× faster (zero dispatch overhead, zero per-inference allocation).
+#[deprecated(
+    since = "0.10.0",
+    note = "Use EnumTape via build_tape_from_plan() + execute_tape() instead"
+)]
 pub struct KvExecutor;
 
+#[allow(deprecated)]
 impl KvExecutor {
     /// Execute a serialized graph according to its schedule.
     ///

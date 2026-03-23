@@ -343,6 +343,16 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 | **Total per instruction** | **~205ns** | **~0ns** | **~205ns** |
 | **150-op transformer layer** | **~30µs** | **~0µs** | **~30µs** |
 
+### KvExecutor Deprecation
+- [x] **dep.1**: `#[deprecated]` on `KvExecutor` struct (`eval/executor.rs`)
+- [x] **dep.2**: `#[deprecated]` on mmap wrappers (`execute_plan`, `execute_plan_with_shape_hints`, `execute_plan_with_kv_state`, `execute_bytes`, `execute_bytes_with_ops`, `execute_bytes_with_progress`, `execute_file`)
+- [x] **dep.3**: `#[allow(deprecated)]` on internal impl blocks and profile functions
+- [x] **dep.4**: Deprecation roadmap documented in handoff spec (Section 8)
+- [ ] **dep.5**: Migrate CLI `run_cmd.rs` generation loop to tape path
+- [ ] **dep.6**: Add intermediate capture to EnumTape (tape profiling)
+- [ ] **dep.7**: Migrate remaining KvExecutor-based tests to tape
+- [ ] **dep.8**: Remove KvExecutor (struct, impl, mmap wrappers, re-exports)
+
 ### Documentation (Sprint 16)
 - [x] **D.1**: Transformer benchmark specification — [specs/docs/transformer-benchmark-spec.md](docs/transformer-benchmark-spec.md)
 - [x] **D.2**: hologram-ai integration guide — [specs/docs/hologram-ai-integration.md](docs/hologram-ai-integration.md)

@@ -15,7 +15,7 @@ use crate::graph::{Graph, GraphOp};
 /// compose them into a `FusedFloatChain`, rewire inputs, and remove predecessor.
 ///
 /// Returns `true` if fusion occurred.
-pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId) -> bool {
+pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]) -> bool {
     let node = match graph.get(id) {
         Some(n) => n,
         None => return false,
@@ -48,7 +48,7 @@ pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId) -> bool {
     };
 
     // Only fuse if predecessor has exactly one successor (this node).
-    let pred_succs = graph.successors(pred_id);
+    let pred_succs = Graph::successors_from_index(pred_id, succ_index);
     if pred_succs.len() != 1 {
         return false;
     }
@@ -85,12 +85,13 @@ mod tests {
             .build();
 
         let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
         let mut fused = 0;
         for &id in &order {
             if g.get(id).is_none() {
                 continue;
             }
-            while try_fuse_float_unary(&mut g, id) {
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
                 fused += 1;
             }
         }
@@ -122,12 +123,13 @@ mod tests {
             .build();
 
         let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
         let mut fused = 0;
         for &id in &order {
             if g.get(id).is_none() {
                 continue;
             }
-            while try_fuse_float_unary(&mut g, id) {
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
                 fused += 1;
             }
         }
@@ -156,12 +158,13 @@ mod tests {
             .build();
 
         let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
         let mut fused = 0;
         for &id in &order {
             if g.get(id).is_none() {
                 continue;
             }
-            while try_fuse_float_unary(&mut g, id) {
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
                 fused += 1;
             }
         }
@@ -181,12 +184,13 @@ mod tests {
             .build();
 
         let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
         let mut fused = 0;
         for &id in &order {
             if g.get(id).is_none() {
                 continue;
             }
-            while try_fuse_float_unary(&mut g, id) {
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
                 fused += 1;
             }
         }
@@ -205,12 +209,13 @@ mod tests {
             .build();
 
         let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
         let mut fused = 0;
         for &id in &order {
             if g.get(id).is_none() {
                 continue;
             }
-            while try_fuse_float_unary(&mut g, id) {
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
                 fused += 1;
             }
         }

@@ -8,6 +8,7 @@ use hologram_archive::section::model_meta::{ModelMetaSection, SECTION_MODEL_META
 use hologram_archive::section::tokenizer::{MiniBpeEncoder, TokenizerSection, SECTION_TOKENIZER};
 use hologram_archive::weight::WeightDType;
 use hologram_archive::{HoloLoader, LoadedPlan};
+#[allow(deprecated)]
 use hologram_exec::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
 use std::io::Write;
 use std::path::PathBuf;
@@ -32,6 +33,7 @@ pub struct RunArgs {
 }
 
 /// Execute the run command.
+#[allow(deprecated)]
 pub async fn execute(args: RunArgs) -> Result<(), CliError> {
     let loader = HoloLoader::open(&args.file)?;
     let plan = loader.load()?;
@@ -353,6 +355,7 @@ fn print_decoded_outputs(outputs: &GraphOutputs, tok: &TokenizerSection) {
 // ── Autoregressive generation ──────────────────────────────────────────
 
 /// Autoregressive text generation loop.
+#[allow(deprecated)]
 fn run_generation(
     plan: &LoadedPlan,
     tok_section: &TokenizerSection,

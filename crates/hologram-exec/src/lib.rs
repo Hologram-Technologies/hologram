@@ -25,18 +25,22 @@ pub use buffer::BufferArena;
 pub use error::{ExecError, ExecResult};
 #[cfg(feature = "profile")]
 pub use eval::executor::IntermediateCapture;
+#[allow(deprecated)]
 pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
 pub use kv_cache::KvCacheState;
+#[allow(deprecated)]
 pub use mmap::{
     build_tape_from_plan, execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress,
     execute_plan, execute_plan_with_kv_state, execute_plan_with_shape_hints, execute_tape,
+    execute_tape_with_kv,
 };
 #[cfg(feature = "profile")]
 pub use mmap::{execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints};
 
 #[cfg(feature = "std")]
+#[allow(deprecated)]
 pub use mmap::execute_file;
 
 /// Register a custom op handler in a `CustomOpRegistry`.

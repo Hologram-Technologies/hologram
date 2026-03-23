@@ -5,5 +5,6 @@ pub mod schedule_bridge;
 pub mod shape_propagate;
 pub mod shape_resolve;
 
+#[allow(deprecated)]
 pub use executor::{resolve_shape_spec, GraphInputs, GraphOutputs, KvExecutor};
 pub use schedule_bridge::build_schedule;
