@@ -3,7 +3,8 @@
 use crate::error::{ArchiveError, ArchiveResult};
 use crate::loader::bytes::load_from_bytes;
 use crate::loader::plan::LoadedPlan;
-use crate::section::SECTION_PIPELINE;
+use crate::section::{SECTION_PIPELINE, SECTION_WEIGHT_DEDUP};
+use crate::weight::dedup::WeightDedupIndex;
 use crate::writer::pipeline_writer::PipelineHeader;
 
 /// Loaded pipeline with access to individual models.
@@ -39,6 +40,9 @@ impl LoadedPipeline {
             rkyv::from_bytes::<PipelineHeader, rkyv::rancor::Error>(section_bytes)
                 .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
 
+        // Parse optional weight dedup index from wrapper sections.
+        let dedup_index = Self::parse_dedup_index(data, &wrapper);
+
         // Each model is a sub-archive within the wrapper's weights
         let weights = wrapper.weights();
         let mut models = Vec::new();
@@ -51,7 +55,23 @@ impl LoadedPipeline {
                     size: entry.size,
                 });
             }
-            let model_plan = load_from_bytes(&weights[start..end])?;
+            let mut model_plan = load_from_bytes(&weights[start..end])?;
+
+            // Resolve deduplicated weights: if the sub-archive has empty
+            // weights and the dedup index has an entry for this component,
+            // graft the shared weights onto the loaded plan.
+            if model_plan.weights().is_empty() {
+                if let Some(ref idx) = dedup_index {
+                    if let Some(dedup_entry) = idx.find_component(&entry.name) {
+                        let w_start = dedup_entry.offset as usize;
+                        let w_end = w_start + dedup_entry.size as usize;
+                        if w_end <= weights.len() {
+                            model_plan.set_weights(weights[w_start..w_end].to_vec());
+                        }
+                    }
+                }
+            }
+
             models.push((entry.name.clone(), model_plan));
         }
 
@@ -80,6 +100,17 @@ impl LoadedPipeline {
     #[must_use]
     pub fn header(&self) -> &PipelineHeader {
         &self.header
+    }
+
+    /// Parse the `WeightDedupIndex` from the wrapper archive, if present.
+    fn parse_dedup_index(data: &[u8], wrapper: &LoadedPlan) -> Option<WeightDedupIndex> {
+        let entry = wrapper.sections().find(SECTION_WEIGHT_DEDUP)?;
+        let start = entry.offset as usize;
+        let end = start + entry.size as usize;
+        if end > data.len() {
+            return None;
+        }
+        rkyv::from_bytes::<WeightDedupIndex, rkyv::rancor::Error>(&data[start..end]).ok()
     }
 }
 

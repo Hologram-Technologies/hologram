@@ -22,7 +22,7 @@ pub use error::{ArchiveError, ArchiveResult};
 pub use format::header::HoloHeader;
 pub use loader::bytes::load_from_bytes;
 pub use loader::plan::LoadedPlan;
-pub use weight::dedup::{WeightDedupIndex, WeightRef, WeightStore, SECTION_WEIGHT_DEDUP};
+pub use weight::dedup::{WeightDedupIndex, WeightRef, WeightStore};
 pub use writer::holo_writer::HoloWriter;
 
 #[cfg(feature = "std")]

@@ -70,4 +70,9 @@ impl LoadedPlan {
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
     }
+
+    /// Replace weights (used by pipeline loader for weight dedup resolution).
+    pub(crate) fn set_weights(&mut self, weights: Vec<u8>) {
+        self.weights = weights;
+    }
 }

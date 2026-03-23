@@ -10,6 +10,8 @@ pub const SECTION_WEIGHT_INDEX: u32 = 1;
 pub const SECTION_LAYER_HEADER: u32 = 2;
 /// Well-known section kind: pipeline header.
 pub const SECTION_PIPELINE: u32 = 3;
+/// Well-known section kind: weight deduplication index.
+pub const SECTION_WEIGHT_DEDUP: u32 = 4;
 /// Base kind for custom sections.
 pub const SECTION_CUSTOM_BASE: u32 = 0x1000;
 
@@ -31,6 +33,7 @@ mod tests {
             SECTION_WEIGHT_INDEX,
             SECTION_LAYER_HEADER,
             SECTION_PIPELINE,
+            SECTION_WEIGHT_DEDUP,
             SECTION_CUSTOM_BASE,
         ];
         for (i, a) in kinds.iter().enumerate() {
