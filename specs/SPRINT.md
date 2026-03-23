@@ -7,6 +7,32 @@
 - [x] Compile-time-first acceleration — [plan](plans/005-compile-time-acceleration.md)
 - [x] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
 - [x] Graph & mmap performance hardening — [plan](plans/007-graph-mmap-performance.md)
+- [x] Dynamic sequence length — attention + slice fix — [plan](plans/016-dynamic-seq-attention-fix.md)
+
+## Sprint 18: Dynamic Shape Inference (Plan 016)
+
+**Plan**: [plans/016-dynamic-seq-attention-fix.md](plans/016-dynamic-seq-attention-fix.md)
+
+Goal: enable ONNX models with dynamic symbolic shapes (variable seq_len) to run
+at runtime without `--seq-len` at compile time.
+
+### Phase 1: Slice Axis Size Inference
+- [x] **1.1**: `infer_slice_axis_size()` helper — infer actual axis dim from buffer + slice upper bound
+- [x] **1.2**: Fix Slice dispatch to use inferred axis size instead of `end` heuristic
+
+### Phase 2: Attention Buffer Validation
+- [x] **2.1**: Validate Q/K/V buffer divisibility before seq inference
+- [x] **2.2**: Validate K/V size consistency (prevent panic on mismatch)
+- [x] **2.3**: Return `ShapeMismatch` with diagnostic info (buffer sizes, head config, inferred seq)
+
+### Phase 3: Conformance Tests
+- [x] **3.1**: GQA attention at variable seq lengths (seq=2 and seq=3)
+- [x] **3.2**: Attention K/V mismatch → error (not panic)
+- [x] **3.3**: Attention non-divisible Q → error
+- [x] **3.4**: Slice with dynamic leading dimension (partial axis slice)
+- [x] **3.5**: Slice where end == axis_size (fast path preserved)
+
+---
 
 ## Sprint 13: Compile-Time-First Acceleration
 

@@ -139,8 +139,6 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
 
     #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
     {
-        // ikj loop order: inner j loop is stride-1 on both out[] and b[],
-        // enabling auto-vectorization and cache-friendly access.
         for i in 0..actual_m {
             for p in 0..actual_k {
                 let a_val = a[i * actual_k + p];

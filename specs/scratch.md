@@ -27,3 +27,19 @@ Metal attention kernel (multi-head attention with tiled QK^T + softmax + score×
 ---
 
 Keep track of those as well in the @specs/SPRINT.md. Can we reduce the amount of memory copying, hopefully to zero-copy and have the execution be O(1) constant-time lookup as much as possible?
+
+---
+
+Can we implement the real fix to not parsing the archive header to detect the pipeline format?
+
+---
+
+Reading weights should be memory mapping be used here? If we map the weights then we should only have to read them when we need them... We can't have a 20s warmup...
+
+---
+
+The 5.2 seconds is still too long... for the graph deserialization, is there anything we can do here to speed this up? Can we also fix the graph parsing?
+
+---
+
+Ideally we don't have to differentiate between pipeline graphs and single graphs

@@ -1,7 +1,7 @@
 use super::helpers::*;
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
 use super::matmul::GemmParams;
-use crate::error::ExecResult;
+use crate::error::{ExecError, ExecResult};
 
 /// Transpose from [seq, n_heads, head_dim] to [n_heads, seq, head_dim].
 ///
@@ -35,8 +35,52 @@ pub(super) fn dispatch_attention(
     let k_raw = cast_f32(inputs[1])?;
     let v_raw = cast_f32(inputs[2])?;
 
-    let seq_q = q_raw.len() / (num_q_heads * head_dim);
-    let seq_k = k_raw.len() / (num_kv_heads * head_dim);
+    // Validate buffer sizes before inferring sequence lengths.
+    let q_stride = num_q_heads * head_dim;
+    let kv_stride = num_kv_heads * head_dim;
+    if q_stride == 0 || kv_stride == 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!(
+                "non-zero head config (q_heads={num_q_heads}, kv_heads={num_kv_heads}, head_dim={head_dim})"
+            ),
+            actual: "zero stride".into(),
+        });
+    }
+    if q_raw.len() % q_stride != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("Q length divisible by num_q_heads*head_dim={q_stride}"),
+            actual: format!("Q has {} f32 elements", q_raw.len()),
+        });
+    }
+    if k_raw.len() % kv_stride != 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!("K length divisible by num_kv_heads*head_dim={kv_stride}"),
+            actual: format!("K has {} f32 elements", k_raw.len()),
+        });
+    }
+    if v_raw.len() != k_raw.len() {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!(
+                "V length == K length ({}) [Q={}, K={}, V={} f32; q_heads={}, kv_heads={}, head_dim={}]",
+                k_raw.len(), q_raw.len(), k_raw.len(), v_raw.len(),
+                num_q_heads, num_kv_heads, head_dim,
+            ),
+            actual: format!("V has {} f32 elements", v_raw.len()),
+        });
+    }
+
+    let seq_q = q_raw.len() / q_stride;
+    let seq_k = k_raw.len() / kv_stride;
+    if seq_q == 0 || seq_k == 0 {
+        return Err(ExecError::ShapeMismatch {
+            expected: "non-zero sequence lengths".into(),
+            actual: format!(
+                "seq_q={seq_q}, seq_k={seq_k} (Q={}, K={} f32 elems)",
+                q_raw.len(),
+                k_raw.len()
+            ),
+        });
+    }
 
     // GGUF inputs arrive as [seq, n_heads, head_dim] — transpose to heads-first.
     // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first.

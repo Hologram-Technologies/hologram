@@ -214,6 +214,33 @@ pub(crate) fn resolve_size(compiled_size: u32, inputs: &[&[u8]]) -> usize {
     }
 }
 
+/// Infer the full axis size for a Slice op from the buffer element count.
+///
+/// The baked `end` is the slice upper bound, not the full axis dimension.
+/// When `end` evenly divides `n_elems`, it may be the axis size (fast path).
+/// Otherwise, search upward for the smallest divisor >= `end` — this finds
+/// the actual axis size even when leading dimensions (like seq_len) change
+/// at runtime.
+#[inline]
+pub(crate) fn infer_slice_axis_size(n_elems: usize, end: usize) -> usize {
+    if end == 0 || n_elems == 0 {
+        return n_elems;
+    }
+    // Fast path: end divides evenly (covers the common case where end == axis_size).
+    if n_elems.is_multiple_of(end) {
+        return end;
+    }
+    // Search upward from end+1 for the smallest divisor of n_elems.
+    // This finds the actual axis size when end < axis_size (e.g., partial slice
+    // from combined QKV: n_elems = seq*2560, end = 2048 → finds 2560).
+    for s in (end + 1)..=n_elems {
+        if n_elems.is_multiple_of(s) {
+            return s;
+        }
+    }
+    n_elems
+}
+
 /// Attempt in-place dispatch for high-frequency custom ops.
 ///
 /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to allocating dispatch.
@@ -587,11 +614,13 @@ fn dispatch_custom(
             axis_from_end,
             start,
             end,
+            axis_size: compiled_axis_size,
         } => {
             let data = inputs[0];
             let start = *start as usize;
             let end = *end as usize;
             let _afe = *axis_from_end as usize;
+            let compiled_as = *compiled_axis_size as usize;
 
             // Without shape info, infer from buffer size and elem_size=4 (f32).
             let n_elems = data.len() / 4;
@@ -599,14 +628,13 @@ fn dispatch_custom(
                 return Ok(vec![]);
             }
 
-            // For axis_from_end=1 (last axis, most common): the axis size
-            // is `end` (the compiled upper bound). Slice [start..end] from it.
-            // For axis_from_end>1: the post-axis product is the product of
-            // all dims after the sliced axis.
-            //
-            // Heuristic: `end` is the compiled axis size (or close to it).
-            // We use it directly as the axis dimension.
-            let axis_size = if end > 0 { end } else { n_elems };
+            // Use the compiled axis_size if provided and it divides n_elems.
+            // Otherwise fall back to heuristic inference from buffer size.
+            let axis_size = if compiled_as > 0 && n_elems.is_multiple_of(compiled_as) {
+                compiled_as
+            } else {
+                infer_slice_axis_size(n_elems, end)
+            };
             let post = 1;
             let chunk = post * 4; // bytes per element along axis
             let src_stride = axis_size * chunk;

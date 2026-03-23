@@ -34,18 +34,76 @@ pub fn validate_header(data: &[u8]) -> ArchiveResult<HoloHeader> {
 /// Validates magic, version, and checksums, then deserializes the
 /// graph and extracts weight data.
 pub fn load_from_bytes(data: &[u8]) -> ArchiveResult<LoadedPlan> {
-    // Find header: it's the rkyv-serialized HoloHeader at offset 0.
-    // We need to figure out where the header ends. The header is
-    // rkyv-serialized, so we try to parse it from the start of data.
-    // The graph_offset tells us where the header region ends.
-    let header = find_and_validate_header(data)?;
+    load_from_bytes_inner(data, true)
+}
 
+/// Load a .holo archive without checksum verification.
+///
+/// Skips the CRC32 checksum on the weights region, which avoids reading
+/// the entire multi-GB weight blob on load. Use for mmap-backed archives
+/// where the OS guarantees data integrity via the filesystem.
+pub fn load_from_bytes_unchecked(data: &[u8]) -> ArchiveResult<LoadedPlan> {
+    load_from_bytes_inner(data, false)
+}
+
+/// Load a .holo archive with zero-copy weight access.
+///
+/// Weights are borrowed directly from the input slice (no allocation or copy).
+/// Skips checksum verification. Ideal for mmap-backed archives.
+///
+/// # Safety
+/// The caller must ensure `data` outlives the returned `LoadedPlan`.
+pub unsafe fn load_from_bytes_zero_copy(data: &[u8]) -> ArchiveResult<LoadedPlan> {
+    let header = find_and_validate_header(data)?;
+    let graph = deserialize_graph(data, &header)?;
+    let section_table = deserialize_section_table(data, &header)?;
+    let layer_header = extract_layer_header(data, &section_table)?;
+
+    // If weights are compressed, we must decompress (allocate).
+    // Otherwise, zero-copy: borrow directly from the mmap'd data.
+    if header.is_weights_compressed() {
+        let weights = extract_weights(data, &header)?;
+        Ok(LoadedPlan::new(
+            header,
+            graph,
+            weights,
+            section_table,
+            layer_header,
+        ))
+    } else {
+        let weights = if header.weights_size > 0 {
+            let start = header.weights_offset as usize;
+            let end = start + header.weights_size as usize;
+            if end > data.len() {
+                return Err(ArchiveError::OutOfBounds {
+                    offset: header.weights_offset,
+                    size: header.weights_size,
+                });
+            }
+            &data[start..end]
+        } else {
+            &[]
+        };
+        Ok(LoadedPlan::new_borrowed(
+            header,
+            graph,
+            weights,
+            section_table,
+            layer_header,
+        ))
+    }
+}
+
+fn load_from_bytes_inner(data: &[u8], verify: bool) -> ArchiveResult<LoadedPlan> {
+    let header = find_and_validate_header(data)?;
     let graph = deserialize_graph(data, &header)?;
     let weights = extract_weights(data, &header)?;
     let section_table = deserialize_section_table(data, &header)?;
     let layer_header = extract_layer_header(data, &section_table)?;
 
-    verify_checksums(data, &header)?;
+    if verify {
+        verify_checksums(data, &header)?;
+    }
 
     Ok(LoadedPlan::new(
         header,
@@ -313,5 +371,63 @@ mod tests {
         let archive = HoloWriter::new().build().unwrap();
         let plan = load_from_bytes(&archive).unwrap();
         assert!(plan.layer_header().is_none());
+    }
+
+    #[test]
+    fn unchecked_skips_checksum() {
+        let weights = vec![42u8; 256];
+        let archive = HoloWriter::new()
+            .set_weights(weights.clone())
+            .build()
+            .unwrap();
+        // Unchecked load should succeed and return correct weights.
+        let plan = load_from_bytes_unchecked(&archive).unwrap();
+        assert_eq!(plan.weights(), &weights);
+    }
+
+    #[test]
+    fn zero_copy_matches_checked() {
+        let weights = vec![7u8; 128];
+        let archive = HoloWriter::new()
+            .set_weights(weights.clone())
+            .build()
+            .unwrap();
+
+        let plan_checked = load_from_bytes(&archive).unwrap();
+        // SAFETY: archive outlives plan (both in this scope).
+        let plan_zero = unsafe { load_from_bytes_zero_copy(&archive) }.unwrap();
+
+        // Both should produce identical weight content.
+        assert_eq!(plan_checked.weights().len(), plan_zero.weights().len());
+        assert_eq!(plan_checked.weights(), plan_zero.weights());
+    }
+
+    #[test]
+    fn zero_copy_with_graph() {
+        let mut g = Graph::new();
+        g.add_node(GraphOp::Input);
+        g.add_node(GraphOp::Output);
+        let weights = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        let archive = HoloWriter::new()
+            .set_graph(&g)
+            .set_weights(weights.clone())
+            .build()
+            .unwrap();
+
+        let plan_checked = load_from_bytes(&archive).unwrap();
+        // SAFETY: archive outlives plan.
+        let plan_zero = unsafe { load_from_bytes_zero_copy(&archive) }.unwrap();
+
+        assert_eq!(plan_checked.node_count(), plan_zero.node_count());
+        assert_eq!(plan_checked.weights(), plan_zero.weights());
+    }
+
+    #[test]
+    fn zero_copy_empty_archive() {
+        let archive = HoloWriter::new().build().unwrap();
+        // SAFETY: archive outlives plan.
+        let plan = unsafe { load_from_bytes_zero_copy(&archive) }.unwrap();
+        assert_eq!(plan.node_count(), 0);
+        assert!(plan.weights().is_empty());
     }
 }

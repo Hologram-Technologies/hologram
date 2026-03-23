@@ -1043,6 +1043,119 @@ fn test_attention_basic() {
     assert_close(&out, &[0.0, 1.0], 1e-4, 1e-3);
 }
 
+#[test]
+fn test_attention_gqa_variable_seq() {
+    // GQA: 2 Q-heads, 1 KV-head, head_dim=4.
+    // Run at seq=2 and seq=3 — both must succeed with different output sizes.
+    let op = FloatOp::Attention {
+        head_dim: 4,
+        num_q_heads: 2,
+        num_kv_heads: 1,
+        scale: f32_to_bits(0.5), // 1/sqrt(4)
+        causal: false,
+        heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+    };
+
+    // seq=2: Q=[2, 2*4]=16 floats, K=[2, 1*4]=8, V=[2, 1*4]=8
+    let q2 = f32_bytes(&[1.0; 16]);
+    let k2 = f32_bytes(&[1.0; 8]);
+    let v2 = f32_bytes(&[1.0; 8]);
+    let r2 = dispatch_float(&op, &[&q2, &k2, &v2]).unwrap();
+    assert_eq!(result_f32(&r2).len(), 16); // output = num_q_heads * seq_q * head_dim
+
+    // seq=3: Q=[3, 2*4]=24 floats, K=[3, 1*4]=12, V=[3, 1*4]=12
+    let q3 = f32_bytes(&[1.0; 24]);
+    let k3 = f32_bytes(&[1.0; 12]);
+    let v3 = f32_bytes(&[1.0; 12]);
+    let r3 = dispatch_float(&op, &[&q3, &k3, &v3]).unwrap();
+    assert_eq!(result_f32(&r3).len(), 24);
+}
+
+#[test]
+fn test_attention_kv_size_mismatch() {
+    // K and V have different sizes → ShapeMismatch error, not panic.
+    let op = FloatOp::Attention {
+        head_dim: 4,
+        num_q_heads: 2,
+        num_kv_heads: 1,
+        scale: f32_to_bits(0.5),
+        causal: false,
+        heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+    };
+    let q = f32_bytes(&[1.0; 16]); // 2 * 2 * 4
+    let k = f32_bytes(&[1.0; 8]); // 2 * 1 * 4
+    let v = f32_bytes(&[1.0; 12]); // 3 * 1 * 4 — mismatched!
+    let result = dispatch_float(&op, &[&q, &k, &v]);
+    assert!(
+        result.is_err(),
+        "K/V size mismatch should return error, not panic"
+    );
+}
+
+#[test]
+fn test_attention_non_divisible_q() {
+    // Q buffer not evenly divisible by num_q_heads * head_dim → error.
+    let op = FloatOp::Attention {
+        head_dim: 4,
+        num_q_heads: 2,
+        num_kv_heads: 1,
+        scale: f32_to_bits(0.5),
+        causal: false,
+        heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+    };
+    let q = f32_bytes(&[1.0; 10]); // 10 not divisible by 2*4=8
+    let k = f32_bytes(&[1.0; 4]);
+    let v = f32_bytes(&[1.0; 4]);
+    let result = dispatch_float(&op, &[&q, &k, &v]);
+    assert!(result.is_err(), "Non-divisible Q should return error");
+}
+
+#[test]
+fn test_slice_dynamic_leading_dim() {
+    // Slice(start=0, end=4) on a [3, 6] tensor (18 f32 elements).
+    // Axis size should be inferred as 6 (not 4), giving output [3, 4] = 12 elements.
+    let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
+    let input = f32_bytes(&data);
+    let op = FloatOp::Slice {
+        axis_from_end: 1,
+        start: 0,
+        end: 4,
+    };
+    let result = dispatch_float(&op, &[&input]).unwrap();
+    let out = result_f32(&result);
+    // Each row of 6 elements sliced to first 4: [0,1,2,3], [6,7,8,9], [12,13,14,15]
+    assert_eq!(out.len(), 12);
+    assert_close(&out[0..4], &[0.0, 1.0, 2.0, 3.0], 1e-6, 1e-6);
+    assert_close(&out[4..8], &[6.0, 7.0, 8.0, 9.0], 1e-6, 1e-6);
+    assert_close(&out[8..12], &[12.0, 13.0, 14.0, 15.0], 1e-6, 1e-6);
+}
+
+#[test]
+fn test_slice_end_equals_axis_size() {
+    // Slice(start=1, end=6) on [3, 6] tensor — end == axis_size (fast path).
+    let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
+    let input = f32_bytes(&data);
+    let op = FloatOp::Slice {
+        axis_from_end: 1,
+        start: 1,
+        end: 6,
+    };
+    let result = dispatch_float(&op, &[&input]).unwrap();
+    let out = result_f32(&result);
+    // Each row sliced [1..6]: [1,2,3,4,5], [7,8,9,10,11], [13,14,15,16,17]
+    assert_eq!(out.len(), 15);
+    assert_close(&out[0..5], &[1.0, 2.0, 3.0, 4.0, 5.0], 1e-6, 1e-6);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISION / SPATIAL OPS (basic smoke tests — stubs may not be fully implemented)
 // ═══════════════════════════════════════════════════════════════════════════════

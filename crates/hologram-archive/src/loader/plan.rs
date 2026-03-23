@@ -4,21 +4,25 @@ use crate::entrypoint::schedule::LayerHeader;
 use crate::format::graph::SerializedGraph;
 use crate::format::header::HoloHeader;
 use crate::section::table::SectionTable;
+use std::borrow::Cow;
 
 /// A loaded and validated archive.
 ///
 /// Provides access to the deserialized graph, raw weight bytes,
 /// the section table, and the layer header (if present).
+///
+/// Weight bytes are borrowed when loaded from mmap (zero-copy) or
+/// owned when loaded from a network buffer or compressed archive.
 pub struct LoadedPlan {
     header: HoloHeader,
     graph: SerializedGraph,
-    weights: Vec<u8>,
+    weights: Cow<'static, [u8]>,
     section_table: SectionTable,
     layer_header: Option<LayerHeader>,
 }
 
 impl LoadedPlan {
-    /// Create a new LoadedPlan (crate-internal).
+    /// Create a new LoadedPlan with owned weight bytes.
     pub(crate) fn new(
         header: HoloHeader,
         graph: SerializedGraph,
@@ -29,7 +33,33 @@ impl LoadedPlan {
         Self {
             header,
             graph,
-            weights,
+            weights: Cow::Owned(weights),
+            section_table,
+            layer_header,
+        }
+    }
+
+    /// Create a new LoadedPlan with borrowed weight bytes (zero-copy from mmap).
+    ///
+    /// # Safety
+    /// The caller must ensure the weight bytes outlive this LoadedPlan.
+    /// This is guaranteed when the bytes come from an mmap stored in the same
+    /// struct (e.g., HoloRunner holds both the mmap and the plan).
+    pub(crate) unsafe fn new_borrowed(
+        header: HoloHeader,
+        graph: SerializedGraph,
+        weights: &[u8],
+        section_table: SectionTable,
+        layer_header: Option<LayerHeader>,
+    ) -> Self {
+        // Extend lifetime to 'static — the caller guarantees the backing
+        // storage (mmap or Vec) outlives this LoadedPlan.
+        let weights_static: &'static [u8] =
+            std::slice::from_raw_parts(weights.as_ptr(), weights.len());
+        Self {
+            header,
+            graph,
+            weights: Cow::Borrowed(weights_static),
             section_table,
             layer_header,
         }
@@ -73,6 +103,6 @@ impl LoadedPlan {
 
     /// Replace weights (used by pipeline loader for weight dedup resolution).
     pub(crate) fn set_weights(&mut self, weights: Vec<u8>) {
-        self.weights = weights;
+        self.weights = Cow::Owned(weights);
     }
 }

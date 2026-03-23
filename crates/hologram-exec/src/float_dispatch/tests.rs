@@ -218,3 +218,55 @@ fn test_broadcast_compare_2d() {
     // 1>10=0, 20>10=1, 3>10=0, 40>10=1, 5>10=0, 60>10=1
     assert_eq!(result, vec![0, 1, 0, 1, 0, 1]);
 }
+
+// ── infer_slice_axis_size tests ──────────────────────────────────────────
+
+#[test]
+fn test_infer_slice_axis_size_fast_path() {
+    // end divides n_elems evenly → return end.
+    assert_eq!(super::infer_slice_axis_size(18, 6), 6);
+    assert_eq!(super::infer_slice_axis_size(100, 10), 10);
+    assert_eq!(super::infer_slice_axis_size(2048, 2048), 2048);
+}
+
+#[test]
+fn test_infer_slice_axis_size_search() {
+    // end does NOT divide n_elems → search upward for smallest divisor >= end.
+    // n_elems=18 (3×6), end=4 → 4 doesn't divide 18, 5 doesn't, 6 does → 6.
+    assert_eq!(super::infer_slice_axis_size(18, 4), 6);
+    // n_elems=60 (3×20 or 4×15 or 5×12 or 6×10), end=7 → 10.
+    assert_eq!(super::infer_slice_axis_size(60, 7), 10);
+}
+
+#[test]
+fn test_infer_slice_axis_size_non_divisible() {
+    // When n_elems = prime * axis_size, and no divisor between end and
+    // axis_size exists, the heuristic correctly finds axis_size.
+    // Use a prime seq so no spurious divisors exist.
+    // n_elems = 11 * 2560 = 28160. Smallest divisor >= 2048: 2560.
+    assert_eq!(super::infer_slice_axis_size(11 * 2560, 2048), 2560);
+    // n_elems = 3 * 2560 = 7680. 7680 % 2048 ≠ 0. Smallest >= 2048: 2560.
+    assert_eq!(super::infer_slice_axis_size(3 * 2560, 2048), 2560);
+}
+
+#[test]
+fn test_infer_slice_axis_size_heuristic_limitation() {
+    // Known limitation: when end or a smaller divisor >= end divides n_elems,
+    // the heuristic may return the wrong axis size. This is because the
+    // function can't distinguish end=axis_size from end<axis_size without
+    // additional context. A proper fix requires storing axis_size in
+    // FloatOp::Slice (tracked in Plan 016).
+    //
+    // Example: seq=8, axis=2560, end=2048. n_elems=20480, 20480%2048=0 → returns 2048 (wrong).
+    // Example: seq=7, axis=2560, end=2048. n_elems=17920, 17920%2240=0 → returns 2240 (wrong).
+    assert_eq!(super::infer_slice_axis_size(8 * 2560, 2048), 2048); // fast path, incorrect
+    assert_eq!(super::infer_slice_axis_size(7 * 2560, 2048), 2240); // finds 2240, not 2560
+}
+
+#[test]
+fn test_infer_slice_axis_size_edge_cases() {
+    assert_eq!(super::infer_slice_axis_size(0, 4), 0);
+    assert_eq!(super::infer_slice_axis_size(10, 0), 10);
+    // n_elems is prime, end < n_elems → only n_elems divides itself.
+    assert_eq!(super::infer_slice_axis_size(17, 4), 17);
+}

@@ -253,11 +253,13 @@ pub enum FloatOp {
     /// Contiguous slice along a single axis.
     /// Extracts elements [start..end) along the specified axis.
     /// `axis_from_end` counts backward: 1 = last axis, 2 = second-to-last, etc.
+    /// `axis_size` is the full dimension of the sliced axis (0 = infer at runtime).
     /// Inputs: [data].
     Slice {
         axis_from_end: u8,
         start: u32,
         end: u32,
+        axis_size: u32,
     },
 
     /// GatherND (stub: pass-through, full N-D gather later).
