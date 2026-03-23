@@ -71,8 +71,9 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
         }
     }
 
-    // 4. CSE on the post-fold/fuse graph (needs fresh topo order)
-    let order = toposort::toposort(graph)?;
+    // 4. CSE — reuses original topo order. Removed nodes are skipped via
+    //    graph.get(id).is_none() inside CSE. Topo invariant holds because
+    //    fusion only removes nodes, never adds new dependencies.
     stats.cse_eliminated = cse::eliminate_common_subexpressions(graph, &order);
 
     Ok(stats)

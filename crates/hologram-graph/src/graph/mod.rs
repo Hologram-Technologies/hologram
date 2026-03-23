@@ -358,9 +358,13 @@ impl Graph {
         let mut index: Vec<Vec<NodeId>> = Vec::with_capacity(len);
         index.resize_with(len, Vec::new);
         for node in self.nodes() {
+            // Deduplicate: if a node lists the same dep twice, only record
+            // the successor once. Matches successors() which uses .any().
+            let mut seen_deps = Vec::new();
             for dep in node.dependencies() {
                 let dep_idx = dep.index() as usize;
-                if dep_idx < len {
+                if dep_idx < len && !seen_deps.contains(&dep) {
+                    seen_deps.push(dep);
                     index[dep_idx].push(node.id);
                 }
             }
@@ -571,6 +575,28 @@ impl Graph {
     pub fn rewire_successors(&mut self, old: NodeId, new: NodeId) {
         for slot in &mut self.slots {
             if let Slot::Occupied(node) = slot {
+                for input in &mut node.inputs {
+                    if input.source == InputSource::Node(old) {
+                        input.source = InputSource::Node(new);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rewire successors of `old` to point to `new`, using a pre-built index.
+    ///
+    /// Only visits actual successors from the index instead of scanning all slots.
+    /// O(degree) instead of O(V×E).
+    pub fn rewire_successors_indexed(
+        &mut self,
+        old: NodeId,
+        new: NodeId,
+        succ_index: &[Vec<NodeId>],
+    ) {
+        let successors: Vec<NodeId> = Self::successors_from_index(old, succ_index).to_vec();
+        for succ_id in successors {
+            if let Some(node) = self.get_mut(succ_id) {
                 for input in &mut node.inputs {
                     if input.source == InputSource::Node(old) {
                         input.source = InputSource::Node(new);

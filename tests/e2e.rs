@@ -7,7 +7,8 @@ use hologram_core::op::{LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
 use hologram_exec::lut_gemm::matmul::naive_matmul;
 use hologram_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
-use hologram_exec::{build_schedule, execute_bytes, GraphInputs, KvExecutor};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::GraphInputs;
 use hologram_ffi::compiler::*;
 use hologram_ffi::encoding::*;
 use hologram_ffi::exec::*;
@@ -40,13 +41,13 @@ fn e2e_linear_chain_fused() {
     // Load from bytes
     let plan = load_from_bytes(&archive).unwrap();
 
-    // Build schedule and execute
-    let schedule = build_schedule(plan.graph()).unwrap();
+    // Build tape and execute
+    let tape = build_tape_from_plan(&plan).unwrap();
     let mut inputs = GraphInputs::new();
     let test_data: Vec<u8> = (0..=255).collect();
     inputs.set(0, test_data);
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     // Verify against direct composed LUT
@@ -83,12 +84,14 @@ fn e2e_diamond_parallel_fanout() {
 
     let _ = fusion::fuse(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     let mut inputs = GraphInputs::new();
     let test_data: Vec<u8> = (0..=255).collect();
     inputs.set(0, test_data);
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     // Verify: relu(x) + sigmoid(x) mod 256
@@ -122,9 +125,11 @@ fn e2e_constants_through_pipeline() {
     assert!(stats.constants_folded >= 1, "should fold relu(const)");
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let inputs = GraphInputs::new(); // No graph-level inputs needed
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     assert_eq!(output, &[LutOp::Relu.apply(42)]);
@@ -148,9 +153,11 @@ fn e2e_chained_constant_folding() {
     assert!(stats.constants_folded >= 2, "should fold add then relu");
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let inputs = GraphInputs::new();
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     // Add(5,3)=8, Relu(8)=8
@@ -174,13 +181,13 @@ fn e2e_multi_input_binary() {
     let _ = fusion::fuse(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     let mut inputs = GraphInputs::new();
     inputs.set(0, vec![10, 100, 200, 250]);
     inputs.set(1, vec![5, 50, 100, 200]);
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let sum = result.by_name("sum").unwrap();
 
     assert_eq!(sum, &[15, 150, 44, 194]); // wrapping add
@@ -210,11 +217,13 @@ fn e2e_long_chain_multi_fusion() {
     );
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     let mut inputs = GraphInputs::new();
     inputs.set(0, (0..=255).collect());
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     // Verify against chained application
@@ -253,11 +262,13 @@ fn e2e_wide_parallel_fanout() {
 
     let _ = fusion::fuse(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     let mut inputs = GraphInputs::new();
     inputs.set(0, (0..=255).collect());
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     for b in 0u8..=255 {
@@ -295,11 +306,15 @@ fn e2e_file_roundtrip() {
         f.write_all(&archive).unwrap();
     }
 
-    // Execute from file
+    // Load from file and execute via tape
+    let loader = hologram_archive::HoloLoader::open(&path).unwrap();
+    let plan = loader.load().unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
+
     let mut inputs = GraphInputs::new();
     inputs.set(0, vec![0, 64, 128, 192, 255]);
 
-    let result = hologram_exec::execute_file(&path, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     for (i, &b) in [0u8, 64, 128, 192, 255].iter().enumerate() {
@@ -328,14 +343,14 @@ fn e2e_lut_gemm_q4_pipeline() {
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     let activations = [1.0f32, 2.0, 3.0, 4.0];
     let act_bytes: Vec<u8> = bytemuck::cast_slice(&activations).to_vec();
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output_bytes = result.by_name("result").unwrap();
     let output: &[f32] = bytemuck::cast_slice(output_bytes);
     assert_eq!(output.len(), n);
@@ -368,7 +383,9 @@ fn e2e_lut_gemm_q8_pipeline() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output_bytes = result.by_name("result").unwrap();
     let output: &[f32] = bytemuck::cast_slice(output_bytes);
     assert_eq!(output.len(), n);
@@ -407,7 +424,9 @@ fn e2e_lut_gemm_q4_accuracy() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
 
     // Q4 error < 5% relative
@@ -448,7 +467,9 @@ fn e2e_lut_gemm_q8_accuracy() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let plan = load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
 
     // Q8 error < 1% relative
@@ -483,7 +504,7 @@ fn e2e_lut_gemm_with_activation() {
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
 
     // 2×4 activation matrix
     let activations = [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
@@ -491,7 +512,7 @@ fn e2e_lut_gemm_with_activation() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
     assert_eq!(output.len(), 2 * n); // 2 rows × 4 cols
                                      // Row 0: [1,0,0,0] × I ≈ [1,1,1,1]
@@ -530,13 +551,13 @@ fn e2e_lut_gemm_archive_roundtrip() {
     assert!(!plan.graph().constants.is_empty());
 
     // Execute and verify
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let activations = [1.0f32, 1.0, 1.0, 1.0];
     let act_bytes: Vec<u8> = bytemuck::cast_slice(&activations).to_vec();
     let mut inputs = GraphInputs::new();
     inputs.set(0, act_bytes);
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output: &[f32] = bytemuck::cast_slice(result.by_name("c").unwrap());
     // sum(1*3 * 4) = 12
     for &v in output {
@@ -562,11 +583,11 @@ fn e2e_compiler_linear_chain() {
     assert!(out.stats.fusion.views_fused >= 1);
 
     let plan = load_from_bytes(&out.archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let mut inputs = GraphInputs::new();
     inputs.set(0, (0..=255).collect());
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     let composed = ElementWiseView::from_table(*LutOp::Sigmoid.table())
@@ -591,11 +612,11 @@ fn e2e_compiler_diamond_with_fusion() {
 
     let out = compile(g).unwrap();
     let plan = load_from_bytes(&out.archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let mut inputs = GraphInputs::new();
     inputs.set(0, (0..=255).collect());
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
 
     for b in 0u8..=255 {
@@ -618,10 +639,10 @@ fn e2e_compiler_with_constants() {
     assert!(out.stats.fusion.constants_folded >= 1);
 
     let plan = load_from_bytes(&out.archive).unwrap();
-    let schedule = build_schedule(plan.graph()).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     let inputs = GraphInputs::new();
 
-    let result = KvExecutor::execute(plan.graph(), &schedule, &inputs).unwrap();
+    let result = execute_tape(&tape, &plan, &inputs).unwrap();
     let output = result.by_name("y").unwrap();
     assert_eq!(output, &[LutOp::Relu.apply(42)]);
 }

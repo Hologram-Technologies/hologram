@@ -18,8 +18,7 @@ pub type CustomHandler = Arc<dyn Fn(&[&[u8]], &ConstantStore) -> ExecResult<Vec<
 
 /// Registry mapping `CustomOpId`s to their handler functions.
 ///
-/// Pass to `execute_bytes_with_ops` or `KvExecutor::execute_with_registry`
-/// to enable custom op dispatch. No global state is used.
+/// Enables custom op dispatch for graphs containing `GraphOp::Custom` nodes.
 #[derive(Default)]
 pub struct CustomOpRegistry {
     handlers: HashMap<u32, CustomHandler>,

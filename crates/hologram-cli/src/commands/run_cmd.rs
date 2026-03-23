@@ -8,8 +8,8 @@ use hologram_archive::section::model_meta::{ModelMetaSection, SECTION_MODEL_META
 use hologram_archive::section::tokenizer::{MiniBpeEncoder, TokenizerSection, SECTION_TOKENIZER};
 use hologram_archive::weight::WeightDType;
 use hologram_archive::{HoloLoader, LoadedPlan};
-#[allow(deprecated)]
-use hologram_exec::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::{GraphInputs, GraphOutputs};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -33,7 +33,6 @@ pub struct RunArgs {
 }
 
 /// Execute the run command.
-#[allow(deprecated)]
 pub async fn execute(args: RunArgs) -> Result<(), CliError> {
     let loader = HoloLoader::open(&args.file)?;
     let plan = loader.load()?;
@@ -73,7 +72,8 @@ pub async fn execute(args: RunArgs) -> Result<(), CliError> {
         }
 
         let start = std::time::Instant::now();
-        let outputs = hologram_exec::execute_plan(&plan, &graph_inputs)?;
+        let tape = build_tape_from_plan(&plan)?;
+        let outputs = execute_tape(&tape, &plan, &graph_inputs)?;
         let elapsed = start.elapsed();
 
         if let Some(tok) = &tokenizer {
@@ -355,7 +355,6 @@ fn print_decoded_outputs(outputs: &GraphOutputs, tok: &TokenizerSection) {
 // ── Autoregressive generation ──────────────────────────────────────────
 
 /// Autoregressive text generation loop.
-#[allow(deprecated)]
 fn run_generation(
     plan: &LoadedPlan,
     tok_section: &TokenizerSection,
@@ -393,8 +392,8 @@ fn run_generation(
         .map(|i| i as u32);
     let mask_dtype = mask_slot.map(|_| resolve_input_dtype(plan, "attention_mask"));
 
-    // Build execution schedule once.
-    let schedule = build_schedule(plan.graph())?;
+    // Build execution tape once (pre-compiled dispatch).
+    let tape = build_tape_from_plan(plan)?;
 
     // Get compiled input sequence length from TensorPort shape.
     // Static-shape ONNX models (no KV-cache) require inputs padded to the
@@ -452,8 +451,7 @@ fn run_generation(
             inputs.set_with_shape(slot, mask_bytes, vec![1, padded_len]);
         }
 
-        let outputs =
-            KvExecutor::execute_with_plan(plan.graph(), &schedule, &inputs, plan.weights())?;
+        let outputs = execute_tape(&tape, plan, &inputs)?;
 
         // Argmax over the last real-token position's logits.
         // For padded inputs, logits are [1, padded_len, vocab_size] and we want

@@ -4,7 +4,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use hologram_archive::writer::holo_writer::HoloWriter;
 use hologram_async::execute_stream;
 use hologram_core::op::LutOp;
-use hologram_exec::{execute_bytes, GraphInputs};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::GraphInputs;
 use hologram_graph::builder::GraphBuilder;
 use hologram_graph::graph::GraphOp;
 
@@ -28,8 +29,10 @@ fn batch_execute(c: &mut Criterion) {
     let archive = build_chain_archive(20);
     let mut inputs = GraphInputs::new();
     inputs.set(0, vec![128u8; 256]);
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     c.bench_function("batch_execute_20nodes", |b| {
-        b.iter(|| execute_bytes(&archive, &inputs).unwrap());
+        b.iter(|| execute_tape(&tape, &plan, &inputs).unwrap());
     });
 }
 

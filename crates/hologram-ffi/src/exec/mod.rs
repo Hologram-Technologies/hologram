@@ -2,8 +2,7 @@
 
 use crate::error::{ffi_catch, set_last_error, FfiStatus};
 use crate::handle::{borrow_handle, borrow_handle_mut, free_handle, into_handle};
-#[allow(deprecated)]
-use hologram_exec::mmap::execute_bytes;
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
 use hologram_exec::{GraphInputs, GraphOutputs};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -51,7 +50,6 @@ pub extern "C" fn hologram_inputs_free(inputs: *mut GraphInputs) {
 /// `archive_ptr`/`archive_len` point to the `.holo` bytes.
 /// Returns an outputs handle or null on error.
 #[no_mangle]
-#[allow(deprecated)]
 pub extern "C" fn hologram_execute_bytes(
     archive_ptr: *const u8,
     archive_len: usize,
@@ -65,7 +63,12 @@ pub extern "C" fn hologram_execute_bytes(
         return std::ptr::null_mut();
     };
     let archive = unsafe { std::slice::from_raw_parts(archive_ptr, archive_len) };
-    match execute_bytes(archive, inp) {
+    let result = (|| {
+        let plan = hologram_archive::load_from_bytes(archive)?;
+        let tape = build_tape_from_plan(&plan)?;
+        execute_tape(&tape, &plan, inp)
+    })();
+    match result {
         Ok(outputs) => into_handle(outputs),
         Err(e) => {
             set_last_error(format!("{e}"));

@@ -32,10 +32,11 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
             queue.push_back(pos);
         }
     }
+    let succ_index = graph.build_successor_index();
     let mut order = Vec::with_capacity(ids.len());
     while let Some(pos) = queue.pop_front() {
         order.push(ids[pos]);
-        for succ_id in graph.successors(ids[pos]) {
+        for &succ_id in Graph::successors_from_index(ids[pos], &succ_index) {
             if let Some(&succ_pos) = id_set.get(&succ_id) {
                 in_degree[succ_pos] -= 1;
                 if in_degree[succ_pos] == 0 {

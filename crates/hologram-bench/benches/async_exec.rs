@@ -5,7 +5,8 @@ use hologram_archive::writer::holo_writer::HoloWriter;
 use hologram_async::{AsyncCompiler, AsyncExecutor};
 use hologram_compiler::CompilerBuilder;
 use hologram_core::op::LutOp;
-use hologram_exec::{execute_bytes, GraphInputs};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::GraphInputs;
 use hologram_graph::builder::GraphBuilder;
 use hologram_graph::graph::GraphOp;
 
@@ -54,8 +55,10 @@ fn sync_execute(c: &mut Criterion) {
         .unwrap();
     let mut inputs = GraphInputs::new();
     inputs.set(0, vec![128u8; 64]);
+    let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+    let tape = build_tape_from_plan(&plan).unwrap();
     c.bench_function("sync_execute_10nodes", |b| {
-        b.iter(|| execute_bytes(&archive, &inputs).unwrap());
+        b.iter(|| execute_tape(&tape, &plan, &inputs).unwrap());
     });
 }
 

@@ -593,3 +593,36 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] Criterion benchmark `ffi.rs`: graph build, lut_apply, encoding embed/lift, full pipeline (build→compile→execute)
 - [x] 6 FFI E2E tests: full pipeline, diamond with fusion, encoding round-trip, LUT ops, error handling, fusion toggle
 - [x] 56 new tests (636 total workspace), zero clippy warnings
+
+---
+
+## Sprint 17: Performance Hardening + KvExecutor Removal
+
+**Plan**: [plans/014-graph-perf-kvexecutor-removal.md](plans/014-graph-perf-kvexecutor-removal.md)
+
+### Phase 1: Graph Successor Index Optimization
+- [x] **1.1**: Successor index in toposort Kahn's loop (O(N²) → O(V+E))
+- [x] **1.2**: Successor index in build_parallel_levels (O(N²) → O(V+E))
+- [x] **1.3**: Successor index in validate acyclicity check
+- [x] **1.4**: Indexed rewire_successors for CSE pass
+
+### Phase 2: Fusion Pass Optimization
+- [x] **2.1**: Eliminate double toposort — reuse original order for CSE
+- [x] **2.2**: Pre-built successor index in fusion pass (commit 6ad9e12)
+
+### Phase 3: KvExecutor Removal
+- [x] **3.1**: Migrate hologram-async to tape path
+- [x] **3.2**: Migrate hologram-ffi to tape path
+- [x] **3.3**: Migrate hologram-cli to tape path
+- [x] **3.4**: Migrate e2e tests to tape path
+- [x] **3.5**: Remove custom_ops tests (KvExecutor-dependent registry dispatch)
+- [x] **3.6**: Migrate executor benchmarks to tape-only
+- [x] **3.7**: Remove deprecated mmap convenience functions (execute_plan, execute_bytes, execute_file, etc.)
+- [x] **3.8**: Clean up re-exports and #[allow(deprecated)] annotations
+- [x] **3.9**: Migrate calculator example to tape path
+
+### Benchmark Results (Phase 1+2)
+- fusion::fuse(1000_nodes): **1.91 ms → 290 µs** (6.6x faster)
+- fusion::fuse(100_nodes): **44 µs → 31 µs** (-30%)
+- compile/100_nodes: **79 µs → 60 µs** (-24%)
+- compile/50_nodes: **45 µs → 41 µs** (-9%)

@@ -95,7 +95,11 @@ impl WasmGraphBuilder {
 pub fn wasm_execute(archive: &[u8], input_data: &[u8]) -> Result<Vec<u8>, JsValue> {
     let mut inputs = hologram_exec::GraphInputs::new();
     inputs.set(0, input_data.to_vec());
-    let outputs = hologram_exec::mmap::execute_bytes(archive, &inputs)
+    let plan = hologram_archive::load_from_bytes(archive)
+        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let tape = hologram_exec::mmap::build_tape_from_plan(&plan)
+        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let outputs = hologram_exec::mmap::execute_tape(&tape, &plan, &inputs)
         .map_err(|e| JsValue::from_str(&format!("{e}")))?;
     match outputs.get(0) {
         Some((_, data)) => Ok(data.to_vec()),

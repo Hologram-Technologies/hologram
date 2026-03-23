@@ -6,7 +6,8 @@ use hologram_archive::HoloWriter;
 use hologram_core::encoding::{AngleEncoding, Encoding, SignedEncoding, UnsignedEncoding};
 use hologram_core::op::{LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
-use hologram_exec::{execute_bytes, GraphInputs};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::GraphInputs;
 use hologram_graph::builder::GraphBuilder;
 use hologram_graph::fusion;
 use hologram_graph::graph::GraphOp;
@@ -164,7 +165,11 @@ fn bench_graph_io(c: &mut Criterion) {
     };
 
     group.bench_function("execute_multi_output(256B)", |b| {
-        b.iter(|| execute_bytes(black_box(&archive), black_box(&inputs_256)))
+        b.iter(|| {
+            let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+            let tape = build_tape_from_plan(&plan).unwrap();
+            execute_tape(black_box(&tape), black_box(&plan), black_box(&inputs_256))
+        })
     });
 
     let data_256: Vec<f64> = (0..=255).map(|i| i as f64 / 255.0).collect();
@@ -185,7 +190,11 @@ fn bench_graph_io(c: &mut Criterion) {
     };
 
     group.bench_function("execute_multi_output(64KB)", |b| {
-        b.iter(|| execute_bytes(black_box(&archive), black_box(&inputs_64k)))
+        b.iter(|| {
+            let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+            let tape = build_tape_from_plan(&plan).unwrap();
+            execute_tape(black_box(&tape), black_box(&plan), black_box(&inputs_64k))
+        })
     });
 
     let data_64k: Vec<f64> = (0..65536).map(|i| (i % 256) as f64 / 255.0).collect();
@@ -235,7 +244,11 @@ fn bench_full_pipeline(c: &mut Criterion) {
     group.bench_function("end_to_end(256B)", |b| {
         b.iter(|| {
             let archive = build_fused_sin_cos_archive();
-            black_box(execute_bytes(&archive, &inputs_256).unwrap())
+            black_box({
+                let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+                let tape = build_tape_from_plan(&plan).unwrap();
+                execute_tape(&tape, &plan, &inputs_256).unwrap()
+            })
         })
     });
 
@@ -248,14 +261,22 @@ fn bench_full_pipeline(c: &mut Criterion) {
     group.bench_function("end_to_end(64KB)", |b| {
         b.iter(|| {
             let archive = build_fused_sin_cos_archive();
-            black_box(execute_bytes(&archive, &inputs_64k).unwrap())
+            black_box({
+                let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+                let tape = build_tape_from_plan(&plan).unwrap();
+                execute_tape(&tape, &plan, &inputs_64k).unwrap()
+            })
         })
     });
 
     let archive = build_fused_sin_cos_archive();
 
     group.bench_function("execute_fused(256B)", |b| {
-        b.iter(|| execute_bytes(black_box(&archive), black_box(&inputs_256)))
+        b.iter(|| {
+            let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+            let tape = build_tape_from_plan(&plan).unwrap();
+            execute_tape(black_box(&tape), black_box(&plan), black_box(&inputs_256))
+        })
     });
 
     let angle = AngleEncoding;
@@ -297,7 +318,11 @@ fn bench_full_pipeline(c: &mut Criterion) {
             let mut inputs = GraphInputs::new();
             inputs.set(0, vec![10u8, 100, 200, 250]);
             inputs.set(1, vec![5u8, 50, 100, 200]);
-            black_box(execute_bytes(&archive, &inputs).unwrap())
+            black_box({
+                let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+                let tape = build_tape_from_plan(&plan).unwrap();
+                execute_tape(&tape, &plan, &inputs).unwrap()
+            })
         })
     });
 

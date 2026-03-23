@@ -55,6 +55,7 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
         }
     }
 
+    let succ_index = graph.build_successor_index();
     let mut levels = Vec::new();
     let mut cursor = 0;
     let mut visited = 0usize;
@@ -67,7 +68,7 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
             let id = ids[pos];
             level_ids.push(id);
             visited += 1;
-            for succ_id in graph.successors(id) {
+            for &succ_id in Graph::successors_from_index(id, &succ_index) {
                 if let Some(&succ_pos) = id_to_pos.get(&succ_id) {
                     in_degree[succ_pos] -= 1;
                     if in_degree[succ_pos] == 0 {

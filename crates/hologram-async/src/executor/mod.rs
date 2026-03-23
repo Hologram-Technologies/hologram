@@ -1,10 +1,10 @@
 //! Async wrapper for archive execution.
 
-#[allow(deprecated)]
-use hologram_exec::{execute_bytes, ExecResult, GraphInputs, GraphOutputs};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::{ExecResult, GraphInputs, GraphOutputs};
 use tokio::task::JoinHandle;
 
-/// Async wrapper for `execute_bytes`.
+/// Async wrapper for tape-based archive execution.
 ///
 /// Runs the executor on a blocking thread so callers can `.await` it
 /// from an async context without stalling the Tokio executor.
@@ -12,9 +12,12 @@ pub struct AsyncExecutor;
 
 impl AsyncExecutor {
     /// Execute a `.holo` archive on a blocking thread.
-    #[allow(deprecated)]
     pub fn execute(archive: Vec<u8>, inputs: GraphInputs) -> JoinHandle<ExecResult<GraphOutputs>> {
-        tokio::task::spawn_blocking(move || execute_bytes(&archive, &inputs))
+        tokio::task::spawn_blocking(move || {
+            let plan = hologram_archive::load_from_bytes(&archive)?;
+            let tape = build_tape_from_plan(&plan)?;
+            execute_tape(&tape, &plan, &inputs)
+        })
     }
 }
 

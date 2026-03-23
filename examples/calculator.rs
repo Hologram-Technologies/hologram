@@ -16,7 +16,8 @@ use hologram_graph::graph::GraphOp;
 
 use hologram_archive::HoloWriter;
 
-use hologram_exec::{execute_bytes, GraphInputs};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::GraphInputs;
 
 fn main() {
     println!("=== Hologram Scientific Calculator ===\n");
@@ -151,7 +152,11 @@ fn demo_graph_io() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, test_input.clone());
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = {
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+        execute_tape(&tape, &plan, &inputs).unwrap()
+    };
 
     println!("  {:>6} {:>8} {:>8} {:>8}", "x", "relu", "sigmoid", "abs");
     let relu_out = result.by_name("relu").unwrap();
@@ -203,7 +208,11 @@ fn demo_full_pipeline() {
     let mut inputs = GraphInputs::new();
     inputs.set(0, test_data.clone());
 
-    let result = execute_bytes(&archive, &inputs).unwrap();
+    let result = {
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+        execute_tape(&tape, &plan, &inputs).unwrap()
+    };
     let output = result.by_name("y").unwrap();
 
     // Verify: LUT result should match direct composition
@@ -275,7 +284,11 @@ fn demo_full_pipeline() {
     let mut inputs2 = GraphInputs::new();
     inputs2.set(0, vec![10, 100, 200, 250]);
     inputs2.set(1, vec![5, 50, 100, 200]);
-    let result2 = execute_bytes(&archive2, &inputs2).unwrap();
+    let result2 = {
+        let plan = hologram_archive::load_from_bytes(&archive2).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+        execute_tape(&tape, &plan, &inputs2).unwrap()
+    };
     let sum = result2.by_name("sum").unwrap();
 
     println!("  {:>6} {:>6} {:>6} {:>10}", "a", "b", "sum", "expected");

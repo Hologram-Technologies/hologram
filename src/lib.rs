@@ -48,20 +48,9 @@ pub use hologram_graph::{
 };
 
 // Execution
-#[cfg(feature = "std")]
-#[allow(deprecated)]
-pub use hologram_exec::execute_file;
-#[allow(deprecated)]
 pub use hologram_exec::{
-    build_tape_from_plan, execute_bytes, execute_bytes_with_ops, execute_plan,
-    execute_plan_with_kv_state, execute_plan_with_shape_hints, execute_tape, execute_tape_with_kv,
-    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState,
-    KvExecutor, KvStore,
-};
-#[cfg(feature = "profile")]
-pub use hologram_exec::{
-    execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints,
-    IntermediateCapture,
+    build_tape_from_plan, execute_tape, execute_tape_with_kv, BufferArena, CustomHandler,
+    CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState, KvStore,
 };
 
 // Archive

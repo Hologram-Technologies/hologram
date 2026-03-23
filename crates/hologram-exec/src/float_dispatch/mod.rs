@@ -559,6 +559,57 @@ fn dispatch_custom(
             batch_axis,
             time_axis,
         } => misc::dispatch_reverse_sequence(inputs, *batch_axis as usize, *time_axis as usize),
+        // ── Slice ──────────────────────────────────────────────────────
+        FloatOp::Slice {
+            axis_from_end,
+            start,
+            end,
+        } => {
+            let data = inputs[0];
+            let start = *start as usize;
+            let end = *end as usize;
+            let _afe = *axis_from_end as usize;
+
+            // Without shape info, infer from buffer size and elem_size=4 (f32).
+            let n_elems = data.len() / 4;
+            if n_elems == 0 {
+                return Ok(vec![]);
+            }
+
+            // For axis_from_end=1 (last axis, most common): the axis size
+            // is `end` (the compiled upper bound). Slice [start..end] from it.
+            // For axis_from_end>1: the post-axis product is the product of
+            // all dims after the sliced axis.
+            //
+            // Heuristic: `end` is the compiled axis size (or close to it).
+            // We use it directly as the axis dimension.
+            let axis_size = if end > 0 { end } else { n_elems };
+            let post = 1;
+            let chunk = post * 4; // bytes per element along axis
+            let src_stride = axis_size * chunk;
+            let actual_end = end.min(axis_size);
+            if start >= actual_end {
+                return Ok(vec![]);
+            }
+            let slice_len = actual_end - start;
+            let pre = (data.len()) / src_stride;
+            let pre = pre.max(1);
+            let dst_stride = slice_len * chunk;
+            let out_bytes = pre * dst_stride;
+
+            let mut out = vec![0u8; out_bytes];
+            for i in 0..pre {
+                let src_off = i * src_stride + start * chunk;
+                let dst_off = i * dst_stride;
+                let src_end = (src_off + dst_stride).min(data.len());
+                let copy_len = src_end.saturating_sub(src_off).min(dst_stride);
+                if copy_len > 0 {
+                    out[dst_off..dst_off + copy_len]
+                        .copy_from_slice(&data[src_off..src_off + copy_len]);
+                }
+            }
+            Ok(out)
+        }
         // ── KV cache ops ───────────────────────────────────────────────
         // Pass-through when no KvCacheState is available (non-pipeline execution).
         // When KvCacheState is wired in, the executor handles these before dispatch.

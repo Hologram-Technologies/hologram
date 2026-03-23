@@ -58,11 +58,12 @@ pub fn is_acyclic(graph: &Graph) -> bool {
             queue.push_back(pos);
         }
     }
+    let succ_index = graph.build_successor_index();
     let mut visited = 0usize;
     while let Some(pos) = queue.pop_front() {
         visited += 1;
         let id = ids[pos];
-        for succ_id in graph.successors(id) {
+        for &succ_id in Graph::successors_from_index(id, &succ_index) {
             if let Some(&succ_pos) = id_to_pos.get(&succ_id) {
                 in_degree[succ_pos] -= 1;
                 if in_degree[succ_pos] == 0 {

@@ -1,4 +1,4 @@
-//! KV-lookup execution engine with parallel level scheduling.
+//! Tape-based execution engine with parallel level scheduling.
 //!
 //! Every operation is an O(1) key-value lookup into precomputed tables.
 //! Graphs are executed level-by-level, where nodes within a level have
@@ -23,25 +23,11 @@ pub mod tape_builder;
 // Re-exports for convenience.
 pub use buffer::BufferArena;
 pub use error::{ExecError, ExecResult};
-#[cfg(feature = "profile")]
-pub use eval::executor::IntermediateCapture;
-#[allow(deprecated)]
-pub use eval::{build_schedule, GraphInputs, GraphOutputs, KvExecutor};
+pub use eval::{build_schedule, GraphInputs, GraphOutputs};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
 pub use kv_cache::KvCacheState;
-#[allow(deprecated)]
-pub use mmap::{
-    build_tape_from_plan, execute_bytes, execute_bytes_with_ops, execute_bytes_with_progress,
-    execute_plan, execute_plan_with_kv_state, execute_plan_with_shape_hints, execute_tape,
-    execute_tape_with_kv,
-};
-#[cfg(feature = "profile")]
-pub use mmap::{execute_plan_with_intermediates, execute_plan_with_intermediates_and_shape_hints};
-
-#[cfg(feature = "std")]
-#[allow(deprecated)]
-pub use mmap::execute_file;
+pub use mmap::{build_tape_from_plan, execute_tape, execute_tape_with_kv};
 
 /// Register a custom op handler in a `CustomOpRegistry`.
 ///

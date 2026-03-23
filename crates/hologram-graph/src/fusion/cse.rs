@@ -22,6 +22,7 @@ struct NodeSignature {
 pub fn eliminate_common_subexpressions(graph: &mut Graph, order: &[NodeId]) -> usize {
     let mut canonical: HashMap<NodeSignature, NodeId> = HashMap::new();
     let mut eliminated = 0;
+    let succ_index = graph.build_successor_index();
 
     for &id in order {
         let node = match graph.get(id) {
@@ -41,7 +42,7 @@ pub fn eliminate_common_subexpressions(graph: &mut Graph, order: &[NodeId]) -> u
 
         if let Some(&canon_id) = canonical.get(&sig) {
             if canon_id != id {
-                graph.rewire_successors(id, canon_id);
+                graph.rewire_successors_indexed(id, canon_id, &succ_index);
                 graph.remove_node(id);
                 eliminated += 1;
             }
