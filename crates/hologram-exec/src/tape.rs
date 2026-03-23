@@ -339,6 +339,9 @@ enum DispatchResult {
     /// Output stored in a Metal GPU buffer. Insert directly into arena.
     #[cfg(has_metal)]
     MetalBuffer(metal::Buffer),
+    /// Output deferred to `flush_deferred()`. Skip swap_insert for now.
+    #[cfg(has_webgpu)]
+    WgpuDeferred,
 }
 
 /// Dispatch a `TapeKernel`, returning how the output should be stored.
@@ -366,6 +369,8 @@ fn dispatch_kernel(
                 KernelOutput::MetalBuffer(buf) => {
                     return Ok(DispatchResult::MetalBuffer(buf));
                 }
+                #[cfg(has_webgpu)]
+                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
             // Fallback to CPU dispatch.
@@ -496,6 +501,8 @@ fn dispatch_kernel(
                 KernelOutput::MetalBuffer(buf) => {
                     return Ok(DispatchResult::MetalBuffer(buf));
                 }
+                #[cfg(has_webgpu)]
+                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
             crate::float_dispatch::matmul::dispatch_matmul_into(
@@ -514,6 +521,8 @@ fn dispatch_kernel(
                 KernelOutput::MetalBuffer(buf) => {
                     return Ok(DispatchResult::MetalBuffer(buf));
                 }
+                #[cfg(has_webgpu)]
+                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
             let actual = crate::float_dispatch::resolve_size(*size, inputs);
@@ -534,6 +543,8 @@ fn dispatch_kernel(
                 KernelOutput::MetalBuffer(buf) => {
                     return Ok(DispatchResult::MetalBuffer(buf));
                 }
+                #[cfg(has_webgpu)]
+                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
             let actual = crate::float_dispatch::resolve_size(*size, inputs);
@@ -1106,6 +1117,7 @@ impl EnumTape {
         // Resolve backend once (not per-instruction).
         let backend = tape_ctx.backend.resolve();
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
+        let mut deferred_slots: Vec<(u32, u8)> = Vec::new();
 
         for level_idx in 0..self.n_levels() {
             let start = self.level_offsets[level_idx];
@@ -1240,13 +1252,23 @@ impl EnumTape {
                     DispatchResult::MetalBuffer(metal_buf) => {
                         arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
                     }
+                    #[cfg(has_webgpu)]
+                    DispatchResult::WgpuDeferred => {
+                        deferred_slots.push((instr.output_idx, instr.output_elem_size));
+                    }
                 }
             } // end inner instruction loop
 
-            // Flush pending GPU work at level boundary (Phase 8.2).
-            // This commits all Metal kernels encoded during this level
-            // and waits for completion before the next level reads outputs.
-            backend.flush();
+            // Flush deferred GPU work at level boundary (Phase 8.2 + 8.3d).
+            // Metal: commits batched command buffer, waits for completion.
+            // WebGPU: submits encoder, polls device, maps+reads all staging buffers.
+            let deferred_data = backend.flush_deferred()?;
+            for (data, &(out_idx, elem_size)) in
+                deferred_data.into_iter().zip(deferred_slots.iter())
+            {
+                arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
+            }
+            deferred_slots.clear();
         } // end level loop
 
         Ok(())
@@ -1268,6 +1290,7 @@ impl EnumTape {
 
         const PAR_THRESHOLD: usize = 4;
         let backend = tape_ctx.backend.resolve();
+        let mut par_deferred_slots: Vec<(u32, u8)> = Vec::new();
 
         for level_idx in 0..self.n_levels() {
             let start = self.level_offsets[level_idx];
@@ -1392,7 +1415,7 @@ impl EnumTape {
                     }
 
                     // General path: SmallVec + dispatch_kernel.
-                    {
+                    let dispatch_result = {
                         let input_refs: SmallVec<[&[u8]; 4]> = instr
                             .input_indices
                             .iter()
@@ -1408,20 +1431,38 @@ impl EnumTape {
                             tape_ctx,
                             &*backend,
                             &mut out_buf,
-                        )?;
-                    }
+                        )?
+                    };
 
                     let out_id = NodeId::new(instr.output_idx, 0);
-                    arena.swap_insert_with_elem_size(
-                        out_id,
-                        &mut out_buf,
-                        instr.output_elem_size as usize,
-                    );
+                    match dispatch_result {
+                        DispatchResult::InOutBuf => {
+                            arena.swap_insert_with_elem_size(
+                                out_id,
+                                &mut out_buf,
+                                instr.output_elem_size as usize,
+                            );
+                        }
+                        #[cfg(has_metal)]
+                        DispatchResult::MetalBuffer(metal_buf) => {
+                            arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
+                        }
+                        #[cfg(has_webgpu)]
+                        DispatchResult::WgpuDeferred => {
+                            par_deferred_slots.push((instr.output_idx, instr.output_elem_size));
+                        }
+                    }
                 }
             }
 
-            // Flush pending GPU work at level boundary (Phase 8.2).
-            backend.flush();
+            // Flush deferred GPU work at level boundary.
+            let deferred_data = backend.flush_deferred()?;
+            for (data, &(out_idx, elem_size)) in
+                deferred_data.into_iter().zip(par_deferred_slots.iter())
+            {
+                arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
+            }
+            par_deferred_slots.clear();
         }
 
         Ok(())

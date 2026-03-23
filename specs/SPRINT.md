@@ -270,12 +270,19 @@
 ### Phase 8: Remaining GPU Work
 - [x] **8.1**: Metal binary/matmul/softmax/rmsnorm all return MetalBuffer (full zero-copy path)
 - [x] **8.2**: Async command buffer batching — `Mutex<Option<CommandBuffer>>` on MetalBackend, encode without commit per dispatch, `flush()` at level boundaries via `ComputeBackend::flush()` trait method
-- [ ] **8.3**: WebGPU/wgpu compute shader path — [plan](plans/012-webgpu-wgpu-compute.md)
+- [x] **8.3**: WebGPU/wgpu compute shader path — [plan](plans/012-webgpu-wgpu-compute.md)
   - [x] **8.3a**: Bootstrap — wgpu device init, WGSL compilation, pipeline caching, OnceLock caching
   - [x] **8.3b**: Complete elementwise — all 9 unary + 4 binary WGSL kernels with staging readback
   - [x] **8.3c**: Custom ops — tiled SGEMM (16×16), softmax, RmsNorm in WGSL
-  - [ ] **8.3d**: Command encoder batching + buffer reuse (optional)
+  - [x] **8.3d**: Deferred command encoder batching — `WgpuDeferred` + `flush_deferred()` — [plan](plans/013-webgpu-deferred-batching.md)
 - [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
+
+### Phase 10: Weight Deduplication Primitive (Plan 021 Phase 3)
+- [x] **10.1**: `WeightStore` — content-addressable weight storage with CRC32 identity + exact byte comparison
+- [x] **10.2**: `WeightDedupIndex` / `WeightDedupEntry` — rkyv-serializable index for the deduplicated blob
+- [x] **10.3**: `SECTION_WEIGHT_DEDUP` section kind, `EmbeddableSection` impl
+- [x] **10.4**: Re-exported from `hologram_archive` crate root
+- [x] **10.5**: 9 unit tests (empty, single, dedup, distinct, build, save-space, get, rkyv roundtrip, zero-copy)
 
 ### Phase 9: Zero-Overhead Dispatch — Flatten Abstraction Layers
 **Plan**: [plans/011-zero-overhead-dispatch.md](plans/011-zero-overhead-dispatch.md)

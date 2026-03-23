@@ -36,6 +36,10 @@ pub enum KernelOutput {
     /// Result stored in a Metal GPU buffer. Insert directly into arena (zero-copy).
     #[cfg(has_metal)]
     MetalBuffer(::metal::Buffer),
+    /// Result deferred — will be available after `flush_deferred()`.
+    /// Used by WebGPU batching: encode now, submit+readback at level boundary.
+    #[cfg(has_webgpu)]
+    WgpuDeferred,
 }
 
 impl KernelOutput {
@@ -95,6 +99,16 @@ pub trait ComputeBackend: Send + Sync {
     /// all MetalBuffers returned by previous dispatch calls contain
     /// valid GPU-written data. No-op for CPU backends.
     fn flush(&self) {}
+
+    /// Flush deferred GPU work and return readback data in dispatch order.
+    ///
+    /// Called at level boundaries. Returns one `Vec<u8>` per deferred dispatch
+    /// in the order they were encoded. Default: calls `flush()` and returns empty.
+    /// Only WebGPU overrides this (Metal uses unified memory, CPU has no deferral).
+    fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {
+        self.flush();
+        Ok(Vec::new())
+    }
 }
 
 /// Runtime backend selector.
@@ -251,6 +265,9 @@ impl ComputeBackend for CachedWebGpuBackend {
     }
     fn name(&self) -> &'static str {
         "webgpu"
+    }
+    fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {
+        self.0.flush_deferred_impl()
     }
 }
 

@@ -11,6 +11,7 @@
 //! - `flush()` support for future command encoder batching
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use hologram_core::op::{FloatOp, OpCategory};
 use wgpu::util::DeviceExt;
@@ -254,11 +255,31 @@ fn rms_norm(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // ── WebGpuBackend ────────────────────────────────────────────────────────────
 
+/// A single deferred GPU dispatch awaiting readback.
+struct DeferredEntry {
+    staging_buf: wgpu::Buffer,
+    byte_len: usize,
+}
+
+/// Pending GPU work: shared command encoder + deferred entries.
+struct PendingWork {
+    encoder: wgpu::CommandEncoder,
+    entries: Vec<DeferredEntry>,
+    /// Buffers referenced by the encoder that must stay alive until submit.
+    kept_alive: Vec<wgpu::Buffer>,
+}
+
 /// WebGPU backend for cross-platform GPU compute via wgpu.
+///
+/// Phase 8.3d: Command encoder batching. Multiple dispatches encode into
+/// a single `CommandEncoder`. `flush_deferred()` submits once and reads
+/// back all staging buffers, returning results in dispatch order.
 pub struct WebGpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    /// Pending work for batch encoding. `None` when idle.
+    pending: Mutex<Option<PendingWork>>,
 }
 
 impl WebGpuBackend {
@@ -339,6 +360,7 @@ impl WebGpuBackend {
             device,
             queue,
             pipelines,
+            pending: Mutex::new(None),
         })
     }
 
@@ -362,41 +384,87 @@ impl WebGpuBackend {
         }
     }
 
-    /// Submit a command encoder and read back from staging buffer into out_buf.
-    fn submit_and_readback(
-        &self,
-        encoder: wgpu::CommandEncoder,
-        staging_buf: &wgpu::Buffer,
-        byte_len: usize,
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        let slice = staging_buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv()
-            .map_err(|_| ExecError::UnsupportedOp("wgpu channel closed".into()))?
-            .map_err(|e| ExecError::UnsupportedOp(format!("wgpu map failed: {e:?}")))?;
-
-        let data = slice.get_mapped_range();
-        out_buf.clear();
-        out_buf.extend_from_slice(&data[..byte_len]);
-        drop(data);
-        staging_buf.unmap();
-        Ok(())
+    /// Get or create the shared command encoder for batch encoding.
+    fn get_or_create_encoder(&self) -> std::sync::MutexGuard<'_, Option<PendingWork>> {
+        let mut pending = self.pending.lock().unwrap();
+        if pending.is_none() {
+            *pending = Some(PendingWork {
+                encoder: self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
+                entries: Vec::new(),
+                kept_alive: Vec::new(),
+            });
+        }
+        pending
     }
 
-    /// Dispatch a unary elementwise op. Writes result to out_buf.
-    fn dispatch_unary(
-        &self,
-        pipeline: &wgpu::ComputePipeline,
-        input: &[u8],
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    /// Encode a copy-to-staging command and track the deferred entry.
+    /// Returns the staging buffer's entry index.
+    fn enqueue_staging(
+        pending: &mut PendingWork,
+        output_buf: wgpu::Buffer,
+        staging_buf: wgpu::Buffer,
+        byte_len: usize,
+    ) {
+        pending
+            .encoder
+            .copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, byte_len as u64);
+        pending.kept_alive.push(output_buf);
+        pending.entries.push(DeferredEntry {
+            staging_buf,
+            byte_len,
+        });
+    }
+
+    /// Flush all pending GPU work: submit once, poll, batch-readback all staging buffers.
+    pub fn flush_deferred_impl(&self) -> ExecResult<Vec<Vec<u8>>> {
+        let work = match self.pending.lock().unwrap().take() {
+            Some(w) => w,
+            None => return Ok(Vec::new()),
+        };
+
+        // Single submit for ALL dispatches in this level.
+        self.queue.submit(std::iter::once(work.encoder.finish()));
+        self.device.poll(wgpu::Maintain::Wait);
+
+        // Issue all map_async calls at once.
+        let channels: Vec<_> = work
+            .entries
+            .iter()
+            .map(|entry| {
+                let slice = entry.staging_buf.slice(..);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                rx
+            })
+            .collect();
+
+        // Single poll satisfies all pending maps.
+        self.device.poll(wgpu::Maintain::Wait);
+
+        // Read back all staging buffers in dispatch order.
+        let mut results = Vec::with_capacity(work.entries.len());
+        for (entry, rx) in work.entries.iter().zip(channels) {
+            rx.recv()
+                .map_err(|_| ExecError::UnsupportedOp("wgpu channel closed".into()))?
+                .map_err(|e| ExecError::UnsupportedOp(format!("wgpu map failed: {e:?}")))?;
+            let slice = entry.staging_buf.slice(..);
+            let data = slice.get_mapped_range();
+            let mut buf = Vec::with_capacity(entry.byte_len);
+            buf.extend_from_slice(&data[..entry.byte_len]);
+            results.push(buf);
+            drop(data);
+            entry.staging_buf.unmap();
+        }
+
+        Ok(results)
+    }
+
+    /// Encode a unary elementwise op into the shared command encoder (deferred).
+    fn dispatch_unary_deferred(&self, pipeline: &wgpu::ComputePipeline, input: &[u8]) {
         let n_floats = input.len() / 4;
         let byte_len = n_floats * 4;
 
@@ -448,29 +516,28 @@ impl WebGpuBackend {
             ],
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (n_floats as u32 + 255) / 256;
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, byte_len as u64);
-
-        self.submit_and_readback(encoder, &staging_buf, byte_len, out_buf)
+        work.kept_alive.extend([input_buf, count_buf]);
+        Self::enqueue_staging(work, output_buf, staging_buf, byte_len);
     }
 
-    /// Dispatch a binary elementwise op. Writes result to out_buf.
-    fn dispatch_binary(
+    /// Encode a binary elementwise op into the shared command encoder (deferred).
+    fn dispatch_binary_deferred(
         &self,
         pipeline: &wgpu::ComputePipeline,
         input_a: &[u8],
         input_b: &[u8],
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    ) {
         let n_a = (input_a.len() / 4) as u32;
         let n_b = (input_b.len() / 4) as u32;
         let n_out = n_a.max(n_b) as usize;
@@ -545,30 +612,29 @@ impl WebGpuBackend {
             ],
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (n_out as u32 + 255) / 256;
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, byte_len as u64);
-
-        self.submit_and_readback(encoder, &staging_buf, byte_len, out_buf)
+        work.kept_alive.extend([buf_a, buf_b, params_buf]);
+        Self::enqueue_staging(work, output_buf, staging_buf, byte_len);
     }
 
-    /// Dispatch tiled SGEMM (matmul). Writes result to out_buf.
-    fn dispatch_sgemm(
+    /// Encode tiled SGEMM (matmul) into the shared command encoder (deferred).
+    fn dispatch_sgemm_deferred(
         &self,
         a: &[u8],
         b: &[u8],
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
     ) -> ExecResult<()> {
         let byte_len = m * n * 4;
 
@@ -649,29 +715,25 @@ impl WebGpuBackend {
             ],
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let wg_x = (n as u32 + 15) / 16;
             let wg_y = (m as u32 + 15) / 16;
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
-        encoder.copy_buffer_to_buffer(&buf_c, 0, &staging_buf, 0, byte_len as u64);
-
-        self.submit_and_readback(encoder, &staging_buf, byte_len, out_buf)
+        work.kept_alive.extend([buf_a, buf_b, params_buf]);
+        Self::enqueue_staging(work, buf_c, staging_buf, byte_len);
+        Ok(())
     }
 
-    /// Dispatch softmax. Writes result to out_buf.
-    fn dispatch_softmax(
-        &self,
-        input: &[u8],
-        row_size: usize,
-        out_buf: &mut Vec<u8>,
-    ) -> ExecResult<()> {
+    /// Encode softmax into the shared command encoder (deferred).
+    fn dispatch_softmax_deferred(&self, input: &[u8], row_size: usize) -> ExecResult<()> {
         let n_floats = input.len() / 4;
         let byte_len = n_floats * 4;
 
@@ -737,29 +799,29 @@ impl WebGpuBackend {
             ],
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (n_floats as u32 + 255) / 256;
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, byte_len as u64);
-
-        self.submit_and_readback(encoder, &staging_buf, byte_len, out_buf)
+        work.kept_alive.extend([input_buf, params_buf]);
+        Self::enqueue_staging(work, output_buf, staging_buf, byte_len);
+        Ok(())
     }
 
-    /// Dispatch RmsNorm. Writes result to out_buf.
-    fn dispatch_rms_norm(
+    /// Encode RmsNorm into the shared command encoder (deferred).
+    fn dispatch_rms_norm_deferred(
         &self,
         input: &[u8],
         weight: &[u8],
         row_size: usize,
         epsilon: f32,
-        out_buf: &mut Vec<u8>,
     ) -> ExecResult<()> {
         let n_floats = input.len() / 4;
         let byte_len = n_floats * 4;
@@ -841,19 +903,20 @@ impl WebGpuBackend {
             ],
         });
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (n_floats as u32 + 255) / 256;
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, byte_len as u64);
-
-        self.submit_and_readback(encoder, &staging_buf, byte_len, out_buf)
+        work.kept_alive.extend([input_buf, weight_buf, params_buf]);
+        Self::enqueue_staging(work, output_buf, staging_buf, byte_len);
+        Ok(())
     }
 }
 
@@ -864,19 +927,19 @@ impl ComputeBackend for WebGpuBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
         // Route MatMul to dispatch_matmul.
         if let FloatOp::MatMul { m, k, n } = op {
-            return self.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf);
+            return self.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, _out_buf);
         }
 
         // Route Softmax with threshold check.
         if let FloatOp::Softmax { size } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= WEBGPU_MIN_BYTES && *size > 0 {
-                self.dispatch_softmax(inputs[0], *size as usize, out_buf)?;
-                return Ok(super::KernelOutput::Bytes);
+                self.dispatch_softmax_deferred(inputs[0], *size as usize)?;
+                return Ok(super::KernelOutput::WgpuDeferred);
             }
             return Ok(super::KernelOutput::Skipped);
         }
@@ -885,14 +948,13 @@ impl ComputeBackend for WebGpuBackend {
         if let FloatOp::RmsNorm { size, epsilon } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= WEBGPU_MIN_BYTES && inputs.len() >= 2 && *size > 0 {
-                self.dispatch_rms_norm(
+                self.dispatch_rms_norm_deferred(
                     inputs[0],
                     inputs[1],
                     *size as usize,
                     f32::from_bits(*epsilon),
-                    out_buf,
                 )?;
-                return Ok(super::KernelOutput::Bytes);
+                return Ok(super::KernelOutput::WgpuDeferred);
             }
             return Ok(super::KernelOutput::Skipped);
         }
@@ -914,12 +976,12 @@ impl ComputeBackend for WebGpuBackend {
 
         match op.category() {
             OpCategory::UnaryElementwise => {
-                self.dispatch_unary(pipeline, inputs[0], out_buf)?;
-                Ok(super::KernelOutput::Bytes)
+                self.dispatch_unary_deferred(pipeline, inputs[0]);
+                Ok(super::KernelOutput::WgpuDeferred)
             }
             OpCategory::BinaryElementwise if inputs.len() >= 2 => {
-                self.dispatch_binary(pipeline, inputs[0], inputs[1], out_buf)?;
-                Ok(super::KernelOutput::Bytes)
+                self.dispatch_binary_deferred(pipeline, inputs[0], inputs[1]);
+                Ok(super::KernelOutput::WgpuDeferred)
             }
             _ => Ok(super::KernelOutput::Skipped),
         }
@@ -931,7 +993,7 @@ impl ComputeBackend for WebGpuBackend {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
         // Same threshold as Metal: 128×128 output minimum.
         if m * n < 128 * 128 {
@@ -940,11 +1002,15 @@ impl ComputeBackend for WebGpuBackend {
         if inputs.len() < 2 {
             return Ok(super::KernelOutput::Skipped);
         }
-        self.dispatch_sgemm(inputs[0], inputs[1], m, k, n, out_buf)?;
-        Ok(super::KernelOutput::Bytes)
+        self.dispatch_sgemm_deferred(inputs[0], inputs[1], m, k, n)?;
+        Ok(super::KernelOutput::WgpuDeferred)
     }
 
     fn name(&self) -> &'static str {
         "webgpu"
+    }
+
+    fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {
+        self.flush_deferred_impl()
     }
 }
