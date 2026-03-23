@@ -101,8 +101,17 @@ impl LoadedPlan {
         self.graph.node_count()
     }
 
-    /// Replace weights (used by pipeline loader for weight dedup resolution).
+    /// Replace weights with owned data (copies into heap).
     pub(crate) fn set_weights(&mut self, weights: Vec<u8>) {
         self.weights = Cow::Owned(weights);
+    }
+
+    /// Replace weights with a borrowed slice (zero-copy from mmap).
+    ///
+    /// # Safety
+    /// The caller must ensure `weights` outlives this LoadedPlan.
+    pub(crate) unsafe fn set_weights_borrowed(&mut self, weights: &[u8]) {
+        let w: &'static [u8] = std::slice::from_raw_parts(weights.as_ptr(), weights.len());
+        self.weights = Cow::Borrowed(w);
     }
 }

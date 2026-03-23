@@ -38,8 +38,20 @@ Reading weights should be memory mapping be used here? If we map the weights the
 
 ---
 
-The 5.2 seconds is still too long... for the graph deserialization, is there anything we can do here to speed this up? Can we also fix the graph parsing?
+What do I need to tell `hologram-ai` now?
 
 ---
 
 Ideally we don't have to differentiate between pipeline graphs and single graphs
+
+---
+
+Yes — you can still compress graphs in archives. The writer has:
+
+HoloWriter::new() — no compression (default, instant load)
+.compress_graph() — opt-in graph compression (smaller archive, 1.5s load penalty)
+.compress_weights() — opt-in weight compression (smaller archive, 20s load penalty)
+For distribution: HoloWriter::new().compress_graph().compress_weights() — smallest archive.
+For local inference: HoloWriter::new() — instant mmap loading.
+
+From distributed holo archives, how do we get instant mmap loading when we're running a holo archive?

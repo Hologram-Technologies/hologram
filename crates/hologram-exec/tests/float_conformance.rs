@@ -1129,6 +1129,7 @@ fn test_slice_dynamic_leading_dim() {
         axis_from_end: 1,
         start: 0,
         end: 4,
+        axis_size: 6,
     };
     let result = dispatch_float(&op, &[&input]).unwrap();
     let out = result_f32(&result);
@@ -1148,12 +1149,49 @@ fn test_slice_end_equals_axis_size() {
         axis_from_end: 1,
         start: 1,
         end: 6,
+        axis_size: 6,
     };
     let result = dispatch_float(&op, &[&input]).unwrap();
     let out = result_f32(&result);
     // Each row sliced [1..6]: [1,2,3,4,5], [7,8,9,10,11], [13,14,15,16,17]
     assert_eq!(out.len(), 15);
     assert_close(&out[0..5], &[1.0, 2.0, 3.0, 4.0, 5.0], 1e-6, 1e-6);
+}
+
+#[test]
+fn test_slice_with_explicit_axis_size() {
+    // axis_size=6 provided explicitly — no heuristic needed.
+    // Slice(start=0, end=4, axis_size=6) on [3, 6] tensor.
+    let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
+    let input = f32_bytes(&data);
+    let op = FloatOp::Slice {
+        axis_from_end: 1,
+        start: 0,
+        end: 4,
+        axis_size: 6, // explicit — overrides heuristic
+    };
+    let result = dispatch_float(&op, &[&input]).unwrap();
+    let out = result_f32(&result);
+    assert_eq!(out.len(), 12); // 3 rows × 4 elements
+    assert_close(&out[0..4], &[0.0, 1.0, 2.0, 3.0], 1e-6, 1e-6);
+}
+
+#[test]
+fn test_slice_axis_size_zero_falls_back_to_heuristic() {
+    // axis_size=0 means "infer at runtime" — should use heuristic.
+    let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
+    let input = f32_bytes(&data);
+    let op = FloatOp::Slice {
+        axis_from_end: 1,
+        start: 0,
+        end: 4,
+        axis_size: 0, // infer at runtime
+    };
+    let result = dispatch_float(&op, &[&input]).unwrap();
+    let out = result_f32(&result);
+    // Heuristic: infer_slice_axis_size(18, 4) = 6 → correct.
+    assert_eq!(out.len(), 12);
+    assert_close(&out[0..4], &[0.0, 1.0, 2.0, 3.0], 1e-6, 1e-6);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -20,7 +20,10 @@ pub use entrypoint::schedule::LayerHeader;
 pub use entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId};
 pub use error::{ArchiveError, ArchiveResult};
 pub use format::header::HoloHeader;
-pub use loader::bytes::{load_from_bytes, load_from_bytes_unchecked, load_from_bytes_zero_copy};
+pub use loader::bytes::{
+    decompress_archive, is_compressed, load_from_bytes, load_from_bytes_unchecked,
+    load_from_bytes_zero_copy,
+};
 pub use loader::plan::LoadedPlan;
 pub use weight::dedup::{WeightDedupIndex, WeightRef, WeightStore};
 pub use writer::holo_writer::HoloWriter;

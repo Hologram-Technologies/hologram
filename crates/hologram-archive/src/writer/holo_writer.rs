@@ -25,6 +25,11 @@ pub struct HoloWriter {
     /// When true, `graph_bytes` are already compressed and should not be
     /// compressed again during `build()`.
     graph_pre_compressed: bool,
+    /// When false, skip weight compression. Default: false (no compression).
+    compress_weights: bool,
+    /// When false, skip graph compression. Default: false (no compression).
+    /// Enables zero-copy rkyv::access on the graph without decompression.
+    compress_graph: bool,
 }
 
 impl Default for HoloWriter {
@@ -44,6 +49,8 @@ impl HoloWriter {
             weight_bytes: None,
             sections: Vec::new(),
             graph_pre_compressed: false,
+            compress_weights: false,
+            compress_graph: false,
         }
     }
 
@@ -72,10 +79,42 @@ impl HoloWriter {
         self
     }
 
+    /// Set the graph from pre-serialized uncompressed rkyv bytes.
+    ///
+    /// The bytes will be compressed during `build()` only if `compress_graph`
+    /// is enabled. Use this when rebuilding an archive from decompressed data.
+    #[must_use]
+    pub fn set_graph_bytes_uncompressed(mut self, bytes: Vec<u8>) -> Self {
+        self.graph_bytes = Some(bytes);
+        self.graph_pre_compressed = false;
+        self
+    }
+
     /// Set raw weight data.
     #[must_use]
     pub fn set_weights(mut self, weights: Vec<u8>) -> Self {
         self.weight_bytes = Some(weights);
+        self
+    }
+
+    /// Enable weight compression (off by default).
+    ///
+    /// Compresses the weight region for smaller archives. Disables zero-copy
+    /// mmap loading — the entire weight region must be decompressed on load.
+    /// Use for distribution/storage; omit for fast local inference.
+    #[must_use]
+    pub fn compress_weights(mut self) -> Self {
+        self.compress_weights = true;
+        self
+    }
+
+    /// Enable graph compression (off by default).
+    ///
+    /// Compresses the graph section for smaller archives. Disables zero-copy
+    /// rkyv::access — the graph must be decompressed and deserialized on load.
+    #[must_use]
+    pub fn compress_graph(mut self) -> Self {
+        self.compress_graph = true;
         self
     }
 
@@ -117,13 +156,16 @@ impl HoloWriter {
                 // Already compressed from a prior archive — skip double compression.
                 flags |= FLAG_GRAPH_COMPRESSED;
                 graph_data
-            } else {
+            } else if self.compress_graph {
                 let block = hologram_compression::compress(&graph_data, CompressionMode::Generic);
                 flags |= FLAG_GRAPH_COMPRESSED;
                 block.data
+            } else {
+                // Uncompressed: enables zero-copy rkyv::access at load time.
+                graph_data
             };
 
-            let weight_data = if !weight_data.is_empty() {
+            let weight_data = if !weight_data.is_empty() && self.compress_weights {
                 let mode = hologram_compression::pipeline::auto_select_mode(&weight_data);
                 let block = hologram_compression::compress(&weight_data, mode);
                 flags |= FLAG_WEIGHTS_COMPRESSED;

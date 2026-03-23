@@ -8,6 +8,53 @@
 - [x] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
 - [x] Graph & mmap performance hardening — [plan](plans/007-graph-mmap-performance.md)
 - [x] Dynamic sequence length — attention + slice fix — [plan](plans/016-dynamic-seq-attention-fix.md)
+- [ ] Zero-copy pipeline weights — [plan](plans/017-zero-copy-pipeline-weights.md)
+- [ ] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
+
+## Sprint 20: Zero-Copy Graph Access (Plan 018)
+
+**Plan**: [plans/018-zero-copy-graph-access.md](plans/018-zero-copy-graph-access.md)
+
+Goal: eliminate 1.5s graph deserialization by using rkyv::access (zero-copy
+archived field access) instead of rkyv::from_bytes (full owned deserialization).
+
+### Phase 1: Optional Graph Compression
+- [x] **1.1**: `compress_graph: bool` field on HoloWriter (default false)
+- [x] **1.2**: `.compress_graph()` opt-in method
+- [x] **1.3**: Skip compression when `compress_graph == false`
+
+### Phase 2: rkyv::access for Zero-Copy Graph (deferred)
+- [ ] **2.1**: `GraphAccess` enum (Owned vs Archived) in LoadedPlan
+- [ ] **2.2**: `ArchivedConstantStore::get()` for archived constant lookup
+- [ ] **2.3**: Archived-compatible `node_dtypes_map()`, `node_shapes_map()`
+- [ ] **2.4**: Update tape_builder, mmap executor, CLI inspect for ArchivedSerializedGraph
+- [ ] **2.5**: Decompress-once cache: compressed archive → uncompressed `.cache` file → mmap
+
+## Sprint 19: Zero-Copy Pipeline Weights (Plan 017)
+
+**Plan**: [plans/017-zero-copy-pipeline-weights.md](plans/017-zero-copy-pipeline-weights.md)
+
+Goal: pipeline archives store weights once in the wrapper, sub-archives reference
+them via dedup index. Loading is zero-copy via mmap. Archive size halved, load
+time from 20s+ to <1s.
+
+### Phase 1: Archive Format + Loader (hologram)
+- [ ] **1.1**: `LoadedPlan::set_weights_borrowed` — zero-copy weight grafting from wrapper mmap
+- [ ] **1.2**: `PipelineWriter::build_with_shared_weights` — shared weight blob layout
+- [ ] **1.3**: `LoadedPipeline` zero-copy loading — borrow sub-archive + shared weights from mmap
+
+### Phase 2: Compiler (hologram-ai)
+- [ ] **2.1**: Shared weight extraction via `WeightStore` during pipeline compilation
+- [ ] **2.2**: Rewrite sub-archive `ConstantData::Deferred` offsets to point into shared blob
+- [ ] **2.3**: `HoloRunner` zero-copy pipeline loading via mmap
+
+### Phase 3: Tests
+- [ ] **3.1**: Pipeline shared weights round-trip (build + load + resolve constants)
+- [ ] **3.2**: Zero-copy mmap pipeline loading (verify no allocation for weights)
+- [ ] **3.3**: Weight dedup across prefill/decode models (identical tensors stored once)
+- [ ] **3.4**: E2E: compile TinyLlama pipeline + run with <1s load time
+
+---
 
 ## Sprint 18: Dynamic Shape Inference (Plan 016)
 

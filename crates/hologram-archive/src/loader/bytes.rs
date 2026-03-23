@@ -9,6 +9,16 @@ use crate::loader::plan::LoadedPlan;
 use crate::section::table::SectionTable;
 use crate::section::SECTION_LAYER_HEADER;
 
+/// Check if an archive has any compressed sections (graph or weights).
+///
+/// Only reads the header (first 128 bytes) — does not parse the full archive.
+/// Use this to decide whether to decompress to a cache file before mmap loading.
+pub fn is_compressed(data: &[u8]) -> bool {
+    validate_header(data)
+        .map(|h| h.is_graph_compressed() || h.is_weights_compressed())
+        .unwrap_or(false)
+}
+
 /// Validate the archive header bytes.
 ///
 /// Reads the fixed-layout header via bytemuck, then checks magic and version.
@@ -27,6 +37,46 @@ pub fn validate_header(data: &[u8]) -> ArchiveResult<HoloHeader> {
         return Err(ArchiveError::UnsupportedVersion(header.version));
     }
     Ok(header)
+}
+
+/// Decompress an archive into an uncompressed version.
+///
+/// Reads the compressed archive, decompresses graph and weight sections,
+/// and rebuilds as an uncompressed archive. The result can be written to
+/// a cache file for instant mmap loading on subsequent runs.
+///
+/// Returns `None` if the archive is already uncompressed.
+pub fn decompress_archive(data: &[u8]) -> ArchiveResult<Option<Vec<u8>>> {
+    let header = validate_header(data)?;
+    if !header.is_graph_compressed() && !header.is_weights_compressed() {
+        return Ok(None); // Already uncompressed
+    }
+
+    // Load via the checked path (handles decompression internally).
+    let plan = load_from_bytes(data)?;
+
+    // Rebuild uncompressed: graph via rkyv serialization, weights as-is.
+    let graph = plan.graph();
+    let graph_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(graph)
+        .map_err(|e| ArchiveError::ValidationFailed(format!("re-serializing graph: {e}")))?
+        .to_vec();
+
+    // Rebuild via HoloWriter with compression disabled (the default).
+    let mut writer = crate::writer::holo_writer::HoloWriter::new()
+        .set_graph_bytes_uncompressed(graph_bytes)
+        .set_weights(plan.weights().to_vec());
+
+    // Preserve sections from the original archive.
+    let sections = plan.sections();
+    for entry in &sections.entries {
+        let start = entry.offset as usize;
+        let end = start + entry.size as usize;
+        if end <= data.len() {
+            writer = writer.add_raw_section(entry.kind, data[start..end].to_vec());
+        }
+    }
+
+    Ok(Some(writer.build()?))
 }
 
 /// Load a .holo archive from a byte slice.

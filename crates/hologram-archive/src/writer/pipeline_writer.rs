@@ -126,6 +126,72 @@ impl PipelineWriter {
 
         writer.build()
     }
+
+    /// Build a pipeline archive with shared (deduplicated) weights.
+    ///
+    /// Sub-archives contain only graph + sections (no embedded weights).
+    /// All weights are stored once in the shared blob, referenced via
+    /// `WeightDedupIndex`. This halves the archive size and enables
+    /// zero-copy mmap loading.
+    ///
+    /// Layout in the wrapper's weight region:
+    /// ```text
+    /// [sub-archive 0 (graph only)] [pad] [sub-archive 1 (graph only)] [pad] [shared weights blob]
+    /// ```
+    pub fn build_with_shared_weights(
+        self,
+        shared_weights: Vec<u8>,
+        dedup_index: &crate::weight::dedup::WeightDedupIndex,
+    ) -> ArchiveResult<Vec<u8>> {
+        if self.models.is_empty() {
+            return Err(ArchiveError::GraphError(
+                "pipeline must have at least one model".into(),
+            ));
+        }
+
+        // Concatenate graph-only sub-archives, then append shared weights.
+        let mut combined = Vec::new();
+        let mut entries = Vec::new();
+        for (name, data) in &self.models {
+            let offset = combined.len() as u64;
+            let size = data.len() as u64;
+            let cksum = checksum::crc32(data);
+            entries.push(PipelineEntry {
+                name: name.clone(),
+                offset,
+                size,
+                checksum: cksum,
+            });
+            combined.extend_from_slice(data);
+            let aligned = align_to_page(combined.len() as u64) as usize;
+            combined.resize(aligned, 0);
+        }
+
+        // Append the shared weight blob (page-aligned).
+        let aligned = align_to_page(combined.len() as u64) as usize;
+        combined.resize(aligned, 0);
+        combined.extend_from_slice(&shared_weights);
+
+        let pipeline_header = PipelineHeader { models: entries };
+
+        use crate::section::SECTION_WEIGHT_DEDUP;
+        use crate::writer::holo_writer::HoloWriter;
+
+        let dedup_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(dedup_index)
+            .map_err(|e| ArchiveError::GraphError(format!("dedup index serialization: {e}")))?
+            .to_vec();
+
+        let mut writer = HoloWriter::new()
+            .set_weights(combined)
+            .add_section(&pipeline_header)
+            .add_raw_section(SECTION_WEIGHT_DEDUP, dedup_bytes);
+
+        for (kind, bytes) in self.extra_sections {
+            writer = writer.add_raw_section(kind, bytes);
+        }
+
+        writer.build()
+    }
 }
 
 #[cfg(test)]

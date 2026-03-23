@@ -252,6 +252,88 @@ cargo install --path . --features cli
 
 ---
 
+## Configuration
+
+Hologram loads settings from TOML config files. Files are checked in priority order (highest first):
+
+1. `--config <path>` flag (explicit override)
+2. `.hologram/config.toml` in the current directory (project-local)
+3. `~/.hologram/config.toml` (user-global)
+4. Built-in defaults
+
+### Example `~/.hologram/config.toml`
+
+```toml
+[cache]
+# Directory for decompressed archive caches.
+# Compressed archives are decompressed once on first run,
+# then mmap'd from cache for instant loading.
+# Default: cache next to the archive file.
+dir = "~/.hologram/cache"
+
+[archive]
+# Whether to compress weights/graph in new archives.
+# false = larger files but instant mmap loading (default).
+# true  = smaller files but requires decompression on load.
+compress_weights = false
+compress_graph = false
+
+[inference]
+# Default inference parameters (overridden by CLI flags).
+temperature = 0.7
+top_k = 40
+max_tokens = 128
+```
+
+### Programmatic access
+
+```rust
+use hologram::config::HologramConfig;
+
+// Load from standard locations (~/.hologram/config.toml, .hologram/config.toml)
+let config = HologramConfig::load();
+
+// Load from a specific file
+let config = HologramConfig::load_file(Path::new("my-config.toml"))
+    .unwrap_or_default();
+
+// Access settings
+if let Some(cache_dir) = config.cache_dir() {
+    println!("Cache: {}", cache_dir.display());
+}
+```
+
+---
+
+## Archive loading
+
+Hologram archives (`.holo`) support two loading modes:
+
+| Mode | Archive type | Load time | Memory |
+|------|-------------|-----------|--------|
+| **Zero-copy mmap** | Uncompressed | Instant | On-demand (page faults) |
+| **Decompress + cache** | Compressed | First run: seconds. Subsequent: instant | Cache file on disk |
+
+By default, `HoloWriter` produces uncompressed archives for instant loading. Use `.compress_weights()` and `.compress_graph()` for smaller archives (e.g., for distribution), and the runtime will decompress once to a cache file.
+
+```rust
+// Uncompressed (default) — instant mmap loading
+let archive = HoloWriter::new()
+    .set_graph(&graph)
+    .set_weights(weights)
+    .build()?;
+
+// Compressed — smaller file, decompressed on first load
+let archive = HoloWriter::new()
+    .set_graph(&graph)
+    .set_weights(weights)
+    .compress_weights()
+    .compress_graph()
+    .build()?;
+```
+
+---
+
 ## C FFI & WebAssembly
 
 `hologram-ffi` exposes the full pipeline via a C ABI. Headers are generated automatically by `cbindgen`:

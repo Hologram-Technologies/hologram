@@ -102,6 +102,76 @@ impl LoadedPipeline {
         &self.header
     }
 
+    /// Load a pipeline archive with zero-copy weight access.
+    ///
+    /// Sub-archive graphs are deserialized (unavoidable), but weights are
+    /// borrowed directly from the input slice (mmap). No weight data is
+    /// copied at any point.
+    ///
+    /// # Safety
+    /// The caller must ensure `data` outlives the returned `LoadedPipeline`.
+    pub unsafe fn from_bytes_zero_copy(data: &[u8]) -> ArchiveResult<Self> {
+        use crate::loader::bytes::{load_from_bytes_unchecked, load_from_bytes_zero_copy};
+
+        let wrapper = load_from_bytes_zero_copy(data)?;
+
+        let pipeline_entry = wrapper
+            .sections()
+            .find(SECTION_PIPELINE)
+            .ok_or(ArchiveError::SectionNotFound(SECTION_PIPELINE))?;
+
+        let section_start = pipeline_entry.offset as usize;
+        let section_end = section_start + pipeline_entry.size as usize;
+        if section_end > data.len() {
+            return Err(ArchiveError::OutOfBounds {
+                offset: pipeline_entry.offset,
+                size: pipeline_entry.size,
+            });
+        }
+
+        let section_bytes = &data[section_start..section_end];
+        let ph: PipelineHeader =
+            rkyv::from_bytes::<PipelineHeader, rkyv::rancor::Error>(section_bytes)
+                .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))?;
+
+        let dedup_index = Self::parse_dedup_index(data, &wrapper);
+        let weights = wrapper.weights();
+
+        let mut models = Vec::new();
+        for entry in &ph.models {
+            let start = entry.offset as usize;
+            let end = start + entry.size as usize;
+            if end > weights.len() {
+                return Err(ArchiveError::OutOfBounds {
+                    offset: entry.offset,
+                    size: entry.size,
+                });
+            }
+
+            // Use unchecked (skips CRC32) for sub-archive graph deserialization.
+            // Sub-archive weights may be empty (shared via dedup index).
+            let mut model_plan = load_from_bytes_unchecked(&weights[start..end])?;
+
+            // Zero-copy weight resolution: borrow from the wrapper's mmap.
+            if model_plan.weights().is_empty() {
+                if let Some(ref idx) = dedup_index {
+                    if let Some(dedup_entry) = idx.find_component(&entry.name) {
+                        let w_start = dedup_entry.offset as usize;
+                        let w_end = w_start + dedup_entry.size as usize;
+                        if w_end <= weights.len() {
+                            // Borrow shared weights directly from mmap — no copy.
+                            model_plan.set_weights_borrowed(&weights[w_start..w_end]);
+                        }
+                    }
+                }
+            }
+
+            models.push((entry.name.clone(), model_plan));
+        }
+
+        Ok(Self { header: ph, models })
+    }
+
     /// Parse the `WeightDedupIndex` from the wrapper archive, if present.
     fn parse_dedup_index(data: &[u8], wrapper: &LoadedPlan) -> Option<WeightDedupIndex> {
         let entry = wrapper.sections().find(SECTION_WEIGHT_DEDUP)?;
@@ -164,5 +234,69 @@ mod tests {
         let loaded = LoadedPipeline::from_bytes(&pipeline).unwrap();
         assert!(loaded.model(0).is_some());
         assert!(loaded.model(1).is_none());
+    }
+
+    /// Build a graph-only sub-archive (no weights).
+    fn make_graph_only_archive() -> Vec<u8> {
+        let mut g = Graph::new();
+        g.add_node(GraphOp::Input);
+        g.add_node(GraphOp::Output);
+        HoloWriter::new().set_graph(&g).build().unwrap()
+    }
+
+    #[test]
+    fn shared_weights_round_trip() {
+        use crate::weight::dedup::{WeightDedupIndex, WeightStore};
+
+        // Build shared weights via WeightStore.
+        let mut store = WeightStore::new();
+        store.insert("lm.prefill", "lm", &[1u8, 2, 3, 4]);
+        store.insert("lm.decode", "lm", &[5u8, 6, 7, 8]);
+        let (shared_blob, dedup_index) = store.build();
+
+        // Build pipeline with shared weights.
+        let pipeline_bytes = PipelineWriter::new()
+            .add_model("lm.prefill", make_graph_only_archive())
+            .add_model("lm.decode", make_graph_only_archive())
+            .build_with_shared_weights(shared_blob.clone(), &dedup_index)
+            .unwrap();
+
+        // Load and verify both models get weights from the shared blob.
+        let loaded = LoadedPipeline::from_bytes(&pipeline_bytes).unwrap();
+        assert_eq!(loaded.model_count(), 2);
+
+        // Sub-archives had empty weights, so they should be grafted from dedup.
+        let prefill = loaded.model_by_name("lm.prefill").unwrap();
+        let decode = loaded.model_by_name("lm.decode").unwrap();
+
+        // Both share the same weight group "lm", so they get the same blob.
+        assert!(!prefill.weights().is_empty());
+        assert!(!decode.weights().is_empty());
+    }
+
+    #[test]
+    fn shared_weights_zero_copy() {
+        use crate::weight::dedup::WeightStore;
+
+        let mut store = WeightStore::new();
+        store.insert("lm.prefill", "lm", &[10u8; 64]);
+        store.insert("lm.decode", "lm", &[20u8; 64]);
+        let (shared_blob, dedup_index) = store.build();
+
+        let pipeline_bytes = PipelineWriter::new()
+            .add_model("lm.prefill", make_graph_only_archive())
+            .add_model("lm.decode", make_graph_only_archive())
+            .build_with_shared_weights(shared_blob, &dedup_index)
+            .unwrap();
+
+        // Zero-copy load.
+        // SAFETY: pipeline_bytes outlives loaded.
+        let loaded = unsafe { LoadedPipeline::from_bytes_zero_copy(&pipeline_bytes) }.unwrap();
+        assert_eq!(loaded.model_count(), 2);
+
+        let prefill = loaded.model_by_name("lm.prefill").unwrap();
+        let decode = loaded.model_by_name("lm.decode").unwrap();
+        assert!(!prefill.weights().is_empty());
+        assert!(!decode.weights().is_empty());
     }
 }

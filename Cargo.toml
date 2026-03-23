@@ -44,8 +44,11 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 
-# JSON output (CLI only)
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
+dirs = "6"
 
 # Math (no_std transcendental functions)
 libm = "0.2"
@@ -84,6 +87,9 @@ hologram-archive = { workspace = true }
 hologram-exec = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
 
 # Optional: compilation pipeline
 hologram-compiler = { workspace = true, optional = true }

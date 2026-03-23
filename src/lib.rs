@@ -17,6 +17,8 @@
 //! | `full` | no | All of the above |
 //! | `wasm` | no | WASM bindings (implies `ffi`) |
 
+pub mod config;
+
 pub use hologram_archive;
 pub use hologram_core;
 pub use hologram_exec;

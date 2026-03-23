@@ -65,3 +65,70 @@ cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
 ```
 
 Link against the compiled `libhologram_ffi` and include `hologram.h`. Functions return `0` on success, negative error codes on failure — call `hologram_last_error()` for details.
+
+## Runtime Configuration
+
+Hologram loads settings from TOML config files, checked in priority order:
+
+1. `--config <path>` flag (explicit override)
+2. `.hologram/config.toml` in the current directory (project-local)
+3. `~/.hologram/config.toml` (user-global)
+4. Built-in defaults
+
+### Config file reference
+
+```toml
+[cache]
+# Directory for decompressed archive caches.
+# Compressed archives are decompressed once, then mmap'd from cache.
+# Supports ~ expansion. Default: cache next to the archive file.
+dir = "~/.hologram/cache"
+
+[archive]
+# Compression settings for new archives.
+# false = larger files, instant mmap loading (default).
+# true  = smaller files, decompression required on first load.
+compress_weights = false
+compress_graph = false
+
+[inference]
+# Default inference parameters (CLI flags override these).
+temperature = 0.7
+top_k = 40
+max_tokens = 128
+```
+
+### Config resolution
+
+Project-local config (`.hologram/config.toml`) overrides user-global config (`~/.hologram/config.toml`). CLI flags override both. Missing files are silently ignored.
+
+```rust
+use hologram::config::HologramConfig;
+
+let config = HologramConfig::load();           // standard locations
+let config = HologramConfig::load_file(path);  // explicit file
+let cache_dir = config.cache_dir();            // Option<PathBuf>, ~ expanded
+```
+
+## Archive Loading Modes
+
+| Mode | Archive type | Load time | RSS |
+|------|-------------|-----------|-----|
+| **Zero-copy mmap** | Uncompressed | Instant (<1ms) | On-demand via page faults |
+| **Decompress + cache** | Compressed | First run: slow. Subsequent: instant | Cache file + mmap |
+| **In-memory** | Any | Proportional to size | Full archive in heap |
+
+`HoloWriter` produces uncompressed archives by default for instant mmap loading:
+
+```rust
+// Default: uncompressed, instant loading
+HoloWriter::new().set_graph(&g).set_weights(w).build()?;
+
+// Opt-in compression for distribution
+HoloWriter::new().set_graph(&g).set_weights(w)
+    .compress_weights()
+    .compress_graph()
+    .build()?;
+```
+
+When loading a compressed archive, the runtime automatically decompresses to a cache file on first run. Subsequent runs mmap the cache for instant loading. The cache location is configurable via the `[cache] dir` setting or `--cache-dir` CLI flag.
