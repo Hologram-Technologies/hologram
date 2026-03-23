@@ -113,10 +113,39 @@ pub fn execute_tape(
     tape.execute(&mut arena, &tape_ctx)?;
 
     // Extract outputs.
-    let mut outputs = Vec::with_capacity(sg.output_names.len());
-    for (i, name) in sg.output_names.iter().enumerate() {
-        let node_id = sg.output_node_ids[i];
-        outputs.push((name.clone(), arena.take(node_id)?));
+    let outputs = collect_outputs(sg, &mut arena)?;
+    Ok(outputs)
+}
+
+/// Collect graph outputs from the arena.
+///
+/// Uses explicitly registered `output_node_ids` when available. Falls back to
+/// scanning for `GraphOp::Output` nodes when no outputs are registered — this
+/// handles graphs built via `GraphBuilder` without explicit `add_output()` calls,
+/// which is common for ONNX-imported vision models.
+fn collect_outputs(
+    sg: &hologram_archive::format::graph::SerializedGraph,
+    arena: &mut crate::buffer::BufferArena<'_>,
+) -> ExecResult<GraphOutputs> {
+    use hologram_graph::graph::GraphOp;
+
+    if !sg.output_node_ids.is_empty() {
+        // Explicit output registration — use it directly.
+        let mut outputs = Vec::with_capacity(sg.output_names.len());
+        for (i, name) in sg.output_names.iter().enumerate() {
+            let node_id = sg.output_node_ids[i];
+            outputs.push((name.clone(), arena.take(node_id)?));
+        }
+        return Ok(GraphOutputs::from_named(outputs));
+    }
+
+    // Fallback: collect from GraphOp::Output nodes in the graph.
+    let mut outputs = Vec::new();
+    for node in &sg.nodes {
+        if matches!(node.op, GraphOp::Output) {
+            let data = arena.take(node.id)?;
+            outputs.push((String::new(), data));
+        }
     }
     Ok(GraphOutputs::from_named(outputs))
 }
@@ -199,12 +228,8 @@ pub fn execute_tape_with_kv(
     // Swap the updated KV state back out.
     *kv_state = tape_ctx.kv_state.expect("kv_state was set").into_inner();
 
-    let mut outputs = Vec::with_capacity(sg.output_names.len());
-    for (i, name) in sg.output_names.iter().enumerate() {
-        let node_id = sg.output_node_ids[i];
-        outputs.push((name.clone(), arena.take(node_id)?));
-    }
-    Ok(GraphOutputs::from_named(outputs))
+    let outputs = collect_outputs(sg, &mut arena)?;
+    Ok(outputs)
 }
 
 #[cfg(test)]
@@ -434,5 +459,43 @@ mod tests {
         inputs.set(0, vec![42, 43, 44]);
         let result = execute_tape(&tape, &plan, &inputs).unwrap();
         assert_eq!(result.by_name("y").unwrap(), &[42, 43, 44]);
+    }
+
+    /// Graph with Output wrapper but NO explicit add_output() call.
+    /// Verifies auto-detection of GraphOp::Output nodes produces data.
+    #[test]
+    fn tape_output_auto_detected() {
+        use hologram_core::op::FloatOp;
+
+        // Build graph WITHOUT calling .output() — no explicit output registration.
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+            .node_with_inputs(GraphOp::Output, &[1])
+            // NOTE: no .output("y", 2) call!
+            .build();
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+        let plan = hologram_archive::load_from_bytes(&archive).unwrap();
+        let tape = build_tape_from_plan(&plan).unwrap();
+
+        let input_f32: Vec<u8> = [
+            (-1.0f32).to_le_bytes(),
+            (2.0f32).to_le_bytes(),
+            (-3.0f32).to_le_bytes(),
+            (4.0f32).to_le_bytes(),
+        ]
+        .concat();
+        let mut inputs = GraphInputs::new();
+        inputs.set(0, input_f32);
+
+        let result = execute_tape(&tape, &plan, &inputs).unwrap();
+        assert!(
+            !result.is_empty(),
+            "auto-detected Output node should produce data"
+        );
+        let output = result.get(0).expect("should have at least one output");
+        let floats: &[f32] = bytemuck::cast_slice(output.1);
+        assert_eq!(floats, &[0.0, 2.0, 0.0, 4.0]);
     }
 }

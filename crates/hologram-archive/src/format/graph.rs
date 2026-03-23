@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use hologram_core::op::FloatDType;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 use hologram_graph::graph::node::{InputSource, Node, NodeId};
+use hologram_graph::graph::GraphOp;
 use hologram_graph::Graph;
 
 /// Compact, rkyv-serializable snapshot of a Graph.
@@ -49,12 +50,28 @@ pub struct SerializedGraph {
 
 impl SerializedGraph {
     /// Create from a live Graph by extracting live nodes.
+    ///
+    /// If no outputs are explicitly registered via `graph.add_output()`,
+    /// auto-detects `GraphOp::Output` nodes and registers them with empty
+    /// names. This ensures graphs built without explicit output registration
+    /// (common for ONNX imports) still produce output when executed.
     #[must_use]
     pub fn from_graph(graph: &Graph) -> Self {
         let nodes: Vec<Node> = graph.nodes().cloned().collect();
         let input_names: Vec<String> = graph.inputs().to_vec();
-        let (output_names, output_node_ids): (Vec<_>, Vec<_>) =
+        let (mut output_names, mut output_node_ids): (Vec<_>, Vec<_>) =
             graph.outputs().iter().cloned().unzip();
+
+        // Fallback: if no outputs are explicitly registered, auto-detect
+        // GraphOp::Output nodes in the graph.
+        if output_node_ids.is_empty() {
+            for node in &nodes {
+                if matches!(node.op, GraphOp::Output) {
+                    output_names.push(String::new());
+                    output_node_ids.push(node.id);
+                }
+            }
+        }
         let constants = graph.constant_store().clone();
         let constant_shapes: Vec<(ConstantId, Vec<usize>)> = graph
             .constant_shapes()

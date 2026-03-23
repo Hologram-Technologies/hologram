@@ -521,4 +521,208 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(from_f32_bytes(&outputs[0].1), vec![1.0, 2.0, 3.0]);
     }
+
+    /// ONNX-style graph: output_node_ids points to a compute node (no
+    /// GraphOp::Output wrapper). Builds SerializedGraph directly, mimicking
+    /// how ONNX import typically wires outputs.
+    #[test]
+    fn tape_execute_onnx_style_no_output_wrapper() {
+        use crate::buffer::BufferArena;
+        use crate::eval::schedule_bridge::build_schedule;
+        use crate::tape::TapeContext;
+        use hologram_graph::constant::ConstantStore;
+        use hologram_graph::graph::node::{InputSlot, Node};
+
+        fn nid(n: u32) -> NodeId {
+            NodeId::new(n, 0)
+        }
+
+        // Input(0) → Relu(1), output registered at Relu node (no Output wrapper)
+        let sg = SerializedGraph {
+            nodes: vec![
+                Node {
+                    id: nid(0),
+                    op: GraphOp::Input,
+                    inputs: Default::default(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(1),
+                    op: GraphOp::Float(FloatOp::Relu),
+                    inputs: vec![InputSlot::from_node(nid(0))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+            ],
+            input_names: vec!["input".into()],
+            output_names: vec!["output".into()],
+            output_node_ids: vec![nid(1)], // Points to compute node, no Output wrapper
+            constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
+        };
+
+        let schedule = build_schedule(&sg).expect("schedule should build");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
+
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let mut arena = BufferArena::with_capacity(sg.nodes.len());
+        arena.insert_borrowed_with_elem_size(nid(0), &input_data, 4);
+
+        tape.prewarm_arena(&mut arena);
+        let constants = ConstantStore::default();
+        let tape_ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &tape_ctx)
+            .expect("tape execution should succeed");
+
+        // Output registered at Relu node (no Output wrapper)
+        let node_id = sg.output_node_ids[0];
+        let output_data = arena.take(node_id).expect("output should be in arena");
+        assert!(
+            !output_data.is_empty(),
+            "ONNX-style output should not be empty"
+        );
+        assert_eq!(from_f32_bytes(&output_data), vec![0.0, 2.0, 0.0, 4.0]);
+    }
+
+    /// ONNX-style graph with Output wrapper: Input(0) → Relu(1) → Output(2).
+    /// Output registered at the Output wrapper node.
+    #[test]
+    fn tape_execute_onnx_style_with_output_wrapper() {
+        use crate::buffer::BufferArena;
+        use crate::eval::schedule_bridge::build_schedule;
+        use crate::tape::TapeContext;
+        use hologram_graph::constant::ConstantStore;
+        use hologram_graph::graph::node::{InputSlot, Node};
+
+        fn nid(n: u32) -> NodeId {
+            NodeId::new(n, 0)
+        }
+
+        // Input(0) → Relu(1) → Output(2), output registered at Output wrapper
+        let sg = SerializedGraph {
+            nodes: vec![
+                Node {
+                    id: nid(0),
+                    op: GraphOp::Input,
+                    inputs: Default::default(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(1),
+                    op: GraphOp::Float(FloatOp::Relu),
+                    inputs: vec![InputSlot::from_node(nid(0))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(2),
+                    op: GraphOp::Output,
+                    inputs: vec![InputSlot::from_node(nid(1))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+            ],
+            input_names: vec!["input".into()],
+            output_names: vec!["output".into()],
+            output_node_ids: vec![nid(2)], // Points to Output wrapper
+            constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
+        };
+
+        let schedule = build_schedule(&sg).expect("schedule should build");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
+
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let mut arena = BufferArena::with_capacity(sg.nodes.len());
+        arena.insert_borrowed_with_elem_size(nid(0), &input_data, 4);
+
+        tape.prewarm_arena(&mut arena);
+        let constants = ConstantStore::default();
+        let tape_ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &tape_ctx)
+            .expect("tape execution should succeed");
+
+        let node_id = sg.output_node_ids[0];
+        let output_data = arena.take(node_id).expect("output should be in arena");
+        assert!(
+            !output_data.is_empty(),
+            "output with wrapper should not be empty"
+        );
+        assert_eq!(from_f32_bytes(&output_data), vec![0.0, 2.0, 0.0, 4.0]);
+    }
+
+    /// ONNX-style multi-layer chain with GraphInput source.
+    /// Input(0) → Relu(1) → Neg(2) → Output(3), first op uses GraphInput.
+    #[test]
+    fn tape_execute_onnx_style_graph_input_to_compute() {
+        use crate::buffer::BufferArena;
+        use crate::eval::schedule_bridge::build_schedule;
+        use crate::tape::TapeContext;
+        use hologram_graph::constant::ConstantStore;
+        use hologram_graph::graph::node::{InputSlot, Node};
+
+        fn nid(n: u32) -> NodeId {
+            NodeId::new(n, 0)
+        }
+
+        // Input(0) with GraphInput edge to Relu(1), then Node edge to Neg(2) → Output(3)
+        let sg = SerializedGraph {
+            nodes: vec![
+                Node {
+                    id: nid(0),
+                    op: GraphOp::Input,
+                    inputs: Default::default(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(1),
+                    op: GraphOp::Float(FloatOp::Relu),
+                    inputs: vec![InputSlot::from_graph_input(0)].into_iter().collect(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(2),
+                    op: GraphOp::Float(FloatOp::Neg),
+                    inputs: vec![InputSlot::from_node(nid(1))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(3),
+                    op: GraphOp::Output,
+                    inputs: vec![InputSlot::from_node(nid(2))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+            ],
+            input_names: vec!["input".into()],
+            output_names: vec!["result".into()],
+            output_node_ids: vec![nid(3)],
+            constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
+        };
+
+        let schedule = build_schedule(&sg).expect("schedule should build");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
+
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let mut arena = BufferArena::with_capacity(sg.nodes.len());
+        arena.insert_borrowed_with_elem_size(nid(0), &input_data, 4);
+
+        tape.prewarm_arena(&mut arena);
+        let constants = ConstantStore::default();
+        let tape_ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &tape_ctx)
+            .expect("tape execution should succeed");
+
+        let node_id = sg.output_node_ids[0];
+        let output_data = arena.take(node_id).expect("output should be in arena");
+        assert!(
+            !output_data.is_empty(),
+            "GraphInput→compute→output should produce data"
+        );
+        // Relu([-1,2,-3,4])=[0,2,0,4]; Neg→[0,-2,0,-4]
+        assert_eq!(from_f32_bytes(&output_data), vec![0.0, -2.0, 0.0, -4.0]);
+    }
 }
