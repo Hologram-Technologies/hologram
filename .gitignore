@@ -8,3 +8,4 @@
 .mypy_cache
 .playwright-mcp/
 **/target
+specs/scratch.md
