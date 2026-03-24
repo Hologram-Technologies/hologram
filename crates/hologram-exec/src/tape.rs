@@ -781,6 +781,36 @@ fn dispatch_inline_unary(kernel: &TapeKernel, input: &[f32], out_buf: &mut Vec<u
             });
         }
         TapeKernel::InlineExp => inline_unary_f32(input, out_buf, |v| v.exp()),
+        TapeKernel::InlineLog => inline_unary_f32(input, out_buf, |v| v.ln()),
+        TapeKernel::InlineSqrt => inline_unary_f32(input, out_buf, |v| v.sqrt()),
+        TapeKernel::InlineCos => inline_unary_f32(input, out_buf, |v| v.cos()),
+        TapeKernel::InlineSin => inline_unary_f32(input, out_buf, |v| v.sin()),
+        TapeKernel::InlineSign => inline_unary_f32(input, out_buf, |v| v.signum()),
+        TapeKernel::InlineFloor => inline_unary_f32(input, out_buf, |v| v.floor()),
+        TapeKernel::InlineCeil => inline_unary_f32(input, out_buf, |v| v.ceil()),
+        TapeKernel::InlineRound => inline_unary_f32(input, out_buf, |v| v.round()),
+        TapeKernel::InlineErf => {
+            // Abramowitz & Stegun approximation (same as dispatch_kernel path).
+            inline_unary_f32(input, out_buf, |v| {
+                #[allow(clippy::excessive_precision)]
+                const A1: f32 = 0.254_829_592;
+                #[allow(clippy::excessive_precision)]
+                const A2: f32 = -0.284_496_736;
+                #[allow(clippy::excessive_precision)]
+                const A3: f32 = 1.421_413_741;
+                #[allow(clippy::excessive_precision)]
+                const A4: f32 = -1.453_152_027;
+                #[allow(clippy::excessive_precision)]
+                const A5: f32 = 1.061_405_429;
+                #[allow(clippy::excessive_precision)]
+                const P: f32 = 0.327_591_1;
+                let sign = if v >= 0.0 { 1.0f32 } else { -1.0f32 };
+                let x = v.abs();
+                let t = 1.0 / (1.0 + P * x);
+                let y = 1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t * (-x * x).exp();
+                sign * y
+            });
+        }
         TapeKernel::InlineReciprocal => inline_unary_f32(input, out_buf, |v| 1.0 / v),
         _ => unreachable!("dispatch_inline_unary called for non-unary kernel"),
     }
@@ -844,6 +874,54 @@ fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
         }
         TapeKernel::InlineReciprocal => {
             inline_unary_inplace(buf, |v| 1.0 / v);
+            true
+        }
+        TapeKernel::InlineLog => {
+            inline_unary_inplace(buf, |v| v.ln());
+            true
+        }
+        TapeKernel::InlineSqrt => {
+            inline_unary_inplace(buf, |v| v.sqrt());
+            true
+        }
+        TapeKernel::InlineCos => {
+            inline_unary_inplace(buf, |v| v.cos());
+            true
+        }
+        TapeKernel::InlineSin => {
+            inline_unary_inplace(buf, |v| v.sin());
+            true
+        }
+        TapeKernel::InlineSign => {
+            inline_unary_inplace(buf, |v| v.signum());
+            true
+        }
+        TapeKernel::InlineFloor => {
+            inline_unary_inplace(buf, |v| v.floor());
+            true
+        }
+        TapeKernel::InlineCeil => {
+            inline_unary_inplace(buf, |v| v.ceil());
+            true
+        }
+        TapeKernel::InlineRound => {
+            inline_unary_inplace(buf, |v| v.round());
+            true
+        }
+        TapeKernel::InlineErf => {
+            #[allow(clippy::excessive_precision)]
+            inline_unary_inplace(buf, |v| {
+                const A1: f32 = 0.254_829_592;
+                const A2: f32 = -0.284_496_736;
+                const A3: f32 = 1.421_413_741;
+                const A4: f32 = -1.453_152_027;
+                const A5: f32 = 1.061_405_429;
+                const P: f32 = 0.327_591_1;
+                let sign = if v >= 0.0 { 1.0f32 } else { -1.0f32 };
+                let x = v.abs();
+                let t = 1.0 / (1.0 + P * x);
+                sign * (1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t * (-x * x).exp())
+            });
             true
         }
         _ => false,

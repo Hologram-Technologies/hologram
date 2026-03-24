@@ -196,8 +196,8 @@ mod tests {
     #[test]
     fn identity_table_is_linear() {
         let mut table = [0u8; 256];
-        for i in 0..256 {
-            table[i] = i as u8;
+        for (i, v) in table.iter_mut().enumerate() {
+            *v = i as u8;
         }
         let hlut = HierarchicalLut::from_flat(&table);
         // Identity should have mostly linear pages.
@@ -209,8 +209,8 @@ mod tests {
     fn random_table_uses_table16() {
         // A shuffled table can't compress.
         let mut table = [0u8; 256];
-        for i in 0..256 {
-            table[i] = (i as u8).wrapping_mul(137).wrapping_add(73);
+        for (i, v) in table.iter_mut().enumerate() {
+            *v = (i as u8).wrapping_mul(137).wrapping_add(73);
         }
         let hlut = HierarchicalLut::from_flat(&table);
         // Should need full Table16 for most pages.
@@ -223,8 +223,8 @@ mod tests {
     fn relu_table_has_constant_and_linear() {
         // ReLU: 0 for input < 128 (signed), identity for input >= 128
         let mut table = [0u8; 256];
-        for i in 128..256 {
-            table[i] = (i - 128) as u8;
+        for (i, v) in table[128..].iter_mut().enumerate() {
+            *v = i as u8;
         }
         let hlut = HierarchicalLut::from_flat(&table);
         // First 8 pages should be constant(0).

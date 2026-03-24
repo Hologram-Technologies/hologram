@@ -319,8 +319,8 @@ mod tests {
         // A = identity-like (1s on diagonal, 0s elsewhere — simplified as all 1s)
         let mut a_floats: Vec<f32> = vec![0.0; m * k];
         // Set first row to all 1.0s
-        for j in 0..k {
-            a_floats[j] = 1.0;
+        for v in a_floats[..k].iter_mut() {
+            *v = 1.0;
         }
         let a: Vec<u8> = bytemuck::cast_slice(&a_floats).to_vec();
 
@@ -343,21 +343,16 @@ mod tests {
 
         let out_floats: &[f32] = bytemuck::cast_slice(&output_bytes);
         // First row of C: sum(A[0,:] * B[:,j]) = sum(1.0 * 2.0, k times) = 2*k = 128.0
-        for j in 0..n {
+        let expected = 2.0 * k as f32;
+        for (j, &val) in out_floats[..n].iter().enumerate() {
             assert!(
-                (out_floats[j] - (2.0 * k as f32)).abs() < 0.1,
-                "matmul C[0,{j}]: got {}, expected {}",
-                out_floats[j],
-                2.0 * k as f32,
+                (val - expected).abs() < 0.1,
+                "matmul C[0,{j}]: got {val}, expected {expected}",
             );
         }
         // Second row should be all 0s (A[1,:] = 0)
-        for j in 0..n {
-            assert!(
-                out_floats[n + j].abs() < 0.1,
-                "matmul C[1,{j}]: got {}, expected 0",
-                out_floats[n + j],
-            );
+        for (j, &val) in out_floats[n..2 * n].iter().enumerate() {
+            assert!(val.abs() < 0.1, "matmul C[1,{j}]: got {val}, expected 0",);
         }
     }
 

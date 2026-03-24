@@ -1234,7 +1234,7 @@ fn test_conv2d_non_square() {
     let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
     let input = f32_bytes(&input);
     // All-ones 1x1x3x3 kernel → each output pixel = sum of its 3x3 neighbourhood (with zero-pad)
-    let kernel = f32_bytes(&vec![1.0; 9]);
+    let kernel = f32_bytes(&[1.0; 9]);
     let op = FloatOp::Conv2d {
         kernel_h: 3,
         kernel_w: 3,
@@ -1262,7 +1262,7 @@ fn test_conv2d_non_square_via_dispatch_into() {
 
     let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
     let input = f32_bytes(&input);
-    let kernel = f32_bytes(&vec![1.0; 9]);
+    let kernel = f32_bytes(&[1.0; 9]);
     let op = FloatOp::Conv2d {
         kernel_h: 3,
         kernel_w: 3,
@@ -1294,7 +1294,7 @@ fn test_conv2d_strided_non_square() {
     // w_out = (5 + 2 - 3)/2 + 1 = 3
     let input: Vec<f32> = (1..=35).map(|x| x as f32).collect();
     let input = f32_bytes(&input);
-    let kernel = f32_bytes(&vec![1.0; 9]);
+    let kernel = f32_bytes(&[1.0; 9]);
     let op = FloatOp::Conv2d {
         kernel_h: 3,
         kernel_w: 3,
@@ -1318,7 +1318,7 @@ fn test_conv2d_with_shapes_non_square() {
     // Test the dispatch_float_with_shapes path with non-square input.
     let input: Vec<f32> = (1..=21).map(|x| x as f32).collect();
     let input = f32_bytes(&input);
-    let kernel = f32_bytes(&vec![1.0; 9]); // 1x1x3x3
+    let kernel = f32_bytes(&[1.0; 9]); // 1x1x3x3
     let op = FloatOp::Conv2d {
         kernel_h: 3,
         kernel_w: 3,
@@ -1350,7 +1350,7 @@ fn test_conv_transpose_non_square() {
     // w_out = (3-1)*1 + 1*(3-1) + 0 + 1 - 2*1 = 2 + 2 + 1 - 2 = 3
     let input: Vec<f32> = (1..=12).map(|x| x as f32).collect();
     let input = f32_bytes(&input);
-    let kernel = f32_bytes(&vec![1.0; 9]); // 1x1x3x3
+    let kernel = f32_bytes(&[1.0; 9]); // 1x1x3x3
     let op = FloatOp::ConvTranspose {
         kernel_h: 3,
         kernel_w: 3,

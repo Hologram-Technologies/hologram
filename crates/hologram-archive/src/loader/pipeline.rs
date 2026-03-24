@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn shared_weights_round_trip() {
-        use crate::weight::dedup::{WeightDedupIndex, WeightStore};
+        use crate::weight::dedup::WeightStore;
 
         // Build shared weights via WeightStore.
         let mut store = WeightStore::new();

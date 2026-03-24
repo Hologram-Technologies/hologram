@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(norm.iter().sum::<u32>(), FREQ_TOTAL);
         // Uniform should give each symbol ~64
         for &f in &norm {
-            assert!(f >= 60 && f <= 68);
+            assert!((60..=68).contains(&f));
         }
     }
 

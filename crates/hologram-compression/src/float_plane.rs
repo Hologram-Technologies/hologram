@@ -118,7 +118,15 @@ mod tests {
     #[test]
     fn f32_round_trip() {
         // Some f32 values as bytes
-        let values: &[f32] = &[1.0, -1.0, 0.0, 3.14, 42.0, f32::MIN, f32::MAX];
+        let values: &[f32] = &[
+            1.0,
+            -1.0,
+            0.0,
+            std::f32::consts::PI,
+            42.0,
+            f32::MIN,
+            f32::MAX,
+        ];
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
 
         let transposed = transpose_f32(&bytes).unwrap();
@@ -128,7 +136,7 @@ mod tests {
 
     #[test]
     fn f64_round_trip() {
-        let values: &[f64] = &[1.0, -1.0, 0.0, 3.14159265, 42.0];
+        let values: &[f64] = &[1.0, -1.0, 0.0, std::f64::consts::PI, 42.0];
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
 
         let transposed = transpose_f64(&bytes).unwrap();

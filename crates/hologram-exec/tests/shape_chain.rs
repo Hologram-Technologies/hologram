@@ -291,7 +291,7 @@ fn i64_concat_two_inputs_correct_values() {
 fn batched_matmul_rejects_k_dim_mismatch() {
     use hologram_exec::float_dispatch::dispatch_batched_matmul;
 
-    let a: Vec<f32> = vec![0.0f32; 1 * 40 * 4096]; // wrong hidden (should be 2048)
+    let a: Vec<f32> = vec![0.0f32; 40 * 4096]; // wrong hidden (should be 2048)
     let b: Vec<f32> = vec![0.0f32; 2048 * 2048]; // actual output-projection weight
 
     let result = dispatch_batched_matmul(
@@ -311,7 +311,7 @@ fn batched_matmul_rejects_k_dim_mismatch() {
 fn batched_matmul_correct_shapes_succeed() {
     use hologram_exec::float_dispatch::dispatch_batched_matmul;
 
-    let a: Vec<f32> = vec![1.0f32; 1 * 40 * 2048];
+    let a: Vec<f32> = vec![1.0f32; 40 * 2048];
     let b: Vec<f32> = vec![0.5f32; 2048 * 2048];
 
     let (out_bytes, out_shape) = dispatch_batched_matmul(
