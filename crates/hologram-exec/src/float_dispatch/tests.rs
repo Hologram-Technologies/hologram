@@ -270,3 +270,129 @@ fn test_infer_slice_axis_size_edge_cases() {
     // n_elems is prime, end < n_elems → only n_elems divides itself.
     assert_eq!(super::infer_slice_axis_size(17, 4), 17);
 }
+
+// ── Sprint 21: attention zero-copy heads_first path ─────────────────
+
+#[test]
+fn test_attention_heads_first_produces_output() {
+    // Minimal attention: 1 head, seq=2, head_dim=2, heads_first=true.
+    // Q=[1,0, 0,1], K=[1,0, 0,1], V=[1,2, 3,4] → output should be non-empty.
+    let q = f32_bytes(&[1.0, 0.0, 0.0, 1.0]); // [1 head, 2 seq, 2 dim]
+    let k = f32_bytes(&[1.0, 0.0, 0.0, 1.0]);
+    let v = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
+    let result = dispatch_float(
+        &FloatOp::Attention {
+            head_dim: 2,
+            num_q_heads: 1,
+            num_kv_heads: 1,
+            scale: f32::to_bits(1.0 / 2.0f32.sqrt()),
+            causal: false,
+            heads_first: true,
+            qk_norm: false,
+            rope: false,
+            rope_base: 0,
+        },
+        &[&q, &k, &v],
+    )
+    .unwrap();
+    let out: &[f32] = bytemuck::cast_slice(&result);
+    assert_eq!(
+        out.len(),
+        4,
+        "attention output should have 4 floats (1 head × 2 seq × 2 dim)"
+    );
+}
+
+#[test]
+fn test_attention_heads_first_matches_transposed() {
+    // Same attention, both paths should produce identical results.
+    // heads_first=true: [n_heads, seq, head_dim]
+    // heads_first=false: [seq, n_heads, head_dim] — needs transpose
+    let head_dim = 2;
+    let n_heads = 1;
+    let seq = 2;
+
+    // heads_first layout: [1, 2, 2]
+    let q_hf = f32_bytes(&[1.0, 0.5, 0.5, 1.0]);
+    let k_hf = f32_bytes(&[1.0, 0.0, 0.0, 1.0]);
+    let v_hf = f32_bytes(&[2.0, 3.0, 4.0, 5.0]);
+
+    // seq_first layout: same data but [2, 1, 2] — identical for n_heads=1.
+    let q_sf = q_hf.clone();
+    let k_sf = k_hf.clone();
+    let v_sf = v_hf.clone();
+
+    let op_hf = FloatOp::Attention {
+        head_dim: head_dim as u32,
+        num_q_heads: n_heads as u32,
+        num_kv_heads: n_heads as u32,
+        scale: f32::to_bits(1.0 / (head_dim as f32).sqrt()),
+        causal: false,
+        heads_first: true,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+    };
+    let op_sf = FloatOp::Attention {
+        head_dim: head_dim as u32,
+        num_q_heads: n_heads as u32,
+        num_kv_heads: n_heads as u32,
+        scale: f32::to_bits(1.0 / (head_dim as f32).sqrt()),
+        causal: false,
+        heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+    };
+
+    let result_hf = dispatch_float(&op_hf, &[&q_hf, &k_hf, &v_hf]).unwrap();
+    let result_sf = dispatch_float(&op_sf, &[&q_sf, &k_sf, &v_sf]).unwrap();
+
+    let out_hf: &[f32] = bytemuck::cast_slice(&result_hf);
+    let out_sf: &[f32] = bytemuck::cast_slice(&result_sf);
+    assert_eq!(out_hf.len(), seq * n_heads * head_dim);
+    // For n_heads=1, both layouts are identical so outputs must match.
+    for (a, b) in out_hf.iter().zip(out_sf.iter()) {
+        assert!(
+            (a - b).abs() < 1e-5,
+            "heads_first and seq_first should match: {a} vs {b}"
+        );
+    }
+}
+
+// ── Sprint 21: norm into_owned / alloc_f32_in ───────────────────────
+
+#[test]
+fn test_softmax_into_sums_to_one() {
+    use super::norm::dispatch_softmax_into;
+    let x = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
+    let mut out_buf = Vec::new();
+    dispatch_softmax_into(&[&x], 4, &mut out_buf).unwrap();
+    let floats: &[f32] = bytemuck::cast_slice(&out_buf);
+    assert_eq!(floats.len(), 4);
+    let sum: f32 = floats.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-5,
+        "softmax_into should sum to 1, got {sum}"
+    );
+}
+
+#[test]
+fn test_rms_norm_into_matches_allocating() {
+    use super::norm::{dispatch_rms_norm, dispatch_rms_norm_into};
+    let x = f32_bytes(&[1.0, 2.0, 3.0]);
+    let w = f32_bytes(&[1.0, 1.0, 1.0]);
+    let eps = 1e-5f32;
+
+    // Allocating path.
+    let result = dispatch_rms_norm(&[&x, &w], 3, eps).unwrap();
+
+    // _into path.
+    let mut out_buf = Vec::new();
+    dispatch_rms_norm_into(&[&x, &w], 3, eps, &mut out_buf).unwrap();
+
+    assert_eq!(
+        result, out_buf,
+        "rms_norm_into must match allocating dispatch_rms_norm"
+    );
+}

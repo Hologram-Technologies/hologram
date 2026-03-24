@@ -171,4 +171,96 @@ mod tests {
         let result = HoloLoader::open(Path::new("/nonexistent.holo"));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn zero_copy_lazy_graph_deserialization() {
+        // Build an uncompressed archive, load via zero-copy, verify graph
+        // is deserialized lazily on first graph() call.
+        let mut g = Graph::new();
+        let n1 = g.add_node(GraphOp::Input);
+        let n2 = g.add_node(GraphOp::Output);
+        g.add_edge(n1, n2);
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_zero_copy_lazy.holo");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(&archive).unwrap();
+        }
+
+        let loader = HoloLoader::open(&path).unwrap();
+        // SAFETY: loader outlives plan.
+        let plan = unsafe { loader.load_zero_copy() }.unwrap();
+        // Graph should be accessible (triggers lazy deser if Archived variant).
+        assert_eq!(plan.graph().nodes.len(), 2);
+        assert_eq!(plan.node_count(), 2);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_cached_uncompressed_no_cache_file() {
+        // Uncompressed archive should load directly without creating a .cache file.
+        let mut g = Graph::new();
+        g.add_node(GraphOp::Input);
+        let archive = HoloWriter::new().set_graph(&g).build().unwrap();
+
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_load_cached.holo");
+        let cache_path = dir.join("test_load_cached.holo.cache");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(&archive).unwrap();
+        }
+        // Remove any leftover cache file.
+        std::fs::remove_file(&cache_path).ok();
+
+        let (_loader, plan) = HoloLoader::load_cached(&path).unwrap();
+        assert_eq!(plan.node_count(), 1);
+        // No cache file should be created for uncompressed archives.
+        assert!(
+            !cache_path.exists(),
+            "uncompressed archive should not create .cache"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_cached_compressed_creates_cache() {
+        // Compressed archive should produce a .cache file on first load.
+        let mut g = Graph::new();
+        g.add_node(GraphOp::Input);
+        g.add_node(GraphOp::Output);
+        let archive = HoloWriter::new()
+            .set_graph(&g)
+            .compress_graph()
+            .build()
+            .unwrap();
+
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_load_cached_compressed.holo");
+        let cache_path = dir.join("test_load_cached_compressed.holo.cache");
+        std::fs::remove_file(&cache_path).ok();
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(&archive).unwrap();
+        }
+
+        let (_loader, plan) = HoloLoader::load_cached(&path).unwrap();
+        assert_eq!(plan.node_count(), 2);
+        // Cache file should now exist.
+        assert!(
+            cache_path.exists(),
+            "compressed archive should create .cache"
+        );
+
+        // Second load should use the cache (no decompression).
+        let (_loader2, plan2) = HoloLoader::load_cached(&path).unwrap();
+        assert_eq!(plan2.node_count(), 2);
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&cache_path).ok();
+    }
 }

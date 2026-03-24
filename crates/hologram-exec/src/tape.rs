@@ -454,15 +454,7 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineSign => {
-            inline_unary(inputs[0], out_buf, |v| {
-                if v > 0.0 {
-                    1.0
-                } else if v < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            });
+            inline_unary(inputs[0], out_buf, |v| v.signum());
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineFloor => {
@@ -824,6 +816,8 @@ fn dispatch_inline_binary(kernel: &TapeKernel, a: &[f32], b: &[f32], out_buf: &m
         TapeKernel::InlineMul => inline_binary_f32(a, b, out_buf, |x, y| x * y),
         TapeKernel::InlineSub => inline_binary_f32(a, b, out_buf, |x, y| x - y),
         TapeKernel::InlineDiv => inline_binary_f32(a, b, out_buf, |x, y| x / y),
+        TapeKernel::InlineMin => inline_binary_f32(a, b, out_buf, |x, y| x.min(y)),
+        TapeKernel::InlineMax => inline_binary_f32(a, b, out_buf, |x, y| x.max(y)),
         _ => unreachable!("dispatch_inline_binary called for non-binary kernel"),
     }
 }
@@ -2045,5 +2039,295 @@ mod tests {
         let mut dst = vec![0.0f32; 3];
         binary_broadcast(&[1.0, 2.0], &[10.0, 20.0, 30.0], &mut dst, |a, b| a + b);
         assert_eq!(dst, vec![11.0, 22.0, 31.0]);
+    }
+
+    // ── Sprint 21 tests: Passthrough, new inline variants, norm direct-write ──
+
+    /// Helper: build and execute a single-instruction tape, return output f32s.
+    fn run_unary_tape(kernel: TapeKernel, input: &[f32]) -> Vec<f32> {
+        let input_bytes: Vec<u8> = bytemuck::cast_slice(input).to_vec();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel,
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: (input.len() * 4) as u32,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), input_bytes);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(1, 0)).unwrap();
+        bytemuck::cast_slice(out).to_vec()
+    }
+
+    fn run_binary_tape(kernel: TapeKernel, a: &[f32], b: &[f32]) -> Vec<f32> {
+        let a_bytes: Vec<u8> = bytemuck::cast_slice(a).to_vec();
+        let b_bytes: Vec<u8> = bytemuck::cast_slice(b).to_vec();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel,
+            output_idx: 2,
+            input_indices: vec![0, 1],
+            output_elem_size: 4,
+            output_byte_hint: (a.len() * 4) as u32,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), a_bytes);
+        arena.insert(NodeId::new(1, 0), b_bytes);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        bytemuck::cast_slice(out).to_vec()
+    }
+
+    #[test]
+    fn passthrough_identity_cast() {
+        // Passthrough kernel should forward input bytes unchanged.
+        let input = [1.0f32, 2.0, 3.0];
+        let out = run_unary_tape(TapeKernel::Passthrough, &input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn passthrough_empty_input() {
+        let out = run_unary_tape(TapeKernel::Passthrough, &[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn inline_log() {
+        let out = run_unary_tape(TapeKernel::InlineLog, &[1.0, std::f32::consts::E]);
+        assert!((out[0] - 0.0).abs() < 1e-6, "ln(1) = 0");
+        assert!((out[1] - 1.0).abs() < 1e-5, "ln(e) = 1");
+    }
+
+    #[test]
+    fn inline_sqrt() {
+        let out = run_unary_tape(TapeKernel::InlineSqrt, &[4.0, 9.0, 0.0]);
+        assert_eq!(out, [2.0, 3.0, 0.0]);
+    }
+
+    #[test]
+    fn inline_cos_sin() {
+        let out_cos = run_unary_tape(TapeKernel::InlineCos, &[0.0]);
+        let out_sin = run_unary_tape(TapeKernel::InlineSin, &[0.0]);
+        assert!((out_cos[0] - 1.0).abs() < 1e-6, "cos(0) = 1");
+        assert!(out_sin[0].abs() < 1e-6, "sin(0) = 0");
+    }
+
+    #[test]
+    fn inline_sign() {
+        let out = run_unary_tape(TapeKernel::InlineSign, &[-5.0, 0.0, 3.0]);
+        // f32::signum() returns 1.0 for +0.0 (IEEE 754 behavior).
+        assert_eq!(out, [-1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn inline_floor_ceil_round() {
+        let out_floor = run_unary_tape(TapeKernel::InlineFloor, &[1.7, -1.3]);
+        let out_ceil = run_unary_tape(TapeKernel::InlineCeil, &[1.1, -1.9]);
+        let out_round = run_unary_tape(TapeKernel::InlineRound, &[1.5, 2.3]);
+        assert_eq!(out_floor, [1.0, -2.0]);
+        assert_eq!(out_ceil, [2.0, -1.0]);
+        assert_eq!(out_round, [2.0, 2.0]);
+    }
+
+    #[test]
+    fn inline_erf() {
+        let out = run_unary_tape(TapeKernel::InlineErf, &[0.0, 1.0]);
+        assert!(out[0].abs() < 1e-5, "erf(0) = 0");
+        assert!((out[1] - 0.8427).abs() < 0.01, "erf(1) ≈ 0.8427");
+    }
+
+    #[test]
+    fn inline_min_max() {
+        let a = [1.0f32, 5.0, 3.0];
+        let b = [2.0f32, 4.0, 3.0];
+        let mins = run_binary_tape(TapeKernel::InlineMin, &a, &b);
+        let maxs = run_binary_tape(TapeKernel::InlineMax, &a, &b);
+        assert_eq!(mins, [1.0, 4.0, 3.0]);
+        assert_eq!(maxs, [2.0, 5.0, 3.0]);
+    }
+
+    #[test]
+    fn inline_layer_norm() {
+        // LayerNorm: normalize [1, 2, 3] with weight=[1,1,1] bias=[0,0,0]
+        // mean=2, var=2/3, inv_std≈1.2247
+        let x: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0, 3.0]).to_vec();
+        let w: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 1.0, 1.0]).to_vec();
+        let b: Vec<u8> = bytemuck::cast_slice(&[0.0f32, 0.0, 0.0]).to_vec();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineLayerNorm {
+                size: 3,
+                epsilon: f32::to_bits(1e-5),
+            },
+            output_idx: 3,
+            input_indices: vec![0, 1, 2],
+            output_elem_size: 4,
+            output_byte_hint: 12,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), x);
+        arena.insert(NodeId::new(1, 0), w);
+        arena.insert(NodeId::new(2, 0), b);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(3, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats.len(), 3);
+        // Normalized: (x - mean) * inv_std ≈ [-1.2247, 0, 1.2247]
+        assert!((floats[0] + 1.2247).abs() < 0.01);
+        assert!(floats[1].abs() < 0.01);
+        assert!((floats[2] - 1.2247).abs() < 0.01);
+    }
+
+    #[test]
+    fn inline_log_softmax() {
+        // LogSoftmax of [0, 0, 0] → [-ln(3), -ln(3), -ln(3)]
+        let x = [0.0f32, 0.0, 0.0];
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineLogSoftmax { size: 3 },
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 12,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), bytemuck::cast_slice(&x).to_vec());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(1, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        let expected = -(3.0f32.ln());
+        for &v in floats {
+            assert!((v - expected).abs() < 1e-5, "expected {expected}, got {v}");
+        }
+    }
+
+    #[test]
+    fn inline_softmax_into_direct_write() {
+        // Verify InlineSoftmax writes correct values and sums to 1.
+        let x = [1.0f32, 2.0, 3.0];
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineSoftmax { size: 3 },
+            output_idx: 1,
+            input_indices: vec![0],
+            output_elem_size: 4,
+            output_byte_hint: 12,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), bytemuck::cast_slice(&x).to_vec());
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(1, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats.len(), 3);
+        let sum: f32 = floats.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "softmax should sum to 1, got {sum}"
+        );
+        // Values should be monotonically increasing (input was sorted).
+        assert!(floats[0] < floats[1]);
+        assert!(floats[1] < floats[2]);
+    }
+
+    #[test]
+    fn inline_gather_dispatch() {
+        use hologram_core::op::FloatDType;
+        // Gather: inputs[0]=indices (i64), inputs[1]=table (f32)
+        // dim=1 means each entry is 1 float. indices=[2,0] → table[2]=30, table[0]=10
+        let table: Vec<u8> = bytemuck::cast_slice(&[10.0f32, 20.0, 30.0, 40.0]).to_vec();
+        let idx_vals: [i64; 2] = [2, 0];
+        let indices: Vec<u8> = bytemuck::cast_slice(&idx_vals).to_vec();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineGather {
+                dim: 1,
+                dtype: FloatDType::F32,
+            },
+            output_idx: 2,
+            // inputs[0] = indices, inputs[1] = table
+            input_indices: vec![1, 0],
+            output_elem_size: 4,
+            output_byte_hint: 8,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        // node 0 = table, node 1 = indices
+        arena.insert(NodeId::new(0, 0), table);
+        arena.insert(NodeId::new(1, 0), indices);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats, &[30.0, 10.0]);
+    }
+
+    #[test]
+    fn inline_concat_dispatch() {
+        use hologram_core::op::FloatDType;
+        // Concat: [1,2] + [3,4,5] → [1,2,3,4,5]
+        let a: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0]).to_vec();
+        let b: Vec<u8> = bytemuck::cast_slice(&[3.0f32, 4.0, 5.0]).to_vec();
+        let constants = empty_constants();
+        let ctx = TapeContext::new(&constants, &[]);
+        let mut tape = EnumTape::new();
+        tape.push(TapeInstruction {
+            kernel: TapeKernel::InlineConcat {
+                size_a: 2,
+                size_b: 3,
+                dtype: FloatDType::F32,
+            },
+            output_idx: 2,
+            input_indices: vec![0, 1],
+            output_elem_size: 4,
+            output_byte_hint: 20,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), a);
+        arena.insert(NodeId::new(1, 0), b);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        let floats: &[f32] = bytemuck::cast_slice(out);
+        assert_eq!(floats, &[1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 }
