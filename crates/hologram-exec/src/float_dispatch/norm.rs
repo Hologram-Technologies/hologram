@@ -1,19 +1,10 @@
 use super::helpers::*;
 use crate::error::{ExecError, ExecResult};
 
-/// Fast approximate inverse square root (Quake III-style with two Newton-Raphson steps).
-///
-/// Two NR iterations give ~0.001% max relative error — sufficient for
-/// normalization layers and matching standard `1.0 / sqrt(x)` to `< 1e-4`.
+/// Inverse square root — precise, portable, and matches ORT reference output.
 #[inline]
 fn fast_rsqrt(x: f32) -> f32 {
-    let half = 0.5 * x;
-    let i = f32::to_bits(x);
-    let i = 0x5f37_59df - (i >> 1);
-    let mut y = f32::from_bits(i);
-    y = y * (1.5 - half * y * y); // First Newton-Raphson iteration
-    y = y * (1.5 - half * y * y); // Second iteration for higher precision
-    y
+    1.0 / x.sqrt()
 }
 
 pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
