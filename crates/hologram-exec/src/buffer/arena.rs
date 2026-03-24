@@ -145,6 +145,23 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
+        // NaN detector: report first node that introduces NaN.
+        #[cfg(debug_assertions)]
+        if elem_size == 4 && buf.len() >= 4 {
+            let floats: &[f32] = bytemuck::cast_slice(buf);
+            if floats.iter().any(|v| v.is_nan()) {
+                static REPORTED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    let nan_count = floats.iter().filter(|v| v.is_nan()).count();
+                    eprintln!(
+                        "[NaN] first NaN at node_idx={idx} ({nan_count}/{} NaN floats, {} bytes)",
+                        floats.len(),
+                        buf.len()
+                    );
+                }
+            }
+        }
         // Take buf's data, give it to the arena.
         let new_data = std::mem::take(buf);
         let old = self.buffers[idx].replace(ArenaBuffer::Owned(new_data));
@@ -295,6 +312,33 @@ impl<'a> BufferArena<'a> {
         let src_idx = src.index() as usize;
         let dst_idx = dst.index() as usize;
         self.ensure_capacity(dst_idx);
+        // NaN detector for in-place/passthrough ops.
+        #[cfg(debug_assertions)]
+        if src_idx < self.buffers.len() {
+            if let Some(ref ab) = self.buffers[src_idx] {
+                let data = match ab {
+                    ArenaBuffer::Owned(v) => v.as_slice(),
+                    ArenaBuffer::Borrowed(s) => s,
+                    #[cfg(has_metal)]
+                    _ => &[],
+                };
+                let es = self.elem_sizes.get(src_idx).copied().unwrap_or(0);
+                if es == 4 && data.len() >= 4 {
+                    let floats: &[f32] = bytemuck::cast_slice(data);
+                    if floats.iter().any(|v| v.is_nan()) {
+                        static REPORTED_MOVE: std::sync::atomic::AtomicBool =
+                            std::sync::atomic::AtomicBool::new(false);
+                        if !REPORTED_MOVE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            let nan_count = floats.iter().filter(|v| v.is_nan()).count();
+                            eprintln!(
+                                "[NaN-move] src={src_idx} dst={dst_idx} ({nan_count}/{} NaN)",
+                                floats.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
         if src_idx < self.buffers.len() {
             let buf = self.buffers[src_idx].take();
             if buf.is_some() {

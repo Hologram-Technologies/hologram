@@ -281,6 +281,20 @@ impl ComputeBackend for CachedWebGpuBackend {
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
     }
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_batched_matmul(
+        &self,
+        inputs: &[&[u8]],
+        batch: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+        b_broadcast: bool,
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<KernelOutput> {
+        self.0
+            .dispatch_batched_matmul(inputs, batch, m, k, n, b_broadcast, out_buf)
+    }
     fn name(&self) -> &'static str {
         "webgpu"
     }

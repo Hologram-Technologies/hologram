@@ -185,6 +185,66 @@ fn sgemm(
 }
 "#;
 
+/// Batched tiled SGEMM kernel: C[b,M,N] = A[b,M,K] × B[b,K,N].
+/// Z workgroup dimension is batch. B can be shared (b_stride=0).
+const SHADER_BATCHED_SGEMM: &str = r#"
+struct BatchGemmParams { M: u32, K: u32, N: u32, a_stride: u32, b_stride: u32 }
+
+@group(0) @binding(0) var<storage, read> A: array<f32>;
+@group(0) @binding(1) var<storage, read> B: array<f32>;
+@group(0) @binding(2) var<storage, read_write> C: array<f32>;
+@group(0) @binding(3) var<uniform> params: BatchGemmParams;
+
+const TILE: u32 = 16u;
+var<workgroup> tileA: array<array<f32, 16>, 16>;
+var<workgroup> tileB: array<array<f32, 16>, 16>;
+
+@compute @workgroup_size(16, 16)
+fn batched_sgemm(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) tid: vec3<u32>,
+    @builtin(workgroup_id) tgid: vec3<u32>,
+) {
+    let batch = tgid.z;
+    let a_off = batch * params.a_stride;
+    let b_off = batch * params.b_stride;
+    let c_off = batch * params.M * params.N;
+
+    let row = tgid.y * TILE + tid.y;
+    let col = tgid.x * TILE + tid.x;
+    var sum: f32 = 0.0;
+    let num_tiles = (params.K + TILE - 1u) / TILE;
+
+    for (var t: u32 = 0u; t < num_tiles; t = t + 1u) {
+        let a_col = t * TILE + tid.x;
+        if (row < params.M && a_col < params.K) {
+            tileA[tid.y][tid.x] = A[a_off + row * params.K + a_col];
+        } else {
+            tileA[tid.y][tid.x] = 0.0;
+        }
+
+        let b_row = t * TILE + tid.y;
+        if (b_row < params.K && col < params.N) {
+            tileB[tid.y][tid.x] = B[b_off + b_row * params.N + col];
+        } else {
+            tileB[tid.y][tid.x] = 0.0;
+        }
+
+        workgroupBarrier();
+
+        for (var p: u32 = 0u; p < TILE; p = p + 1u) {
+            sum = sum + tileA[tid.y][p] * tileB[p][tid.x];
+        }
+
+        workgroupBarrier();
+    }
+
+    if (row < params.M && col < params.N) {
+        C[c_off + row * params.N + col] = sum;
+    }
+}
+"#;
+
 /// Softmax kernel: input, output, params { total, row_size }.
 const SHADER_SOFTMAX: &str = r#"
 struct SoftmaxParams { total: u32, row_size: u32 }
@@ -333,6 +393,7 @@ impl WebGpuBackend {
             ),
             (SHADER_BINARY, &["add_op", "mul_op", "sub_op", "div_op"]),
             (SHADER_SGEMM, &["sgemm"]),
+            (SHADER_BATCHED_SGEMM, &["batched_sgemm"]),
             (SHADER_SOFTMAX, &["softmax"]),
             (SHADER_RMS_NORM, &["rms_norm"]),
         ];
@@ -732,6 +793,116 @@ impl WebGpuBackend {
         Ok(())
     }
 
+    /// Encode batched tiled SGEMM into the shared command encoder (deferred).
+    fn dispatch_batched_sgemm_deferred(
+        &self,
+        a: &[u8],
+        b: &[u8],
+        batch: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+        b_broadcast: bool,
+    ) -> ExecResult<()> {
+        let byte_len = batch * m * n * 4;
+
+        let buf_a = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("A"),
+                contents: a,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let buf_b = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("B"),
+                contents: b,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let buf_c = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("C"),
+            size: byte_len as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct BatchGemmParams {
+            m: u32,
+            k: u32,
+            n: u32,
+            a_stride: u32,
+            b_stride: u32,
+            _pad: [u32; 3], // align to 32 bytes for uniform buffer
+        }
+        let params = BatchGemmParams {
+            m: m as u32,
+            k: k as u32,
+            n: n as u32,
+            a_stride: (m * k) as u32,
+            b_stride: if b_broadcast { 0 } else { (k * n) as u32 },
+            _pad: [0; 3],
+        };
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("batch_gemm_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("staging"),
+            size: byte_len as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let pipeline = self.pipelines.get("batched_sgemm").ok_or_else(|| {
+            ExecError::UnsupportedOp("wgpu batched_sgemm pipeline missing".into())
+        })?;
+        let bind_group_layout = pipeline.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buf_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buf_c.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pending = self.get_or_create_encoder();
+        let work = pending.as_mut().unwrap();
+        {
+            let mut pass = work
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let wg_x = (n as u32 + 15) / 16;
+            let wg_y = (m as u32 + 15) / 16;
+            pass.dispatch_workgroups(wg_x, wg_y, batch as u32);
+        }
+        work.kept_alive.extend([buf_a, buf_b, params_buf]);
+        Self::enqueue_staging(work, buf_c, staging_buf, byte_len);
+        Ok(())
+    }
+
     /// Encode softmax into the shared command encoder (deferred).
     fn dispatch_softmax_deferred(&self, input: &[u8], row_size: usize) -> ExecResult<()> {
         let n_floats = input.len() / 4;
@@ -1003,6 +1174,25 @@ impl ComputeBackend for WebGpuBackend {
             return Ok(super::KernelOutput::Skipped);
         }
         self.dispatch_sgemm_deferred(inputs[0], inputs[1], m, k, n)?;
+        Ok(super::KernelOutput::WgpuDeferred)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_batched_matmul(
+        &self,
+        inputs: &[&[u8]],
+        batch: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+        b_broadcast: bool,
+        _out_buf: &mut Vec<u8>,
+    ) -> ExecResult<super::KernelOutput> {
+        let total_output = batch * m * n;
+        if total_output < 4096 || inputs.len() < 2 {
+            return Ok(super::KernelOutput::Skipped);
+        }
+        self.dispatch_batched_sgemm_deferred(inputs[0], inputs[1], batch, m, k, n, b_broadcast)?;
         Ok(super::KernelOutput::WgpuDeferred)
     }
 

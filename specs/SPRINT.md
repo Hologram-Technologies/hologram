@@ -11,7 +11,7 @@
 - [x] Zero-copy pipeline weights — [plan](plans/017-zero-copy-pipeline-weights.md)
 - [x] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
 - [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
-- [ ] MatMul optimization — [plan](plans/020-matmul-optimization.md)
+- [x] MatMul optimization — [plan](plans/020-matmul-optimization.md)
 
 ## Sprint 22: MatMul Optimization (Plan 020)
 
@@ -34,11 +34,11 @@ non-BLAS platforms, and enable batched matmul on GPU.
 ### Phase 3: CPU Register-Blocked Micro-Kernel
 - [x] **3.1**: 4×8 register-blocked matmul for non-BLAS platforms
 - [x] **3.2**: Remainder handling for non-tile-aligned dimensions
-- [ ] **3.3**: Matmul size sweep benchmark
+- [x] **3.3**: Matmul size sweep benchmark (1×64×64 → 128×2048×2048)
 
 ### Phase 4: Batched MatMul GPU Dispatch
 - [x] **4.1**: Metal batched SGEMM kernel (Z-dimension batch, shared-memory tiled)
-- [ ] **4.2**: WebGPU batched SGEMM kernel
+- [x] **4.2**: WebGPU batched SGEMM kernel (Z-workgroup batch, deferred dispatch)
 - [x] **4.3**: Wire batched dispatch through ComputeBackend trait (default Skipped)
 
 ---
