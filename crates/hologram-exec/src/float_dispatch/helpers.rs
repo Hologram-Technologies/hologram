@@ -1,5 +1,27 @@
 use crate::error::ExecResult;
 
+/// Allocate space for `n` f32s in `out_buf` and return a mutable f32 slice.
+///
+/// Writes directly into `out_buf` — no intermediate Vec allocation.
+#[inline]
+pub(super) fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
+    let start = out_buf.len();
+    out_buf.resize(start + n * 4, 0);
+    bytemuck::cast_slice_mut(&mut out_buf[start..])
+}
+
+/// Transpose a row-major matrix [rows × cols] → [cols × rows].
+#[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
+pub(super) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    let mut dst = vec![0.0f32; rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            dst[c * rows + r] = src[r * cols + c];
+        }
+    }
+    dst
+}
+
 pub(super) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match bytemuck::try_cast_slice(bytes) {
         Ok(s) => Ok(std::borrow::Cow::Borrowed(s)),

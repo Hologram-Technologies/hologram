@@ -16,16 +16,6 @@ fn fast_rsqrt(x: f32) -> f32 {
     y
 }
 
-/// Allocate `out_buf` space for `n` f32s and return a mutable f32 slice.
-///
-/// Writes directly into `out_buf` — no intermediate Vec allocation.
-#[inline]
-fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
-    let start = out_buf.len();
-    out_buf.resize(start + n * 4, 0);
-    bytemuck::cast_slice_mut(&mut out_buf[start..])
-}
-
 pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     if x.len() % size != 0 {

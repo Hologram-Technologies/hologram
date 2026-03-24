@@ -11,6 +11,37 @@
 - [x] Zero-copy pipeline weights — [plan](plans/017-zero-copy-pipeline-weights.md)
 - [x] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
 - [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
+- [ ] MatMul optimization — [plan](plans/020-matmul-optimization.md)
+
+## Sprint 22: MatMul Optimization (Plan 020)
+
+**Plan**: [plans/020-matmul-optimization.md](plans/020-matmul-optimization.md)
+
+Goal: optimize MatMul kernels across CPU and GPU paths. Fix dispatch_gemm perf
+bug, eliminate intermediate allocations, add register-blocked micro-kernel for
+non-BLAS platforms, and enable batched matmul on GPU.
+
+### Phase 1: dispatch_gemm Loop Restructuring
+- [x] **1.1**: Pre-transpose A/B instead of runtime conditionals in inner loop
+- [x] **1.2**: Use k-outer loop pattern via shared `matmul_k_outer` kernel
+- [x] **1.3**: Apply alpha/beta scaling as post-pass
+
+### Phase 2: dispatch_matmul_into Direct Write
+- [x] **2.1**: Move `alloc_f32_in` + `transpose_f32` to shared helpers module
+- [x] **2.2**: Rewrite dispatch_matmul_into to write directly to out_buf
+- [x] **2.3**: Consolidate all matmul loops to shared `matmul_k_outer` kernel
+
+### Phase 3: CPU Register-Blocked Micro-Kernel
+- [x] **3.1**: 4×8 register-blocked matmul for non-BLAS platforms
+- [x] **3.2**: Remainder handling for non-tile-aligned dimensions
+- [ ] **3.3**: Matmul size sweep benchmark
+
+### Phase 4: Batched MatMul GPU Dispatch
+- [x] **4.1**: Metal batched SGEMM kernel (Z-dimension batch, shared-memory tiled)
+- [ ] **4.2**: WebGPU batched SGEMM kernel
+- [x] **4.3**: Wire batched dispatch through ComputeBackend trait (default Skipped)
+
+---
 
 ## Sprint 21: Runtime Fat Trim & Allocation Elimination (Plan 019)
 

@@ -87,6 +87,23 @@ pub trait ComputeBackend: Send + Sync {
         out_buf: &mut Vec<u8>,
     ) -> ExecResult<KernelOutput>;
 
+    /// Dispatch a batched matmul (batch × M×K × K×N).
+    /// `dims` = `[batch, m, k, n, b_broadcast_flag]` (b_broadcast_flag: 0 or 1).
+    /// Default: returns Skipped (falls back to per-batch CPU dispatch).
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_batched_matmul(
+        &self,
+        _inputs: &[&[u8]],
+        _batch: usize,
+        _m: usize,
+        _k: usize,
+        _n: usize,
+        _b_broadcast: bool,
+        _out_buf: &mut Vec<u8>,
+    ) -> ExecResult<KernelOutput> {
+        Ok(KernelOutput::Skipped)
+    }
+
     /// Backend name for diagnostics and logging.
     fn name(&self) -> &'static str;
 
@@ -218,6 +235,19 @@ impl ComputeBackend for CachedMetalBackend {
         out_buf: &mut Vec<u8>,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
+    }
+    fn dispatch_batched_matmul(
+        &self,
+        inputs: &[&[u8]],
+        batch: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+        b_broadcast: bool,
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<KernelOutput> {
+        self.0
+            .dispatch_batched_matmul(inputs, batch, m, k, n, b_broadcast, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"

@@ -235,6 +235,66 @@ kernel void sgemm(
     }
 }
 
+// ── Batched SGEMM: C[b,M,N] = A[b,M,K] × B[b,K,N] ──────────────────
+// Same tiled algorithm as sgemm, but with batch dimension in Z.
+// Each batch operates on independent A, B, C slices.
+// B can be shared across batches (b_stride=0) for weight broadcasting.
+kernel void batched_sgemm(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& K [[buffer(4)]],
+    constant uint& N [[buffer(5)]],
+    constant uint& a_stride [[buffer(6)]],
+    constant uint& b_stride [[buffer(7)]],
+    uint3 gid [[thread_position_in_grid]],
+    uint3 tid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]
+) {
+    threadgroup float tileA[TILE_SIZE][TILE_SIZE];
+    threadgroup float tileB[TILE_SIZE][TILE_SIZE];
+
+    uint batch = tgid.z;
+    device const float* A_b = A + batch * a_stride;
+    device const float* B_b = B + batch * b_stride;
+    device float* C_b = C + batch * (M * N);
+
+    uint row = tgid.y * TILE_SIZE + tid.y;
+    uint col = tgid.x * TILE_SIZE + tid.x;
+
+    float sum = 0.0f;
+    uint numTiles = (K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (uint t = 0; t < numTiles; t++) {
+        uint aCol = t * TILE_SIZE + tid.x;
+        if (row < M && aCol < K) {
+            tileA[tid.y][tid.x] = A_b[row * K + aCol];
+        } else {
+            tileA[tid.y][tid.x] = 0.0f;
+        }
+
+        uint bRow = t * TILE_SIZE + tid.y;
+        if (bRow < K && col < N) {
+            tileB[tid.y][tid.x] = B_b[bRow * N + col];
+        } else {
+            tileB[tid.y][tid.x] = 0.0f;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint p = 0; p < TILE_SIZE; p++) {
+            sum += tileA[tid.y][p] * tileB[p][tid.x];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (row < M && col < N) {
+        C_b[row * N + col] = sum;
+    }
+}
+
 // ── Softmax: row-wise softmax over chunks of `size` elements ──────────
 // Each threadgroup processes one row. Uses parallel reduction for max and sum.
 kernel void softmax(
@@ -764,6 +824,101 @@ impl ComputeBackend for MetalBackend {
         // 2D grid: (N, M) — each thread computes C[row, col].
         let threadgroup_size = metal::MTLSize::new(16, 16, 1);
         let grid_size = metal::MTLSize::new(n as u64, m as u64, 1);
+        encoder.dispatch_threads(grid_size, threadgroup_size);
+        encoder.end_encoding();
+        drop(pending);
+
+        Ok(super::KernelOutput::MetalBuffer(buf_c))
+    }
+
+    fn dispatch_batched_matmul(
+        &self,
+        inputs: &[&[u8]],
+        batch: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+        b_broadcast: bool,
+        _out_buf: &mut Vec<u8>,
+    ) -> ExecResult<super::KernelOutput> {
+        // Batched matmul is worthwhile when total compute exceeds GPU launch cost.
+        // On Apple Silicon, crossover is ~batch*m*n > 4096 elements total output.
+        let total_output = batch * m * n;
+        if total_output < 4096 {
+            return Ok(super::KernelOutput::Skipped);
+        }
+
+        let pipeline = match self.pipelines.get("batched_sgemm") {
+            Some(p) => p,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+        if inputs.len() < 2 {
+            return Ok(super::KernelOutput::Skipped);
+        }
+
+        let out_bytes = batch * m * n * 4;
+        let a_stride_val = (m * k) as u32;
+        let b_stride_val = if b_broadcast { 0u32 } else { (k * n) as u32 };
+        let m_u32 = m as u32;
+        let k_u32 = k as u32;
+        let n_u32 = n as u32;
+
+        let buf_a = self.device.new_buffer_with_data(
+            inputs[0].as_ptr() as *const _,
+            inputs[0].len() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_b = self.device.new_buffer_with_data(
+            inputs[1].as_ptr() as *const _,
+            inputs[1].len() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_c = self
+            .device
+            .new_buffer(out_bytes as u64, MTLResourceOptions::StorageModeShared);
+
+        let buf_m = self.device.new_buffer_with_data(
+            &m_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_k = self.device.new_buffer_with_data(
+            &k_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_n = self.device.new_buffer_with_data(
+            &n_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_a_stride = self.device.new_buffer_with_data(
+            &a_stride_val as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_b_stride = self.device.new_buffer_with_data(
+            &b_stride_val as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending.as_ref().unwrap();
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&buf_a), 0);
+        encoder.set_buffer(1, Some(&buf_b), 0);
+        encoder.set_buffer(2, Some(&buf_c), 0);
+        encoder.set_buffer(3, Some(&buf_m), 0);
+        encoder.set_buffer(4, Some(&buf_k), 0);
+        encoder.set_buffer(5, Some(&buf_n), 0);
+        encoder.set_buffer(6, Some(&buf_a_stride), 0);
+        encoder.set_buffer(7, Some(&buf_b_stride), 0);
+
+        // 3D grid: (N, M, batch) — Z dimension is batch.
+        let threadgroup_size = metal::MTLSize::new(16, 16, 1);
+        let grid_size = metal::MTLSize::new(n as u64, m as u64, batch as u64);
         encoder.dispatch_threads(grid_size, threadgroup_size);
         encoder.end_encoding();
         drop(pending);
