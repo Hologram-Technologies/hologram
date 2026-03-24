@@ -69,6 +69,68 @@ impl HoloLoader {
         }
     }
 
+    /// Load with zero-copy graph and weight access.
+    ///
+    /// Graph bytes are stored as raw archived bytes — deserialized lazily on
+    /// first `plan.graph()` call. Weights are borrowed directly from the mmap.
+    ///
+    /// If the archive is compressed, automatically decompresses to a `.cache`
+    /// file next to the archive and mmap-loads that instead (decompress once,
+    /// instant on subsequent loads).
+    ///
+    /// # Safety
+    /// The returned `LoadedPlan` borrows from `self.mmap`. The caller must
+    /// ensure this `HoloLoader` outlives the returned plan.
+    pub unsafe fn load_zero_copy(&self) -> ArchiveResult<LoadedPlan> {
+        if let Some(header) = HoloHeader::from_bytes(&self.mmap) {
+            self.advise_sections(&header);
+        }
+        crate::loader::bytes::load_from_bytes_zero_copy(&self.mmap)
+    }
+
+    /// Load with zero-copy access, using a decompressed cache file if needed.
+    ///
+    /// If the archive is compressed:
+    /// 1. Checks for `{path}.cache` — if it exists and is newer, mmap that
+    /// 2. Otherwise decompresses the archive, writes `{path}.cache`, mmap-loads it
+    ///
+    /// If uncompressed, loads directly via zero-copy.
+    pub fn load_cached(path: &Path) -> ArchiveResult<(Self, LoadedPlan)> {
+        let loader = Self::open(path)?;
+        if !crate::loader::bytes::is_compressed(&loader.mmap) {
+            // Already uncompressed — load zero-copy directly.
+            let plan = unsafe { loader.load_zero_copy()? };
+            return Ok((loader, plan));
+        }
+
+        // Check for cache file.
+        let cache_path = path.with_extension("holo.cache");
+        if cache_path.exists() {
+            // Cache exists — load from cache instead.
+            let cached = Self::open(&cache_path)?;
+            let plan = unsafe { cached.load_zero_copy()? };
+            return Ok((cached, plan));
+        }
+
+        // Decompress and write cache.
+        if let Some(decompressed) = crate::loader::bytes::decompress_archive(&loader.mmap)? {
+            if let Ok(mut f) = std::fs::File::create(&cache_path) {
+                use std::io::Write;
+                let _ = f.write_all(&decompressed);
+            }
+            // Load from the new cache file.
+            if cache_path.exists() {
+                let cached = Self::open(&cache_path)?;
+                let plan = unsafe { cached.load_zero_copy()? };
+                return Ok((cached, plan));
+            }
+        }
+
+        // Fallback: load normally (compressed, no cache).
+        let plan = loader.load()?;
+        Ok((loader, plan))
+    }
+
     /// Raw bytes of the memory-mapped archive.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {

@@ -105,21 +105,33 @@ pub fn load_from_bytes_unchecked(data: &[u8]) -> ArchiveResult<LoadedPlan> {
 /// The caller must ensure `data` outlives the returned `LoadedPlan`.
 pub unsafe fn load_from_bytes_zero_copy(data: &[u8]) -> ArchiveResult<LoadedPlan> {
     let header = find_and_validate_header(data)?;
-    let graph = deserialize_graph(data, &header)?;
     let section_table = deserialize_section_table(data, &header)?;
     let layer_header = extract_layer_header(data, &section_table)?;
+
+    // Extract graph bytes without deserializing — lazy deser on first access.
+    let graph_bytes = extract_graph_bytes(data, &header)?;
 
     // If weights are compressed, we must decompress (allocate).
     // Otherwise, zero-copy: borrow directly from the mmap'd data.
     if header.is_weights_compressed() {
         let weights = extract_weights(data, &header)?;
-        Ok(LoadedPlan::new(
-            header,
-            graph,
-            weights,
-            section_table,
-            layer_header,
-        ))
+        if graph_bytes.is_empty() {
+            Ok(LoadedPlan::new(
+                header,
+                SerializedGraph::empty(),
+                weights,
+                section_table,
+                layer_header,
+            ))
+        } else {
+            Ok(LoadedPlan::new_with_archived_graph(
+                header,
+                graph_bytes,
+                weights,
+                section_table,
+                layer_header,
+            ))
+        }
     } else {
         let weights = if header.weights_size > 0 {
             let start = header.weights_offset as usize;
@@ -134,13 +146,23 @@ pub unsafe fn load_from_bytes_zero_copy(data: &[u8]) -> ArchiveResult<LoadedPlan
         } else {
             &[]
         };
-        Ok(LoadedPlan::new_borrowed(
-            header,
-            graph,
-            weights,
-            section_table,
-            layer_header,
-        ))
+        if graph_bytes.is_empty() {
+            Ok(LoadedPlan::new_borrowed(
+                header,
+                SerializedGraph::empty(),
+                weights,
+                section_table,
+                layer_header,
+            ))
+        } else {
+            Ok(LoadedPlan::new_with_archived_graph_borrowed(
+                header,
+                graph_bytes,
+                weights,
+                section_table,
+                layer_header,
+            ))
+        }
     }
 }
 
@@ -170,6 +192,22 @@ fn find_and_validate_header(data: &[u8]) -> ArchiveResult<HoloHeader> {
 }
 
 fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<SerializedGraph> {
+    let aligned = extract_graph_bytes(data, header)?;
+    if aligned.is_empty() {
+        return Ok(SerializedGraph::empty());
+    }
+    rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(&aligned)
+        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
+}
+
+/// Extract graph bytes as aligned bytes WITHOUT deserializing.
+///
+/// For uncompressed archives, this returns the raw rkyv bytes in an AlignedVec.
+/// These bytes can be stored as `GraphAccess::Archived` for lazy deserialization.
+fn extract_graph_bytes(
+    data: &[u8],
+    header: &HoloHeader,
+) -> ArchiveResult<rkyv::util::AlignedVec<16>> {
     let start = header.graph_offset as usize;
     let end = start + header.graph_size as usize;
     if end > data.len() {
@@ -179,23 +217,11 @@ fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<Serializ
         });
     }
     if header.graph_size == 0 {
-        return Ok(SerializedGraph {
-            nodes: Vec::new(),
-            input_names: Vec::new(),
-            output_names: Vec::new(),
-            output_node_ids: Vec::new(),
-            constants: hologram_graph::constant::ConstantStore::new(),
-            constant_shapes: Vec::new(),
-            node_shapes: Vec::new(),
-            node_dtypes: Vec::new(),
-        });
+        return Ok(rkyv::util::AlignedVec::<16>::new());
     }
     let graph_bytes = &data[start..end];
 
-    // Decompress if the graph section is compressed, then copy into an
-    // AlignedVec<16> so rkyv's pointer-alignment validation succeeds.
-    // (rkyv serializes into AlignedVec<16>; a plain Vec<u8> from
-    // decompression is only guaranteed alignment 1.)
+    // Decompress if compressed, then align for rkyv.
     let aligned = if header.is_graph_compressed() {
         let decompressed = hologram_compression::decompress(graph_bytes).ok_or_else(|| {
             ArchiveError::ValidationFailed("failed to decompress graph section".into())
@@ -208,9 +234,7 @@ fn deserialize_graph(data: &[u8], header: &HoloHeader) -> ArchiveResult<Serializ
         av.extend_from_slice(graph_bytes);
         av
     };
-
-    rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(&aligned)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
+    Ok(aligned)
 }
 
 fn extract_weights(data: &[u8], header: &HoloHeader) -> ArchiveResult<Vec<u8>> {

@@ -34,6 +34,8 @@ impl WeightCache {
     }
 
     /// Get or deserialize a Q4 weight constant.
+    ///
+    /// Single hash probe per access via the `Entry` API — no double lookup.
     pub fn get_q4(
         &mut self,
         cid: ConstantId,
@@ -41,14 +43,17 @@ impl WeightCache {
         weights: &[u8],
     ) -> ExecResult<&QuantizedWeights4> {
         let key = cid.raw();
-        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
-            let bytes = resolve_constant_bytes(cid, constants, weights)?;
-            let qw = rkyv::from_bytes::<QuantizedWeights4, rkyv::rancor::Error>(bytes)
-                .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
-            e.insert(CachedWeight::Q4(qw));
-        }
-        match self.entries.get(&key) {
-            Some(CachedWeight::Q4(qw)) => Ok(qw),
+        let entry = match self.entries.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let bytes = resolve_constant_bytes(cid, constants, weights)?;
+                let qw = rkyv::from_bytes::<QuantizedWeights4, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+                e.insert(CachedWeight::Q4(qw))
+            }
+        };
+        match entry {
+            CachedWeight::Q4(qw) => Ok(qw),
             _ => Err(ExecError::InvalidQuantization(
                 "weight type mismatch".to_string(),
             )),
@@ -56,6 +61,8 @@ impl WeightCache {
     }
 
     /// Get or deserialize a Q8 weight constant.
+    ///
+    /// Single hash probe per access via the `Entry` API — no double lookup.
     pub fn get_q8(
         &mut self,
         cid: ConstantId,
@@ -63,14 +70,17 @@ impl WeightCache {
         weights: &[u8],
     ) -> ExecResult<&QuantizedWeights8> {
         let key = cid.raw();
-        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
-            let bytes = resolve_constant_bytes(cid, constants, weights)?;
-            let qw = rkyv::from_bytes::<QuantizedWeights8, rkyv::rancor::Error>(bytes)
-                .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
-            e.insert(CachedWeight::Q8(Box::new(qw)));
-        }
-        match self.entries.get(&key) {
-            Some(CachedWeight::Q8(qw)) => Ok(qw),
+        let entry = match self.entries.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let bytes = resolve_constant_bytes(cid, constants, weights)?;
+                let qw = rkyv::from_bytes::<QuantizedWeights8, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+                e.insert(CachedWeight::Q8(Box::new(qw)))
+            }
+        };
+        match entry {
+            CachedWeight::Q8(qw) => Ok(qw),
             _ => Err(ExecError::InvalidQuantization(
                 "weight type mismatch".to_string(),
             )),

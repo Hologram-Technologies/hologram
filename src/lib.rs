@@ -17,6 +17,7 @@
 //! | `full` | no | All of the above |
 //! | `wasm` | no | WASM bindings (implies `ffi`) |
 
+#[cfg(feature = "cli")]
 pub mod config;
 
 pub use hologram_archive;

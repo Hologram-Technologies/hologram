@@ -1,7 +1,6 @@
 fn main() {
     // Register custom cfg names so rustc doesn't warn about them.
     println!("cargo::rustc-check-cfg=cfg(has_metal)");
-    println!("cargo::rustc-check-cfg=cfg(has_cuda)");
     println!("cargo::rustc-check-cfg=cfg(has_webgpu)");
 
     #[cfg(feature = "accelerate")]
@@ -22,16 +21,6 @@ fn main() {
     // Metal: always available on macOS 10.14+.
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "macos" {
         println!("cargo:rustc-cfg=has_metal");
-    }
-
-    // CUDA: detect via CUDA_HOME env var or nvcc on PATH.
-    let has_cuda = std::env::var("CUDA_HOME").is_ok()
-        || std::process::Command::new("nvcc")
-            .arg("--version")
-            .output()
-            .is_ok();
-    if has_cuda {
-        println!("cargo:rustc-cfg=has_cuda");
     }
 
     // WebGPU: available when the `webgpu` feature is active (native via wgpu),

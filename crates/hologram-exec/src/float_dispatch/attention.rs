@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::helpers::*;
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
 use super::matmul::GemmParams;
@@ -22,7 +24,7 @@ fn transpose_heads(data: &[f32], seq: usize, n_heads: usize, head_dim: usize) ->
     out
 }
 
-pub(super) fn dispatch_attention(
+pub(crate) fn dispatch_attention(
     inputs: &[&[u8]],
     head_dim: usize,
     num_q_heads: usize,
@@ -83,20 +85,25 @@ pub(super) fn dispatch_attention(
     }
 
     // GGUF inputs arrive as [seq, n_heads, head_dim] — transpose to heads-first.
-    // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first.
-    let (q, k, v) = if heads_first {
-        (q_raw.to_vec(), k_raw.to_vec(), v_raw.to_vec())
+    // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first (zero-copy).
+    #[allow(clippy::type_complexity)]
+    let (q, k, v): (Cow<[f32]>, Cow<[f32]>, Cow<[f32]>) = if heads_first {
+        (
+            Cow::Borrowed(&*q_raw),
+            Cow::Borrowed(&*k_raw),
+            Cow::Borrowed(&*v_raw),
+        )
     } else {
         (
-            transpose_heads(&q_raw, seq_q, num_q_heads, head_dim),
-            transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim),
-            transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim),
+            Cow::Owned(transpose_heads(&q_raw, seq_q, num_q_heads, head_dim)),
+            Cow::Owned(transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim)),
+            Cow::Owned(transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim)),
         )
     };
     // Optional additive mask from input[3] (ONNX attention mask).
     // Shape: broadcastable to [num_q_heads, seq_q, seq_k].
-    let mask: Option<Vec<f32>> = if inputs.len() >= 4 && !inputs[3].is_empty() {
-        Some(cast_f32(inputs[3])?.to_vec())
+    let mask: Option<Cow<[f32]>> = if inputs.len() >= 4 && !inputs[3].is_empty() {
+        Some(cast_f32(inputs[3])?)
     } else {
         None
     };
@@ -278,7 +285,7 @@ pub(super) fn dispatch_attention(
     }
 }
 
-pub(super) fn dispatch_rope(
+pub(crate) fn dispatch_rope(
     inputs: &[&[u8]],
     dim: usize,
     base: f32,
@@ -289,7 +296,7 @@ pub(super) fn dispatch_rope(
 
     let half = dim / 2;
     let n_heads = n_heads.max(1);
-    let mut out = x.to_vec();
+    let mut out = x.into_owned();
 
     // Pre-compute frequency table: freq[i] = 1.0 / base^(2i/dim).
     // Avoids calling powf() per element in the inner loop.

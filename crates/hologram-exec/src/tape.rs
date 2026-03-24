@@ -185,6 +185,60 @@ pub enum TapeKernel {
     /// Inline RmsNorm with baked row size and epsilon (as f32::to_bits()).
     InlineRmsNorm { size: u32, epsilon: u32 },
 
+    // ── Inline ops (Phase 9a expansion — Sprint 21) ──────────────────
+    /// Inline Log: v.ln().
+    InlineLog,
+    /// Inline Sqrt: v.sqrt().
+    InlineSqrt,
+    /// Inline Cos.
+    InlineCos,
+    /// Inline Sin.
+    InlineSin,
+    /// Inline Sign.
+    InlineSign,
+    /// Inline Floor.
+    InlineFloor,
+    /// Inline Ceil.
+    InlineCeil,
+    /// Inline Round.
+    InlineRound,
+    /// Inline Erf (Abramowitz & Stegun).
+    InlineErf,
+    /// Inline binary Min.
+    InlineMin,
+    /// Inline binary Max.
+    InlineMax,
+    /// Inline LayerNorm with baked size and epsilon.
+    InlineLayerNorm { size: u32, epsilon: u32 },
+    /// Inline AddRmsNorm with baked size and epsilon.
+    InlineAddRmsNorm { size: u32, epsilon: u32 },
+    /// Inline LogSoftmax with baked row size.
+    InlineLogSoftmax { size: u32 },
+    /// Inline Attention with baked head config.
+    InlineAttention {
+        head_dim: u32,
+        num_q_heads: u32,
+        num_kv_heads: u32,
+        scale: u32,
+        causal: bool,
+        heads_first: bool,
+    },
+    /// Inline RotaryEmbedding with baked params (uses position offset from TapeContext).
+    InlineRoPE { dim: u32, base: u32, n_heads: u32 },
+    /// Inline Gather with baked dim and dtype.
+    InlineGather {
+        dim: u32,
+        dtype: hologram_core::op::FloatDType,
+    },
+    /// Inline Concat with baked sizes and dtype.
+    InlineConcat {
+        size_a: u32,
+        size_b: u32,
+        dtype: hologram_core::op::FloatDType,
+    },
+    /// Identity passthrough — no kernel, just forward input to output.
+    Passthrough,
+
     /// Custom op — handler baked at tape build time from registry.
     Custom(crate::kv::CustomHandler),
 }
@@ -203,11 +257,22 @@ impl TapeKernel {
             | TapeKernel::InlineTanh
             | TapeKernel::InlineGelu
             | TapeKernel::InlineExp
-            | TapeKernel::InlineReciprocal => Some(1),
+            | TapeKernel::InlineReciprocal
+            | TapeKernel::InlineLog
+            | TapeKernel::InlineSqrt
+            | TapeKernel::InlineCos
+            | TapeKernel::InlineSin
+            | TapeKernel::InlineSign
+            | TapeKernel::InlineFloor
+            | TapeKernel::InlineCeil
+            | TapeKernel::InlineRound
+            | TapeKernel::InlineErf => Some(1),
             TapeKernel::InlineAdd
             | TapeKernel::InlineMul
             | TapeKernel::InlineSub
-            | TapeKernel::InlineDiv => Some(2),
+            | TapeKernel::InlineDiv
+            | TapeKernel::InlineMin
+            | TapeKernel::InlineMax => Some(2),
             _ => None,
         }
     }
@@ -370,6 +435,167 @@ fn dispatch_kernel(
         }
         TapeKernel::InlineReciprocal => {
             inline_unary(inputs[0], out_buf, |v| 1.0 / v);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLog => {
+            inline_unary(inputs[0], out_buf, |v| v.ln());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSqrt => {
+            inline_unary(inputs[0], out_buf, |v| v.sqrt());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineCos => {
+            inline_unary(inputs[0], out_buf, |v| v.cos());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSin => {
+            inline_unary(inputs[0], out_buf, |v| v.sin());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSign => {
+            inline_unary(inputs[0], out_buf, |v| {
+                if v > 0.0 {
+                    1.0
+                } else if v < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineFloor => {
+            inline_unary(inputs[0], out_buf, |v| v.floor());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineCeil => {
+            inline_unary(inputs[0], out_buf, |v| v.ceil());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineRound => {
+            inline_unary(inputs[0], out_buf, |v| v.round());
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineErf => {
+            inline_unary(inputs[0], out_buf, |v| {
+                // Abramowitz & Stegun approximation
+                #[allow(clippy::excessive_precision)]
+                const A1: f32 = 0.254_829_592;
+                #[allow(clippy::excessive_precision)]
+                const A2: f32 = -0.284_496_736;
+                #[allow(clippy::excessive_precision)]
+                const A3: f32 = 1.421_413_741;
+                #[allow(clippy::excessive_precision)]
+                const A4: f32 = -1.453_152_027;
+                #[allow(clippy::excessive_precision)]
+                const A5: f32 = 1.061_405_429;
+                #[allow(clippy::excessive_precision)]
+                const P: f32 = 0.327_591_1;
+                let sign = if v >= 0.0 { 1.0f32 } else { -1.0f32 };
+                let x = v.abs();
+                let t = 1.0 / (1.0 + P * x);
+                let y = 1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t * (-x * x).exp();
+                sign * y
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineMin => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.min(b));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineMax => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.max(b));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLayerNorm { size, epsilon } => {
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_layer_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAddRmsNorm { size, epsilon } => {
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_add_rms_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLogSoftmax { size } => {
+            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            crate::float_dispatch::norm::dispatch_log_softmax_into(inputs, actual, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAttention {
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            scale,
+            causal,
+            heads_first,
+        } => {
+            let result = crate::float_dispatch::attention::dispatch_attention(
+                inputs,
+                *head_dim as usize,
+                *num_q_heads as usize,
+                *num_kv_heads as usize,
+                f32::from_bits(*scale),
+                *causal,
+                *heads_first,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineRoPE { dim, base, n_heads } => {
+            let start_pos = tape_ctx
+                .ctx
+                .as_ref()
+                .map(|c| c.position_offset as usize)
+                .unwrap_or(0);
+            let result = crate::float_dispatch::attention::dispatch_rope(
+                inputs,
+                *dim as usize,
+                f32::from_bits(*base),
+                *n_heads as usize,
+                start_pos,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGather { dim, dtype } => {
+            let result = crate::float_dispatch::gather_concat::dispatch_gather(
+                inputs,
+                *dim as usize,
+                *dtype,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineConcat {
+            size_a,
+            size_b,
+            dtype,
+        } => {
+            let result = crate::float_dispatch::gather_concat::dispatch_concat(
+                inputs,
+                *size_a as usize,
+                *size_b as usize,
+                *dtype,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::Passthrough => {
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
             Ok(DispatchResult::InOutBuf)
         }
 

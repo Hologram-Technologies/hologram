@@ -37,7 +37,7 @@ pub(super) fn dispatch_scatter_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     let indices_bytes = inputs[1];
     let updates = cast_f32(inputs[2])?;
 
-    let mut out = data.to_vec();
+    let mut out = data.into_owned();
 
     // Simple 1-D scatter: indices are i64, each indexing into the flat output
     let indices: Vec<usize> = iter_i64(indices_bytes).map(|v| v as usize).collect();
@@ -53,7 +53,7 @@ pub(super) fn dispatch_scatter_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
 
 pub(super) fn dispatch_cumsum(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
-    let mut out = data.to_vec();
+    let mut out = data.into_owned();
 
     // Simple 1-D cumulative sum
     for i in 1..out.len() {
@@ -98,7 +98,7 @@ pub(super) fn dispatch_reverse_sequence(
 ) -> ExecResult<Vec<u8>> {
     // Simple: reverse the entire f32 sequence
     let data = cast_f32(inputs[0])?;
-    let mut out = data.to_vec();
+    let mut out = data.into_owned();
     out.reverse();
     Ok(f32_vec_to_bytes(out))
 }

@@ -49,6 +49,21 @@ pub struct SerializedGraph {
 }
 
 impl SerializedGraph {
+    /// Create an empty graph (no nodes, no constants).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            nodes: Vec::new(),
+            input_names: Vec::new(),
+            output_names: Vec::new(),
+            output_node_ids: Vec::new(),
+            constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
+        }
+    }
+
     /// Create from a live Graph by extracting live nodes.
     ///
     /// If no outputs are explicitly registered via `graph.add_output()`,

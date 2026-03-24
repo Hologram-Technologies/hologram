@@ -3,11 +3,11 @@
 //! All kernels operate on `&[u8]` inputs interpreted as `&[f32]` via bytemuck,
 //! matching the pattern used by `MatMulLut4`/`MatMulLut8`.
 
-mod attention;
+pub(crate) mod attention;
 pub(crate) mod cast;
 mod conv;
 mod elementwise;
-mod gather_concat;
+pub(crate) mod gather_concat;
 mod helpers;
 pub mod matmul;
 mod misc;
@@ -33,11 +33,8 @@ pub use shape_ops::{dispatch_reshape_with_shape, dispatch_transpose};
 
 // ── Dispatch entry points ────────────────────────────────────────────────────
 
-/// Dispatch a `FloatOp` with the given byte-buffer inputs.
-///
-/// Category-based dispatch: generic kernel patterns (unary, binary, compare,
-/// byte-bool) are handled by `OpCategory`, while ops needing dedicated logic
-/// are dispatched individually via `dispatch_custom`.
+/// Dispatch a `FloatOp` with the given byte-buffer inputs (no execution context).
+#[inline]
 pub fn dispatch_float(op: &FloatOp, inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     dispatch_float_ctx(op, inputs, None)
 }
@@ -117,7 +114,7 @@ pub fn dispatch_float_with_shapes(
                 op.apply_compare(a, b)
             })
         }
-        _ => dispatch_float(op, inputs),
+        _ => dispatch_float_ctx(op, inputs, None),
     }
 }
 

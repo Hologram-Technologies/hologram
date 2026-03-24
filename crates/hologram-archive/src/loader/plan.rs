@@ -5,6 +5,24 @@ use crate::format::graph::SerializedGraph;
 use crate::format::header::HoloHeader;
 use crate::section::table::SectionTable;
 use std::borrow::Cow;
+use std::sync::OnceLock;
+
+/// How the graph is stored — either fully deserialized (owned) or as raw
+/// archived bytes that are deserialized lazily on first access.
+///
+/// The `Archived` variant enables zero-copy graph loading: uncompressed graph
+/// bytes from mmap are kept as-is, avoiding the 1.5s `rkyv::from_bytes`
+/// deserialization cost until the graph is actually needed.
+enum GraphAccess {
+    /// Fully deserialized graph (compressed archives, or after lazy deser).
+    Owned(SerializedGraph),
+    /// Raw archived bytes (uncompressed, 16-byte aligned). The graph is
+    /// deserialized lazily on first `graph()` call via `OnceLock`.
+    Archived {
+        bytes: rkyv::util::AlignedVec<16>,
+        cache: OnceLock<SerializedGraph>,
+    },
+}
 
 /// A loaded and validated archive.
 ///
@@ -13,16 +31,20 @@ use std::borrow::Cow;
 ///
 /// Weight bytes are borrowed when loaded from mmap (zero-copy) or
 /// owned when loaded from a network buffer or compressed archive.
+///
+/// Graph bytes may be stored as raw archived bytes (uncompressed archives)
+/// and deserialized lazily on first access, avoiding the 1.5s deserialization
+/// cost for large graphs like TinyLlama's 199MB graph.
 pub struct LoadedPlan {
     header: HoloHeader,
-    graph: SerializedGraph,
+    graph: GraphAccess,
     weights: Cow<'static, [u8]>,
     section_table: SectionTable,
     layer_header: Option<LayerHeader>,
 }
 
 impl LoadedPlan {
-    /// Create a new LoadedPlan with owned weight bytes.
+    /// Create a new LoadedPlan with an owned (fully deserialized) graph and owned weight bytes.
     pub(crate) fn new(
         header: HoloHeader,
         graph: SerializedGraph,
@@ -32,7 +54,7 @@ impl LoadedPlan {
     ) -> Self {
         Self {
             header,
-            graph,
+            graph: GraphAccess::Owned(graph),
             weights: Cow::Owned(weights),
             section_table,
             layer_header,
@@ -52,13 +74,59 @@ impl LoadedPlan {
         section_table: SectionTable,
         layer_header: Option<LayerHeader>,
     ) -> Self {
-        // Extend lifetime to 'static — the caller guarantees the backing
-        // storage (mmap or Vec) outlives this LoadedPlan.
         let weights_static: &'static [u8] =
             std::slice::from_raw_parts(weights.as_ptr(), weights.len());
         Self {
             header,
-            graph,
+            graph: GraphAccess::Owned(graph),
+            weights: Cow::Borrowed(weights_static),
+            section_table,
+            layer_header,
+        }
+    }
+
+    /// Create a LoadedPlan with raw archived graph bytes (zero-copy graph).
+    ///
+    /// The graph is NOT deserialized until `graph()` is called. This avoids
+    /// the 1.5s `rkyv::from_bytes` cost for large graphs.
+    pub(crate) fn new_with_archived_graph(
+        header: HoloHeader,
+        graph_bytes: rkyv::util::AlignedVec<16>,
+        weights: Vec<u8>,
+        section_table: SectionTable,
+        layer_header: Option<LayerHeader>,
+    ) -> Self {
+        Self {
+            header,
+            graph: GraphAccess::Archived {
+                bytes: graph_bytes,
+                cache: OnceLock::new(),
+            },
+            weights: Cow::Owned(weights),
+            section_table,
+            layer_header,
+        }
+    }
+
+    /// Create a LoadedPlan with raw archived graph bytes and borrowed weights.
+    ///
+    /// # Safety
+    /// The caller must ensure the weight bytes outlive this LoadedPlan.
+    pub(crate) unsafe fn new_with_archived_graph_borrowed(
+        header: HoloHeader,
+        graph_bytes: rkyv::util::AlignedVec<16>,
+        weights: &[u8],
+        section_table: SectionTable,
+        layer_header: Option<LayerHeader>,
+    ) -> Self {
+        let weights_static: &'static [u8] =
+            std::slice::from_raw_parts(weights.as_ptr(), weights.len());
+        Self {
+            header,
+            graph: GraphAccess::Archived {
+                bytes: graph_bytes,
+                cache: OnceLock::new(),
+            },
             weights: Cow::Borrowed(weights_static),
             section_table,
             layer_header,
@@ -71,10 +139,16 @@ impl LoadedPlan {
         &self.header
     }
 
-    /// The deserialized graph.
+    /// The deserialized graph (lazy — deserialized on first call for archived graphs).
     #[must_use]
     pub fn graph(&self) -> &SerializedGraph {
-        &self.graph
+        match &self.graph {
+            GraphAccess::Owned(sg) => sg,
+            GraphAccess::Archived { bytes, cache } => cache.get_or_init(|| {
+                rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(bytes)
+                    .expect("archived graph bytes should be valid rkyv")
+            }),
+        }
     }
 
     /// Raw weight bytes.
@@ -98,7 +172,7 @@ impl LoadedPlan {
     /// Number of nodes in the graph.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.graph.node_count()
+        self.graph().node_count()
     }
 
     /// Replace weights with owned data (copies into heap).
@@ -110,7 +184,7 @@ impl LoadedPlan {
     ///
     /// # Safety
     /// The caller must ensure `weights` outlives this LoadedPlan.
-    pub(crate) unsafe fn set_weights_borrowed(&mut self, weights: &[u8]) {
+    pub unsafe fn set_weights_borrowed(&mut self, weights: &[u8]) {
         let w: &'static [u8] = std::slice::from_raw_parts(weights.as_ptr(), weights.len());
         self.weights = Cow::Borrowed(w);
     }

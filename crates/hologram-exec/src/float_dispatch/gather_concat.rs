@@ -3,7 +3,7 @@ use super::helpers::*;
 use crate::error::{ExecError, ExecResult};
 use hologram_core::op::FloatDType;
 
-pub(super) fn dispatch_gather(
+pub(crate) fn dispatch_gather(
     inputs: &[&[u8]],
     dim: usize,
     dtype: FloatDType,
@@ -65,7 +65,7 @@ pub(super) fn dispatch_gather(
     }
 }
 
-pub(super) fn dispatch_concat(
+pub(crate) fn dispatch_concat(
     inputs: &[&[u8]],
     size_a: usize,
     size_b: usize,

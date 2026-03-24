@@ -254,6 +254,17 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
         FloatOp::Div => TapeKernel::InlineDiv,
         FloatOp::Abs => TapeKernel::InlineAbs,
         FloatOp::Reciprocal => TapeKernel::InlineReciprocal,
+        FloatOp::Log => TapeKernel::InlineLog,
+        FloatOp::Sqrt => TapeKernel::InlineSqrt,
+        FloatOp::Cos => TapeKernel::InlineCos,
+        FloatOp::Sin => TapeKernel::InlineSin,
+        FloatOp::Sign => TapeKernel::InlineSign,
+        FloatOp::Floor => TapeKernel::InlineFloor,
+        FloatOp::Ceil => TapeKernel::InlineCeil,
+        FloatOp::Round => TapeKernel::InlineRound,
+        FloatOp::Erf => TapeKernel::InlineErf,
+        FloatOp::Min => TapeKernel::InlineMin,
+        FloatOp::Max => TapeKernel::InlineMax,
 
         // Inline custom ops — bake dimensions/parameters at build time.
         FloatOp::MatMul { m, k, n } => TapeKernel::InlineMatMul {
@@ -266,6 +277,54 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             size: *size,
             epsilon: *epsilon,
         },
+        FloatOp::LayerNorm { size, epsilon } => TapeKernel::InlineLayerNorm {
+            size: *size,
+            epsilon: *epsilon,
+        },
+        FloatOp::AddRmsNorm { size, epsilon } => TapeKernel::InlineAddRmsNorm {
+            size: *size,
+            epsilon: *epsilon,
+        },
+        FloatOp::LogSoftmax { size } => TapeKernel::InlineLogSoftmax { size: *size },
+
+        FloatOp::Attention {
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            scale,
+            causal,
+            heads_first,
+            ..
+        } => TapeKernel::InlineAttention {
+            head_dim: *head_dim,
+            num_q_heads: *num_q_heads,
+            num_kv_heads: *num_kv_heads,
+            scale: *scale,
+            causal: *causal,
+            heads_first: *heads_first,
+        },
+        FloatOp::RotaryEmbedding { dim, base, n_heads } => TapeKernel::InlineRoPE {
+            dim: *dim,
+            base: *base,
+            n_heads: *n_heads,
+        },
+        FloatOp::Gather { dim, dtype } => TapeKernel::InlineGather {
+            dim: *dim,
+            dtype: *dtype,
+        },
+        FloatOp::Concat {
+            size_a,
+            size_b,
+            dtype,
+        } => TapeKernel::InlineConcat {
+            size_a: *size_a,
+            size_b: *size_b,
+            dtype: *dtype,
+        },
+
+        // Identity passthrough — no computation needed.
+        FloatOp::Cast { from, to } if from == to => TapeKernel::Passthrough,
+        FloatOp::Reshape => TapeKernel::Passthrough,
 
         FloatOp::KvWrite {
             layer,

@@ -25,6 +25,18 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// Cross-platform home directory lookup (replaces `dirs` crate).
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE").ok().map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME").ok().map(PathBuf::from)
+    }
+}
+
 /// Top-level hologram configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -81,7 +93,7 @@ impl HologramConfig {
     /// Merges local `.hologram/config.toml` over global `~/.hologram/config.toml`.
     /// Missing files are silently ignored (defaults used).
     pub fn load() -> Self {
-        let global = dirs::home_dir().map(|h| h.join(".hologram").join("config.toml"));
+        let global = home_dir().map(|h| h.join(".hologram").join("config.toml"));
         let local = Path::new(".hologram").join("config.toml");
 
         let mut config = Self::default();
@@ -124,7 +136,7 @@ impl HologramConfig {
 /// Expand `~` to the user's home directory.
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix('~') {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.join(rest.trim_start_matches('/'));
         }
     }

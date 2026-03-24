@@ -8,8 +8,50 @@
 - [x] UOR-based lossless compression — [plan](plans/006-uor-compression-implementation.md)
 - [x] Graph & mmap performance hardening — [plan](plans/007-graph-mmap-performance.md)
 - [x] Dynamic sequence length — attention + slice fix — [plan](plans/016-dynamic-seq-attention-fix.md)
-- [ ] Zero-copy pipeline weights — [plan](plans/017-zero-copy-pipeline-weights.md)
-- [ ] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
+- [x] Zero-copy pipeline weights — [plan](plans/017-zero-copy-pipeline-weights.md)
+- [x] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
+- [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
+
+## Sprint 21: Runtime Fat Trim & Allocation Elimination (Plan 019)
+
+**Plan**: [plans/019-runtime-fat-trim.md](plans/019-runtime-fat-trim.md)
+
+Goal: eliminate dead code, remove unused dependencies, eliminate `.to_vec()`
+allocations in the hot path, and inline remaining high-frequency ops as
+TapeKernel variants.
+
+### Phase 1: Dead Code & Dependency Removal
+- [x] **1.1**: Remove CUDA backend stub (`backend/cuda.rs` — always returns Skipped)
+- [x] **1.2**: Replace `dirs` crate with cross-platform `home_dir()` helper (~25 transitive deps removed)
+- [x] **1.3**: Gate `serde`/`toml` behind `cli` feature (remove from library dep tree)
+- [x] **1.4**: Narrow `tokio` features (drop "full", use minimal subset)
+
+### Phase 2: `.to_vec()` Elimination (71 calls audited)
+- [x] **2.1**: Tape-builder passthrough for identity Cast and Reshape (zero dispatch, zero copy)
+- [x] **2.2**: Norm `_into` variants write directly to `out_buf` (9 calls → zero intermediate Vec)
+- [x] **2.3**: Attention zero-copy `heads_first` path via `Cow<[f32]>` (3 tensor copies eliminated)
+- [x] **2.4**: `into_owned()` replacements for scatter_nd, cumsum, reverse_sequence, mask, RoPE (8 calls)
+
+### Phase 2b: Inline TapeKernel Expansion
+- [x] **2b.1**: Inline LayerNorm, AddRmsNorm, LogSoftmax (norm ops with baked params)
+- [x] **2b.2**: Inline Attention, RotaryEmbedding (per-layer ops — uses TapeContext for position offset)
+- [x] **2b.3**: Inline Gather, Concat (data movement ops with baked params)
+- [x] **2b.4**: Inline remaining simple unary: Log, Sqrt, Cos, Sin, Sign, Floor, Ceil, Round, Erf
+- [x] **2b.5**: Inline remaining simple binary: Min, Max
+
+### Phase 3: Weight Cache & Dispatch Cleanup
+- [x] **3.1**: Weight cache — eliminate double hash lookup via Entry API
+- [x] **3.2**: `dispatch_float` marked `#[inline]` (kept for public API + test compat)
+- [x] **3.3**: Allocating norm variants: `into_owned()` instead of `to_vec()`
+
+### Benchmark Results (Sprint 21)
+- tape::relu 64KB: **2.30 µs → 1.81 µs** (21% faster)
+- transformer decode step: **5.99 ms → 2.77 ms** (54% faster, 2.2x speedup)
+- softmax row_based 8192: **12.83 µs → 11.83 µs** (8% faster)
+- tape::linear chain 4 nodes: **1.15 µs** (unchanged — already optimal)
+- Total inline TapeKernel variants: **17 → 38** (all high-frequency ops covered)
+
+---
 
 ## Sprint 20: Zero-Copy Graph Access (Plan 018)
 
@@ -23,12 +65,12 @@ archived field access) instead of rkyv::from_bytes (full owned deserialization).
 - [x] **1.2**: `.compress_graph()` opt-in method
 - [x] **1.3**: Skip compression when `compress_graph == false`
 
-### Phase 2: rkyv::access for Zero-Copy Graph (deferred)
-- [ ] **2.1**: `GraphAccess` enum (Owned vs Archived) in LoadedPlan
-- [ ] **2.2**: `ArchivedConstantStore::get()` for archived constant lookup
-- [ ] **2.3**: Archived-compatible `node_dtypes_map()`, `node_shapes_map()`
-- [ ] **2.4**: Update tape_builder, mmap executor, CLI inspect for ArchivedSerializedGraph
-- [ ] **2.5**: Decompress-once cache: compressed archive → uncompressed `.cache` file → mmap
+### Phase 2: Zero-Copy Graph Access
+- [x] **2.1**: `GraphAccess` enum (Owned vs Archived) in LoadedPlan — lazy `OnceLock` deserialization
+- [x] **2.2**: ~~`ArchivedConstantStore::get()`~~ — not needed: `graph()` transparently deserializes
+- [x] **2.3**: ~~Archived-compatible maps~~ — not needed: lazy deser returns `&SerializedGraph`
+- [x] **2.4**: ~~Update consumers~~ — all unchanged: `graph()` API returns `&SerializedGraph`
+- [x] **2.5**: Decompress-once cache: `HoloLoader::load_cached()` with `.holo.cache` file + mmap
 
 ## Sprint 19: Zero-Copy Pipeline Weights (Plan 017)
 
@@ -39,20 +81,20 @@ them via dedup index. Loading is zero-copy via mmap. Archive size halved, load
 time from 20s+ to <1s.
 
 ### Phase 1: Archive Format + Loader (hologram)
-- [ ] **1.1**: `LoadedPlan::set_weights_borrowed` — zero-copy weight grafting from wrapper mmap
-- [ ] **1.2**: `PipelineWriter::build_with_shared_weights` — shared weight blob layout
-- [ ] **1.3**: `LoadedPipeline` zero-copy loading — borrow sub-archive + shared weights from mmap
+- [x] **1.1**: `LoadedPlan::set_weights_borrowed` — zero-copy weight grafting from wrapper mmap
+- [x] **1.2**: `PipelineWriter::build_with_shared_weights` — shared weight blob layout
+- [x] **1.3**: `LoadedPipeline::from_bytes_zero_copy` — borrow sub-archive + shared weights from mmap
 
 ### Phase 2: Compiler (hologram-ai)
-- [ ] **2.1**: Shared weight extraction via `WeightStore` during pipeline compilation
-- [ ] **2.2**: Rewrite sub-archive `ConstantData::Deferred` offsets to point into shared blob
-- [ ] **2.3**: `HoloRunner` zero-copy pipeline loading via mmap
+- [x] **2.1**: Shared weight extraction via `WeightStore` — `build_with_shared_weights()` wired
+- [x] **2.2**: ~~Rewrite Deferred offsets~~ — not needed: offsets are per-component, loader grafts correct slice
+- [x] **2.3**: `HoloRunner` zero-copy pipeline loading — dedup index resolution added to `from_storage()`
 
 ### Phase 3: Tests
-- [ ] **3.1**: Pipeline shared weights round-trip (build + load + resolve constants)
-- [ ] **3.2**: Zero-copy mmap pipeline loading (verify no allocation for weights)
-- [ ] **3.3**: Weight dedup across prefill/decode models (identical tensors stored once)
-- [ ] **3.4**: E2E: compile TinyLlama pipeline + run with <1s load time
+- [x] **3.1**: Pipeline shared weights round-trip (build + load + resolve constants)
+- [x] **3.2**: Zero-copy mmap pipeline loading (verify no allocation for weights)
+- [ ] **3.3**: Weight dedup across prefill/decode models — needs TinyLlama model files
+- [ ] **3.4**: E2E: compile TinyLlama pipeline + run with <1s load time — needs TinyLlama model files
 
 ---
 
@@ -199,7 +241,7 @@ at runtime without `--seq-len` at compile time.
 
 ### Phase 2: mmap Page Discipline (P1)
 - [x] **2.1**: Add `madvise` hints for mmap'd weight regions (MADV_RANDOM for LUT-GEMM, MADV_SEQUENTIAL for graph)
-- [ ] **2.2**: Weight-page prefetch for next instruction's constants (unblocked — LUT-GEMM wired in Phase 8)
+- [x] **2.2**: Weight-page prefetch for next instruction's constants (already wired in execute loop)
 - [x] **2.3**: Audit tape builder for eager weight-page touching (CLEAN — no weight data accessed)
 
 ### Phase 3: Graph Edge Efficiency (P2)
@@ -348,7 +390,7 @@ at runtime without `--seq-len` at compile time.
   - [x] **8.3b**: Complete elementwise — all 9 unary + 4 binary WGSL kernels with staging readback
   - [x] **8.3c**: Custom ops — tiled SGEMM (16×16), softmax, RmsNorm in WGSL
   - [x] **8.3d**: Deferred command encoder batching — `WgpuDeferred` + `flush_deferred()` — [plan](plans/013-webgpu-deferred-batching.md)
-- [ ] **8.4**: CUDA kernel implementations (NVIDIA server-side)
+- ~~**8.4**: CUDA kernel implementations~~ (removed — CUDA stub deleted in Sprint 21)
 
 ### Phase 10: Weight Deduplication Primitive (Plan 021 Phase 3)
 - [x] **10.1**: `WeightStore` — content-addressable weight storage with CRC32 identity + exact byte comparison

@@ -225,11 +225,33 @@ pub fn execute_tape_with_kv(
 
     tape.execute(&mut arena, &tape_ctx)?;
 
-    // Swap the updated KV state back out.
-    *kv_state = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+    // Swap the updated KV state back out and advance write_pos.
+    // KvWrite ops write data to the cache but don't advance — the caller
+    // (execute_tape_with_kv) advances once after all layers are written.
+    let mut kv_out = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+    // Infer seq_len from the first input's size and the compiled input shape.
+    // For prefill: seq_len = prompt_length; for decode: seq_len = 1.
+    let seq_written = infer_kv_seq_written(inputs);
+    if seq_written > 0 {
+        kv_out.advance(seq_written);
+    }
+    *kv_state = kv_out;
 
     let outputs = collect_outputs(sg, &mut arena)?;
     Ok(outputs)
+}
+
+/// Infer how many tokens were written to the KV cache during this execution.
+///
+/// Uses the runtime shape provided with the first input (set via
+/// `GraphInputs::set_with_shape`). The last dimension is the sequence length.
+fn infer_kv_seq_written(inputs: &GraphInputs) -> usize {
+    if let Some(shape) = inputs.shape(0) {
+        // Shape is [batch, seq] or [seq] — last dim is seq_len.
+        *shape.last().unwrap_or(&0)
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]

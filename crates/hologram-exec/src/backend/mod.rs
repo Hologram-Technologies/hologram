@@ -4,16 +4,13 @@
 //! Unsupported ops return `Ok(false)`, causing fallback to the CPU backend.
 //!
 //! Backend availability is auto-detected at build time (`build.rs` emits
-//! `has_metal`, `has_cuda`, `has_webgpu` cfg flags). Runtime selection
-//! is via [`BackendSelector`].
+//! `has_metal`, `has_webgpu` cfg flags). Runtime selection is via
+//! [`BackendSelector`].
 
 pub mod cpu;
 
 #[cfg(has_metal)]
 pub mod metal;
-
-#[cfg(has_cuda)]
-pub mod cuda;
 
 #[cfg(has_webgpu)]
 pub mod webgpu;
@@ -125,8 +122,6 @@ pub enum BackendSelector {
     Cpu,
     /// Force Metal backend (macOS/iOS Apple GPU).
     Metal,
-    /// Force CUDA backend (NVIDIA GPU).
-    Cuda,
     /// Force WebGPU backend (browser/wgpu).
     WebGpu,
 }
@@ -149,8 +144,6 @@ impl BackendSelector {
                     None => Box::new(cpu::CpuBackend),
                 }
             }
-            #[cfg(has_cuda)]
-            Self::Cuda => Box::new(cuda::CudaBackend),
             #[cfg(has_webgpu)]
             Self::WebGpu => {
                 use std::sync::{Arc, OnceLock};
@@ -170,7 +163,7 @@ impl BackendSelector {
 
 /// Returns the best available backend for the current build.
 ///
-/// Priority: Metal > WebGPU > CUDA > CPU.
+/// Priority: Metal > WebGPU > CPU.
 /// Metal is preferred on macOS (Apple Silicon native). WebGPU is preferred
 /// over CUDA because it's cross-platform (browser + native via wgpu).
 /// The returned backend is cached — repeated calls return the same instance.
@@ -196,11 +189,6 @@ pub fn default_backend() -> Box<dyn ComputeBackend> {
         if let Some(backend) = cached {
             return Box::new(CachedWebGpuBackend(Arc::clone(backend)));
         }
-    }
-
-    #[cfg(has_cuda)]
-    {
-        return Box::new(cuda::CudaBackend);
     }
 
     #[allow(unreachable_code)]
@@ -277,8 +265,6 @@ pub fn available_backends() -> Vec<&'static str> {
     let mut v = vec!["cpu"];
     #[cfg(has_metal)]
     v.push("metal");
-    #[cfg(has_cuda)]
-    v.push("cuda");
     #[cfg(has_webgpu)]
     v.push("webgpu");
     v

@@ -16,6 +16,16 @@ fn fast_rsqrt(x: f32) -> f32 {
     y
 }
 
+/// Allocate `out_buf` space for `n` f32s and return a mutable f32 slice.
+///
+/// Writes directly into `out_buf` — no intermediate Vec allocation.
+#[inline]
+fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
+    let start = out_buf.len();
+    out_buf.resize(start + n * 4, 0);
+    bytemuck::cast_slice_mut(&mut out_buf[start..])
+}
+
 pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     if x.len() % size != 0 {
@@ -25,48 +35,8 @@ pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<
         });
     }
 
-    let mut out = x.to_vec();
-    let uniform = 1.0f32 / size as f32;
-    for row in out.chunks_mut(size) {
-        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        if max == f32::INFINITY {
-            // Overflow: some scores are +inf (padding positions with overflowed Q@K).
-            // Only +inf positions get non-zero weight; finite positions get 0.
-            // This is the limit of softmax as the max diverges to infinity.
-            let inf_count = row.iter().filter(|&&v| v == f32::INFINITY).count();
-            let w = if inf_count > 0 {
-                1.0f32 / inf_count as f32
-            } else {
-                uniform
-            };
-            for v in row.iter_mut() {
-                *v = if *v == f32::INFINITY { w } else { 0.0 };
-            }
-            continue;
-        }
-        if !max.is_finite() {
-            // All-masked (-inf or NaN): uniform output to prevent NaN propagation.
-            for v in row.iter_mut() {
-                *v = uniform;
-            }
-            continue;
-        }
-        let mut sum = 0.0f32;
-        for v in row.iter_mut() {
-            *v = (*v - max).exp();
-            sum += *v;
-        }
-        if sum > 0.0 {
-            for v in row.iter_mut() {
-                *v /= sum;
-            }
-        } else {
-            for v in row.iter_mut() {
-                *v = uniform;
-            }
-        }
-    }
-
+    let mut out = x.into_owned();
+    softmax_in_place(&mut out, size);
     Ok(f32_vec_to_bytes(out))
 }
 
@@ -78,7 +48,7 @@ pub(super) fn dispatch_log_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<
             actual: format!("{} floats", x.len()),
         });
     }
-    let mut out = x.to_vec();
+    let mut out = x.into_owned();
     for row in out.chunks_mut(size) {
         let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let log_sum_exp = row.iter().map(|&v| (v - max).exp()).sum::<f32>().ln() + max;
@@ -108,14 +78,8 @@ pub(super) fn dispatch_rms_norm(
             actual: format!("{} floats", x.len()),
         });
     }
-    let mut out = x.to_vec();
-    for row in out.chunks_mut(size) {
-        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
-        let inv_rms = fast_rsqrt(ms + epsilon);
-        for (v, &w) in row.iter_mut().zip(weight.iter()) {
-            *v = *v * inv_rms * w;
-        }
-    }
+    let mut out = x.into_owned();
+    rms_norm_in_place(&mut out, &weight, size, epsilon);
     Ok(f32_vec_to_bytes(out))
 }
 
@@ -154,18 +118,12 @@ pub(super) fn dispatch_add_rms_norm(
         .zip(residual.iter())
         .map(|(&a, &b)| a + b)
         .collect();
-    for row in out.chunks_mut(size) {
-        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
-        let inv_rms = fast_rsqrt(ms + epsilon);
-        for (v, &w) in row.iter_mut().zip(weight.iter()) {
-            *v = *v * inv_rms * w;
-        }
-    }
+    rms_norm_in_place(&mut out, &weight, size, epsilon);
     Ok(f32_vec_to_bytes(out))
 }
 
-/// Fused Add + RMS normalization writing directly into a pre-allocated output buffer.
-pub(super) fn dispatch_add_rms_norm_into(
+/// Fused Add + RMS normalization writing directly into out_buf (zero intermediate Vec).
+pub(crate) fn dispatch_add_rms_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -192,23 +150,15 @@ pub(super) fn dispatch_add_rms_norm_into(
             actual: format!("{} floats", x.len()),
         });
     }
-    let mut out: Vec<f32> = x
-        .iter()
-        .zip(residual.iter())
-        .map(|(&a, &b)| a + b)
-        .collect();
-    for row in out.chunks_mut(size) {
-        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
-        let inv_rms = fast_rsqrt(ms + epsilon);
-        for (v, &w) in row.iter_mut().zip(weight.iter()) {
-            *v = *v * inv_rms * w;
-        }
+    let out = alloc_f32_in(out_buf, x.len());
+    for (o, (&a, &b)) in out.iter_mut().zip(x.iter().zip(residual.iter())) {
+        *o = a + b;
     }
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
+    rms_norm_in_place(out, &weight, size, epsilon);
     Ok(())
 }
 
-/// Softmax writing directly into a pre-allocated output buffer.
+/// Softmax writing directly into out_buf (zero intermediate Vec).
 pub(crate) fn dispatch_softmax_into(
     inputs: &[&[u8]],
     size: usize,
@@ -222,49 +172,13 @@ pub(crate) fn dispatch_softmax_into(
         });
     }
 
-    let mut out = x.to_vec();
-    let uniform = 1.0f32 / size as f32;
-    for row in out.chunks_mut(size) {
-        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        if max == f32::INFINITY {
-            let inf_count = row.iter().filter(|&&v| v == f32::INFINITY).count();
-            let w = if inf_count > 0 {
-                1.0f32 / inf_count as f32
-            } else {
-                uniform
-            };
-            for v in row.iter_mut() {
-                *v = if *v == f32::INFINITY { w } else { 0.0 };
-            }
-            continue;
-        }
-        if !max.is_finite() {
-            for v in row.iter_mut() {
-                *v = uniform;
-            }
-            continue;
-        }
-        let mut sum = 0.0f32;
-        for v in row.iter_mut() {
-            *v = (*v - max).exp();
-            sum += *v;
-        }
-        if sum > 0.0 {
-            for v in row.iter_mut() {
-                *v /= sum;
-            }
-        } else {
-            for v in row.iter_mut() {
-                *v = uniform;
-            }
-        }
-    }
-
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
+    let out = alloc_f32_in(out_buf, x.len());
+    out.copy_from_slice(&x);
+    softmax_in_place(out, size);
     Ok(())
 }
 
-/// RmsNorm writing directly into a pre-allocated output buffer.
+/// RmsNorm writing directly into out_buf (zero intermediate Vec).
 pub(crate) fn dispatch_rms_norm_into(
     inputs: &[&[u8]],
     size: usize,
@@ -285,16 +199,9 @@ pub(crate) fn dispatch_rms_norm_into(
             actual: format!("{} floats", x.len()),
         });
     }
-    let mut out = x.to_vec();
-    for row in out.chunks_mut(size) {
-        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
-        let inv_rms = fast_rsqrt(ms + epsilon);
-        for (v, &w) in row.iter_mut().zip(weight.iter()) {
-            *v = *v * inv_rms * w;
-        }
-    }
-
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
+    let out = alloc_f32_in(out_buf, x.len());
+    out.copy_from_slice(&x);
+    rms_norm_in_place(out, &weight, size, epsilon);
     Ok(())
 }
 
@@ -312,33 +219,27 @@ pub(super) fn dispatch_layer_norm(
             actual: format!("weight={}, bias={}", weight.len(), bias.len()),
         });
     }
-    let mut out = x.to_vec();
-    for row in out.chunks_mut(size) {
-        let mean: f32 = row.iter().sum::<f32>() / size as f32;
-        let var: f32 = row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / size as f32;
-        let inv_std = fast_rsqrt(var + epsilon);
-        for (i, v) in row.iter_mut().enumerate() {
-            *v = (*v - mean) * inv_std * weight[i] + bias[i];
-        }
-    }
+    let mut out = x.into_owned();
+    layer_norm_in_place(&mut out, &weight, &bias, size, epsilon);
     Ok(f32_vec_to_bytes(out))
 }
 
-/// LogSoftmax writing directly into a pre-allocated output buffer.
-pub(super) fn dispatch_log_softmax_into(
+/// LogSoftmax writing directly into out_buf (zero intermediate Vec).
+pub(crate) fn dispatch_log_softmax_into(
     inputs: &[&[u8]],
     size: usize,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
-    if size > 0 && x.len() % size != 0 {
+    let actual_size = if size == 0 { x.len() } else { size };
+    if actual_size > 0 && x.len() % actual_size != 0 {
         return Err(ExecError::ShapeMismatch {
-            expected: format!("multiple of {size}"),
+            expected: format!("multiple of {actual_size}"),
             actual: format!("{} floats", x.len()),
         });
     }
-    let actual_size = if size == 0 { x.len() } else { size };
-    let mut out = x.to_vec();
+    let out = alloc_f32_in(out_buf, x.len());
+    out.copy_from_slice(&x);
     for row in out.chunks_mut(actual_size) {
         let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let log_sum_exp = row.iter().map(|&v| (v - max).exp()).sum::<f32>().ln() + max;
@@ -346,12 +247,11 @@ pub(super) fn dispatch_log_softmax_into(
             *v -= log_sum_exp;
         }
     }
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
     Ok(())
 }
 
-/// LayerNorm writing directly into a pre-allocated output buffer.
-pub(super) fn dispatch_layer_norm_into(
+/// LayerNorm writing directly into out_buf (zero intermediate Vec).
+pub(crate) fn dispatch_layer_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -367,17 +267,9 @@ pub(super) fn dispatch_layer_norm_into(
             actual: format!("weight={}, bias={}", weight.len(), bias.len()),
         });
     }
-    let mut out = x.to_vec();
-    for row in out.chunks_mut(actual_size) {
-        let mean: f32 = row.iter().sum::<f32>() / actual_size as f32;
-        let var: f32 =
-            row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / actual_size as f32;
-        let inv_std = fast_rsqrt(var + epsilon);
-        for (i, v) in row.iter_mut().enumerate() {
-            *v = (*v - mean) * inv_std * weight[i] + bias[i];
-        }
-    }
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
+    let out = alloc_f32_in(out_buf, x.len());
+    out.copy_from_slice(&x);
+    layer_norm_in_place(out, &weight, &bias, actual_size, epsilon);
     Ok(())
 }
 
@@ -401,7 +293,7 @@ pub(super) fn dispatch_instance_norm(
     };
     let actual_size = if size > 0 { size } else { spatial };
 
-    let mut out = data.to_vec();
+    let mut out = data.into_owned();
 
     for c in 0..n_channels {
         let start = c * actual_size;
@@ -453,4 +345,72 @@ pub(super) fn dispatch_lrn(
     }
 
     Ok(f32_vec_to_bytes(out))
+}
+
+// ── Shared in-place kernels ─────────────────────────────────────────────
+
+/// Softmax in-place on a mutable f32 slice.
+#[inline]
+fn softmax_in_place(out: &mut [f32], size: usize) {
+    let uniform = 1.0f32 / size as f32;
+    for row in out.chunks_mut(size) {
+        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if max == f32::INFINITY {
+            let inf_count = row.iter().filter(|&&v| v == f32::INFINITY).count();
+            let w = if inf_count > 0 {
+                1.0f32 / inf_count as f32
+            } else {
+                uniform
+            };
+            for v in row.iter_mut() {
+                *v = if *v == f32::INFINITY { w } else { 0.0 };
+            }
+            continue;
+        }
+        if !max.is_finite() {
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
+            continue;
+        }
+        let mut sum = 0.0f32;
+        for v in row.iter_mut() {
+            *v = (*v - max).exp();
+            sum += *v;
+        }
+        if sum > 0.0 {
+            for v in row.iter_mut() {
+                *v /= sum;
+            }
+        } else {
+            for v in row.iter_mut() {
+                *v = uniform;
+            }
+        }
+    }
+}
+
+/// RmsNorm in-place on a mutable f32 slice.
+#[inline]
+fn rms_norm_in_place(out: &mut [f32], weight: &[f32], size: usize, epsilon: f32) {
+    for row in out.chunks_mut(size) {
+        let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
+        let inv_rms = fast_rsqrt(ms + epsilon);
+        for (v, &w) in row.iter_mut().zip(weight.iter()) {
+            *v = *v * inv_rms * w;
+        }
+    }
+}
+
+/// LayerNorm in-place on a mutable f32 slice.
+#[inline]
+fn layer_norm_in_place(out: &mut [f32], weight: &[f32], bias: &[f32], size: usize, epsilon: f32) {
+    for row in out.chunks_mut(size) {
+        let mean: f32 = row.iter().sum::<f32>() / size as f32;
+        let var: f32 = row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / size as f32;
+        let inv_std = fast_rsqrt(var + epsilon);
+        for (i, v) in row.iter_mut().enumerate() {
+            *v = (*v - mean) * inv_std * weight[i] + bias[i];
+        }
+    }
 }
