@@ -242,6 +242,15 @@ pub enum TapeKernel {
         size_b: u32,
         dtype: hologram_core::op::FloatDType,
     },
+    /// Inline Transpose with baked permutation and input shape.
+    InlineTranspose {
+        /// Permutation indices (first `ndim` entries valid).
+        perm: [u8; 8],
+        /// Input shape (first `ndim` entries valid).
+        input_shape: [u32; 8],
+        /// Number of valid dimensions.
+        ndim: u8,
+    },
     /// Identity passthrough — no kernel, just forward input to output.
     Passthrough,
 
@@ -587,6 +596,19 @@ fn dispatch_kernel(
                 *size_b as usize,
                 *dtype,
             )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineTranspose {
+            perm,
+            input_shape,
+            ndim,
+        } => {
+            let n = *ndim as usize;
+            let shape: Vec<usize> = input_shape[..n].iter().map(|&d| d as usize).collect();
+            let perm_slice: &[u8] = &perm[..n];
+            let (result, _out_shape) =
+                crate::float_dispatch::dispatch_transpose(inputs[0], perm_slice, &shape)?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }

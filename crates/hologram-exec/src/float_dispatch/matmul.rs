@@ -115,31 +115,86 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
     let b = cast_f32(inputs[1])?;
 
     let actual_k = infer_matmul_k(k, m, n, a.len(), b.len())?;
-    let actual_m = a.len() / actual_k;
-    let actual_n = b.len() / actual_k;
 
-    // Cap output to prevent OOM from shape inference errors.
-    let out_size = actual_m.saturating_mul(actual_n);
+    // Detect batched matmul: when compiled m and n are non-zero and the total
+    // elements exceed m*k (for A) or k*n (for B), there are batch dimensions.
+    let mk = m.max(1) * actual_k;
+    let kn = actual_k * n.max(1);
+
+    let (batch, actual_m, actual_n) = if m > 0
+        && n > 0
+        && mk > 0
+        && kn > 0
+        && a.len() > mk
+        && a.len().is_multiple_of(mk)
+        && (b.len().is_multiple_of(kn) || b.len() == kn)
+    {
+        // Batched: A has batch leading dims, B may be batched or broadcast.
+        let batch_a = a.len() / mk;
+        let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+            b.len() / kn
+        } else {
+            1
+        };
+        if batch_a == batch_b || batch_b == 1 {
+            (batch_a, m, n)
+        } else {
+            // Batch mismatch — fall back to flat 2D.
+            (1, a.len() / actual_k, b.len() / actual_k)
+        }
+    } else {
+        // Flat 2D matmul (no batch dims or m/n unknown).
+        (1, a.len() / actual_k, b.len() / actual_k)
+    };
+
+    let out_size = batch * actual_m * actual_n;
     if out_size > 256 * 1024 * 1024 {
         return Err(ExecError::ShapeMismatch {
-            expected: format!("matmul output < 1GB (compiled k={k})"),
+            expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
             actual: format!(
-                "[{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {} floats",
-                out_size
+                "batch={batch} [{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {out_size} floats",
             ),
         });
     }
 
     let mut out = vec![0.0f32; out_size];
 
-    #[cfg(all(feature = "accelerate", target_os = "macos"))]
-    {
-        blas::sgemm(actual_m, actual_n, actual_k, &a, &b, &mut out);
-    }
-
-    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-    {
-        matmul_k_outer(&a, &b, &mut out, actual_m, actual_k, actual_n);
+    if batch == 1 {
+        // Single (possibly flattened) 2D matmul.
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm(actual_m, actual_n, actual_k, &a, &b, &mut out);
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            matmul_k_outer(&a, &b, &mut out, actual_m, actual_k, actual_n);
+        }
+    } else {
+        // Batched matmul: compute one [m, k] × [k, n] per batch.
+        let a_stride = actual_m * actual_k;
+        let b_stride = if b.len() == kn {
+            0
+        } else {
+            actual_k * actual_n
+        };
+        let o_stride = actual_m * actual_n;
+        for i in 0..batch {
+            let a_slice = &a[i * a_stride..(i + 1) * a_stride];
+            let b_slice = if b_stride > 0 {
+                &b[i * b_stride..(i + 1) * b_stride]
+            } else {
+                &b[..kn] // broadcast: same B for all batches
+            };
+            let o_slice = &mut out[i * o_stride..(i + 1) * o_stride];
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
+            }
+        }
     }
 
     Ok(f32_vec_to_bytes(out))
@@ -157,30 +212,80 @@ pub fn dispatch_matmul_into(
     let b = cast_f32(inputs[1])?;
 
     let actual_k = infer_matmul_k(k, m, n, a.len(), b.len())?;
-    let actual_m = a.len() / actual_k;
-    let actual_n = b.len() / actual_k;
 
-    let out_size = actual_m.saturating_mul(actual_n);
+    // Detect batched matmul (same logic as dispatch_matmul).
+    let mk = m.max(1) * actual_k;
+    let kn = actual_k * n.max(1);
+
+    let (batch, actual_m, actual_n) = if m > 0
+        && n > 0
+        && mk > 0
+        && kn > 0
+        && a.len() > mk
+        && a.len().is_multiple_of(mk)
+        && (b.len().is_multiple_of(kn) || b.len() == kn)
+    {
+        let batch_a = a.len() / mk;
+        let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+            b.len() / kn
+        } else {
+            1
+        };
+        if batch_a == batch_b || batch_b == 1 {
+            (batch_a, m, n)
+        } else {
+            (1, a.len() / actual_k, b.len() / actual_k)
+        }
+    } else {
+        (1, a.len() / actual_k, b.len() / actual_k)
+    };
+
+    let out_size = batch * actual_m * actual_n;
     if out_size > 256 * 1024 * 1024 {
         return Err(ExecError::ShapeMismatch {
-            expected: format!("matmul output < 1GB (compiled k={k})"),
+            expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
             actual: format!(
-                "[{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {} floats",
-                out_size
+                "batch={batch} [{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {out_size} floats",
             ),
         });
     }
 
     let out = alloc_f32_in(out_buf, out_size);
 
-    #[cfg(all(feature = "accelerate", target_os = "macos"))]
-    {
-        blas::sgemm(actual_m, actual_n, actual_k, &a, &b, out);
-    }
-
-    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-    {
-        matmul_k_outer(&a, &b, out, actual_m, actual_k, actual_n);
+    if batch == 1 {
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm(actual_m, actual_n, actual_k, &a, &b, out);
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            matmul_k_outer(&a, &b, out, actual_m, actual_k, actual_n);
+        }
+    } else {
+        let a_stride = actual_m * actual_k;
+        let b_stride = if b.len() == kn {
+            0
+        } else {
+            actual_k * actual_n
+        };
+        let o_stride = actual_m * actual_n;
+        for i in 0..batch {
+            let a_slice = &a[i * a_stride..(i + 1) * a_stride];
+            let b_slice = if b_stride > 0 {
+                &b[i * b_stride..(i + 1) * b_stride]
+            } else {
+                &b[..kn]
+            };
+            let o_slice = &mut out[i * o_stride..(i + 1) * o_stride];
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
+            }
+        }
     }
 
     Ok(())

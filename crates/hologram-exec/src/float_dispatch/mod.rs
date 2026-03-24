@@ -441,7 +441,12 @@ fn dispatch_custom(
             size_b,
             dtype,
         } => gather_concat::dispatch_concat(inputs, *size_a as usize, *size_b as usize, *dtype),
-        FloatOp::Reshape | FloatOp::Transpose { .. } | FloatOp::GatherND => Ok(inputs[0].to_vec()),
+        FloatOp::Reshape | FloatOp::GatherND => Ok(inputs[0].to_vec()),
+        FloatOp::Transpose { .. } => {
+            // Flat dispatch path has no shape metadata — passthrough.
+            // The tape executor uses InlineTranspose with baked shapes instead.
+            Ok(inputs[0].to_vec())
+        }
         FloatOp::Cast { from, to } => cast::dispatch_cast(inputs, *from, *to),
         FloatOp::Embed { dim, quant } => cast::dispatch_embed(inputs, *dim as usize, *quant),
         FloatOp::Where => gather_concat::dispatch_where(inputs),

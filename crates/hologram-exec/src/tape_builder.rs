@@ -84,7 +84,35 @@ pub fn build_tape(
             }
 
             // Resolve kernel enum variant.
-            let kernel = resolve_kernel(&node.op, registry)?;
+            // For Transpose, we need input shapes to bake into InlineTranspose.
+            let kernel = if let GraphOp::Float(FloatOp::Transpose { perm, ndim }) = &node.op {
+                let n = *ndim as usize;
+                // Get the input node's shape from compiled shapes.
+                let input_node_id = node.inputs.first().and_then(|slot| match slot.source {
+                    InputSource::Node(id) => Some(id),
+                    InputSource::GraphInput { index } => {
+                        graph_input_node_ids.get(index as usize).copied()
+                    }
+                    _ => None,
+                });
+                let input_shape_vec = input_node_id.and_then(|id| shapes.get(&id));
+                if let Some(ishape) = input_shape_vec {
+                    let mut shape_arr = [0u32; 8];
+                    for (i, &d) in ishape.iter().take(8).enumerate() {
+                        shape_arr[i] = d as u32;
+                    }
+                    TapeKernel::InlineTranspose {
+                        perm: *perm,
+                        input_shape: shape_arr,
+                        ndim: n as u8,
+                    }
+                } else {
+                    // No shape info — fall back to passthrough (legacy behavior).
+                    TapeKernel::Passthrough
+                }
+            } else {
+                resolve_kernel(&node.op, registry)?
+            };
 
             // Pre-compute output elem_size.
             let output_elem_size = compute_elem_size(node_id, &node.op, &dtypes);
