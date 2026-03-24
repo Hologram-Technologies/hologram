@@ -261,6 +261,66 @@ Specify concretely how this architecture compiles to the Hologram runtime:
 - When uncertain, present multiple competing design options and compare them.
 - Assume the execution target is the Hologram runtime with its existing LUT hierarchy and tape model.
 
+## Implementation effort analysis
+
+The design must be grounded in realistic implementation cost. The Hologram codebase has been analyzed to determine the exact gap between current infrastructure and each coherence primitive. **Your design document should factor in these constraints — propose architectures achievable in Phase 1 first, with Phase 2/3 extensions clearly marked.**
+
+### Pillar-by-pillar gap analysis
+
+| Coherence Pillar | What Exists | What's Needed | Cheapest Path | Effort | Full Path | Effort |
+|---|---|---|---|---|---|---|
+| **Complex-valued states** | `ElementWiseView` is scalar `[u8; 256]` only | Amplitude + phase encoding | Paired Q0 views (two tables, convention only) | 1 week | Joint Q0 `[u8; 65536]` or ComplexQ1 encoding | 4–6 weeks |
+| **NTT / spectral** | No FFT/NTT. Ring is Z/65536 (not prime — no primitive roots) | Spectral transforms on finite rings | Reframe LUT-GEMM as spectral interaction primitive | 0 weeks | Z/257 ring module + butterfly kernel + twiddle tables | 3–4 weeks |
+| **Resonance gating** | `FloatOp::Where` (element-wise), threshold LUTs trivial to bake | Data-dependent field masking | Threshold LUT → `InlineMul` mask (already expressible) | 0 weeks | Tape bank selector (multi-tape MoE) | 2–3 weeks |
+| **Modal memory** | `KvCacheState` — hardcoded for K/V pairs only | Persistent named field patterns across executions | Generalize KvCacheState to named mode channels | 2–3 weeks | — | — |
+| **Energy normalization** | `InlineRmsNorm`, `InlineLayerNorm` (float) | Ring-valued norms without float | Keep float norms as escape hatch | 0 weeks | Precomputed norm² + sqrt tables on Z/257 | 1 week |
+| **Training pipeline** | No training in hologram (inference only) | Float training → ring quantization | — | — | Straight-through estimators, learned LUT entries | 6–8 weeks |
+
+### Key technical risks
+
+- **Q0 precision ceiling**: Z/256Z has 8 bits of resolution. For tasks requiring fine discrimination (language modeling perplexity), this may be fundamentally insufficient. Q1 (16-bit) helps but costs 512× more memory per joint operation.
+- **NTT ring incompatibility**: NTT requires a prime modulus for primitive roots of unity. Z/256Z and Z/65536Z are powers of 2 — no primitive roots exist. Z/257 works (primitive root: 3, supports NTT up to length 256) but introduces a **parallel ring** alongside existing Z/256Z infrastructure, not a replacement.
+- **Static tape vs. dynamic routing**: The tape is fully pre-compiled with no runtime branching. Element-wise LUT masking (threshold → multiply) handles most gating needs, but true MoE-style expert selection requires a tape bank selector — a new executor concept.
+- **Training convergence**: Learning discrete LUT entries via straight-through estimators is fragile. No published results demonstrate coherence-native models outperforming transformers on any task. The entire training strategy is unvalidated.
+- **Opportunity cost**: Full implementation is ~31 weeks. That's time not spent on proven optimizations (matmul tuning, larger model support, standard training pipeline).
+
+### Three-phase implementation plan
+
+**Phase 1 — Minimum Viable Coherence (~5 weeks)**
+- Paired Q0 views (convention only, no struct changes)
+- Reframe LUT-GEMM as spectral interaction (no code change, just semantic interpretation)
+- Threshold LUT + InlineMul for resonance gating (bake new tables, existing executor)
+- Generalize KvCacheState → named modal memory channels
+- Single coherence block as custom op via existing `CustomOpRegistry`
+- Synthetic benchmark (associative recall, sequence copy)
+- **No new `TapeKernel` variants needed**
+
+*Go/no-go criteria:*
+- Coherence block runs on EnumTape with ≤3 new LUT tables
+- Synthetic task >80% accuracy
+- LUT utilization >30% (≥77 of 256 entries hit during inference)
+- Throughput within 2× of equivalent float custom op
+
+**Phase 2 — Ring-Native Coherence (~11 weeks)** *(gate on Phase 1 results)*
+- ComplexQ1 encoding (`amplitude:phase` in u16)
+- Z/257 ring module + NTT butterfly kernel + `TapeKernel::NTTButterfly`
+- Tape bank selector for MoE-style routing
+- LUT-based norms on Z/257
+- Small coherence language model vs. transformer baseline
+
+**Phase 3 — Production Coherence (~15 weeks)** *(gate on Phase 2 language modeling results)*
+- Training pipeline (float → ring quantization, straight-through estimators)
+- Metal/WebGPU NTT compute kernels
+- Scaling benchmarks (head-to-head vs. transformers)
+- Architecture hyperparameter search (ring size, depth, centroid count)
+
+### ROI signals to watch
+
+- **LUT utilization**: If <30% of table entries are hit, the model uses a tiny fraction of the ring — a simpler mechanism may suffice.
+- **Composition depth**: If accuracy degrades after >3 chained `.then()` calls, Q0 precision is the bottleneck.
+- **Spectral vs. centroid**: If LUT-GEMM (centroid-based) matches NTT (spectral) quality, skip the Z/257 ring entirely.
+- **Training loss curves**: If ring-quantized models don't converge within 2× the epochs of float baselines, the training strategy needs rethinking.
+
 ## Deliverable style
 
 Write the answer like a production-quality internal architecture research memo:
