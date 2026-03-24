@@ -9,3 +9,4 @@
 .playwright-mcp/
 **/target
 specs/scratch.md
+external
