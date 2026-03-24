@@ -154,8 +154,9 @@ impl<'a> BufferArena<'a> {
                     std::sync::atomic::AtomicBool::new(false);
                 if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     let nan_count = floats.iter().filter(|v| v.is_nan()).count();
+                    let hint = crate::tape::NAN_KERNEL_HINT.with(|h| h.borrow().clone());
                     eprintln!(
-                        "[NaN] first NaN at node_idx={idx} ({nan_count}/{} NaN floats, {} bytes)",
+                        "[NaN] first NaN at node_idx={idx} ({nan_count}/{} NaN, {} bytes) {hint}",
                         floats.len(),
                         buf.len()
                     );
@@ -330,8 +331,9 @@ impl<'a> BufferArena<'a> {
                             std::sync::atomic::AtomicBool::new(false);
                         if !REPORTED_MOVE.swap(true, std::sync::atomic::Ordering::Relaxed) {
                             let nan_count = floats.iter().filter(|v| v.is_nan()).count();
+                            let hint = crate::tape::NAN_KERNEL_HINT.with(|h| h.borrow().clone());
                             eprintln!(
-                                "[NaN-move] src={src_idx} dst={dst_idx} ({nan_count}/{} NaN)",
+                                "[NaN-move] src={src_idx} dst={dst_idx} ({nan_count}/{} NaN) {hint}",
                                 floats.len()
                             );
                         }

@@ -8,6 +8,12 @@
 //! The tape is built once per model load and executed per inference call.
 //! This is Phase 0.7 of the Compile-Time-First Acceleration plan.
 
+#[cfg(debug_assertions)]
+thread_local! {
+    /// Debug: records current kernel info for NaN tracing in arena.
+    pub static NAN_KERNEL_HINT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 use smallvec::SmallVec;
 
 use hologram_core::op::FloatOp;
@@ -1336,6 +1342,16 @@ impl EnumTape {
 
             for (i, instr) in level_instrs.iter().enumerate() {
                 let global_i = start + i;
+                // Debug: log kernel info for NaN tracing.
+                #[cfg(debug_assertions)]
+                {
+                    NAN_KERNEL_HINT.with(|h| {
+                        *h.borrow_mut() = format!(
+                            "instr={} out={} inputs={:?}",
+                            global_i, instr.output_idx, instr.input_indices
+                        );
+                    });
+                }
                 // Prefetch next instruction's input data and weight pages.
                 if global_i + 1 < self.instructions.len() {
                     let next = &self.instructions[global_i + 1];
