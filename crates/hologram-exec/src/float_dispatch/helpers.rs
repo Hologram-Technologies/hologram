@@ -4,7 +4,7 @@ use crate::error::ExecResult;
 ///
 /// Writes directly into `out_buf` — no intermediate Vec allocation.
 #[inline]
-pub(super) fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
+pub(crate) fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
     let start = out_buf.len();
     out_buf.resize(start + n * 4, 0);
     bytemuck::cast_slice_mut(&mut out_buf[start..])
@@ -12,7 +12,7 @@ pub(super) fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
 
 /// Transpose a row-major matrix [rows × cols] → [cols × rows].
 #[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
-pub(super) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+pub(crate) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     let mut dst = vec![0.0f32; rows * cols];
     for r in 0..rows {
         for c in 0..cols {
@@ -22,7 +22,7 @@ pub(super) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     dst
 }
 
-pub(super) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
+pub(crate) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match bytemuck::try_cast_slice(bytes) {
         Ok(s) => Ok(std::borrow::Cow::Borrowed(s)),
         Err(_) => Ok(std::borrow::Cow::Owned(
@@ -35,14 +35,14 @@ pub(super) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> 
 }
 
 /// Iterator over i64 values read from potentially-misaligned bytes.
-pub(super) fn iter_i64(bytes: &[u8]) -> impl Iterator<Item = i64> + '_ {
+pub(crate) fn iter_i64(bytes: &[u8]) -> impl Iterator<Item = i64> + '_ {
     bytes
         .chunks_exact(8)
         .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
 }
 
 /// Read a single i64 at element index `idx` from potentially-misaligned bytes.
-pub(super) fn read_i64_at(bytes: &[u8], idx: usize) -> Option<i64> {
+pub(crate) fn read_i64_at(bytes: &[u8], idx: usize) -> Option<i64> {
     let off = idx * 8;
     bytes
         .get(off..off + 8)
@@ -50,14 +50,14 @@ pub(super) fn read_i64_at(bytes: &[u8], idx: usize) -> Option<i64> {
 }
 
 /// Iterator over i32 values read from potentially-misaligned bytes.
-pub(super) fn iter_i32(bytes: &[u8]) -> impl Iterator<Item = i32> + '_ {
+pub(crate) fn iter_i32(bytes: &[u8]) -> impl Iterator<Item = i32> + '_ {
     bytes
         .chunks_exact(4)
         .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
 }
 
 /// Read a single i32 at element index `idx` from potentially-misaligned bytes.
-pub(super) fn read_i32_at(bytes: &[u8], idx: usize) -> Option<i32> {
+pub(crate) fn read_i32_at(bytes: &[u8], idx: usize) -> Option<i32> {
     let off = idx * 4;
     bytes
         .get(off..off + 4)
@@ -77,7 +77,7 @@ pub fn f32_vec_to_bytes(data: Vec<f32>) -> Vec<u8> {
     unsafe { Vec::from_raw_parts(ptr, len, cap) }
 }
 
-pub(super) fn gcd(mut a: usize, mut b: usize) -> usize {
+pub(crate) fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
         let t = b;
         b = a % b;
@@ -87,22 +87,22 @@ pub(super) fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 #[cfg(test)]
-pub(super) fn sigmoid(x: f32) -> f32 {
+pub(crate) fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
 #[cfg(test)]
-pub(super) fn silu(x: f32) -> f32 {
+pub(crate) fn silu(x: f32) -> f32 {
     x * sigmoid(x)
 }
 
 use smallvec::SmallVec;
 
 /// Most tensors have ≤6 dimensions; SmallVec avoids heap allocation for common cases.
-pub(super) type StrideVec = SmallVec<[usize; 6]>;
+pub(crate) type StrideVec = SmallVec<[usize; 6]>;
 
 /// Compute strides for a shape (row-major). Stack-allocated for ≤6 dims.
-pub(super) fn compute_strides_small(shape: &[usize]) -> StrideVec {
+pub(crate) fn compute_strides_small(shape: &[usize]) -> StrideVec {
     let mut strides = SmallVec::from_elem(1usize, shape.len());
     for i in (0..shape.len().saturating_sub(1)).rev() {
         strides[i] = strides[i + 1] * shape[i + 1];
@@ -117,7 +117,7 @@ pub fn compute_strides(shape: &[usize]) -> Vec<usize> {
 
 /// Compute broadcast strides: for dimensions where `src` has size 1 (broadcast),
 /// the stride is 0 (same element repeated). Otherwise, uses normal strides.
-pub(super) fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> StrideVec {
+pub(crate) fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> StrideVec {
     let src_strides = compute_strides_small(src_shape);
     let offset = out_shape.len() - src_shape.len();
     let mut strides = SmallVec::from_elem(0usize, out_shape.len());
@@ -132,7 +132,7 @@ pub(super) fn compute_broadcast_strides(src_shape: &[usize], out_shape: &[usize]
 
 /// Convert a flat output index to a flat source index using broadcast strides.
 #[inline]
-pub(super) fn broadcast_flat_index(
+pub(crate) fn broadcast_flat_index(
     flat_idx: usize,
     out_shape: &[usize],
     out_strides: &[usize],
@@ -151,7 +151,7 @@ pub(super) fn broadcast_flat_index(
 /// Compute numpy-style broadcast output shape.
 /// Returns `None` if shapes are not broadcast-compatible (dimensions must be
 /// equal or one of them must be 1).
-pub(super) fn broadcast_shapes(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+pub(crate) fn broadcast_shapes(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
     let max_len = a.len().max(b.len());
     let mut result = Vec::with_capacity(max_len);
     for i in 0..max_len {
@@ -174,7 +174,7 @@ pub(super) fn broadcast_shapes(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
 }
 
 /// Heuristic to infer (C, H, W) from total element count and batch size.
-pub(super) fn infer_nchw(total: usize, n: usize) -> (usize, usize, usize) {
+pub(crate) fn infer_nchw(total: usize, n: usize) -> (usize, usize, usize) {
     let per_batch = total / n.max(1);
     // Try common channel counts: 1, 3, then factors
     for &c in &[3, 1, 64, 128, 256, 512, 32, 16] {

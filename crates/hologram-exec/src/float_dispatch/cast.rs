@@ -2,7 +2,7 @@ use super::helpers::*;
 use crate::error::ExecResult;
 use hologram_core::op::FloatDType;
 
-pub(super) fn dispatch_cast(
+pub(crate) fn dispatch_cast(
     inputs: &[&[u8]],
     from: FloatDType,
     to: FloatDType,
@@ -87,7 +87,7 @@ pub(super) fn dispatch_cast(
     }
 }
 
-pub(super) fn dispatch_embed(inputs: &[&[u8]], dim: usize, quant: u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_embed(inputs: &[&[u8]], dim: usize, quant: u8) -> ExecResult<Vec<u8>> {
     // inputs[0] = token_ids (i64 or u32), inputs[1] = table (f32 or quantized) [vocab, dim]
     let raw = inputs[0];
     let table_bytes = inputs[1];
@@ -115,7 +115,7 @@ pub(super) fn dispatch_embed(inputs: &[&[u8]], dim: usize, quant: u8) -> ExecRes
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_dequantize(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_dequantize(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     // Q4_0 dequantization: blocks of 18 bytes (2 byte scale + 16 nibbles = 32 values)
     let data = inputs[0];
     let block_size = 18;
@@ -209,7 +209,7 @@ fn dequantize_q6_k(data: &[u8]) -> Vec<f32> {
 
 /// Decode bytes as f32, applying dequantization if quant != 0.
 /// quant: 0=f32, 1=Q4_0, 2=Q8_0, 3=Q6_K.
-pub(super) fn decode_weights(data: &[u8], quant: u8) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
+pub(crate) fn decode_weights(data: &[u8], quant: u8) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match quant {
         1 => Ok(std::borrow::Cow::Owned(dequantize_q4_0(data))),
         3 => Ok(std::borrow::Cow::Owned(dequantize_q6_k(data))),
@@ -219,7 +219,7 @@ pub(super) fn decode_weights(data: &[u8], quant: u8) -> ExecResult<std::borrow::
 }
 
 #[inline]
-pub(super) fn f16_to_f32(bits: u16) -> f32 {
+pub(crate) fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
     let exp = ((bits >> 10) & 0x1F) as u32;
     let mant = (bits & 0x3FF) as u32;

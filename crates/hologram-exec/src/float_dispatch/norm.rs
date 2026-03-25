@@ -7,7 +7,7 @@ fn fast_rsqrt(x: f32) -> f32 {
     1.0 / x.sqrt()
 }
 
-pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     if x.len() % size != 0 {
         return Err(ExecError::ShapeMismatch {
@@ -21,7 +21,7 @@ pub(super) fn dispatch_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_log_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_log_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     if x.len() % size != 0 {
         return Err(ExecError::ShapeMismatch {
@@ -40,7 +40,7 @@ pub(super) fn dispatch_log_softmax(inputs: &[&[u8]], size: usize) -> ExecResult<
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_rms_norm(
+pub(crate) fn dispatch_rms_norm(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -67,7 +67,7 @@ pub(super) fn dispatch_rms_norm(
 /// Fused Add + RMS normalization: rmsnorm(x + residual, weight, epsilon).
 /// Inputs: [x (f32), residual (f32), weight (f32)].
 /// Avoids materializing the intermediate x + residual buffer.
-pub(super) fn dispatch_add_rms_norm(
+pub(crate) fn dispatch_add_rms_norm(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -186,7 +186,7 @@ pub(crate) fn dispatch_rms_norm_into(
     Ok(())
 }
 
-pub(super) fn dispatch_layer_norm(
+pub(crate) fn dispatch_layer_norm(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -254,7 +254,7 @@ pub(crate) fn dispatch_layer_norm_into(
     Ok(())
 }
 
-pub(super) fn dispatch_instance_norm(
+pub(crate) fn dispatch_instance_norm(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
@@ -300,7 +300,7 @@ pub(super) fn dispatch_instance_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_lrn(
+pub(crate) fn dispatch_lrn(
     inputs: &[&[u8]],
     size: usize,
     alpha: f32,

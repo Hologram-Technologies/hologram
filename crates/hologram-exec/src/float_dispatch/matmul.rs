@@ -201,6 +201,48 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
 }
 
 /// MatMul writing directly into a pre-allocated output buffer (zero intermediate Vec).
+/// Infer actual (m, k, n) dimensions from compiled values and runtime buffer sizes.
+///
+/// When the runtime buffer has fewer elements than compiled m*k (variable-length
+/// execution like decode with 1 token instead of 2048), adapts m to match the
+/// actual buffer size. For batched matmul, preserves m and detects batch count.
+pub(crate) fn infer_matmul_dims(
+    compiled_m: usize,
+    compiled_k: usize,
+    compiled_n: usize,
+    a_elems: usize,
+    b_elems: usize,
+) -> (usize, usize, usize) {
+    let actual_k =
+        infer_matmul_k(compiled_k, compiled_m, compiled_n, a_elems, b_elems).unwrap_or(compiled_k);
+
+    let mk = compiled_m.max(1) * actual_k;
+    let kn = actual_k * compiled_n.max(1);
+
+    if compiled_m > 0
+        && compiled_n > 0
+        && mk > 0
+        && kn > 0
+        && a_elems > mk
+        && a_elems.is_multiple_of(mk)
+        && (b_elems.is_multiple_of(kn) || b_elems == kn)
+    {
+        // Batched case: keep compiled m and n, batch is implicit.
+        (compiled_m, actual_k, compiled_n)
+    } else if actual_k > 0 {
+        // Non-batched: infer m from buffer size.
+        let actual_m = a_elems / actual_k;
+        let actual_n = if b_elems >= actual_k {
+            b_elems / actual_k
+        } else {
+            compiled_n
+        };
+        (actual_m, actual_k, actual_n)
+    } else {
+        (compiled_m, compiled_k, compiled_n)
+    }
+}
+
 pub fn dispatch_matmul_into(
     inputs: &[&[u8]],
     m: usize,
@@ -379,7 +421,7 @@ pub fn dispatch_batched_matmul(
 /// Uses compiled k/m/n as hints. When compiled k is wrong (doesn't divide
 /// both inputs), tries to infer k from compiled n (B's last dim, typically
 /// concrete for weight matrices) or from common factors.
-fn infer_matmul_k(
+pub(crate) fn infer_matmul_k(
     compiled_k: usize,
     compiled_m: usize,
     compiled_n: usize,
@@ -448,7 +490,7 @@ fn infer_matmul_k(
     })
 }
 
-pub(super) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> ExecResult<Vec<u8>> {
     let a = cast_f32(inputs[0])?;
     let b = super::cast::decode_weights(inputs[1], quant_b)?;
     let c: std::borrow::Cow<'_, [f32]> = if inputs.len() > 2 {

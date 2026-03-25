@@ -146,7 +146,7 @@ pub(crate) fn dispatch_concat(
     }
 }
 
-pub(super) fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     // inputs: [cond (u8 or f32), x (f32), y (f32)]
     // Condition is normalized to per-element booleans via to_bools(),
     // which handles both u8 masks and f32-encoded booleans uniformly.
@@ -168,7 +168,7 @@ pub(super) fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_range(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_range(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     // inputs: [start, limit, delta] — each is a scalar, dtype is either f32 or i64.
     let read_scalar = |b: &[u8]| -> f32 {
         match b.len() {
@@ -191,7 +191,7 @@ pub(super) fn dispatch_range(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_shape(
+pub(crate) fn dispatch_shape(
     inputs: &[&[u8]],
     dtype: FloatDType,
     _start: i64,

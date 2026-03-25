@@ -115,8 +115,6 @@ impl<'a> TapeContext<'a> {
 /// appropriate dispatch function directly, enabling inlining and
 /// eliminating vtable indirection.
 pub enum TapeKernel {
-    /// Float op dispatched via `dispatch_float_into`.
-    Float(FloatOp),
     /// Fused chain of unary float ops.
     FusedFloatChain(Vec<FloatOp>),
     /// Graph output passthrough.
@@ -249,7 +247,167 @@ pub enum TapeKernel {
         /// Number of valid dimensions.
         ndim: u8,
     },
-    /// Identity passthrough — no kernel, just forward input to output.
+    // ── Complete FloatOp coverage (no more Float(FloatOp) catch-all) ────
+    /// Power: a^b.
+    InlinePow,
+    /// Modulo: a % b.
+    InlineMod,
+    /// Clamp to [min, max]. min/max stored as f32 bits.
+    InlineClip { min: u32, max: u32 },
+    /// Test for NaN: output is u8 (0 or 1).
+    InlineIsNaN,
+    /// Logical NOT (unary, f32 domain: 0→1, nonzero→0).
+    InlineNot,
+    /// Logical AND (binary, f32 domain).
+    InlineAnd,
+    /// Logical OR.
+    InlineOr,
+    /// Logical XOR.
+    InlineXor,
+    /// Equality comparison (f32→f32: 0.0 or 1.0).
+    InlineEqual,
+    /// Less-than comparison.
+    InlineLess,
+    /// Less-or-equal comparison.
+    InlineLessOrEqual,
+    /// Greater-than comparison.
+    InlineGreater,
+    /// Greater-or-equal comparison.
+    InlineGreaterOrEqual,
+    /// General matrix multiply with alpha/beta/transpose flags.
+    InlineGemm {
+        m: u32,
+        k: u32,
+        n: u32,
+        alpha: u32,
+        beta: u32,
+        trans_a: bool,
+        trans_b: bool,
+        quant_b: u8,
+    },
+    /// Sum reduction along last `size` elements.
+    InlineReduceSum { size: u32 },
+    /// Mean reduction along last `size` elements.
+    InlineReduceMean { size: u32 },
+    /// Max reduction along last `size` elements.
+    InlineReduceMax { size: u32 },
+    /// Min reduction along last `size` elements.
+    InlineReduceMin { size: u32 },
+    /// Product reduction along last `size` elements.
+    InlineReduceProd { size: u32 },
+    /// Type cast between dtypes.
+    InlineCast {
+        from: hologram_core::op::FloatDType,
+        to: hologram_core::op::FloatDType,
+    },
+    /// Embedding lookup: [token_ids, table] → [len(ids), dim].
+    InlineEmbed { dim: u32, quant: u8 },
+    /// Conditional selection: cond ? x : y.
+    InlineWhere,
+    /// Generate range [start, limit) with step.
+    InlineRange,
+    /// Extract shape as i64 tensor.
+    InlineShape {
+        dtype: hologram_core::op::FloatDType,
+        start: i64,
+        end: i64,
+    },
+    /// Contiguous slice along axis.
+    InlineSlice {
+        axis_from_end: u8,
+        start: u32,
+        end: u32,
+        axis_size: u32,
+    },
+    /// GatherND.
+    InlineGatherND,
+    /// Fused SiLU gating (SwiGLU): silu(gate) * up.
+    InlineFusedSwiGLU,
+    /// Reshape: zero-copy data, metadata-only shape change.
+    InlineReshape,
+    /// Dequantize Q4_0 → f32.
+    InlineDequantize,
+    /// 2-D convolution.
+    InlineConv2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        input_h: u32,
+        input_w: u32,
+    },
+    /// 2-D transposed convolution.
+    InlineConvTranspose {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        output_pad_h: u32,
+        output_pad_w: u32,
+        input_h: u32,
+        input_w: u32,
+    },
+    /// 2-D max pooling.
+    InlineMaxPool2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+    },
+    /// 2-D average pooling.
+    InlineAvgPool2d {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+    },
+    /// Global average pool: spatial dims → 1.
+    InlineGlobalAvgPool {
+        channels: u32,
+        spatial_h: u32,
+        spatial_w: u32,
+    },
+    /// Resize (nearest/linear/cubic). Mode encoded as u8.
+    InlineResize { mode: u8 },
+    /// N-D padding. Mode: 0=constant, 1=reflect, 2=edge.
+    InlinePad { mode: u8 },
+    /// Instance normalization.
+    InlineInstanceNorm { size: u32, epsilon: u32 },
+    /// Local response normalization.
+    InlineLRN {
+        size: u32,
+        alpha: u32,
+        beta: u32,
+        bias: u32,
+    },
+    /// Top-K along axis.
+    InlineTopK { axis: u32, largest: bool },
+    /// ScatterND.
+    InlineScatterND,
+    /// Cumulative sum along axis.
+    InlineCumSum { axis: u32 },
+    /// NonZero: returns indices of non-zero elements.
+    InlineNonZero,
+    /// Compress along axis.
+    InlineCompress { axis: u32 },
+    /// ReverseSequence along time/batch axes.
+    InlineReverseSequence { batch_axis: u32, time_axis: u32 },
+
+    /// Identity passthrough — same-type Cast only.
     Passthrough,
 
     /// Custom op — handler baked at tape build time from registry.
@@ -279,13 +437,27 @@ impl TapeKernel {
             | TapeKernel::InlineFloor
             | TapeKernel::InlineCeil
             | TapeKernel::InlineRound
-            | TapeKernel::InlineErf => Some(1),
+            | TapeKernel::InlineErf
+            | TapeKernel::InlineClip { .. }
+            | TapeKernel::InlineNot
+            | TapeKernel::InlineIsNaN => Some(1),
             TapeKernel::InlineAdd
             | TapeKernel::InlineMul
             | TapeKernel::InlineSub
             | TapeKernel::InlineDiv
             | TapeKernel::InlineMin
-            | TapeKernel::InlineMax => Some(2),
+            | TapeKernel::InlineMax
+            | TapeKernel::InlinePow
+            | TapeKernel::InlineMod
+            | TapeKernel::InlineEqual
+            | TapeKernel::InlineLess
+            | TapeKernel::InlineLessOrEqual
+            | TapeKernel::InlineGreater
+            | TapeKernel::InlineGreaterOrEqual
+            | TapeKernel::InlineAnd
+            | TapeKernel::InlineOr
+            | TapeKernel::InlineXor
+            | TapeKernel::InlineFusedSwiGLU => Some(2),
             _ => None,
         }
     }
@@ -324,22 +496,6 @@ fn dispatch_kernel(
     use crate::kv::KvStore;
 
     match kernel {
-        TapeKernel::Float(op) => {
-            // Try selected backend (GPU/accelerator) first.
-            match backend.dispatch_float(op, inputs, out_buf)? {
-                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-                #[cfg(has_metal)]
-                KernelOutput::MetalBuffer(buf) => {
-                    return Ok(DispatchResult::MetalBuffer(buf));
-                }
-                #[cfg(has_webgpu)]
-                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
-                KernelOutput::Skipped => {}
-            }
-            // Fallback to CPU dispatch.
-            float_dispatch::dispatch_float_into(op, inputs, tape_ctx.ctx.as_ref(), out_buf)?;
-            Ok(DispatchResult::InOutBuf)
-        }
         TapeKernel::FusedFloatChain(chain) => {
             float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)?;
             Ok(DispatchResult::InOutBuf)
@@ -664,26 +820,464 @@ fn dispatch_kernel(
             }
             Ok(DispatchResult::InOutBuf)
         }
+        TapeKernel::InlineReshape => {
+            // Zero-copy: bytes unchanged, only metadata changes.
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+
+        // ── New inline simple ops (Phase 10: complete TapeKernel coverage) ──
+        TapeKernel::InlinePow => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.powf(b));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineMod => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a % b);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineClip { min, max } => {
+            let min_f = hologram_core::op::bits_to_f32(*min);
+            let max_f = hologram_core::op::bits_to_f32(*max);
+            inline_unary(inputs[0], out_buf, |v| v.max(min_f).min(max_f));
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineIsNaN => {
+            inline_unary(inputs[0], out_buf, |v| if v.is_nan() { 1.0 } else { 0.0 });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineNot => {
+            inline_unary(inputs[0], out_buf, |v| if v == 0.0 { 1.0 } else { 0.0 });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAnd => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if a != 0.0 && b != 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineOr => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if a != 0.0 || b != 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineXor => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if (a != 0.0) ^ (b != 0.0) {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineEqual => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if a == b {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLess => {
+            inline_binary(
+                inputs[0],
+                inputs[1],
+                out_buf,
+                |a, b| if a < b { 1.0 } else { 0.0 },
+            );
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLessOrEqual => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if a <= b {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGreater => {
+            inline_binary(
+                inputs[0],
+                inputs[1],
+                out_buf,
+                |a, b| if a > b { 1.0 } else { 0.0 },
+            );
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGreaterOrEqual => {
+            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
+                if a >= b {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineFusedSwiGLU => {
+            inline_binary(inputs[0], inputs[1], out_buf, |g, u| {
+                g * (1.0 / (1.0 + (-g).exp())) * u
+            });
+            Ok(DispatchResult::InOutBuf)
+        }
+
+        // ── Complex ops (call existing handlers) ──────────────────────────
+        TapeKernel::InlineGemm {
+            m,
+            k,
+            n,
+            alpha,
+            beta,
+            trans_a,
+            trans_b,
+            quant_b,
+        } => {
+            let result = float_dispatch::matmul::dispatch_gemm(
+                inputs,
+                float_dispatch::matmul::GemmParams {
+                    m: *m as usize,
+                    n: *n as usize,
+                    k: *k as usize,
+                    alpha: hologram_core::op::bits_to_f32(*alpha),
+                    beta: hologram_core::op::bits_to_f32(*beta),
+                    trans_a: *trans_a,
+                    trans_b: *trans_b,
+                },
+                *quant_b,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReduceSum { size } => {
+            let actual = float_dispatch::resolve_size(*size, inputs);
+            let result = float_dispatch::reduce::dispatch_reduce(
+                inputs,
+                actual,
+                float_dispatch::reduce::reduce_sum,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReduceMean { size } => {
+            let actual = float_dispatch::resolve_size(*size, inputs);
+            let result = float_dispatch::reduce::dispatch_reduce(
+                inputs,
+                actual,
+                float_dispatch::reduce::reduce_mean,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReduceMax { size } => {
+            let actual = float_dispatch::resolve_size(*size, inputs);
+            let result = float_dispatch::reduce::dispatch_reduce(
+                inputs,
+                actual,
+                float_dispatch::reduce::reduce_max,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReduceMin { size } => {
+            let actual = float_dispatch::resolve_size(*size, inputs);
+            let result = float_dispatch::reduce::dispatch_reduce(
+                inputs,
+                actual,
+                float_dispatch::reduce::reduce_min,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReduceProd { size } => {
+            let result = float_dispatch::reduce::dispatch_reduce(
+                inputs,
+                *size as usize,
+                float_dispatch::reduce::reduce_prod,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineCast { from, to } => {
+            let result = float_dispatch::cast::dispatch_cast(inputs, *from, *to)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineEmbed { dim, quant } => {
+            let result = float_dispatch::cast::dispatch_embed(inputs, *dim as usize, *quant)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineWhere => {
+            let result = float_dispatch::gather_concat::dispatch_where(inputs)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineRange => {
+            let result = float_dispatch::gather_concat::dispatch_range(inputs)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineShape { dtype, start, end } => {
+            let result =
+                float_dispatch::gather_concat::dispatch_shape(inputs, *dtype, *start, *end)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSlice {
+            axis_from_end,
+            start,
+            end,
+            axis_size,
+        } => {
+            let result = float_dispatch::dispatch_float_ctx(
+                &FloatOp::Slice {
+                    axis_from_end: *axis_from_end,
+                    start: *start,
+                    end: *end,
+                    axis_size: *axis_size,
+                },
+                inputs,
+                tape_ctx.ctx.as_ref(),
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGatherND => {
+            // GatherND: pass-through (same as Reshape — data unchanged).
+            if let Some(b) = inputs.first() {
+                out_buf.extend_from_slice(b);
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineDequantize => {
+            let result = float_dispatch::cast::dispatch_dequantize(inputs)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineConv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => {
+            let result = float_dispatch::conv::dispatch_conv2d_direct(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+                *input_h as usize,
+                *input_w as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineConvTranspose {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            output_pad_h,
+            output_pad_w,
+            input_h,
+            input_w,
+        } => {
+            let result = float_dispatch::conv::dispatch_conv_transpose(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+                *output_pad_h as usize,
+                *output_pad_w as usize,
+                *input_h as usize,
+                *input_w as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineMaxPool2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+        } => {
+            let result = float_dispatch::pool::dispatch_max_pool_2d(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAvgPool2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+        } => {
+            let result = float_dispatch::pool::dispatch_avg_pool_2d(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGlobalAvgPool {
+            channels,
+            spatial_h,
+            spatial_w,
+        } => {
+            let result = float_dispatch::pool::dispatch_global_avg_pool_direct(
+                inputs,
+                *channels as usize,
+                *spatial_h as usize,
+                *spatial_w as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineResize { mode } => {
+            let result = float_dispatch::spatial::dispatch_resize(inputs, *mode)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlinePad { mode } => {
+            let result = float_dispatch::spatial::dispatch_pad(inputs, *mode)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineInstanceNorm { size, epsilon } => {
+            let actual = float_dispatch::resolve_size(*size, inputs);
+            let result = float_dispatch::norm::dispatch_instance_norm(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLRN {
+            size,
+            alpha,
+            beta,
+            bias,
+        } => {
+            let result = float_dispatch::norm::dispatch_lrn(
+                inputs,
+                *size as usize,
+                hologram_core::op::bits_to_f32(*alpha),
+                hologram_core::op::bits_to_f32(*beta),
+                hologram_core::op::bits_to_f32(*bias),
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineTopK { axis, largest } => {
+            let result = float_dispatch::misc::dispatch_top_k(inputs, *axis as usize, *largest)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineScatterND => {
+            let result = float_dispatch::misc::dispatch_scatter_nd(inputs)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineCumSum { axis } => {
+            let result = float_dispatch::misc::dispatch_cumsum(inputs, *axis as usize)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineNonZero => {
+            let result = float_dispatch::misc::dispatch_nonzero(inputs)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineCompress { axis } => {
+            let result = float_dispatch::misc::dispatch_compress(inputs, *axis as usize)?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineReverseSequence {
+            batch_axis,
+            time_axis,
+        } => {
+            let result = float_dispatch::misc::dispatch_reverse_sequence(
+                inputs,
+                *batch_axis as usize,
+                *time_axis as usize,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
 
         // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
         // Try backend (GPU) first, then direct CPU kernel call.
         TapeKernel::InlineMatMul { m, k, n } => {
-            match backend.dispatch_matmul(inputs, *m as usize, *k as usize, *n as usize, out_buf)? {
-                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-                #[cfg(has_metal)]
-                KernelOutput::MetalBuffer(buf) => {
-                    return Ok(DispatchResult::MetalBuffer(buf));
-                }
-                #[cfg(has_webgpu)]
-                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
-                KernelOutput::Skipped => {}
-            }
-            crate::float_dispatch::matmul::dispatch_matmul_into(
-                inputs,
+            // Adapt dimensions from actual buffer sizes (variable-length execution).
+            // Uses the same logic as dispatch_matmul_into to handle batched matmul,
+            // non-seq m dimensions, and runtime size inference.
+            let (actual_m, actual_k, actual_n) = crate::float_dispatch::matmul::infer_matmul_dims(
                 *m as usize,
                 *k as usize,
                 *n as usize,
-                out_buf,
+                inputs[0].len() / 4,
+                inputs[1].len() / 4,
+            );
+            // Skip backend dispatch — use CPU for now to validate correctness.
+            // TODO: re-enable backend.dispatch_matmul with adapted dims once validated.
+            crate::float_dispatch::matmul::dispatch_matmul_into(
+                inputs, actual_m, actual_k, actual_n, out_buf,
             )?;
             Ok(DispatchResult::InOutBuf)
         }
@@ -878,6 +1472,18 @@ fn dispatch_inline_unary(kernel: &TapeKernel, input: &[f32], out_buf: &mut Vec<u
             });
         }
         TapeKernel::InlineReciprocal => inline_unary_f32(input, out_buf, |v| 1.0 / v),
+        TapeKernel::InlineClip { min, max } => {
+            let min_f = hologram_core::op::bits_to_f32(*min);
+            let max_f = hologram_core::op::bits_to_f32(*max);
+            inline_unary_f32(input, out_buf, |v| v.max(min_f).min(max_f));
+        }
+        TapeKernel::InlineNot => {
+            inline_unary_f32(input, out_buf, |v| if v == 0.0 { 1.0 } else { 0.0 })
+        }
+        TapeKernel::InlineIsNaN => {
+            // IsNaN outputs f32 1.0/0.0 in the inline path (consistent with f32 arena).
+            inline_unary_f32(input, out_buf, |v| if v.is_nan() { 1.0 } else { 0.0 });
+        }
         _ => unreachable!("dispatch_inline_unary called for non-unary kernel"),
     }
 }
@@ -892,6 +1498,64 @@ fn dispatch_inline_binary(kernel: &TapeKernel, a: &[f32], b: &[f32], out_buf: &m
         TapeKernel::InlineDiv => inline_binary_f32(a, b, out_buf, |x, y| x / y),
         TapeKernel::InlineMin => inline_binary_f32(a, b, out_buf, |x, y| x.min(y)),
         TapeKernel::InlineMax => inline_binary_f32(a, b, out_buf, |x, y| x.max(y)),
+        TapeKernel::InlinePow => inline_binary_f32(a, b, out_buf, |x, y| x.powf(y)),
+        TapeKernel::InlineMod => inline_binary_f32(a, b, out_buf, |x, y| x % y),
+        TapeKernel::InlineEqual => {
+            inline_binary_f32(a, b, out_buf, |x, y| if x == y { 1.0 } else { 0.0 });
+        }
+        TapeKernel::InlineLess => {
+            inline_binary_f32(a, b, out_buf, |x, y| if x < y { 1.0 } else { 0.0 });
+        }
+        TapeKernel::InlineLessOrEqual => {
+            inline_binary_f32(a, b, out_buf, |x, y| if x <= y { 1.0 } else { 0.0 });
+        }
+        TapeKernel::InlineGreater => {
+            inline_binary_f32(a, b, out_buf, |x, y| if x > y { 1.0 } else { 0.0 });
+        }
+        TapeKernel::InlineGreaterOrEqual => {
+            inline_binary_f32(a, b, out_buf, |x, y| if x >= y { 1.0 } else { 0.0 });
+        }
+        TapeKernel::InlineAnd => {
+            inline_binary_f32(
+                a,
+                b,
+                out_buf,
+                |x, y| {
+                    if x != 0.0 && y != 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                },
+            );
+        }
+        TapeKernel::InlineOr => {
+            inline_binary_f32(
+                a,
+                b,
+                out_buf,
+                |x, y| {
+                    if x != 0.0 || y != 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                },
+            );
+        }
+        TapeKernel::InlineXor => {
+            inline_binary_f32(a, b, out_buf, |x, y| {
+                if (x != 0.0) ^ (y != 0.0) {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+        }
+        TapeKernel::InlineFusedSwiGLU => {
+            // silu(gate) * up = gate * sigmoid(gate) * up
+            inline_binary_f32(a, b, out_buf, |g, u| g * (1.0 / (1.0 + (-g).exp())) * u);
+        }
         _ => unreachable!("dispatch_inline_binary called for non-binary kernel"),
     }
 }
@@ -992,6 +1656,20 @@ fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
             });
             true
         }
+        TapeKernel::InlineClip { min, max } => {
+            let min_f = hologram_core::op::bits_to_f32(*min);
+            let max_f = hologram_core::op::bits_to_f32(*max);
+            inline_unary_inplace(buf, |v| v.max(min_f).min(max_f));
+            true
+        }
+        TapeKernel::InlineNot => {
+            inline_unary_inplace(buf, |v| if v == 0.0 { 1.0 } else { 0.0 });
+            true
+        }
+        TapeKernel::InlineIsNaN => {
+            inline_unary_inplace(buf, |v| if v.is_nan() { 1.0 } else { 0.0 });
+            true
+        }
         _ => false,
     }
 }
@@ -1005,7 +1683,7 @@ fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
 fn dispatch_kernel_par(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
-    ctx: Option<&ExecutionContext>,
+    _ctx: Option<&ExecutionContext>,
     constants: &ConstantStore,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
@@ -1013,7 +1691,6 @@ fn dispatch_kernel_par(
     use crate::kv::KvStore;
 
     match kernel {
-        TapeKernel::Float(op) => float_dispatch::dispatch_float_into(op, inputs, ctx, out_buf),
         TapeKernel::FusedFloatChain(chain) => {
             float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)
         }
@@ -1474,7 +2151,12 @@ impl EnumTape {
                 // ── Fast path: Output passthrough (zero-copy move) ──
                 if instr.passthrough {
                     if let Some(&src_idx) = instr.input_indices.first() {
-                        arena.move_slot(NodeId::new(src_idx, 0), NodeId::new(instr.output_idx, 0));
+                        let src_id = NodeId::new(src_idx, 0);
+                        let dst_id = NodeId::new(instr.output_idx, 0);
+                        arena.move_slot(src_id, dst_id);
+                        if let Some(meta) = instr.output_meta {
+                            arena.set_meta(dst_id, meta);
+                        }
                         continue;
                     }
                 }
@@ -1551,6 +2233,68 @@ impl EnumTape {
                     continue;
                 }
 
+                // ── Fast path: Reshape/Passthrough with shape-aware TensorMeta ──
+                // When input has fewer elements than the compiled output shape
+                // (variable-length execution), adjust the output meta to match
+                // the actual element count. This is how ONNX Reshape(-1) works.
+                // ── Fast path: Reshape — zero-copy data, adjust shape metadata ──
+                if matches!(
+                    instr.kernel,
+                    TapeKernel::InlineReshape | TapeKernel::Passthrough
+                ) {
+                    if let Some(&src_idx) = instr.input_indices.first() {
+                        let src_id = NodeId::new(src_idx, 0);
+                        let out_id = NodeId::new(instr.output_idx, 0);
+
+                        // Compute adjusted output meta from input meta + compiled target shape.
+                        // When actual element count differs from compiled (variable-length
+                        // execution), find the dim that changed and scale it.
+                        let adjusted_meta =
+                            match (arena.get_meta(src_id).copied(), instr.output_meta) {
+                                (Some(input_meta), Some(compiled_meta)) => {
+                                    let actual_elems = input_meta.n_elems();
+                                    let compiled_elems = compiled_meta.n_elems();
+                                    if actual_elems != compiled_elems
+                                        && actual_elems > 0
+                                        && compiled_elems > 0
+                                    {
+                                        let mut adjusted = compiled_meta;
+                                        let ratio = actual_elems as f64 / compiled_elems as f64;
+                                        for i in 0..adjusted.ndim as usize {
+                                            let scaled =
+                                                (adjusted.dims[i] as f64 * ratio).round() as u32;
+                                            let mut check = adjusted;
+                                            check.dims[i] = scaled;
+                                            if check.n_elems() == actual_elems {
+                                                adjusted.dims[i] = scaled;
+                                                break;
+                                            }
+                                        }
+                                        Some(adjusted)
+                                    } else {
+                                        Some(compiled_meta)
+                                    }
+                                }
+                                (_, Some(compiled_meta)) => Some(compiled_meta),
+                                (Some(input_meta), None) => Some(input_meta),
+                                _ => None,
+                            };
+
+                        let data = arena.get(src_id)?;
+                        out_buf.clear();
+                        out_buf.extend_from_slice(data);
+                        arena.swap_insert_with_elem_size(
+                            out_id,
+                            &mut out_buf,
+                            instr.output_elem_size as usize,
+                        );
+                        if let Some(meta) = adjusted_meta {
+                            arena.set_meta(out_id, meta);
+                        }
+                        continue;
+                    }
+                }
+
                 // ── General path: SmallVec collection + dispatch_kernel ──
                 let dispatch_result = {
                     let input_refs: SmallVec<[&[u8]; 4]> = instr
@@ -1573,6 +2317,7 @@ impl EnumTape {
 
                 // Store output based on dispatch result.
                 let out_id = NodeId::new(instr.output_idx, 0);
+
                 match dispatch_result {
                     DispatchResult::InOutBuf => {
                         arena.swap_insert_with_elem_size(
@@ -1898,7 +2643,7 @@ mod tests {
     fn enum_tape_float_relu() {
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
-            kernel: TapeKernel::Float(FloatOp::Relu),
+            kernel: TapeKernel::InlineRelu,
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,
@@ -1972,7 +2717,7 @@ mod tests {
         // Input(0) → Relu(1) → Output(2)
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
-            kernel: TapeKernel::Float(FloatOp::Relu),
+            kernel: TapeKernel::InlineRelu,
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,
@@ -2016,7 +2761,7 @@ mod tests {
         // Run the same tape twice — second run should reuse allocations.
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
-            kernel: TapeKernel::Float(FloatOp::Relu),
+            kernel: TapeKernel::InlineRelu,
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,
@@ -2078,7 +2823,7 @@ mod tests {
         // Generic Float path
         let mut tape2 = EnumTape::new();
         tape2.push(TapeInstruction {
-            kernel: TapeKernel::Float(FloatOp::Relu),
+            kernel: TapeKernel::InlineRelu,
             output_idx: 1,
             input_indices: vec![0],
             output_elem_size: 4,

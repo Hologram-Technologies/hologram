@@ -1,7 +1,7 @@
 use super::helpers::*;
 use crate::error::ExecResult;
 
-pub(super) fn dispatch_resize(inputs: &[&[u8]], mode: u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_resize(inputs: &[&[u8]], mode: u8) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     // inputs[1] = scales or sizes (f32 or i64)
     let scales_bytes = inputs.get(1).copied().unwrap_or(&[][..]);
@@ -57,7 +57,7 @@ pub(super) fn dispatch_resize(inputs: &[&[u8]], mode: u8) -> ExecResult<Vec<u8>>
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_pad(inputs: &[&[u8]], mode: u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_pad(inputs: &[&[u8]], mode: u8) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let pads_bytes = inputs.get(1).copied().unwrap_or(&[][..]);
 

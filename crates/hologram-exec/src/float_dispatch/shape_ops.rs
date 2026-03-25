@@ -92,7 +92,7 @@ pub fn dispatch_transpose(
 ///
 /// Infers the source shape from `n_src` and `target_shape`: each source dim
 /// is either 1 (broadcast) or equals the target dim.
-pub(super) fn broadcast_to(src: &[f32], n_src: usize, target_shape: &[usize]) -> Vec<f32> {
+pub(crate) fn broadcast_to(src: &[f32], n_src: usize, target_shape: &[usize]) -> Vec<f32> {
     let target_elems: usize = target_shape
         .iter()
         .copied()

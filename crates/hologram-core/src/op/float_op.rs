@@ -54,6 +54,13 @@ impl FloatDType {
     }
 }
 
+/// Sentinel value for a dimension that is resolved at runtime.
+///
+/// Used in TensorMeta and shape specifications to indicate a dimension
+/// whose size is determined by the actual input data, not by compiled shapes.
+/// Analogous to ONNX Reshape's `-1` dimension inference.
+pub const RUNTIME: u32 = u32::MAX;
+
 /// Lightweight metadata attached to every buffer in the arena.
 ///
 /// Carries shape, dtype, and dimensionality — making each tensor buffer

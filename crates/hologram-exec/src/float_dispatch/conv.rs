@@ -114,7 +114,7 @@ fn conv2d_core(
 ///
 /// All dispatch paths route through this function — no shape guessing needed.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_conv2d_direct(
+pub(crate) fn dispatch_conv2d_direct(
     inputs: &[&[u8]],
     kh: usize,
     kw: usize,
@@ -182,7 +182,7 @@ pub(super) fn dispatch_conv2d_direct(
 ///
 /// Delegates to `dispatch_conv2d_direct` after extracting H/W from shapes.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_conv2d_with_shapes(
+pub(crate) fn dispatch_conv2d_with_shapes(
     inputs: &[&[u8]],
     input_shapes: &[Vec<usize>],
     kh: usize,
@@ -211,7 +211,7 @@ pub(super) fn dispatch_conv2d_with_shapes(
 
 /// Transposed 2-D convolution with explicit spatial dimensions.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_conv_transpose(
+pub(crate) fn dispatch_conv_transpose(
     inputs: &[&[u8]],
     kh: usize,
     kw: usize,

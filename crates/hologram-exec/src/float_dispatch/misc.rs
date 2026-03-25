@@ -2,7 +2,7 @@ use super::elementwise::to_bools;
 use super::helpers::*;
 use crate::error::ExecResult;
 
-pub(super) fn dispatch_top_k(inputs: &[&[u8]], _axis: usize, largest: bool) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_top_k(inputs: &[&[u8]], _axis: usize, largest: bool) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     // K from inputs[1] (i64 scalar)
     let k = if inputs.len() >= 2 && inputs[1].len() >= 8 {
@@ -31,7 +31,7 @@ pub(super) fn dispatch_top_k(inputs: &[&[u8]], _axis: usize, largest: bool) -> E
     Ok(f32_vec_to_bytes(values))
 }
 
-pub(super) fn dispatch_scatter_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_scatter_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     // inputs: [data, indices, updates]
     let data = cast_f32(inputs[0])?;
     let indices_bytes = inputs[1];
@@ -51,7 +51,7 @@ pub(super) fn dispatch_scatter_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_cumsum(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_cumsum(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let mut out = data.into_owned();
 
@@ -63,7 +63,7 @@ pub(super) fn dispatch_cumsum(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_nonzero(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_nonzero(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     // NonZero returns indices of non-zero elements as i64
     let indices: Vec<i64> = data
@@ -76,7 +76,7 @@ pub(super) fn dispatch_nonzero(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     Ok(bytemuck::cast_slice(&indices).to_vec())
 }
 
-pub(super) fn dispatch_compress(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_compress(inputs: &[&[u8]], _axis: usize) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     // condition from inputs[1]: boolean mask
     let cond = to_bools(inputs[1]);
@@ -91,7 +91,7 @@ pub(super) fn dispatch_compress(inputs: &[&[u8]], _axis: usize) -> ExecResult<Ve
     Ok(f32_vec_to_bytes(out))
 }
 
-pub(super) fn dispatch_reverse_sequence(
+pub(crate) fn dispatch_reverse_sequence(
     inputs: &[&[u8]],
     _batch_axis: usize,
     _time_axis: usize,

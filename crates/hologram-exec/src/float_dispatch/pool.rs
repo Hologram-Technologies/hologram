@@ -61,7 +61,7 @@ fn pool_2d<A: Copy>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_max_pool_2d(
+pub(crate) fn dispatch_max_pool_2d(
     inputs: &[&[u8]],
     kh: usize,
     kw: usize,
@@ -100,7 +100,7 @@ pub(super) fn dispatch_max_pool_2d(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_avg_pool_2d(
+pub(crate) fn dispatch_avg_pool_2d(
     inputs: &[&[u8]],
     kh: usize,
     kw: usize,
@@ -148,7 +148,7 @@ pub(super) fn dispatch_avg_pool_2d(
 /// GlobalAvgPool with explicit channel and spatial dimensions from the op fields.
 ///
 /// All dispatch paths route through this function — no shape guessing needed.
-pub(super) fn dispatch_global_avg_pool_direct(
+pub(crate) fn dispatch_global_avg_pool_direct(
     inputs: &[&[u8]],
     channels: usize,
     spatial_h: usize,

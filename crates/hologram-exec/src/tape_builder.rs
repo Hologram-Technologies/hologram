@@ -210,6 +210,18 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
             | TapeKernel::InlineGelu
             | TapeKernel::InlineExp
             | TapeKernel::InlineReciprocal
+            | TapeKernel::InlineLog
+            | TapeKernel::InlineSqrt
+            | TapeKernel::InlineCos
+            | TapeKernel::InlineSin
+            | TapeKernel::InlineSign
+            | TapeKernel::InlineFloor
+            | TapeKernel::InlineCeil
+            | TapeKernel::InlineRound
+            | TapeKernel::InlineErf
+            | TapeKernel::InlineClip { .. }
+            | TapeKernel::InlineNot
+            | TapeKernel::InlineIsNaN
                 if instr.input_indices.len() == 1 =>
             {
                 if is_single_consumer(instr.input_indices[0]) {
@@ -273,12 +285,11 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
 
 /// Resolve a `FloatOp` to a [`TapeKernel`] variant.
 ///
-/// KvWrite/KvRead are intercepted and mapped to dedicated TapeKernel variants.
-/// All other ops are stored as `TapeKernel::Float(op)` — size inference
-/// happens at dispatch time inside `dispatch_float_into`.
+/// Every FloatOp maps to a dedicated TapeKernel variant — no catch-all.
+/// This ensures exhaustive coverage and explicit dispatch for every op.
 fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
     match fop {
-        // Inline hot ops — skip backend + dispatch_float_into entirely.
+        // ── Unary activations ────────────────────────────────────────────
         FloatOp::Relu => TapeKernel::InlineRelu,
         FloatOp::Neg => TapeKernel::InlineNeg,
         FloatOp::Sigmoid => TapeKernel::InlineSigmoid,
@@ -286,10 +297,6 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
         FloatOp::Tanh => TapeKernel::InlineTanh,
         FloatOp::Gelu => TapeKernel::InlineGelu,
         FloatOp::Exp => TapeKernel::InlineExp,
-        FloatOp::Add => TapeKernel::InlineAdd,
-        FloatOp::Mul => TapeKernel::InlineMul,
-        FloatOp::Sub => TapeKernel::InlineSub,
-        FloatOp::Div => TapeKernel::InlineDiv,
         FloatOp::Abs => TapeKernel::InlineAbs,
         FloatOp::Reciprocal => TapeKernel::InlineReciprocal,
         FloatOp::Log => TapeKernel::InlineLog,
@@ -301,21 +308,63 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
         FloatOp::Ceil => TapeKernel::InlineCeil,
         FloatOp::Round => TapeKernel::InlineRound,
         FloatOp::Erf => TapeKernel::InlineErf,
+        FloatOp::Not => TapeKernel::InlineNot,
+        FloatOp::IsNaN => TapeKernel::InlineIsNaN,
+        FloatOp::Clip { min, max } => TapeKernel::InlineClip {
+            min: *min,
+            max: *max,
+        },
+
+        // ── Binary arithmetic ────────────────────────────────────────────
+        FloatOp::Add => TapeKernel::InlineAdd,
+        FloatOp::Mul => TapeKernel::InlineMul,
+        FloatOp::Sub => TapeKernel::InlineSub,
+        FloatOp::Div => TapeKernel::InlineDiv,
         FloatOp::Min => TapeKernel::InlineMin,
         FloatOp::Max => TapeKernel::InlineMax,
+        FloatOp::Pow => TapeKernel::InlinePow,
+        FloatOp::Mod => TapeKernel::InlineMod,
 
-        // Inline custom ops — bake dimensions/parameters at build time.
+        // ── Boolean / comparison ─────────────────────────────────────────
+        FloatOp::And => TapeKernel::InlineAnd,
+        FloatOp::Or => TapeKernel::InlineOr,
+        FloatOp::Xor => TapeKernel::InlineXor,
+        FloatOp::Equal => TapeKernel::InlineEqual,
+        FloatOp::Less => TapeKernel::InlineLess,
+        FloatOp::LessOrEqual => TapeKernel::InlineLessOrEqual,
+        FloatOp::Greater => TapeKernel::InlineGreater,
+        FloatOp::GreaterOrEqual => TapeKernel::InlineGreaterOrEqual,
+
+        // ── Linear algebra ───────────────────────────────────────────────
         FloatOp::MatMul { m, k, n } => TapeKernel::InlineMatMul {
             m: *m,
             k: *k,
             n: *n,
         },
-        FloatOp::Softmax { size } => TapeKernel::InlineSoftmax { size: *size },
-        FloatOp::RmsNorm { size, epsilon } => TapeKernel::InlineRmsNorm {
-            size: *size,
-            epsilon: *epsilon,
+        FloatOp::Gemm {
+            m,
+            k,
+            n,
+            alpha,
+            beta,
+            trans_a,
+            trans_b,
+            quant_b,
+        } => TapeKernel::InlineGemm {
+            m: *m,
+            k: *k,
+            n: *n,
+            alpha: *alpha,
+            beta: *beta,
+            trans_a: *trans_a,
+            trans_b: *trans_b,
+            quant_b: *quant_b,
         },
-        FloatOp::LayerNorm { size, epsilon } => TapeKernel::InlineLayerNorm {
+
+        // ── Normalization / softmax ──────────────────────────────────────
+        FloatOp::Softmax { size } => TapeKernel::InlineSoftmax { size: *size },
+        FloatOp::LogSoftmax { size } => TapeKernel::InlineLogSoftmax { size: *size },
+        FloatOp::RmsNorm { size, epsilon } => TapeKernel::InlineRmsNorm {
             size: *size,
             epsilon: *epsilon,
         },
@@ -323,8 +372,34 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             size: *size,
             epsilon: *epsilon,
         },
-        FloatOp::LogSoftmax { size } => TapeKernel::InlineLogSoftmax { size: *size },
+        FloatOp::LayerNorm { size, epsilon } => TapeKernel::InlineLayerNorm {
+            size: *size,
+            epsilon: *epsilon,
+        },
+        FloatOp::InstanceNorm { size, epsilon } => TapeKernel::InlineInstanceNorm {
+            size: *size,
+            epsilon: *epsilon,
+        },
+        FloatOp::LRN {
+            size,
+            alpha,
+            beta,
+            bias,
+        } => TapeKernel::InlineLRN {
+            size: *size,
+            alpha: *alpha,
+            beta: *beta,
+            bias: *bias,
+        },
 
+        // ── Reductions ───────────────────────────────────────────────────
+        FloatOp::ReduceSum { size } => TapeKernel::InlineReduceSum { size: *size },
+        FloatOp::ReduceMean { size } => TapeKernel::InlineReduceMean { size: *size },
+        FloatOp::ReduceMax { size } => TapeKernel::InlineReduceMax { size: *size },
+        FloatOp::ReduceMin { size } => TapeKernel::InlineReduceMin { size: *size },
+        FloatOp::ReduceProd { size } => TapeKernel::InlineReduceProd { size: *size },
+
+        // ── Attention / RoPE ─────────────────────────────────────────────
         FloatOp::Attention {
             head_dim,
             num_q_heads,
@@ -346,6 +421,10 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             base: *base,
             n_heads: *n_heads,
         },
+        FloatOp::FusedSwiGLU => TapeKernel::InlineFusedSwiGLU,
+
+        // ── Shape manipulation ───────────────────────────────────────────
+        FloatOp::Reshape => TapeKernel::InlineReshape,
         FloatOp::Gather { dim, dtype } => TapeKernel::InlineGather {
             dim: *dim,
             dtype: *dtype,
@@ -359,11 +438,153 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             size_b: *size_b,
             dtype: *dtype,
         },
-
-        // Identity passthrough — no computation needed.
         FloatOp::Cast { from, to } if from == to => TapeKernel::Passthrough,
-        FloatOp::Reshape => TapeKernel::Passthrough,
+        FloatOp::Cast { from, to } => TapeKernel::InlineCast {
+            from: *from,
+            to: *to,
+        },
+        FloatOp::Slice {
+            axis_from_end,
+            start,
+            end,
+            axis_size,
+        } => TapeKernel::InlineSlice {
+            axis_from_end: *axis_from_end,
+            start: *start,
+            end: *end,
+            axis_size: *axis_size,
+        },
+        FloatOp::Shape { dtype, start, end } => TapeKernel::InlineShape {
+            dtype: *dtype,
+            start: *start,
+            end: *end,
+        },
+        FloatOp::GatherND => TapeKernel::InlineGatherND,
 
+        // ── Embedding / quantization ─────────────────────────────────────
+        FloatOp::Embed { dim, quant } => TapeKernel::InlineEmbed {
+            dim: *dim,
+            quant: *quant,
+        },
+        FloatOp::Dequantize => TapeKernel::InlineDequantize,
+
+        // ── Conditional / utility ────────────────────────────────────────
+        FloatOp::Where => TapeKernel::InlineWhere,
+        FloatOp::Range => TapeKernel::InlineRange,
+        FloatOp::TopK { axis, largest } => TapeKernel::InlineTopK {
+            axis: *axis,
+            largest: *largest,
+        },
+        FloatOp::ScatterND => TapeKernel::InlineScatterND,
+        FloatOp::CumSum { axis } => TapeKernel::InlineCumSum { axis: *axis },
+        FloatOp::NonZero => TapeKernel::InlineNonZero,
+        FloatOp::Compress { axis } => TapeKernel::InlineCompress { axis: *axis },
+        FloatOp::ReverseSequence {
+            batch_axis,
+            time_axis,
+        } => TapeKernel::InlineReverseSequence {
+            batch_axis: *batch_axis,
+            time_axis: *time_axis,
+        },
+
+        // ── Vision / spatial ─────────────────────────────────────────────
+        FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => TapeKernel::InlineConv2d {
+            kernel_h: *kernel_h,
+            kernel_w: *kernel_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+            dilation_h: *dilation_h,
+            dilation_w: *dilation_w,
+            group: *group,
+            input_h: *input_h,
+            input_w: *input_w,
+        },
+        FloatOp::ConvTranspose {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            output_pad_h,
+            output_pad_w,
+            input_h,
+            input_w,
+        } => TapeKernel::InlineConvTranspose {
+            kernel_h: *kernel_h,
+            kernel_w: *kernel_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+            dilation_h: *dilation_h,
+            dilation_w: *dilation_w,
+            group: *group,
+            output_pad_h: *output_pad_h,
+            output_pad_w: *output_pad_w,
+            input_h: *input_h,
+            input_w: *input_w,
+        },
+        FloatOp::MaxPool2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+        } => TapeKernel::InlineMaxPool2d {
+            kernel_h: *kernel_h,
+            kernel_w: *kernel_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+        },
+        FloatOp::AvgPool2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+        } => TapeKernel::InlineAvgPool2d {
+            kernel_h: *kernel_h,
+            kernel_w: *kernel_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+        },
+        FloatOp::GlobalAvgPool {
+            channels,
+            spatial_h,
+            spatial_w,
+        } => TapeKernel::InlineGlobalAvgPool {
+            channels: *channels,
+            spatial_h: *spatial_h,
+            spatial_w: *spatial_w,
+        },
+        FloatOp::Resize { mode } => TapeKernel::InlineResize { mode: *mode },
+        FloatOp::PadOp { mode } => TapeKernel::InlinePad { mode: *mode },
+
+        // ── KV cache ─────────────────────────────────────────────────────
         FloatOp::KvWrite {
             layer,
             n_kv_heads,
@@ -388,7 +609,9 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             head_dim: *head_dim,
             heads_first: *heads_first,
         },
-        _ => TapeKernel::Float(*fop),
+
+        // Transpose is handled separately (before this function).
+        FloatOp::Transpose { .. } => TapeKernel::Passthrough,
     }
 }
 

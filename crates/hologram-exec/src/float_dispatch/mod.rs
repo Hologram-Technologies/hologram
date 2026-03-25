@@ -5,17 +5,17 @@
 
 pub(crate) mod attention;
 pub(crate) mod cast;
-mod conv;
-mod elementwise;
+pub(crate) mod conv;
+pub(crate) mod elementwise;
 pub(crate) mod gather_concat;
-mod helpers;
+pub(crate) mod helpers;
 pub mod matmul;
-mod misc;
+pub(crate) mod misc;
 pub(crate) mod norm;
 pub(crate) mod pool;
-mod reduce;
-mod shape_ops;
-mod spatial;
+pub(crate) mod reduce;
+pub(crate) mod shape_ops;
+pub(crate) mod spatial;
 #[cfg(test)]
 mod tests;
 

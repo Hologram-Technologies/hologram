@@ -1,7 +1,7 @@
 use super::helpers::*;
 use crate::error::ExecResult;
 
-pub(super) fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<Vec<u8>> {
+pub(crate) fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     let out: Vec<f32> = x.iter().map(|&v| f(v)).collect();
     Ok(f32_vec_to_bytes(out))
@@ -11,7 +11,7 @@ pub(super) fn unary_map(inputs: &[&[u8]], f: impl Fn(f32) -> f32) -> ExecResult<
 ///
 /// Pre-sizes the buffer and writes f32 results contiguously, avoiding both
 /// per-element extend_from_slice and intermediate Vec<f32> allocation.
-pub(super) fn unary_map_into(inputs: &[&[u8]], f: impl Fn(f32) -> f32, out_buf: &mut Vec<u8>) {
+pub(crate) fn unary_map_into(inputs: &[&[u8]], f: impl Fn(f32) -> f32, out_buf: &mut Vec<u8>) {
     let x = cast_f32(inputs[0]).unwrap_or_default();
     let byte_len = x.len() * 4;
     out_buf.reserve(byte_len);
@@ -25,7 +25,7 @@ pub(super) fn unary_map_into(inputs: &[&[u8]], f: impl Fn(f32) -> f32, out_buf: 
     }
 }
 
-pub(super) fn binary_elementwise(
+pub(crate) fn binary_elementwise(
     inputs: &[&[u8]],
     f: impl Fn(f32, f32) -> f32,
 ) -> ExecResult<Vec<u8>> {
@@ -41,7 +41,7 @@ pub(super) fn binary_elementwise(
 /// Binary elementwise into a pre-allocated output buffer.
 ///
 /// Writes directly into out_buf as f32 via bytemuck cast, zero intermediate allocation.
-pub(super) fn binary_elementwise_into(
+pub(crate) fn binary_elementwise_into(
     inputs: &[&[u8]],
     f: impl Fn(f32, f32) -> f32,
     out_buf: &mut Vec<u8>,
@@ -64,7 +64,7 @@ pub(super) fn binary_elementwise_into(
 /// Follows numpy broadcasting rules: dimensions are compared right-to-left,
 /// and each dimension must be either equal or 1. A dimension of 1 is broadcast
 /// (repeated) to match the other operand's dimension.
-pub(super) fn binary_elementwise_broadcast(
+pub(crate) fn binary_elementwise_broadcast(
     inputs: &[&[u8]],
     input_shapes: &[Vec<usize>],
     f: impl Fn(f32, f32) -> f32,
@@ -136,7 +136,7 @@ pub(super) fn binary_elementwise_broadcast(
 }
 
 /// Binary compare with proper N-D broadcasting.
-pub(super) fn binary_compare_broadcast(
+pub(crate) fn binary_compare_broadcast(
     inputs: &[&[u8]],
     input_shapes: &[Vec<usize>],
     f: impl Fn(f32, f32) -> bool,
@@ -216,7 +216,7 @@ pub(super) fn binary_compare_broadcast(
 ///
 /// If the buffer is f32-aligned, each 4-byte f32 becomes one bool (nonzero → 1).
 /// Otherwise, each byte is a boolean directly.
-pub(super) fn to_bools(data: &[u8]) -> Vec<u8> {
+pub(crate) fn to_bools(data: &[u8]) -> Vec<u8> {
     // If all bytes are 0 or 1 the data is packed boolean (1 byte per element),
     // which is what binary_compare / IsNaN / Cast-to-bool ops emit.
     // Checking this FIRST avoids misinterpreting packed bools as f32 when the
@@ -236,7 +236,7 @@ pub(super) fn to_bools(data: &[u8]) -> Vec<u8> {
     data.iter().map(|&v| (v != 0) as u8).collect()
 }
 
-pub(super) fn binary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8, u8) -> u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn binary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8, u8) -> u8) -> ExecResult<Vec<u8>> {
     let a = to_bools(inputs[0]);
     let b = to_bools(inputs[1]);
     let out_len = a.len().max(b.len());
@@ -246,13 +246,13 @@ pub(super) fn binary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8, u8) -> u8) -> Ex
     Ok(out)
 }
 
-pub(super) fn unary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8) -> u8) -> ExecResult<Vec<u8>> {
+pub(crate) fn unary_byte_bool(inputs: &[&[u8]], f: impl Fn(u8) -> u8) -> ExecResult<Vec<u8>> {
     let bools = to_bools(inputs[0]);
     let out: Vec<u8> = bools.iter().map(|&x| f(x)).collect();
     Ok(out)
 }
 
-pub(super) fn binary_compare(
+pub(crate) fn binary_compare(
     inputs: &[&[u8]],
     f: impl Fn(f32, f32) -> bool,
 ) -> ExecResult<Vec<u8>> {
@@ -265,7 +265,7 @@ pub(super) fn binary_compare(
     Ok(out)
 }
 
-pub(super) fn dispatch_isnan(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_isnan(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[0])?;
     let out: Vec<u8> = x.iter().map(|v| v.is_nan() as u8).collect();
     Ok(out)
