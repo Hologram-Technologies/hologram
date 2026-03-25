@@ -68,6 +68,9 @@ pub struct BufferArena<'a> {
     buffers: Vec<Option<ArenaBuffer<'a>>>,
     /// Element size in bytes per node. 0 means "use default (4)".
     elem_sizes: Vec<u8>,
+    /// Per-buffer tensor metadata (shape, dtype). Parallel to `buffers`.
+    /// `None` = no metadata available (legacy path, infer from buffer size).
+    metas: Vec<Option<hologram_core::op::TensorMeta>>,
     /// Number of populated slots.
     count: usize,
 }
@@ -85,6 +88,7 @@ impl<'a> BufferArena<'a> {
         Self {
             buffers: Vec::new(),
             elem_sizes: Vec::new(),
+            metas: Vec::new(),
             count: 0,
         }
     }
@@ -95,9 +99,11 @@ impl<'a> BufferArena<'a> {
         let mut buffers = Vec::with_capacity(cap);
         buffers.resize_with(cap, || None);
         let elem_sizes = vec![0u8; cap];
+        let metas = vec![None; cap];
         Self {
             buffers,
             elem_sizes,
+            metas,
             count: 0,
         }
     }
@@ -109,6 +115,7 @@ impl<'a> BufferArena<'a> {
             let new_len = (idx + 1).max(self.buffers.len() * 2);
             self.buffers.resize_with(new_len, || None);
             self.elem_sizes.resize(new_len, 0);
+            self.metas.resize(new_len, None);
         }
     }
 
@@ -145,24 +152,6 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        // NaN detector: report first node that introduces NaN.
-        #[cfg(debug_assertions)]
-        if elem_size == 4 && buf.len() >= 4 {
-            let floats: &[f32] = bytemuck::cast_slice(buf);
-            if floats.iter().any(|v| v.is_nan()) {
-                static REPORTED: std::sync::atomic::AtomicBool =
-                    std::sync::atomic::AtomicBool::new(false);
-                if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    let nan_count = floats.iter().filter(|v| v.is_nan()).count();
-                    let hint = crate::tape::NAN_KERNEL_HINT.with(|h| h.borrow().clone());
-                    eprintln!(
-                        "[NaN] first NaN at node_idx={idx} ({nan_count}/{} NaN, {} bytes) {hint}",
-                        floats.len(),
-                        buf.len()
-                    );
-                }
-            }
-        }
         // Take buf's data, give it to the arena.
         let new_data = std::mem::take(buf);
         let old = self.buffers[idx].replace(ArenaBuffer::Owned(new_data));
@@ -172,6 +161,34 @@ impl<'a> BufferArena<'a> {
             *buf = old_vec;
         }
         self.elem_sizes[idx] = elem_size as u8;
+        // Infer 1-D metadata from buffer size when no explicit meta is provided.
+        if idx < self.metas.len() {
+            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(
+                buf.len(),
+                elem_size,
+            ));
+        }
+    }
+
+    /// Insert with explicit tensor metadata.
+    pub fn swap_insert_with_meta(
+        &mut self,
+        id: NodeId,
+        buf: &mut Vec<u8>,
+        meta: hologram_core::op::TensorMeta,
+    ) {
+        let elem_size = meta.dtype.byte_size();
+        self.swap_insert_with_elem_size(id, buf, elem_size);
+        let idx = id.index() as usize;
+        if idx < self.metas.len() {
+            self.metas[idx] = Some(meta);
+        }
+    }
+
+    /// Get tensor metadata for a node.
+    pub fn get_meta(&self, id: NodeId) -> Option<&hologram_core::op::TensorMeta> {
+        let idx = id.index() as usize;
+        self.metas.get(idx).and_then(|m| m.as_ref())
     }
 
     /// Insert a borrowed buffer for the given node (zero-copy).
@@ -193,6 +210,12 @@ impl<'a> BufferArena<'a> {
         }
         self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
         self.elem_sizes[idx] = elem_size as u8;
+        if idx < self.metas.len() {
+            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(
+                data.len(),
+                elem_size,
+            ));
+        }
     }
 
     /// Insert a Metal GPU buffer (zero-copy on Apple Silicon unified memory).
@@ -313,34 +336,6 @@ impl<'a> BufferArena<'a> {
         let src_idx = src.index() as usize;
         let dst_idx = dst.index() as usize;
         self.ensure_capacity(dst_idx);
-        // NaN detector for in-place/passthrough ops.
-        #[cfg(debug_assertions)]
-        if src_idx < self.buffers.len() {
-            if let Some(ref ab) = self.buffers[src_idx] {
-                let data = match ab {
-                    ArenaBuffer::Owned(v) => v.as_slice(),
-                    ArenaBuffer::Borrowed(s) => s,
-                    #[cfg(has_metal)]
-                    _ => &[],
-                };
-                let es = self.elem_sizes.get(src_idx).copied().unwrap_or(0);
-                if es == 4 && data.len() >= 4 {
-                    let floats: &[f32] = bytemuck::cast_slice(data);
-                    if floats.iter().any(|v| v.is_nan()) {
-                        static REPORTED_MOVE: std::sync::atomic::AtomicBool =
-                            std::sync::atomic::AtomicBool::new(false);
-                        if !REPORTED_MOVE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                            let nan_count = floats.iter().filter(|v| v.is_nan()).count();
-                            let hint = crate::tape::NAN_KERNEL_HINT.with(|h| h.borrow().clone());
-                            eprintln!(
-                                "[NaN-move] src={src_idx} dst={dst_idx} ({nan_count}/{} NaN) {hint}",
-                                floats.len()
-                            );
-                        }
-                    }
-                }
-            }
-        }
         if src_idx < self.buffers.len() {
             let buf = self.buffers[src_idx].take();
             if buf.is_some() {
@@ -350,6 +345,13 @@ impl<'a> BufferArena<'a> {
                 self.buffers[dst_idx] = buf;
                 let es = self.elem_sizes[src_idx];
                 self.elem_sizes[dst_idx] = es;
+                // Propagate metadata from src to dst.
+                if src_idx < self.metas.len() {
+                    let meta = self.metas[src_idx].take();
+                    if dst_idx < self.metas.len() {
+                        self.metas[dst_idx] = meta;
+                    }
+                }
                 // src slot is now empty.
                 self.count -= 1;
             }

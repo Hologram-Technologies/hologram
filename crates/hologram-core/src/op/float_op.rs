@@ -54,6 +54,67 @@ impl FloatDType {
     }
 }
 
+/// Lightweight metadata attached to every buffer in the arena.
+///
+/// Carries shape, dtype, and dimensionality — making each tensor buffer
+/// self-describing. Stored in a parallel `Vec` alongside arena buffers
+/// (NOT embedded in buffer bytes — zero-copy preserved for mmap'd data).
+///
+/// Fixed-size (40 bytes), `Copy`, no heap allocation per tensor.
+/// O(1) access by NodeId index.
+#[derive(Clone, Copy, Debug)]
+pub struct TensorMeta {
+    /// Number of valid entries in `dims` (0 = scalar, max 8).
+    pub ndim: u8,
+    /// Element data type.
+    pub dtype: FloatDType,
+    /// Actual shape at runtime. First `ndim` entries are valid.
+    pub dims: [u32; 8],
+}
+
+impl TensorMeta {
+    /// Create metadata from a dtype and shape slice.
+    pub fn new(dtype: FloatDType, shape: &[usize]) -> Self {
+        let ndim = shape.len().min(8) as u8;
+        let mut dims = [0u32; 8];
+        for (i, &d) in shape.iter().take(8).enumerate() {
+            dims[i] = d as u32;
+        }
+        Self { ndim, dtype, dims }
+    }
+
+    /// Create 1-D metadata inferred from buffer byte length and element size.
+    pub fn infer_1d(byte_len: usize, elem_size: usize) -> Self {
+        let n_elems = if elem_size > 0 {
+            byte_len / elem_size
+        } else {
+            byte_len
+        };
+        let dtype = FloatDType::from_byte_size(elem_size);
+        Self {
+            ndim: 1,
+            dtype,
+            dims: [n_elems as u32, 0, 0, 0, 0, 0, 0, 0],
+        }
+    }
+
+    /// Total number of elements.
+    pub fn n_elems(&self) -> usize {
+        if self.ndim == 0 {
+            return 1;
+        }
+        self.dims[..self.ndim as usize]
+            .iter()
+            .map(|&d| d as usize)
+            .product()
+    }
+
+    /// Shape as a slice of usize.
+    pub fn shape(&self) -> &[u32] {
+        &self.dims[..self.ndim as usize]
+    }
+}
+
 /// Float-domain tensor operations for AI inference.
 ///
 /// Serialized into `.holo` archives alongside `PrimOp`/`LutOp` ops.

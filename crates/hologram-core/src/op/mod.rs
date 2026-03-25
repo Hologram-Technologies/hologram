@@ -6,7 +6,7 @@ mod lut_op;
 mod prim;
 mod shape_spec;
 
-pub use float_op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp, OpCategory};
+pub use float_op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp, OpCategory, TensorMeta};
 pub use lut_op::LutOp;
 pub use prim::PrimOp;
 pub use shape_spec::{ShapeDim, ShapeSpec};
