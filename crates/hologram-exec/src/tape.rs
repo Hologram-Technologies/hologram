@@ -605,8 +605,42 @@ fn dispatch_kernel(
             ndim,
         } => {
             let n = *ndim as usize;
-            let shape: Vec<usize> = input_shape[..n].iter().map(|&d| d as usize).collect();
+            let compiled_shape: Vec<usize> = input_shape[..n].iter().map(|&d| d as usize).collect();
             let perm_slice: &[u8] = &perm[..n];
+
+            // Verify baked shape matches actual input size. If the input
+            // is a different size (e.g., KV cache produced a runtime-sized
+            // tensor), infer the actual shape by scaling the variable dim.
+            let input_elems = inputs[0].len() / 4; // f32 elements
+            let compiled_elems: usize = compiled_shape.iter().product();
+            let shape = if compiled_elems > 0 && compiled_elems == input_elems {
+                compiled_shape
+            } else if compiled_elems > 0 && input_elems > 0 {
+                // Find the dim that changed (variable-length dim like seq)
+                // and scale it to match the actual input size.
+                let mut adjusted = compiled_shape.clone();
+                let ratio = input_elems as f64 / compiled_elems as f64;
+                // Find the dim most likely to be variable (not head_dim, not n_heads).
+                // Heuristic: the dim that, when scaled by ratio, gives an integer.
+                for i in 0..adjusted.len() {
+                    let scaled = (adjusted[i] as f64 * ratio).round() as usize;
+                    let check: usize = adjusted
+                        .iter()
+                        .enumerate()
+                        .map(|(j, &d)| if j == i { scaled } else { d })
+                        .product();
+                    if check == input_elems {
+                        adjusted[i] = scaled;
+                        break;
+                    }
+                }
+                adjusted
+            } else {
+                // Can't determine shape — passthrough (identity).
+                out_buf.extend_from_slice(inputs[0]);
+                return Ok(DispatchResult::InOutBuf);
+            };
+
             let (result, _out_shape) =
                 crate::float_dispatch::dispatch_transpose(inputs[0], perm_slice, &shape)?;
             out_buf.extend_from_slice(&result);
@@ -1150,7 +1184,8 @@ fn dispatch_kv_write(
     let stride = nkv * hd;
     let seq = if stride > 0 { floats.len() / stride } else { 1 };
 
-    // Transpose from heads-first [heads, seq, dim] to seq-first [seq, heads, dim].
+    // Transpose from heads-first [heads, seq, dim] to seq-first [seq, heads, dim]
+    // for contiguous per-position storage in the KV cache.
     let seq_first = transpose_heads_to_seq_first(floats, nkv, seq, hd);
 
     let mut kv = kv_cell.borrow_mut();
@@ -1196,10 +1231,9 @@ fn dispatch_kv_read(
     let total_seq = kv.write_pos();
     let k = kv.read_k(layer);
     let v = kv.read_v(layer);
-    // Transpose to heads-first for attention kernel.
+    // Transpose from seq-first cache to heads-first for attention kernel.
     let k_heads = transpose_seq_first_to_heads(k, nkv, total_seq, hd);
     let v_heads = transpose_seq_first_to_heads(v, nkv, total_seq, hd);
-    // Concatenate K and V as output (downstream Attention op expects both).
     out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&k_heads));
     out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&v_heads));
     Ok(())
