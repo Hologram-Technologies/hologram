@@ -1339,6 +1339,9 @@ pub struct TapeInstruction {
     /// If true, a unary inline op can overwrite its input buffer in place.
     /// Set when the input has exactly one consumer and the op preserves size.
     pub can_reuse_input: bool,
+    /// Pre-computed output tensor metadata (shape + dtype) from compiled graph.
+    /// `None` = not available (infer from buffer size at runtime).
+    pub output_meta: Option<hologram_core::op::TensorMeta>,
 }
 
 /// Pre-compiled execution tape using enum dispatch.
@@ -1488,6 +1491,9 @@ impl EnumTape {
                         &mut out_buf,
                         instr.output_elem_size as usize,
                     );
+                    if let Some(meta) = instr.output_meta {
+                        arena.set_meta(out_id, meta);
+                    }
                     continue;
                 }
 
@@ -1519,6 +1525,9 @@ impl EnumTape {
                         &mut out_buf,
                         instr.output_elem_size as usize,
                     );
+                    if let Some(meta) = instr.output_meta {
+                        arena.set_meta(out_id, meta);
+                    }
                     continue;
                 }
 
@@ -1551,6 +1560,9 @@ impl EnumTape {
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
+                        if let Some(meta) = instr.output_meta {
+                            arena.set_meta(out_id, meta);
+                        }
                     }
                     #[cfg(has_metal)]
                     DispatchResult::MetalBuffer(metal_buf) => {
@@ -1703,6 +1715,9 @@ impl EnumTape {
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
+                        if let Some(meta) = instr.output_meta {
+                            arena.set_meta(out_id, meta);
+                        }
                         continue;
                     }
 
@@ -1721,6 +1736,9 @@ impl EnumTape {
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
+                        if let Some(meta) = instr.output_meta {
+                            arena.set_meta(out_id, meta);
+                        }
                         continue;
                     }
 
@@ -1752,6 +1770,9 @@ impl EnumTape {
                                 &mut out_buf,
                                 instr.output_elem_size as usize,
                             );
+                            if let Some(meta) = instr.output_meta {
+                                arena.set_meta(out_id, meta);
+                            }
                         }
                         #[cfg(has_metal)]
                         DispatchResult::MetalBuffer(metal_buf) => {
@@ -1822,6 +1843,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -1847,6 +1869,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
@@ -1857,6 +1880,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -1889,6 +1913,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -1918,6 +1943,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -1929,6 +1955,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -1960,6 +1987,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -2002,6 +2030,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2020,6 +2049,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape2.end_level();
         let mut arena2 = BufferArena::new();
@@ -2051,6 +2081,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2080,6 +2111,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -2091,6 +2123,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
 
@@ -2152,6 +2185,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2176,6 +2210,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2277,6 +2312,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2309,6 +2345,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2338,6 +2375,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2380,6 +2418,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -2414,6 +2453,7 @@ mod tests {
             weight_offset_hint: 0,
             passthrough: false,
             can_reuse_input: false,
+            output_meta: None,
         });
         tape.end_level();
         let mut arena = BufferArena::new();

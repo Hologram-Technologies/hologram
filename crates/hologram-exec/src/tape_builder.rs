@@ -136,6 +136,15 @@ pub fn build_tape(
             // Pre-compute weight offset for LUT-GEMM prefetching.
             let weight_offset_hint = compute_weight_offset(&kernel, &sg.constants);
 
+            // Pre-compute output tensor metadata from compiled shapes + dtypes.
+            let output_meta = shapes.get(&node_id).map(|shape| {
+                let dtype = dtypes
+                    .get(&node_id)
+                    .copied()
+                    .unwrap_or(hologram_core::op::FloatDType::F32);
+                hologram_core::op::TensorMeta::new(dtype, shape)
+            });
+
             tape.push(TapeInstruction {
                 kernel,
                 output_idx: node_id.index(),
@@ -145,6 +154,7 @@ pub fn build_tape(
                 weight_offset_hint,
                 passthrough: false,
                 can_reuse_input: false,
+                output_meta,
             });
         }
         tape.end_level();

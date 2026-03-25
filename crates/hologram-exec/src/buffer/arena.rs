@@ -185,6 +185,14 @@ impl<'a> BufferArena<'a> {
         }
     }
 
+    /// Set tensor metadata for a node (overwrites any inferred 1-D metadata).
+    pub fn set_meta(&mut self, id: NodeId, meta: hologram_core::op::TensorMeta) {
+        let idx = id.index() as usize;
+        if idx < self.metas.len() {
+            self.metas[idx] = Some(meta);
+        }
+    }
+
     /// Get tensor metadata for a node.
     pub fn get_meta(&self, id: NodeId) -> Option<&hologram_core::op::TensorMeta> {
         let idx = id.index() as usize;
