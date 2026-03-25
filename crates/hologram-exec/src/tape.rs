@@ -1184,30 +1184,35 @@ fn dispatch_kv_write(
     let stride = nkv * hd;
     let seq = if stride > 0 { floats.len() / stride } else { 1 };
 
-    // Transpose from heads-first [heads, seq, dim] to seq-first [seq, heads, dim]
-    // for contiguous per-position storage in the KV cache.
-    let seq_first = transpose_heads_to_seq_first(floats, nkv, seq, hd);
-
+    // Data arrives in seq-first [seq, heads, dim] format (attention fusion
+    // uses heads_first=false — K/V traced back past head-reshaping Transpose).
+    // Store directly — the KV cache uses seq-first layout natively.
     let mut kv = kv_cell.borrow_mut();
     if is_key {
-        kv.write_layer(layer, &seq_first, &[]);
+        kv.write_layer(layer, floats, &[]);
     } else {
-        kv.write_layer(layer, &[], &seq_first);
+        kv.write_layer(layer, &[], floats);
     }
 
     if kv.write_pos() == 0 {
-        // Prefill: pass through original heads-first data.
+        // Prefill: pass through original data (flat projection output).
         out_buf.extend_from_slice(input);
     } else {
-        // Decode: read full cache and transpose back to heads-first.
-        let total_seq = kv.write_pos() + seq;
+        // Decode: read full cache (seq-first) and transpose to match
+        // the format the attention kernel expects. The prefill path
+        // passes through flat [seq, kv_heads*head_dim] data; for decode,
+        // we need the same logical layout from the cached data.
+        let _total_seq = kv.write_pos() + seq;
         let full = if is_key {
             kv.read_k_through(layer, seq)
         } else {
             kv.read_v_through(layer, seq)
         };
-        let heads_first = transpose_seq_first_to_heads(full, nkv, total_seq, hd);
-        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads_first));
+        // Cache is [total_seq, nkv * hd] flat. Reshape conceptually to
+        // [total_seq, nkv, hd] — this matches the prefill format.
+        // No physical transpose needed since the data is already in
+        // the same flat layout as the prefill's projection output.
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(full));
     }
     Ok(())
 }
@@ -1215,8 +1220,8 @@ fn dispatch_kv_write(
 /// KvRead dispatch: read full cached K/V from the KV cache.
 fn dispatch_kv_read(
     layer: u32,
-    n_kv_heads: u32,
-    head_dim: u32,
+    _n_kv_heads: u32,
+    _head_dim: u32,
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
@@ -1226,61 +1231,12 @@ fn dispatch_kv_read(
         ));
     };
     let kv = kv_cell.borrow();
-    let nkv = n_kv_heads as usize;
-    let hd = head_dim as usize;
-    let total_seq = kv.write_pos();
     let k = kv.read_k(layer);
     let v = kv.read_v(layer);
-    // Transpose from seq-first cache to heads-first for attention kernel.
-    let k_heads = transpose_seq_first_to_heads(k, nkv, total_seq, hd);
-    let v_heads = transpose_seq_first_to_heads(v, nkv, total_seq, hd);
-    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&k_heads));
-    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&v_heads));
+    // Output seq-first — GQA kernel (heads_first=false) transposes at runtime.
+    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(k));
+    out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(v));
     Ok(())
-}
-
-/// Transpose KV data from heads-first `[heads, seq, dim]` to seq-first `[seq, heads, dim]`.
-fn transpose_heads_to_seq_first(
-    data: &[f32],
-    n_heads: usize,
-    seq: usize,
-    head_dim: usize,
-) -> Vec<f32> {
-    let total = n_heads * seq * head_dim;
-    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
-        return data.to_vec();
-    }
-    let mut out = vec![0.0f32; total];
-    for h in 0..n_heads {
-        for s in 0..seq {
-            let src = (h * seq + s) * head_dim;
-            let dst = (s * n_heads + h) * head_dim;
-            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
-        }
-    }
-    out
-}
-
-/// Transpose KV data from seq-first `[seq, heads, dim]` to heads-first `[heads, seq, dim]`.
-fn transpose_seq_first_to_heads(
-    data: &[f32],
-    n_heads: usize,
-    seq: usize,
-    head_dim: usize,
-) -> Vec<f32> {
-    let total = n_heads * seq * head_dim;
-    if data.len() < total || seq == 0 || n_heads == 0 || head_dim == 0 {
-        return data.to_vec();
-    }
-    let mut out = vec![0.0f32; total];
-    for s in 0..seq {
-        for h in 0..n_heads {
-            let src = (s * n_heads + h) * head_dim;
-            let dst = (h * seq + s) * head_dim;
-            out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
-        }
-    }
-    out
 }
 
 /// A single instruction in the enum-dispatch tape.
