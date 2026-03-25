@@ -300,6 +300,62 @@ pub(crate) fn dispatch_instance_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
+pub(crate) fn dispatch_group_norm(
+    inputs: &[&[u8]],
+    num_groups: usize,
+    epsilon: f32,
+) -> ExecResult<Vec<u8>> {
+    // inputs: [data, scale, bias]
+    // GroupNorm: reshape data as [N, G, C/G, spatial...], normalize per-group.
+    // Scale and bias are per-channel (length C).
+    let data = cast_f32(inputs[0])?;
+    let scale = cast_f32(inputs[1])?;
+    let bias = cast_f32(inputs[2])?;
+
+    let n_channels = scale.len();
+    if num_groups == 0 || n_channels == 0 {
+        return Ok(f32_vec_to_bytes(data.into_owned()));
+    }
+    let channels_per_group = n_channels / num_groups;
+    let spatial = data.len() / n_channels; // total spatial elements per channel
+
+    let mut out = data.into_owned();
+
+    for g in 0..num_groups {
+        // Compute mean and variance over all channels in this group and their spatial elements.
+        let group_size = channels_per_group * spatial;
+        let mut sum: f64 = 0.0;
+        let mut sum_sq: f64 = 0.0;
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for &v in &out[start..end] {
+                let v64 = v as f64;
+                sum += v64;
+                sum_sq += v64 * v64;
+            }
+        }
+        let mean = (sum / group_size as f64) as f32;
+        let var = (sum_sq / group_size as f64 - (mean as f64 * mean as f64)) as f32;
+        let inv_std = 1.0 / (var + epsilon).sqrt();
+
+        // Normalize, then apply per-channel scale and bias.
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let s = if c < scale.len() { scale[c] } else { 1.0 };
+            let b = if c < bias.len() { bias[c] } else { 0.0 };
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for v in out[start..end].iter_mut() {
+                *v = (*v - mean) * inv_std * s + b;
+            }
+        }
+    }
+
+    Ok(f32_vec_to_bytes(out))
+}
+
 pub(crate) fn dispatch_lrn(
     inputs: &[&[u8]],
     size: usize,

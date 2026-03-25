@@ -160,6 +160,7 @@ fn ensure_all_ops_covered() {
         FloatOp::Resize { .. } => {}
         FloatOp::PadOp { .. } => {}
         FloatOp::InstanceNorm { .. } => {}
+        FloatOp::GroupNorm { .. } => {}
         FloatOp::LRN { .. } => {}
         FloatOp::ReduceProd { .. } => {}
         FloatOp::TopK { .. } => {}

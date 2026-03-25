@@ -586,6 +586,10 @@ fn dispatch_custom(
         FloatOp::InstanceNorm { size, epsilon } => {
             norm::dispatch_instance_norm(inputs, resolve_size(*size, inputs), bits_to_f32(*epsilon))
         }
+        FloatOp::GroupNorm {
+            num_groups,
+            epsilon,
+        } => norm::dispatch_group_norm(inputs, *num_groups as usize, bits_to_f32(*epsilon)),
         FloatOp::LRN {
             size,
             alpha,

@@ -380,6 +380,13 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             size: *size,
             epsilon: *epsilon,
         },
+        FloatOp::GroupNorm {
+            num_groups,
+            epsilon,
+        } => TapeKernel::InlineGroupNorm {
+            num_groups: *num_groups,
+            epsilon: *epsilon,
+        },
         FloatOp::LRN {
             size,
             alpha,

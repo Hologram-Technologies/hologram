@@ -481,6 +481,11 @@ pub enum FloatOp {
         /// When false, output in `[seq, heads, dim]` — return seq-first directly.
         heads_first: bool,
     },
+
+    // ── New ops (append-only to preserve discriminant ordering) ──────────
+    /// Group normalization: normalize over groups of channels.
+    /// `num_groups` groups, `epsilon` stored as `f32::to_bits()`.
+    GroupNorm { num_groups: u32, epsilon: u32 },
 }
 
 impl FloatOp {
@@ -567,6 +572,7 @@ impl FloatOp {
             Self::Resize { .. } => 2,       // data, scales/sizes
             Self::PadOp { .. } => 2,        // data, pads
             Self::InstanceNorm { .. } => 3, // data, scale, bias
+            Self::GroupNorm { .. } => 3,    // data, scale, bias
             Self::LRN { .. } => 1,
 
             // Utility ops
@@ -658,6 +664,7 @@ impl FloatOp {
             Self::Resize { .. } => "float.resize",
             Self::PadOp { .. } => "float.pad",
             Self::InstanceNorm { .. } => "float.instance_norm",
+            Self::GroupNorm { .. } => "float.group_norm",
             Self::LRN { .. } => "float.lrn",
             Self::ReduceProd { .. } => "float.reduce_prod",
             Self::TopK { .. } => "float.top_k",
@@ -777,7 +784,7 @@ impl FloatOp {
             | Self::LRN { .. } => ShapeSpec::Custom,
 
             // Shape-preserving vision ops
-            Self::InstanceNorm { .. } => ShapeSpec::SameAs(0),
+            Self::InstanceNorm { .. } | Self::GroupNorm { .. } => ShapeSpec::SameAs(0),
 
             // Utility: custom shape logic
             Self::ReduceProd { .. } => ShapeSpec::DropLastDim(0),
@@ -896,6 +903,7 @@ impl FloatOp {
             | Self::Resize { .. }
             | Self::PadOp { .. }
             | Self::InstanceNorm { .. }
+            | Self::GroupNorm { .. }
             | Self::LRN { .. }
             | Self::ReduceProd { .. }
             | Self::CumSum { .. }
@@ -1078,6 +1086,7 @@ impl FloatOp {
             | Self::Resize { .. }
             | Self::PadOp { .. }
             | Self::InstanceNorm { .. }
+            | Self::GroupNorm { .. }
             | Self::LRN { .. }
             | Self::ReduceProd { .. }
             | Self::TopK { .. }
@@ -1222,6 +1231,7 @@ impl FloatOp {
             Self::Resize { .. } => "Resize",
             Self::PadOp { .. } => "Pad",
             Self::InstanceNorm { .. } => "InstanceNorm",
+            Self::GroupNorm { .. } => "GroupNorm",
             Self::LRN { .. } => "LRN",
             Self::ReduceProd { .. } => "ReduceProd",
             Self::TopK { .. } => "TopK",

@@ -412,6 +412,9 @@ pub enum TapeKernel {
 
     /// Custom op — handler baked at tape build time from registry.
     Custom(crate::kv::CustomHandler),
+
+    /// Group normalization.
+    InlineGroupNorm { num_groups: u32, epsilon: u32 },
 }
 
 impl TapeKernel {
@@ -1202,6 +1205,18 @@ fn dispatch_kernel(
             let result = float_dispatch::norm::dispatch_instance_norm(
                 inputs,
                 actual,
+                f32::from_bits(*epsilon),
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGroupNorm {
+            num_groups,
+            epsilon,
+        } => {
+            let result = float_dispatch::norm::dispatch_group_norm(
+                inputs,
+                *num_groups as usize,
                 f32::from_bits(*epsilon),
             )?;
             out_buf.extend_from_slice(&result);
