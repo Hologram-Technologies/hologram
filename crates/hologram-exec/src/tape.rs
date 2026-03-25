@@ -295,6 +295,10 @@ impl TapeKernel {
 enum DispatchResult {
     /// Output written to `out_buf`. Store via swap_insert.
     InOutBuf,
+    /// Output written to `out_buf` with runtime-computed metadata that
+    /// overrides the compiled output_meta (e.g., KV cache decode produces
+    /// different shapes than compiled).
+    InOutBufWithMeta(hologram_core::op::TensorMeta),
     /// Output stored in a Metal GPU buffer. Insert directly into arena.
     #[cfg(has_metal)]
     MetalBuffer(metal::Buffer),
@@ -370,7 +374,7 @@ fn dispatch_kernel(
             is_key,
             heads_first,
         } => {
-            dispatch_kv_write(
+            let kv_meta = dispatch_kv_write(
                 inputs,
                 *layer,
                 *n_kv_heads,
@@ -380,7 +384,7 @@ fn dispatch_kernel(
                 tape_ctx,
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchResult::InOutBufWithMeta(kv_meta))
         }
         TapeKernel::KvRead {
             layer,
@@ -1171,6 +1175,8 @@ fn dispatch_lut_gemm_8(
 /// - `true`: input is `[heads, seq, dim]`, transpose to seq-first for storage,
 ///   and transpose back to heads-first on output during decode.
 /// - `false`: input is `[seq, heads, dim]`, store directly, output seq-first.
+///
+/// Returns the actual output TensorMeta (runtime shape, not compiled).
 #[allow(clippy::too_many_arguments)]
 fn dispatch_kv_write(
     inputs: &[&[u8]],
@@ -1181,7 +1187,7 @@ fn dispatch_kv_write(
     heads_first: bool,
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
-) -> ExecResult<()> {
+) -> ExecResult<hologram_core::op::TensorMeta> {
     let Some(kv_cell) = &tape_ctx.kv_state else {
         return Err(crate::error::ExecError::UnsupportedOp(
             "KvWrite requires TapeContext with kv_state".into(),
@@ -1190,7 +1196,7 @@ fn dispatch_kv_write(
     let input = inputs.first().copied().unwrap_or(&[]);
     if input.is_empty() || input.len() % 4 != 0 {
         out_buf.extend_from_slice(input);
-        return Ok(());
+        return Ok(hologram_core::op::TensorMeta::infer_1d(input.len(), 4));
     }
     let floats: &[f32] = bytemuck::cast_slice(input);
     let nkv = n_kv_heads as usize;
@@ -1214,9 +1220,15 @@ fn dispatch_kv_write(
         kv.write_layer(layer, &[], cache_data);
     }
 
-    if kv.write_pos() == 0 {
+    let out_meta = if kv.write_pos() == 0 {
         // Prefill: pass through original data in its original layout.
         out_buf.extend_from_slice(input);
+        // Output shape matches input shape.
+        if heads_first {
+            hologram_core::op::TensorMeta::new(hologram_core::op::FloatDType::F32, &[nkv, seq, hd])
+        } else {
+            hologram_core::op::TensorMeta::new(hologram_core::op::FloatDType::F32, &[seq, nkv, hd])
+        }
     } else {
         // Decode: read full cache (seq-first) and convert to output layout.
         let total_seq = kv.write_pos() + seq;
@@ -1228,11 +1240,19 @@ fn dispatch_kv_write(
         if heads_first {
             let heads = transpose_seq_first_to_heads(full, nkv, total_seq, hd);
             out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads));
+            hologram_core::op::TensorMeta::new(
+                hologram_core::op::FloatDType::F32,
+                &[nkv, total_seq, hd],
+            )
         } else {
             out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(full));
+            hologram_core::op::TensorMeta::new(
+                hologram_core::op::FloatDType::F32,
+                &[total_seq, nkv, hd],
+            )
         }
-    }
-    Ok(())
+    };
+    Ok(out_meta)
 }
 
 /// KvRead dispatch: read full cached K/V from the KV cache.
@@ -1564,6 +1584,15 @@ impl EnumTape {
                             arena.set_meta(out_id, meta);
                         }
                     }
+                    DispatchResult::InOutBufWithMeta(runtime_meta) => {
+                        arena.swap_insert_with_elem_size(
+                            out_id,
+                            &mut out_buf,
+                            instr.output_elem_size as usize,
+                        );
+                        // Use runtime-computed meta instead of compiled meta.
+                        arena.set_meta(out_id, runtime_meta);
+                    }
                     #[cfg(has_metal)]
                     DispatchResult::MetalBuffer(metal_buf) => {
                         arena.insert_metal(out_id, metal_buf, instr.output_elem_size as usize);
@@ -1773,6 +1802,14 @@ impl EnumTape {
                             if let Some(meta) = instr.output_meta {
                                 arena.set_meta(out_id, meta);
                             }
+                        }
+                        DispatchResult::InOutBufWithMeta(runtime_meta) => {
+                            arena.swap_insert_with_elem_size(
+                                out_id,
+                                &mut out_buf,
+                                instr.output_elem_size as usize,
+                            );
+                            arena.set_meta(out_id, runtime_meta);
                         }
                         #[cfg(has_metal)]
                         DispatchResult::MetalBuffer(metal_buf) => {
