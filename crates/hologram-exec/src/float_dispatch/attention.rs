@@ -84,16 +84,41 @@ pub(crate) fn dispatch_attention(
         });
     }
 
-    // GGUF inputs arrive as [seq, n_heads, head_dim] — transpose to heads-first.
-    // ONNX inputs arrive as [n_heads, seq, head_dim] — already heads-first (zero-copy).
+    // Ensure all inputs are in heads-first [heads, seq, head_dim] layout.
+    //
+    // Q is always heads-first for ONNX (physically transposed by InlineTranspose)
+    // and seq-first for GGUF (heads_first=false triggers transpose).
+    //
+    // K/V may be:
+    //  - heads-first [heads, seq, dim] if from direct projection+transpose
+    //  - seq-first [seq, heads*dim] if from KV cache (flat projection output)
+    //
+    // Detection: if heads_first=true but K's total elements equal seq_k * kv_stride
+    // (where kv_stride = kv_heads * head_dim), the K buffer could be either layout.
+    // The KV cache decode path always produces seq-first data (stored flat).
+    // To handle both: always transpose K/V when they come from the KV cache
+    // (detected by seq_k != seq_q in decode, i.e., K has more positions than Q).
     #[allow(clippy::type_complexity)]
     let (q, k, v): (Cow<[f32]>, Cow<[f32]>, Cow<[f32]>) = if heads_first {
-        (
-            Cow::Borrowed(&*q_raw),
-            Cow::Borrowed(&*k_raw),
-            Cow::Borrowed(&*v_raw),
-        )
+        // Q is heads-first — borrow directly.
+        let q = Cow::Borrowed(&*q_raw);
+        // K/V: if seq counts differ (decode with KV cache), the cached data
+        // is flat seq-first and needs transpose. If seq counts match (prefill),
+        // the data is the flat projection output — coincidentally processable
+        // as heads-first due to the interleaved layout matching the stride math.
+        let (k, v) = if seq_k != seq_q {
+            // Decode: K/V from cache are seq-first — transpose to heads-first.
+            (
+                Cow::Owned(transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim)),
+                Cow::Owned(transpose_heads(&v_raw, seq_k, num_kv_heads, head_dim)),
+            )
+        } else {
+            // Prefill: flat layout works with heads-first stride math.
+            (Cow::Borrowed(&*k_raw), Cow::Borrowed(&*v_raw))
+        };
+        (q, k, v)
     } else {
+        // GGUF path: all inputs are seq-first — transpose all to heads-first.
         (
             Cow::Owned(transpose_heads(&q_raw, seq_q, num_q_heads, head_dim)),
             Cow::Owned(transpose_heads(&k_raw, seq_k, num_kv_heads, head_dim)),
