@@ -398,6 +398,9 @@ pub enum FloatOp {
         n_kv_heads: u32,
         head_dim: u32,
         is_key: bool,
+        /// When true, input is `[heads, seq, dim]` — transpose to seq-first for storage.
+        /// When false, input is `[seq, heads, dim]` — store directly.
+        heads_first: bool,
     },
     /// Read cached K and V tensors from the KV cache for a transformer layer.
     /// Inputs: none (state-only). Outputs: [K_cached (f32), V_cached (f32)].
@@ -406,6 +409,9 @@ pub enum FloatOp {
         layer: u32,
         n_kv_heads: u32,
         head_dim: u32,
+        /// When true, output in `[heads, seq, dim]` — transpose from seq-first cache.
+        /// When false, output in `[seq, heads, dim]` — return seq-first directly.
+        heads_first: bool,
     },
 }
 

@@ -359,20 +359,24 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             n_kv_heads,
             head_dim,
             is_key,
+            heads_first,
         } => TapeKernel::KvWrite {
             layer: *layer,
             n_kv_heads: *n_kv_heads,
             head_dim: *head_dim,
             is_key: *is_key,
+            heads_first: *heads_first,
         },
         FloatOp::KvRead {
             layer,
             n_kv_heads,
             head_dim,
+            heads_first,
         } => TapeKernel::KvRead {
             layer: *layer,
             n_kv_heads: *n_kv_heads,
             head_dim: *head_dim,
+            heads_first: *heads_first,
         },
         _ => TapeKernel::Float(*fop),
     }
