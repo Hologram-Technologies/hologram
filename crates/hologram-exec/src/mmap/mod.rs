@@ -234,7 +234,11 @@ pub fn execute_tape_with_kv(
 
     // Swap the KV state into the tape context (takes ownership via RefCell).
     let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
-    let tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
+    let position_offset = kv_owned.write_pos() as u32;
+    let mut tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
+    // Set position offset for ops that need absolute position (RoPE).
+    // During prefill: position_offset = 0. During decode: position_offset = N (prefilled tokens).
+    tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
 
     tape.execute(&mut arena, &tape_ctx)?;
 
