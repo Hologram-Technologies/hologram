@@ -46,15 +46,57 @@ pub fn execute_tape(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
 ) -> ExecResult<GraphOutputs> {
-    use hologram_graph::constant::ConstantData;
-    use hologram_graph::graph::GraphOp;
-
     let sg = plan.graph();
     let weights = plan.weights();
     let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
 
     // Seed arena with constants and graph inputs.
     let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+
+    // Pre-warm arena with output slot allocations (first-inference optimization).
+    tape.prewarm_arena(&mut arena);
+
+    // Build tape context with weight access for LUT-GEMM ops.
+    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
+
+    // Execute the tape.
+    tape.execute(&mut arena, &tape_ctx)?;
+
+    // Extract outputs.
+    let outputs = collect_outputs(sg, &mut arena)?;
+    Ok(outputs)
+}
+
+/// Collect graph outputs from the arena.
+///
+/// Seed the arena with constants and graph inputs from the serialized graph.
+///
+/// Sets N-D TensorMeta for constants (from compiled shapes) and graph inputs
+/// (from GraphInputs::shape), ensuring downstream ops have correct metadata
+/// for shape-aware dimension resolution.
+fn seed_arena<'a>(
+    sg: &'a hologram_archive::format::graph::SerializedGraph,
+    weights: &'a [u8],
+    compiled_dtypes: &std::collections::HashMap<
+        hologram_graph::graph::node::NodeId,
+        hologram_core::op::FloatDType,
+    >,
+    compiled_shapes: &std::collections::HashMap<hologram_graph::graph::node::NodeId, Vec<usize>>,
+    inputs: &'a GraphInputs,
+    arena: &mut crate::buffer::BufferArena<'a>,
+) -> ExecResult<()> {
+    use hologram_graph::constant::ConstantData;
+    use hologram_graph::graph::GraphOp;
+
     for node in &sg.nodes {
         match &node.op {
             GraphOp::Constant(cid) => {
@@ -78,6 +120,14 @@ pub fn execute_tape(
                     .map(|d| d.byte_size())
                     .unwrap_or(4);
                 arena.insert_borrowed_with_elem_size(node.id, data, es);
+                // Set N-D metadata for constants from compiled shapes.
+                if let Some(shape) = compiled_shapes.get(&node.id) {
+                    let dtype = compiled_dtypes
+                        .get(&node.id)
+                        .copied()
+                        .unwrap_or(hologram_core::op::FloatDType::F32);
+                    arena.set_meta(node.id, hologram_core::op::TensorMeta::new(dtype, shape));
+                }
             }
             GraphOp::Input => {
                 let input_idx = sg
@@ -113,23 +163,9 @@ pub fn execute_tape(
             }
         }
     }
-
-    // Pre-warm arena with output slot allocations (first-inference optimization).
-    tape.prewarm_arena(&mut arena);
-
-    // Build tape context with weight access for LUT-GEMM ops.
-    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
-
-    // Execute the tape.
-    tape.execute(&mut arena, &tape_ctx)?;
-
-    // Extract outputs.
-    let outputs = collect_outputs(sg, &mut arena)?;
-    Ok(outputs)
+    Ok(())
 }
 
-/// Collect graph outputs from the arena.
-///
 /// Uses explicitly registered `output_node_ids` when available. Falls back to
 /// scanning for `GraphOp::Output` nodes when no outputs are registered — this
 /// handles graphs built via `GraphBuilder` without explicit `add_output()` calls,
@@ -172,72 +208,20 @@ pub fn execute_tape_with_kv(
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
 ) -> ExecResult<GraphOutputs> {
-    use hologram_graph::constant::ConstantData;
-    use hologram_graph::graph::GraphOp;
-
     let sg = plan.graph();
     let weights = plan.weights();
     let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
 
     let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
-    for node in &sg.nodes {
-        match &node.op {
-            GraphOp::Constant(cid) => {
-                let data = match sg.constants.get(*cid) {
-                    Some(ConstantData::Bytes(bytes)) => bytes.as_slice(),
-                    Some(ConstantData::Deferred {
-                        byte_size,
-                        source_id,
-                    }) => {
-                        let start = *source_id as usize;
-                        let end = start + *byte_size as usize;
-                        if end > weights.len() {
-                            return Err(ExecError::ConstantNotFound(cid.raw()));
-                        }
-                        &weights[start..end]
-                    }
-                    None => return Err(ExecError::ConstantNotFound(cid.raw())),
-                };
-                let es = compiled_dtypes
-                    .get(&node.id)
-                    .map(|d| d.byte_size())
-                    .unwrap_or(4);
-                arena.insert_borrowed_with_elem_size(node.id, data, es);
-            }
-            GraphOp::Input => {
-                let input_idx = sg
-                    .nodes
-                    .iter()
-                    .filter(|n| matches!(n.op, GraphOp::Input))
-                    .position(|n| n.id == node.id);
-                if let Some(idx) = input_idx {
-                    if let Some(data) = inputs.get(idx as u32) {
-                        let es = compiled_dtypes
-                            .get(&node.id)
-                            .map(|d| d.byte_size())
-                            .unwrap_or(8);
-                        arena.insert_borrowed_with_elem_size(node.id, data, es);
-                        // Set N-D metadata from GraphInputs shape if available.
-                        if let Some(shape) = inputs.shape(idx as u32) {
-                            let dtype = compiled_dtypes
-                                .get(&node.id)
-                                .copied()
-                                .unwrap_or(hologram_core::op::FloatDType::F32);
-                            arena.set_meta(
-                                node.id,
-                                hologram_core::op::TensorMeta::new(dtype, shape),
-                            );
-                        }
-                    }
-                }
-            }
-            _ => {
-                if let Some(dtype) = compiled_dtypes.get(&node.id) {
-                    arena.set_elem_size(node.id, dtype.byte_size());
-                }
-            }
-        }
-    }
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
 
     tape.prewarm_arena(&mut arena);
 
