@@ -73,6 +73,10 @@ pub struct TapeContext<'a> {
     /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
     /// Resolved to a concrete `&dyn ComputeBackend` once at execute start.
     pub backend: BackendSelector,
+    /// Pre-computed shape overrides from `ShapeContextGraph`.
+    /// Keyed by raw node index. When present, the executor sets this as the
+    /// output `TensorMeta` after dispatch, overriding any heuristic inference.
+    pub shape_overrides: std::collections::HashMap<u32, Vec<usize>>,
 }
 
 impl<'a> TapeContext<'a> {
@@ -87,6 +91,7 @@ impl<'a> TapeContext<'a> {
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: None,
             backend: BackendSelector::Auto,
+            shape_overrides: std::collections::HashMap::new(),
         }
     }
 
@@ -104,6 +109,7 @@ impl<'a> TapeContext<'a> {
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: Some(RefCell::new(kv)),
             backend: BackendSelector::Auto,
+            shape_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -2816,6 +2822,20 @@ impl EnumTape {
                     #[cfg(has_webgpu)]
                     DispatchResult::WgpuDeferred => {
                         deferred_slots.push((instr.output_idx, instr.output_elem_size));
+                    }
+                }
+                // Shape context override: if the compiler's ShapeContextGraph
+                // resolved this node's output shape from actual input dimensions,
+                // set it as the definitive TensorMeta. This overrides both
+                // heuristic inference and dispatch-computed meta, ensuring all
+                // downstream ops see the correct shape.
+                if !tape_ctx.shape_overrides.is_empty() {
+                    if let Some(shape) = tape_ctx.shape_overrides.get(&instr.output_idx) {
+                        let dtype = arena
+                            .get_meta(out_id)
+                            .map(|m| m.dtype)
+                            .unwrap_or(hologram_core::op::FloatDType::F32);
+                        arena.set_meta(out_id, hologram_core::op::TensorMeta::new(dtype, shape));
                     }
                 }
             } // end inner instruction loop
