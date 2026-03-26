@@ -213,6 +213,87 @@ pub fn resolve_transpose_shape(
     compiled_shape[..n].iter().map(|&d| d as usize).collect()
 }
 
+// ── Output meta computation ─────────────────────────────────────────────────
+
+/// Compute runtime output TensorMeta from input metas and actual output byte count.
+///
+/// This is the "TCP header" approach: instead of relying on compiled shapes,
+/// derive the output shape from the operation semantics + actual inputs.
+/// Returns the compiled meta when input metas are insufficient.
+pub fn compute_output_meta(
+    input_metas: &InputMetas,
+    compiled_meta: Option<TensorMeta>,
+    out_bytes: usize,
+    elem_size: usize,
+) -> Option<TensorMeta> {
+    let out_elems = if elem_size > 0 {
+        out_bytes / elem_size
+    } else {
+        out_bytes / 4
+    };
+    let dtype = input_metas
+        .first()
+        .and_then(|m| m.as_ref())
+        .map(|m| m.dtype)
+        .unwrap_or(hologram_core::op::FloatDType::F32);
+
+    // If we have a compiled meta whose element count matches actual output,
+    // it's correct — use it (preserves N-D shape).
+    if let Some(ref cm) = compiled_meta {
+        if cm.n_elems() == out_elems {
+            return compiled_meta;
+        }
+    }
+
+    // Try to derive from first input meta (covers unary, norm, softmax,
+    // activation, and other element-preserving ops).
+    if let Some(Some(input_meta)) = input_metas.first() {
+        if input_meta.n_elems() == out_elems {
+            // Element-preserving: output shape = input shape.
+            return Some(*input_meta);
+        }
+    }
+
+    // For binary ops: if output elems match the larger input, use its shape.
+    if input_metas.len() >= 2 {
+        for m in input_metas.iter().flatten() {
+            if m.n_elems() == out_elems {
+                return Some(*m);
+            }
+        }
+    }
+
+    // If compiled meta exists but element count differs, try to adjust
+    // one dimension to match actual output (variable-length scaling).
+    if let Some(cm) = compiled_meta {
+        if cm.ndim > 0 && cm.n_elems() > 0 && out_elems > 0 {
+            let mut adjusted = cm;
+            let compiled_elems = cm.n_elems();
+            // Find which dim changed and scale it.
+            for i in 0..adjusted.ndim as usize {
+                let old_dim = adjusted.dims[i] as usize;
+                if old_dim > 0 {
+                    let scaled =
+                        (old_dim as f64 * out_elems as f64 / compiled_elems as f64).round() as u32;
+                    let mut check = adjusted;
+                    check.dims[i] = scaled;
+                    if check.n_elems() == out_elems {
+                        adjusted.dims[i] = scaled;
+                        return Some(adjusted);
+                    }
+                }
+            }
+        }
+    }
+
+    // Last resort: 1-D meta from actual output.
+    if out_elems > 0 {
+        Some(TensorMeta::new(dtype, &[out_elems]))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

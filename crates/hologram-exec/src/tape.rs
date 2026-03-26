@@ -2302,7 +2302,11 @@ impl EnumTape {
                         &mut out_buf,
                         instr.output_elem_size as usize,
                     );
-                    if let Some(meta) = instr.output_meta {
+                    // Unary: output shape = input shape.
+                    let src_id = NodeId::new(instr.input_indices[0], 0);
+                    if let Some(meta) = arena.get_meta(src_id).copied() {
+                        arena.set_meta(out_id, meta);
+                    } else if let Some(meta) = instr.output_meta {
                         arena.set_meta(out_id, meta);
                     }
                     continue;
@@ -2330,13 +2334,25 @@ impl EnumTape {
                     };
                     out_buf.clear();
                     dispatch_inline_binary(&instr.kernel, a, b, &mut out_buf);
+                    let out_len = out_buf.len();
                     let out_id = NodeId::new(instr.output_idx, 0);
                     arena.swap_insert_with_elem_size(
                         out_id,
                         &mut out_buf,
                         instr.output_elem_size as usize,
                     );
-                    if let Some(meta) = instr.output_meta {
+                    // Binary: use the input meta that matches output element count.
+                    let a_id = NodeId::new(instr.input_indices[0], 0);
+                    let b_id = NodeId::new(instr.input_indices[1], 0);
+                    let a_meta = arena.get_meta(a_id).copied();
+                    let b_meta = arena.get_meta(b_id).copied();
+                    let out_elems = out_len / 4;
+                    if let Some(meta) = a_meta
+                        .filter(|m| m.n_elems() == out_elems)
+                        .or_else(|| b_meta.filter(|m| m.n_elems() == out_elems))
+                    {
+                        arena.set_meta(out_id, meta);
+                    } else if let Some(meta) = instr.output_meta {
                         arena.set_meta(out_id, meta);
                     }
                     continue;
@@ -2405,17 +2421,17 @@ impl EnumTape {
                 }
 
                 // ── General path: SmallVec collection + dispatch_kernel ──
+                let input_metas: crate::shape_resolve::InputMetas = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                    .collect();
                 let dispatch_result = {
                     let input_refs: SmallVec<[&[u8]; 4]> = instr
                         .input_indices
                         .iter()
                         .map(|&idx| arena.get(NodeId::new(idx, 0)))
                         .collect::<ExecResult<SmallVec<_>>>()?;
-                    let input_metas: crate::shape_resolve::InputMetas = instr
-                        .input_indices
-                        .iter()
-                        .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
-                        .collect();
                     out_buf.clear();
                     if instr.output_byte_hint > 0 {
                         out_buf.reserve(instr.output_byte_hint as usize);
@@ -2435,12 +2451,21 @@ impl EnumTape {
 
                 match dispatch_result {
                     DispatchResult::InOutBuf => {
+                        let out_len = out_buf.len();
                         arena.swap_insert_with_elem_size(
                             out_id,
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
-                        if let Some(meta) = instr.output_meta {
+                        // Compute runtime meta from actual output + input metas.
+                        // This ensures downstream ops get correct N-D shapes even
+                        // when compiled shapes don't match runtime sizes.
+                        if let Some(meta) = crate::shape_resolve::compute_output_meta(
+                            &input_metas,
+                            instr.output_meta,
+                            out_len,
+                            instr.output_elem_size as usize,
+                        ) {
                             arena.set_meta(out_id, meta);
                         }
                     }
@@ -2450,7 +2475,6 @@ impl EnumTape {
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
-                        // Use runtime-computed meta instead of compiled meta.
                         arena.set_meta(out_id, runtime_meta);
                     }
                     #[cfg(has_metal)]
@@ -2664,14 +2688,26 @@ impl EnumTape {
                     };
 
                     let out_id = NodeId::new(instr.output_idx, 0);
+                    // Re-collect input metas for output meta computation.
+                    let input_metas: crate::shape_resolve::InputMetas = instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                        .collect();
                     match dispatch_result {
                         DispatchResult::InOutBuf => {
+                            let out_len = out_buf.len();
                             arena.swap_insert_with_elem_size(
                                 out_id,
                                 &mut out_buf,
                                 instr.output_elem_size as usize,
                             );
-                            if let Some(meta) = instr.output_meta {
+                            if let Some(meta) = crate::shape_resolve::compute_output_meta(
+                                &input_metas,
+                                instr.output_meta,
+                                out_len,
+                                instr.output_elem_size as usize,
+                            ) {
                                 arena.set_meta(out_id, meta);
                             }
                         }
