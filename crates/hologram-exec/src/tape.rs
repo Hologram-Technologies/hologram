@@ -1555,31 +1555,57 @@ fn dispatch_kernel(
             let bias: &[f32] = bytemuck::try_cast_slice(inputs[2]).map_err(|_| {
                 crate::error::ExecError::UnsupportedOp("bias not f32-aligned".into())
             })?;
+            // Resolve runtime dimensions from N-D input metas (same as InlineMatMul).
+            let meta_dims = shape_resolve::resolve_matmul_dims(
+                *m,
+                *k,
+                *n,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+                inputs[0].len(),
+                inputs[1].len(),
+            );
+            let a_floats = inputs[0].len() / 4;
+            let b_floats = inputs[1].len() / 4;
+            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
+                && a_floats > 0
+                && b_floats > 0
+                && a_floats.is_multiple_of(meta_dims.1)
+                && b_floats.is_multiple_of(meta_dims.1)
+            {
+                meta_dims
+            } else {
+                crate::float_dispatch::matmul::infer_matmul_dims(
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    a_floats,
+                    b_floats,
+                )
+            };
             crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
                 &inputs[..2],
-                *m as usize,
-                *k as usize,
-                *n as usize,
+                actual_m,
+                actual_k,
+                actual_n,
                 bias,
                 activation,
                 out_buf,
             )?;
-            let a_floats = inputs[0].len() / 4;
-            let mk = (*m as usize) * (*k as usize);
-            let batch = if mk > 0 && a_floats > mk {
-                a_floats / mk
+            let batch = if actual_m > 0 && actual_k > 0 {
+                a_floats / (actual_m * actual_k)
             } else {
                 1
             };
             let meta = if batch > 1 {
                 hologram_core::op::TensorMeta::new(
                     hologram_core::op::FloatDType::F32,
-                    &[batch, *m as usize, *n as usize],
+                    &[batch, actual_m, actual_n],
                 )
             } else {
                 hologram_core::op::TensorMeta::new(
                     hologram_core::op::FloatDType::F32,
-                    &[*m as usize, *n as usize],
+                    &[actual_m, actual_n],
                 )
             };
             Ok(DispatchResult::InOutBufWithMeta(meta))

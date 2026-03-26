@@ -121,7 +121,14 @@ fn seed_arena<'a>(
                     .unwrap_or(4);
                 arena.insert_borrowed_with_elem_size(node.id, data, es);
                 // Set N-D metadata for constants from compiled shapes.
-                if let Some(shape) = compiled_shapes.get(&node.id) {
+                // Try node_shapes first, then constant_shapes (keyed by ConstantId).
+                let shape = compiled_shapes.get(&node.id).or_else(|| {
+                    sg.constant_shapes
+                        .iter()
+                        .find(|(c, _)| *c == *cid)
+                        .map(|(_, s)| s)
+                });
+                if let Some(shape) = shape {
                     let dtype = compiled_dtypes
                         .get(&node.id)
                         .copied()
