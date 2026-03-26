@@ -2287,9 +2287,26 @@ impl EnumTape {
                     if let Some(&src_idx) = instr.input_indices.first() {
                         let src_id = NodeId::new(src_idx, 0);
                         let dst_id = NodeId::new(instr.output_idx, 0);
+                        // Preserve input's runtime meta through passthrough.
+                        // Only use compiled meta when it intentionally changes
+                        // rank (squeeze/unsqueeze) or when input has no meta.
+                        let input_meta = arena.get_meta(src_id).copied();
                         arena.move_slot(src_id, dst_id);
-                        if let Some(meta) = instr.output_meta {
-                            arena.set_meta(dst_id, meta);
+                        match (input_meta, instr.output_meta) {
+                            (Some(im), Some(cm))
+                                if im.ndim != cm.ndim && cm.n_elems() == im.n_elems() =>
+                            {
+                                // Intentional rank change (squeeze/unsqueeze) — use compiled.
+                                arena.set_meta(dst_id, cm);
+                            }
+                            (Some(im), _) => {
+                                // Preserve input meta (data unchanged).
+                                arena.set_meta(dst_id, im);
+                            }
+                            (None, Some(cm)) => {
+                                arena.set_meta(dst_id, cm);
+                            }
+                            _ => {}
                         }
                         continue;
                     }
