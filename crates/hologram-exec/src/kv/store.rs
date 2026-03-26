@@ -144,6 +144,92 @@ impl KvStore {
             GraphOp::FusedFloatChain(ref chain) => {
                 crate::float_dispatch::dispatch_fused_chain(chain, inputs)
             }
+            GraphOp::FusedMatMulActivation {
+                m,
+                k,
+                n,
+                activation,
+            } => {
+                let mut out_buf = Vec::new();
+                crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+                    inputs,
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    activation,
+                    &mut out_buf,
+                )?;
+                Ok(out_buf)
+            }
+            GraphOp::FusedRmsNormActivation {
+                size,
+                epsilon,
+                activation,
+            } => {
+                let mut result = crate::float_dispatch::norm::dispatch_rms_norm(
+                    inputs,
+                    *size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
+            GraphOp::FusedLayerNormActivation {
+                size,
+                epsilon,
+                activation,
+            } => {
+                let mut result = crate::float_dispatch::norm::dispatch_layer_norm(
+                    inputs,
+                    *size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
+            GraphOp::FusedGroupNormActivation {
+                num_groups,
+                epsilon,
+                activation,
+            } => {
+                let mut result = crate::float_dispatch::norm::dispatch_group_norm(
+                    inputs,
+                    *num_groups as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
+            GraphOp::MatMulLut4Activation(cid, activation) => {
+                let mut out_buf = dispatch_lut_gemm_4(inputs[0], *cid, constants, weights)?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut out_buf)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(out_buf)
+            }
+            GraphOp::MatMulLut8Activation(cid, activation) => {
+                let mut out_buf = dispatch_lut_gemm_8(inputs[0], *cid, constants, weights)?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut out_buf)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(out_buf)
+            }
             GraphOp::Custom { id, .. } => registry
                 .ok_or_else(|| ExecError::UnsupportedOp(format!("custom op {}", id.raw())))?
                 .dispatch(*id, inputs, constants),

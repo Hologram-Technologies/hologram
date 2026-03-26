@@ -35,6 +35,7 @@ specs/
 - **No speculative corrections**: `correct_stale_shape` scans at most `ndim` integers (≤8 for all current ops). It must not call external functions, allocate, or recurse.
 - **Fast-path first**: the common case is that compiled shapes are correct. All correction logic must be guarded by a cheap identity check (`prod == actual_count`) that short-circuits to a no-op.
 - **Avoid growing shape_resolve.rs**: new op support belongs in the compiler's shape oracle, not in runtime shape inference. If a new op's output shape cannot be expressed via `ShapeSpec`, add a `ShapeSpec` variant rather than a new `resolve_*` function.
+- **All ops must dispatch through `TapeKernel`**: every operation — float, quantized, fused, or custom — must have a corresponding `TapeKernel` variant and go through `dispatch_kernel()`. Do not introduce op execution paths that bypass the tape (e.g., ad-hoc closures, `Box<dyn Fn>`, or direct kernel calls outside the enum match). New ops require a new `TapeKernel` variant in `tape.rs` and a mapping in `tape_builder.rs`.
 
 ## Problem-Solving Philosophy
 

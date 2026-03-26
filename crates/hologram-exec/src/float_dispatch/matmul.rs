@@ -1,5 +1,6 @@
 use super::helpers::*;
 use crate::error::{ExecError, ExecResult};
+use hologram_core::op::FloatOp;
 
 /// Parameters for a GEMM (General Matrix Multiply) operation:
 /// `C = alpha * op(A) * op(B) + beta * C`
@@ -617,4 +618,34 @@ fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: 
             }
         }
     }
+}
+
+// ── Epilogue fusion: matmul + activation ─────────────────────────────
+
+/// Fused matmul + activation dispatch. Runs the standard vectorized matmul
+/// kernel, then applies activation as a tight post-pass on the output buffer.
+///
+/// This preserves autovectorization of both the matmul inner loop and the
+/// activation loop, while eliminating one arena slot allocation + one tape
+/// instruction dispatch vs the unfused path.
+pub fn dispatch_matmul_activation_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    activation: &FloatOp,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    // Run the standard matmul (fully vectorized, cache-friendly).
+    dispatch_matmul_into(inputs, m, k, n, out_buf)?;
+
+    // Epilogue: apply activation in-place on the just-written output.
+    // Data is cache-hot. Tight scalar loop — no arena overhead.
+    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf) {
+        for v in floats.iter_mut() {
+            *v = activation.apply_unary(*v);
+        }
+    }
+
+    Ok(())
 }

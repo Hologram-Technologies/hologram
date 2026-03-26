@@ -12,6 +12,37 @@
 - [x] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
 - [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
 - [x] MatMul optimization — [plan](plans/020-matmul-optimization.md)
+- [ ] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
+
+## Sprint 23: Epilogue Fusion (Plan 030)
+
+**Plan**: [plans/030-epilogue-fusion.md](plans/030-epilogue-fusion.md)
+
+Goal: fuse matmul+activation and norm+activation into single TapeKernel variants,
+eliminating memory round-trips between accumulator writeback and activation.
+Driven by thermodynamic precision analysis (Landauer's principle: the epilogue is
+the last reversible place to change precision gauges).
+
+### Phase 1: MatMul + Activation Epilogue Fusion
+- [ ] **1.1**: Add `TapeKernel::InlineMatMulActivation` variant
+- [ ] **1.2**: Add `matmul_k_outer_fused` CPU kernel + `dispatch_matmul_activation_into`
+- [ ] **1.3**: Wire dispatch in tape executor
+- [ ] **1.4**: Add `GraphOp::FusedMatMulActivation` (rkyv-serializable)
+- [ ] **1.5**: Add `try_fuse_matmul_activation()` fusion pass
+- [ ] **1.6**: Wire tape builder: `FusedMatMulActivation` → `InlineMatMulActivation`
+- [ ] **1.7**: LUT-GEMM fused variants (`MatMulLut4Activation`, `MatMulLut8Activation`)
+
+### Phase 2: Norm + Activation Fusion
+- [ ] **2.1**: Add fused `InlineRmsNormActivation`, `InlineLayerNormActivation`, `InlineGroupNormActivation`
+- [ ] **2.2**: Fused norm kernels (apply activation before writeback)
+- [ ] **2.3**: Add `try_fuse_norm_activation()` fusion pass
+
+### Phase 3: Tests
+- [ ] **3.1**: Unit tests: fused kernel bit-identical to separate ops
+- [ ] **3.2**: Graph fusion tests: pattern detection + no-fuse cases
+- [ ] **3.3**: Tape E2E: fused vs unfused output identity
+
+---
 
 ## Sprint 22: MatMul Optimization (Plan 020)
 

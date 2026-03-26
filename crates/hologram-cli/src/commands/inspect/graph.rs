@@ -44,6 +44,27 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
             format!("FusedFloatChain({})", names.join(" → "))
         }
+        GraphOp::FusedMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => format!("MatMul[{m},{k},{n}]+{}", activation.name()),
+        GraphOp::MatMulLut4Activation(id, act) => {
+            format!("MatMulLut4(id={})+{}", id.raw(), act.name())
+        }
+        GraphOp::MatMulLut8Activation(id, act) => {
+            format!("MatMulLut8(id={})+{}", id.raw(), act.name())
+        }
+        GraphOp::FusedRmsNormActivation { activation, .. } => {
+            format!("RmsNorm+{}", activation.name())
+        }
+        GraphOp::FusedLayerNormActivation { activation, .. } => {
+            format!("LayerNorm+{}", activation.name())
+        }
+        GraphOp::FusedGroupNormActivation { activation, .. } => {
+            format!("GroupNorm+{}", activation.name())
+        }
         GraphOp::Custom { id, arity } => {
             format!("Custom(id={}, arity={})", id.raw(), arity)
         }

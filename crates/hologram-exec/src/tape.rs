@@ -129,6 +129,10 @@ pub enum TapeKernel {
     MatMulLut4(ConstantId),
     /// 8-bit quantized LUT-GEMM matmul.
     MatMulLut8(ConstantId),
+    /// 4-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
+    MatMulLut4Activation(ConstantId, FloatOp),
+    /// 8-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
+    MatMulLut8Activation(ConstantId, FloatOp),
     /// KV cache write (autoregressive generation).
     KvWrite {
         layer: u32,
@@ -182,6 +186,14 @@ pub enum TapeKernel {
     // Still try backend (Metal GPU) first, then direct CPU kernel call.
     /// Inline MatMul with baked dimensions.
     InlineMatMul { m: u32, k: u32, n: u32 },
+    /// Fused MatMul + element-wise activation (epilogue fusion).
+    /// Activation applied in-register before writeback — avoids memory round-trip.
+    InlineMatMulActivation {
+        m: u32,
+        k: u32,
+        n: u32,
+        activation: FloatOp,
+    },
     /// Inline Softmax with baked row size.
     InlineSoftmax { size: u32 },
     /// Inline RmsNorm with baked row size and epsilon (as f32::to_bits()).
@@ -415,6 +427,26 @@ pub enum TapeKernel {
 
     /// Group normalization.
     InlineGroupNorm { num_groups: u32, epsilon: u32 },
+
+    // ── Epilogue fusion: norm + activation ────────────────────────────
+    /// Fused RmsNorm + activation.
+    InlineRmsNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused LayerNorm + activation.
+    InlineLayerNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused GroupNorm + activation.
+    InlineGroupNormActivation {
+        num_groups: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
 }
 
 impl TapeKernel {
@@ -526,6 +558,16 @@ fn dispatch_kernel(
         }
         TapeKernel::MatMulLut8(cid) => {
             dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut4Activation(cid, activation) => {
+            dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut8Activation(cid, activation) => {
+            dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
+            apply_activation_to_out_buf(out_buf, activation);
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::KvWrite {
@@ -1327,6 +1369,62 @@ fn dispatch_kernel(
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
+
+        // ── Fused norm + activation (epilogue fusion) ────────────────
+        TapeKernel::InlineRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
+            crate::float_dispatch::norm::dispatch_rms_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineLayerNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            let actual = shape_resolve::resolve_last_dim_with_weight(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+                inputs.get(1).map(|b| b.len()).unwrap_or(0),
+            );
+            crate::float_dispatch::norm::dispatch_layer_norm_into(
+                inputs,
+                actual,
+                f32::from_bits(*epsilon),
+                out_buf,
+            )?;
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineGroupNormActivation {
+            num_groups,
+            epsilon,
+            activation,
+        } => {
+            let result = float_dispatch::norm::dispatch_group_norm(
+                inputs,
+                *num_groups as usize,
+                f32::from_bits(*epsilon),
+            )?;
+            out_buf.extend_from_slice(&result);
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(DispatchResult::InOutBuf)
+        }
+
         TapeKernel::InlineLRN {
             size,
             alpha,
@@ -1420,6 +1518,60 @@ fn dispatch_kernel(
                 inputs, actual_m, actual_k, actual_n, out_buf,
             )?;
             // Compute output meta: [batch, M, N] from resolved dims.
+            let batch = if actual_m > 0 && actual_k > 0 {
+                a_floats / (actual_m * actual_k)
+            } else {
+                1
+            };
+            let meta = if batch > 1 {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[batch, actual_m, actual_n],
+                )
+            } else {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[actual_m, actual_n],
+                )
+            };
+            Ok(DispatchResult::InOutBufWithMeta(meta))
+        }
+        TapeKernel::InlineMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => {
+            let meta_dims = shape_resolve::resolve_matmul_dims(
+                *m,
+                *k,
+                *n,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+                inputs[0].len(),
+                inputs[1].len(),
+            );
+            let a_floats = inputs[0].len() / 4;
+            let b_floats = inputs[1].len() / 4;
+            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
+                && a_floats > 0
+                && b_floats > 0
+                && a_floats.is_multiple_of(meta_dims.1)
+                && b_floats.is_multiple_of(meta_dims.1)
+            {
+                meta_dims
+            } else {
+                crate::float_dispatch::matmul::infer_matmul_dims(
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    a_floats,
+                    b_floats,
+                )
+            };
+            crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+                inputs, actual_m, actual_k, actual_n, activation, out_buf,
+            )?;
             let batch = if actual_m > 0 && actual_k > 0 {
                 a_floats / (actual_m * actual_k)
             } else {
@@ -1945,6 +2097,19 @@ fn dispatch_kernel_par(
                 out_buf,
             )
         }
+        TapeKernel::InlineMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+            inputs,
+            *m as usize,
+            *k as usize,
+            *n as usize,
+            activation,
+            out_buf,
+        ),
         TapeKernel::InlineSoftmax { size } => {
             let actual = crate::shape_resolve::resolve_last_dim(
                 *size,
@@ -1975,6 +2140,17 @@ fn dispatch_kernel_par(
         _ => Err(crate::error::ExecError::UnsupportedOp(
             "non-parallelizable op in parallel level".into(),
         )),
+    }
+}
+
+/// Apply activation element-wise to an out_buf that contains f32 data.
+/// Used for epilogue fusion on LUT-GEMM paths where the kernel writes
+/// to out_buf first and we apply activation as an immediate post-pass.
+fn apply_activation_to_out_buf(out_buf: &mut [u8], activation: &FloatOp) {
+    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf) {
+        for v in floats.iter_mut() {
+            *v = activation.apply_unary(*v);
+        }
     }
 }
 
@@ -2615,6 +2791,8 @@ impl EnumTape {
                     instr.kernel,
                     TapeKernel::MatMulLut4(_)
                         | TapeKernel::MatMulLut8(_)
+                        | TapeKernel::MatMulLut4Activation(..)
+                        | TapeKernel::MatMulLut8Activation(..)
                         | TapeKernel::KvWrite { .. }
                         | TapeKernel::KvRead { .. }
                 )

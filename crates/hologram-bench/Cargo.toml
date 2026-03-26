@@ -78,3 +78,7 @@ harness = false
 [[bench]]
 name = "matmul"
 harness = false
+
+[[bench]]
+name = "epilogue_fusion"
+harness = false

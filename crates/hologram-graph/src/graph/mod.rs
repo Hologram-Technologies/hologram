@@ -95,6 +95,36 @@ pub enum GraphOp {
     /// Applied sequentially: chain[0](x) → chain[1](...) → ... → chain[n](...).
     /// Produced by the float fusion pass.
     FusedFloatChain(Vec<FloatOp>),
+    /// Fused matmul + activation (compile-time epilogue fusion).
+    /// Two inputs (same as MatMul). Produced by the matmul+activation fusion pass.
+    FusedMatMulActivation {
+        m: u32,
+        k: u32,
+        n: u32,
+        activation: FloatOp,
+    },
+    /// Fused 4-bit LUT-GEMM + activation (epilogue fusion).
+    MatMulLut4Activation(ConstantId, FloatOp),
+    /// Fused 8-bit LUT-GEMM + activation (epilogue fusion).
+    MatMulLut8Activation(ConstantId, FloatOp),
+    /// Fused RmsNorm + activation (epilogue fusion).
+    FusedRmsNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused LayerNorm + activation (epilogue fusion).
+    FusedLayerNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused GroupNorm + activation (epilogue fusion).
+    FusedGroupNormActivation {
+        num_groups: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
 }
 
 impl GraphOp {
@@ -109,12 +139,17 @@ impl GraphOp {
             | Self::CallSubgraph(_)
             | Self::MatMulLut4(_)
             | Self::MatMulLut8(_)
+            | Self::MatMulLut4Activation(..)
+            | Self::MatMulLut8Activation(..)
             | Self::BatchMatMulLut4(_)
             | Self::BatchMatMulLut8(_) => 1,
             Self::Prim(p) => p.arity(),
             Self::Custom { arity, .. } => *arity,
             Self::Float(f) => f.arity(),
             Self::FusedFloatChain(_) => 1,
+            Self::FusedMatMulActivation { .. } => 2,
+            Self::FusedRmsNormActivation { .. } => 2,
+            Self::FusedLayerNormActivation { .. } | Self::FusedGroupNormActivation { .. } => 3,
         }
     }
 
@@ -128,11 +163,17 @@ impl GraphOp {
                 | Self::FusedView(_)
                 | Self::MatMulLut4(_)
                 | Self::MatMulLut8(_)
+                | Self::MatMulLut4Activation(..)
+                | Self::MatMulLut8Activation(..)
                 | Self::BatchMatMulLut4(_)
                 | Self::BatchMatMulLut8(_)
                 | Self::Custom { .. }
                 | Self::Float(_)
                 | Self::FusedFloatChain(_)
+                | Self::FusedMatMulActivation { .. }
+                | Self::FusedRmsNormActivation { .. }
+                | Self::FusedLayerNormActivation { .. }
+                | Self::FusedGroupNormActivation { .. }
         )
     }
 

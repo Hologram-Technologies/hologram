@@ -68,6 +68,200 @@ pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId, succ_index: &[Vec<Nod
     true
 }
 
+/// Try to fuse a MatMul node forward into a successor unary activation.
+///
+/// If a MatMul has exactly one successor and that successor is an element-wise
+/// unary float op, replace the pair with a `FusedMatMulActivation` node.
+/// The successor absorbs the MatMul's inputs and the MatMul node is removed.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_matmul_activation(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Current node must be a MatMul.
+    let (m, k, n) = match &node.op {
+        GraphOp::Float(FloatOp::MatMul { m, k, n }) => (*m, *k, *n),
+        _ => return false,
+    };
+
+    // MatMul must have exactly one successor.
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let succ_id = succs[0];
+
+    let succ = match graph.get(succ_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Successor must be an element-wise unary float op.
+    let activation = match &succ.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+
+    // Successor must have exactly one predecessor (this MatMul).
+    let succ_preds: Vec<NodeId> = succ.dependencies().collect();
+    if succ_preds.len() != 1 {
+        return false;
+    }
+
+    // Replace the successor node with the fused op, keeping its NodeId.
+    let matmul_inputs = node.inputs.clone();
+    graph.replace_op(
+        succ_id,
+        GraphOp::FusedMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        },
+    );
+    if let Some(succ_node) = graph.get_mut(succ_id) {
+        succ_node.inputs = matmul_inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
+/// Try to fuse a norm op (RmsNorm/LayerNorm/GroupNorm) forward into a successor
+/// unary activation. Same pattern as matmul fusion.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_norm_activation(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Current node must be a norm op.
+    let fused_op_fn: Box<dyn FnOnce(FloatOp) -> GraphOp> = match &node.op {
+        GraphOp::Float(FloatOp::RmsNorm { size, epsilon }) => {
+            let (s, e) = (*size, *epsilon);
+            Box::new(move |act| GraphOp::FusedRmsNormActivation {
+                size: s,
+                epsilon: e,
+                activation: act,
+            })
+        }
+        GraphOp::Float(FloatOp::LayerNorm { size, epsilon }) => {
+            let (s, e) = (*size, *epsilon);
+            Box::new(move |act| GraphOp::FusedLayerNormActivation {
+                size: s,
+                epsilon: e,
+                activation: act,
+            })
+        }
+        GraphOp::Float(FloatOp::GroupNorm {
+            num_groups,
+            epsilon,
+        }) => {
+            let (ng, e) = (*num_groups, *epsilon);
+            Box::new(move |act| GraphOp::FusedGroupNormActivation {
+                num_groups: ng,
+                epsilon: e,
+                activation: act,
+            })
+        }
+        _ => return false,
+    };
+
+    // Must have exactly one successor.
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let succ_id = succs[0];
+
+    let succ = match graph.get(succ_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let activation = match &succ.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+    let succ_preds: Vec<NodeId> = succ.dependencies().collect();
+    if succ_preds.len() != 1 {
+        return false;
+    }
+
+    let norm_inputs = node.inputs.clone();
+    graph.replace_op(succ_id, fused_op_fn(activation));
+    if let Some(succ_node) = graph.get_mut(succ_id) {
+        succ_node.inputs = norm_inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
+/// Try to fuse a LUT-GEMM (MatMulLut4/MatMulLut8) forward into a successor
+/// unary activation. Same pattern as `try_fuse_matmul_activation`.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_lut_gemm_activation(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Current node must be a LUT-GEMM variant.
+    let (is_q4, cid) = match &node.op {
+        GraphOp::MatMulLut4(cid) => (true, *cid),
+        GraphOp::MatMulLut8(cid) => (false, *cid),
+        _ => return false,
+    };
+
+    // Must have exactly one successor.
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let succ_id = succs[0];
+
+    let succ = match graph.get(succ_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Successor must be element-wise unary with single predecessor.
+    let activation = match &succ.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+    let succ_preds: Vec<NodeId> = succ.dependencies().collect();
+    if succ_preds.len() != 1 {
+        return false;
+    }
+
+    let lut_inputs = node.inputs.clone();
+    let fused_op = if is_q4 {
+        GraphOp::MatMulLut4Activation(cid, activation)
+    } else {
+        GraphOp::MatMulLut8Activation(cid, activation)
+    };
+    graph.replace_op(succ_id, fused_op);
+    if let Some(succ_node) = graph.get_mut(succ_id) {
+        succ_node.inputs = lut_inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +440,111 @@ mod tests {
                 "mismatch at x={x}: got {val}, expected {expected}"
             );
         }
+    }
+
+    // ── MatMul + Activation epilogue fusion tests ─────────────────────
+
+    #[test]
+    fn fuse_matmul_relu() {
+        // Input0, Input1 → MatMul → Relu → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0
+            .node(GraphOp::Input) // 1
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::MatMul { m: 2, k: 3, n: 4 }),
+                &[0, 1],
+            ) // 2
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[2]) // 3
+            .node_with_inputs(GraphOp::Output, &[3]) // 4
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_matmul_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+        assert_eq!(g.node_count(), 4); // Input0, Input1, FusedMatMulActivation, Output
+
+        let fused_node = g
+            .node_ids()
+            .into_iter()
+            .find(|&id| matches!(g.get(id).unwrap().op, GraphOp::FusedMatMulActivation { .. }))
+            .expect("should have FusedMatMulActivation");
+        if let GraphOp::FusedMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } = &g.get(fused_node).unwrap().op
+        {
+            assert_eq!((*m, *k, *n), (2, 3, 4));
+            assert_eq!(*activation, FloatOp::Relu);
+        }
+    }
+
+    #[test]
+    fn no_fuse_matmul_fan_out() {
+        // Input0, Input1 → MatMul → [Relu, Sigmoid]
+        // MatMul has 2 successors — should NOT fuse.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0
+            .node(GraphOp::Input) // 1
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::MatMul { m: 2, k: 3, n: 4 }),
+                &[0, 1],
+            ) // 2
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[2]) // 3
+            .node_with_inputs(GraphOp::Float(FloatOp::Sigmoid), &[2]) // 4
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_matmul_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 0);
+        assert_eq!(g.node_count(), 5);
+    }
+
+    #[test]
+    fn no_fuse_matmul_non_unary_successor() {
+        // Input0, Input1 → MatMul → Softmax → Output
+        // Softmax is not element-wise unary — should NOT fuse.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0
+            .node(GraphOp::Input) // 1
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::MatMul { m: 2, k: 3, n: 4 }),
+                &[0, 1],
+            ) // 2
+            .node_with_inputs(GraphOp::Float(FloatOp::Softmax { size: 4 }), &[2]) // 3
+            .node_with_inputs(GraphOp::Output, &[3]) // 4
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_matmul_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 0);
     }
 }

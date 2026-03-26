@@ -1,10 +1,11 @@
 //! Single-pass fusion engine.
 //!
-//! One topological walk interleaving four optimizations:
+//! One topological walk interleaving five optimizations:
 //! 1. Constant folding — evaluate ops on constant inputs at compile time
 //! 2. View fusion — collapse byte-domain unary chains into a single 256-byte LUT
-//! 3. Float chain fusion — collapse f32-domain unary chains into FusedFloatChain
-//! 4. CSE — deduplicate nodes with identical (op, sorted predecessors)
+//! 3. MatMul+activation epilogue fusion — absorb successor activation into matmul
+//! 4. Float chain fusion — collapse f32-domain unary chains into FusedFloatChain
+//! 5. CSE — deduplicate nodes with identical (op, sorted predecessors)
 //!
 //! Why single-pass works: topo order ensures predecessors are processed first.
 //! Constant folding propagates forward. View fusion looks backward (chain
@@ -28,6 +29,8 @@ pub struct FusionStats {
     pub views_fused: usize,
     /// Number of float element-wise chains fused into FusedFloatChain.
     pub float_chains_fused: usize,
+    /// Number of MatMul+activation pairs fused (epilogue fusion).
+    pub matmul_activations_fused: usize,
     /// Number of duplicate nodes eliminated by CSE.
     pub cse_eliminated: usize,
 }
@@ -36,7 +39,11 @@ impl FusionStats {
     /// Total number of nodes removed by all optimizations.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.constants_folded + self.views_fused + self.float_chains_fused + self.cse_eliminated
+        self.constants_folded
+            + self.views_fused
+            + self.float_chains_fused
+            + self.matmul_activations_fused
+            + self.cse_eliminated
     }
 }
 
@@ -65,13 +72,24 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
             stats.views_fused += 1;
         }
 
-        // 3. Float chain fusion (f32-domain backward chain walk)
+        // 3. MatMul + activation epilogue fusion (forward: matmul absorbs successor)
+        if float_fusion::try_fuse_matmul_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+        }
+        if float_fusion::try_fuse_lut_gemm_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+        }
+        if float_fusion::try_fuse_norm_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+        }
+
+        // 4. Float chain fusion (f32-domain backward chain walk)
         while float_fusion::try_fuse_float_unary(graph, id, &succ_index) {
             stats.float_chains_fused += 1;
         }
     }
 
-    // 4. CSE — reuses original topo order. Removed nodes are skipped via
+    // 5. CSE — reuses original topo order. Removed nodes are skipped via
     //    graph.get(id).is_none() inside CSE. Topo invariant holds because
     //    fusion only removes nodes, never adds new dependencies.
     stats.cse_eliminated = cse::eliminate_common_subexpressions(graph, &order);
@@ -151,9 +169,10 @@ mod tests {
             constants_folded: 3,
             views_fused: 2,
             float_chains_fused: 1,
+            matmul_activations_fused: 1,
             cse_eliminated: 1,
         };
-        assert_eq!(stats.total_removed(), 7);
+        assert_eq!(stats.total_removed(), 8);
     }
 
     #[test]
@@ -166,5 +185,39 @@ mod tests {
         let stats = fuse(&mut g).unwrap();
         assert_eq!(stats.total_removed(), 0);
         assert_eq!(g.node_count(), 2);
+    }
+
+    #[test]
+    fn fuse_matmul_activation_via_full_pass() {
+        use hologram_core::op::FloatOp;
+        // Input0, Input1 → MatMul → Silu → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0
+            .node(GraphOp::Input) // 1
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::MatMul { m: 4, k: 8, n: 16 }),
+                &[0, 1],
+            ) // 2
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[2]) // 3
+            .node_with_inputs(GraphOp::Output, &[3]) // 4
+            .build();
+
+        let stats = fuse(&mut g).unwrap();
+        assert_eq!(stats.matmul_activations_fused, 1);
+        assert_eq!(g.node_count(), 4); // Input0, Input1, FusedMatMulActivation, Output
+
+        // Verify the fused node exists with correct parameters.
+        let has_fused = g.node_ids().into_iter().any(|id| {
+            matches!(
+                g.get(id).unwrap().op,
+                GraphOp::FusedMatMulActivation {
+                    m: 4,
+                    k: 8,
+                    n: 16,
+                    activation: FloatOp::Silu,
+                }
+            )
+        });
+        assert!(has_fused, "should contain FusedMatMulActivation with Silu");
     }
 }

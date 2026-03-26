@@ -241,6 +241,17 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
     match op {
         GraphOp::Float(fop) => Ok(resolve_float_kernel(fop)),
         GraphOp::FusedFloatChain(chain) => Ok(TapeKernel::FusedFloatChain(chain.clone())),
+        GraphOp::FusedMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => Ok(TapeKernel::InlineMatMulActivation {
+            m: *m,
+            k: *k,
+            n: *n,
+            activation: *activation,
+        }),
         GraphOp::Output => Ok(TapeKernel::Output),
         GraphOp::Lut(_) | GraphOp::FusedView(_) => {
             let view = op
@@ -263,6 +274,39 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         }
         GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
             Ok(TapeKernel::MatMulLut8(*cid))
+        }
+        GraphOp::FusedRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => Ok(TapeKernel::InlineRmsNormActivation {
+            size: *size,
+            epsilon: *epsilon,
+            activation: *activation,
+        }),
+        GraphOp::FusedLayerNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => Ok(TapeKernel::InlineLayerNormActivation {
+            size: *size,
+            epsilon: *epsilon,
+            activation: *activation,
+        }),
+        GraphOp::FusedGroupNormActivation {
+            num_groups,
+            epsilon,
+            activation,
+        } => Ok(TapeKernel::InlineGroupNormActivation {
+            num_groups: *num_groups,
+            epsilon: *epsilon,
+            activation: *activation,
+        }),
+        GraphOp::MatMulLut4Activation(cid, activation) => {
+            Ok(TapeKernel::MatMulLut4Activation(*cid, *activation))
+        }
+        GraphOp::MatMulLut8Activation(cid, activation) => {
+            Ok(TapeKernel::MatMulLut8Activation(*cid, *activation))
         }
         GraphOp::Custom { id, arity: _ } => {
             let reg = registry.ok_or_else(|| {

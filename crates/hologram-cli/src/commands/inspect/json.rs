@@ -103,6 +103,41 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
             json!({"FusedFloatChain": names})
         }
+        GraphOp::FusedMatMulActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => json!({"FusedMatMulActivation": {
+            "m": m, "k": k, "n": n, "activation": activation.name()
+        }}),
+        GraphOp::MatMulLut4Activation(id, act) => json!({"MatMulLut4Activation": {
+            "id": id.raw(), "activation": act.name()
+        }}),
+        GraphOp::MatMulLut8Activation(id, act) => json!({"MatMulLut8Activation": {
+            "id": id.raw(), "activation": act.name()
+        }}),
+        GraphOp::FusedRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            json!({"FusedRmsNormActivation": {"size": size, "epsilon": epsilon, "activation": activation.name()}})
+        }
+        GraphOp::FusedLayerNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            json!({"FusedLayerNormActivation": {"size": size, "epsilon": epsilon, "activation": activation.name()}})
+        }
+        GraphOp::FusedGroupNormActivation {
+            num_groups,
+            epsilon,
+            activation,
+        } => {
+            json!({"FusedGroupNormActivation": {"num_groups": num_groups, "epsilon": epsilon, "activation": activation.name()}})
+        }
         GraphOp::Custom { id, arity } => {
             json!({"Custom": {"id": id.raw(), "arity": arity}})
         }
