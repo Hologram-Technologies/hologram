@@ -827,10 +827,13 @@ fn dispatch_kernel(
                 return Ok(DispatchResult::InOutBuf);
             };
 
-            let (result, _out_shape) =
+            let (result, out_shape) =
                 crate::float_dispatch::dispatch_transpose(inputs[0], perm_slice, &shape)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            // Propagate permuted shape as output meta.
+            let meta =
+                hologram_core::op::TensorMeta::new(hologram_core::op::FloatDType::F32, &out_shape);
+            Ok(DispatchResult::InOutBufWithMeta(meta))
         }
         TapeKernel::Passthrough => {
             if let Some(b) = inputs.first() {
