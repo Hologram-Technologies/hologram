@@ -111,6 +111,14 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         } => json!({"FusedMatMulActivation": {
             "m": m, "k": k, "n": n, "activation": activation.name()
         }}),
+        GraphOp::FusedMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => {
+            json!({"FusedMatMulBiasActivation": {"m": m, "k": k, "n": n, "activation": activation.name()}})
+        }
         GraphOp::MatMulLut4Activation(id, act) => json!({"MatMulLut4Activation": {
             "id": id.raw(), "activation": act.name()
         }}),

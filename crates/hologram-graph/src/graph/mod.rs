@@ -125,6 +125,16 @@ pub enum GraphOp {
         epsilon: u32,
         activation: FloatOp,
     },
+    /// Fused matmul + bias add + activation (full epilogue fusion).
+    /// Three inputs: [activation_input, weight_constant, bias_constant].
+    /// Bias is read directly from arena (zero-copy mmap'd constant).
+    /// Eliminates both intermediate buffers from MatMul → Add → Activation.
+    FusedMatMulBiasActivation {
+        m: u32,
+        k: u32,
+        n: u32,
+        activation: FloatOp,
+    },
 }
 
 impl GraphOp {
@@ -148,6 +158,7 @@ impl GraphOp {
             Self::Float(f) => f.arity(),
             Self::FusedFloatChain(_) => 1,
             Self::FusedMatMulActivation { .. } => 2,
+            Self::FusedMatMulBiasActivation { .. } => 3,
             Self::FusedRmsNormActivation { .. } => 2,
             Self::FusedLayerNormActivation { .. } | Self::FusedGroupNormActivation { .. } => 3,
         }
@@ -171,6 +182,7 @@ impl GraphOp {
                 | Self::Float(_)
                 | Self::FusedFloatChain(_)
                 | Self::FusedMatMulActivation { .. }
+                | Self::FusedMatMulBiasActivation { .. }
                 | Self::FusedRmsNormActivation { .. }
                 | Self::FusedLayerNormActivation { .. }
                 | Self::FusedGroupNormActivation { .. }

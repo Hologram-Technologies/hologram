@@ -50,6 +50,14 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
             n,
             activation,
         } => format!("MatMul[{m},{k},{n}]+{}", activation.name()),
+        GraphOp::FusedMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => {
+            format!("MatMul[{m},{k},{n}]+Bias+{}", activation.name())
+        }
         GraphOp::MatMulLut4Activation(id, act) => {
             format!("MatMulLut4(id={})+{}", id.raw(), act.name())
         }

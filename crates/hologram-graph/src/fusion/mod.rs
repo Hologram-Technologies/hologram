@@ -72,7 +72,13 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
             stats.views_fused += 1;
         }
 
-        // 3. MatMul + activation epilogue fusion (forward: matmul absorbs successor)
+        // 3. MatMul + bias + activation (3-node → 1-node, highest value)
+        if float_fusion::try_fuse_matmul_bias_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+            continue; // MatMul consumed — skip 2-node fusion.
+        }
+
+        // 4. MatMul + activation epilogue fusion (forward: matmul absorbs successor)
         if float_fusion::try_fuse_matmul_activation(graph, id, &succ_index) {
             stats.matmul_activations_fused += 1;
         }
@@ -219,5 +225,39 @@ mod tests {
             )
         });
         assert!(has_fused, "should contain FusedMatMulActivation with Silu");
+    }
+
+    #[test]
+    fn fuse_matmul_bias_activation_via_full_pass() {
+        use crate::constant::ConstantData;
+        use hologram_core::op::FloatOp;
+        // Input0, Input1(weight) → MatMul → Add(bias_constant) → Relu → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0: activation input
+            .node(GraphOp::Input) // 1: weight
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::MatMul { m: 1, k: 64, n: 32 }),
+                &[0, 1],
+            ) // 2: MatMul
+            .constant(ConstantData::Bytes(vec![0u8; 128])) // 3: bias constant (32 f32s)
+            .node_with_inputs(GraphOp::Float(FloatOp::Add), &[2, 3]) // 4: Add(matmul, bias)
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[4]) // 5: Relu
+            .node_with_inputs(GraphOp::Output, &[5]) // 6: Output
+            .build();
+
+        let stats = fuse(&mut g).unwrap();
+        assert_eq!(
+            stats.matmul_activations_fused, 1,
+            "should fuse MatMul+Bias+Activation"
+        );
+        // Should have: Input0, Input1, bias_constant, FusedMatMulBiasActivation, Output
+        // MatMul and Add removed (2 nodes gone).
+        let has_fused = g.node_ids().into_iter().any(|id| {
+            matches!(
+                g.get(id).unwrap().op,
+                GraphOp::FusedMatMulBiasActivation { .. }
+            )
+        });
+        assert!(has_fused, "should contain FusedMatMulBiasActivation");
     }
 }

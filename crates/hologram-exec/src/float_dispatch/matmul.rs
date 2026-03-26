@@ -649,3 +649,35 @@ pub fn dispatch_matmul_activation_into(
 
     Ok(())
 }
+
+/// Fused matmul + bias + activation dispatch. Runs the standard matmul,
+/// then applies bias addition and activation in a single pass over the
+/// cache-hot output. Eliminates both intermediate buffers that the
+/// unfused MatMul → Add(bias) → Activation path requires.
+pub fn dispatch_matmul_bias_activation_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    bias: &[f32],
+    activation: &FloatOp,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    // Standard matmul (fully vectorized, cache-friendly).
+    dispatch_matmul_into(inputs, m, k, n, out_buf)?;
+
+    // Fused epilogue: bias + activation in one pass.
+    // Data is cache-hot from the matmul write.
+    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf) {
+        let bias_len = bias.len();
+        if bias_len > 0 {
+            for row in floats.chunks_mut(bias_len) {
+                for (j, v) in row.iter_mut().enumerate() {
+                    *v = activation.apply_unary(*v + bias[j]);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

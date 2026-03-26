@@ -12,7 +12,33 @@
 - [x] Zero-copy graph access — [plan](plans/018-zero-copy-graph-access.md)
 - [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
 - [x] MatMul optimization — [plan](plans/020-matmul-optimization.md)
-- [ ] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
+- [x] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
+- [ ] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
+
+## Sprint 24: Bias Fusion (Plan 031)
+
+**Plan**: [plans/031-bias-fusion.md](plans/031-bias-fusion.md)
+
+Goal: fuse MatMul+Add(bias)+Activation into a single TapeKernel, eliminating
+two intermediate buffers. This is the pattern that `can_reuse_input` cannot
+optimize away — the real performance win from epilogue fusion.
+
+### Phase 1: Graph + Tape Variants
+- [ ] **1.1**: Add `FusedMatMulBiasActivation` GraphOp + `InlineMatMulBiasActivation` TapeKernel
+- [ ] **1.2**: Exhaustive match coverage (kv/store, CLI inspect, tape builder)
+
+### Phase 2: Fused Kernel
+- [ ] **2.1**: `dispatch_matmul_bias_activation_into` — matmul + bias+activation in single pass
+
+### Phase 3: Fusion Pass
+- [ ] **3.1**: `try_fuse_matmul_bias_activation()` — 3-node pattern (MatMul → Add(const) → Activation)
+- [ ] **3.2**: Wire into `fuse()` before 2-node matmul+activation pass
+
+### Phase 4: Tests + Benchmark
+- [ ] **4.1**: Graph fusion tests (fuse, no-fuse fan-out, no-fuse non-constant bias)
+- [ ] **4.2**: Benchmark: 3-op unfused vs 1-op fused
+
+---
 
 ## Sprint 23: Epilogue Fusion (Plan 030)
 

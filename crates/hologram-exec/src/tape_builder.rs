@@ -252,6 +252,17 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             n: *n,
             activation: *activation,
         }),
+        GraphOp::FusedMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => Ok(TapeKernel::InlineMatMulBiasActivation {
+            m: *m,
+            k: *k,
+            n: *n,
+            activation: *activation,
+        }),
         GraphOp::Output => Ok(TapeKernel::Output),
         GraphOp::Lut(_) | GraphOp::FusedView(_) => {
             let view = op

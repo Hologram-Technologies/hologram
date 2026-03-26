@@ -6,7 +6,7 @@
 
 use hologram_core::op::FloatOp;
 
-use crate::graph::node::NodeId;
+use crate::graph::node::{InputSource, NodeId};
 use crate::graph::{Graph, GraphOp};
 
 /// Try to fuse a unary float node backward into its predecessor chain.
@@ -65,6 +65,121 @@ pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId, succ_index: &[Vec<Nod
     }
 
     graph.remove_node(pred_id);
+    true
+}
+
+/// Try to fuse a MatMul → Add(constant bias) → Activation into a single
+/// `FusedMatMulBiasActivation` node. This 3-node pattern appears in every
+/// Linear+Activation layer and eliminates two intermediate buffers.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_matmul_bias_activation(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Current node must be a MatMul.
+    let (m, k, n) = match &node.op {
+        GraphOp::Float(FloatOp::MatMul { m, k, n }) => (*m, *k, *n),
+        _ => return false,
+    };
+
+    // MatMul must have exactly one successor (the Add).
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let add_id = succs[0];
+
+    let add_node = match graph.get(add_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Successor must be Float(Add).
+    if !matches!(&add_node.op, GraphOp::Float(FloatOp::Add)) {
+        return false;
+    }
+
+    // Add must have exactly 2 inputs. One is the MatMul, the other must be a Constant (bias).
+    if add_node.inputs.len() != 2 {
+        return false;
+    }
+    // Find the bias constant node ID (the Add input that isn't the MatMul).
+    let bias_node_id = {
+        let mut found = None;
+        for slot in &add_node.inputs {
+            if let InputSource::Node(pred_id) = &slot.source {
+                if *pred_id == id {
+                    continue; // This is the MatMul input, skip.
+                }
+                // Check if this predecessor is a Constant node.
+                if let Some(pred_node) = graph.get(*pred_id) {
+                    if matches!(&pred_node.op, GraphOp::Constant(_)) {
+                        found = Some(*pred_id);
+                    }
+                }
+            }
+        }
+        match found {
+            Some(nid) => nid,
+            None => return false, // No constant bias found.
+        }
+    };
+
+    // Add must have exactly one successor (the Activation).
+    let add_succs = Graph::successors_from_index(add_id, succ_index);
+    if add_succs.len() != 1 {
+        return false;
+    }
+    let act_id = add_succs[0];
+
+    let act_node = match graph.get(act_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Activation must be element-wise unary.
+    let activation = match &act_node.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+
+    // Activation must have exactly one predecessor (the Add).
+    let act_preds: Vec<NodeId> = act_node.dependencies().collect();
+    if act_preds.len() != 1 {
+        return false;
+    }
+
+    // Build fused inputs: [matmul_input0, matmul_input1, bias_constant_node].
+    // Bias stays in the graph as a constant node — zero-copy from arena.
+    let mut fused_inputs = node.inputs.clone();
+    fused_inputs.push(crate::graph::node::InputSlot {
+        source: InputSource::Node(bias_node_id),
+        output_port: 0,
+    });
+
+    graph.replace_op(
+        act_id,
+        GraphOp::FusedMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        },
+    );
+    if let Some(act_node) = graph.get_mut(act_id) {
+        act_node.inputs = fused_inputs;
+    }
+
+    // Remove the MatMul and Add nodes (bias constant stays).
+    graph.remove_node(id);
+    graph.remove_node(add_id);
     true
 }
 

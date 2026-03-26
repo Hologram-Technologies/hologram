@@ -161,6 +161,26 @@ impl KvStore {
                 )?;
                 Ok(out_buf)
             }
+            GraphOp::FusedMatMulBiasActivation {
+                m,
+                k,
+                n,
+                activation,
+            } => {
+                let bias: &[f32] = bytemuck::try_cast_slice(inputs[2])
+                    .map_err(|_| ExecError::UnsupportedOp("bias not f32-aligned".into()))?;
+                let mut out_buf = Vec::new();
+                crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
+                    &inputs[..2],
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    bias,
+                    activation,
+                    &mut out_buf,
+                )?;
+                Ok(out_buf)
+            }
             GraphOp::FusedRmsNormActivation {
                 size,
                 epsilon,

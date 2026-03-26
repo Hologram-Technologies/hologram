@@ -194,6 +194,15 @@ pub enum TapeKernel {
         n: u32,
         activation: FloatOp,
     },
+    /// Fused MatMul + bias add + activation (full epilogue fusion).
+    /// Three inputs: [activation, weight, bias]. Bias from arena (zero-copy).
+    /// Eliminates both intermediate buffers from MatMul → Add(bias) → Activation.
+    InlineMatMulBiasActivation {
+        m: u32,
+        k: u32,
+        n: u32,
+        activation: FloatOp,
+    },
     /// Inline Softmax with baked row size.
     InlineSoftmax { size: u32 },
     /// Inline RmsNorm with baked row size and epsilon (as f32::to_bits()).
@@ -1536,6 +1545,45 @@ fn dispatch_kernel(
             };
             Ok(DispatchResult::InOutBufWithMeta(meta))
         }
+        TapeKernel::InlineMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => {
+            // inputs: [activation_tensor, weight, bias] — all zero-copy from arena.
+            let bias: &[f32] = bytemuck::try_cast_slice(inputs[2]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("bias not f32-aligned".into())
+            })?;
+            crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
+                &inputs[..2],
+                *m as usize,
+                *k as usize,
+                *n as usize,
+                bias,
+                activation,
+                out_buf,
+            )?;
+            let a_floats = inputs[0].len() / 4;
+            let mk = (*m as usize) * (*k as usize);
+            let batch = if mk > 0 && a_floats > mk {
+                a_floats / mk
+            } else {
+                1
+            };
+            let meta = if batch > 1 {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[batch, *m as usize, *n as usize],
+                )
+            } else {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[*m as usize, *n as usize],
+                )
+            };
+            Ok(DispatchResult::InOutBufWithMeta(meta))
+        }
         TapeKernel::InlineMatMulActivation {
             m,
             k,
@@ -2793,6 +2841,7 @@ impl EnumTape {
                         | TapeKernel::MatMulLut8(_)
                         | TapeKernel::MatMulLut4Activation(..)
                         | TapeKernel::MatMulLut8Activation(..)
+                        | TapeKernel::InlineMatMulBiasActivation { .. }
                         | TapeKernel::KvWrite { .. }
                         | TapeKernel::KvRead { .. }
                 )
