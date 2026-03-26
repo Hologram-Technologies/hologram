@@ -116,9 +116,39 @@ impl TensorMeta {
             .product()
     }
 
-    /// Shape as a slice of usize.
+    /// Shape as a slice of u32.
     pub fn shape(&self) -> &[u32] {
         &self.dims[..self.ndim as usize]
+    }
+
+    /// Last dimension (normalization/reduction axis for most ops).
+    pub fn last_dim(&self) -> Option<u32> {
+        if self.ndim > 0 {
+            Some(self.dims[self.ndim as usize - 1])
+        } else {
+            None
+        }
+    }
+
+    /// Second-to-last dimension (e.g., sequence length for MatMul).
+    pub fn second_last_dim(&self) -> Option<u32> {
+        if self.ndim >= 2 {
+            Some(self.dims[self.ndim as usize - 2])
+        } else {
+            None
+        }
+    }
+
+    /// Spatial (H, W) — last two dims. For NCHW tensors these are spatial dims.
+    pub fn spatial_hw(&self) -> Option<(u32, u32)> {
+        if self.ndim >= 2 {
+            Some((
+                self.dims[self.ndim as usize - 2],
+                self.dims[self.ndim as usize - 1],
+            ))
+        } else {
+            None
+        }
     }
 }
 

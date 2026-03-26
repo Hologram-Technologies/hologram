@@ -14,6 +14,7 @@ pub mod kv_cache;
 pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
+pub mod shape_resolve;
 pub mod tape;
 pub mod tape_builder;
 
