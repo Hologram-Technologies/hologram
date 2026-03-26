@@ -146,10 +146,17 @@ pub fn execute_tape_with_kv_and_shapes(
         inputs,
         &mut arena,
     )?;
-    tape.prewarm_arena(&mut arena);
-
     let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
     let position_offset = kv_owned.write_pos() as u32;
+
+    // Skip pre-warming for decode steps (write_pos > 0). The compiled output
+    // byte hints are sized for the full compiled seq_len, which wastes cache
+    // during single-token decode. On-demand allocation produces correctly-sized
+    // buffers. Prefill (write_pos == 0) benefits from pre-warming since its
+    // buffer sizes are closer to compiled.
+    if position_offset == 0 {
+        tape.prewarm_arena(&mut arena);
+    }
     let mut tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
     tape_ctx.shape_overrides = shape_overrides.clone();
