@@ -1336,7 +1336,8 @@ fn dispatch_kernel(
         // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
         // Try backend (GPU) first, then direct CPU kernel call.
         TapeKernel::InlineMatMul { m, k, n } => {
-            let (actual_m, actual_k, actual_n) = shape_resolve::resolve_matmul_dims(
+            // Try N-D metadata first, then fall back to buffer-length heuristic.
+            let meta_dims = shape_resolve::resolve_matmul_dims(
                 *m,
                 *k,
                 *n,
@@ -1345,6 +1346,26 @@ fn dispatch_kernel(
                 inputs[0].len(),
                 inputs[1].len(),
             );
+            // Validate: k must divide both buffers cleanly.
+            let a_floats = inputs[0].len() / 4;
+            let b_floats = inputs[1].len() / 4;
+            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
+                && a_floats > 0
+                && b_floats > 0
+                && a_floats.is_multiple_of(meta_dims.1)
+                && b_floats.is_multiple_of(meta_dims.1)
+            {
+                meta_dims
+            } else {
+                // Fall back to buffer-length inference.
+                crate::float_dispatch::matmul::infer_matmul_dims(
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    a_floats,
+                    b_floats,
+                )
+            };
             // Skip backend dispatch — use CPU for now to validate correctness.
             // TODO: re-enable backend.dispatch_matmul with adapted dims once validated.
             crate::float_dispatch::matmul::dispatch_matmul_into(

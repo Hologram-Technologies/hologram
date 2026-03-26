@@ -92,6 +92,17 @@ pub fn execute_tape(
                             .map(|d| d.byte_size())
                             .unwrap_or(8);
                         arena.insert_borrowed_with_elem_size(node.id, data, es);
+                        // Set N-D metadata from GraphInputs shape if available.
+                        if let Some(shape) = inputs.shape(idx as u32) {
+                            let dtype = compiled_dtypes
+                                .get(&node.id)
+                                .copied()
+                                .unwrap_or(hologram_core::op::FloatDType::F32);
+                            arena.set_meta(
+                                node.id,
+                                hologram_core::op::TensorMeta::new(dtype, shape),
+                            );
+                        }
                     }
                 }
             }
@@ -206,6 +217,17 @@ pub fn execute_tape_with_kv(
                             .map(|d| d.byte_size())
                             .unwrap_or(8);
                         arena.insert_borrowed_with_elem_size(node.id, data, es);
+                        // Set N-D metadata from GraphInputs shape if available.
+                        if let Some(shape) = inputs.shape(idx as u32) {
+                            let dtype = compiled_dtypes
+                                .get(&node.id)
+                                .copied()
+                                .unwrap_or(hologram_core::op::FloatDType::F32);
+                            arena.set_meta(
+                                node.id,
+                                hologram_core::op::TensorMeta::new(dtype, shape),
+                            );
+                        }
                     }
                 }
             }

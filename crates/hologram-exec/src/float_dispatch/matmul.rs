@@ -206,7 +206,6 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
 /// When the runtime buffer has fewer elements than compiled m*k (variable-length
 /// execution like decode with 1 token instead of 2048), adapts m to match the
 /// actual buffer size. For batched matmul, preserves m and detects batch count.
-#[allow(dead_code)] // Replaced by shape_resolve::resolve_matmul_dims; kept for reference
 pub(crate) fn infer_matmul_dims(
     compiled_m: usize,
     compiled_k: usize,
