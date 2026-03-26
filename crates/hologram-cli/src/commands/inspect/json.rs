@@ -13,6 +13,11 @@ use serde_json::{json, Value};
 
 use super::InspectArgs;
 
+/// Format a 32-byte hash as a hex string.
+fn hex(hash: &[u8; 32]) -> String {
+    hash.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Print the full archive as a JSON object.
 pub fn print(args: &InspectArgs, data: &[u8], plan: &LoadedPlan, schedule: &ExecutionSchedule) {
     let obj = build(args, data, plan, schedule);
@@ -46,8 +51,8 @@ fn archive_json(args: &InspectArgs, data: &[u8], plan: &LoadedPlan) -> Value {
         "graph_size": h.graph_size,
         "weights_offset": h.weights_offset,
         "weights_size": h.weights_size,
-        "graph_checksum": format!("{:#010x}", h.graph_checksum),
-        "weights_checksum": format!("{:#010x}", h.weights_checksum),
+        "graph_checksum": hex(&h.graph_checksum),
+        "weights_checksum": hex(&h.weights_checksum),
         "section_count": h.section_count,
         "total_size": h.total_size,
     })
@@ -198,7 +203,7 @@ fn sections_json(plan: &LoadedPlan) -> Value {
                 "kind_name": section_kind_name(e.kind),
                 "offset": e.offset,
                 "size": e.size,
-                "checksum": format!("{:#010x}", e.checksum),
+                "checksum": hex(&e.checksum),
             })
         })
         .collect();
@@ -248,7 +253,7 @@ fn tensor_json(t: &TensorMetadata) -> Value {
         "dtype": t.dtype.name(),
         "offset": t.offset,
         "size": t.size,
-        "checksum": format!("{:#010x}", t.checksum),
+        "checksum": hex(&t.checksum),
     });
     if let Some(q) = &t.quantization {
         obj["quantization"] = json!({

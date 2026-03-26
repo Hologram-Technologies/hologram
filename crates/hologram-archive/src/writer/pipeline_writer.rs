@@ -14,8 +14,8 @@ pub struct PipelineEntry {
     pub offset: u64,
     /// Byte size of this model's sub-archive.
     pub size: u64,
-    /// CRC32 of the sub-archive bytes.
-    pub checksum: u32,
+    /// BLAKE3 hash of the sub-archive bytes.
+    pub checksum: [u8; 32],
 }
 
 /// Header for multi-model pipeline archives.
@@ -99,7 +99,7 @@ impl PipelineWriter {
         for (name, data) in &self.models {
             let offset = combined.len() as u64;
             let size = data.len() as u64;
-            let cksum = checksum::crc32(data);
+            let cksum = checksum::checksum(data);
             entries.push(PipelineEntry {
                 name: name.clone(),
                 offset,
@@ -155,7 +155,7 @@ impl PipelineWriter {
         for (name, data) in &self.models {
             let offset = combined.len() as u64;
             let size = data.len() as u64;
-            let cksum = checksum::crc32(data);
+            let cksum = checksum::checksum(data);
             entries.push(PipelineEntry {
                 name: name.clone(),
                 offset,
@@ -242,7 +242,7 @@ mod tests {
                 name: "test".into(),
                 offset: 0,
                 size: 100,
-                checksum: 0xABCD,
+                checksum: [0xAB; 32],
             }],
         };
         assert_eq!(ph.section_kind(), SECTION_PIPELINE);

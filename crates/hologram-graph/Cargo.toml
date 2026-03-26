@@ -10,3 +10,7 @@ hologram-core = { workspace = true }
 rkyv = { workspace = true }
 smallvec = { workspace = true }
 tinyvec = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+parallel = ["dep:rayon"]

@@ -10,10 +10,13 @@ hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
-crc32fast = { workspace = true }
 blake3 = { workspace = true }
 
 [dependencies.memmap2]
+workspace = true
+optional = true
+
+[dependencies.rayon]
 workspace = true
 optional = true
 
@@ -24,3 +27,4 @@ workspace = true
 default = ["std"]
 std = ["memmap2"]
 compression = []
+parallel = ["dep:rayon"]

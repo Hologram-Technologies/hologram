@@ -33,7 +33,6 @@ rayon = "1.8"
 
 # Archive support
 memmap2 = "0.9"
-crc32fast = "1.4"
 blake3 = "1"
 
 # Data structures
@@ -108,7 +107,7 @@ full = ["default", "async", "ffi", "cli"]
 
 std = ["hologram-core/std", "hologram-exec/std"]
 simd = ["hologram-core/simd"]
-parallel = ["hologram-exec/parallel"]
+parallel = ["hologram-exec/parallel", "hologram-graph/parallel", "hologram-archive/parallel", "hologram-compiler?/parallel"]
 accelerate = ["hologram-exec/accelerate"]
 profile = ["hologram-exec/profile"]
 

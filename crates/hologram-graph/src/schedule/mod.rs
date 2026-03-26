@@ -20,12 +20,26 @@ pub struct ExecutionSchedule {
 impl ExecutionSchedule {
     /// Build an execution schedule from a graph. O(V + E).
     pub fn build(graph: &Graph) -> GraphResult<Self> {
-        let levels = levels::build_parallel_levels(graph)?;
-        let cp = critical_path::critical_path_length(graph)?;
-        Ok(Self {
-            levels,
-            critical_path: cp,
-        })
+        #[cfg(feature = "parallel")]
+        {
+            let (levels, cp) = rayon::join(
+                || levels::build_parallel_levels(graph),
+                || critical_path::critical_path_length(graph),
+            );
+            Ok(Self {
+                levels: levels?,
+                critical_path: cp?,
+            })
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let levels = levels::build_parallel_levels(graph)?;
+            let cp = critical_path::critical_path_length(graph)?;
+            Ok(Self {
+                levels,
+                critical_path: cp,
+            })
+        }
     }
 
     /// Number of execution levels.

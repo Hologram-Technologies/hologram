@@ -1,24 +1,15 @@
-//! CRC32 checksum utilities (wraps crc32fast).
+//! BLAKE3 checksum utilities for archive integrity verification.
 
-/// Compute CRC32 checksum of a byte slice.
+/// Compute BLAKE3 checksum of a byte slice.
 #[inline]
-pub fn crc32(data: &[u8]) -> u32 {
-    crc32fast::hash(data)
+pub fn checksum(data: &[u8]) -> [u8; 32] {
+    *blake3::hash(data).as_bytes()
 }
 
-/// Verify a CRC32 checksum matches an expected value.
+/// Verify a BLAKE3 checksum matches an expected value.
 #[inline]
-pub fn verify_crc32(data: &[u8], expected: u32) -> bool {
-    crc32(data) == expected
-}
-
-/// Compute CRC32 incrementally over multiple slices.
-pub fn crc32_combine(slices: &[&[u8]]) -> u32 {
-    let mut hasher = crc32fast::Hasher::new();
-    for s in slices {
-        hasher.update(s);
-    }
-    hasher.finalize()
+pub fn verify(data: &[u8], expected: &[u8; 32]) -> bool {
+    &checksum(data) == expected
 }
 
 #[cfg(test)]
@@ -27,34 +18,34 @@ mod tests {
 
     #[test]
     fn empty_slice() {
-        assert_eq!(crc32(&[]), 0);
+        // BLAKE3 of empty input is a known constant (not zero).
+        let c = checksum(&[]);
+        assert_ne!(c, [0u8; 32]);
     }
 
     #[test]
-    fn known_value() {
-        // CRC32 of "HOLO" should be deterministic
-        let c = crc32(b"HOLO");
-        assert_ne!(c, 0);
-        assert_eq!(c, crc32(b"HOLO"));
+    fn deterministic() {
+        let c1 = checksum(b"HOLO");
+        let c2 = checksum(b"HOLO");
+        assert_eq!(c1, c2);
     }
 
     #[test]
     fn verify_pass() {
         let data = b"test data";
-        let checksum = crc32(data);
-        assert!(verify_crc32(data, checksum));
+        let c = checksum(data);
+        assert!(verify(data, &c));
     }
 
     #[test]
     fn verify_fail() {
-        assert!(!verify_crc32(b"test data", 0x12345678));
+        assert!(!verify(b"test data", &[0x12; 32]));
     }
 
     #[test]
-    fn combine_equivalence() {
-        let full = b"hello world";
-        let c1 = crc32(full);
-        let c2 = crc32_combine(&[b"hello ", b"world"]);
-        assert_eq!(c1, c2);
+    fn different_inputs_differ() {
+        let c1 = checksum(b"hello");
+        let c2 = checksum(b"world");
+        assert_ne!(c1, c2);
     }
 }

@@ -143,38 +143,46 @@ impl HoloWriter {
         let graph_data = self.graph_bytes.unwrap_or_default();
         let weight_data = self.weight_bytes.unwrap_or_default();
 
-        // Compress graph and weight sections.
+        // Compress graph and weight sections (in parallel when feature enabled).
         let (graph_data, weight_data, flags) = {
             use crate::format::header::{FLAG_GRAPH_COMPRESSED, FLAG_WEIGHTS_COMPRESSED};
             use hologram_compression::codec::CompressionMode;
 
-            let mut flags = 0u32;
+            let compress_graph_flag = self.compress_graph;
+            let pre_compressed = self.graph_pre_compressed;
+            let compress_weights_flag = self.compress_weights;
 
-            let graph_data = if graph_data.is_empty() {
-                graph_data
-            } else if self.graph_pre_compressed {
-                // Already compressed from a prior archive — skip double compression.
-                flags |= FLAG_GRAPH_COMPRESSED;
-                graph_data
-            } else if self.compress_graph {
-                let block = hologram_compression::compress(&graph_data, CompressionMode::Generic);
-                flags |= FLAG_GRAPH_COMPRESSED;
-                block.data
-            } else {
-                // Uncompressed: enables zero-copy rkyv::access at load time.
-                graph_data
+            let compress_graph = move || -> (Vec<u8>, u32) {
+                if graph_data.is_empty() {
+                    (graph_data, 0)
+                } else if pre_compressed {
+                    (graph_data, FLAG_GRAPH_COMPRESSED)
+                } else if compress_graph_flag {
+                    let block =
+                        hologram_compression::compress(&graph_data, CompressionMode::Generic);
+                    (block.data, FLAG_GRAPH_COMPRESSED)
+                } else {
+                    (graph_data, 0)
+                }
             };
 
-            let weight_data = if !weight_data.is_empty() && self.compress_weights {
-                let mode = hologram_compression::pipeline::auto_select_mode(&weight_data);
-                let block = hologram_compression::compress(&weight_data, mode);
-                flags |= FLAG_WEIGHTS_COMPRESSED;
-                block.data
-            } else {
-                weight_data
+            let compress_weights = move || -> (Vec<u8>, u32) {
+                if !weight_data.is_empty() && compress_weights_flag {
+                    let mode = hologram_compression::pipeline::auto_select_mode(&weight_data);
+                    let block = hologram_compression::compress(&weight_data, mode);
+                    (block.data, FLAG_WEIGHTS_COMPRESSED)
+                } else {
+                    (weight_data, 0)
+                }
             };
 
-            (graph_data, weight_data, flags)
+            #[cfg(feature = "parallel")]
+            let ((graph_data, gf), (weight_data, wf)) =
+                rayon::join(compress_graph, compress_weights);
+            #[cfg(not(feature = "parallel"))]
+            let ((graph_data, gf), (weight_data, wf)) = (compress_graph(), compress_weights());
+
+            (graph_data, weight_data, gf | wf)
         };
 
         let layout = compute_layout(
@@ -292,7 +300,7 @@ fn build_section_table(sections: &[(u32, Vec<u8>)], offsets: &[u64]) -> SectionT
             kind: *kind,
             offset,
             size: data.len() as u64,
-            checksum: checksum::crc32(data),
+            checksum: checksum::checksum(data),
         });
     }
     table
@@ -309,8 +317,8 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         section_table_offset: layout.section_table_offset,
         section_table_size: layout.section_table_size,
         total_size: layout.total_size,
-        graph_checksum: checksum::crc32(graph_data),
-        weights_checksum: checksum::crc32(weight_data),
+        graph_checksum: checksum::checksum(graph_data),
+        weights_checksum: checksum::checksum(weight_data),
         section_count: layout.section_offsets.len() as u32,
         flags: 0,
     }
@@ -426,8 +434,8 @@ mod tests {
         let weight_data = vec![4, 5, 6];
         let layout = compute_layout(3, 3, &[]);
         let header = build_header(&layout, &graph_data, &weight_data);
-        assert_eq!(header.graph_checksum, checksum::crc32(&graph_data));
-        assert_eq!(header.weights_checksum, checksum::crc32(&weight_data));
+        assert_eq!(header.graph_checksum, checksum::checksum(&graph_data));
+        assert_eq!(header.weights_checksum, checksum::checksum(&weight_data));
     }
 
     #[test]

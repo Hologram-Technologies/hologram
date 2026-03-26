@@ -148,7 +148,7 @@ impl LoadedPipeline {
                 });
             }
 
-            // Use unchecked (skips CRC32) for sub-archive graph deserialization.
+            // Use unchecked (skips BLAKE3) for sub-archive graph deserialization.
             // Sub-archive weights may be empty (shared via dedup index).
             let mut model_plan = load_from_bytes_unchecked(&weights[start..end])?;
 

@@ -9,8 +9,8 @@ pub struct SectionEntry {
     pub offset: u64,
     /// Byte size of the section data.
     pub size: u64,
-    /// CRC32 of the section data.
-    pub checksum: u32,
+    /// BLAKE3 hash of the section data.
+    pub checksum: [u8; 32],
 }
 
 /// Table of all sections in an archive.
@@ -71,12 +71,12 @@ mod tests {
             kind: 1,
             offset: 4096,
             size: 256,
-            checksum: 0xABCD,
+            checksum: [0xAB; 32],
         });
         assert_eq!(t.len(), 1);
         let found = t.find(1).unwrap();
         assert_eq!(found.offset, 4096);
-        assert_eq!(found.checksum, 0xABCD);
+        assert_eq!(found.checksum, [0xAB; 32]);
     }
 
     #[test]
@@ -91,7 +91,7 @@ mod tests {
             kind: 2,
             offset: 8192,
             size: 1024,
-            checksum: 0xDEAD,
+            checksum: [0xDE; 32],
         };
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&e).unwrap();
         let archived =
@@ -107,7 +107,7 @@ mod tests {
             kind: 1,
             offset: 0,
             size: 100,
-            checksum: 0,
+            checksum: [0u8; 32],
         });
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&t).unwrap();
         let archived =

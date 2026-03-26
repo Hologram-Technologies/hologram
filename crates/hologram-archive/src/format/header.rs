@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use super::{FORMAT_VERSION, HOLO_MAGIC};
 
 /// Fixed size of the serialized header in bytes.
-pub const HEADER_SIZE: usize = 80;
+pub const HEADER_SIZE: usize = 136;
 
 /// On-disk header for a .holo archive.
 ///
@@ -36,10 +36,10 @@ pub struct HoloHeader {
     pub section_table_size: u64,
     /// Total archive size in bytes.
     pub total_size: u64,
-    /// CRC32 of the graph section bytes.
-    pub graph_checksum: u32,
-    /// CRC32 of the weights section bytes.
-    pub weights_checksum: u32,
+    /// BLAKE3 hash of the graph section bytes.
+    pub graph_checksum: [u8; 32],
+    /// BLAKE3 hash of the weights section bytes.
+    pub weights_checksum: [u8; 32],
     /// Number of entries in the section table.
     pub section_count: u32,
     /// Reserved flags for future use.
@@ -110,8 +110,8 @@ mod tests {
             graph_size: 512,
             weights_offset: 8192,
             weights_size: 1024,
-            graph_checksum: 0xDEAD_BEEF,
-            weights_checksum: 0xCAFE_BABE,
+            graph_checksum: [0xDE; 32],
+            weights_checksum: [0xCA; 32],
             section_count: 0,
             section_table_offset: 0,
             section_table_size: 0,
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(h2.magic, HOLO_MAGIC);
         assert_eq!(h2.version, FORMAT_VERSION);
         assert_eq!(h2.graph_offset, 4096);
-        assert_eq!(h2.weights_checksum, 0xCAFE_BABE);
+        assert_eq!(h2.weights_checksum, [0xCA; 32]);
     }
 
     #[test]

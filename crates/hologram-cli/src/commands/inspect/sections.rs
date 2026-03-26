@@ -20,13 +20,14 @@ pub fn print(plan: &LoadedPlan) {
 
 /// Print a single section entry.
 fn print_entry(entry: &hologram_archive::section::table::SectionEntry) {
+    let hex: String = entry.checksum.iter().map(|b| format!("{b:02x}")).collect();
     println!(
-        "  Kind {} ({})  offset={}  size={}  checksum={:#010x}",
+        "  Kind {} ({})  offset={}  size={}  checksum={}",
         entry.kind,
         section_kind_name(entry.kind),
         entry.offset,
         format_bytes(entry.size),
-        entry.checksum,
+        hex,
     );
 }
 

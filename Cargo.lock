@@ -380,15 +380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32fast"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "criterion"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -691,11 +682,11 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytemuck",
- "crc32fast",
  "hologram-compression",
  "hologram-core",
  "hologram-graph",
  "memmap2",
+ "rayon",
  "rkyv",
 ]
 
@@ -749,6 +740,7 @@ dependencies = [
  "hologram-archive",
  "hologram-core",
  "hologram-graph",
+ "rayon",
 ]
 
 [[package]]
@@ -803,6 +795,7 @@ name = "hologram-graph"
 version = "0.1.0"
 dependencies = [
  "hologram-core",
+ "rayon",
  "rkyv",
  "smallvec",
  "tinyvec",

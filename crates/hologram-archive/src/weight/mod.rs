@@ -76,8 +76,8 @@ pub struct TensorMetadata {
     pub size: u64,
     /// Optional quantization parameters.
     pub quantization: Option<quantize::QuantizationParams>,
-    /// CRC32 of this tensor's raw bytes.
-    pub checksum: u32,
+    /// BLAKE3 hash of this tensor's raw bytes.
+    pub checksum: [u8; 32],
     /// Compression scheme: 0 = none, 1 = stratum, 2 = ring_diff, 3 = orbit_torus.
     pub compression_scheme: u8,
 }
@@ -116,7 +116,7 @@ mod tests {
             offset: 0,
             size: 0,
             quantization: None,
-            checksum: 0,
+            checksum: [0u8; 32],
             compression_scheme: 0,
         };
         assert_eq!(m.num_elements(), 1);
@@ -131,7 +131,7 @@ mod tests {
             offset: 0,
             size: 48,
             quantization: None,
-            checksum: 0,
+            checksum: [0u8; 32],
             compression_scheme: 0,
         };
         assert_eq!(m.num_elements(), 12);
@@ -154,13 +154,13 @@ mod tests {
             offset: 0,
             size: 512,
             quantization: None,
-            checksum: 0xABCD,
+            checksum: [0xAB; 32],
             compression_scheme: 0,
         };
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&m).unwrap();
         let archived =
             rkyv::access::<rkyv::Archived<TensorMetadata>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.name.as_str(), "bias");
-        assert_eq!(archived.checksum, 0xABCD);
+        assert_eq!(archived.checksum, [0xAB; 32]);
     }
 }

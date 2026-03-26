@@ -61,13 +61,30 @@ fn build_last_use_map(
     level_map: &HashMap<NodeId, usize>,
     max_level: usize,
 ) -> HashMap<NodeId, usize> {
-    let mut last_use = HashMap::new();
-    for node in graph.nodes() {
-        let succs = graph.successors(node.id);
-        let dies = compute_dies(&succs, level_map, max_level);
-        last_use.insert(node.id, dies);
+    let ids = graph.node_ids();
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        ids.par_iter()
+            .map(|&id| {
+                let succs = graph.successors(id);
+                let dies = compute_dies(&succs, level_map, max_level);
+                (id, dies)
+            })
+            .collect()
     }
-    last_use
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut last_use = HashMap::new();
+        for &id in &ids {
+            let succs = graph.successors(id);
+            let dies = compute_dies(&succs, level_map, max_level);
+            last_use.insert(id, dies);
+        }
+        last_use
+    }
 }
 
 /// Compute the `dies` level for a node given its successors.

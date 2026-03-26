@@ -15,7 +15,26 @@
 - [x] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 
-## Sprint 24: Bias Fusion (Plan 031)
+## Sprint 25: Parallel Compilation + BLAKE3 Checksums
+
+Goal: parallelise the compiler pipeline and migrate archive checksums from
+CRC32 to BLAKE3 (format v2). ADR: [specs/adrs/001-blake3-checksums.md](adrs/001-blake3-checksums.md)
+
+### Part A: CRC32 → BLAKE3 Migration
+- [x] **A.1**: Migrate `checksum/mod.rs` from crc32fast to blake3
+- [x] **A.2**: Expand header/section/error/weight checksum fields to `[u8; 32]`
+- [x] **A.3**: Update writers + loader
+- [x] **A.4**: Remove `crc32fast` dep
+
+### Part B: Parallel Compilation (feature-gated `parallel`)
+- [x] **B.1**: Add `parallel` feature + rayon to archive/graph/compiler crates
+- [x] **B.2**: Parallelise graph + weight compression (`rayon::join`)
+- [x] **B.3**: Parallelise schedule building (levels ∥ critical path)
+- [x] **B.4**: Parallelise liveness analysis (`par_iter`)
+
+---
+
+## Sprint 24: Bias Fusion (Plan 031) — DONE
 
 **Plan**: [plans/031-bias-fusion.md](plans/031-bias-fusion.md)
 
@@ -50,23 +69,23 @@ Driven by thermodynamic precision analysis (Landauer's principle: the epilogue i
 the last reversible place to change precision gauges).
 
 ### Phase 1: MatMul + Activation Epilogue Fusion
-- [ ] **1.1**: Add `TapeKernel::InlineMatMulActivation` variant
-- [ ] **1.2**: Add `matmul_k_outer_fused` CPU kernel + `dispatch_matmul_activation_into`
-- [ ] **1.3**: Wire dispatch in tape executor
-- [ ] **1.4**: Add `GraphOp::FusedMatMulActivation` (rkyv-serializable)
-- [ ] **1.5**: Add `try_fuse_matmul_activation()` fusion pass
-- [ ] **1.6**: Wire tape builder: `FusedMatMulActivation` → `InlineMatMulActivation`
-- [ ] **1.7**: LUT-GEMM fused variants (`MatMulLut4Activation`, `MatMulLut8Activation`)
+- [x] **1.1**: Add `TapeKernel::InlineMatMulActivation` variant
+- [x] **1.2**: Add `matmul_k_outer_fused` CPU kernel + `dispatch_matmul_activation_into`
+- [x] **1.3**: Wire dispatch in tape executor
+- [x] **1.4**: Add `GraphOp::FusedMatMulActivation` (rkyv-serializable)
+- [x] **1.5**: Add `try_fuse_matmul_activation()` fusion pass
+- [x] **1.6**: Wire tape builder: `FusedMatMulActivation` → `InlineMatMulActivation`
+- [x] **1.7**: LUT-GEMM fused variants (`MatMulLut4Activation`, `MatMulLut8Activation`)
 
 ### Phase 2: Norm + Activation Fusion
-- [ ] **2.1**: Add fused `InlineRmsNormActivation`, `InlineLayerNormActivation`, `InlineGroupNormActivation`
-- [ ] **2.2**: Fused norm kernels (apply activation before writeback)
-- [ ] **2.3**: Add `try_fuse_norm_activation()` fusion pass
+- [x] **2.1**: Add fused `InlineRmsNormActivation`, `InlineLayerNormActivation`, `InlineGroupNormActivation`
+- [x] **2.2**: Fused norm kernels (apply activation before writeback)
+- [x] **2.3**: Add `try_fuse_norm_activation()` fusion pass
 
 ### Phase 3: Tests
-- [ ] **3.1**: Unit tests: fused kernel bit-identical to separate ops
-- [ ] **3.2**: Graph fusion tests: pattern detection + no-fuse cases
-- [ ] **3.3**: Tape E2E: fused vs unfused output identity
+- [x] **3.1**: Unit tests: fused kernel bit-identical to separate ops
+- [x] **3.2**: Graph fusion tests: pattern detection + no-fuse cases
+- [x] **3.3**: Tape E2E: fused vs unfused output identity
 
 ---
 

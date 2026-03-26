@@ -89,7 +89,7 @@ pub fn load_from_bytes(data: &[u8]) -> ArchiveResult<LoadedPlan> {
 
 /// Load a .holo archive without checksum verification.
 ///
-/// Skips the CRC32 checksum on the weights region, which avoids reading
+/// Skips the BLAKE3 checksum on the weights region, which avoids reading
 /// the entire multi-GB weight blob on load. Use for mmap-backed archives
 /// where the OS guarantees data integrity via the filesystem.
 pub fn load_from_bytes_unchecked(data: &[u8]) -> ArchiveResult<LoadedPlan> {
@@ -307,7 +307,7 @@ fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {
     if header.graph_size > 0 {
         let start = header.graph_offset as usize;
         let end = start + header.graph_size as usize;
-        let actual = checksum::crc32(&data[start..end]);
+        let actual = checksum::checksum(&data[start..end]);
         if actual != header.graph_checksum {
             return Err(ArchiveError::ChecksumMismatch {
                 expected: header.graph_checksum,
@@ -319,7 +319,7 @@ fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {
     if header.weights_size > 0 {
         let start = header.weights_offset as usize;
         let end = start + header.weights_size as usize;
-        let actual = checksum::crc32(&data[start..end]);
+        let actual = checksum::checksum(&data[start..end]);
         if actual != header.weights_checksum {
             return Err(ArchiveError::ChecksumMismatch {
                 expected: header.weights_checksum,

@@ -3,6 +3,14 @@
 use std::fmt;
 use std::io;
 
+/// Format a 32-byte hash as a short hex string (first 8 hex chars).
+fn hex(hash: &[u8; 32]) -> String {
+    hash.iter()
+        .take(4)
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+}
+
 /// Error type for archive operations.
 #[derive(Debug)]
 pub enum ArchiveError {
@@ -10,8 +18,11 @@ pub enum ArchiveError {
     InvalidMagic,
     /// Unsupported format version.
     UnsupportedVersion(u32),
-    /// CRC32 checksum mismatch.
-    ChecksumMismatch { expected: u32, actual: u32 },
+    /// BLAKE3 checksum mismatch.
+    ChecksumMismatch {
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
     /// Section not found by kind.
     SectionNotFound(u32),
     /// Offset or size exceeds archive bounds.
@@ -34,7 +45,9 @@ impl fmt::Display for ArchiveError {
             Self::ChecksumMismatch { expected, actual } => {
                 write!(
                     f,
-                    "checksum mismatch: expected {expected:#010x}, got {actual:#010x}"
+                    "checksum mismatch: expected {}, got {}",
+                    hex(expected),
+                    hex(actual),
                 )
             }
             Self::SectionNotFound(kind) => {
@@ -91,13 +104,16 @@ mod tests {
 
     #[test]
     fn display_checksum_mismatch() {
-        let e = ArchiveError::ChecksumMismatch {
-            expected: 0xDEAD_BEEF,
-            actual: 0x0000_0001,
-        };
+        let mut expected = [0u8; 32];
+        expected[0] = 0xDE;
+        expected[1] = 0xAD;
+        expected[2] = 0xBE;
+        expected[3] = 0xEF;
+        let actual = [0u8; 32];
+        let e = ArchiveError::ChecksumMismatch { expected, actual };
         let s = format!("{e}");
-        assert!(s.contains("0xdeadbeef"));
-        assert!(s.contains("0x00000001"));
+        assert!(s.contains("deadbeef"));
+        assert!(s.contains("00000000"));
     }
 
     #[test]
