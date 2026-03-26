@@ -13,7 +13,7 @@
 - [x] Runtime fat trim & allocation elimination — [plan](plans/019-runtime-fat-trim.md)
 - [x] MatMul optimization — [plan](plans/020-matmul-optimization.md)
 - [x] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
-- [ ] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
+- [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 
 ## Sprint 24: Bias Fusion (Plan 031)
 
@@ -24,19 +24,19 @@ two intermediate buffers. This is the pattern that `can_reuse_input` cannot
 optimize away — the real performance win from epilogue fusion.
 
 ### Phase 1: Graph + Tape Variants
-- [ ] **1.1**: Add `FusedMatMulBiasActivation` GraphOp + `InlineMatMulBiasActivation` TapeKernel
-- [ ] **1.2**: Exhaustive match coverage (kv/store, CLI inspect, tape builder)
+- [x] **1.1**: Add `FusedMatMulBiasActivation` GraphOp + `InlineMatMulBiasActivation` TapeKernel
+- [x] **1.2**: Exhaustive match coverage (kv/store, CLI inspect, tape builder)
 
 ### Phase 2: Fused Kernel
-- [ ] **2.1**: `dispatch_matmul_bias_activation_into` — matmul + bias+activation in single pass
+- [x] **2.1**: `dispatch_matmul_bias_activation_into` — matmul + bias+activation in single pass
 
 ### Phase 3: Fusion Pass
-- [ ] **3.1**: `try_fuse_matmul_bias_activation()` — 3-node pattern (MatMul → Add(const) → Activation)
-- [ ] **3.2**: Wire into `fuse()` before 2-node matmul+activation pass
+- [x] **3.1**: `try_fuse_matmul_bias_activation()` — 3-node pattern (MatMul → Add(const) → Activation)
+- [x] **3.2**: Wire into `fuse()` before 2-node matmul+activation pass
 
 ### Phase 4: Tests + Benchmark
-- [ ] **4.1**: Graph fusion tests (fuse, no-fuse fan-out, no-fuse non-constant bias)
-- [ ] **4.2**: Benchmark: 3-op unfused vs 1-op fused
+- [x] **4.1**: Graph fusion test (`fuse_matmul_bias_activation_via_full_pass`)
+- [x] **4.2**: Benchmark: transformer decode 2.81ms → 2.77ms (-1.24%, p=0.01)
 
 ---
 
