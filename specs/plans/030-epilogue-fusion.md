@@ -176,3 +176,74 @@ Same pattern as matmul: norm node with exactly one successor that is elementwise
 - **BLAS path**: sgemm doesn't support fused epilogues. Apply activation as post-pass on output buffer. Still saves one arena slot allocation + index lookup vs separate tape instruction.
 - **GPU/Metal path**: Metal SGEMM kernel could have a fused epilogue (shader modification) — out of scope for this sprint, filed as future work.
 - **Ordering**: MatMul fusion runs BEFORE unary chain fusion in `fuse()`. This prevents a Relu from being absorbed into a prior unary chain when it should be absorbed into the MatMul.
+
+---
+
+## Benchmark Results (Sprint 23)
+
+The fused path is currently **slower** than unfused at all tested sizes:
+
+| Size | Unfused | Fused | Delta | Why |
+|------|---------|-------|-------|-----|
+| 1x64x64 | 978 ns | 1.65 µs | +69% | Dispatch overhead dominates tiny matmul |
+| 1x256x256 | 9.59 µs | 12.5 µs | +30% | Dimension re-inference overhead |
+| 1x512x512 | 36.1 µs | 40.9 µs | +13% | Overhead shrinking |
+| 1x2048x2048 | 538 µs | 556 µs | +3% | Compute-dominated, overhead marginal |
+
+### Root cause analysis
+
+The unfused path benefits from hologram's existing tape optimizations:
+1. **`can_reuse_input`**: Silu after MatMul overwrites the output buffer in-place (zero allocation)
+2. **Inline dispatch**: `InlineSilu` is a direct `v * sigmoid(v)` with no indirection
+3. **Cache locality**: MatMul output stays in L1/L2 for the immediately following Silu
+
+The fused `dispatch_matmul_activation_into` calls `dispatch_matmul_into` internally, which re-does dimension inference (`infer_matmul_k`, batch detection) that was already done in the `dispatch_kernel` match arm. This adds ~0.5-1µs per call.
+
+### Why the architecture is still correct
+
+The performance regression is in the **dispatch overhead**, not the kernel. The fusion eliminates:
+- One `TapeInstruction` from the tape (fewer instructions to iterate)
+- One arena slot allocation (no intermediate buffer between matmul and activation)
+- One output metadata propagation step
+
+These benefits are real but small compared to the double dimension-inference cost. Once the dispatch path is streamlined, the fused path should break even or win.
+
+---
+
+## Future Work: Making Fused Path Break Even
+
+### Investigation 1: Eliminate double dimension inference (HIGH priority)
+
+**Problem**: `InlineMatMulActivation` dispatch in `tape.rs` resolves dimensions via `shape_resolve::resolve_matmul_dims`, then calls `dispatch_matmul_activation_into` which calls `dispatch_matmul_into` which calls `infer_matmul_k` again.
+
+**Fix**: Pass pre-resolved (actual_m, actual_k, actual_n) directly to a lower-level kernel function that skips inference. Create `matmul_kernel_into(a, b, out, m, k, n)` that just does the multiply without any size validation or batch detection. The dispatch arm handles all sizing, the kernel just multiplies.
+
+**Files**: [tape.rs](crates/hologram-exec/src/tape.rs) dispatch arm, [matmul.rs](crates/hologram-exec/src/float_dispatch/matmul.rs) new low-level function.
+
+**Expected impact**: Removes ~0.5-1µs overhead. Should make fused path break even at 256x256 and win at larger sizes.
+
+### Investigation 2: Monomorphic activation dispatch (MEDIUM priority)
+
+**Problem**: `activation.apply_unary(*v)` is a match on `FloatOp` variant per element. For Relu this is trivial but the branch predictor may not optimize it as well as the dedicated `InlineRelu` path.
+
+**Fix**: At tape-build time, specialize the activation function into a concrete `fn(f32) -> f32` pointer. Store `fn(f32) -> f32` in the TapeKernel instead of `FloatOp`. Eliminates the match dispatch per element.
+
+**Files**: [tape.rs](crates/hologram-exec/src/tape.rs) TapeKernel variant, [tape_builder.rs](crates/hologram-exec/src/tape_builder.rs) specialization.
+
+**Expected impact**: ~5-10% improvement on activation post-pass, especially for small matmuls.
+
+### Investigation 3: Bias fusion (HIGH value, new feature)
+
+**Problem**: Many transformer layers have `Linear(x) = xW + b` followed by activation. Currently: MatMul → Add(bias) → Silu = 3 tape instructions, 2 intermediate buffers.
+
+**Fix**: Add `InlineMatMulBiasActivation { m, k, n, bias_cid, activation }` that fuses all three. The bias add is element-wise and can be combined with the activation post-pass: `for v in out { *v = activation(v + bias[col]) }`. One loop, one write.
+
+**Expected impact**: Eliminates a real intermediate buffer (bias add output). This is where fused path should clearly win vs unfused.
+
+### Investigation 4: GPU epilogue shader (LOW priority, blocked)
+
+**Problem**: Metal SGEMM kernel writes to device memory, then activation runs as a separate compute pass.
+
+**Fix**: Add activation function to the Metal SGEMM shader epilogue. Apply in shared memory before writing to device memory.
+
+**Blocked on**: Metal shader compilation infrastructure. Filed as future work.
