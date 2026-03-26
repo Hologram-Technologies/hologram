@@ -490,6 +490,7 @@ enum DispatchResult {
 fn dispatch_kernel(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
+    input_metas: &crate::shape_resolve::InputMetas,
     tape_ctx: &TapeContext<'_>,
     backend: &dyn crate::backend::ComputeBackend,
     out_buf: &mut Vec<u8>,
@@ -497,6 +498,7 @@ fn dispatch_kernel(
     use crate::backend::KernelOutput;
     use crate::float_dispatch;
     use crate::kv::KvStore;
+    use crate::shape_resolve;
 
     match kernel {
         TapeKernel::FusedFloatChain(chain) => {
@@ -687,7 +689,12 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineLayerNorm { size, epsilon } => {
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim_with_weight(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+                inputs.get(1).map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_layer_norm_into(
                 inputs,
                 actual,
@@ -697,7 +704,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineAddRmsNorm { size, epsilon } => {
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_add_rms_norm_into(
                 inputs,
                 actual,
@@ -707,7 +718,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineLogSoftmax { size } => {
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_log_softmax_into(inputs, actual, out_buf)?;
             Ok(DispatchResult::InOutBuf)
         }
@@ -950,12 +965,21 @@ fn dispatch_kernel(
             trans_b,
             quant_b,
         } => {
+            let (actual_m, actual_k, actual_n) = shape_resolve::resolve_matmul_dims(
+                *m,
+                *k,
+                *n,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+                inputs[0].len(),
+                inputs.get(1).map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::matmul::dispatch_gemm(
                 inputs,
                 float_dispatch::matmul::GemmParams {
-                    m: *m as usize,
-                    n: *n as usize,
-                    k: *k as usize,
+                    m: actual_m,
+                    n: actual_n,
+                    k: actual_k,
                     alpha: hologram_core::op::bits_to_f32(*alpha),
                     beta: hologram_core::op::bits_to_f32(*beta),
                     trans_a: *trans_a,
@@ -967,7 +991,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineReduceSum { size } => {
-            let actual = float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -977,7 +1005,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineReduceMean { size } => {
-            let actual = float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -987,7 +1019,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineReduceMax { size } => {
-            let actual = float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -997,7 +1033,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineReduceMin { size } => {
-            let actual = float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -1085,6 +1125,11 @@ fn dispatch_kernel(
             input_h,
             input_w,
         } => {
+            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
+                *input_h,
+                *input_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
             let result = float_dispatch::conv::dispatch_conv2d_direct(
                 inputs,
                 *kernel_h as usize,
@@ -1096,8 +1141,8 @@ fn dispatch_kernel(
                 *dilation_h as usize,
                 *dilation_w as usize,
                 *group as usize,
-                *input_h as usize,
-                *input_w as usize,
+                actual_h,
+                actual_w,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -1117,6 +1162,11 @@ fn dispatch_kernel(
             input_h,
             input_w,
         } => {
+            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
+                *input_h,
+                *input_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
             let result = float_dispatch::conv::dispatch_conv_transpose(
                 inputs,
                 *kernel_h as usize,
@@ -1130,8 +1180,8 @@ fn dispatch_kernel(
                 *group as usize,
                 *output_pad_h as usize,
                 *output_pad_w as usize,
-                *input_h as usize,
-                *input_w as usize,
+                actual_h,
+                actual_w,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -1181,11 +1231,14 @@ fn dispatch_kernel(
             spatial_h,
             spatial_w,
         } => {
+            let (actual_c, actual_h, actual_w) = shape_resolve::resolve_global_avg_pool_dims(
+                *channels,
+                *spatial_h,
+                *spatial_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
             let result = float_dispatch::pool::dispatch_global_avg_pool_direct(
-                inputs,
-                *channels as usize,
-                *spatial_h as usize,
-                *spatial_w as usize,
+                inputs, actual_c, actual_h, actual_w,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -1201,7 +1254,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineInstanceNorm { size, epsilon } => {
-            let actual = float_dispatch::resolve_size(*size, inputs);
+            let actual = shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             let result = float_dispatch::norm::dispatch_instance_norm(
                 inputs,
                 actual,
@@ -1279,15 +1336,14 @@ fn dispatch_kernel(
         // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
         // Try backend (GPU) first, then direct CPU kernel call.
         TapeKernel::InlineMatMul { m, k, n } => {
-            // Adapt dimensions from actual buffer sizes (variable-length execution).
-            // Uses the same logic as dispatch_matmul_into to handle batched matmul,
-            // non-seq m dimensions, and runtime size inference.
-            let (actual_m, actual_k, actual_n) = crate::float_dispatch::matmul::infer_matmul_dims(
-                *m as usize,
-                *k as usize,
-                *n as usize,
-                inputs[0].len() / 4,
-                inputs[1].len() / 4,
+            let (actual_m, actual_k, actual_n) = shape_resolve::resolve_matmul_dims(
+                *m,
+                *k,
+                *n,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+                inputs[0].len(),
+                inputs[1].len(),
             );
             // Skip backend dispatch — use CPU for now to validate correctness.
             // TODO: re-enable backend.dispatch_matmul with adapted dims once validated.
@@ -1307,7 +1363,11 @@ fn dispatch_kernel(
                 KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = crate::shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)?;
             Ok(DispatchResult::InOutBuf)
         }
@@ -1329,7 +1389,11 @@ fn dispatch_kernel(
                 KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
                 KernelOutput::Skipped => {}
             }
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = crate::shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_rms_norm_into(
                 inputs,
                 actual,
@@ -1698,6 +1762,7 @@ fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
 fn dispatch_kernel_par(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
+    input_metas: &crate::shape_resolve::InputMetas,
     _ctx: Option<&ExecutionContext>,
     constants: &ConstantStore,
     out_buf: &mut Vec<u8>,
@@ -1795,11 +1860,19 @@ fn dispatch_kernel_par(
             )
         }
         TapeKernel::InlineSoftmax { size } => {
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = crate::shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)
         }
         TapeKernel::InlineRmsNorm { size, epsilon } => {
-            let actual = crate::float_dispatch::resolve_size(*size, inputs);
+            let actual = crate::shape_resolve::resolve_last_dim(
+                *size,
+                input_metas.first().and_then(|m| m.as_ref()),
+                inputs.first().map(|b| b.len()).unwrap_or(0),
+            );
             crate::float_dispatch::norm::dispatch_rms_norm_into(
                 inputs,
                 actual,
@@ -2317,6 +2390,11 @@ impl EnumTape {
                         .iter()
                         .map(|&idx| arena.get(NodeId::new(idx, 0)))
                         .collect::<ExecResult<SmallVec<_>>>()?;
+                    let input_metas: crate::shape_resolve::InputMetas = instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                        .collect();
                     out_buf.clear();
                     if instr.output_byte_hint > 0 {
                         out_buf.reserve(instr.output_byte_hint as usize);
@@ -2324,6 +2402,7 @@ impl EnumTape {
                     dispatch_kernel(
                         &instr.kernel,
                         &input_refs,
+                        &input_metas,
                         tape_ctx,
                         &*backend,
                         &mut out_buf,
@@ -2427,6 +2506,11 @@ impl EnumTape {
                             .iter()
                             .map(|&idx| arena.get(NodeId::new(idx, 0)))
                             .collect::<ExecResult<SmallVec<_>>>()?;
+                        let input_metas: crate::shape_resolve::InputMetas = instr
+                            .input_indices
+                            .iter()
+                            .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                            .collect();
                         let mut out_buf = Vec::with_capacity(if instr.output_byte_hint > 0 {
                             instr.output_byte_hint as usize
                         } else {
@@ -2435,6 +2519,7 @@ impl EnumTape {
                         dispatch_kernel_par(
                             &instr.kernel,
                             &input_refs,
+                            &input_metas,
                             exec_ctx,
                             tape_ctx.constants,
                             &mut out_buf,
@@ -2538,6 +2623,11 @@ impl EnumTape {
                             .iter()
                             .map(|&idx| arena.get(NodeId::new(idx, 0)))
                             .collect::<ExecResult<SmallVec<_>>>()?;
+                        let input_metas: crate::shape_resolve::InputMetas = instr
+                            .input_indices
+                            .iter()
+                            .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                            .collect();
                         out_buf.clear();
                         if instr.output_byte_hint > 0 {
                             out_buf.reserve(instr.output_byte_hint as usize);
@@ -2545,6 +2635,7 @@ impl EnumTape {
                         dispatch_kernel(
                             &instr.kernel,
                             &input_refs,
+                            &input_metas,
                             tape_ctx,
                             &*backend,
                             &mut out_buf,

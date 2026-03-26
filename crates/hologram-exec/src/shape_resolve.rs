@@ -32,12 +32,13 @@ pub fn resolve_last_dim(
     let n_floats = input_byte_len / 4;
 
     // Best: use N-D shape from runtime metadata.
-    // Trust meta when buffer is empty (compile-time only) or when it
-    // cleanly divides the buffer (runtime validation).
+    // Validate that meta's total elements matches buffer (catches dtype mismatches
+    // where meta was computed with wrong elem_size, e.g., I64 vs F32).
     if let Some(meta) = input_meta {
         if let Some(d) = meta.last_dim() {
             let d = d as usize;
-            if d > 0 && (n_floats == 0 || n_floats.is_multiple_of(d)) {
+            let meta_total = meta.n_elems();
+            if d > 0 && meta_total == n_floats && n_floats.is_multiple_of(d) {
                 return d;
             }
         }
@@ -90,6 +91,8 @@ pub fn resolve_matmul_dims(
 
     // Try N-D metadata first.
     if let (Some(a), Some(b)) = (a_meta, b_meta) {
+        // Debug: uncomment to trace matmul resolution
+        // eprintln!("matmul metas: A={:?} B={:?}", a.shape(), b.shape());
         if a.ndim >= 2 && b.ndim >= 2 {
             let k = a.last_dim().unwrap_or(compiled_k) as usize;
             let m = a.second_last_dim().unwrap_or(compiled_m) as usize;
@@ -222,7 +225,9 @@ mod tests {
     #[test]
     fn resolve_last_dim_from_meta() {
         let m = meta(&[1, 320, 64, 64]);
-        assert_eq!(resolve_last_dim(0, Some(&m), 0), 64);
+        // Total elements = 1*320*64*64 = 1310720. Buffer = 1310720*4 bytes.
+        let byte_len = 1310720 * 4;
+        assert_eq!(resolve_last_dim(0, Some(&m), byte_len), 64);
     }
 
     #[test]
