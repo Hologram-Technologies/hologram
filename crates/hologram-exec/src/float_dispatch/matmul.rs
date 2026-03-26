@@ -148,7 +148,7 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
     };
 
     let out_size = batch * actual_m * actual_n;
-    if out_size > 256 * 1024 * 1024 {
+    if out_size > 1024 * 1024 * 1024 {
         return Err(ExecError::ShapeMismatch {
             expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
             actual: format!(
@@ -283,7 +283,7 @@ pub fn dispatch_matmul_into(
     };
 
     let out_size = batch * actual_m * actual_n;
-    if out_size > 256 * 1024 * 1024 {
+    if out_size > 1024 * 1024 * 1024 {
         return Err(ExecError::ShapeMismatch {
             expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
             actual: format!(
@@ -381,7 +381,7 @@ pub fn dispatch_batched_matmul(
     }
 
     let out_size = batch * c_stride;
-    if out_size > 256 * 1024 * 1024 {
+    if out_size > 1024 * 1024 * 1024 {
         return Err(ExecError::ShapeMismatch {
             expected: "batched matmul output < 1GB".to_string(),
             actual: format!("{out_size} floats"),

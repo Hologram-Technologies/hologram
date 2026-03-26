@@ -991,7 +991,12 @@ fn dispatch_kernel(
                 *quant_b,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            // Gemm output: [M, N]
+            let meta = hologram_core::op::TensorMeta::new(
+                hologram_core::op::FloatDType::F32,
+                &[actual_m, actual_n],
+            );
+            Ok(DispatchResult::InOutBufWithMeta(meta))
         }
         TapeKernel::InlineReduceSum { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1101,6 +1106,21 @@ fn dispatch_kernel(
                 tape_ctx.ctx.as_ref(),
             )?;
             out_buf.extend_from_slice(&result);
+            // Compute output meta: adjust sliced axis dimension.
+            if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
+                let n = in_meta.ndim as usize;
+                let axis = if (*axis_from_end as usize) < n {
+                    n - *axis_from_end as usize - 1
+                } else {
+                    0
+                };
+                let slice_len = (*end).saturating_sub(*start);
+                let mut out_meta = *in_meta;
+                if axis < n {
+                    out_meta.dims[axis] = slice_len;
+                }
+                return Ok(DispatchResult::InOutBufWithMeta(out_meta));
+            }
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineGatherND => {
@@ -1399,7 +1419,24 @@ fn dispatch_kernel(
             crate::float_dispatch::matmul::dispatch_matmul_into(
                 inputs, actual_m, actual_k, actual_n, out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            // Compute output meta: [batch, M, N] from resolved dims.
+            let batch = if actual_m > 0 && actual_k > 0 {
+                a_floats / (actual_m * actual_k)
+            } else {
+                1
+            };
+            let meta = if batch > 1 {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[batch, actual_m, actual_n],
+                )
+            } else {
+                hologram_core::op::TensorMeta::new(
+                    hologram_core::op::FloatDType::F32,
+                    &[actual_m, actual_n],
+                )
+            };
+            Ok(DispatchResult::InOutBufWithMeta(meta))
         }
         TapeKernel::InlineSoftmax { size } => {
             match backend.dispatch_float(&FloatOp::Softmax { size: *size }, inputs, out_buf)? {
