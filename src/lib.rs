@@ -59,10 +59,11 @@ pub use hologram_exec::{
 };
 
 // Archive
+pub use hologram_archive::loader::pipeline::LoadedPipeline;
 #[cfg(feature = "std")]
 pub use hologram_archive::HoloLoader;
 pub use hologram_archive::{
-    load_from_bytes, load_from_bytes_unchecked, load_from_bytes_zero_copy, ArchiveError,
+    load_auto, load_from_bytes, load_from_bytes_unchecked, load_from_bytes_zero_copy, ArchiveError,
     ArchiveResult, HoloHeader, HoloWriter, LayerDescriptor, LayerEntrypoint, LayerHeader, LayerId,
     LoadedPlan,
 };

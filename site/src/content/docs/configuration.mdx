@@ -114,7 +114,7 @@ let cache_dir = config.cache_dir();            // Option<PathBuf>, ~ expanded
 
 | Mode | Archive type | Load time | RSS |
 |------|-------------|-----------|-----|
-| **Zero-copy mmap** | Uncompressed | Instant (<1ms) | On-demand via page faults |
+| **Zero-copy mmap** | Uncompressed | Instant (&lt;1ms) | On-demand via page faults |
 | **Decompress + cache** | Compressed | First run: slow. Subsequent: instant | Cache file + mmap |
 | **In-memory** | Any | Proportional to size | Full archive in heap |
 

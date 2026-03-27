@@ -102,6 +102,19 @@ impl LoadedPipeline {
         &self.header
     }
 
+    /// Consume the pipeline and return the first model's [`LoadedPlan`].
+    ///
+    /// Useful for single-component pipelines where callers want to treat
+    /// the archive as a flat model without pipeline awareness.
+    #[must_use]
+    pub fn into_first_model(mut self) -> Option<LoadedPlan> {
+        if self.models.is_empty() {
+            None
+        } else {
+            Some(self.models.remove(0).1)
+        }
+    }
+
     /// Load a pipeline archive with zero-copy weight access.
     ///
     /// Sub-archive graphs are deserialized (unavoidable), but weights are
