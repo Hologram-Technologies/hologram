@@ -234,8 +234,8 @@ mod tests {
     #[test]
     fn page_classify_linear_exact() {
         let mut c = [0.0f32; 256];
-        for i in 0..256 {
-            c[i] = 0.1 * i as f32;
+        for (i, v) in c.iter_mut().enumerate() {
+            *v = 0.1 * i as f32;
         }
         assert_eq!(page_classify(&c), PageKindTag::Linear);
     }
@@ -243,8 +243,8 @@ mod tests {
     #[test]
     fn fit_linear_exact_ramp() {
         let mut c = [0.0f32; 256];
-        for i in 0..256 {
-            c[i] = 2.0 * i as f32 + 1.0; // slope=2, offset=1
+        for (i, v) in c.iter_mut().enumerate() {
+            *v = 2.0 * i as f32 + 1.0; // slope=2, offset=1
         }
         let (slope, offset) = fit_linear(&c);
         assert!((slope - 2.0).abs() < 1e-3, "slope={slope}");
@@ -274,10 +274,10 @@ mod tests {
         let weights: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let qw = quantize_16bit(&weights, 4, 4);
         // At least some pages should be classified
-        let has_any_constant = qw.page_tags.iter().any(|&t| t == PageKindTag::Constant);
+        let has_any_constant = qw.page_tags.contains(&PageKindTag::Constant);
         let has_any_tag = has_any_constant
-            || qw.page_tags.iter().any(|&t| t == PageKindTag::Linear)
-            || qw.page_tags.iter().any(|&t| t == PageKindTag::Full);
+            || qw.page_tags.contains(&PageKindTag::Linear)
+            || qw.page_tags.contains(&PageKindTag::Full);
         assert!(has_any_tag);
     }
 

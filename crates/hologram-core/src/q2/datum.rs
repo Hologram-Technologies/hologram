@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn spectrum_matches_value_bits() {
-        let v = 0b1010_1010_1010_1010_1010_10u32;
+        let v = 0b10_1010_1010_1010_1010_1010_u32;
         let d = TripleDatum::new(v);
         let s = d.spectrum();
         assert_eq!(s.len(), 24);

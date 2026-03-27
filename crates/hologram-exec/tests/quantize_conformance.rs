@@ -29,8 +29,8 @@ fn quantize_orbit_symmetry() {
 fn quantize_orbit_identity_asymmetric() {
     // Random asymmetric centroids → no compression
     let mut centroids = [0.0f32; 256];
-    for i in 0..256usize {
-        centroids[i] = (i as f32 * 1.6180339) % 7.0 + 1.0;
+    for (i, c) in centroids.iter_mut().enumerate() {
+        *c = (i as f32 * 1.6180339) % 7.0 + 1.0;
     }
     let orbit = build_orbit_map_q8(&centroids);
     assert_eq!(

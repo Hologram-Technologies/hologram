@@ -97,8 +97,8 @@ mod tests {
 
     fn identity_table() -> [u8; 256] {
         let mut t = [0u8; 256];
-        for i in 0..256usize {
-            t[i] = i as u8;
+        for (i, v) in t.iter_mut().enumerate() {
+            *v = i as u8;
         }
         t
     }
@@ -149,8 +149,8 @@ mod tests {
         // For values 0..127, output is identity.
         // Low average stratum.
         let mut table = [0u8; 256];
-        for i in 0usize..128 {
-            table[i] = i as u8;
+        for (i, v) in table[..128].iter_mut().enumerate() {
+            *v = i as u8;
         }
         let s = mean_stratum_q0(&table);
         // Half of outputs are 0 (stratum 0), half are identity (~4 bits average)

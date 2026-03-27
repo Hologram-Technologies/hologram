@@ -149,14 +149,6 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
     };
 
     let out_size = batch * actual_m * actual_n;
-    if out_size > 1024 * 1024 * 1024 {
-        return Err(ExecError::ShapeMismatch {
-            expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
-            actual: format!(
-                "batch={batch} [{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {out_size} floats",
-            ),
-        });
-    }
 
     let mut out = vec![0.0f32; out_size];
 
@@ -284,14 +276,6 @@ pub fn dispatch_matmul_into(
     };
 
     let out_size = batch * actual_m * actual_n;
-    if out_size > 1024 * 1024 * 1024 {
-        return Err(ExecError::ShapeMismatch {
-            expected: format!("matmul output < 1GB (compiled m={m} k={k} n={n})"),
-            actual: format!(
-                "batch={batch} [{actual_m},{actual_k}]x[{actual_k},{actual_n}] = {out_size} floats",
-            ),
-        });
-    }
 
     let out = alloc_f32_in(out_buf, out_size);
 

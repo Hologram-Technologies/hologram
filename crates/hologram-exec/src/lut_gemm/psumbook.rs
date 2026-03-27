@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn psumbook4_dot_orbits_matches_dot() {
-        use crate::lut_gemm::orbit::{build_orbit_map_q4, OrbitMap4};
+        use crate::lut_gemm::orbit::build_orbit_map_q4;
         // Fully symmetric centroids: c[i] = -c[16-i mod 16] exactly.
         let mut centroids = [0.0f32; Q4_LEVELS];
         for i in 1..8usize {
@@ -352,8 +352,8 @@ mod tests {
         use crate::lut_gemm::orbit::build_orbit_map_q8;
         // Asymmetric centroids: no compression, all reps.
         let mut centroids = [0.0f32; Q8_LEVELS];
-        for i in 0..Q8_LEVELS {
-            centroids[i] = (i as f32 * 1.6180339) % 7.0 + 1.0;
+        for (i, c) in centroids.iter_mut().enumerate() {
+            *c = (i as f32 * 1.6180339) % 7.0 + 1.0;
         }
         let orbits = build_orbit_map_q8(&centroids);
         assert_eq!(orbits.rep_count, 256);

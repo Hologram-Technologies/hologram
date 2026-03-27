@@ -516,6 +516,9 @@ pub enum FloatOp {
     /// Group normalization: normalize over groups of channels.
     /// `num_groups` groups, `epsilon` stored as `f32::to_bits()`.
     GroupNorm { num_groups: u32, epsilon: u32 },
+    /// ArgMax: index of the maximum value along an axis.
+    /// Output dtype is I64. `axis` is the reduction axis.
+    ArgMax { axis: u32, keepdims: bool },
 }
 
 impl FloatOp {
@@ -603,6 +606,7 @@ impl FloatOp {
             Self::PadOp { .. } => 2,        // data, pads
             Self::InstanceNorm { .. } => 3, // data, scale, bias
             Self::GroupNorm { .. } => 3,    // data, scale, bias
+            Self::ArgMax { .. } => 1,
             Self::LRN { .. } => 1,
 
             // Utility ops
@@ -695,6 +699,7 @@ impl FloatOp {
             Self::PadOp { .. } => "float.pad",
             Self::InstanceNorm { .. } => "float.instance_norm",
             Self::GroupNorm { .. } => "float.group_norm",
+            Self::ArgMax { .. } => "float.argmax",
             Self::LRN { .. } => "float.lrn",
             Self::ReduceProd { .. } => "float.reduce_prod",
             Self::TopK { .. } => "float.top_k",
@@ -815,6 +820,7 @@ impl FloatOp {
 
             // Shape-preserving vision ops
             Self::InstanceNorm { .. } | Self::GroupNorm { .. } => ShapeSpec::SameAs(0),
+            Self::ArgMax { .. } => ShapeSpec::DropLastDim(0),
 
             // Utility: custom shape logic
             Self::ReduceProd { .. } => ShapeSpec::DropLastDim(0),
@@ -892,6 +898,9 @@ impl FloatOp {
             | Self::Xor
             | Self::Not
             | Self::IsNaN => FloatDType::Bool,
+
+            // ── Index output (I64) ──
+            Self::ArgMax { .. } => FloatDType::I64,
 
             // ── Explicit type change ──
             Self::Cast { to, .. } => *to,
@@ -1272,6 +1281,7 @@ impl FloatOp {
             Self::ReverseSequence { .. } => "ReverseSequence",
             Self::KvWrite { .. } => "KvWrite",
             Self::KvRead { .. } => "KvRead",
+            Self::ArgMax { .. } => "ArgMax",
         }
     }
 }

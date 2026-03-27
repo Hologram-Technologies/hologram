@@ -47,26 +47,32 @@ impl HoloLoader {
     ///
     /// Failures are silently ignored — these are advisory hints only.
     fn advise_sections(&self, header: &HoloHeader) {
-        use memmap2::Advice;
+        #[cfg(unix)]
+        {
+            use memmap2::Advice;
 
-        // Graph section: read sequentially once at load time.
-        if header.graph_size > 0 {
-            let _ = self.mmap.advise_range(
-                Advice::Sequential,
-                header.graph_offset as usize,
-                header.graph_size as usize,
-            );
+            // Graph section: read sequentially once at load time.
+            if header.graph_size > 0 {
+                let _ = self.mmap.advise_range(
+                    Advice::Sequential,
+                    header.graph_offset as usize,
+                    header.graph_size as usize,
+                );
+            }
+
+            // Weight section: random access during LUT-GEMM dispatch.
+            // Prevents wasteful readahead that would pollute the page cache.
+            if header.weights_size > 0 {
+                let _ = self.mmap.advise_range(
+                    Advice::Random,
+                    header.weights_offset as usize,
+                    header.weights_size as usize,
+                );
+            }
         }
 
-        // Weight section: random access during LUT-GEMM dispatch.
-        // Prevents wasteful readahead that would pollute the page cache.
-        if header.weights_size > 0 {
-            let _ = self.mmap.advise_range(
-                Advice::Random,
-                header.weights_offset as usize,
-                header.weights_size as usize,
-            );
-        }
+        #[cfg(not(unix))]
+        let _ = header;
     }
 
     /// Load with zero-copy graph and weight access.

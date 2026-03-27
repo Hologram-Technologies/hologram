@@ -411,7 +411,7 @@ mod tests {
             .collect();
         let qw = quantize_8bit(&weights, k as u32, n as u32);
         let activations: Vec<f32> = (0..m * k)
-            .map(|i| ((i as f32 * 2.7182818) % 1.0) * 2.0 - 1.0)
+            .map(|i| ((i as f32 * std::f32::consts::E) % 1.0) * 2.0 - 1.0)
             .collect();
 
         let mut out_fiber = vec![0.0f32; m * n];
@@ -434,11 +434,11 @@ mod tests {
         let k = 512;
         let n = 4;
         let weights: Vec<f32> = (0..k * n)
-            .map(|i| ((i as f32 * 1.4142135) % 1.0) * 0.1)
+            .map(|i| ((i as f32 * std::f32::consts::SQRT_2) % 1.0) * 0.1)
             .collect();
         let qw = quantize_8bit(&weights, k as u32, n as u32);
         let activations: Vec<f32> = (0..m * k)
-            .map(|i| ((i as f32 * 2.2360679) % 1.0) * 0.5)
+            .map(|i| ((i as f32 * 2.236_068) % 1.0) * 0.5)
             .collect();
         let mut lut_out = vec![0.0f32; m * n];
         let mut naive_out = vec![0.0f32; m * n];

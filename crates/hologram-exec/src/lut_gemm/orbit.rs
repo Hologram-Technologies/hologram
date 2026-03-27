@@ -135,9 +135,9 @@ mod tests {
     fn make_random_centroids_q8() -> [f32; 256] {
         // Pseudo-random values without symmetry
         let mut c = [0.0f32; 256];
-        for i in 0..256usize {
+        for (i, v) in c.iter_mut().enumerate() {
             // Using a deterministic "hash" that avoids symmetry
-            c[i] = (i as f32 * 1.6180339) % 7.0 + 1.0;
+            *v = (i as f32 * 1.6180339) % 7.0 + 1.0;
         }
         c
     }
