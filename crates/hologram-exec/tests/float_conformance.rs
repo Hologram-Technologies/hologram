@@ -161,6 +161,7 @@ fn ensure_all_ops_covered() {
         FloatOp::PadOp { .. } => {}
         FloatOp::InstanceNorm { .. } => {}
         FloatOp::GroupNorm { .. } => {}
+        FloatOp::ArgMax { .. } => {}
         FloatOp::LRN { .. } => {}
         FloatOp::ReduceProd { .. } => {}
         FloatOp::TopK { .. } => {}

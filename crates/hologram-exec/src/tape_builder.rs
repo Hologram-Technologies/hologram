@@ -505,6 +505,10 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             num_groups: *num_groups,
             epsilon: *epsilon,
         },
+        FloatOp::ArgMax { axis, keepdims } => TapeKernel::InlineArgMax {
+            axis: *axis,
+            keepdims: *keepdims,
+        },
         FloatOp::LRN {
             size,
             alpha,

@@ -468,6 +468,9 @@ pub enum TapeKernel {
     /// Group normalization.
     InlineGroupNorm { num_groups: u32, epsilon: u32 },
 
+    /// ArgMax: index of max value along last axis. Output is I64.
+    InlineArgMax { axis: u32, keepdims: bool },
+
     // ── Epilogue fusion: norm + activation ────────────────────────────
     /// Fused RmsNorm + activation.
     InlineRmsNormActivation {
@@ -1302,6 +1305,53 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_prod,
             )?;
             out_buf.extend_from_slice(&result);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineArgMax { axis, keepdims } => {
+            let input = inputs.first().copied().unwrap_or(&[]);
+            let floats: &[f32] = bytemuck::cast_slice(input);
+            // Resolve axis size from input meta or compiled value.
+            let axis_size = shape_resolve::resolve_last_dim(
+                *axis,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input.len(),
+            );
+            if axis_size == 0 || floats.is_empty() {
+                return Ok(DispatchResult::InOutBuf);
+            }
+            let n_rows = floats.len() / axis_size;
+            // Parallel argmax over rows using rayon.
+            use rayon::prelude::*;
+            let indices: Vec<i64> = if n_rows > 64 {
+                floats
+                    .par_chunks(axis_size)
+                    .map(|row| {
+                        row.iter()
+                            .enumerate()
+                            .max_by(|(_, a), (_, b)| {
+                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .map(|(i, _)| i as i64)
+                            .unwrap_or(0)
+                    })
+                    .collect()
+            } else {
+                floats
+                    .chunks(axis_size)
+                    .map(|row| {
+                        row.iter()
+                            .enumerate()
+                            .max_by(|(_, a), (_, b)| {
+                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .map(|(i, _)| i as i64)
+                            .unwrap_or(0)
+                    })
+                    .collect()
+            };
+            let result_bytes: Vec<u8> = indices.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            out_buf.extend_from_slice(&result_bytes);
+            let _ = keepdims; // Shape adjustment handled by output meta.
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineCast { from, to } => {
