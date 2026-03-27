@@ -4,7 +4,7 @@
 
 The hologram workspace (10 crates, ~48K LoC) implements O(1) compute acceleration using precomputed LUT tables at Q0-Q1 and algorithmic ops at Q3+. The architecture has reached its ceiling: LUTs don't scale past Q1 (128KB/table), the float escape hatch (`FloatOp`) breaks ring closure, and the tape-based executor prevents native code generation.
 
-This refactoring makes the entire stack parametric over quantum level, replaces LUTs with ring-primitive compositions, and replaces tape dispatch with Cranelift JIT. The governing principle: **every operation is a ring primitive or a composition of ring primitives. No fallbacks. No escape hatches. No foreign-domain transitions.**
+This refactoring makes the entire stack parametric over quantum level, replaces LUTs with ring-primitive compositions, and introduces Cranelift JIT as an **optional acceleration layer** alongside the existing tape executor. The governing principle: **every operation is a ring primitive or a composition of ring primitives. No fallbacks. No escape hatches. No foreign-domain transitions.**
 
 If an operation cannot be expressed as a composition of ring primitives at the chosen quantum level, the quantum level is wrong — not the operation.
 
@@ -14,25 +14,130 @@ The new implementation is built under `prism-*` crate names during development. 
 
 This plan follows strict test-first discipline: conformance tests are written FIRST to define the contract, then implementation makes the tests pass.
 
+---
+
+## Hard Requirements
+
+These are non-negotiable constraints. Violation of any is a plan rejection.
+
+### HR-1: Memory-Mapped O(1) Weight Access
+
+Archives contain weights >1GiB (commonly 4-8GiB). These MUST run on resource-constrained devices (2GiB RAM). The full archive must never be read or loaded into memory — not during compilation, not during initialization, not during execution.
+
+1. **Zero weight bytes touched during compilation** — metadata only (byte offsets + sizes from `ConstantData::Deferred`)
+2. **O(1) weight access per graph op** — pre-computed byte offset baked into instruction, no search/index/hash
+3. **No upfront processing of the weight section** — no scan, no index build, no integrity check over weights at load time
+4. **Demand-paged mmap preserved** — `Cow::Borrowed(&mmap[offset..])`, physical RAM proportional to working set, not archive size
+5. **Prefetch hints for upcoming weight accesses** — `weight_offset_hint` pattern preserved
+6. **WeightCache persistence** — borrowed `RefCell<WeightCache>`, no re-deserialization across calls
+7. **`madvise(MADV_RANDOM)` on weight section** — no sequential readahead
+
+Current system: 4GiB archive on 2GiB device → ~600MiB physical RAM working set. This must be preserved.
+
+### HR-2: WASM Target Support
+
+`cranelift-jit` requires mmap + executable memory — not available on wasm32. No JIT backend solves this (fundamental WebAssembly constraint). The tape execution path must be preserved as a WASM fallback. `hologram-ffi` with `wasm` feature must continue to work.
+
+### HR-3: blake3 Checksums Only
+
+All archive checksums must use blake3. No CRC. The plan previously referenced "CRC32/Blake3" — only blake3 is carried forward.
+
+### HR-4: Single-Crate Public API
+
+Consumers depend on `hologram` only — never on subcrates directly. All public types re-exported flat from `src/lib.rs`. The `GraphOp<Q>` generic must NOT leak into the public API — use a type alias or erased wrapper. Internal crate names are invisible to consumers.
+
+### HR-5: Q3+ Performance Parity
+
+Q3+ inference throughput must not regress beyond 1.5× of current. LUT-GEMM psumbook advantage (32× fewer multiplies for Q4) and SIMD activation lookup (5-8× faster than polynomial) must be preserved or matched.
+
+---
+
+## Architecture Decision: Hybrid JIT + Tape
+
+**Full JIT replacement (original plan) is rejected** due to HR-1 through HR-5 violations. The revised architecture is **hybrid**: JIT accelerates elementwise chain fusion while tape handles specialized kernels.
+
+### What Runs Where
+
+**Tape-only (never JIT)**:
+- All ops that access `ConstantData::Deferred` weights (mmap path with prefetch) — HR-1
+- `MatMulLut4/8` + psumbook kernel — preserves 32× multiply reduction — HR-5
+- `LutView`, `PrimUnary` at Q0/Q1 — table lookup is O(1), unbeatable — HR-5
+- `KvWrite`, `KvRead` — stateful RefCell borrows, must serialize — HR-1
+- `Custom` ops — user-defined handlers with arbitrary Rust closures
+- All WASM execution — HR-2
+
+**JIT candidates (elementwise chains on native targets)**:
+- Chains of 3+ unary/binary float ops on same tensor shape, no weight access, no runtime state
+- Composed reductions feeding into elementwise ops
+- Norm + activation patterns not already fused in tape
+
+### `TapeKernel::JitSegment`
+
+Extend `TapeKernel` with a JIT variant instead of replacing tape:
+
+```rust
+TapeKernel::JitSegment {
+    func: JitFnPtr,    // fn(*const *const u8, *mut u8, usize)
+    n_inputs: u8,
+}
+```
+
+The execute loop dispatches JitSegment like any other kernel. Arena, prefetch, parallel execution, decode optimization — all unchanged. JIT is just another kernel type.
+
+### Compiler Decision Logic
+
+New pass: `jit_partition_stage` between `fuse_stage` and `emit_stage`:
+1. Walk nodes in topological order
+2. Classify as JIT-eligible: elementwise float ops, no weight access, no runtime state
+3. Greedily extend chains (same tensor shape, single-consumer successors)
+4. Chains of 3+ ops → `JitSegment`; shorter chains → inline tape kernels
+5. `#[cfg(target_arch = "wasm32")]` → no-op (all tape) — HR-2
+
+### Crate Organization
+
+```
+hologram-ring (kernel, was hologram-core) — parametric ring foundation
+hologram-graph (kernel)                   — parametric GraphOp<Q>, fusion, scheduling
+hologram-archive (kernel)                 — HOLO v1, blake3 checksums
+hologram-exec (bridge)                    — tape execution + TapeKernel::JitSegment
+hologram-jit (bridge, NEW)                — Cranelift codegen, feature-gated, never wasm32
+hologram-compiler (bridge)                — pipeline + jit_partition_stage
+hologram-compression (bridge)             — parametric over RingWord
+hologram-ffi (user)                       — unchanged, WASM preserved
+hologram-cli (user)                       — add --jit flag
+hologram-bench (user)                     — benchmarks for both paths
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+hologram-jit = { path = "crates/hologram-jit", optional = true }
+
+[features]
+jit = ["hologram-jit"]  # default on native
+```
+
+`hologram-exec` does NOT depend on `hologram-jit`. It only holds `JitFnPtr` (a plain function pointer). The JIT crate is needed at compile/load time only.
+
+---
+
 ## hologram-ai Consumer Contract
 
-hologram-ai is the primary consumer (ADR-0001). The refactored hologram must maintain these contract surfaces:
+hologram-ai is the primary consumer (ADR-0001). The refactored hologram must maintain these contract surfaces. All types re-exported flat from `use hologram::*` (HR-4).
 
 | Contract Surface | Status |
 |---|---|
-| `Graph`, `GraphBuilder`, `GraphOp`, `NodeId` | Preserved (GraphOp variants change — see Phase 8B) |
+| `Graph`, `GraphBuilder`, `GraphOp`, `NodeId` | Preserved (GraphOp variants change — see Phase 8B). `GraphOp<Q>` generic is internal; public API uses type alias. |
 | `PrimOp` (10 ring primitives) | Preserved (identical) |
 | `ActivationOp` (replaces `LutOp`) | Renamed — hologram-ai adopts new enum |
 | `CustomOpId`, `CustomOpRegistry`, `CustomHandler` | Preserved (identical) |
 | `ConstantData`, `ConstantId`, `ConstantStore` | Preserved (identical) |
 | `compile(&graph) -> CompilationOutput` | Preserved (same API, new internals) |
-| `HoloWriter`, `HoloLoader`, `LoadedPlan` | Preserved (archive version bumped to v2) |
-| Execution: `build_tape` + `execute_tape` | Replaced by `JitModule::compile` + `execute` |
-| `KvCacheState` for autoregressive gen | Preserved (JIT-backed) |
+| `HoloWriter`, `HoloLoader`, `LoadedPlan` | Preserved (new archive format, version 1) |
+| Execution: `build_tape` + `execute_tape` | Preserved (tape is the primary path). JIT segments transparent — dispatched inside same tape loop. |
+| `KvCacheState` for autoregressive gen | Preserved (tape-backed, never JIT) |
+| `WeightCache` (persistent, borrowed RefCell) | Preserved (HR-1) |
 | `FloatOp` (70+ variants) | Eliminated — ring-native replacements |
 | `LutOp` (21 activations) | Renamed to `ActivationOp` |
-| `MatMulLut4/8/16` | Replaced by Accumulate+Reduce subgraph |
-| `ElementWiseView` | Eliminated (internal to fusion) |
+| `MatMulLut4/8/16` | Preserved on tape path (psumbook kernel). Graph builder helper `build_matmul_subgraph()` available. |
+| `ElementWiseView` | Eliminated from public API (internal to fusion) |
 
 ---
 
@@ -52,7 +157,7 @@ prism-ring/tests/scaffold_test.rs
 1. Create `crates/prism-ring/Cargo.toml` (`#![no_std]`, depends on `uor-foundation = "0.1.1"`)
 2. Create empty `crates/prism-graph/`, `prism-compiler/`, `prism-archive/`, `prism-jit/`, `prism-compression/`, `prism-ffi/`, `prism-cli/`, `prism-bench/`
 3. Add all to workspace `members` in root `Cargo.toml`
-4. Add `cranelift-codegen`, `cranelift-frontend`, `cranelift-jit`, `cranelift-module`, `cranelift-native` to `[workspace.dependencies]`
+4. Add `cranelift-codegen`, `cranelift-frontend`, `cranelift-jit`, `cranelift-module`, `cranelift-native` to `[workspace.dependencies]` — **feature-gated, cfg(not(wasm32))**
 5. Verify `cargo test --workspace` passes (all hologram tests green)
 
 ### Files to create
@@ -85,8 +190,6 @@ For each W in {u8, u16, u32, u64, u128} — exhaustive for u8, sampled for large
 7. **Constants**: `ZERO == 0`, `ONE == 1`, `MAX == 2^BITS - 1`
 8. **Bit intrinsics**: `count_ones`, `leading_zeros`, `trailing_zeros` match `core` intrinsics
 
-Sampling pattern from existing [ring_conformance.rs](crates/hologram-core/tests/ring_conformance.rs): step_by primes (17, 19, 23) for u8 triples, spot-check vectors `[0, 1, 127, 255, 0xFFFF, 0x00FF_FFFF, u32::MAX/2, u32::MAX]` for u32/u64.
-
 **Implementation** (`prism-ring/src/word.rs`):
 ```rust
 pub trait RingWord:
@@ -111,460 +214,42 @@ pub trait RingWord:
     fn to_u64(self) -> u64;
 }
 ```
-Implement for u8, u16, u32, u64, u128. Each method is a one-liner delegating to Rust intrinsics. All methods are `#[inline]` and compile to single ALU instructions.
+Implement for u8, u16, u32, u64, u128. Each method is a one-liner delegating to Rust intrinsics.
 
-### Phase 1B: QuantumLevel trait + PrismPrimitives
+### Phase 1B–1J
 
-**Tests** (`prism-ring/tests/quantum_level_conformance.rs`):
+_Unchanged from original plan: QuantumLevel trait, PrimOp, Involution, Datum/Address, Ring/NDA/CD, Observables, Encoding, Accumulation._
 
-For each level {Q0, Q1, Q3, Q7, Q15}:
-1. `Q::BITS == 8 * (Q::INDEX + 1)`
-2. `<Q::Word as RingWord>::BITS == Q::BITS`
-3. Level → Word type mapping: Q0→u8, Q1→u16, Q3→u32, Q7→u64, Q15→u128
-4. Each level type is a ZST: `core::mem::size_of::<Q0>() == 0`
-5. `PrismPrimitives` implements `uor_foundation::Primitives` with same mapping as `HoloPrimitives`
+### Phase 1I: Activations as ComposedOperations (REVISED)
 
-**Implementation** (`prism-ring/src/level.rs`):
-```rust
-/// Marker trait for quantum levels. Zero-sized — monomorphized away.
-pub trait QuantumLevel: Copy + 'static {
-    const BITS: u32;         // 8*(k+1)
-    const INDEX: u32;        // k
-    type Word: RingWord;
-}
-
-#[derive(Debug, Clone, Copy)] pub struct Q0;
-#[derive(Debug, Clone, Copy)] pub struct Q1;
-#[derive(Debug, Clone, Copy)] pub struct Q3;
-#[derive(Debug, Clone, Copy)] pub struct Q7;
-#[derive(Debug, Clone, Copy)] pub struct Q15;
-```
-
-| Level | INDEX | BITS | Word | Ring | Cranelift | Hardware |
-|-------|-------|------|------|------|-----------|----------|
-| Q0 | 0 | 8 | u8 | Z/256Z | I8 | byte ops |
-| Q1 | 1 | 16 | u16 | Z/65536Z | I16 | half-word |
-| Q3 | 3 | 32 | u32 | Z/2^32Z | I32 | 32-bit ALU |
-| Q7 | 7 | 64 | u64 | Z/2^64Z | I64 | 64-bit ALU |
-| Q15 | 15 | 128 | u128 | Z/2^128Z | I128 | SIMD pair |
-
-Note: INDEX follows the formula strictly. Q2 (24-bit) from hologram is dropped — there is no hardware-native 24-bit type. The new Q3 (32-bit) absorbs hologram's Q2 and Q3 functionality.
+**Hybrid activation strategy** per HR-5:
 
 ```rust
-/// The UOR primitive type family for Prism.
-pub struct PrismPrimitives;
-impl uor_foundation::Primitives for PrismPrimitives {
-    type String = str;
-    type Integer = i64;
-    type NonNegativeInteger = u64;
-    type PositiveInteger = u64;
-    type Decimal = f64;
-    type Boolean = bool;
-}
-```
-
-### Phase 1C: PrimOp — parametric primitives
-
-**Tests** (`prism-ring/tests/primop_conformance.rs`):
-
-For each of the 10 PrimOps x each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. **Known-answer**: `apply_unary`/`apply_binary` matches hand-computed values
-2. **Cross-level embedding**: Zero-extend Q0 value into Q1, apply op, truncate back. For operations where no overflow occurs (bitwise ops), result matches Q0 result exactly.
-3. **Arity**: 1 for unary (Neg, Bnot, Succ, Pred), 2 for binary (Add, Sub, Mul, Xor, And, Or)
-4. **Commutativity**: correct for each binary op (Add, Mul, Xor, And, Or: true; Sub: false)
-5. **Associativity**: correct for each binary op (Add, Mul, Xor, And, Or: true; Sub: false)
-6. **Identity element**: Add→0, Mul→1, Xor→0, And→MAX, Or→0
-7. **Critical identity**: `neg(bnot(x)) == succ(x)` — exhaustive at Q0, sampled at Q1/Q3/Q7
-8. **UOR trait conformance**: `PrimOp` implements `Operation<PrismPrimitives>` with correct arity, geometric character, and `composed_of` name. Implements `BinaryOp<PrismPrimitives>` with correct `commutative()`, `associative()`, `identity()`.
-
-Test vectors transplanted from existing [ring_conformance.rs](crates/hologram-core/tests/ring_conformance.rs) and [q3_conformance.rs](crates/hologram-core/tests/q3_conformance.rs).
-
-**Implementation** (`prism-ring/src/prim.rs`):
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrimOp { Neg, Bnot, Succ, Pred, Add, Sub, Mul, Xor, And, Or }
-
-impl PrimOp {
-    #[inline] pub const fn arity(&self) -> u8 { ... }
-    #[inline] pub fn apply_unary<W: RingWord>(&self, x: W) -> W { ... }
-    #[inline] pub fn apply_binary<W: RingWord>(&self, a: W, b: W) -> W { ... }
-}
-```
-Generic over `RingWord`. No LUT tables. All ops are direct wrapping arithmetic — the same code path at every quantum level. Implements `uor_foundation::kernel::op::Operation<PrismPrimitives>` and `BinaryOp<PrismPrimitives>`.
-
-### Phase 1D: Involution\<Q\> and DihedralGroup
-
-**Tests** (`prism-ring/tests/involution_conformance.rs`):
-
-For each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. `Neg` is involutory: `neg(neg(x)) == x` for all sampled x
-2. `Bnot` is involutory: `bnot(bnot(x)) == x` for all sampled x
-3. **Critical identity**: `neg(bnot(x)) == succ(x)` (the UOR fundamental identity)
-4. **Geometric character**: Neg → `RingReflection`, Bnot → `HypercubeReflection`
-5. **UOR trait conformance**: `Involution<Q>` implements `uor_foundation::kernel::op::Involution<PrismPrimitives>`, `UnaryOp`, `Operation`
-6. **DihedralGroup**: Ring type at each level implements `DihedralGroup<PrismPrimitives>` with `generated_by()` returning [Neg, Bnot], `order()` returning 2^BITS
-
-**Implementation** (`prism-ring/src/involution.rs`):
-```rust
-/// The two generators of the dihedral group D_{2^n}.
-/// Zero-sized — the apply method is const fn, compiles to a single ALU instruction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Involution<Q: QuantumLevel> {
-    Neg,
-    Bnot,
-    _Phantom(core::marker::PhantomData<Q>),
-}
-
-impl<Q: QuantumLevel> Involution<Q> {
+impl ActivationOp {
     #[inline]
-    pub fn apply(self, x: Q::Word) -> Q::Word {
-        match self {
-            Self::Neg => x.wrapping_neg(),
-            Self::Bnot => !x,  // via Not trait on RingWord
-            _ => unreachable!(),
+    pub fn apply<Q: QuantumLevel>(&self, x: Q::Word) -> Q::Word {
+        if Q::BITS <= 16 {
+            // Table lookup — pre-evaluated ring function, O(1)
+            Self::table::<Q>()[x.to_u64() as usize]
+        } else {
+            // Piecewise polynomial — computed ring function
+            self.polynomial_eval::<Q>(x)
         }
     }
 }
 ```
-Implements `uor_foundation::kernel::op::{Operation, UnaryOp, Involution}` for `Involution<Q>`.
 
-### Phase 1E: Datum\<Q\> and Address\<Q\>
+- Q0 (256 entries, 256B): LUT — fits in single cache line, SIMD via vpshufb/vqtbl1q
+- Q1 (65536 entries, 128KB): LUT — fits in L2, still faster than polynomial
+- Q3+ (4B+ entries): Piecewise polynomial — tables impractical, polynomial is correct approach
 
-**Tests** (`prism-ring/tests/datum_conformance.rs`):
-
-For each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. `Datum::new(v).value() == v as u64`
-2. `Datum::new(v).quantum() == Q::BITS as u64`
-3. `Datum::new(v).stratum() == v.count_ones() as u64`
-4. `Datum::new(v).spectrum()` is a binary string of length BITS
-5. `Datum::PI1.value() == 1` (multiplicative generator)
-6. **Address round-trip**: `Address::from_word(v).glyph()` produces valid UTF-8 Braille
-7. **UOR trait conformance**: `Datum<Q>` implements `uor_foundation::kernel::schema::Datum<PrismPrimitives>`, `Address<Q>` implements `uor_foundation::kernel::address::Address<PrismPrimitives>`
-
-**Implementation** (`prism-ring/src/datum.rs`, `prism-ring/src/address.rs`):
-```rust
-/// An element of the ring R_n at quantum level Q.
-/// const-constructible, zero allocation.
-pub struct Datum<Q: QuantumLevel> {
-    value: Q::Word,
-    spectrum_buf: [u8; MAX_SPECTRUM_LEN],  // binary string, const-computed
-    address: Address<Q>,
-}
-
-/// Braille-encoded address for a ring element.
-pub struct Address<Q: QuantumLevel> {
-    value: Q::Word,
-    glyph_buf: [u8; MAX_GLYPH_LEN],  // UTF-8 Braille, const-computed
-}
-```
-All construction is `const fn`. Spectrum and glyph buffers are computed at construction time with zero allocation. Implements UOR `Datum<PrismPrimitives>` and `Address<PrismPrimitives>`.
-
-### Phase 1F: Ring\<Q\> — UOR Ring + NormedDivisionAlgebra + CayleyDicksonConstruction
-
-**Tests** (`prism-ring/tests/ring_uor_conformance.rs`):
-
-For each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. `ring.ring_quantum() == Q::BITS as u64`
-2. `ring.modulus() == 2^Q::BITS` (as u64, or 0 for overflow at Q7)
-3. `ring.at_quantum_level()` matches `uor_foundation::enums::QuantumLevel` mapping
-4. `ring.generator().value() == 1` (PI1)
-5. `ring.negation()` is `Involution::Neg`, `ring.complement()` is `Involution::Bnot`
-
-For the Cayley-Dickson chain:
-6. Q0: dimension 1 (real), source dim 1, target dim 2
-7. Q1: dimension 2 (complex), source dim 2, target dim 4
-8. Q3: dimension 4 (quaternion) — non-commutative from here
-9. Q7: dimension 8 (octonion) — non-associative, terminal in CD chain
-10. Each level: `target_dim == 2 * source_dim`
-11. Adjoined elements: "i", "j", "k", "e4..e7"
-
-For algebra properties:
-12. Q0, Q1: commutative and associative
-13. Q3: non-commutative, associative
-14. Q7: non-commutative, non-associative
-15. Associator at Q7: non-zero for imaginary embeddings, zero for real subalgebra
-
-**Implementation** (`prism-ring/src/ring.rs`):
-```rust
-/// Zero-sized marker type for the ring R_n at quantum level Q.
-#[derive(Debug, Clone, Copy)]
-pub struct PrismRing<Q: QuantumLevel>(PhantomData<Q>);
-
-// Ring<PrismPrimitives>
-impl<Q: QuantumLevel> uor_foundation::kernel::schema::Ring<PrismPrimitives> for PrismRing<Q> {
-    fn ring_quantum(&self) -> u64 { Q::BITS as u64 }
-    fn modulus(&self) -> u64 { ... }
-    type Datum = Datum<Q>;
-    type Involution = Involution<Q>;
-    fn generator(&self) -> &Self::Datum { ... }
-    fn negation(&self) -> &Self::Involution { ... }
-    fn complement(&self) -> &Self::Involution { ... }
-    fn at_quantum_level(&self) -> QuantumLevel { ... }
-}
-
-// Group<PrismPrimitives> + DihedralGroup<PrismPrimitives>
-impl<Q: QuantumLevel> uor_foundation::kernel::op::Group<PrismPrimitives> for PrismRing<Q> {
-    type Operation = Involution<Q>;
-    fn generated_by(&self) -> &[Self::Operation] { &[Involution::Neg, Involution::Bnot] }
-    fn order(&self) -> u64 { 1u64 << Q::BITS }
-}
-impl<Q: QuantumLevel> uor_foundation::kernel::op::DihedralGroup<PrismPrimitives> for PrismRing<Q> {}
-
-// NormedDivisionAlgebra<PrismPrimitives>
-impl<Q: QuantumLevel> NormedDivisionAlgebra<PrismPrimitives> for PrismRing<Q> {
-    fn algebra_dimension(&self) -> u64 { 1 << Q::INDEX.min(3) } // 1, 2, 4, 8
-    fn is_commutative(&self) -> bool { Q::INDEX < 3 }
-    fn is_associative(&self) -> bool { Q::INDEX < 7 }
-    fn basis_elements(&self) -> &str { ... }
-    type MultiplicationTable = PrismMultTable<Q>;
-    ...
-}
-
-// CayleyDicksonConstruction<PrismPrimitives> — chain terminates at Q7 (octonions)
-impl<Q: QuantumLevel> CayleyDicksonConstruction<PrismPrimitives> for PrismRing<Q> where Q: HasNextLevel {
-    type NormedDivisionAlgebra = PrismDivisionAlgebra;
-    fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra { ... }
-    fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra { ... }
-    fn adjoined_element(&self) -> &str { ... }
-    fn conjugation_rule(&self) -> &str { ... }
-}
-```
-All static allocations. All singletons. ZSTs throughout. The `PrismDivisionAlgebra` enum unifies across levels (same pattern as existing `HoloDivisionAlgebra`).
-
-### Phase 1G: Observables — generic
-
-**Tests** (`prism-ring/tests/observables_conformance.rs`):
-
-For each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. `stratum(x) == x.count_ones()`
-2. `curvature(x) == (x ^ x.wrapping_add(ONE)).count_ones()`
-3. `rank(x) == x.trailing_zeros()`
-4. `domain(x) == x.leading_zeros()`
-5. **Boundary**: `stratum(ZERO) == 0`, `stratum(MAX) == BITS`
-6. **Stratum range**: `0 <= stratum(x) <= BITS` for all x
-7. **Curvature range**: `1 <= curvature(x)` for all x (always at least 1 bit flips)
-
-**Implementation** (`prism-ring/src/observables.rs`):
-```rust
-#[inline] pub fn stratum<W: RingWord>(x: W) -> u32 { x.count_ones() }
-#[inline] pub fn curvature<W: RingWord>(x: W) -> u32 { (x ^ x.wrapping_add(W::ONE)).count_ones() }
-#[inline] pub fn rank<W: RingWord>(x: W) -> u32 { x.trailing_zeros() }
-#[inline] pub fn domain<W: RingWord>(x: W) -> u32 { x.leading_zeros() }
-```
-Each function compiles to 1-3 ALU instructions at any quantum level.
-
-### Phase 1H: Encoding — parametric embed/lift
-
-**Tests** (`prism-ring/tests/encoding_conformance.rs`):
-
-For each encoding {Angle, Signed, Unsigned, Raw} x each QuantumLevel:
-1. **Round-trip fidelity**: `lift(embed(v))` recovers v to within the quantization step of the level (1/2^BITS)
-2. **Monotonicity**: `v1 < v2 => embed(v1) <= embed(v2)` (for Unsigned, Signed)
-3. **Range coverage**: embed maps the continuous domain onto the full word space [0, MAX]
-4. **Boundary exactness**: `embed(0.0) == ZERO` (Unsigned), `embed(-1.0) == 0 ∧ embed(1.0) == MAX` (Signed), `embed(0.0) == 0 ∧ embed(2π) wraps to 0` (Angle)
-5. **UOR trait**: implements `Encoding` concept (embed is the pi map, lift is the lambda map)
-
-**Implementation** (`prism-ring/src/encoding.rs`):
-```rust
-pub trait Encoding<W: RingWord> {
-    fn embed(&self, value: f64) -> W;  // π: continuous → ring
-    fn lift(&self, word: W) -> f64;    // λ: ring → continuous
-    fn name(&self) -> &'static str;
-}
-```
-Concrete: `AngleEncoding<Q>`, `SignedEncoding<Q>`, `UnsignedEncoding<Q>`, `RawEncoding<Q>`.
-The encoding is the pi-F-lambda bridge between the continuous domain and the ring. Once in the ring, all computation is ring-native. The encoding boundary exists only at graph input/output.
-
-### Phase 1I: Activations as ComposedOperations
-
-**Tests** (`prism-ring/tests/activation_conformance.rs`):
-
-This is the critical contract. Every activation is a `ComposedOperation` — a chain of ring primitives. There is no LUT. There is no f64 escape hatch. The ring arithmetic IS the computation.
-
-For each of 21 activations x each QuantumLevel {Q0, Q1, Q3, Q7}:
-
-1. **Decomposition witness**: `decompose()` returns a `Vec<PrimOp>` chain. Applying the chain step-by-step matches `apply()` exactly (bit-identical).
-2. **Ring closure**: `apply()` takes a `W` and returns a `W`. No intermediate f64.
-3. **Structural properties**:
-   - relu: monotonic, `relu(ZERO) == ZERO`, `relu(MAX) depends on sign convention`
-   - sigmoid: monotonic, bounded
-   - abs: `abs(abs(x)) == abs(x)` (idempotent)
-   - square: `square(neg(x)) == square(x)` (even function)
-4. **Consistency oracle** (test-only, not runtime): At 256 sample points, encode an f64 value, apply activation in-ring, decode back to f64 — compare against f64 reference. This verifies the polynomial coefficients were correctly computed. The oracle tolerance is the quantization step of the level (1/256 for Q0, 1/65536 for Q1, etc.). The oracle is a TEST, not a fallback.
-5. **Piecewise polynomial structure**: For transcendentals (sigmoid, tanh, gelu, silu):
-   - Segment boundaries are ring constants (precomputed, stored as `W`)
-   - Polynomial coefficients are ring constants
-   - Evaluation is `mul` + `add` in the ring (Horner's method)
-   - Segment selection is `sub` + sign-bit extraction (comparison via ring ops)
-   - All intermediate values are `W` — never leaves the ring
-
-f64 reference implementations for the oracle (transplant from [float_conformance.rs](crates/hologram-exec/tests/float_conformance.rs)):
-```rust
-// TEST-ONLY oracles — these verify polynomial coefficient correctness
-fn sigmoid_ref(x: f64) -> f64 { 1.0 / (1.0 + (-x).exp()) }
-fn gelu_ref(x: f64) -> f64 { 0.5 * x * (1.0 + erf(x / SQRT_2)) }
-fn silu_ref(x: f64) -> f64 { x * sigmoid_ref(x) }
-```
-
-**Implementation** (`prism-ring/src/activation.rs`):
-```rust
-pub enum ActivationOp { Relu, Abs, Square, Cube, Sigmoid, Tanh, Gelu, Silu, ... /* all 21 */ }
-
-impl ActivationOp {
-    /// The composedOf witness: a chain of PrimOps that implements this activation.
-    pub fn decompose<Q: QuantumLevel>(&self) -> Vec<PrimOp> { ... }
-
-    /// Apply directly using inlined ring arithmetic. Zero allocation. Zero f64.
-    #[inline]
-    pub fn apply<Q: QuantumLevel>(&self, x: Q::Word) -> Q::Word { ... }
-}
-```
-
-Simple activations:
-- `relu`: sign-bit mask via `ushr` + `and` (3 ring ops)
-- `abs`: conditional neg via sign-bit (3 ring ops)
-- `square`: `mul(x, x)` (1 ring op)
-- `cube`: `mul(mul(x, x), x)` (2 ring ops)
-
-Transcendentals — ring-native piecewise polynomial:
-- Fixed-point representation within the ring word (encoding determines bit split: integer.fractional)
-- Polynomial coefficients are ring constants, precomputed per quantum level
-- Horner's method: `c0 + x*(c1 + x*(c2 + x*c3))` — each step is `mul` + `add`
-- Segment boundaries are ring constants. Comparison: `sub(x, boundary)`, extract sign bit
-- Number of segments × polynomial degree chosen so the composed operation is exact to within the quantization step at that level. At Q3 (32-bit), a 4-segment cubic gives ~10^-7 relative error. At Q7 (64-bit), 8-segment cubic gives ~10^-15.
-- At Q0 (8 bits), the polynomial evaluation collapses to a small number of ring ops that happen to produce the correct 256 output values. This is algebraically verified, not approximated.
-
-### Phase 1J: Accumulation pattern
-
-**Tests** (`prism-ring/tests/accumulate_conformance.rs`):
-
-For each QuantumLevel:
-1. `accumulate(acc, a, b) == wrapping_add(acc, wrapping_mul(a, b))`
-2. Iterated: `Σ a[i] * b[i]` via fold over accumulate matches loop of add+mul
-3. Matmul 2x2: `C[i,j] = Σ_k A[i,k] * B[k,j]` via accumulate, verify against ring-arithmetic reference
-
-**Implementation** (`prism-ring/src/accumulate.rs`):
-```rust
-#[inline]
-pub fn accumulate<W: RingWord>(acc: W, a: W, b: W) -> W {
-    acc.wrapping_add(a.wrapping_mul(b))
-}
-```
-Compiles to `imul` + `iadd` — two ALU instructions at any quantum level.
-
-### Reusable existing code
-- `PrimOp` enum shape, arity, commutativity from [prim.rs](crates/hologram-core/src/op/prim.rs)
-- UOR trait impl patterns from [byte_ring.rs](crates/hologram-core/src/ring/byte_ring.rs) — Ring, Group, DihedralGroup, NormedDivisionAlgebra, CayleyDicksonConstruction
-- Datum/Address patterns from [datum/mod.rs](crates/hologram-core/src/datum/mod.rs)
-- Test sampling from [ring_conformance.rs](crates/hologram-core/tests/ring_conformance.rs) — step_by primes for exhaustive, spot vectors for Q3+
-- `assert_throughput` from [perf_contract.rs](crates/hologram-core/tests/perf_contract.rs)
+This is ring-consistent: the LUT IS a ring function (W→W), pre-evaluated at compile time. Monomorphized away — zero runtime dispatch.
 
 ---
 
 ## Phase 2: prism-graph — Parametric Graph IR
 
-### Phase 2A: Arena graph + GraphOp
-
-**Tests** (`prism-graph/tests/graph_conformance.rs`):
-
-Transplant from existing hologram-graph inline tests:
-1. Empty graph: `node_count == 0`, `is_empty`
-2. Add/get/remove: generational safety (stale NodeIds return None)
-3. Slot reuse: same index, different generation
-4. Edge connectivity: `predecessors`, `successors` correct
-5. Named I/O: `add_input`, `add_output`, `sources`, `sinks`
-6. ConstantStore: add/get round-trip (bit-identical)
-7. GraphBuilder: fluent API produces valid graph topology
-
-New tests for new GraphOp:
-8. `GraphOp::Accumulate` has arity 3 (acc, a, b)
-9. `GraphOp::Reduce { op, axis }` has arity 1 (reduces along axis)
-10. `GraphOp::Broadcast { shape }` has arity 1
-11. `GraphOp::Reshape { target }` has arity 1
-12. **Exhaustive variant check**: no `Lut`, `FusedView`, `FusedView16`, `Float`, `FusedFloatChain`, `MatMulLut*`, `BatchMatMulLut*`, `RingPrimUnary`, `RingPrimBinary` variants exist in the enum. The type system enforces ring closure.
-
-**Implementation**:
-- Copy arena/node/edge from [node.rs](crates/hologram-graph/src/graph/node.rs) — NodeId, InputSlot, InputSource, Node unchanged
-- New `GraphOp<Q: QuantumLevel>`:
-  ```rust
-  pub enum GraphOp<Q: QuantumLevel> {
-      Input,
-      Output,
-      Constant(ConstantId),
-      Prim(PrimOp),
-      Activation(ActivationOp),
-      Accumulate,                         // α: fused multiply-add
-      Reduce { op: PrimOp, axis: u32 },   // iterated op along axis
-      Broadcast { shape: ShapeSpec },      // replicate across dimensions
-      Reshape { target: ShapeSpec },       // reinterpret layout
-      Fused(FusedOp),                     // algebraically simplified composition
-      Custom { id: CustomOpId, arity: u8 },
-      CallSubgraph(SubgraphId),
-      Passthrough,
-      _Phantom(PhantomData<Q>),
-  }
-  ```
-- GraphBuilder: transplant from [builder/mod.rs](crates/hologram-graph/src/builder/mod.rs)
-- ConstantStore: transplant from [constant/mod.rs](crates/hologram-graph/src/constant/mod.rs)
-- SubgraphDef: transplant from [subgraph/](crates/hologram-graph/src/subgraph/)
-
-### Phase 2B: Matmul as subgraph pattern
-
-**Tests** (`prism-graph/tests/matmul_pattern_conformance.rs`):
-
-1. Build matmul subgraph (Broadcast + Accumulate + Reduce) for M=2, K=3, N=2
-2. Evaluate via interpreted ring ops: matches reference `C[i,j] = Σ_k A[i,k] * B[k,j]` (exact in ring)
-3. Pattern recognition: `recognize_matmul(&graph)` returns `Some(MatmulPattern { m, k, n })`
-4. Psumbook reordering: reordered accumulation (group by quantized weight index, then multiply by centroids) produces identical ring result as standard order (addition is commutative and associative in the ring)
-5. Convolution pattern: expressible as matmul with reshaped inputs (im2col)
-6. Attention pattern: Q*K^T matmul → activation → V matmul, all ring-native
-
-**Implementation** (`prism-graph/src/patterns/`):
-- `matmul.rs`: Build matmul subgraph template
-- `conv.rs`: Convolution as reshaped matmul
-- `attention.rs`: Multi-head attention as matmul chain
-- `recognize.rs`: Pattern matching on subgraph structure → PatternAnnotation
-
-### Phase 2C: Algebraic fusion
-
-**Tests** (`prism-graph/tests/fusion_conformance.rs`):
-
-1. **Chain composition**: Prim(Neg) → Prim(Bnot) → fuses to single Fused node
-2. **Involution cancellation**: Neg → Neg → Passthrough (identity, zero cost)
-3. **Critical identity fusion**: Bnot → Neg chain → recognized as Succ
-4. **Constant folding**: Const(5) → Prim(Succ) → Const(6), at any Q level
-5. **CSE**: identical `(op, inputs)` pairs deduplicated (same as existing)
-6. **Activation composition**: Activation(Relu) → Activation(Sigmoid) → merged polynomial
-7. **Dead code elimination**: nodes with no consumers removed
-8. **Semantic preservation**: fused graph produces bit-identical output as unfused for 1000 random inputs at Q3
-
-**Implementation** (`prism-graph/src/fusion/`):
-- `compose.rs`: Chain PrimOp sequences into FusedOp
-- `cancel.rs`: Involution detection and cancellation
-- `identity.rs`: Critical identity recognition (bnot∘neg → succ)
-- `constant.rs`: Constant folding via `PrimOp::apply_*`
-- `cse.rs`: Transplant from [cse.rs](crates/hologram-graph/src/fusion/cse.rs)
-- `dce.rs`: Dead code elimination
-
-### Phase 2D: Scheduling
-
-**Tests** (`prism-graph/tests/schedule_conformance.rs`):
-
-Transplant existing tests:
-1. Toposort produces valid topological order
-2. Level assignment: no node scheduled before dependencies
-3. Critical path length matches manual calculation
-4. Parallel levels: all nodes in a level have satisfied dependencies
-5. Liveness intervals: `[born, dies]` correct for each node
-
-**Implementation**: Transplant [schedule/](crates/hologram-graph/src/schedule/) — unchanged.
-
-### Reusable existing code
-- [node.rs](crates/hologram-graph/src/graph/node.rs): NodeId, InputSlot, InputSource, Node — verbatim
-- [builder/mod.rs](crates/hologram-graph/src/builder/mod.rs): GraphBuilder fluent API
-- [constant/mod.rs](crates/hologram-graph/src/constant/mod.rs): ConstantStore
-- [schedule/](crates/hologram-graph/src/schedule/): toposort, levels, critical_path — verbatim
-- [fusion/cse.rs](crates/hologram-graph/src/fusion/cse.rs): CSE pass
+_Phase 2A–2D unchanged from original plan: arena graph, GraphOp<Q>, matmul subgraph, algebraic fusion, scheduling._
 
 ---
 
@@ -572,216 +257,159 @@ Transplant existing tests:
 
 **Tests** (`prism-archive/tests/archive_conformance.rs`):
 
-1. Header magic: `b"HOLO"`, version 2 (major version bump for ring-native format)
+1. Header magic: `b"HOLO"`, version 1
 2. Quantum level in header: write Q3 → read → `quantum_index == 3`
-3. Graph round-trip: write graph → read → same node_count, same topology (bit-identical serialization)
+3. Graph round-trip: write graph → read → same node_count, same topology
 4. Constants round-trip: write ring constants → read → identical bytes
 5. Weight section: write weights → read → identical bytes, dedup works
-6. Checksum: corrupt one byte → load returns error
-7. Version: v1 archives → load returns `UnsupportedVersion` (clean break, no backward compat)
+6. **blake3 checksum**: corrupt one byte → load returns error (HR-3)
+7. Old archives incompatible (new header layout) — no backward compat needed
 8. Multi-model: multiple graphs in one archive
+9. **Mmap zero-copy preserved** (HR-1): `load_from_bytes_zero_copy` still borrows weight bytes from mmap
+10. **madvise hints preserved**: `Advice::Random` on weight section, `Advice::Sequential` on graph
 
 **Implementation**:
-- Fork `hologram-archive`, keep magic `HOLO`, bump version to 2
-- Add `quantum_index: u32` to header
-- Serialize new `GraphOp<Q>` via rkyv (no `ElementWiseView`, `FusedView16`, `FloatOp`)
-- Remove all eliminated types from serialization
-- v1 archives are not loadable — hologram-ai must recompile models
+- Fork `hologram-archive`, keep magic `HOLO`, version stays 1 (fresh start, no backward compat)
+- Serialize new `GraphOp<Q>` via rkyv
+- **blake3 only** for all checksums (HR-3)
+- Zero-copy mmap path preserved exactly (HR-1)
+- Per-weight compression metadata (`compression_scheme: u8`) populated (future: lazy decompression)
+
+**Header Layout** (144 bytes, `#[repr(C)]`, bytemuck Pod):
+
+```rust
+pub struct HoloHeader {
+    pub magic: [u8; 4],              //   0: b"HOLO"
+    pub version: u32,                //   4: 1 (fresh start, no backward compat)
+    pub graph_offset: u64,           //   8: byte offset of serialized graph
+    pub graph_size: u64,             //  16: byte size of graph section
+    pub weights_offset: u64,         //  24: byte offset of weights section
+    pub weights_size: u64,           //  32: byte size of weights section
+    pub section_table_offset: u64,   //  40: byte offset of section table
+    pub section_table_size: u64,     //  48: byte size of section table
+    pub total_size: u64,             //  56: total archive size
+    pub graph_checksum: [u8; 32],    //  64: blake3 hash of graph bytes
+    pub weights_checksum: [u8; 32],  //  96: blake3 hash of weight bytes
+    pub section_count: u32,          // 128: entries in section table
+    pub flags: u32,                  // 132: compression + feature flags
+    pub quantum_index: u32,          // 136: NEW — quantum level (0=Q0, 1=Q1, 3=Q3, 7=Q7)
+    pub _reserved: u32,             // 140: padding for alignment
+}
+// Total: 144 bytes
+```
+
+No backward compatibility with the old hologram archive format. This is version 1 of the ring-native format — a fresh start. Old `.holo` files are simply incompatible (different header size, different graph serialization). Models must be recompiled.
 
 ### Reusable existing code
 - [format/mod.rs](crates/hologram-archive/src/format/mod.rs): Header + section layout
-- [loader/mod.rs](crates/hologram-archive/src/loader/mod.rs): Zero-copy load
+- [loader/mod.rs](crates/hologram-archive/src/loader/mod.rs): Zero-copy load + madvise
 - [writer/mod.rs](crates/hologram-archive/src/writer/mod.rs): Archive writing
 - [weight/mod.rs](crates/hologram-archive/src/weight/mod.rs): Weight storage + dedup
-- [checksum/mod.rs](crates/hologram-archive/src/checksum/mod.rs): CRC32/Blake3
+- [checksum/mod.rs](crates/hologram-archive/src/checksum/mod.rs): blake3 implementation
 
 ---
 
 ## Phase 4: prism-compiler — Compilation Pipeline
 
-**Tests** (`prism-compiler/tests/compiler_conformance.rs`):
-
-1. Compile empty graph → valid .holo v2 archive
-2. Compile linear chain (Input→Prim(Add)→Output) → correct schedule, 1 level
-3. Fusion applied: Neg→Bnot chain fused in output
-4. Diamond graph: parallel fan-out scheduled into 2+ levels
-5. Constant propagation: Const(5)→Succ→ folded to Const(6)
-6. Cycle detection: graph with cycle → `CompileError`
-7. Liveness: intervals correct, no use-after-free in workspace assignments
-8. Workspace: buffer slot reuse respects liveness (slot never live in two intervals)
-9. Pattern recognition: Accumulate+Reduce+Broadcast annotated as matmul with tiling metadata
-
-**Tests for pattern stage** (`prism-compiler/tests/pattern_conformance.rs`):
-1. Matmul pattern recognized → `PatternAnnotation::Matmul { m, k, n, tile: TileSpec }`
-2. Tiling metadata: TM, TN, TK tile sizes derived from target register file
-3. Convolution pattern recognized → `PatternAnnotation::Conv { ... }`
-4. Attention pattern recognized → `PatternAnnotation::Attention { ... }`
-5. Non-pattern subgraph: no false positive match
-
-**Pipeline**:
+**Pipeline** (REVISED for hybrid):
 ```
-parse → validate → fuse → pattern → schedule → liveness → workspace → emit
+parse → validate → fuse → jit_partition → pattern → schedule → liveness → workspace → emit
 ```
 
-**Implementation**:
-- Fork `hologram-compiler` structure
-- Replace fusion stage with prism-graph algebraic fusion
-- Add `pattern_stage`: recognize matmul/conv/attention, annotate tiling
+- `jit_partition_stage`: NEW — identifies elementwise chains eligible for JIT (feature-gated, no-op on wasm32)
+- `pattern_stage`: Recognize matmul/conv/attention, annotate tiling + psumbook eligibility
 - Removed stages: `precision_stage` (parametric ring), `qedl_stage` (no boundary)
 
-### Reusable existing code
-- [compiler/mod.rs](crates/hologram-compiler/src/compiler/mod.rs): Pipeline orchestration
-- [liveness/mod.rs](crates/hologram-compiler/src/liveness/mod.rs): Liveness intervals
-- [workspace/mod.rs](crates/hologram-compiler/src/workspace/mod.rs): Workspace layout
+**Key addition — pattern_stage psumbook detection**:
+```
+PatternAnnotation::QuantizedMatmul { quantization: Q4/Q8, m, k, n }
+  → emits psumbook-aware tape kernel (preserves 32× multiply reduction)
+```
 
 ---
 
-## Phase 5: prism-jit — Cranelift JIT
+## Phase 5: prism-jit — Cranelift JIT (Feature-Gated)
 
-Cranelift is a new dependency (not present in hologram today). No backend trait. No dispatch. One code path: graph → Cranelift IR → native instructions → function pointer.
+**REVISED**: JIT is an optional accelerator, not a replacement. Feature-gated behind `jit` feature, never compiled for wasm32.
 
-### Phase 5A: Cranelift lowering for PrimOp
-
-**Tests** (`prism-jit/tests/jit_primop_conformance.rs`):
-
-For each PrimOp x each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. JIT-compiled unary op == `PrimOp::apply_unary` — exhaustive at Q0 (all 256), 10K samples at Q1/Q3/Q7
-2. JIT-compiled binary op == `PrimOp::apply_binary` — same sampling
-3. Type mapping: Q0→I8, Q1→I16, Q3→I32, Q7→I64 (verified via Cranelift IR inspection)
-4. **Bit-identical**: JIT result is not "close to" interpreted — it IS identical. Both are wrapping ALU ops.
-
-**Implementation** (`prism-jit/src/lower.rs`):
-```rust
-fn cranelift_type<Q: QuantumLevel>() -> Type {
-    match Q::BITS { 8 => I8, 16 => I16, 32 => I32, 64 => I64, 128 => I128, _ => unreachable!() }
-}
-fn lower_prim<Q: QuantumLevel>(builder: &mut FunctionBuilder, op: PrimOp, args: &[Value]) -> Value {
-    match op {
-        PrimOp::Add  => builder.ins().iadd(args[0], args[1]),
-        PrimOp::Sub  => builder.ins().isub(args[0], args[1]),
-        PrimOp::Mul  => builder.ins().imul(args[0], args[1]),
-        PrimOp::Neg  => builder.ins().ineg(args[0]),
-        PrimOp::Bnot => builder.ins().bnot(args[0]),
-        PrimOp::Succ => { let one = builder.ins().iconst(cranelift_type::<Q>(), 1); builder.ins().iadd(args[0], one) }
-        PrimOp::Pred => { let one = builder.ins().iconst(cranelift_type::<Q>(), 1); builder.ins().isub(args[0], one) }
-        PrimOp::Xor  => builder.ins().bxor(args[0], args[1]),
-        PrimOp::And  => builder.ins().band(args[0], args[1]),
-        PrimOp::Or   => builder.ins().bor(args[0], args[1]),
-    }
-}
+```toml
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cranelift-codegen = "0.115"
+cranelift-frontend = "0.115"
+cranelift-jit = "0.115"
+cranelift-module = "0.115"
+cranelift-native = "0.115"
 ```
-Each PrimOp lowers to exactly 1 Cranelift IR instruction (Succ/Pred: 1 const + 1 add/sub).
 
-### Phase 5B: Cranelift lowering for activations
+### Phase 5A–5B: Cranelift lowering for PrimOp + Activations
 
-**Tests** (`prism-jit/tests/jit_activation_conformance.rs`):
+_Unchanged from original plan._
 
-For each ActivationOp x each QuantumLevel {Q0, Q3, Q7}:
-1. JIT-compiled activation == `ActivationOp::apply()` — bit-identical for 256 sample points
-2. Piecewise polynomial: correct segment branching in generated code (test boundary inputs specifically)
-3. **Consistency oracle** (test-only): compare JIT result against f64 reference via encode/decode, verify within quantization step
+### Phase 5C: Cranelift lowering for elementwise chains (REVISED)
 
-**Implementation** (`prism-jit/src/lower_activation.rs`):
-- Lower `ActivationOp::decompose()` chain as sequence of Cranelift instructions
-- Piecewise polynomials: Cranelift `brif` for segment selection, Horner's method for evaluation
-- All Cranelift values are `cranelift_type::<Q>()` — integer types, never float
+**Scope reduced**: JIT compiles fused elementwise chains only — NOT matmul loop nests (those stay on tape with psumbook).
 
-### Phase 5C: Cranelift lowering for Accumulate + loop nests
+**Tests** (`prism-jit/tests/jit_chain_conformance.rs`):
+1. Chain of 3 unary ops: Relu → Sigmoid → Neg — JIT output bit-identical to sequential tape
+2. Chain of 5 mixed ops: Add → Relu → Mul → Sigmoid → Sub — bit-identical
+3. Shape-preserving: JIT chain on [1024] tensor produces same output as tape
+4. **No weight access**: JIT segment receives only arena buffers, never mmap'd weight bytes
 
-**Tests** (`prism-jit/tests/jit_accumulate_conformance.rs`):
+### Phase 5D: JIT module — compile segment (REVISED)
 
-1. Single accumulate: `acc + a * b` bit-identical to interpreted
-2. Reduction loop: `Σ_i a[i]` bit-identical to loop of wrapping_add
-3. Matmul 4x4 via tiled loop nest: bit-identical to interpreted matmul
-4. Matmul 64x64: bit-identical
-5. Broadcast + accumulate: correct address arithmetic (base + stride * index)
-
-**Implementation** (`prism-jit/src/lower_loop.rs`):
-- Loop emission: Cranelift basic blocks → branch → body → increment → compare → branch-back
-- Tiling: nested loops with tile sizes from compiler PatternAnnotation
-- Accumulate in inner loop: `imul` + `iadd`
-- Address computation: `base + stride * index` via `imul` + `iadd` on pointer-width integers
-
-### Phase 5D: JIT module — compile + execute
-
-**Tests** (`prism-jit/tests/jit_e2e_conformance.rs`):
-
-1. Linear chain: Input → Relu → Sigmoid → Output — JIT execute bit-identical to interpreted
-2. Diamond graph: parallel fan-out — JIT execute bit-identical to interpreted
-3. Matmul graph: 8x8 matmul — JIT execute bit-identical to interpreted
-4. Multiple executions: same JIT module, different inputs, correct each time
-5. Cache: second compile of same graph reuses cached function pointer
-6. Host adaptation: Q7 graph compiles on x86_64 (emits ADD r64, r64 equivalent) and on aarch64 (emits ADD Xd, Xn, Xm equivalent) — verified by Cranelift target detection
-
-**Implementation**:
 ```rust
-pub struct JitModule<Q: QuantumLevel> {
-    module: cranelift_jit::JITModule,
-    fn_ptr: *const u8,
-    _phantom: PhantomData<Q>,
-}
-impl<Q: QuantumLevel> JitModule<Q> {
-    pub fn compile(archive: &HoloArchive) -> Result<Self, JitError>;
-    pub unsafe fn execute(&self, inputs: &[&[Q::Word]], outputs: &mut [Vec<Q::Word>]);
-}
+/// Compile a chain of elementwise ops into a native function pointer.
+pub fn compile_segment(
+    ops: &[FloatOp],
+    input_shapes: &[&[usize]],
+    output_shape: &[usize],
+) -> Option<JitFnPtr>
 ```
-No `ComputeBackend`. No `BackendSelector`. No dispatch. The ring IS the execution model.
 
-### Phase 5E: Performance contracts
+The generated function loops over elements, reading from input pointers and writing to output. All intermediates stay in registers — this is the core JIT advantage.
 
-**Tests** (`prism-jit/tests/perf_contract.rs`):
+**ABI**: `fn(inputs: *const *const f32, output: *mut f32, count: usize)`
 
-Using `assert_throughput` pattern from existing [perf_contract.rs](crates/hologram-core/tests/perf_contract.rs) with 5x CI headroom:
+### Phase 5E: Performance contracts (REVISED)
+
+**Absolute budgets** with 5x CI headroom:
 1. JIT compile 100-node linear graph: < 100ms
-2. JIT-compiled Q0 unary op throughput: 1M ops in < 10ms (matches existing LUT budget)
-3. JIT-compiled composed chain (5 ops): 1M ops in < 50ms
-4. JIT-compiled accumulate (single): 1M ops in < 10ms
-5. JIT-compiled matmul 64x64 at Q7: < 1ms (native 64-bit ALU)
-6. Cache hit: second compile of same graph: < 1ms
+2. JIT-compiled chain (5 ops) throughput: 1M elements in < 50ms
+3. Cache hit: second compile of same graph: < 1ms
+
+**Relative regression gates** (run both old and new, compare):
+```
+prism-jit/tests/perf_regression.rs:
+  - Q4 matmul 512×512: throughput >= 0.8× current hologram LUT-GEMM
+  - Q8 matmul 512×512: throughput >= 0.8× current hologram LUT-GEMM
+  - Q0 activation batch (64KB): throughput >= 0.9× current ElementWiseView SIMD
+  - Q3 activation batch (64KB): throughput >= 0.5× current
+  - Full E2E TinyLlama decode token: latency <= 1.5× current
+```
 
 ---
 
 ## Phase 6: prism-compression — Parametric Compression
 
-Can proceed in parallel with Phase 5.
+_Unchanged from original plan, plus:_
 
-**Tests** (`prism-compression/tests/compression_conformance.rs`):
-
-For each QuantumLevel {Q0, Q1, Q3, Q7}:
-1. Ring-diff round-trip: compress → decompress == original (bit-identical, lossless)
-2. Ring-diff residuals: correlated data → residuals cluster near ZERO
-3. Stratum partitioning: `(BITS + 1)` bins at each level, each partition decompresses correctly
-4. Torus decomposition: configurable bit-split, round-trip exact
-5. ANS encode/decode: round-trip lossless
-6. Compression ratio: correlated data at Q7 compresses > 2:1
-
-**Implementation**:
-- Parametrize `ring_diff` over `RingWord`: `diff[i] = data[i].wrapping_sub(pred[i])`
-- Parametrize stratum histogram: `BITS + 1` bins
-- Torus decomposition: configurable bit positions, generic over `RingWord`
-- ANS backend unchanged (byte-level entropy coding)
-
-### Reusable existing code
-- [ring_diff.rs](crates/hologram-compression/src/ring_diff.rs): Ring-diff algorithm
-- [entropy/](crates/hologram-compression/src/entropy/): ANS backend
+**Future work (not blocking Phase 8)**: Per-weight compression with lazy decompression into bounded `WeightCache` with LRU eviction. This allows compressed archives on constrained devices without breaking mmap (HR-1). The per-tensor `compression_scheme: u8` field in weight metadata should be populated.
 
 ---
 
 ## Phase 7: Peripheral Crates
 
-Can proceed in parallel with Phase 5-6.
-
 ### prism-ffi
-- Tests: C ABI smoke tests (compile + link), WASM compilation gate
-- Implementation: `extern "C"` wrappers for compile/execute, opaque handles for JitModule
+- Tests: C ABI smoke tests, **WASM compilation gate** (HR-2)
+- Implementation: `extern "C"` wrappers for compile/execute
+- **WASM path uses tape execution only** — no JIT dependency
 
 ### prism-cli
-- Tests: `--help` produces output, `compile` subcommand produces .holo file, `run` executes and prints output
-- Subcommands: `compile`, `run`, `inspect`, `bench`
+- Tests: `--help`, `compile`, `run`, `inspect`
+- Add `--jit` flag to enable JIT segments (default on native, unavailable on wasm32)
 
 ### prism-bench
-- Tests: criterion benchmarks compile and run
-- Suites: ring ops per level, graph fusion, JIT compile latency, JIT execute throughput, matmul at each Q level, archive I/O
+- Suites: ring ops per level, graph fusion, JIT compile latency, JIT chain throughput, **tape vs JIT comparison**, matmul at each Q level, archive I/O
 
 ---
 
@@ -789,115 +417,140 @@ Can proceed in parallel with Phase 5-6.
 
 ### Phase 8A: Full pipeline E2E
 
-**Tests** (`tests/e2e_prism.rs`):
-
-1. **Linear chain**: build graph → compile → .holo → load → JIT → execute → verify output is bit-identical to interpreted ring ops
-2. **Diamond graph**: parallel fan-out through full pipeline
-3. **Matmul**: Accumulate/Reduce subgraph → compile → JIT → verify bit-identical to interpreted matmul
-4. **Cross-level**: same graph topology at Q0 and Q7, both produce correct ring-native results
-5. **Multi-model**: encoder + decoder in single .holo archive, sequential execution
-6. **Activation chain**: Input → encode → Relu → Sigmoid → Gelu → decode → Output, verify against oracle
+_Unchanged from original plan._
 
 ### Phase 8B: hologram-ai contract conformance
 
-hologram-ai consumes hologram's public API per ADR-0001. The refactored implementation must maintain this contract. The prism crates are an internal implementation — the public API stays `hologram::*`.
+**REVISED** — tape execution is primary path, JIT is transparent acceleration:
 
 **Tests** (`tests/hologram_ai_contract_conformance.rs`):
-
-1. **Graph construction**: `Graph`, `GraphBuilder`, `GraphOp`, `NodeId`, `CustomOpId` — hologram-ai builds graphs with `Prim(PrimOp::Add)`, `Activation(ActivationOp::Gelu)`, `Custom { id, arity }`, `Constant(ConstantId)`, `Accumulate`, `Reduce`
-2. **Custom op registry**: `CustomOpRegistry::new()`, `.register(id, arity, handler)`, `.dispatch(id, inputs, constants)` — hologram-ai registers SDPA, RoPE, Embedding, Dequantize handlers
-3. **Compile pipeline**: `compile(&graph) -> CompilationOutput` — produces a .holo archive
-4. **Archive I/O**: `HoloWriter::write()`, `HoloLoader::load()`, `load_from_bytes()`, `load_from_bytes_zero_copy()` — .holo format round-trips
-5. **JIT execution**: `JitModule::compile(archive)`, `execute(inputs, outputs)` — replaces `build_tape_from_plan` + `execute_tape`. The hologram-ai-facing API wraps JIT behind the same ergonomic surface.
-6. **KV cache**: `KvCacheState` for autoregressive generation — `execute_with_kv()` variant
-7. **Constant data**: `ConstantData::Bytes()` and `ConstantData::Deferred { ... }` for weight storage
-8. **Error types**: `GraphError`, `CompileError`, `ExecError` — same error taxonomy
-
-**hologram-ai op mapping (updated for ring-native)**:
-
-| AI Operation | Old GraphOp | New GraphOp |
-|---|---|---|
-| MatMul (any quantization) | `MatMulLut4/8/16(ConstantId)` | Accumulate+Reduce subgraph (compiler recognizes pattern) |
-| Activations (Gelu, Relu, Silu, Tanh, Sigmoid) | `Lut(LutOp::...)` | `Activation(ActivationOp::...)` |
-| Binary ops (Add, Mul, Sub, ...) | `Prim(PrimOp::...)` | `Prim(PrimOp::...)` (unchanged) |
-| Weight constants | `Constant(ConstantId)` | `Constant(ConstantId)` (unchanged) |
-| Attention, Norm, RoPE, Embed, Dequantize | `Custom { id, arity }` | `Custom { id, arity }` (unchanged) |
-
-**Key contract changes hologram-ai must adopt**:
-- `LutOp::Gelu` → `ActivationOp::Gelu` (enum rename, same semantics)
-- `MatMulLut4(cid)` → `build_matmul_subgraph(a, weights_cid, m, k, n)` (graph builder helper)
-- `FloatOp::*` → removed. All float operations expressed as ring-native `Activation`, `Prim`, or `Custom`
-- `build_tape_from_plan` + `execute_tape` → `JitModule::compile` + `execute` (API shape change)
-- `ElementWiseView` → not exposed (internal to fusion)
-- `.holo` archive version bumped to v2 (same magic, same loader API, new graph format)
+1. **Graph construction**: `Graph`, `GraphBuilder`, `GraphOp`, `NodeId` — monomorphic API (HR-4)
+2. **Custom op registry**: unchanged
+3. **Compile pipeline**: `compile(&graph) -> CompilationOutput` — unchanged
+4. **Archive I/O**: unchanged, blake3 checksums (HR-3)
+5. **Tape execution**: `build_tape_from_plan` + `execute_tape` — preserved as primary path
+6. **JIT acceleration**: JIT segments dispatched transparently inside tape loop (feature-gated)
+7. **KV cache**: `KvCacheState` for autoregressive — tape-backed, never JIT
+8. **Mmap weight access**: `ConstantData::Deferred` resolved O(1) via mmap slice (HR-1)
+9. **Error types**: `GraphError`, `CompileError`, `ExecError` — updated for ring-native ops
 
 ### Phase 8C: Remove old hologram crates, rename prism → hologram
 
-Once all E2E + contract tests pass:
-1. Remove `crates/hologram-*` (old implementation) from workspace
-2. Rename `crates/prism-*` → `crates/hologram-*` (the prism implementation IS hologram now)
-   - `prism-ring` → `hologram-ring` (was `hologram-core`)
-   - `prism-graph` → `hologram-graph` (same name, new internals)
-   - `prism-compiler` → `hologram-compiler` (same name, new internals)
-   - `prism-archive` → `hologram-archive` (same name, new internals)
-   - `prism-jit` → `hologram-jit` (new crate, replaces `hologram-exec`)
-   - `prism-compression` → `hologram-compression` (same name, new internals)
-   - `prism-ffi` → `hologram-ffi` (same name, new internals)
-   - `prism-cli` → `hologram-cli` (same name, new internals)
-   - `prism-bench` → `hologram-bench` (same name, new internals)
-3. Update root `Cargo.toml`: package name stays `hologram`, re-export from renamed crates
-4. Update `src/lib.rs`: flat re-exports maintain the `use hologram::*` public API surface
-5. Archive magic stays `HOLO` (not `PRSM`) — it's still hologram's format, just version-bumped
-6. Update `CLAUDE.md`, `AGENTS.md`, `README.md`, `hologram.repo.yaml`
-7. Binary name stays `hologram`
+**GATE**: Phase 8C must NOT proceed until:
+1. All E2E + contract tests pass
+2. All perf regression gates pass (Phase 5E)
+3. WASM compilation gate passes (Phase 7)
+4. Mmap O(1) weight access verified on constrained device profile (HR-1)
 
-The public API for hologram-ai is `use hologram::{Graph, GraphBuilder, GraphOp, NodeId, CustomOpId, CustomOpRegistry, ConstantData, ConstantId, ConstantStore, HoloWriter, HoloLoader, ...}`. This surface is preserved. The internals are parametric-ring + Cranelift JIT.
+Once gates pass:
+1. Remove `crates/hologram-*` (old) from workspace
+2. Rename `crates/prism-*` → `crates/hologram-*`
+   - `prism-ring` → `hologram-ring` (was `hologram-core`)
+   - `prism-graph` → `hologram-graph`
+   - `prism-compiler` → `hologram-compiler`
+   - `prism-archive` → `hologram-archive`
+   - `prism-jit` → `hologram-jit` (NEW, feature-gated)
+   - `prism-compression` → `hologram-compression`
+   - `prism-ffi` → `hologram-ffi`
+   - `prism-cli` → `hologram-cli`
+   - `prism-bench` → `hologram-bench`
+3. **hologram-exec preserved** — tape execution remains, with `TapeKernel::JitSegment` variant
+4. Update `src/lib.rs`: flat re-exports, `GraphOp<Q>` aliased to hide generic (HR-4)
+5. Archive magic stays `HOLO`, binary name stays `hologram`
+6. Update `CLAUDE.md`, `AGENTS.md`, `README.md`, `hologram.repo.yaml`
 
 ---
 
-## What Is Eliminated (complete list)
-
-Every item below existed because the ring was too small or the architecture allowed escape hatches:
+## What Is Eliminated
 
 | Eliminated | Reason | Replaced By |
 |---|---|---|
-| `ElementWiseView` (256B LUT) | Ring has sufficient precision | `ComposedOperation` (ring-primitive chain) |
-| `ElementWiseView16` (128KB LUT) | Same | Same |
-| All activation LUT tables (21×256B, 21×128KB) | Same | Piecewise polynomial in ring arithmetic |
-| `LutOp` enum | LUT concept eliminated | `ActivationOp` with `decompose()` |
-| `FloatOp` enum (70+ variants) | Breaks ring closure | Ring-native computation |
+| `ElementWiseView16` (128KB LUT) | Parametric ring | Polynomial at Q3+, LUT preserved at Q0/Q1 |
+| `FloatOp` enum (70+ variants) | Breaks ring closure | Ring-native `Activation`, `Prim`, `Custom` |
 | `FusedFloatChain` | Same | Algebraic fusion of ring ops |
-| `QedlBoundary` | No float/ring boundary exists | Encoding at graph I/O only |
-| `ComputeBackend` / `BackendSelector` | Ring ops are ALU, not GPU | Cranelift JIT |
-| Metal backend (32K lines) | Same | Same |
-| WebGPU backend (42K lines) | Same | Same |
-| `TapeKernel` / tape interpreter | Compilation replaces interpretation | Cranelift JIT |
-| `BufferArena` | Pointer arithmetic in JIT code | Workspace layout + JIT addressing |
-| `MatMulLut4/8/16` graph ops | Special cases eliminated | Accumulate+Reduce subgraph pattern |
-| `BatchMatMulLut4/8/16` graph ops | Same | Same |
-| `RingPrimUnary`/`RingPrimBinary` graph ops | Redundant with `Prim(PrimOp)` | `Prim(PrimOp)` |
-| `lut_gemm/` module (psumbook, orbit) | LUT-GEMM replaced | JIT-compiled tiled matmul loop nest |
-| `float_dispatch/` module | Float domain eliminated | Ring-native activations |
-| `precision_stage` in compiler | Parametric ring, no promotion | QuantumLevel parameter |
-| `qedl_stage` in compiler | No quantize/dequantize boundary | Encoding at graph I/O only |
-| `CurvatureFlux` runtime tracking | Dynamic precision selection eliminated | Compile-time quantum level |
+| `QedlBoundary` | No float/ring boundary | Encoding at graph I/O only |
+| `RingPrimUnary`/`RingPrimBinary` | Redundant | `Prim(PrimOp)` |
+| `precision_stage` in compiler | Parametric ring | QuantumLevel parameter |
+| `qedl_stage` in compiler | No boundary | Encoding at graph I/O only |
+| `CurvatureFlux` runtime tracking | Dynamic selection eliminated | Compile-time quantum level |
+| CRC checksums | HR-3 | blake3 only |
 
-## What Survives (algebraically motivated)
+## What Survives
 
 | Surviving | Why |
 |---|---|
-| 10 ring primitives (Neg, Bnot, Succ, Pred, Add, Sub, Mul, Xor, And, Or) | UOR foundation ontology |
-| Dihedral group D_{2^n} (Neg and Bnot as generators) | Ring symmetry group |
-| Critical identity `succ = neg ∘ bnot` | Fundamental ring relation |
-| Observable algebra (stratum, curvature, rank, domain) | Ring element classification |
-| Encoding pipeline (π-F-λ) | Bridge between continuous and ring domains |
-| Graph IR (nodes, edges, scheduling, liveness, workspace) | Computation representation |
-| Algebraic fusion (now purely ring-native) | Graph optimization |
-| Accumulation pattern (matmul as iterated add/mul) | Universal compute primitive |
-| UOR trait hierarchy (Ring, Datum, Involution, DihedralGroup, NDA, CD) | Ontological grounding |
-| Arena-based graph with generational indexing | Memory safety |
-| rkyv serialization, content-addressed archives | Portable persistence |
-| Cayley-Dickson chain (R→C→H→O) | Algebraic structure of quantum levels |
+| 10 ring primitives | UOR foundation ontology |
+| Tape execution engine | HR-1 (mmap weight access), HR-2 (WASM), HR-5 (psumbook) |
+| LUT-GEMM psumbook kernel | HR-5 — 32× fewer multiplies for Q4 |
+| ElementWiseView at Q0 (256B LUT) | HR-5 — O(1) per element, SIMD accelerated |
+| BufferArena + zero-allocation | Decode optimization (2× throughput) |
+| Platform prefetch hints | Weight page fault overlap |
+| KvCacheState (tape-backed) | Autoregressive generation |
+| Metal/WebGPU backends | Hardware acceleration |
+| mmap zero-copy loading | HR-1 |
+| Dihedral group, critical identity, observables | Ring algebraic structure |
+| Encoding pipeline (π-F-λ) | Graph I/O boundary |
+| Graph IR, scheduling, liveness, workspace | Computation representation |
+| Algebraic fusion (now ring-native) | Graph optimization |
+| UOR trait hierarchy | Ontological grounding |
+| rkyv serialization, blake3 archives | Portable persistence |
+
+---
+
+## Quantified Performance Expectations
+
+### LUT-GEMM (preserved on tape, HR-5)
+
+| Metric | Q4 LUT-GEMM | Q8 LUT-GEMM |
+|--------|-------------|-------------|
+| Multiplies per output element | 16 (centroids) | 256 (centroids) |
+| Multiply reduction vs naive | **32×** | **2×** |
+| L1 working set | 64B (Psumbook4) | 1KB (Psumbook8) |
+
+### Activation (hybrid, HR-5)
+
+| Path | Throughput |
+|------|------------|
+| Q0 LUT + AVX2 vpshufb (preserved) | ~1.7B elem/s |
+| Q0 LUT + NEON vqtbl1q (preserved) | ~800M elem/s |
+| Q3+ piecewise polynomial (new) | ~200M elem/s |
+
+### JIT Chain Fusion (new benefit)
+
+| Scenario | Tape (current) | JIT segment |
+|----------|---------------|------------|
+| 5-op elementwise chain on 64KB tensor | 5 loops, 5 arena round-trips | 1 fused loop, registers only |
+| Estimated speedup | 1× | ~2-3× for chain-heavy subgraphs |
+
+### Tape dispatch overhead: <1% of inference — not the bottleneck
+
+---
+
+## KV Cache Integration
+
+KvCacheState stays on tape path (never JIT):
+- `KvWrite`/`KvRead` TapeKernel variants preserved with heads-first/seq-first transpose
+- `ExecutionContext.position_offset` drives RoPE + decode optimization
+- `advance()` call in execution epilogue preserved
+- KV ops serialize (no parallel execution — RefCell borrow safety)
+
+---
+
+## Error Taxonomy Updates
+
+- `InsufficientKernel { op, dtype }` → update to reference ring-native ops + quantum levels
+- `ExecError::UnsupportedOp` → update for ring-native op set
+- `ArchiveError::InvalidMagic` / `ArchiveError::UnsupportedVersion` for old archives
+- PX_5 model (Insufficient vs Contradictory) preserved conceptually
+
+---
+
+## Archive Migration
+
+- No backward compatibility — old archives are simply incompatible (different header layout, different graph serialization)
+- Version stays 1 (fresh start for the ring-native format)
+- Models must be recompiled from source (ONNX/GGUF → new hologram pipeline)
+- No migration tool needed — recompilation is the migration
 
 ---
 
@@ -905,16 +558,15 @@ Every item below existed because the ring was too small or the architecture allo
 
 | Existing Test | New Location | Notes |
 |---|---|---|
-| `ring_conformance.rs` | `prism-ring/tests/ring_word_conformance.rs` + `primop_conformance.rs` + `ring_uor_conformance.rs` | Parametric over all levels; adds UOR trait tests |
-| `q3_conformance.rs` | `prism-ring/tests/ring_uor_conformance.rs` (CD chain section) | Octonion non-associativity, associator at Q7 |
-| `carry_conformance.rs` | `prism-ring/tests/encoding_conformance.rs` | Lift/lower → encoding embed/lift |
-| `perf_contract.rs` | `prism-jit/tests/perf_contract.rs` | Budgets for JIT, not LUT |
-| `float_conformance.rs` | **Eliminated** — f64 refs reused as test oracle in `activation_conformance.rs` | FloatOps gone; references become oracle |
-| `gemm_conformance.rs` | `prism-graph/tests/matmul_pattern_conformance.rs` | Matmul as subgraph, not LUT-GEMM kernel |
-| `quantize_conformance.rs` | **Eliminated** | No quantization orbit model |
-| `streaming_conformance.rs` | `prism-jit/tests/jit_e2e_conformance.rs` | Streaming via JIT |
-| `shape_chain.rs` | `prism-graph/tests/graph_conformance.rs` | Shape propagation in graph |
-| `tests/e2e.rs` | `tests/e2e_prism.rs` | Full pipeline with JIT |
+| `ring_conformance.rs` | `prism-ring/tests/ring_word_conformance.rs` + `primop_conformance.rs` + `ring_uor_conformance.rs` | Parametric over all levels |
+| `q3_conformance.rs` | `prism-ring/tests/ring_uor_conformance.rs` (CD chain) | |
+| `carry_conformance.rs` | `prism-ring/tests/encoding_conformance.rs` | |
+| `perf_contract.rs` | `prism-jit/tests/perf_contract.rs` + `perf_regression.rs` | Absolute + relative gates |
+| `float_conformance.rs` | **Eliminated** — refs reused as oracle in `activation_conformance.rs` | |
+| `gemm_conformance.rs` | `prism-graph/tests/matmul_pattern_conformance.rs` | Matmul as subgraph |
+| `quantize_conformance.rs` | **Eliminated** | |
+| `streaming_conformance.rs` | `prism-jit/tests/jit_chain_conformance.rs` | |
+| `tests/e2e.rs` | `tests/e2e_prism.rs` | Full pipeline |
 
 ---
 
@@ -931,16 +583,148 @@ Phase 1A─→1B─→1C─→1D─→1E─→1F─→1G─→1H─→1I─→1J
     │       │
     │       └── Phase 4                 (prism-compiler, needs 2C+3)
     │               │
-    │               └── Phase 5A─→5B─→5C─→5D─→5E  (prism-jit)
+    │               └── Phase 5A─→5B─→5C─→5D─→5E  (prism-jit, feature-gated)
     │
     ├── Phase 6                         (prism-compression, parallel with 2-5)
     │
     ├── Phase 7                         (ffi/cli/bench, parallel with 5-6)
     │
-    └── Phase 8A─→8B─→8C                 (E2E + contract + rename, needs all above)
+    └── Phase 8A─→8B─→8C               (E2E + contract + rename, GATED)
 ```
 
 **Critical path**: 0 → 1 → 2 → 4 → 5 → 8
+**Phase 8C gate**: perf regression + WASM + mmap verification
+
+---
+
+## Concurrency Model: Async + Parallel + SIMD
+
+The current system supports three independent concurrency axes. All must be preserved.
+
+### Feature Axes
+
+| Axis | Technology | Feature flag | Purpose |
+|------|-----------|-------------|---------|
+| **Async** | `tokio::task::spawn_blocking` | `async` | Non-blocking wrappers for compilation + execution |
+| **Parallel** | `rayon::par_iter` | `parallel` | Level-wise node parallelism + column-parallel LUT-GEMM |
+| **SIMD** | AVX2/SSE4.2/NEON intrinsics | `simd` | Vectorized LUT table application (Q0 activations) |
+
+### How They Compose
+
+```
+AsyncExecutor::execute(archive, inputs).await
+  → tokio::spawn_blocking (offload to blocking thread)
+    → execute_tape() (sync, in blocking thread)
+      → for each level:
+          if level.len() >= 4 && !needs_shared_state:
+            rayon::par_iter on instructions     ← PARALLEL
+              → dispatch_kernel:
+                  LutView → apply_slice()       ← SIMD (AVX2/NEON)
+                  MatMulLut4 → psumbook kernel  ← sequential (RefCell)
+          else:
+            sequential with prefetch            ← PREFETCH (x86/ARM)
+```
+
+### Adaptive Parallel Dispatch
+
+| Threshold | Value | Purpose |
+|-----------|-------|---------|
+| `PARALLEL_THRESHOLD` | 4 nodes | Min nodes for rayon dispatch |
+| `SMALL_BUFFER_BYTES` | 256 bytes | Raises threshold to 16 for tiny ops |
+| `PAR_COL_THRESHOLD` | 64 columns | Min columns for parallel LUT-GEMM |
+
+Ops that hold shared mutable state (`MatMulLut4/8`, `KvWrite/KvRead`) force sequential execution for their level. Other ops in the same level still benefit from prefetch overlap.
+
+### SIMD Dispatch (Compile-Time)
+
+| ISA | Intrinsic | Throughput | Target |
+|-----|-----------|------------|--------|
+| AVX2 | `vpshufb` | 32 bytes/iter, ~0.6 cycles/elem | x86_64 |
+| SSE4.2 | `pshufb` | 16 bytes/iter | x86_64 fallback |
+| NEON | `vqtbl1q_u8` | 16 bytes/iter, ~1.25 cycles/elem | aarch64 |
+| Scalar | `table[byte]` | 1 byte/iter, ~4 cycles/elem | All platforms + WASM |
+
+Detection is **compile-time only** (`#[cfg(target_feature)]`), no runtime CPUID. Scalar remainder always handled.
+
+### What the Refactor Must Preserve
+
+1. **Rayon level parallelism** — JitSegment dispatch must be parallelizable (no shared state)
+2. **Column-parallel LUT-GEMM** — psumbook kernel stays on tape with per-thread stack-allocated Psumbook4 (64B, no false sharing)
+3. **SIMD activation dispatch** — ElementWiseView at Q0/Q1 preserved with AVX2/NEON paths
+4. **Prefetch overlap** — sequential path prefetches next instruction's inputs + weight pages
+5. **Async wrappers** — `spawn_blocking` pattern preserved (tape is sync, async is wrapper)
+6. **No rayon/tokio conflict** — separate thread pools, no contention
+
+---
+
+## Additional Design Decisions
+
+### no_std / Bare-Metal
+
+- `hologram-ring` (was hologram-core): `#![no_std]`, all `const fn`, zero allocations. `StaticBuf<N>` exists for stack-allocated buffers.
+- `hologram-exec`: **requires `std`** — uses `Vec`, `HashMap`, mmap. No bare-metal story.
+- **Gap**: No execution path for `no_std` targets beyond ring primitives. Embedded/RTOS devices can use `hologram-ring` for ring arithmetic but not graph execution.
+- **Recommendation**: Accept this limitation. Ring primitives on bare-metal, full execution requires std + allocator.
+
+### Custom Op Boundaries
+
+Custom ops (`CustomHandler = Arc<dyn Fn + Send + Sync>`) are opaque closures. They:
+- Act as **hard fusion boundaries** — fusion cannot cross them
+- Have no shape contract — output shape inferred from byte count
+- Are baked into `TapeKernel::Custom(handler)` at tape build time
+
+**Impact on JIT partitioning**: A JIT-eligible chain interrupted by a custom op splits into two JIT segments with the custom op on tape between them. The `jit_partition_stage` must detect custom ops as chain terminators.
+
+### Dynamic Shape Handling
+
+Current shape resolution uses heuristic fallbacks (`shape_resolve.rs`):
+1. Input TensorMeta (if available)
+2. Compiled baked size
+3. Buffer-length inference (`floats / k → m`)
+4. Shape overrides from `TapeContext.shape_overrides`
+
+In the ring-native model:
+- `FloatDType` eliminated — dtype derived from quantum level (`Q3 → u32`)
+- `TensorMeta` simplified: `ndim + dims[8]`, no dtype field (it's always `Q::Word`)
+- Shape overrides preserved for variable-length sequences (autoregressive decode)
+- KV cache shapes still resolved at runtime from `write_pos`
+
+### Multi-Q Archives
+
+The plan adds `quantum_index: u32` to the archive header — **one Q level per archive**. Mixed-Q graphs are not supported in a single archive. This is simpler than per-node Q selection (which the current precision_stage does) but means:
+- All ops in one archive run at the same Q level
+- Mixed-precision models need separate archives or a single Q level chosen conservatively
+
+### Profiling
+
+The `profile` feature flag exists but is unused. The refactor should add:
+- Per-kernel timing via `std::time::Instant` guards (behind `profile` feature)
+- JIT vs tape annotation in profiling output
+- `TapeInstruction.kernel_name: &'static str` for diagnostic output
+
+### Cranelift Versioning
+
+Cranelift is pre-1.0 with breaking changes across minor versions. Strategy:
+- Pin to a specific Cranelift version (e.g., 0.115.x)
+- Track wasmtime release cycle for tested combinations
+- Feature-gate behind `jit` — users who don't need JIT avoid the dependency entirely
+- Treat Cranelift upgrade as a separate PR with JIT conformance test gate
+
+### JitFnPtr Thread Safety
+
+`JitFnPtr` wraps a raw function pointer to JIT-compiled code. Requirements:
+- JIT-compiled code is position-independent and read-only after compilation → **safe to share across threads**
+- Implement `unsafe impl Send for JitFnPtr {}` and `unsafe impl Sync for JitFnPtr {}` with safety comment
+- `Drop` must deallocate JIT memory via `cranelift_jit::JITModule` (must happen on owning thread or be `Send`)
+- Parallel level execution can dispatch JitSegment across rayon threads safely
+
+---
+
+## Build Time Impact
+
+- **Current**: 132 packages, ~566 MB release, ~40-50 sec CI
+- **Cranelift addition**: +20-30 sec incremental, ~130 MB
+- **Mitigation**: feature-gated, isolated crate, CI cache (`Swatinem/rust-cache@v2`)
 
 ---
 
@@ -953,13 +737,14 @@ cargo clippy --workspace -- -D warnings  # no warnings
 cargo fmt --all -- --check          # formatted
 ```
 
-After Phase 5D (JIT E2E):
+After Phase 5E (JIT + regression):
 ```bash
-cargo test -p prism-jit             # JIT conformance
+cargo test -p prism-jit             # JIT conformance + perf regression
 cargo bench -p prism-bench          # performance baselines
 ```
 
 After Phase 8A (full E2E):
 ```bash
 cargo test --workspace              # everything including e2e_prism
+cargo test --target wasm32-unknown-unknown -p prism-ring  # WASM gate
 ```
