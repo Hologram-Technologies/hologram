@@ -24,7 +24,7 @@ pub struct UnsignedEncoding24;
 impl Encoding24 for UnsignedEncoding24 {
     #[inline]
     fn embed(&self, val: f64) -> u32 {
-        (val.clamp(0.0, 1.0) * MAX_Q2).round() as u32 & 0x00FF_FFFF
+        libm::round(val.clamp(0.0, 1.0) * MAX_Q2) as u32 & 0x00FF_FFFF
     }
     #[inline]
     fn lift(&self, raw: u32) -> f64 {
@@ -42,7 +42,7 @@ impl Encoding24 for SignedEncoding24 {
     #[inline]
     fn embed(&self, val: f64) -> u32 {
         let half = MAX_Q2 / 2.0;
-        (val.clamp(-1.0, 1.0) * half + half).round() as u32 & 0x00FF_FFFF
+        libm::round(val.clamp(-1.0, 1.0) * half + half) as u32 & 0x00FF_FFFF
     }
     #[inline]
     fn lift(&self, raw: u32) -> f64 {
@@ -61,8 +61,9 @@ impl Encoding24 for AngleEncoding24 {
     #[inline]
     fn embed(&self, val: f64) -> u32 {
         use core::f64::consts::TAU;
-        let norm = val.rem_euclid(TAU) / TAU;
-        (norm * MAX_Q2).round() as u32 & 0x00FF_FFFF
+        let norm = libm::fmod(val, TAU);
+        let norm = if norm < 0.0 { norm + TAU } else { norm } / TAU;
+        libm::round(norm * MAX_Q2) as u32 & 0x00FF_FFFF
     }
     #[inline]
     fn lift(&self, raw: u32) -> f64 {
