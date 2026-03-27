@@ -14,6 +14,32 @@
 - [x] MatMul optimization — [plan](plans/020-matmul-optimization.md)
 - [x] Epilogue fusion (Plan 005 Phase 2) — [plan](plans/030-epilogue-fusion.md)
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
+- [x] Shape-aware tape execution API (feat/ai-optimization)
+
+## Sprint 26: UOR 0.1.0 Migration — Algebraic Performance Acceleration
+
+**Plan**: [plans/033-uor-migration.md](plans/033-uor-migration.md)
+
+Goal: merge the Q0→Q3 Cayley-Dickson algebraic acceleration chain from
+`feat/uor0.1.0-migration`. Key wins: ~256× faster quantization, ~2× fewer MACs
+via orbit compression, 24 inline hot-path kernels, cache-optimized fiber-ordered
+GEMM, carry-driven dynamic precision dispatch, Q1 view fusion, and platform
+prefetch.
+
+### Merge
+- [ ] **M.1**: Merge `feat/ai-optimization` → `main`
+- [ ] **M.2**: Merge `origin/feat/uor0.1.0-migration` → `main` (resolve `tape.rs` conflict)
+- [ ] **M.3**: Verify: `cargo test` + `cargo clippy` + `cargo fmt --check`
+
+### New Modules (from migration branch)
+- Q1/Q2/Q3 algebraic types (`hologram-core/src/{q1,q2,q3}/`)
+- Carry-driven precision lifting (`hologram-core/src/carry/`)
+- Orbit compression + Q16 quantization (`hologram-exec/src/lut_gemm/{orbit,quantize_q1,psumbook_q1}.rs`)
+- Precision + QEDL compiler passes (`hologram-compiler/src/{precision,qedl}/`)
+- Q1 view fusion pass (`hologram-graph/src/fusion/q1_view_fusion.rs`)
+- 58 new conformance + performance-contract tests
+
+---
 
 ## Sprint 25: Parallel Compilation + BLAKE3 Checksums
 
