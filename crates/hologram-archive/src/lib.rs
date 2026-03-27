@@ -21,7 +21,7 @@ pub use entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId};
 pub use error::{ArchiveError, ArchiveResult};
 pub use format::header::HoloHeader;
 pub use loader::bytes::{
-    decompress_archive, is_compressed, load_from_bytes, load_from_bytes_unchecked,
+    decompress_archive, is_compressed, load_auto, load_from_bytes, load_from_bytes_unchecked,
     load_from_bytes_zero_copy,
 };
 pub use loader::plan::LoadedPlan;

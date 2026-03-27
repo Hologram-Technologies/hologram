@@ -87,6 +87,26 @@ pub fn load_from_bytes(data: &[u8]) -> ArchiveResult<LoadedPlan> {
     load_from_bytes_inner(data, true)
 }
 
+/// Load a `.holo` archive, auto-detecting pipeline format.
+///
+/// If the archive is a pipeline wrapper (empty graph with a pipeline section),
+/// returns the first model's [`LoadedPlan`]. Otherwise identical to [`load_from_bytes`].
+pub fn load_auto(data: &[u8]) -> ArchiveResult<LoadedPlan> {
+    let plan = load_from_bytes_inner(data, true)?;
+    if plan.graph().nodes.is_empty()
+        && plan
+            .sections()
+            .find(crate::section::SECTION_PIPELINE)
+            .is_some()
+    {
+        let pipeline = crate::loader::pipeline::LoadedPipeline::from_bytes(data)?;
+        if let Some(model) = pipeline.into_first_model() {
+            return Ok(model);
+        }
+    }
+    Ok(plan)
+}
+
 /// Load a .holo archive without checksum verification.
 ///
 /// Skips the BLAKE3 checksum on the weights region, which avoids reading
