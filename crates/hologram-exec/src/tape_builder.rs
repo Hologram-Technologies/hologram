@@ -6,13 +6,12 @@
 //!
 //! Built once at model load time, amortized across all inference calls.
 
-use std::collections::HashMap;
-
 use hologram_archive::format::graph::SerializedGraph;
-use hologram_core::op::{FloatDType, FloatOp};
+use hologram_core::op::{FloatDType, FloatOp, PrimOp};
 use hologram_graph::graph::node::{InputSource, NodeId};
 use hologram_graph::graph::GraphOp;
 use hologram_graph::schedule::ExecutionSchedule;
+use smallvec::SmallVec;
 
 use crate::error::{ExecError, ExecResult};
 use crate::kv::CustomOpRegistry;
@@ -48,8 +47,8 @@ pub fn build_tape(
         }
     }
 
-    let dtypes: HashMap<NodeId, FloatDType> = sg.node_dtypes_map();
-    let shapes: HashMap<NodeId, Vec<usize>> = sg.node_shapes_map();
+    let dtypes: Vec<Option<FloatDType>> = sg.node_dtypes_vec(max_idx);
+    let shapes: Vec<Option<&[usize]>> = sg.node_shapes_vec(max_idx);
 
     // Build lookup from graph-input index → Input node's NodeId.
     // Graph inputs are seeded into the arena at their node's index; compute ops
@@ -63,6 +62,15 @@ pub fn build_tape(
 
     let total_nodes: usize = schedule.levels.iter().map(|l| l.node_ids.len()).sum();
     let mut tape = EnumTape::with_capacity(total_nodes, schedule.levels.len());
+
+    // Build-time involution fold: tracks the PrimOp discriminant emitted per
+    // output arena slot. When a byte involution (Neg or Bnot) has a single
+    // input produced by the same involution, the two cancel to identity →
+    // emit Passthrough instead.
+    //
+    // Zero-clone: PrimOp is Copy (1 byte); we only track the discriminant,
+    // not the full 264-byte GraphOp. Flat Vec indexing avoids HashMap hashing.
+    let mut last_prim: Vec<Option<PrimOp>> = vec![None; max_idx];
 
     for level in &schedule.levels {
         for &node_id in &level.node_ids {
@@ -83,14 +91,12 @@ pub fn build_tape(
                 _ => {}
             }
 
-            // Resolve kernel enum variant.
-            let kernel = resolve_kernel(&node.op, registry)?;
-
             // Pre-compute output elem_size.
             let output_elem_size = compute_elem_size(node_id, &node.op, &dtypes);
 
             // Collect input indices — resolve both Node and GraphInput sources.
-            let input_indices: Vec<u32> = node
+            // SmallVec<[u32; 2]>: avoids heap allocation for ≤2 inputs (~95% of ops).
+            let input_indices: SmallVec<[u32; 2]> = node
                 .inputs
                 .iter()
                 .filter_map(|slot| match slot.source {
@@ -101,6 +107,36 @@ pub fn build_tape(
                     InputSource::None => None,
                 })
                 .collect();
+
+            // Resolve kernel enum variant.
+            // Build-time involution fold: if both this node and its sole input
+            // are the same byte involution (Neg or Bnot), they cancel to
+            // identity — emit Passthrough to skip redundant computation.
+            // Zero-clone: compares 1-byte PrimOp discriminants, not 264-byte GraphOp.
+            let kernel = if is_byte_involution(&node.op) && input_indices.len() == 1 {
+                let input_prim = last_prim.get(input_indices[0] as usize).copied().flatten();
+                if let GraphOp::Prim(p) = &node.op {
+                    if input_prim == Some(*p) {
+                        TapeKernel::Passthrough
+                    } else {
+                        resolve_kernel(&node.op, registry)?
+                    }
+                } else {
+                    resolve_kernel(&node.op, registry)?
+                }
+            } else {
+                resolve_kernel(&node.op, registry)?
+            };
+
+            // Track PrimOp discriminant for Prim nodes; None for all others.
+            // PrimOp is Copy — no heap allocation, no clone.
+            let nidx = node_id.index() as usize;
+            if nidx < max_idx {
+                last_prim[nidx] = match &node.op {
+                    GraphOp::Prim(p) => Some(*p),
+                    _ => None,
+                };
+            }
 
             // Pre-compute output byte size hint from compiled shapes.
             let output_byte_hint = compute_output_byte_hint(node_id, &shapes, output_elem_size);
@@ -162,6 +198,12 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
                     instr.passthrough = true;
                 }
             }
+            // Identity passthrough: zero-copy forward; always set passthrough.
+            TapeKernel::Passthrough if instr.input_indices.len() == 1 => {
+                if is_single_consumer(instr.input_indices[0]) {
+                    instr.passthrough = true;
+                }
+            }
             // Unary inline ops: reuse input buffer in-place if single consumer.
             TapeKernel::InlineRelu
             | TapeKernel::InlineNeg
@@ -183,6 +225,15 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
     }
 }
 
+/// Returns true if `op` is a self-inverse byte operation (Neg or Bnot).
+///
+/// These are the only ops where `ByteInvolution` implements `Involution<HoloPrimitives>` —
+/// applying them twice returns the original value, making the pair foldable to Passthrough.
+#[inline]
+fn is_byte_involution(op: &GraphOp) -> bool {
+    matches!(op, GraphOp::Prim(PrimOp::Neg) | GraphOp::Prim(PrimOp::Bnot))
+}
+
 /// Resolve a `GraphOp` to a [`TapeKernel`] enum variant.
 ///
 /// No closures, no heap allocation — just selects the right variant
@@ -192,6 +243,8 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         GraphOp::Float(fop) => Ok(resolve_float_kernel(fop)),
         GraphOp::FusedFloatChain(chain) => Ok(TapeKernel::FusedFloatChain(chain.clone())),
         GraphOp::Output => Ok(TapeKernel::Output),
+        GraphOp::Passthrough => Ok(TapeKernel::Passthrough),
+        GraphOp::FusedView16(v) => Ok(TapeKernel::LutView16(v.clone())),
         GraphOp::Lut(_) | GraphOp::FusedView(_) => {
             let view = op
                 .to_view()
@@ -214,6 +267,17 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
             Ok(TapeKernel::MatMulLut8(*cid))
         }
+        GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
+            Ok(TapeKernel::MatMulLut16(*cid))
+        }
+        GraphOp::RingPrimUnary(p, level) => Ok(TapeKernel::RingPrimUnary {
+            op: *p,
+            level: *level,
+        }),
+        GraphOp::RingPrimBinary(p, level) => Ok(TapeKernel::RingPrimBinary {
+            op: *p,
+            level: *level,
+        }),
         GraphOp::Custom { id, arity: _ } => {
             let reg = registry.ok_or_else(|| {
                 ExecError::UnsupportedOp(format!(
@@ -354,9 +418,10 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
 ///
 /// Uses the compiled dtype when available, falling back to the op's
 /// declared output dtype. Default: 4 (f32).
-fn compute_elem_size(node_id: NodeId, op: &GraphOp, dtypes: &HashMap<NodeId, FloatDType>) -> u8 {
+fn compute_elem_size(node_id: NodeId, op: &GraphOp, dtypes: &[Option<FloatDType>]) -> u8 {
     // Try compiled dtype first (most reliable).
-    if let Some(dtype) = dtypes.get(&node_id) {
+    let idx = node_id.index() as usize;
+    if let Some(Some(dtype)) = dtypes.get(idx) {
         return dtype.byte_size() as u8;
     }
     // Infer from op's output dtype declaration.
@@ -375,12 +440,9 @@ fn compute_elem_size(node_id: NodeId, op: &GraphOp, dtypes: &HashMap<NodeId, Flo
 ///
 /// Returns the product of shape dimensions × element size, or 0 if the
 /// shape is unknown or contains a 0-sentinel (dynamic dimension).
-fn compute_output_byte_hint(
-    node_id: NodeId,
-    shapes: &HashMap<NodeId, Vec<usize>>,
-    elem_size: u8,
-) -> u32 {
-    let Some(shape) = shapes.get(&node_id) else {
+fn compute_output_byte_hint(node_id: NodeId, shapes: &[Option<&[usize]>], elem_size: u8) -> u32 {
+    let idx = node_id.index() as usize;
+    let Some(Some(shape)) = shapes.get(idx) else {
         return 0;
     };
     if shape.is_empty() {
@@ -406,7 +468,9 @@ fn compute_weight_offset(
     constants: &hologram_graph::constant::ConstantStore,
 ) -> u32 {
     let cid = match kernel {
-        TapeKernel::MatMulLut4(cid) | TapeKernel::MatMulLut8(cid) => *cid,
+        TapeKernel::MatMulLut4(cid)
+        | TapeKernel::MatMulLut8(cid)
+        | TapeKernel::MatMulLut16(cid) => *cid,
         _ => return 0,
     };
     match constants.get(cid) {

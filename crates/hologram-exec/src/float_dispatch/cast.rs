@@ -211,10 +211,12 @@ fn dequantize_q6_k(data: &[u8]) -> Vec<f32> {
 /// quant: 0=f32, 1=Q4_0, 2=Q8_0, 3=Q6_K.
 pub(super) fn decode_weights(data: &[u8], quant: u8) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match quant {
+        0 => cast_f32(data),
         1 => Ok(std::borrow::Cow::Owned(dequantize_q4_0(data))),
         3 => Ok(std::borrow::Cow::Owned(dequantize_q6_k(data))),
-        // TODO: Q8_0 dequantization
-        _ => cast_f32(data),
+        _ => Err(crate::error::ExecError::UnsupportedOp(format!(
+            "unsupported weight quantization format: quant={quant}"
+        ))),
     }
 }
 

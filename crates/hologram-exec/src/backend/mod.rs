@@ -306,6 +306,7 @@ impl ComputeBackend for CachedWebGpuBackend {
 /// List all backends available in this build.
 #[must_use]
 pub fn available_backends() -> Vec<&'static str> {
+    #[allow(unused_mut)]
     let mut v = vec!["cpu"];
     #[cfg(has_metal)]
     v.push("metal");

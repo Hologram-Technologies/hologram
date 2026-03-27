@@ -9,11 +9,13 @@ use hologram_graph::constant::{ConstantData, ConstantId, ConstantStore};
 
 use crate::error::{ExecError, ExecResult};
 use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
+use crate::lut_gemm::quantize_q1::QuantizedWeights16;
 
 /// Cached quantized weight variants.
 enum CachedWeight {
     Q4(QuantizedWeights4),
     Q8(Box<QuantizedWeights8>),
+    Q16(Box<QuantizedWeights16>),
 }
 
 /// Cache for deserialized quantized weights.
@@ -81,6 +83,33 @@ impl WeightCache {
         };
         match entry {
             CachedWeight::Q8(qw) => Ok(qw),
+            _ => Err(ExecError::InvalidQuantization(
+                "weight type mismatch".to_string(),
+            )),
+        }
+    }
+
+    /// Get or deserialize a Q16 weight constant.
+    ///
+    /// Single hash probe per access via the `Entry` API — no double lookup.
+    pub fn get_q16(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&QuantizedWeights16> {
+        let key = cid.raw();
+        let entry = match self.entries.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let bytes = resolve_constant_bytes(cid, constants, weights)?;
+                let qw = rkyv::from_bytes::<QuantizedWeights16, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+                e.insert(CachedWeight::Q16(Box::new(qw)))
+            }
+        };
+        match entry {
+            CachedWeight::Q16(qw) => Ok(qw),
             _ => Err(ExecError::InvalidQuantization(
                 "weight type mismatch".to_string(),
             )),

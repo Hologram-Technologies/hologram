@@ -6,6 +6,7 @@ license.workspace = true
 description = "Criterion benchmarks for hologram"
 
 [dependencies]
+uor-foundation = { workspace = true }
 hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
 hologram-archive = { workspace = true }

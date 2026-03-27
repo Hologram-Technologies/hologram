@@ -135,6 +135,98 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for WordInvolution {
 impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for WordInvolution {}
 impl uor_foundation::kernel::op::Involution<HoloPrimitives> for WordInvolution {}
 
+static GROUP_GENERATORS: [WordInvolution; 2] = [WordInvolution::Neg, WordInvolution::Bnot];
+
+impl uor_foundation::kernel::op::Group<HoloPrimitives> for WordRing {
+    type Operation = WordInvolution;
+
+    #[inline]
+    fn generated_by(&self) -> &[Self::Operation] {
+        &GROUP_GENERATORS
+    }
+
+    #[inline]
+    fn order(&self) -> u64 {
+        65536
+    }
+}
+
+impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for WordRing {}
+
+/// Marker for the Z/65536Z multiplication table.
+pub struct WordMultTable;
+
+impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for WordMultTable {}
+
+static WORD_MULT_TABLE: WordMultTable = WordMultTable;
+
+impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for WordRing {
+    #[inline]
+    fn algebra_dimension(&self) -> u64 {
+        2
+    }
+
+    #[inline]
+    fn is_commutative(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn is_associative(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn basis_elements(&self) -> &str {
+        "{1, i}"
+    }
+
+    type MultiplicationTable = WordMultTable;
+
+    #[inline]
+    fn algebra_multiplication_table(&self) -> &Self::MultiplicationTable {
+        &WORD_MULT_TABLE
+    }
+}
+
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for WordRing {
+    #[inline]
+    fn commutator_formula(&self) -> &str {
+        "[a,b] = 0"
+    }
+}
+
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for WordRing {
+    #[inline]
+    fn associator_formula(&self) -> &str {
+        "[a,b,c] = 0"
+    }
+}
+
+impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for WordRing {
+    type NormedDivisionAlgebra = crate::ring::HoloDivisionAlgebra;
+
+    #[inline]
+    fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra {
+        &crate::ring::Q1_ALGEBRA
+    }
+
+    #[inline]
+    fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra {
+        &crate::ring::Q2_ALGEBRA
+    }
+
+    #[inline]
+    fn adjoined_element(&self) -> &str {
+        "j"
+    }
+
+    #[inline]
+    fn conjugation_rule(&self) -> &str {
+        "j\u{00b2} = \u{2212}1 mod 65536"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +304,16 @@ mod tests {
         assert_eq!(neg.apply(bnot.apply(0)), 1);
         assert_eq!(neg.apply(bnot.apply(65534)), 65535);
         assert_eq!(neg.apply(bnot.apply(65535)), 0);
+    }
+
+    #[test]
+    fn cayley_dickson_chain_q1_to_q2() {
+        use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+        let r1 = WordRing;
+        assert_eq!(r1.cayley_dickson_source().algebra_dimension(), 2); // C = Q1
+        assert_eq!(r1.cayley_dickson_target().algebra_dimension(), 4); // H = Q2
+        assert_eq!(r1.cayley_dickson_target().basis_elements(), "{1, i, j, k}");
+        assert_eq!(r1.adjoined_element(), "j");
     }
 
     #[test]

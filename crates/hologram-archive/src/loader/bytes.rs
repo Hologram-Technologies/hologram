@@ -274,10 +274,8 @@ fn deserialize_section_table(data: &[u8], header: &HoloHeader) -> ArchiveResult<
         });
     }
     let table_bytes = &data[start..end];
-    let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(table_bytes.len());
-    aligned.extend_from_slice(table_bytes);
-    rkyv::from_bytes::<SectionTable, rkyv::rancor::Error>(&aligned)
-        .map_err(|e| ArchiveError::ValidationFailed(format!("{e}")))
+
+    SectionTable::from_raw_bytes(table_bytes).map_err(|e| ArchiveError::ValidationFailed(e.into()))
 }
 
 /// Extract the `LayerHeader` section from the archive, if present.

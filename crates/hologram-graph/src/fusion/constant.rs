@@ -52,6 +52,14 @@ pub fn try_fold_constant(graph: &mut Graph, id: NodeId) -> bool {
             prim_op.apply_binary(values[0], values[1])
         }
         GraphOp::FusedView(view) if values.len() == 1 => view.apply(values[0]),
+        // RingPrimUnary/Binary at Q0 are semantically identical to Prim — foldable.
+        // Q1/Q2 constant data is a single byte; multi-byte ring folding is not supported.
+        GraphOp::RingPrimUnary(prim_op, hologram_core::op::RingLevel::Q0) if values.len() == 1 => {
+            prim_op.apply_unary(values[0])
+        }
+        GraphOp::RingPrimBinary(prim_op, hologram_core::op::RingLevel::Q0) if values.len() == 2 => {
+            prim_op.apply_binary(values[0], values[1])
+        }
         _ => return false,
     };
 
@@ -113,6 +121,56 @@ mod tests {
         } else {
             panic!("expected Constant");
         }
+    }
+
+    #[test]
+    fn fold_ring_prim_unary_q0() {
+        use hologram_core::op::RingLevel;
+        let mut g = GraphBuilder::new()
+            .constant(ConstantData::Bytes(vec![42]))
+            .node_with_inputs(GraphOp::RingPrimUnary(PrimOp::Neg, RingLevel::Q0), &[0])
+            .build();
+        let ids = g.node_ids();
+        let neg_id = ids[1];
+        assert!(try_fold_constant(&mut g, neg_id));
+        let node = g.get(neg_id).unwrap();
+        assert!(matches!(node.op, GraphOp::Constant(_)));
+        // Value should be neg(42) mod 256 = 214.
+        if let GraphOp::Constant(cid) = node.op {
+            let data = g.get_constant(cid).unwrap();
+            assert_eq!(data, &ConstantData::Bytes(vec![42u8.wrapping_neg()]));
+        }
+    }
+
+    #[test]
+    fn fold_ring_prim_binary_q0() {
+        use hologram_core::op::RingLevel;
+        let mut g = GraphBuilder::new()
+            .constant(ConstantData::Bytes(vec![10]))
+            .constant(ConstantData::Bytes(vec![20]))
+            .node_with_inputs(GraphOp::RingPrimBinary(PrimOp::Add, RingLevel::Q0), &[0, 1])
+            .build();
+        let ids = g.node_ids();
+        let add_id = ids[2];
+        assert!(try_fold_constant(&mut g, add_id));
+        if let GraphOp::Constant(cid) = g.get(add_id).unwrap().op {
+            let data = g.get_constant(cid).unwrap();
+            assert_eq!(data, &ConstantData::Bytes(vec![30])); // add_q0(10, 20) == 30
+        } else {
+            panic!("expected Constant");
+        }
+    }
+
+    #[test]
+    fn ring_prim_q1_not_folded() {
+        // Q1 ring prim: constant data is a single byte; multi-byte folding not supported.
+        use hologram_core::op::RingLevel;
+        let mut g = GraphBuilder::new()
+            .constant(ConstantData::Bytes(vec![42]))
+            .node_with_inputs(GraphOp::RingPrimUnary(PrimOp::Neg, RingLevel::Q1), &[0])
+            .build();
+        let ids = g.node_ids();
+        assert!(!try_fold_constant(&mut g, ids[1])); // should NOT fold
     }
 
     #[test]

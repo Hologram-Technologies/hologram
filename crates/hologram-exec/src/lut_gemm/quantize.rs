@@ -4,6 +4,7 @@
 //! representations. Each weight is replaced by an index into a centroid table.
 //! At inference time, these indices drive Psumbook accumulation.
 
+use super::orbit::{build_orbit_map_q4, build_orbit_map_q8, OrbitMap4, OrbitMap8};
 use super::psumbook::{Q4_LEVELS, Q8_LEVELS};
 
 /// Number of k-means iterations for quantization.
@@ -51,6 +52,9 @@ pub struct QuantizedWeights4 {
     pub rows: u32,
     /// Number of columns (n dimension).
     pub cols: u32,
+    /// Dihedral orbit map built after k-means convergence.
+    /// Enables `dot_orbits` for compressed centroid dot products.
+    pub orbits: OrbitMap4,
 }
 
 /// 8-bit quantized weight matrix (256 centroids).
@@ -64,6 +68,9 @@ pub struct QuantizedWeights8 {
     pub rows: u32,
     /// Number of columns (n dimension).
     pub cols: u32,
+    /// Dihedral orbit map built after k-means convergence.
+    /// Enables `dot_orbits` for compressed centroid dot products.
+    pub orbits: OrbitMap8,
 }
 
 /// Unified quantized weights (Q4 or Q8).
@@ -173,12 +180,14 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
     }
     let mut centroids = [0.0f32; Q4_LEVELS];
     centroids.copy_from_slice(&centroids_vec);
+    let orbits = build_orbit_map_q4(&centroids);
     let indices = pack_assignments_q4(&assignments);
     QuantizedWeights4 {
         indices,
         centroids,
         rows,
         cols,
+        orbits,
     }
 }
 
@@ -205,11 +214,46 @@ pub fn quantize_8bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights8
     }
     let mut centroids = [0.0f32; Q8_LEVELS];
     centroids.copy_from_slice(&centroids_vec);
+    let orbits = build_orbit_map_q8(&centroids);
     QuantizedWeights8 {
         indices: assignments,
         centroids,
         rows,
         cols,
+        orbits,
+    }
+}
+
+/// Fast-path Q8 quantization for uniform centroid spacing.
+///
+/// Replaces O(N×256) k-means with O(N) floor-division assignment.
+/// For uniformly-spaced centroids, `find_nearest` degenerates to
+/// `index = round((value - min) / step)` — a single arithmetic op per weight.
+///
+/// Produces the same `QuantizedWeights8` structure as `quantize_8bit`,
+/// with identical downstream LUT-GEMM behavior. Orbit map is built
+/// from the uniform centroids (O(256), once).
+#[must_use]
+pub fn quantize_8bit_uniform(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights8 {
+    let (min, max) = min_max(weights);
+    let range = max - min;
+    let mut centroids = [0.0f32; Q8_LEVELS];
+    for (i, c) in centroids.iter_mut().enumerate() {
+        *c = min + range * (i as f32) / 255.0;
+    }
+    let step = if range > 0.0 { range / 255.0 } else { 1.0 };
+    let inv_step = 1.0 / step;
+    let indices: Vec<u8> = weights
+        .iter()
+        .map(|&w| ((w - min) * inv_step).round().clamp(0.0, 255.0) as u8)
+        .collect();
+    let orbits = build_orbit_map_q8(&centroids);
+    QuantizedWeights8 {
+        indices,
+        centroids,
+        rows,
+        cols,
+        orbits,
     }
 }
 

@@ -10,7 +10,7 @@ pub mod node;
 pub mod validate;
 
 use crate::constant::{ConstantData, ConstantId, ConstantStore};
-use hologram_core::op::{FloatDType, FloatOp, LutOp, PrimOp};
+use hologram_core::op::{FloatDType, FloatOp, LutOp, PrimOp, RingLevel};
 use hologram_core::view::ElementWiseView;
 use node::{InputSlot, InputSource, Node, NodeId};
 
@@ -82,6 +82,10 @@ pub enum GraphOp {
     BatchMatMulLut4(ConstantId),
     /// Batched LUT-GEMM with 8-bit quantized weights.
     BatchMatMulLut8(ConstantId),
+    /// LUT-GEMM matmul with 16-bit hierarchical quantized weights (stored as constant).
+    MatMulLut16(ConstantId),
+    /// Batched LUT-GEMM with 16-bit hierarchical quantized weights.
+    BatchMatMulLut16(ConstantId),
     /// Consumer-defined op. Dispatched via `CustomOpRegistry` at execution time.
     ///
     /// The `arity` field must match the number of edges wired to this node.
@@ -95,6 +99,27 @@ pub enum GraphOp {
     /// Applied sequentially: chain[0](x) → chain[1](...) → ... → chain[n](...).
     /// Produced by the float fusion pass.
     FusedFloatChain(Vec<FloatOp>),
+    /// Identity passthrough — zero-copy forward of input to output.
+    ///
+    /// Produced by view fusion when two involutions compose to identity
+    /// (e.g. neg∘neg or bnot∘bnot). No computation required at runtime;
+    /// the tape builder maps this to `TapeKernel::Passthrough`.
+    Passthrough,
+    /// Precomputed 128KB Q1 lookup table (result of Q1 view fusion).
+    ///
+    /// Box because ElementWiseView16 is 128 KB heap-allocated.
+    /// Produced by q1_view_fusion when adjacent RingPrimUnary(_, Q1) nodes fuse.
+    FusedView16(Box<hologram_core::q1::view::ElementWiseView16>),
+    /// Byte-domain unary primitive op at a specified ring level.
+    ///
+    /// Stays in ring domain (Z/2^nZ) with no float conversion.
+    /// Q0: uses ADD_Q0/MUL_Q0 LUT tables. Q1: uses native wrapping ops.
+    RingPrimUnary(PrimOp, RingLevel),
+    /// Byte-domain binary primitive op at a specified ring level.
+    ///
+    /// Stays in ring domain (Z/2^nZ) with no float conversion.
+    /// Q0: uses ADD_Q0/MUL_Q0 LUT tables. Q1: uses native wrapping ops.
+    RingPrimBinary(PrimOp, RingLevel),
 }
 
 impl GraphOp {
@@ -106,11 +131,17 @@ impl GraphOp {
             Self::Output
             | Self::Lut(_)
             | Self::FusedView(_)
+            | Self::Passthrough
             | Self::CallSubgraph(_)
             | Self::MatMulLut4(_)
             | Self::MatMulLut8(_)
             | Self::BatchMatMulLut4(_)
-            | Self::BatchMatMulLut8(_) => 1,
+            | Self::BatchMatMulLut8(_)
+            | Self::MatMulLut16(_)
+            | Self::BatchMatMulLut16(_) => 1,
+            Self::FusedView16(_) => 1,
+            Self::RingPrimUnary(_, _) => 1,
+            Self::RingPrimBinary(_, _) => 2,
             Self::Prim(p) => p.arity(),
             Self::Custom { arity, .. } => *arity,
             Self::Float(f) => f.arity(),
@@ -126,13 +157,19 @@ impl GraphOp {
             Self::Prim(_)
                 | Self::Lut(_)
                 | Self::FusedView(_)
+                | Self::FusedView16(_)
+                | Self::Passthrough
                 | Self::MatMulLut4(_)
                 | Self::MatMulLut8(_)
                 | Self::BatchMatMulLut4(_)
                 | Self::BatchMatMulLut8(_)
+                | Self::MatMulLut16(_)
+                | Self::BatchMatMulLut16(_)
                 | Self::Custom { .. }
                 | Self::Float(_)
                 | Self::FusedFloatChain(_)
+                | Self::RingPrimUnary(_, _)
+                | Self::RingPrimBinary(_, _)
         )
     }
 
@@ -143,12 +180,33 @@ impl GraphOp {
     }
 
     /// Convert to an ElementWiseView if this op is a unary table lookup.
+    ///
+    /// For the 4 unary PrimOps, returns a reference to a cached static view —
+    /// no 256-byte table is built at runtime (UOR canonical representation).
     #[must_use]
     pub fn to_view(&self) -> Option<ElementWiseView> {
         match self {
             Self::Lut(op) => Some(ElementWiseView::from_table(*op.table())),
             Self::FusedView(v) => Some(*v),
-            Self::Prim(p) if p.arity() == 1 => Some(ElementWiseView::new(|x| p.apply_unary(x))),
+            Self::Passthrough => Some(ElementWiseView::identity()),
+            Self::Prim(PrimOp::Neg) => Some(hologram_core::view::NEG_VIEW),
+            Self::Prim(PrimOp::Bnot) => Some(hologram_core::view::BNOT_VIEW),
+            Self::Prim(PrimOp::Succ) => Some(hologram_core::view::SUCC_VIEW),
+            Self::Prim(PrimOp::Pred) => Some(hologram_core::view::PRED_VIEW),
+            _ => None,
+        }
+    }
+
+    /// Convert to a Q1 ElementWiseView16 if this op is a Q1-level unary lookup.
+    #[must_use]
+    pub fn to_view16(&self) -> Option<hologram_core::q1::view::ElementWiseView16> {
+        match self {
+            Self::RingPrimUnary(p, RingLevel::Q1) => {
+                Some(hologram_core::q1::view::ElementWiseView16::from_fn(|x| {
+                    p.apply_unary_q1(x)
+                }))
+            }
+            Self::FusedView16(v) => Some((**v).clone()),
             _ => None,
         }
     }

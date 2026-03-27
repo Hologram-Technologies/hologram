@@ -210,6 +210,41 @@ pub(super) fn dispatch_shape(
     Ok(bytemuck::cast_slice(&[n_elements]).to_vec())
 }
 
+/// N-D gather: `output[k] = data[indices[k]]` for flat-index access.
+///
+/// `inputs[0]` = data (f32 flat buffer)
+/// `inputs[1]` = indices (i64 or i32 flat buffer — detected by buffer alignment)
+///
+/// Each index value is a flat offset into the data f32 array.
+/// Out-of-bounds indices clamp to 0.0 (matches ONNX GatherND behavior for
+/// empty-or-zero outputs on invalid indices).
+pub(super) fn dispatch_gather_nd(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
+    if inputs.len() < 2 || inputs[1].is_empty() {
+        return Ok(vec![]);
+    }
+    let data = cast_f32(inputs[0])?;
+    let idx_bytes = inputs[1];
+
+    // Detect index dtype from buffer alignment: i64=8B per element, i32=4B.
+    let indices: Vec<usize> = if idx_bytes.len().is_multiple_of(8) {
+        bytemuck::cast_slice::<u8, i64>(idx_bytes)
+            .iter()
+            .map(|&i| i.max(0) as usize)
+            .collect()
+    } else {
+        bytemuck::cast_slice::<u8, i32>(idx_bytes)
+            .iter()
+            .map(|&i| i.max(0) as usize)
+            .collect()
+    };
+
+    let out: Vec<f32> = indices
+        .iter()
+        .map(|&i| *data.get(i).unwrap_or(&0.0))
+        .collect();
+    Ok(f32_vec_to_bytes(out))
+}
+
 /// Slice a tensor's shape according to ONNX Shape opset-15 `start`/`end` attributes.
 ///
 /// Returns an i64 buffer containing `in_shape[s..e]` where `s` and `e` are
@@ -245,4 +280,67 @@ pub fn dispatch_shape_sliced(
     }
     let sliced: Vec<i64> = in_shape[s..e].iter().map(|&d| d as i64).collect();
     Ok(bytemuck::cast_slice(&sliced).to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn f32_to_bytes(v: &[f32]) -> Vec<u8> {
+        f32_vec_to_bytes(v.to_vec())
+    }
+
+    fn bytes_to_f32(b: &[u8]) -> Vec<f32> {
+        bytemuck::cast_slice::<u8, f32>(b).to_vec()
+    }
+
+    #[test]
+    fn gather_nd_basic_1d() {
+        // data = [10.0, 20.0, 30.0], indices = [2, 0, 1] → [30.0, 10.0, 20.0]
+        let data = f32_to_bytes(&[10.0f32, 20.0, 30.0]);
+        let idx: Vec<i32> = vec![2, 0, 1];
+        let idx_bytes: Vec<u8> = bytemuck::cast_slice::<i32, u8>(&idx).to_vec();
+        let result = dispatch_gather_nd(&[&data, &idx_bytes]).unwrap();
+        let out = bytes_to_f32(&result);
+        assert_eq!(out, &[30.0f32, 10.0, 20.0]);
+    }
+
+    #[test]
+    fn gather_nd_out_of_bounds_clamps() {
+        // index 5 is OOB for data of length 3 → clamp to 0.0
+        // Use 3 i32 indices (12 bytes) to avoid ambiguity with the i64 detection
+        // heuristic (which triggers when buffer length is divisible by 8).
+        let data = f32_to_bytes(&[1.0f32, 2.0, 3.0]);
+        let idx: Vec<i32> = vec![0, 5, 2];
+        let idx_bytes: Vec<u8> = bytemuck::cast_slice::<i32, u8>(&idx).to_vec();
+        let result = dispatch_gather_nd(&[&data, &idx_bytes]).unwrap();
+        let out = bytes_to_f32(&result);
+        assert_eq!(out[0], 1.0); // data[0]
+        assert_eq!(out[1], 0.0); // OOB → clamp to 0.0
+        assert_eq!(out[2], 3.0); // data[2]
+    }
+
+    #[test]
+    fn gather_nd_i64_indices() {
+        let data = f32_to_bytes(&[5.0f32, 6.0, 7.0]);
+        let idx: Vec<i64> = vec![1, 2];
+        let idx_bytes: Vec<u8> = bytemuck::cast_slice::<i64, u8>(&idx).to_vec();
+        let result = dispatch_gather_nd(&[&data, &idx_bytes]).unwrap();
+        let out = bytes_to_f32(&result);
+        assert_eq!(out, &[6.0f32, 7.0]);
+    }
+
+    #[test]
+    fn gather_nd_empty_indices_returns_empty() {
+        let data = f32_to_bytes(&[1.0f32, 2.0]);
+        let result = dispatch_gather_nd(&[&data, &[]]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn gather_nd_single_input_returns_empty() {
+        let data = f32_to_bytes(&[1.0f32, 2.0]);
+        let result = dispatch_gather_nd(&[&data]).unwrap();
+        assert!(result.is_empty());
+    }
 }

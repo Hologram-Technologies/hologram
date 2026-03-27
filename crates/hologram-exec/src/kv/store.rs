@@ -7,8 +7,9 @@ use hologram_graph::graph::GraphOp;
 
 use crate::error::{ExecError, ExecResult};
 use crate::kv::registry::CustomOpRegistry;
-use crate::lut_gemm::matmul::{lut_gemm_4bit, lut_gemm_8bit};
+use crate::lut_gemm::matmul::{lut_gemm_16bit, lut_gemm_4bit, lut_gemm_8bit};
 use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
+use crate::lut_gemm::quantize_q1::QuantizedWeights16;
 
 /// Stateless dispatch table for O(1) graph operations.
 ///
@@ -49,6 +50,16 @@ impl KvStore {
         output
     }
 
+    /// Apply a unary operation directly into a pre-allocated output buffer.
+    ///
+    /// Zero-alloc: writes into `out_buf[out_buf.len()..]`, no intermediate Vec.
+    #[inline]
+    pub fn apply_unary_into(view: &ElementWiseView, input: &[u8], out_buf: &mut Vec<u8>) {
+        let base = out_buf.len();
+        out_buf.resize(base + input.len(), 0);
+        view.apply_to(input, &mut out_buf[base..]);
+    }
+
     /// Apply a binary `PrimOp` element-wise on two inputs.
     pub fn apply_binary(op: PrimOp, lhs: &[u8], rhs: &[u8]) -> ExecResult<Vec<u8>> {
         if lhs.len() != rhs.len() {
@@ -63,6 +74,30 @@ impl KvStore {
             .map(|(&a, &b)| op.apply_binary(a, b))
             .collect();
         Ok(out)
+    }
+
+    /// Apply a binary `PrimOp` directly into a pre-allocated output buffer.
+    ///
+    /// Zero-alloc: writes into `out_buf[out_buf.len()..]`, no intermediate Vec.
+    #[inline]
+    pub fn apply_binary_into(
+        op: PrimOp,
+        lhs: &[u8],
+        rhs: &[u8],
+        out_buf: &mut Vec<u8>,
+    ) -> ExecResult<()> {
+        if lhs.len() != rhs.len() {
+            return Err(ExecError::LengthMismatch {
+                expected: lhs.len(),
+                actual: rhs.len(),
+            });
+        }
+        let base = out_buf.len();
+        out_buf.resize(base + lhs.len(), 0);
+        for (i, dst) in out_buf[base..].iter_mut().enumerate() {
+            *dst = op.apply_binary(lhs[i], rhs[i]);
+        }
+        Ok(())
     }
 
     /// Dispatch a `GraphOp` given its input buffers.
@@ -108,6 +143,13 @@ impl KvStore {
     ) -> ExecResult<Vec<u8>> {
         match op {
             GraphOp::Output => Ok(inputs[0].to_vec()),
+            GraphOp::FusedView16(view) => {
+                let input = inputs[0];
+                let input_u16: &[u16] = bytemuck::cast_slice(input);
+                let mut out = input_u16.to_vec();
+                view.apply_slice(&mut out);
+                Ok(bytemuck::cast_slice(&out).to_vec())
+            }
             GraphOp::Lut(_) | GraphOp::FusedView(_) => {
                 let view = op.to_view().unwrap();
                 Ok(Self::apply_unary(&view, inputs[0]))
@@ -129,6 +171,9 @@ impl KvStore {
             GraphOp::BatchMatMulLut8(cid) => {
                 dispatch_lut_gemm_8(inputs[0], *cid, constants, weights)
             }
+            GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
+                dispatch_lut_gemm_16(inputs[0], *cid, constants, weights)
+            }
             GraphOp::Float(ref f) => {
                 if input_shapes.len() >= 2 {
                     crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
@@ -147,6 +192,14 @@ impl KvStore {
             GraphOp::Custom { id, .. } => registry
                 .ok_or_else(|| ExecError::UnsupportedOp(format!("custom op {}", id.raw())))?
                 .dispatch(*id, inputs, constants),
+            GraphOp::Passthrough => Ok(inputs.first().copied().unwrap_or(&[]).to_vec()),
+            GraphOp::RingPrimUnary(p, _level) => {
+                let view = GraphOp::Prim(*p)
+                    .to_view()
+                    .ok_or_else(|| ExecError::UnsupportedOp(format!("RingPrimUnary {:?}", p)))?;
+                Ok(Self::apply_unary(&view, inputs[0]))
+            }
+            GraphOp::RingPrimBinary(p, _level) => Self::apply_binary(*p, inputs[0], inputs[1]),
         }
     }
 }
@@ -184,6 +237,24 @@ fn dispatch_lut_gemm_8(
     let n = qw.cols as usize;
     let mut output = vec![0.0f32; m * n];
     lut_gemm_8bit(activations, &qw, &mut output);
+    Ok(crate::float_dispatch::f32_vec_to_bytes(output))
+}
+
+/// Resolve constant and run 16-bit hierarchical LUT-GEMM.
+fn dispatch_lut_gemm_16(
+    activation_bytes: &[u8],
+    cid: hologram_graph::constant::ConstantId,
+    constants: &ConstantStore,
+    weights: &[u8],
+) -> ExecResult<Vec<u8>> {
+    let weight_bytes = resolve_constant_bytes(cid, constants, weights)?;
+    let qw = rkyv::from_bytes::<QuantizedWeights16, rkyv::rancor::Error>(weight_bytes)
+        .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+    let activations = cast_f32(activation_bytes)?;
+    let m = activations.len() / qw.rows as usize;
+    let n = qw.cols as usize;
+    let mut output = vec![0.0f32; m * n];
+    lut_gemm_16bit(activations, &qw, &mut output);
     Ok(crate::float_dispatch::f32_vec_to_bytes(output))
 }
 

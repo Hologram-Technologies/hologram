@@ -3,7 +3,7 @@
 use crate::checksum;
 use crate::entrypoint::schedule::LayerHeader;
 use crate::entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId, TensorPort};
-use crate::error::{ArchiveError, ArchiveResult};
+use crate::error::ArchiveResult;
 use crate::format::graph::SerializedGraph;
 use crate::format::header::HoloHeader;
 use crate::format::{align_to_page, FORMAT_VERSION, HOLO_MAGIC, PAGE_SIZE};
@@ -177,7 +177,7 @@ impl HoloWriter {
             (graph_data, weight_data, flags)
         };
 
-        let layout = compute_layout(
+        let (layout, table_bytes) = compute_layout(
             graph_data.len() as u64,
             weight_data.len() as u64,
             &self.sections,
@@ -185,7 +185,14 @@ impl HoloWriter {
 
         let mut header = build_header(&layout, &graph_data, &weight_data);
         header.flags = flags;
-        assemble_archive(header, &layout, &graph_data, &weight_data, &self.sections)
+        assemble_archive(
+            header,
+            &layout,
+            &graph_data,
+            &weight_data,
+            &self.sections,
+            &table_bytes,
+        )
     }
 
     /// Add a default `LayerHeader` if a graph was set and none was provided.
@@ -242,11 +249,17 @@ struct ArchiveLayout {
     total_size: u64,
 }
 
+/// Compute the archive layout and build the section table bytes once.
+///
+/// Returns `(layout, table_bytes)`. The table is serialized via
+/// `SectionTable::to_raw_bytes()` (bytemuck fixed-layout), avoiding
+/// rkyv overhead. CRC32 per section is computed exactly once here;
+/// `assemble_archive` reuses the returned `table_bytes` directly.
 fn compute_layout(
     graph_size: u64,
     weights_size: u64,
     sections: &[(u32, Vec<u8>)],
-) -> ArchiveLayout {
+) -> (ArchiveLayout, Vec<u8>) {
     // Header serialized size (estimate; we'll use a fixed page)
     let header_size = PAGE_SIZE;
     let graph_offset = header_size;
@@ -262,11 +275,10 @@ fn compute_layout(
         cursor += data.len() as u64;
         cursor = align_to_page(cursor);
     }
-    // Section table after section data
+    // Section table after section data — build once via bytemuck.
     let section_table_offset = cursor;
     let table = build_section_table(sections, &section_offsets);
-    let table_bytes =
-        rkyv::to_bytes::<rkyv::rancor::Error>(&table).expect("section table serialization");
+    let table_bytes = table.to_raw_bytes();
     let section_table_size = table_bytes.len() as u64;
     cursor += section_table_size;
     cursor = align_to_page(cursor);
@@ -275,14 +287,17 @@ fn compute_layout(
     let weights_offset = cursor;
     let total_size = weights_offset + weights_size;
 
-    ArchiveLayout {
-        graph_offset,
-        section_offsets,
-        section_table_offset,
-        section_table_size,
-        weights_offset,
-        total_size,
-    }
+    (
+        ArchiveLayout {
+            graph_offset,
+            section_offsets,
+            section_table_offset,
+            section_table_size,
+            weights_offset,
+            total_size,
+        },
+        table_bytes,
+    )
 }
 
 fn build_section_table(sections: &[(u32, Vec<u8>)], offsets: &[u64]) -> SectionTable {
@@ -322,6 +337,7 @@ fn assemble_archive(
     graph_data: &[u8],
     weight_data: &[u8],
     sections: &[(u32, Vec<u8>)],
+    table_bytes: &[u8],
 ) -> ArchiveResult<Vec<u8>> {
     let mut buf = vec![0u8; layout.total_size as usize];
 
@@ -339,12 +355,9 @@ fn assemble_archive(
         buf[o..o + data.len()].copy_from_slice(data);
     }
 
-    // Write section table
-    let table = build_section_table(sections, &layout.section_offsets);
-    let table_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&table)
-        .map_err(|e| ArchiveError::GraphError(format!("{e}")))?;
+    // Write section table — reuse pre-computed bytes from compute_layout.
     let sto = layout.section_table_offset as usize;
-    buf[sto..sto + table_bytes.len()].copy_from_slice(&table_bytes);
+    buf[sto..sto + table_bytes.len()].copy_from_slice(table_bytes);
 
     // Write weights
     let wo = layout.weights_offset as usize;
@@ -415,7 +428,7 @@ mod tests {
 
     #[test]
     fn graph_offset_page_aligned() {
-        let layout = compute_layout(100, 50, &[]);
+        let (layout, _) = compute_layout(100, 50, &[]);
         assert_eq!(layout.graph_offset % PAGE_SIZE, 0);
         assert_eq!(layout.weights_offset % PAGE_SIZE, 0);
     }
@@ -424,7 +437,7 @@ mod tests {
     fn header_has_correct_checksums() {
         let graph_data = vec![1, 2, 3];
         let weight_data = vec![4, 5, 6];
-        let layout = compute_layout(3, 3, &[]);
+        let (layout, _) = compute_layout(3, 3, &[]);
         let header = build_header(&layout, &graph_data, &weight_data);
         assert_eq!(header.graph_checksum, checksum::crc32(&graph_data));
         assert_eq!(header.weights_checksum, checksum::crc32(&weight_data));

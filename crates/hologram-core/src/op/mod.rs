@@ -11,6 +11,26 @@ pub use lut_op::LutOp;
 pub use prim::PrimOp;
 pub use shape_spec::{ShapeDim, ShapeSpec};
 
+/// Ring quantum level for ring-arithmetic execution.
+///
+/// Selects which ring Z/2^nZ to operate in:
+/// - Q0: Z/256Z (8-bit)
+/// - Q1: Z/65536Z (16-bit)
+/// - Q2: Z/2^24Z (24-bit)
+/// - Q3: Z/2^32Z (32-bit)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[repr(u8)]
+pub enum RingLevel {
+    Q0 = 0,
+    Q1 = 1,
+    Q2 = 2,
+    Q3 = 3,
+}
+
 /// Unified operation enum for all byte-level operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(

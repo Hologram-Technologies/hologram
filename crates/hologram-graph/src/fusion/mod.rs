@@ -13,6 +13,7 @@
 pub mod constant;
 pub mod cse;
 pub mod float_fusion;
+pub mod q1_view_fusion;
 pub mod view_fusion;
 
 use crate::error::GraphResult;
@@ -26,6 +27,8 @@ pub struct FusionStats {
     pub constants_folded: usize,
     /// Number of unary chains fused into FusedViews.
     pub views_fused: usize,
+    /// Number of Q1 unary chains fused into FusedView16.
+    pub q1_views_fused: usize,
     /// Number of float element-wise chains fused into FusedFloatChain.
     pub float_chains_fused: usize,
     /// Number of duplicate nodes eliminated by CSE.
@@ -36,7 +39,11 @@ impl FusionStats {
     /// Total number of nodes removed by all optimizations.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.constants_folded + self.views_fused + self.float_chains_fused + self.cse_eliminated
+        self.constants_folded
+            + self.views_fused
+            + self.q1_views_fused
+            + self.float_chains_fused
+            + self.cse_eliminated
     }
 }
 
@@ -60,9 +67,14 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
             continue;
         }
 
-        // 2. View fusion (backward chain walk)
+        // 2a. Q0 view fusion (backward chain walk)
         while view_fusion::try_fuse_unary_backward(graph, id, &succ_index) {
             stats.views_fused += 1;
+        }
+
+        // 2b. Q1 view fusion (backward chain walk)
+        while q1_view_fusion::try_fuse_q1_unary_backward(graph, id, &succ_index) {
+            stats.q1_views_fused += 1;
         }
 
         // 3. Float chain fusion (f32-domain backward chain walk)
@@ -150,10 +162,11 @@ mod tests {
         let stats = FusionStats {
             constants_folded: 3,
             views_fused: 2,
+            q1_views_fused: 1,
             float_chains_fused: 1,
             cse_eliminated: 1,
         };
-        assert_eq!(stats.total_removed(), 7);
+        assert_eq!(stats.total_removed(), 8);
     }
 
     #[test]

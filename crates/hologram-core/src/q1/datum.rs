@@ -238,6 +238,16 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for WordAddress {
     fn quantum(&self) -> u64 {
         16
     }
+
+    #[inline]
+    fn digest_algorithm(&self) -> &str {
+        "blake3"
+    }
+
+    #[inline]
+    fn canonical_bytes(&self) -> &str {
+        self.as_str()
+    }
 }
 
 #[cfg(test)]

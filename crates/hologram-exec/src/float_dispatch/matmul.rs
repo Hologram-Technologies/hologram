@@ -274,6 +274,22 @@ pub fn dispatch_batched_matmul(
 /// Uses compiled k/m/n as hints. When compiled k is wrong (doesn't divide
 /// both inputs), tries to infer k from compiled n (B's last dim, typically
 /// concrete for weight matrices) or from common factors.
+/// Validate a k candidate: must divide both inputs and not produce an absurdly
+/// large output (guards against k=1 or erroneous small values).
+#[inline]
+fn try_k(k: usize, a_len: usize, b_len: usize) -> Option<usize> {
+    if k == 0 || !a_len.is_multiple_of(k) || !b_len.is_multiple_of(k) {
+        return None;
+    }
+    let m_cand = a_len / k;
+    let n_cand = b_len / k;
+    if m_cand.saturating_mul(n_cand) < 256 * 1024 * 1024 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
 fn infer_matmul_k(
     compiled_k: usize,
     compiled_m: usize,
@@ -281,64 +297,49 @@ fn infer_matmul_k(
     a_len: usize,
     b_len: usize,
 ) -> ExecResult<usize> {
-    // Primary: compiled k divides both inputs cleanly.
+    // Primary: compiled k is high-confidence — no output-size guard needed.
     if compiled_k > 1 && a_len.is_multiple_of(compiled_k) && b_len.is_multiple_of(compiled_k) {
         return Ok(compiled_k);
     }
-    // Fallback 1: if compiled n is known, infer k = b_len / n.
-    if compiled_n > 1 && b_len.is_multiple_of(compiled_n) {
-        let k = b_len / compiled_n;
-        if k > 0 && a_len.is_multiple_of(k) {
-            return Ok(k);
-        }
-    }
-    // Fallback 2: if compiled m is known, infer k = a_len / m.
-    if compiled_m > 1 && a_len.is_multiple_of(compiled_m) {
-        let k = a_len / compiled_m;
-        if k > 0 && b_len.is_multiple_of(k) {
-            return Ok(k);
-        }
-    }
-    // Fallback 3: when compiled_n is known, try k = b_len / compiled_n even
-    // if a_len % k != 0 — this handles batched MatMul where A is [batch, m, k].
-    // Also try using compiled_n as k directly (common for square weight matrices).
-    if compiled_n > 1 {
-        // Try compiled_n as k (e.g. weight is [2048, 2048], both k and n are 2048)
-        if a_len.is_multiple_of(compiled_n) && b_len.is_multiple_of(compiled_n) {
-            return Ok(compiled_n);
-        }
-    }
 
-    // Fallback 4: use GCD of a_len and b_len as k (finds the largest shared dim).
+    // Build candidate list in priority order; validate each with try_k.
     let g = gcd(a_len, b_len);
-    if g > 1 {
-        // Verify output won't be absurdly large (m * n < 256M floats)
-        let m_cand = a_len / g;
-        let n_cand = b_len / g;
-        if m_cand.saturating_mul(n_cand) < 256 * 1024 * 1024 {
-            return Ok(g);
-        }
-        // GCD is too large, try smaller common factors by dividing GCD
-        // Use compiled_n hint if available
+    let candidates = [
+        // k = b_len / n: weight's last dim is usually concrete.
+        if compiled_n > 1 && b_len.is_multiple_of(compiled_n) {
+            b_len / compiled_n
+        } else {
+            0
+        },
+        // k = a_len / m: activation's last dim.
+        if compiled_m > 1 && a_len.is_multiple_of(compiled_m) {
+            a_len / compiled_m
+        } else {
+            0
+        },
+        // compiled_n as k: square weight matrix case.
+        compiled_n,
+        // GCD: largest shared dimension.
+        g,
+        // GCD sub-divisor when GCD is too large: round down to compiled_n multiple.
         if compiled_n > 1 && g.is_multiple_of(compiled_n) {
-            let k = g / compiled_n * compiled_n; // round down to compiled_n multiple
-            if k > 1 && a_len.is_multiple_of(k) && b_len.is_multiple_of(k) {
-                return Ok(k);
-            }
+            g / compiled_n * compiled_n
+        } else {
+            0
+        },
+        // Last resort: compiled_k including k=1 (guarded against huge output).
+        compiled_k,
+    ];
+    for k in candidates {
+        if let Some(k) = try_k(k, a_len, b_len) {
+            return Ok(k);
         }
     }
 
-    // Last resort: compiled_k works if it divides both (even k=1 for scalar matmul).
-    if compiled_k > 0 && a_len.is_multiple_of(compiled_k) && b_len.is_multiple_of(compiled_k) {
-        // Guard against k=1 producing impossibly large outputs.
-        let m_cand = a_len / compiled_k;
-        let n_cand = b_len / compiled_k;
-        if m_cand.saturating_mul(n_cand) < 256 * 1024 * 1024 {
-            return Ok(compiled_k);
-        }
-    }
     Err(ExecError::ShapeMismatch {
-        expected: format!("matmul k dividing both inputs (compiled k={compiled_k}, m={compiled_m}, n={compiled_n})"),
+        expected: format!(
+            "matmul k dividing both inputs (compiled k={compiled_k}, m={compiled_m}, n={compiled_n})"
+        ),
         actual: format!("a={a_len}, b={b_len}"),
     })
 }

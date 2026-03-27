@@ -89,6 +89,7 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::Prim(p) => json!({"Prim": p.name()}),
         GraphOp::Lut(l) => json!({"Lut": l.name()}),
         GraphOp::FusedView(_) => json!("FusedView"),
+        GraphOp::FusedView16(_) => json!("FusedView16"),
         GraphOp::Constant(id) => {
             let size = constants.get(*id).map_or(0, |c| c.byte_size());
             json!({"Constant": {"id": id.raw(), "byte_size": size}})
@@ -98,6 +99,14 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::MatMulLut8(id) => json!({"MatMulLut8": id.raw()}),
         GraphOp::BatchMatMulLut4(id) => json!({"BatchMatMulLut4": id.raw()}),
         GraphOp::BatchMatMulLut8(id) => json!({"BatchMatMulLut8": id.raw()}),
+        GraphOp::MatMulLut16(id) => json!({"MatMulLut16": id.raw()}),
+        GraphOp::BatchMatMulLut16(id) => json!({"BatchMatMulLut16": id.raw()}),
+        GraphOp::RingPrimUnary(p, level) => {
+            json!({"RingPrimUnary": {"op": p.name(), "level": format!("{:?}", level)}})
+        }
+        GraphOp::RingPrimBinary(p, level) => {
+            json!({"RingPrimBinary": {"op": p.name(), "level": format!("{:?}", level)}})
+        }
         GraphOp::Float(f) => json!({"Float": f.name()}),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
@@ -106,6 +115,7 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::Custom { id, arity } => {
             json!({"Custom": {"id": id.raw(), "arity": arity}})
         }
+        GraphOp::Passthrough => json!("Passthrough"),
     }
 }
 

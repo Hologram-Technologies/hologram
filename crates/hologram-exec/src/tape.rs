@@ -50,9 +50,9 @@ fn prefetch_read(ptr: *const u8) {
 
 // ── Enum-dispatch tape (Phase 8) ──────────────────────────────────────────────
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
-use hologram_core::op::PrimOp;
+use hologram_core::op::{PrimOp, RingLevel};
 use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 
@@ -79,6 +79,11 @@ pub struct TapeContext<'a> {
     /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
     /// Resolved to a concrete `&dyn ComputeBackend` once at execute start.
     pub backend: BackendSelector,
+    /// Carry flux for dynamic precision — tracks accumulated carry across
+    /// ring operations. Per-frame: call `reset_flux()` at frame boundaries
+    /// in streaming workloads. Uses `Cell` for interior mutability (zero-cost
+    /// since CurvatureFlux is Copy).
+    pub flux: Cell<hologram_core::carry::CurvatureFlux>,
 }
 
 impl<'a> TapeContext<'a> {
@@ -93,6 +98,7 @@ impl<'a> TapeContext<'a> {
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: None,
             backend: BackendSelector::Auto,
+            flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
         }
     }
 
@@ -110,7 +116,14 @@ impl<'a> TapeContext<'a> {
             weight_cache: RefCell::new(WeightCache::new()),
             kv_state: Some(RefCell::new(kv)),
             backend: BackendSelector::Auto,
+            flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
         }
+    }
+
+    /// Reset carry flux to zero. Call at frame boundaries in streaming workloads.
+    #[inline]
+    pub fn reset_flux(&self) {
+        self.flux.set(hologram_core::carry::CurvatureFlux::ZERO);
     }
 }
 
@@ -129,6 +142,8 @@ pub enum TapeKernel {
     Output,
     /// Byte-domain LUT (256-byte table).
     LutView(ElementWiseView),
+    /// Q1 domain LUT (128KB table, heap-allocated).
+    LutView16(Box<hologram_core::q1::view::ElementWiseView16>),
     /// Byte-domain unary prim via LUT.
     PrimUnary(ElementWiseView),
     /// Byte-domain binary prim.
@@ -137,6 +152,8 @@ pub enum TapeKernel {
     MatMulLut4(ConstantId),
     /// 8-bit quantized LUT-GEMM matmul.
     MatMulLut8(ConstantId),
+    /// 16-bit hierarchical quantized LUT-GEMM matmul.
+    MatMulLut16(ConstantId),
     /// KV cache write (autoregressive generation).
     KvWrite {
         layer: u32,
@@ -247,6 +264,13 @@ pub enum TapeKernel {
 
     /// Custom op — handler baked at tape build time from registry.
     Custom(crate::kv::CustomHandler),
+
+    /// Ring-arithmetic unary op. Stays in ring domain (Z/2^nZ), no float conversion.
+    /// Q0: applies PrimOp via LUT (apply_unary). Q1: native wrapping u16 ops.
+    RingPrimUnary { op: PrimOp, level: RingLevel },
+    /// Ring-arithmetic binary op. Stays in ring domain (Z/2^nZ), no float conversion.
+    /// Q0: uses ADD_Q0/MUL_Q0 LUT (apply_binary). Q1: add_q1/mul_q1 native ops.
+    RingPrimBinary { op: PrimOp, level: RingLevel },
 }
 
 impl TapeKernel {
@@ -340,12 +364,160 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
-            out_buf.extend_from_slice(&KvStore::apply_unary(view, inputs[0]));
+            KvStore::apply_unary_into(view, inputs[0], out_buf);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::LutView16(view) => {
+            let input = inputs[0];
+            let base = out_buf.len();
+            out_buf.resize(base + input.len(), 0);
+            out_buf[base..].copy_from_slice(input);
+            let dst: &mut [u16] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+            view.apply_slice(dst);
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::PrimBinary(p) => {
-            let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
-            out_buf.extend_from_slice(&r);
+            KvStore::apply_binary_into(*p, inputs[0], inputs[1], out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::RingPrimUnary { op, level } => {
+            let input = inputs[0];
+            let base = out_buf.len();
+            // Dynamic precision: if carry flux demands higher level, promote.
+            let effective_level = {
+                let flux = tape_ctx.flux.get();
+                let flux_level = flux.required_level();
+                if (flux_level as u8) > (*level as u8) {
+                    flux_level
+                } else {
+                    *level
+                }
+            };
+            match effective_level {
+                RingLevel::Q0 => {
+                    out_buf.resize(base + input.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for (i, &x) in input.iter().enumerate() {
+                        dst[i] = op.apply_unary(x);
+                    }
+                }
+                RingLevel::Q1 => {
+                    out_buf.resize(base + input.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for chunk in input.chunks_exact(2).zip(dst.chunks_exact_mut(2)) {
+                        let (c_in, c_out) = chunk;
+                        let val = u16::from_le_bytes([c_in[0], c_in[1]]);
+                        let r = op.apply_unary_q1(val);
+                        let b = r.to_le_bytes();
+                        c_out[0] = b[0];
+                        c_out[1] = b[1];
+                    }
+                }
+                RingLevel::Q2 => {
+                    out_buf.resize(base + input.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for chunk in input.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+                        let (c_in, c_out) = chunk;
+                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], 0]);
+                        let r = op.apply_unary_q2(val);
+                        let b = r.to_le_bytes();
+                        c_out[0] = b[0];
+                        c_out[1] = b[1];
+                        c_out[2] = b[2];
+                    }
+                }
+                RingLevel::Q3 => {
+                    out_buf.resize(base + input.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for chunk in input.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+                        let (c_in, c_out) = chunk;
+                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], c_in[3]]);
+                        let r = op.apply_unary_q3(val);
+                        let b = r.to_le_bytes();
+                        c_out.copy_from_slice(&b);
+                    }
+                }
+            }
+            // Accumulate curvature: XOR first byte of input/output, popcount.
+            // O(1) — single XOR + popcount = 2 instructions.
+            if !input.is_empty() && out_buf.len() > base {
+                let curvature = (input[0] ^ out_buf[base]).count_ones() as u8;
+                let mut flux = tape_ctx.flux.get();
+                flux.accumulate(curvature, effective_level);
+                tape_ctx.flux.set(flux);
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::RingPrimBinary { op, level } => {
+            let (lhs, rhs) = (inputs[0], inputs[1]);
+            if lhs.len() != rhs.len() {
+                return Err(crate::error::ExecError::LengthMismatch {
+                    expected: lhs.len(),
+                    actual: rhs.len(),
+                });
+            }
+            let base = out_buf.len();
+            let effective_level = {
+                let flux = tape_ctx.flux.get();
+                let flux_level = flux.required_level();
+                if (flux_level as u8) > (*level as u8) {
+                    flux_level
+                } else {
+                    *level
+                }
+            };
+            match effective_level {
+                RingLevel::Q0 => {
+                    out_buf.resize(base + lhs.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for i in 0..lhs.len() {
+                        dst[i] = op.apply_binary(lhs[i], rhs[i]);
+                    }
+                }
+                RingLevel::Q1 => {
+                    out_buf.resize(base + lhs.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for i in (0..lhs.len()).step_by(2) {
+                        let a = u16::from_le_bytes([lhs[i], lhs[i + 1]]);
+                        let b_val = u16::from_le_bytes([rhs[i], rhs[i + 1]]);
+                        let r = op.apply_binary_q1(a, b_val);
+                        let bytes = r.to_le_bytes();
+                        dst[i] = bytes[0];
+                        dst[i + 1] = bytes[1];
+                    }
+                }
+                RingLevel::Q2 => {
+                    out_buf.resize(base + lhs.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for i in (0..lhs.len()).step_by(3) {
+                        let a = u32::from_le_bytes([lhs[i], lhs[i + 1], lhs[i + 2], 0]);
+                        let b_val = u32::from_le_bytes([rhs[i], rhs[i + 1], rhs[i + 2], 0]);
+                        let r = op.apply_binary_q2(a, b_val);
+                        let bytes = r.to_le_bytes();
+                        dst[i] = bytes[0];
+                        dst[i + 1] = bytes[1];
+                        dst[i + 2] = bytes[2];
+                    }
+                }
+                RingLevel::Q3 => {
+                    out_buf.resize(base + lhs.len(), 0);
+                    let dst = &mut out_buf[base..];
+                    for i in (0..lhs.len()).step_by(4) {
+                        let a = u32::from_le_bytes([lhs[i], lhs[i + 1], lhs[i + 2], lhs[i + 3]]);
+                        let b_val =
+                            u32::from_le_bytes([rhs[i], rhs[i + 1], rhs[i + 2], rhs[i + 3]]);
+                        let r = op.apply_binary_q3(a, b_val);
+                        dst[i..i + 4].copy_from_slice(&r.to_le_bytes());
+                    }
+                }
+            }
+            // Accumulate curvature for binary op.
+            if !lhs.is_empty() && out_buf.len() > base {
+                let curvature = (lhs[0] ^ out_buf[base]).count_ones() as u8;
+                let mut flux = tape_ctx.flux.get();
+                flux.accumulate(curvature, effective_level);
+                tape_ctx.flux.set(flux);
+            }
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::MatMulLut4(cid) => {
@@ -354,6 +526,10 @@ fn dispatch_kernel(
         }
         TapeKernel::MatMulLut8(cid) => {
             dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut16(cid) => {
+            dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?;
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::KvWrite {
@@ -956,12 +1132,20 @@ fn dispatch_kernel_par(
             Ok(())
         }
         TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
-            out_buf.extend_from_slice(&KvStore::apply_unary(view, inputs[0]));
+            KvStore::apply_unary_into(view, inputs[0], out_buf);
+            Ok(())
+        }
+        TapeKernel::LutView16(view) => {
+            let input = inputs[0];
+            let base = out_buf.len();
+            out_buf.resize(base + input.len(), 0);
+            out_buf[base..].copy_from_slice(input);
+            let dst: &mut [u16] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+            view.apply_slice(dst);
             Ok(())
         }
         TapeKernel::PrimBinary(p) => {
-            let r = KvStore::apply_binary(*p, inputs[0], inputs[1])?;
-            out_buf.extend_from_slice(&r);
+            KvStore::apply_binary_into(*p, inputs[0], inputs[1], out_buf)?;
             Ok(())
         }
         // Inline hot ops — fully parallelizable.
@@ -1101,6 +1285,27 @@ fn dispatch_lut_gemm_8(
     Ok(())
 }
 
+/// LUT-GEMM Q16 dispatch for tape kernels.
+fn dispatch_lut_gemm_16(
+    inputs: &[&[u8]],
+    cid: ConstantId,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let qw = cache.get_q16(cid, tape_ctx.constants, tape_ctx.weights)?;
+    let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+        crate::error::ExecError::UnsupportedOp("Q16: activation not f32-aligned".into())
+    })?;
+    let k = qw.rows as usize;
+    let n = qw.cols as usize;
+    let m = if k > 0 { activations.len() / k } else { 0 };
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_16bit(activations, qw, &mut output);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    Ok(())
+}
+
 /// KvWrite dispatch: transpose heads→seq, write to cache, output for downstream attention.
 #[allow(clippy::too_many_arguments)]
 fn dispatch_kv_write(
@@ -1234,7 +1439,10 @@ pub struct TapeInstruction {
     /// Output node index (where to store the result in the arena).
     pub output_idx: u32,
     /// Input node indices (where to gather inputs from the arena).
-    pub input_indices: Vec<u32>,
+    ///
+    /// `SmallVec<[u32; 2]>`: ~95% of ops have ≤2 inputs, avoiding heap
+    /// allocation for the common case during tape build.
+    pub input_indices: SmallVec<[u32; 2]>,
     /// Element size of the output (for arena metadata).
     pub output_elem_size: u8,
     /// Pre-computed output byte size hint (0 = unknown/dynamic).
@@ -1738,7 +1946,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 1,
             output_byte_hint: 0,
             weight_offset_hint: 0,
@@ -1763,7 +1971,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Float(FloatOp::Relu),
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 8, // 2 floats × 4 bytes
             weight_offset_hint: 0,
@@ -1773,7 +1981,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
             output_idx: 2,
-            input_indices: vec![1],
+            input_indices: smallvec::smallvec![1],
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
@@ -1805,7 +2013,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::LutView(view),
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 1,
             output_byte_hint: 3,
             weight_offset_hint: 0,
@@ -1834,7 +2042,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Float(FloatOp::Relu),
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
@@ -1845,7 +2053,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
             output_idx: 2,
-            input_indices: vec![1],
+            input_indices: smallvec::smallvec![1],
             output_elem_size: 4,
             output_byte_hint: 0,
             weight_offset_hint: 0,
@@ -1876,7 +2084,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::Float(FloatOp::Relu),
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
@@ -1918,7 +2126,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineRelu,
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
@@ -1936,7 +2144,7 @@ mod tests {
         tape2.push(TapeInstruction {
             kernel: TapeKernel::Float(FloatOp::Relu),
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
@@ -1967,7 +2175,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineAdd,
             output_idx: 2,
-            input_indices: vec![0, 1],
+            input_indices: smallvec::smallvec![0, 1],
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
@@ -1996,7 +2204,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineSigmoid,
             output_idx: 2,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
@@ -2007,7 +2215,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineMul,
             output_idx: 3,
-            input_indices: vec![2, 1],
+            input_indices: smallvec::smallvec![2, 1],
             output_elem_size: 4,
             output_byte_hint: 4,
             weight_offset_hint: 0,
@@ -2068,7 +2276,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel,
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: (input.len() * 4) as u32,
             weight_offset_hint: 0,
@@ -2092,7 +2300,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel,
             output_idx: 2,
-            input_indices: vec![0, 1],
+            input_indices: smallvec::smallvec![0, 1],
             output_elem_size: 4,
             output_byte_hint: (a.len() * 4) as u32,
             weight_offset_hint: 0,
@@ -2193,7 +2401,7 @@ mod tests {
                 epsilon: f32::to_bits(1e-5),
             },
             output_idx: 3,
-            input_indices: vec![0, 1, 2],
+            input_indices: smallvec::smallvec![0, 1, 2],
             output_elem_size: 4,
             output_byte_hint: 12,
             weight_offset_hint: 0,
@@ -2225,7 +2433,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineLogSoftmax { size: 3 },
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 12,
             weight_offset_hint: 0,
@@ -2254,7 +2462,7 @@ mod tests {
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineSoftmax { size: 3 },
             output_idx: 1,
-            input_indices: vec![0],
+            input_indices: smallvec::smallvec![0],
             output_elem_size: 4,
             output_byte_hint: 12,
             weight_offset_hint: 0,
@@ -2296,7 +2504,7 @@ mod tests {
             },
             output_idx: 2,
             // inputs[0] = indices, inputs[1] = table
-            input_indices: vec![1, 0],
+            input_indices: smallvec::smallvec![1, 0],
             output_elem_size: 4,
             output_byte_hint: 8,
             weight_offset_hint: 0,
@@ -2330,7 +2538,7 @@ mod tests {
                 dtype: FloatDType::F32,
             },
             output_idx: 2,
-            input_indices: vec![0, 1],
+            input_indices: smallvec::smallvec![0, 1],
             output_elem_size: 4,
             output_byte_hint: 20,
             weight_offset_hint: 0,
@@ -2345,5 +2553,139 @@ mod tests {
         let out = arena.get(NodeId::new(2, 0)).unwrap();
         let floats: &[f32] = bytemuck::cast_slice(out);
         assert_eq!(floats, &[1.0, 2.0, 3.0, 4.0, 5.0]);
+    }
+
+    // ── Ring-arithmetic execution path tests (Refinement E) ──────────────────
+
+    fn make_ring_tape(kernel: TapeKernel, n_inputs: u8) -> (EnumTape, ConstantStore) {
+        let mut tape = EnumTape::new();
+        let input_indices: smallvec::SmallVec<[u32; 2]> = (0..n_inputs as u32).collect();
+        tape.push(TapeInstruction {
+            kernel,
+            output_idx: n_inputs as u32,
+            input_indices,
+            output_elem_size: 1,
+            output_byte_hint: 0,
+            weight_offset_hint: 0,
+            passthrough: false,
+            can_reuse_input: false,
+        });
+        tape.end_level();
+        (tape, empty_constants())
+    }
+
+    #[test]
+    fn ring_prim_binary_q0_add_wrapping() {
+        // 255 + 1 = 0 (wrapping mod 256). No float conversion.
+        let (tape, constants) = make_ring_tape(
+            TapeKernel::RingPrimBinary {
+                op: PrimOp::Add,
+                level: RingLevel::Q0,
+            },
+            2,
+        );
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), vec![255u8]);
+        arena.insert(NodeId::new(1, 0), vec![1u8]);
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+        assert_eq!(arena.get(NodeId::new(2, 0)).unwrap(), &[0u8]);
+    }
+
+    #[test]
+    fn ring_prim_binary_q0_mul_wrapping() {
+        // 200 * 2 = 400 mod 256 = 144. No float conversion.
+        let (tape, constants) = make_ring_tape(
+            TapeKernel::RingPrimBinary {
+                op: PrimOp::Mul,
+                level: RingLevel::Q0,
+            },
+            2,
+        );
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), vec![200u8]);
+        arena.insert(NodeId::new(1, 0), vec![2u8]);
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+        assert_eq!(arena.get(NodeId::new(2, 0)).unwrap(), &[144u8]);
+    }
+
+    #[test]
+    fn ring_prim_unary_q0_neg_wrapping() {
+        // neg(1) = 255 (wrapping neg mod 256).
+        let (tape, constants) = make_ring_tape(
+            TapeKernel::RingPrimUnary {
+                op: PrimOp::Neg,
+                level: RingLevel::Q0,
+            },
+            1,
+        );
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), vec![1u8, 128u8, 0u8]);
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+        assert_eq!(arena.get(NodeId::new(1, 0)).unwrap(), &[255u8, 128u8, 0u8]);
+    }
+
+    #[test]
+    fn ring_prim_binary_q1_add_wrapping() {
+        // Q1: 65535 + 1 = 0 (mod 65536). Input/output as le bytes.
+        let (tape, constants) = make_ring_tape(
+            TapeKernel::RingPrimBinary {
+                op: PrimOp::Add,
+                level: RingLevel::Q1,
+            },
+            2,
+        );
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), 65535u16.to_le_bytes().to_vec()); // 0xFF 0xFF
+        arena.insert(NodeId::new(1, 0), 1u16.to_le_bytes().to_vec()); // 0x01 0x00
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(2, 0)).unwrap();
+        assert_eq!(u16::from_le_bytes([out[0], out[1]]), 0u16);
+    }
+
+    #[test]
+    fn ring_prim_unary_q1_neg() {
+        // Q1: neg(1) = 65535.
+        let (tape, constants) = make_ring_tape(
+            TapeKernel::RingPrimUnary {
+                op: PrimOp::Neg,
+                level: RingLevel::Q1,
+            },
+            1,
+        );
+        let mut arena = BufferArena::new();
+        arena.insert(NodeId::new(0, 0), 1u16.to_le_bytes().to_vec());
+        let ctx = TapeContext::new(&constants, &[]);
+        tape.execute(&mut arena, &ctx).unwrap();
+        let out = arena.get(NodeId::new(1, 0)).unwrap();
+        assert_eq!(u16::from_le_bytes([out[0], out[1]]), 65535u16);
+    }
+
+    #[test]
+    fn ring_prim_binary_q0_exhaustive_add() {
+        // Exhaustively verify Q0 Add ring path matches apply_binary for all 256 byte values.
+        let constants = empty_constants();
+        for a in 0u8..=255 {
+            for b in 0u8..=255 {
+                let (tape, _) = make_ring_tape(
+                    TapeKernel::RingPrimBinary {
+                        op: PrimOp::Add,
+                        level: RingLevel::Q0,
+                    },
+                    2,
+                );
+                let mut arena = BufferArena::new();
+                arena.insert(NodeId::new(0, 0), vec![a]);
+                arena.insert(NodeId::new(1, 0), vec![b]);
+                let ctx = TapeContext::new(&constants, &[]);
+                tape.execute(&mut arena, &ctx).unwrap();
+                let ring_out = arena.get(NodeId::new(2, 0)).unwrap()[0];
+                let expected = PrimOp::Add.apply_binary(a, b);
+                assert_eq!(ring_out, expected, "ring Q0 Add mismatch at ({a},{b})");
+            }
+        }
     }
 }
