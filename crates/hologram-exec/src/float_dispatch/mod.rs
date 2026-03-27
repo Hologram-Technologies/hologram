@@ -356,23 +356,25 @@ pub fn dispatch_fused_chain(chain: &[FloatOp], inputs: &[&[u8]]) -> ExecResult<V
 }
 
 /// Dispatch a fused chain into a pre-allocated output buffer.
+///
+/// Zero-alloc: writes directly into `out_buf` via bytemuck cast_slice_mut,
+/// avoiding the intermediate `Vec<f32>` collect + extend_from_slice pattern.
 pub fn dispatch_fused_chain_into(
     chain: &[FloatOp],
     inputs: &[&[u8]],
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     let x = helpers::cast_f32(inputs[0])?;
-    let out: Vec<f32> = x
-        .iter()
-        .map(|&v| {
-            let mut val = v;
-            for op in chain {
-                val = op.apply_unary(val);
-            }
-            val
-        })
-        .collect();
-    out_buf.extend_from_slice(bytemuck::cast_slice(&out));
+    let base = out_buf.len();
+    out_buf.resize(base + x.len() * 4, 0);
+    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    for (d, &s) in dst.iter_mut().zip(x.iter()) {
+        let mut val = s;
+        for op in chain {
+            val = op.apply_unary(val);
+        }
+        *d = val;
+    }
     Ok(())
 }
 
@@ -441,12 +443,13 @@ fn dispatch_custom(
             size_b,
             dtype,
         } => gather_concat::dispatch_concat(inputs, *size_a as usize, *size_b as usize, *dtype),
-        FloatOp::Reshape | FloatOp::GatherND => Ok(inputs[0].to_vec()),
+        FloatOp::Reshape => Ok(inputs[0].to_vec()),
         FloatOp::Transpose { .. } => {
             // Flat dispatch path has no shape metadata — passthrough.
             // The tape executor uses InlineTranspose with baked shapes instead.
             Ok(inputs[0].to_vec())
         }
+        FloatOp::GatherND => gather_concat::dispatch_gather_nd(inputs),
         FloatOp::Cast { from, to } => cast::dispatch_cast(inputs, *from, *to),
         FloatOp::Embed { dim, quant } => cast::dispatch_embed(inputs, *dim as usize, *quant),
         FloatOp::Where => gather_concat::dispatch_where(inputs),

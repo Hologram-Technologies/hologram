@@ -134,6 +134,20 @@ pub const fn q2_add(a: u32, b: u32) -> u32 {
     a.wrapping_add(b) & 0x00FF_FFFF
 }
 
+/// Subtraction in Z/2^24 Z.
+#[inline]
+#[must_use]
+pub const fn q2_sub(a: u32, b: u32) -> u32 {
+    a.wrapping_sub(b) & 0x00FF_FFFF
+}
+
+/// Multiplication in Z/2^24 Z.
+#[inline]
+#[must_use]
+pub const fn q2_mul(a: u32, b: u32) -> u32 {
+    a.wrapping_mul(b) & 0x00FF_FFFF
+}
+
 // ── Q3 helpers ──────────────────────────────────────────────────
 
 /// Stratum (popcount) for Q3 (32-bit) values.
@@ -155,6 +169,27 @@ pub const fn q3_curvature(value: u32) -> u8 {
 #[must_use]
 pub const fn q3_add(a: u32, b: u32) -> u32 {
     a.wrapping_add(b)
+}
+
+/// Subtraction in Z/2^32 Z.
+#[inline]
+#[must_use]
+pub const fn q3_sub(a: u32, b: u32) -> u32 {
+    a.wrapping_sub(b)
+}
+
+/// Multiplication in Z/2^32 Z.
+#[inline]
+#[must_use]
+pub const fn q3_mul(a: u32, b: u32) -> u32 {
+    a.wrapping_mul(b)
+}
+
+/// Negation (additive inverse) in Z/2^32 Z.
+#[inline]
+#[must_use]
+pub const fn q3_neg(a: u32) -> u32 {
+    a.wrapping_neg()
 }
 
 #[cfg(test)]
@@ -234,6 +269,35 @@ mod tests {
     fn q3_add_wraps() {
         assert_eq!(q3_add(u32::MAX, 1), 0);
         assert_eq!(q3_add(100, 200), 300);
+    }
+
+    #[test]
+    fn q3_sub_wrapping() {
+        assert_eq!(q3_sub(0, 1), u32::MAX); // underflow wraps
+        assert_eq!(q3_sub(100, 50), 50);
+        assert_eq!(q3_sub(u32::MAX, u32::MAX), 0);
+    }
+
+    #[test]
+    fn q3_mul_wrapping() {
+        assert_eq!(q3_mul(2, 3), 6);
+        assert_eq!(q3_mul(0, u32::MAX), 0);
+        assert_eq!(q3_mul(u32::MAX, 2), u32::MAX - 1); // wrapping
+    }
+
+    #[test]
+    fn q3_neg_involution() {
+        for x in [0u32, 1, 127, u32::MAX / 2, u32::MAX] {
+            assert_eq!(q3_neg(q3_neg(x)), x);
+        }
+    }
+
+    #[test]
+    fn q3_add_sub_inverse() {
+        for a in [0u32, 1, 0xFFFF, u32::MAX] {
+            assert_eq!(q3_sub(a, a), 0);
+            assert_eq!(q3_add(a, q3_neg(a)), 0);
+        }
     }
 
     #[test]

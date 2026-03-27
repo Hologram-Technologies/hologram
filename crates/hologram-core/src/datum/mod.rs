@@ -227,6 +227,16 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
     fn quantum(&self) -> u64 {
         8
     }
+
+    #[inline]
+    fn digest_algorithm(&self) -> &str {
+        "blake3"
+    }
+
+    #[inline]
+    fn canonical_bytes(&self) -> &str {
+        self.as_str()
+    }
 }
 
 #[cfg(test)]

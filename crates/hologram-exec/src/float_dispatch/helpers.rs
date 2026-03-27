@@ -25,13 +25,18 @@ pub(crate) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 pub(crate) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match bytemuck::try_cast_slice(bytes) {
         Ok(s) => Ok(std::borrow::Cow::Borrowed(s)),
-        Err(_) => Ok(std::borrow::Cow::Owned(
-            bytes
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-                .collect(),
-        )),
+        Err(_) => Ok(std::borrow::Cow::Owned(cast_f32_unaligned(bytes))),
     }
+}
+
+/// Misalignment recovery path. Marked `#[cold]` to keep the aligned hot path
+/// free of branch-prediction overhead.
+#[cold]
+fn cast_f32_unaligned(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect()
 }
 
 /// Iterator over i64 values read from potentially-misaligned bytes.

@@ -4,14 +4,19 @@
 
 use std::collections::HashMap;
 
-use crate::graph::node::NodeId;
-use crate::graph::Graph;
+use smallvec::SmallVec;
 
-/// Signature for CSE: (op hash-eq key, sorted predecessor ids).
+use crate::graph::node::NodeId;
+use crate::graph::{Graph, GraphOp};
+
+/// Signature for CSE: (op hash-eq key, predecessor ids).
+///
+/// `SmallVec<[NodeId; 2]>` fits unary and binary ops on the stack —
+/// zero heap allocation for the common case of ≤ 2 predecessors.
 #[derive(Hash, PartialEq, Eq)]
 struct NodeSignature {
     op: crate::graph::GraphOp,
-    preds: Vec<NodeId>,
+    preds: SmallVec<[NodeId; 2]>,
 }
 
 /// Eliminate common subexpressions in the graph.
@@ -35,8 +40,17 @@ pub fn eliminate_common_subexpressions(graph: &mut Graph, order: &[NodeId]) -> u
         }
 
         let op = node.op.clone();
-        let mut preds: Vec<NodeId> = node.dependencies().collect();
-        preds.sort_by_key(|n| (n.index(), n.generation()));
+        let mut preds: SmallVec<[NodeId; 2]> = node.dependencies().collect();
+
+        // Only sort when the op is commutative — for non-commutative ops (e.g. Sub),
+        // argument order is semantically significant and must be preserved.
+        let needs_sort = match &op {
+            GraphOp::Prim(p) if preds.len() == 2 => p.is_commutative_binary(),
+            _ => preds.len() > 1,
+        };
+        if needs_sort {
+            preds.sort_by_key(|n| (n.index(), n.generation()));
+        }
 
         let sig = NodeSignature { op, preds };
 
@@ -118,5 +132,20 @@ mod tests {
         let count = eliminate_common_subexpressions(&mut g, &order);
         assert_eq!(count, 2);
         assert_eq!(g.node_count(), 2);
+    }
+
+    #[test]
+    fn no_dedup_non_commutative() {
+        // Sub(0, 1) and Sub(1, 0) have reversed args — must NOT be deduped.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0
+            .node(GraphOp::Input) // 1
+            .node_with_inputs(GraphOp::Prim(PrimOp::Sub), &[0, 1]) // 2
+            .node_with_inputs(GraphOp::Prim(PrimOp::Sub), &[1, 0]) // 3 (reversed)
+            .build();
+        let order = toposort::toposort(&g).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order);
+        assert_eq!(count, 0);
+        assert_eq!(g.node_count(), 4);
     }
 }

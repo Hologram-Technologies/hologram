@@ -1,5 +1,8 @@
 //! Cache-aligned partial sum accumulators for LUT-GEMM.
 //!
+//! Psumbooks accumulate activation values grouped by weight index,
+//! then produce the output element via a centroid dot product.
+//!
 //! A Psumbook groups activation values by their corresponding quantized
 //! weight index. After accumulation, a dot product with centroids produces
 //! the matmul output element in O(Q) instead of O(k).
@@ -17,7 +20,7 @@ pub const Q8_LEVELS: usize = 256;
 #[derive(Clone)]
 #[repr(C, align(64))]
 pub struct Psumbook4 {
-    sums: [f32; Q4_LEVELS],
+    pub(crate) sums: [f32; Q4_LEVELS],
 }
 
 impl Psumbook4 {
@@ -50,6 +53,35 @@ impl Psumbook4 {
             .sum()
     }
 
+    /// Orbit-compressed dot product.
+    ///
+    /// Combines each orbit pair's contributions before the centroid multiply,
+    /// reducing centroid MACs from Q to `orbits.rep_count`.
+    ///
+    /// Two-pass O(Q):
+    /// 1. Combine sums by representative (each entry contributes once).
+    /// 2. Multiply only representative entries by their centroids.
+    #[inline]
+    #[must_use]
+    pub fn dot_orbits(
+        &self,
+        centroids: &[f32; Q4_LEVELS],
+        orbits: &super::orbit::OrbitMap4,
+    ) -> f32 {
+        let mut combined = [0.0f32; Q4_LEVELS];
+        for i in 0..Q4_LEVELS {
+            let (rep, sign) = orbits.entries[i];
+            combined[rep as usize] += self.sums[i] * (sign as f32);
+        }
+        let mut result = 0.0f32;
+        for i in 0..Q4_LEVELS {
+            if orbits.entries[i].0 as usize == i {
+                result += centroids[i] * combined[i];
+            }
+        }
+        result
+    }
+
     /// Reset all sums to zero for reuse.
     #[inline]
     pub fn reset(&mut self) {
@@ -70,17 +102,24 @@ impl Default for Psumbook4 {
 #[derive(Clone)]
 #[repr(C, align(64))]
 pub struct Psumbook8 {
-    sums: [f32; Q8_LEVELS],
+    pub(crate) sums: [f32; Q8_LEVELS],
 }
 
 impl Psumbook8 {
-    /// Create a zeroed psumbook.
+    /// Create a zeroed psumbook. No heap allocation — 1 KB stack value.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self {
             sums: [0.0; Q8_LEVELS],
         }
+    }
+
+    /// Alias for `new()` — stack-allocate a zero-initialized Psumbook8.
+    #[inline]
+    #[must_use]
+    pub fn zeroed() -> Self {
+        Self::new()
     }
 
     /// Add `value` to the bucket at `index`.
@@ -102,6 +141,38 @@ impl Psumbook8 {
             .zip(centroids.iter())
             .map(|(&s, &c)| s * c)
             .sum()
+    }
+
+    /// Orbit-compressed dot product.
+    ///
+    /// Same semantics as `Psumbook4::dot_orbits` but for 256 centroids.
+    /// For fully symmetric Q8 models, `orbits.rep_count ≈ 128`, halving centroid MACs.
+    ///
+    /// When `rep_count == 256` (no compression), delegates to `dot()` directly —
+    /// zero overhead for non-symmetric centroids.
+    #[inline]
+    #[must_use]
+    pub fn dot_orbits(
+        &self,
+        centroids: &[f32; Q8_LEVELS],
+        orbits: &super::orbit::OrbitMap8,
+    ) -> f32 {
+        // Fast path: no symmetry to exploit → direct SIMD-friendly dot.
+        if orbits.rep_count as usize == Q8_LEVELS {
+            return self.dot(centroids);
+        }
+        let mut combined = [0.0f32; Q8_LEVELS];
+        for i in 0..Q8_LEVELS {
+            let (rep, sign) = orbits.entries[i];
+            combined[rep as usize] += self.sums[i] * (sign as f32);
+        }
+        let mut result = 0.0f32;
+        for i in 0..Q8_LEVELS {
+            if orbits.entries[i].0 as usize == i {
+                result += centroids[i] * combined[i];
+            }
+        }
+        result
     }
 
     /// Reset all sums to zero for reuse.
@@ -222,6 +293,82 @@ mod tests {
         centroids[0] = 2.0;
         // (5-3)*2 = 4
         assert!((book.dot(&centroids) - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn psumbook4_dot_orbits_matches_dot() {
+        use crate::lut_gemm::orbit::{build_orbit_map_q4, OrbitMap4};
+        // Fully symmetric centroids: c[i] = -c[16-i mod 16] exactly.
+        let mut centroids = [0.0f32; Q4_LEVELS];
+        for i in 1..8usize {
+            centroids[i] = i as f32;
+            centroids[16 - i] = -(i as f32);
+        }
+        let orbits = build_orbit_map_q4(&centroids);
+
+        let mut book = Psumbook4::new();
+        // Accumulate some values into multiple buckets.
+        book.accumulate(1, 2.0);
+        book.accumulate(15, 3.0); // maps to neg(1)
+        book.accumulate(3, 1.5);
+        book.accumulate(0, 0.5);
+
+        let std_dot = book.dot(&centroids);
+        let orbit_dot = book.dot_orbits(&centroids, &orbits);
+        assert!(
+            (std_dot - orbit_dot).abs() < 1e-5,
+            "dot_orbits diverges: {std_dot} vs {orbit_dot}"
+        );
+    }
+
+    #[test]
+    fn psumbook8_dot_orbits_matches_dot() {
+        use crate::lut_gemm::orbit::build_orbit_map_q8;
+        // Fully symmetric Q8 centroids.
+        let mut centroids = [0.0f32; Q8_LEVELS];
+        for i in 1..128usize {
+            centroids[i] = i as f32;
+            centroids[256 - i] = -(i as f32);
+        }
+        let orbits = build_orbit_map_q8(&centroids);
+
+        let mut book = Psumbook8::new();
+        book.accumulate(1, 2.0);
+        book.accumulate(255, 3.0); // maps to neg(1) = 255
+        book.accumulate(64, 1.0);
+        book.accumulate(192, 4.0); // maps to neg(64) = 192
+        book.accumulate(0, 0.5);
+
+        let std_dot = book.dot(&centroids);
+        let orbit_dot = book.dot_orbits(&centroids, &orbits);
+        assert!(
+            (std_dot - orbit_dot).abs() < 1e-4,
+            "dot_orbits Q8 diverges: {std_dot} vs {orbit_dot}"
+        );
+    }
+
+    #[test]
+    fn psumbook8_dot_orbits_asymmetric_matches_dot() {
+        use crate::lut_gemm::orbit::build_orbit_map_q8;
+        // Asymmetric centroids: no compression, all reps.
+        let mut centroids = [0.0f32; Q8_LEVELS];
+        for i in 0..Q8_LEVELS {
+            centroids[i] = (i as f32 * 1.6180339) % 7.0 + 1.0;
+        }
+        let orbits = build_orbit_map_q8(&centroids);
+        assert_eq!(orbits.rep_count, 256);
+
+        let mut book = Psumbook8::new();
+        for i in 0..Q8_LEVELS {
+            book.accumulate(i as u8, (i as f32) * 0.01);
+        }
+
+        let std_dot = book.dot(&centroids);
+        let orbit_dot = book.dot_orbits(&centroids, &orbits);
+        assert!(
+            (std_dot - orbit_dot).abs() / std_dot.abs() < 1e-5,
+            "asymmetric dot_orbits diverges: {std_dot} vs {orbit_dot}"
+        );
     }
 
     #[test]

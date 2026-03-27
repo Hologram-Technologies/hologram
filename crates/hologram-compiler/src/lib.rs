@@ -8,6 +8,8 @@
 pub mod compiler;
 pub mod error;
 pub mod liveness;
+pub mod precision;
+pub mod qedl;
 pub mod workspace;
 
 pub use compiler::{compile, CompilationOutput, CompilationStats, CompilerBuilder};
