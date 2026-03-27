@@ -66,7 +66,8 @@ pub fn execute_tape(
     tape.prewarm_arena(&mut arena);
 
     // Build tape context with weight access for LUT-GEMM ops.
-    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
 
     // Execute the tape.
     tape.execute(&mut arena, &tape_ctx)?;
@@ -115,7 +116,8 @@ pub fn execute_tape_with_shapes(
     )?;
     tape.prewarm_arena(&mut arena);
 
-    let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
     tape_ctx.shape_overrides = shape_overrides.clone();
     tape.execute(&mut arena, &tape_ctx)?;
 
@@ -157,7 +159,9 @@ pub fn execute_tape_with_kv_and_shapes(
     if position_offset == 0 {
         tape.prewarm_arena(&mut arena);
     }
-    let mut tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let mut tape_ctx =
+        crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, &wc, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
     tape_ctx.shape_overrides = shape_overrides.clone();
 
@@ -312,6 +316,32 @@ pub fn execute_tape_with_kv(
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
 ) -> ExecResult<GraphOutputs> {
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    execute_tape_with_kv_impl(tape, plan, inputs, kv_state, &wc)
+}
+
+/// Execute with KV cache and a persistent weight cache.
+///
+/// The `weight_cache` persists deserialized quantized weights across calls.
+/// For LUT-GEMM models, the first call deserializes weights; subsequent
+/// calls reuse them — eliminating per-step rkyv overhead.
+pub fn execute_tape_with_kv_cached(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
+    execute_tape_with_kv_impl(tape, plan, inputs, kv_state, weight_cache)
+}
+
+fn execute_tape_with_kv_impl(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
     let sg = plan.graph();
     let weights = plan.weights();
     let compiled_dtypes = sg.node_dtypes_map();
@@ -327,14 +357,15 @@ pub fn execute_tape_with_kv(
         &mut arena,
     )?;
 
-    tape.prewarm_arena(&mut arena);
-
-    // Swap the KV state into the tape context (takes ownership via RefCell).
     let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
     let position_offset = kv_owned.write_pos() as u32;
-    let mut tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
-    // Set position offset for ops that need absolute position (RoPE).
-    // During prefill: position_offset = 0. During decode: position_offset = N (prefilled tokens).
+
+    if position_offset == 0 {
+        tape.prewarm_arena(&mut arena);
+    }
+
+    let mut tape_ctx =
+        crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, weight_cache, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
 
     tape.execute(&mut arena, &tape_ctx)?;

@@ -66,8 +66,11 @@ pub struct TapeContext<'a> {
     pub constants: &'a ConstantStore,
     /// Raw weight archive bytes for deferred constants.
     pub weights: &'a [u8],
-    /// Lazily-populated cache for deserialized quantized weights.
-    pub weight_cache: RefCell<WeightCache>,
+    /// Persistent cache for deserialized quantized weights.
+    /// Borrowed from the caller so it persists across execution calls.
+    /// For LUT-GEMM, the first call deserializes weights; subsequent calls
+    /// reuse them — eliminating per-step rkyv deserialization overhead.
+    pub weight_cache: &'a RefCell<WeightCache>,
     /// Optional KV cache for autoregressive generation (KvWrite/KvRead ops).
     pub kv_state: Option<RefCell<KvCacheState>>,
     /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
@@ -83,12 +86,16 @@ impl<'a> TapeContext<'a> {
     /// Create a context from a constant store and weight archive.
     /// Uses `BackendSelector::Auto` (best available backend).
     #[must_use]
-    pub fn new(constants: &'a ConstantStore, weights: &'a [u8]) -> Self {
+    pub fn new(
+        constants: &'a ConstantStore,
+        weights: &'a [u8],
+        weight_cache: &'a RefCell<WeightCache>,
+    ) -> Self {
         TapeContext {
             ctx: None,
             constants,
             weights,
-            weight_cache: RefCell::new(WeightCache::new()),
+            weight_cache,
             kv_state: None,
             backend: BackendSelector::Auto,
             shape_overrides: std::collections::HashMap::new(),
@@ -100,13 +107,14 @@ impl<'a> TapeContext<'a> {
     pub fn with_kv_cache(
         constants: &'a ConstantStore,
         weights: &'a [u8],
+        weight_cache: &'a RefCell<WeightCache>,
         kv: KvCacheState,
     ) -> Self {
         TapeContext {
             ctx: None,
             constants,
             weights,
-            weight_cache: RefCell::new(WeightCache::new()),
+            weight_cache,
             kv_state: Some(RefCell::new(kv)),
             backend: BackendSelector::Auto,
             shape_overrides: std::collections::HashMap::new(),
@@ -3127,7 +3135,8 @@ mod tests {
         let tape = EnumTape::new();
         let mut arena = BufferArena::new();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         assert!(tape.execute(&mut arena, &ctx).is_ok());
     }
 
@@ -3151,7 +3160,8 @@ mod tests {
         arena.insert(NodeId::new(0, 0), vec![10, 20, 30]);
 
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
         assert_eq!(arena.get(NodeId::new(1, 0)).unwrap(), &[10, 20, 30]);
@@ -3190,7 +3200,8 @@ mod tests {
         arena.insert(NodeId::new(0, 0), input_bytes);
 
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
         let out = arena.get(NodeId::new(2, 0)).unwrap();
@@ -3221,7 +3232,8 @@ mod tests {
         arena.insert(NodeId::new(0, 0), vec![0, 128, 255]);
 
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
         let out = arena.get(NodeId::new(1, 0)).unwrap();
@@ -3266,7 +3278,8 @@ mod tests {
         arena.insert(NodeId::new(0, 0), input);
 
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
         let out = arena.get(NodeId::new(2, 0)).unwrap();
@@ -3292,7 +3305,8 @@ mod tests {
         tape.end_level();
 
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Run 1
         let mut arena = BufferArena::new();
@@ -3317,7 +3331,8 @@ mod tests {
     fn inline_relu_matches_generic() {
         let input: Vec<u8> = [(-2.0f32).to_le_bytes(), 3.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Inline path
         let mut tape = EnumTape::new();
@@ -3368,7 +3383,8 @@ mod tests {
         let a: Vec<u8> = [1.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat();
         let b: Vec<u8> = [10.0f32.to_le_bytes(), 20.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Inline path
         let mut tape = EnumTape::new();
@@ -3399,7 +3415,8 @@ mod tests {
         let input: Vec<u8> = [0.0f32.to_le_bytes()].concat(); // sigmoid(0) = 0.5
         let two: Vec<u8> = [2.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
 
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -3474,7 +3491,8 @@ mod tests {
     fn run_unary_tape(kernel: TapeKernel, input: &[f32]) -> Vec<f32> {
         let input_bytes: Vec<u8> = bytemuck::cast_slice(input).to_vec();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel,
@@ -3499,7 +3517,8 @@ mod tests {
         let a_bytes: Vec<u8> = bytemuck::cast_slice(a).to_vec();
         let b_bytes: Vec<u8> = bytemuck::cast_slice(b).to_vec();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel,
@@ -3598,7 +3617,8 @@ mod tests {
         let w: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 1.0, 1.0]).to_vec();
         let b: Vec<u8> = bytemuck::cast_slice(&[0.0f32, 0.0, 0.0]).to_vec();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineLayerNorm {
@@ -3634,7 +3654,8 @@ mod tests {
         // LogSoftmax of [0, 0, 0] → [-ln(3), -ln(3), -ln(3)]
         let x = [0.0f32, 0.0, 0.0];
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineLogSoftmax { size: 3 },
@@ -3664,7 +3685,8 @@ mod tests {
         // Verify InlineSoftmax writes correct values and sums to 1.
         let x = [1.0f32, 2.0, 3.0];
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineSoftmax { size: 3 },
@@ -3703,7 +3725,8 @@ mod tests {
         let idx_vals: [i64; 2] = [2, 0];
         let indices: Vec<u8> = bytemuck::cast_slice(&idx_vals).to_vec();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineGather {
@@ -3738,7 +3761,8 @@ mod tests {
         let a: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0]).to_vec();
         let b: Vec<u8> = bytemuck::cast_slice(&[3.0f32, 4.0, 5.0]).to_vec();
         let constants = empty_constants();
-        let ctx = TapeContext::new(&constants, &[]);
+        let wc = std::cell::RefCell::new(WeightCache::new());
+        let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
             kernel: TapeKernel::InlineConcat {
