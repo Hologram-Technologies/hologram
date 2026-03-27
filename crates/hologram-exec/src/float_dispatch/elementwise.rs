@@ -59,6 +59,18 @@ pub(crate) fn binary_elementwise_into(
     }
 }
 
+/// Cycling fallback: apply `f` element-wise with modular index repeat.
+///
+/// Used when proper N-D broadcasting is unavailable or inapplicable.
+/// Output length is `max(a.len(), b.len())`.
+#[inline]
+fn cycling_f32(a: &[f32], b: &[f32], f: &impl Fn(f32, f32) -> f32) -> Vec<f32> {
+    let out_len = a.len().max(b.len());
+    (0..out_len)
+        .map(|i| f(a[i % a.len()], b[i % b.len()]))
+        .collect()
+}
+
 /// Binary elementwise with proper N-D broadcasting using input shapes.
 ///
 /// Follows numpy broadcasting rules: dimensions are compared right-to-left,
@@ -76,11 +88,7 @@ pub(crate) fn binary_elementwise_broadcast(
 
     // Fast path: same shape or one is scalar — cycling is correct.
     if sa == sb || a.len() == 1 || b.len() == 1 {
-        let out_len = a.len().max(b.len());
-        let out: Vec<f32> = (0..out_len)
-            .map(|i| f(a[i % a.len()], b[i % b.len()]))
-            .collect();
-        return Ok(f32_vec_to_bytes(out));
+        return Ok(f32_vec_to_bytes(cycling_f32(&a, &b, &f)));
     }
 
     // Validate shapes match data sizes.
@@ -88,24 +96,14 @@ pub(crate) fn binary_elementwise_broadcast(
     let b_prod: usize = sb.iter().product();
     if a_prod != a.len() || b_prod != b.len() {
         // Shape doesn't match data — fall back to cycling.
-        let out_len = a.len().max(b.len());
-        let out: Vec<f32> = (0..out_len)
-            .map(|i| f(a[i % a.len()], b[i % b.len()]))
-            .collect();
-        return Ok(f32_vec_to_bytes(out));
+        return Ok(f32_vec_to_bytes(cycling_f32(&a, &b, &f)));
     }
 
     // Compute broadcast output shape. Fall back to cycling if shapes
     // are not broadcast-compatible (e.g. non-f32 dtype mismatch).
     let out_shape = match broadcast_shapes(sa, sb) {
         Some(s) => s,
-        None => {
-            let out_len = a.len().max(b.len());
-            let out: Vec<f32> = (0..out_len)
-                .map(|i| f(a[i % a.len()], b[i % b.len()]))
-                .collect();
-            return Ok(f32_vec_to_bytes(out));
-        }
+        None => return Ok(f32_vec_to_bytes(cycling_f32(&a, &b, &f))),
     };
     let out_len: usize = out_shape.iter().product();
 
@@ -113,11 +111,7 @@ pub(crate) fn binary_elementwise_broadcast(
     // input_shapes are stale (0-sentinels resolved to wrong values creating
     // orthogonal broadcast dimensions at runtime). Fall back to cycling.
     if out_len > a.len().max(b.len()) {
-        let safe_len = a.len().max(b.len());
-        let out: Vec<f32> = (0..safe_len)
-            .map(|i| f(a[i % a.len()], b[i % b.len()]))
-            .collect();
-        return Ok(f32_vec_to_bytes(out));
+        return Ok(f32_vec_to_bytes(cycling_f32(&a, &b, &f)));
     }
 
     // Compute strides for index mapping.

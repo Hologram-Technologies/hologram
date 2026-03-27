@@ -6,7 +6,7 @@ license.workspace = true
 description = "Expression graph, subgraphs, fusion engine, parallel scheduling"
 
 [dependencies]
-hologram-core = { workspace = true }
+hologram-core = { workspace = true, features = ["std"] }
 rkyv = { workspace = true }
 smallvec = { workspace = true }
 tinyvec = { workspace = true }

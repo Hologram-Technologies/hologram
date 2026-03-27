@@ -33,12 +33,17 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::Prim(p) => format!("Prim({})", p.name()),
         GraphOp::Lut(l) => format!("Lut({})", l.name()),
         GraphOp::FusedView(_) => "FusedView (256-byte table)".into(),
+        GraphOp::FusedView16(_) => "FusedView16 (128KB Q1 table)".into(),
         GraphOp::Constant(id) => format_constant(id, constants),
         GraphOp::CallSubgraph(s) => format!("CallSubgraph({})", s.raw()),
         GraphOp::MatMulLut4(id) => format!("MatMulLut4(id={})", id.raw()),
         GraphOp::MatMulLut8(id) => format!("MatMulLut8(id={})", id.raw()),
         GraphOp::BatchMatMulLut4(id) => format!("BatchMatMulLut4(id={})", id.raw()),
         GraphOp::BatchMatMulLut8(id) => format!("BatchMatMulLut8(id={})", id.raw()),
+        GraphOp::MatMulLut16(id) => format!("MatMulLut16(id={})", id.raw()),
+        GraphOp::BatchMatMulLut16(id) => format!("BatchMatMulLut16(id={})", id.raw()),
+        GraphOp::RingPrimUnary(p, level) => format!("RingPrimUnary({}, {:?})", p.name(), level),
+        GraphOp::RingPrimBinary(p, level) => format!("RingPrimBinary({}, {:?})", p.name(), level),
         GraphOp::Float(f) => f.name().to_string(),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
@@ -76,6 +81,7 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::Custom { id, arity } => {
             format!("Custom(id={}, arity={})", id.raw(), arity)
         }
+        GraphOp::Passthrough => "Passthrough".into(),
     }
 }
 

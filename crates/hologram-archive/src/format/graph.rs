@@ -136,6 +136,40 @@ impl SerializedGraph {
         self.node_dtypes.iter().copied().collect()
     }
 
+    /// Build a flat `Vec<Option<FloatDType>>` indexed by `node_id.index()`.
+    ///
+    /// Zero-copy: `FloatDType` is `Copy`. Avoids HashMap allocation/hashing for
+    /// dense 0..max_idx node indices during tape build. Returns a Vec of length
+    /// `max_idx`; nodes without a dtype entry are `None`.
+    #[must_use]
+    pub fn node_dtypes_vec(&self, max_idx: usize) -> Vec<Option<FloatDType>> {
+        let mut out = vec![None; max_idx];
+        for &(id, dtype) in &self.node_dtypes {
+            let idx = id.index() as usize;
+            if idx < max_idx {
+                out[idx] = Some(dtype);
+            }
+        }
+        out
+    }
+
+    /// Build a flat `Vec<Option<&[usize]>>` indexed by `node_id.index()`.
+    ///
+    /// Zero-clone: borrows shapes from `self.node_shapes`, no cloning.
+    /// Avoids HashMap allocation/hashing for dense node indices during tape build.
+    /// Returns a Vec of length `max_idx`; nodes without a shape are `None`.
+    #[must_use]
+    pub fn node_shapes_vec(&self, max_idx: usize) -> Vec<Option<&[usize]>> {
+        let mut out: Vec<Option<&[usize]>> = vec![None; max_idx];
+        for (id, shape) in &self.node_shapes {
+            let idx = id.index() as usize;
+            if idx < max_idx {
+                out[idx] = Some(shape.as_slice());
+            }
+        }
+        out
+    }
+
     /// Reconstruct a live Graph from this serialized snapshot.
     #[must_use]
     pub fn to_graph(&self) -> Graph {

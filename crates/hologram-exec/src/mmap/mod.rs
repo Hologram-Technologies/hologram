@@ -66,7 +66,8 @@ pub fn execute_tape(
     tape.prewarm_arena(&mut arena);
 
     // Build tape context with weight access for LUT-GEMM ops.
-    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights);
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
 
     // Execute the tape.
     tape.execute(&mut arena, &tape_ctx)?;
@@ -74,6 +75,106 @@ pub fn execute_tape(
     // Extract outputs.
     let outputs = collect_outputs(sg, &mut arena)?;
     Ok(outputs)
+}
+
+/// Execute a tape with pre-computed shape overrides from a `ShapeContextGraph`.
+///
+/// Like [`execute_tape`] but applies `shape_overrides` to the arena after seeding,
+/// giving every node correct N-D `TensorMeta` before any kernel dispatches.
+/// This eliminates all heuristic shape inference (`resolve_size`, `infer_matmul_dims`,
+/// `infer_slice_axis_size`) for nodes covered by the shape map.
+///
+/// `shape_overrides` is keyed by raw node ID (u32), mapping to the resolved output shape.
+/// Pass an empty map to fall back to the current heuristic behavior.
+/// Execute a tape with pre-computed shape overrides from a `ShapeContextGraph`.
+///
+/// Like [`execute_tape`] but passes `shape_overrides` to the tape executor,
+/// which uses them to set correct `TensorMeta` on each node's output after
+/// dispatch. This eliminates heuristic shape inference for all covered nodes.
+///
+/// `shape_overrides` is keyed by raw node index (u32), mapping to the resolved
+/// output shape. Pass an empty map to fall back to heuristic behavior.
+pub fn execute_tape_with_shapes(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    shape_overrides: &std::collections::HashMap<u32, Vec<usize>>,
+) -> ExecResult<GraphOutputs> {
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
+
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+    tape.prewarm_arena(&mut arena);
+
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
+    tape_ctx.shape_overrides = shape_overrides.clone();
+    tape.execute(&mut arena, &tape_ctx)?;
+
+    collect_outputs(sg, &mut arena)
+}
+
+/// Execute a tape with KV cache and pre-computed shape overrides.
+///
+/// Combines [`execute_tape_with_kv`] and [`execute_tape_with_shapes`].
+pub fn execute_tape_with_kv_and_shapes(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    shape_overrides: &std::collections::HashMap<u32, Vec<usize>>,
+) -> ExecResult<GraphOutputs> {
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
+
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+    let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
+    let position_offset = kv_owned.write_pos() as u32;
+
+    // Skip pre-warming for decode steps (write_pos > 0). The compiled output
+    // byte hints are sized for the full compiled seq_len, which wastes cache
+    // during single-token decode. On-demand allocation produces correctly-sized
+    // buffers. Prefill (write_pos == 0) benefits from pre-warming since its
+    // buffer sizes are closer to compiled.
+    if position_offset == 0 {
+        tape.prewarm_arena(&mut arena);
+    }
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let mut tape_ctx =
+        crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, &wc, kv_owned);
+    tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
+    tape_ctx.shape_overrides = shape_overrides.clone();
+
+    tape.execute(&mut arena, &tape_ctx)?;
+
+    let mut kv_out = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+    let seq_written = infer_kv_seq_written(inputs);
+    if seq_written > 0 {
+        kv_out.advance(seq_written);
+    }
+    *kv_state = kv_out;
+
+    collect_outputs(sg, &mut arena)
 }
 
 /// Collect graph outputs from the arena.
@@ -121,7 +222,14 @@ fn seed_arena<'a>(
                     .unwrap_or(4);
                 arena.insert_borrowed_with_elem_size(node.id, data, es);
                 // Set N-D metadata for constants from compiled shapes.
-                if let Some(shape) = compiled_shapes.get(&node.id) {
+                // Try node_shapes first, then constant_shapes (keyed by ConstantId).
+                let shape = compiled_shapes.get(&node.id).or_else(|| {
+                    sg.constant_shapes
+                        .iter()
+                        .find(|(c, _)| *c == *cid)
+                        .map(|(_, s)| s)
+                });
+                if let Some(shape) = shape {
                     let dtype = compiled_dtypes
                         .get(&node.id)
                         .copied()
@@ -208,6 +316,32 @@ pub fn execute_tape_with_kv(
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
 ) -> ExecResult<GraphOutputs> {
+    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    execute_tape_with_kv_impl(tape, plan, inputs, kv_state, &wc)
+}
+
+/// Execute with KV cache and a persistent weight cache.
+///
+/// The `weight_cache` persists deserialized quantized weights across calls.
+/// For LUT-GEMM models, the first call deserializes weights; subsequent
+/// calls reuse them — eliminating per-step rkyv overhead.
+pub fn execute_tape_with_kv_cached(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
+    execute_tape_with_kv_impl(tape, plan, inputs, kv_state, weight_cache)
+}
+
+fn execute_tape_with_kv_impl(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
     let sg = plan.graph();
     let weights = plan.weights();
     let compiled_dtypes = sg.node_dtypes_map();
@@ -223,11 +357,16 @@ pub fn execute_tape_with_kv(
         &mut arena,
     )?;
 
-    tape.prewarm_arena(&mut arena);
-
-    // Swap the KV state into the tape context (takes ownership via RefCell).
     let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
-    let tape_ctx = crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, kv_owned);
+    let position_offset = kv_owned.write_pos() as u32;
+
+    if position_offset == 0 {
+        tape.prewarm_arena(&mut arena);
+    }
+
+    let mut tape_ctx =
+        crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, weight_cache, kv_owned);
+    tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
 
     tape.execute(&mut arena, &tape_ctx)?;
 

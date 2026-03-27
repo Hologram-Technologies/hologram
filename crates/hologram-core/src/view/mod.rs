@@ -186,6 +186,75 @@ impl Default for ElementWiseView {
     }
 }
 
+// ── Canonical static views for UOR unary primitives ──────────────────────────
+//
+// These are algebraically immutable objects — the views for Neg, Bnot, Succ,
+// and Pred are uniquely determined by the byte-ring axioms. Caching them as
+// `static` avoids rebuilding the 256-byte table on every `to_view()` call.
+// Neg and Bnot are self-inverse (involutions): VIEW ∘ VIEW = identity.
+// Succ and Pred are mutual inverses: SUCC_VIEW ∘ PRED_VIEW = identity.
+
+const fn make_neg_table() -> [u8; 256] {
+    let mut t = [0u8; 256];
+    let mut i = 0u8;
+    loop {
+        t[i as usize] = i.wrapping_neg();
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    t
+}
+
+const fn make_bnot_table() -> [u8; 256] {
+    let mut t = [0u8; 256];
+    let mut i = 0u8;
+    loop {
+        t[i as usize] = !i;
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    t
+}
+
+const fn make_succ_table() -> [u8; 256] {
+    let mut t = [0u8; 256];
+    let mut i = 0u8;
+    loop {
+        t[i as usize] = i.wrapping_add(1);
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    t
+}
+
+const fn make_pred_table() -> [u8; 256] {
+    let mut t = [0u8; 256];
+    let mut i = 0u8;
+    loop {
+        t[i as usize] = i.wrapping_sub(1);
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    t
+}
+
+/// Canonical view for byte negation (`wrapping_neg`). Self-inverse involution.
+pub static NEG_VIEW: ElementWiseView = ElementWiseView::from_table(make_neg_table());
+/// Canonical view for bitwise NOT (`!x`). Self-inverse involution.
+pub static BNOT_VIEW: ElementWiseView = ElementWiseView::from_table(make_bnot_table());
+/// Canonical view for successor (`wrapping_add(1)`). Inverse of `PRED_VIEW`.
+pub static SUCC_VIEW: ElementWiseView = ElementWiseView::from_table(make_succ_table());
+/// Canonical view for predecessor (`wrapping_sub(1)`). Inverse of `SUCC_VIEW`.
+pub static PRED_VIEW: ElementWiseView = ElementWiseView::from_table(make_pred_table());
+
 #[cfg(test)]
 mod tests {
     use super::*;

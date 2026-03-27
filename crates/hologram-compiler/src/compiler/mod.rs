@@ -15,6 +15,7 @@ use hologram_graph::graph::node::NodeId;
 
 use crate::error::{CompileError, CompileResult};
 use crate::liveness;
+use crate::qedl::{pass::insert_qedl_boundaries, EncodingId};
 use crate::workspace;
 
 /// QEDL pipeline boundary marker.
@@ -44,6 +45,8 @@ pub struct CompilationStats {
     pub schedule_levels: usize,
     /// Fusion pass statistics.
     pub fusion: FusionStats,
+    /// Number of Prim nodes promoted to RingPrimUnary/Binary by the precision pass.
+    pub ring_prims_promoted: usize,
 }
 
 /// Output of the compilation pipeline.
@@ -56,8 +59,8 @@ pub struct CompilationOutput {
     /// The execution schedule.
     pub schedule: ExecutionSchedule,
     /// QEDL pipeline boundaries: nodes where quantize/dequantize transitions occur.
-    /// Empty until the QEDL insertion pass is implemented.
-    pub qedl_boundaries: Vec<(NodeId, QedlBoundary)>,
+    /// Each entry: (consuming node id, boundary kind, selected encoding).
+    pub qedl_boundaries: Vec<(NodeId, QedlBoundary, EncodingId)>,
 }
 
 /// Builder for configuring and running the compilation pipeline.
@@ -98,7 +101,8 @@ pub fn compile(graph: Graph) -> CompileResult<CompilationOutput> {
 fn compile_impl(mut graph: Graph, enable_fusion: bool) -> CompileResult<CompilationOutput> {
     parse_stage(&graph)?;
     let fusion_stats = fuse_stage(&mut graph, enable_fusion)?;
-    emit_stage(&graph, fusion_stats)
+    let ring_prims_promoted = precision_stage(&mut graph);
+    emit_stage(&graph, fusion_stats, ring_prims_promoted)
 }
 
 /// Stage 1: validate graph structure.
@@ -114,20 +118,41 @@ fn fuse_stage(graph: &mut Graph, enable: bool) -> CompileResult<FusionStats> {
     fusion::fuse(graph).map_err(CompileError::from)
 }
 
+/// Stage 2b: promote byte-domain Prim ops to ring-level-tagged variants.
+///
+/// Uses observable analysis (stratum/curvature of output LUT) to select
+/// the minimum Q-level (Q0/Q1/Q2) per node. Bakes the ring level into the
+/// graph so the archive contains fully annotated ops.
+fn precision_stage(graph: &mut Graph) -> usize {
+    crate::precision::promote_prim_ring_levels(graph)
+}
+
 /// Stage 3: schedule, liveness, workspace, emit archive.
-fn emit_stage(graph: &Graph, fusion_stats: FusionStats) -> CompileResult<CompilationOutput> {
+fn emit_stage(
+    graph: &Graph,
+    fusion_stats: FusionStats,
+    ring_prims_promoted: usize,
+) -> CompileResult<CompilationOutput> {
     let schedule = build_schedule(graph)?;
     let intervals = liveness::compute_liveness(&schedule, graph);
     let layout = workspace::plan_workspace(&intervals);
-    let stats = build_stats(graph, &schedule, &layout, fusion_stats);
+    let stats = build_stats(graph, &schedule, &layout, fusion_stats, ring_prims_promoted);
     let layer_header = build_layer_header(graph, &schedule);
     let archive = write_archive(graph, &layer_header)?;
+
+    // Run QEDL pass: collect domain-crossing boundary annotations.
+    let topo_order: Vec<NodeId> = schedule
+        .levels
+        .iter()
+        .flat_map(|level| level.node_ids.iter().copied())
+        .collect();
+    let qedl_boundaries = insert_qedl_boundaries(graph, &topo_order);
 
     Ok(CompilationOutput {
         archive,
         stats,
         schedule,
-        qedl_boundaries: Vec::new(),
+        qedl_boundaries,
     })
 }
 
@@ -142,6 +167,7 @@ fn build_stats(
     schedule: &ExecutionSchedule,
     layout: &workspace::WorkspaceLayout,
     fusion: FusionStats,
+    ring_prims_promoted: usize,
 ) -> CompilationStats {
     CompilationStats {
         workspace_slots: layout.total_slots,
@@ -149,6 +175,7 @@ fn build_stats(
         total_nodes: graph.node_count(),
         schedule_levels: schedule.num_levels(),
         fusion,
+        ring_prims_promoted,
     }
 }
 

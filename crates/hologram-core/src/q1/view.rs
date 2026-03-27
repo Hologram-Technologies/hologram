@@ -12,6 +12,10 @@ use core::fmt;
 ///
 /// Heap-allocated (128 KB) — too large for stack. Not `Copy`.
 #[derive(Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct ElementWiseView16 {
     table: Box<[u16; 65536]>,
 }

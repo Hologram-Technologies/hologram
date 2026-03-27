@@ -15,12 +15,15 @@
 extern crate std;
 
 pub mod buffer;
+pub mod carry;
 pub mod datum;
 pub mod encoding;
 pub mod error;
 pub mod lut;
 pub mod op;
 pub mod q1;
+pub mod q2;
+pub mod q3;
 pub mod quantum;
 pub mod ring;
 pub mod view;

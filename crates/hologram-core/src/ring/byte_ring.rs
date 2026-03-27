@@ -2,6 +2,8 @@
 
 use crate::datum::ByteDatum;
 use crate::lut::arith;
+use crate::q1::ring::WordRing;
+use crate::q2::ring::TripleRing;
 use crate::HoloPrimitives;
 use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
 
@@ -126,6 +128,161 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for ByteInvolution {
 impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for ByteInvolution {}
 impl uor_foundation::kernel::op::Involution<HoloPrimitives> for ByteInvolution {}
 
+static GROUP_GENERATORS: [ByteInvolution; 2] = [ByteInvolution::Neg, ByteInvolution::Bnot];
+
+impl uor_foundation::kernel::op::Group<HoloPrimitives> for ByteRing {
+    type Operation = ByteInvolution;
+
+    #[inline]
+    fn generated_by(&self) -> &[Self::Operation] {
+        &GROUP_GENERATORS
+    }
+
+    #[inline]
+    fn order(&self) -> u64 {
+        256
+    }
+}
+
+impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for ByteRing {}
+
+/// Marker for the Z/256Z multiplication table (the ring is trivially specified).
+pub struct ByteMultTable;
+
+impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for ByteMultTable {}
+
+static BYTE_MULT_TABLE: ByteMultTable = ByteMultTable;
+
+impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for ByteRing {
+    #[inline]
+    fn algebra_dimension(&self) -> u64 {
+        1
+    }
+
+    #[inline]
+    fn is_commutative(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn is_associative(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn basis_elements(&self) -> &str {
+        "{1}"
+    }
+
+    type MultiplicationTable = ByteMultTable;
+
+    #[inline]
+    fn algebra_multiplication_table(&self) -> &Self::MultiplicationTable {
+        &BYTE_MULT_TABLE
+    }
+}
+
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for ByteRing {
+    #[inline]
+    fn commutator_formula(&self) -> &str {
+        "[a,b] = 0"
+    }
+}
+
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for ByteRing {
+    #[inline]
+    fn associator_formula(&self) -> &str {
+        "[a,b,c] = 0"
+    }
+}
+
+/// Unified division algebra enum bridging Q0–Q3 across the Cayley-Dickson chain.
+///
+/// Used as the `NormedDivisionAlgebra` associated type for `CayleyDicksonConstruction`
+/// on `ByteRing`, `WordRing`, and `TripleRing`.
+#[derive(Debug, Clone, Copy)]
+pub enum HoloDivisionAlgebra {
+    /// Q0 level: the real algebra R ≅ Z/256Z.
+    Q0(ByteRing),
+    /// Q1 level: the complex algebra C ≅ Z/65536Z.
+    Q1(WordRing),
+    /// Q2 level: the quaternion algebra H ≅ Z/2^24Z.
+    Q2(TripleRing),
+    /// Q3 level: the octonion algebra O ≅ Z/2^32Z.
+    Q3(crate::q3::OctonionRing),
+}
+
+impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives>
+    for HoloDivisionAlgebra
+{
+    type MultiplicationTable = ByteMultTable;
+
+    #[inline]
+    fn algebra_dimension(&self) -> u64 {
+        match self {
+            Self::Q0(_) => 1,
+            Self::Q1(_) => 2,
+            Self::Q2(_) => 4,
+            Self::Q3(_) => 8,
+        }
+    }
+
+    #[inline]
+    fn is_commutative(&self) -> bool {
+        !matches!(self, Self::Q3(_))
+    }
+
+    #[inline]
+    fn is_associative(&self) -> bool {
+        !matches!(self, Self::Q3(_))
+    }
+
+    #[inline]
+    fn basis_elements(&self) -> &str {
+        match self {
+            Self::Q0(_) => "{1}",
+            Self::Q1(_) => "{1, i}",
+            Self::Q2(_) => "{1, i, j, k}",
+            Self::Q3(_) => "{1, e1, e2, e3, e4, e5, e6, e7}",
+        }
+    }
+
+    #[inline]
+    fn algebra_multiplication_table(&self) -> &Self::MultiplicationTable {
+        &BYTE_MULT_TABLE
+    }
+}
+
+static Q0_ALGEBRA: HoloDivisionAlgebra = HoloDivisionAlgebra::Q0(ByteRing);
+pub(crate) static Q1_ALGEBRA: HoloDivisionAlgebra = HoloDivisionAlgebra::Q1(WordRing);
+pub(crate) static Q2_ALGEBRA: HoloDivisionAlgebra = HoloDivisionAlgebra::Q2(TripleRing);
+pub(crate) static Q3_ALGEBRA: HoloDivisionAlgebra =
+    HoloDivisionAlgebra::Q3(crate::q3::OctonionRing);
+
+impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for ByteRing {
+    type NormedDivisionAlgebra = HoloDivisionAlgebra;
+
+    #[inline]
+    fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra {
+        &Q0_ALGEBRA
+    }
+
+    #[inline]
+    fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra {
+        &Q1_ALGEBRA
+    }
+
+    #[inline]
+    fn adjoined_element(&self) -> &str {
+        "i"
+    }
+
+    #[inline]
+    fn conjugation_rule(&self) -> &str {
+        "i\u{00b2} = \u{2212}1 mod 256"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +339,35 @@ mod tests {
         for i in 0..=255u8 {
             assert_eq!(neg.apply(bnot.apply(i)), i.wrapping_add(1));
         }
+    }
+
+    #[test]
+    fn group_order_and_generators() {
+        use uor_foundation::kernel::op::Group;
+        let ring = ByteRing;
+        assert_eq!(ring.order(), 256);
+        assert_eq!(ring.generated_by().len(), 2);
+    }
+
+    #[test]
+    fn cayley_dickson_r_to_c_grounding() {
+        use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+        let ring = ByteRing;
+        let src = ring.cayley_dickson_source();
+        let tgt = ring.cayley_dickson_target();
+        assert_eq!(src.algebra_dimension(), 1); // R = Q0
+        assert_eq!(tgt.algebra_dimension(), 2); // C = Q1
+        assert_eq!(ring.adjoined_element(), "i");
+        assert!(ring.conjugation_rule().contains("mod 256"));
+    }
+
+    #[test]
+    fn holo_division_algebra_q2() {
+        use uor_foundation::kernel::division::NormedDivisionAlgebra;
+        let q2 = HoloDivisionAlgebra::Q2(TripleRing);
+        assert_eq!(q2.algebra_dimension(), 4);
+        assert_eq!(q2.basis_elements(), "{1, i, j, k}");
+        assert!(q2.is_commutative());
+        assert!(q2.is_associative());
     }
 }
