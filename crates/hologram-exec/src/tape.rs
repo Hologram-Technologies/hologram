@@ -2734,19 +2734,11 @@ impl EnumTape {
                                         && actual_elems > 0
                                         && compiled_elems > 0
                                     {
-                                        let mut adjusted = compiled_meta;
-                                        let ratio = actual_elems as f64 / compiled_elems as f64;
-                                        for i in 0..adjusted.ndim as usize {
-                                            let scaled =
-                                                (adjusted.dims[i] as f64 * ratio).round() as u32;
-                                            let mut check = adjusted;
-                                            check.dims[i] = scaled;
-                                            if check.n_elems() == actual_elems {
-                                                adjusted.dims[i] = scaled;
-                                                break;
-                                            }
-                                        }
-                                        Some(adjusted)
+                                        crate::shape_resolve::scale_meta_to_fit(
+                                            compiled_meta,
+                                            actual_elems,
+                                            Some(&input_meta),
+                                        )
                                     } else {
                                         Some(compiled_meta)
                                     }
