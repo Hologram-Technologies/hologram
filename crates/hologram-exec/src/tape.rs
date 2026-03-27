@@ -1152,44 +1152,31 @@ fn dispatch_kernel(
             end,
             axis_size,
         } => {
-            // Resolve actual axis_size from input meta when available.
-            // axis_from_end encoding: ndim - original_axis (set during lowering).
-            // Recover: axis = ndim - axis_from_end.
-            let resolved_axis_size = input_metas
-                .first()
-                .and_then(|m| m.as_ref())
-                .and_then(|meta| {
-                    let n = meta.ndim as usize;
-                    let afe = *axis_from_end as usize;
-                    (afe > 0 && afe <= n).then(|| meta.dims[n - afe])
-                })
-                .filter(|&d| d > 0)
-                .unwrap_or(*axis_size);
-
             let result = float_dispatch::dispatch_float_ctx(
                 &FloatOp::Slice {
                     axis_from_end: *axis_from_end,
                     start: *start,
                     end: *end,
-                    axis_size: resolved_axis_size,
+                    axis_size: *axis_size,
                 },
                 inputs,
                 tape_ctx.ctx.as_ref(),
             )?;
             out_buf.extend_from_slice(&result);
-
-            // Output meta: adjust the sliced axis dimension.
+            // Compute output meta: adjust sliced axis dimension.
             if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
                 let n = in_meta.ndim as usize;
-                let afe = *axis_from_end as usize;
-                if afe > 0 && afe <= n {
-                    let axis = n - afe;
-                    let effective_end = (*end).min(resolved_axis_size);
-                    let slice_len = effective_end.saturating_sub(*start);
-                    let mut out_meta = *in_meta;
+                let axis = if (*axis_from_end as usize) < n {
+                    n - *axis_from_end as usize - 1
+                } else {
+                    0
+                };
+                let slice_len = (*end).saturating_sub(*start);
+                let mut out_meta = *in_meta;
+                if axis < n {
                     out_meta.dims[axis] = slice_len;
-                    return Ok(DispatchResult::InOutBufWithMeta(out_meta));
                 }
+                return Ok(DispatchResult::InOutBufWithMeta(out_meta));
             }
             Ok(DispatchResult::InOutBuf)
         }
@@ -2734,11 +2721,19 @@ impl EnumTape {
                                         && actual_elems > 0
                                         && compiled_elems > 0
                                     {
-                                        crate::shape_resolve::scale_meta_to_fit(
-                                            compiled_meta,
-                                            actual_elems,
-                                            Some(&input_meta),
-                                        )
+                                        let mut adjusted = compiled_meta;
+                                        let ratio = actual_elems as f64 / compiled_elems as f64;
+                                        for i in 0..adjusted.ndim as usize {
+                                            let scaled =
+                                                (adjusted.dims[i] as f64 * ratio).round() as u32;
+                                            let mut check = adjusted;
+                                            check.dims[i] = scaled;
+                                            if check.n_elems() == actual_elems {
+                                                adjusted.dims[i] = scaled;
+                                                break;
+                                            }
+                                        }
+                                        Some(adjusted)
                                     } else {
                                         Some(compiled_meta)
                                     }

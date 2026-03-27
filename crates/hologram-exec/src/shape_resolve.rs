@@ -265,12 +265,24 @@ pub fn compute_output_meta(
 
     // If compiled meta exists but element count differs, try to adjust
     // one dimension to match actual output (variable-length scaling).
-    // Use simple first-match here (not input-disambiguated) because this
-    // handles ALL ops, not just Reshape. Reshape has its own handler with
-    // input-based disambiguation in the execution loop.
     if let Some(cm) = compiled_meta {
-        if let Some(adjusted) = scale_meta_to_fit(cm, out_elems, None) {
-            return Some(adjusted);
+        if cm.ndim > 0 && cm.n_elems() > 0 && out_elems > 0 {
+            let mut adjusted = cm;
+            let compiled_elems = cm.n_elems();
+            // Find which dim changed and scale it.
+            for i in 0..adjusted.ndim as usize {
+                let old_dim = adjusted.dims[i] as usize;
+                if old_dim > 0 {
+                    let scaled =
+                        (old_dim as f64 * out_elems as f64 / compiled_elems as f64).round() as u32;
+                    let mut check = adjusted;
+                    check.dims[i] = scaled;
+                    if check.n_elems() == out_elems {
+                        adjusted.dims[i] = scaled;
+                        return Some(adjusted);
+                    }
+                }
+            }
         }
     }
 
@@ -280,62 +292,6 @@ pub fn compute_output_meta(
     } else {
         None
     }
-}
-
-/// Scale one dimension of `compiled` to make its total elements equal `target_elems`.
-///
-/// When multiple dimensions could be scaled (e.g., seq=32 and heads=32 both
-/// produce valid results), uses `input_meta` to disambiguate: the scaled
-/// dimension should match a dimension in the input that actually changed
-/// from its compiled value.
-pub fn scale_meta_to_fit(
-    compiled: TensorMeta,
-    target_elems: usize,
-    input_meta: Option<&TensorMeta>,
-) -> Option<TensorMeta> {
-    let compiled_elems = compiled.n_elems();
-    if compiled.ndim == 0 || compiled_elems == 0 || target_elems == 0 {
-        return None;
-    }
-    if compiled_elems == target_elems {
-        return Some(compiled);
-    }
-
-    let ratio = target_elems as f64 / compiled_elems as f64;
-    let mut best: Option<(usize, u32)> = None;
-
-    for i in 0..compiled.ndim as usize {
-        let old_dim = compiled.dims[i] as usize;
-        if old_dim == 0 {
-            continue;
-        }
-        let scaled = (old_dim as f64 * ratio).round() as u32;
-        let mut check = compiled;
-        check.dims[i] = scaled;
-        if check.n_elems() != target_elems {
-            continue;
-        }
-        // This dim produces a valid scaling. Check if the input meta
-        // confirms it's the right one (the scaled value matches an
-        // input dimension that differs from the compiled dim).
-        let confirmed = input_meta.is_some_and(|im| {
-            (0..im.ndim as usize).any(|j| im.dims[j] == scaled && scaled != compiled.dims[i])
-        });
-        match best {
-            None => best = Some((i, scaled)),
-            Some(_) if confirmed => {
-                best = Some((i, scaled));
-                break; // Input-confirmed match — highest confidence.
-            }
-            _ => {} // Keep the first unconfirmed match if no better option.
-        }
-    }
-
-    best.map(|(i, scaled)| {
-        let mut adjusted = compiled;
-        adjusted.dims[i] = scaled;
-        adjusted
-    })
 }
 
 #[cfg(test)]
