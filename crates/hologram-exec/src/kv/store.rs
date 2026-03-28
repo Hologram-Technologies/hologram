@@ -200,6 +200,11 @@ impl KvStore {
                 Ok(Self::apply_unary(&view, inputs[0]))
             }
             GraphOp::RingPrimBinary(p, _level) => Self::apply_binary(*p, inputs[0], inputs[1]),
+            GraphOp::RingActivation(_, _)
+            | GraphOp::RingAccumulate(_)
+            | GraphOp::RingReduce { .. } => Err(ExecError::UnsupportedOp(
+                "ring-native op (use tape path)".into(),
+            )),
         }
     }
 }

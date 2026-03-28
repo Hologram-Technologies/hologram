@@ -107,6 +107,15 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::RingPrimBinary(p, level) => {
             json!({"RingPrimBinary": {"op": p.name(), "level": format!("{:?}", level)}})
         }
+        GraphOp::RingActivation(act, level) => {
+            json!({"RingActivation": {"op": format!("{:?}", act), "level": format!("{:?}", level)}})
+        }
+        GraphOp::RingAccumulate(level) => {
+            json!({"RingAccumulate": {"level": format!("{:?}", level)}})
+        }
+        GraphOp::RingReduce { op, axis, level } => {
+            json!({"RingReduce": {"op": op.name(), "axis": axis, "level": format!("{:?}", level)}})
+        }
         GraphOp::Float(f) => json!({"Float": f.name()}),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();

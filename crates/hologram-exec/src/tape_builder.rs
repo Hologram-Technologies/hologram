@@ -278,6 +278,14 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             op: *p,
             level: *level,
         }),
+        GraphOp::RingActivation(act, level) => Ok(TapeKernel::RingActivation {
+            op: *act,
+            level: *level,
+        }),
+        GraphOp::RingAccumulate(level) => Ok(TapeKernel::RingAccumulate { level: *level }),
+        GraphOp::RingReduce { .. } => Err(ExecError::UnsupportedOp(
+            "RingReduce not yet implemented in tape".into(),
+        )),
         GraphOp::Custom { id, arity: _ } => {
             let reg = registry.ok_or_else(|| {
                 ExecError::UnsupportedOp(format!(

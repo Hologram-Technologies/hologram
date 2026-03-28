@@ -11,6 +11,10 @@ pub use lut_op::LutOp;
 pub use prim::PrimOp;
 pub use shape_spec::{ShapeDim, ShapeSpec};
 
+// Ring-native activation ops from hologram-ring (parametric ring foundation)
+pub use hologram_ring::activation::ActivationOp;
+pub use hologram_ring::{QuantumLevel, RingWord};
+
 /// Ring quantum level for ring-arithmetic execution.
 ///
 /// Selects which ring Z/2^nZ to operate in:

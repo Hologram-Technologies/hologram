@@ -120,6 +120,20 @@ pub enum GraphOp {
     /// Stays in ring domain (Z/2^nZ) with no float conversion.
     /// Q0: uses ADD_Q0/MUL_Q0 LUT tables. Q1: uses native wrapping ops.
     RingPrimBinary(PrimOp, RingLevel),
+
+    // ── Ring-native ops (from hologram-ring) ─────────────────────────────
+    /// Ring-native activation (21 ops, composed from ring primitives).
+    /// Uses ActivationOp::apply::<Q> at the ring level specified by RingLevel.
+    /// Q0/Q1: LUT path. Q3+: piecewise polynomial path.
+    RingActivation(hologram_core::op::ActivationOp, RingLevel),
+    /// Ring-domain fused multiply-add: acc + a * b.
+    RingAccumulate(RingLevel),
+    /// Ring-domain reduction along an axis.
+    RingReduce {
+        op: PrimOp,
+        axis: u32,
+        level: RingLevel,
+    },
 }
 
 impl GraphOp {
@@ -142,6 +156,9 @@ impl GraphOp {
             Self::FusedView16(_) => 1,
             Self::RingPrimUnary(_, _) => 1,
             Self::RingPrimBinary(_, _) => 2,
+            Self::RingActivation(_, _) => 1,
+            Self::RingAccumulate(_) => 3,
+            Self::RingReduce { .. } => 1,
             Self::Prim(p) => p.arity(),
             Self::Custom { arity, .. } => *arity,
             Self::Float(f) => f.arity(),
@@ -169,6 +186,9 @@ impl GraphOp {
                 | Self::Float(_)
                 | Self::FusedFloatChain(_)
                 | Self::RingPrimUnary(_, _)
+                | Self::RingActivation(_, _)
+                | Self::RingAccumulate(_)
+                | Self::RingReduce { .. }
                 | Self::RingPrimBinary(_, _)
         )
     }

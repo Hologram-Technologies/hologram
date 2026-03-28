@@ -55,7 +55,37 @@ pub const FLAG_WEIGHTS_COMPRESSED: u32 = 1 << 1;
 /// Flag bit: archive contains compression metadata per tensor.
 pub const COMPRESSION_FLAG: u32 = 0x0010;
 
+/// Flag bit: checksums use blake3 (truncated to u32) instead of CRC32.
+pub const FLAG_BLAKE3_CHECKSUMS: u32 = 1 << 2;
+
+/// Mask for quantum_index stored in flags bits 16-23.
+const QUANTUM_INDEX_SHIFT: u32 = 16;
+const QUANTUM_INDEX_MASK: u32 = 0xFF << QUANTUM_INDEX_SHIFT;
+
 impl HoloHeader {
+    /// Get the quantum level index (0=Q0, 1=Q1, 3=Q3, 7=Q7).
+    /// Stored in bits 16-23 of the flags field.
+    #[must_use]
+    pub fn quantum_index(&self) -> u32 {
+        (self.flags & QUANTUM_INDEX_MASK) >> QUANTUM_INDEX_SHIFT
+    }
+
+    /// Set the quantum level index in the flags field.
+    pub fn set_quantum_index(&mut self, index: u32) {
+        self.flags = (self.flags & !QUANTUM_INDEX_MASK) | ((index & 0xFF) << QUANTUM_INDEX_SHIFT);
+    }
+
+    /// Whether checksums use blake3 instead of CRC32.
+    #[must_use]
+    pub fn uses_blake3(&self) -> bool {
+        self.flags & FLAG_BLAKE3_CHECKSUMS != 0
+    }
+
+    /// Set the blake3 checksum flag.
+    pub fn set_blake3(&mut self) {
+        self.flags |= FLAG_BLAKE3_CHECKSUMS;
+    }
+
     /// Whether the graph section is compressed.
     #[must_use]
     pub fn is_graph_compressed(&self) -> bool {

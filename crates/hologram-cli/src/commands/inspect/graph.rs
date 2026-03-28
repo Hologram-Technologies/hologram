@@ -44,6 +44,11 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::BatchMatMulLut16(id) => format!("BatchMatMulLut16(id={})", id.raw()),
         GraphOp::RingPrimUnary(p, level) => format!("RingPrimUnary({}, {:?})", p.name(), level),
         GraphOp::RingPrimBinary(p, level) => format!("RingPrimBinary({}, {:?})", p.name(), level),
+        GraphOp::RingActivation(act, level) => format!("RingActivation({:?}, {:?})", act, level),
+        GraphOp::RingAccumulate(level) => format!("RingAccumulate({:?})", level),
+        GraphOp::RingReduce { op, axis, level } => {
+            format!("RingReduce({}, axis={}, {:?})", op.name(), axis, level)
+        }
         GraphOp::Float(f) => f.name().to_string(),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();

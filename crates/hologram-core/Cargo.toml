@@ -7,6 +7,7 @@ description = "Core LUT tables, views, ring, encoding for O(1) computation"
 
 [dependencies]
 uor-foundation = { workspace = true }
+hologram-ring = { workspace = true, features = ["std", "serialize"] }
 bytemuck = { workspace = true }
 libm = { workspace = true }
 # rkyv is optional: only enabled when the 'serialize' feature is on.
@@ -17,5 +18,4 @@ rkyv = { version = "0.8", default-features = false, optional = true }
 default = ["std"]
 std = ["serialize", "rkyv/std", "rkyv/bytecheck"]
 serialize = ["dep:rkyv", "rkyv/alloc", "rkyv/bytecheck"]
-simd = []
-no_alloc = []
+simd = [] # SIMD dispatch is compile-time detected; flag reserved for future gating

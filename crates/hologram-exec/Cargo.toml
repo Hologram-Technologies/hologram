@@ -8,6 +8,7 @@ description = "KV-lookup execution engine with parallel level scheduling"
 [dependencies]
 hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
+hologram-ring = { workspace = true, features = ["std"] }
 hologram-archive = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
@@ -35,3 +36,4 @@ parallel = ["rayon"]
 accelerate = []
 profile = []
 webgpu = ["wgpu", "pollster"]
+
