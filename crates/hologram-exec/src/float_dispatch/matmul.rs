@@ -171,14 +171,14 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
             actual_k * actual_n
         };
         let o_stride = actual_m * actual_n;
-        for i in 0..batch {
+
+        let do_batch = |i: usize, o_slice: &mut [f32]| {
             let a_slice = &a[i * a_stride..(i + 1) * a_stride];
             let b_slice = if b_stride > 0 {
                 &b[i * b_stride..(i + 1) * b_stride]
             } else {
-                &b[..kn] // broadcast: same B for all batches
+                &b[..kn]
             };
-            let o_slice = &mut out[i * o_stride..(i + 1) * o_stride];
             #[cfg(all(feature = "accelerate", target_os = "macos"))]
             {
                 blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
@@ -187,6 +187,21 @@ pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecRe
             {
                 matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
             }
+        };
+
+        #[cfg(feature = "parallel")]
+        if batch >= 2 {
+            use rayon::prelude::*;
+            out.par_chunks_mut(o_stride)
+                .enumerate()
+                .for_each(|(i, o_slice)| do_batch(i, o_slice));
+        } else {
+            do_batch(0, &mut out);
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        for i in 0..batch {
+            do_batch(i, &mut out[i * o_stride..(i + 1) * o_stride]);
         }
     }
 
@@ -296,14 +311,14 @@ pub fn dispatch_matmul_into(
             actual_k * actual_n
         };
         let o_stride = actual_m * actual_n;
-        for i in 0..batch {
+
+        let do_batch = |i: usize, o_slice: &mut [f32]| {
             let a_slice = &a[i * a_stride..(i + 1) * a_stride];
             let b_slice = if b_stride > 0 {
                 &b[i * b_stride..(i + 1) * b_stride]
             } else {
                 &b[..kn]
             };
-            let o_slice = &mut out[i * o_stride..(i + 1) * o_stride];
             #[cfg(all(feature = "accelerate", target_os = "macos"))]
             {
                 blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
@@ -312,6 +327,21 @@ pub fn dispatch_matmul_into(
             {
                 matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
             }
+        };
+
+        #[cfg(feature = "parallel")]
+        if batch >= 2 {
+            use rayon::prelude::*;
+            out.par_chunks_mut(o_stride)
+                .enumerate()
+                .for_each(|(i, o_slice)| do_batch(i, o_slice));
+        } else {
+            do_batch(0, out);
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        for i in 0..batch {
+            do_batch(i, &mut out[i * o_stride..(i + 1) * o_stride]);
         }
     }
 
@@ -366,22 +396,14 @@ pub fn dispatch_batched_matmul(
     }
 
     let out_size = batch * c_stride;
-    if out_size > 1024 * 1024 * 1024 {
-        return Err(ExecError::ShapeMismatch {
-            expected: "batched matmul output < 1GB".to_string(),
-            actual: format!("{out_size} floats"),
-        });
-    }
 
     let mut out = vec![0.0f32; out_size];
 
-    for bat in 0..batch {
+    let do_batch = |bat: usize, c_slice: &mut [f32]| {
         let a_off = bat * a_stride;
         let b_off = (bat % b_batch_count) * b_stride;
-        let c_off = bat * c_stride;
         let a_slice = &a[a_off..a_off + a_stride];
         let b_slice = &b[b_off..b_off + b_stride];
-        let c_slice = &mut out[c_off..c_off + c_stride];
 
         #[cfg(all(feature = "accelerate", target_os = "macos"))]
         {
@@ -392,6 +414,21 @@ pub fn dispatch_batched_matmul(
         {
             matmul_k_outer(a_slice, b_slice, c_slice, mat_m, mat_k, mat_n);
         }
+    };
+
+    #[cfg(feature = "parallel")]
+    if batch >= 2 {
+        use rayon::prelude::*;
+        out.par_chunks_mut(c_stride)
+            .enumerate()
+            .for_each(|(bat, c_slice)| do_batch(bat, c_slice));
+    } else {
+        do_batch(0, &mut out);
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    for bat in 0..batch {
+        do_batch(bat, &mut out[bat * c_stride..(bat + 1) * c_stride]);
     }
 
     // Output shape: A's batch dims + [M, N]
@@ -543,6 +580,10 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
 ///
 /// Falls back to scalar k-outer for remainder rows/columns that don't
 /// fill a complete tile.
+/// Minimum number of M-tile rows to justify spawning rayon threads.
+/// Below this, thread-pool overhead exceeds computation savings.
+const PAR_M_TILE_THRESHOLD: usize = 8;
+
 #[inline]
 #[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
 fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
@@ -554,7 +595,72 @@ fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: 
     let m_rem = m % MR;
     let n_rem = n % NR;
 
-    // Tiled body: MR×NR register blocks.
+    // Parallel path: split M-tile rows across rayon threads.
+    // Each thread writes to non-overlapping output rows, so no synchronization needed.
+    #[cfg(feature = "parallel")]
+    if m_tiles >= PAR_M_TILE_THRESHOLD {
+        use rayon::prelude::*;
+        // Process tiled body in parallel over M-tile rows.
+        (0..m_tiles).into_par_iter().for_each(|it| {
+            let i = it * MR;
+            // SAFETY: each iteration writes exclusively to out[i*n..(i+MR)*n],
+            // which is non-overlapping across different `it` values.
+            let out_ptr = out.as_ptr() as *mut f32;
+            for jt in 0..n_tiles {
+                let j = jt * NR;
+                let mut acc = [[0.0f32; NR]; MR];
+                for p in 0..k {
+                    let b_off = p * n + j;
+                    for ii in 0..MR {
+                        let a_val = a[(i + ii) * k + p];
+                        for jj in 0..NR {
+                            acc[ii][jj] += a_val * b[b_off + jj];
+                        }
+                    }
+                }
+                for (ii, acc_row) in acc.iter().enumerate() {
+                    let off = (i + ii) * n + j;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(acc_row.as_ptr(), out_ptr.add(off), NR);
+                    }
+                }
+            }
+            if n_rem > 0 {
+                let j = n_tiles * NR;
+                for ii in 0..MR {
+                    let row = i + ii;
+                    for p in 0..k {
+                        let a_val = a[row * k + p];
+                        for jj in 0..n_rem {
+                            unsafe {
+                                let ptr = out_ptr.add(row * n + j + jj);
+                                *ptr += a_val * b[p * n + j + jj];
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Remainder rows (sequential — typically ≤3 rows).
+        if m_rem > 0 {
+            let i = m_tiles * MR;
+            for ii in 0..m_rem {
+                let row = i + ii;
+                for p in 0..k {
+                    let a_val = a[row * k + p];
+                    let b_row = &b[p * n..(p + 1) * n];
+                    let o_row = &mut out[row * n..(row + 1) * n];
+                    for j in 0..n {
+                        o_row[j] += a_val * b_row[j];
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Sequential path: original register-blocked tiling.
     for it in 0..m_tiles {
         let i = it * MR;
         for jt in 0..n_tiles {
