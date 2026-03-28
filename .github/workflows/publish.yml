@@ -144,7 +144,7 @@ jobs:
   # Create GitHub Release with binaries
   # Note: GitHub Packages does not currently support native Cargo registries
   # Users should consume these crates via git dependencies:
-  #   hologram = { git = "https://github.com/UOR-Foundation/hologram", tag = "v0.1.0" }
+  #   hologram = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v0.1.0" }
   release:
     name: Create GitHub Release
     needs: [verify, build-binaries]
@@ -185,11 +185,11 @@ jobs:
 
           ```toml
           [dependencies]
-          hologram = { git = "https://github.com/UOR-Foundation/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologram = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
 
           # Or for specific crates:
-          hologram-core = { git = "https://github.com/UOR-Foundation/hologram", tag = "v${{ needs.verify.outputs.version }}" }
-          hologramr = { git = "https://github.com/UOR-Foundation/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologram-core = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologramr = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
           ```
 
           #### CLI Binary
@@ -229,11 +229,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "1. **Git Dependency** (Recommended for Libraries)" >> $GITHUB_STEP_SUMMARY
           echo "   \`\`\`toml" >> $GITHUB_STEP_SUMMARY
-          echo "   hologram = { git = \"https://github.com/UOR-Foundation/hologram\", tag = \"v${{ needs.verify.outputs.version }}\" }" >> $GITHUB_STEP_SUMMARY
+          echo "   hologram = { git = \"https://github.com/Hologram-Technologies/hologram\", tag = \"v${{ needs.verify.outputs.version }}\" }" >> $GITHUB_STEP_SUMMARY
           echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "2. **Binary Download** (For CLI Tool)" >> $GITHUB_STEP_SUMMARY
-          echo "   - Download from [GitHub Releases](https://github.com/UOR-Foundation/hologram/releases/tag/v${{ needs.verify.outputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "   - Download from [GitHub Releases](https://github.com/Hologram-Technologies/hologram/releases/tag/v${{ needs.verify.outputs.version }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Note on GitHub Packages" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

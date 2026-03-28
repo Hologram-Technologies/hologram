@@ -63,7 +63,7 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: UOR-Foundation
+          owner: Hologram-Technologies
           repositories: hologram-website
 
       - name: Push benchmarks to website repository
@@ -73,7 +73,7 @@ jobs:
         run: |
           DATE=$(date -u +"%Y-%m-%d")
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
-          git clone --depth 1 "https://x-access-token:${WEBSITE_DEPLOY_TOKEN}@github.com/UOR-Foundation/hologram-website.git" /tmp/website
+          git clone --depth 1 "https://x-access-token:${WEBSITE_DEPLOY_TOKEN}@github.com/Hologram-Technologies/hologram-website.git" /tmp/website
 
           # Create date-based directory structure within public/
           BENCH_DIR="/tmp/website/public/benches/${DATE}"
