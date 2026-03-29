@@ -32,7 +32,10 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::FusedView16(_)
         | GraphOp::Prim(_)
         | GraphOp::RingPrimUnary(_, _)
-        | GraphOp::RingPrimBinary(_, _) => Domain::Byte,
+        | GraphOp::RingPrimBinary(_, _)
+        | GraphOp::RingActivation(_, _)
+        | GraphOp::RingAccumulate(_)
+        | GraphOp::RingReduce { .. } => Domain::Byte,
 
         GraphOp::Float(_)
         | GraphOp::FusedFloatChain(_)

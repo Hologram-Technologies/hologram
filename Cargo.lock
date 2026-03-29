@@ -756,6 +756,7 @@ name = "hologram-core"
 version = "0.3.0"
 dependencies = [
  "bytemuck",
+ "hologram-ring",
  "libm",
  "rkyv",
  "uor-foundation",
@@ -769,6 +770,7 @@ dependencies = [
  "hologram-archive",
  "hologram-core",
  "hologram-graph",
+ "hologram-ring",
  "metal 0.33.0",
  "pollster",
  "rayon",
@@ -800,6 +802,14 @@ dependencies = [
  "rkyv",
  "smallvec",
  "tinyvec",
+]
+
+[[package]]
+name = "hologram-ring"
+version = "0.3.0"
+dependencies = [
+ "rkyv",
+ "uor-foundation",
 ]
 
 [[package]]

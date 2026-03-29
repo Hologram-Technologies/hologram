@@ -1,12 +1,27 @@
-//! BLAKE3 checksum utilities for archive integrity verification.
+//! Checksum utilities: BLAKE3 (primary) and truncated u32 variant for header compatibility.
 
-/// Compute BLAKE3 checksum of a byte slice.
+/// Compute BLAKE3 checksum of a byte slice (full 32-byte hash).
 #[inline]
 pub fn checksum(data: &[u8]) -> [u8; 32] {
     *blake3::hash(data).as_bytes()
 }
 
-/// Verify a BLAKE3 checksum matches an expected value.
+/// Compute blake3 hash of a byte slice, truncated to 4 bytes for header compatibility.
+/// Returns the first 4 bytes of the blake3 hash as a u32.
+#[inline]
+pub fn blake3_u32(data: &[u8]) -> u32 {
+    let hash = blake3::hash(data);
+    let bytes = hash.as_bytes();
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// Verify a blake3 checksum (truncated to u32) matches.
+#[inline]
+pub fn verify_blake3(data: &[u8], expected: u32) -> bool {
+    blake3_u32(data) == expected
+}
+
+/// Verify a BLAKE3 checksum matches an expected 32-byte value.
 #[inline]
 pub fn verify(data: &[u8], expected: &[u8; 32]) -> bool {
     &checksum(data) == expected

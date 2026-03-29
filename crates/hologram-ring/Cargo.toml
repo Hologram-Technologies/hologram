@@ -1,0 +1,15 @@
+[package]
+name = "hologram-ring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parametric ring R_n: RingWord, QuantumLevel, PrimOp, observables, encodings, activations — algebraic foundation for hologram"
+
+[dependencies]
+uor-foundation = { workspace = true }
+rkyv = { version = "0.8", default-features = false, optional = true }
+
+[features]
+default = ["std"]
+std = []
+serialize = ["dep:rkyv", "rkyv/alloc"]

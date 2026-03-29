@@ -21,6 +21,11 @@ hologram-ffi = { path = "crates/hologram-ffi" }
 # Compression
 hologram-compression = { path = "crates/hologram-compression" }
 
+# Ring foundation (parametric ring algebra)
+hologram-ring = { path = "crates/hologram-ring", default-features = false }
+
+
+
 # UOR Foundation
 uor-foundation = "0.1.1"
 
@@ -60,6 +65,7 @@ wasm-bindgen = "0.2"
 # GPU (optional)
 wgpu = "23"
 pollster = "0.4"
+
 
 [package]
 name = "hologram"

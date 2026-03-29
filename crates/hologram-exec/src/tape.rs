@@ -497,6 +497,15 @@ pub enum TapeKernel {
     /// Ring-arithmetic binary op. Stays in ring domain (Z/2^nZ), no float conversion.
     /// Q0: uses ADD_Q0/MUL_Q0 LUT (apply_binary). Q1: add_q1/mul_q1 native ops.
     RingPrimBinary { op: PrimOp, level: RingLevel },
+
+    /// Ring-native activation. Applies ActivationOp::apply element-wise at the specified level.
+    /// Q0/Q1: LUT path (O(1) per element). Q3+: piecewise polynomial (register arithmetic).
+    RingActivation {
+        op: hologram_core::op::ActivationOp,
+        level: RingLevel,
+    },
+    /// Ring-domain fused multiply-add: acc + a * b, element-wise.
+    RingAccumulate { level: RingLevel },
 }
 
 impl TapeKernel {
@@ -747,6 +756,118 @@ fn dispatch_kernel(
                 let mut flux = tape_ctx.flux.get();
                 flux.accumulate(curvature, effective_level);
                 tape_ctx.flux.set(flux);
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::RingActivation { op, level } => {
+            let input = inputs[0];
+            let base = out_buf.len();
+            let effective_level = {
+                let flux = tape_ctx.flux.get();
+                let flux_level = flux.required_level();
+                if (flux_level as u8) > (*level as u8) {
+                    flux_level
+                } else {
+                    *level
+                }
+            };
+            out_buf.resize(base + input.len(), 0);
+            let dst = &mut out_buf[base..];
+            match effective_level {
+                RingLevel::Q0 => {
+                    for (i, &x) in input.iter().enumerate() {
+                        dst[i] = op.apply::<hologram_ring::Q0>(x);
+                    }
+                }
+                RingLevel::Q1 => {
+                    for (c_in, c_out) in input.chunks_exact(2).zip(dst.chunks_exact_mut(2)) {
+                        let val = u16::from_le_bytes([c_in[0], c_in[1]]);
+                        let r = op.apply::<hologram_ring::Q1>(val);
+                        c_out.copy_from_slice(&r.to_le_bytes());
+                    }
+                }
+                RingLevel::Q2 => {
+                    // Q2 (24-bit): treat as u32 masked to 24 bits
+                    for (c_in, c_out) in input.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], 0]);
+                        let r = op.apply::<hologram_ring::Q3>(val) & 0x00FF_FFFF;
+                        let b = r.to_le_bytes();
+                        c_out[0] = b[0];
+                        c_out[1] = b[1];
+                        c_out[2] = b[2];
+                    }
+                }
+                RingLevel::Q3 => {
+                    for (c_in, c_out) in input.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], c_in[3]]);
+                        let r = op.apply::<hologram_ring::Q3>(val);
+                        c_out.copy_from_slice(&r.to_le_bytes());
+                    }
+                }
+            }
+            // Curvature: O(1) — single XOR + popcount on first byte
+            if !input.is_empty() && out_buf.len() > base {
+                let curvature = (input[0] ^ out_buf[base]).count_ones() as u8;
+                let mut flux = tape_ctx.flux.get();
+                flux.accumulate(curvature, effective_level);
+                tape_ctx.flux.set(flux);
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::RingAccumulate { level } => {
+            // Three inputs: acc, a, b. Element-wise: acc + a * b
+            if inputs.len() < 3 {
+                return Err(crate::error::ExecError::UnsupportedOp(
+                    "RingAccumulate requires 3 inputs".into(),
+                ));
+            }
+            let (acc, a, b) = (inputs[0], inputs[1], inputs[2]);
+            let base = out_buf.len();
+            out_buf.resize(base + acc.len(), 0);
+            let dst = &mut out_buf[base..];
+            match level {
+                RingLevel::Q0 => {
+                    for i in 0..acc.len() {
+                        dst[i] = hologram_ring::accumulate(acc[i], a[i], b[i]);
+                    }
+                }
+                RingLevel::Q3 => {
+                    for i in (0..acc.len()).step_by(4) {
+                        let va = u32::from_le_bytes([acc[i], acc[i + 1], acc[i + 2], acc[i + 3]]);
+                        let vb = u32::from_le_bytes([a[i], a[i + 1], a[i + 2], a[i + 3]]);
+                        let vc = u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+                        let r = hologram_ring::accumulate(va, vb, vc);
+                        dst[i..i + 4].copy_from_slice(&r.to_le_bytes());
+                    }
+                }
+                RingLevel::Q1 => {
+                    for i in (0..acc.len()).step_by(2) {
+                        if i + 1 < acc.len() {
+                            let va = u16::from_le_bytes([acc[i], acc[i + 1]]);
+                            let vb = u16::from_le_bytes([a[i], a[i + 1]]);
+                            let vc = u16::from_le_bytes([b[i], b[i + 1]]);
+                            let r = hologram_ring::accumulate(va, vb, vc);
+                            dst[i..i + 2].copy_from_slice(&r.to_le_bytes());
+                        }
+                    }
+                }
+                RingLevel::Q2 => {
+                    for i in (0..acc.len()).step_by(3) {
+                        if i + 2 < acc.len() {
+                            let va = u32::from_le_bytes([acc[i], acc[i + 1], acc[i + 2], 0])
+                                & 0x00FF_FFFF;
+                            let vb =
+                                u32::from_le_bytes([a[i], a[i + 1], a[i + 2], 0]) & 0x00FF_FFFF;
+                            let vc =
+                                u32::from_le_bytes([b[i], b[i + 1], b[i + 2], 0]) & 0x00FF_FFFF;
+                            let r = hologram_ring::accumulate(va, vb, vc) & 0x00FF_FFFF;
+                            let bytes = r.to_le_bytes();
+                            dst[i] = bytes[0];
+                            dst[i + 1] = bytes[1];
+                            dst[i + 2] = bytes[2];
+                        }
+                    }
+                }
             }
             Ok(DispatchResult::InOutBuf)
         }
