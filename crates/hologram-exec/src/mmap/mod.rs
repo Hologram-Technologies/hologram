@@ -62,15 +62,26 @@ pub fn execute_tape(
         &mut arena,
     )?;
 
-    // Pre-warm arena with output slot allocations (first-inference optimization).
-    tape.prewarm_arena(&mut arena);
+    // Pre-warm arena with output slot allocations — skip for large models
+    // where the total prewarm would exceed available memory. Swap-insert
+    // recycling handles buffer reuse during execution regardless.
+    let total_prewarm: u64 = tape.prewarm_estimate();
+    if total_prewarm < 2 * 1024 * 1024 * 1024 {
+        tape.prewarm_arena(&mut arena);
+    }
 
     // Build tape context with weight access for LUT-GEMM ops.
     let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
     let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
 
-    // Execute the tape.
-    tape.execute(&mut arena, &tape_ctx)?;
+    // Execute the tape with liveness-based eviction: free activation
+    // buffers as soon as all consumers have executed.
+    // Protect graph output nodes from eviction so collect_outputs can read them.
+    // Liveness-based eviction: pass consumer counts as a borrowed slice.
+    // The execute_with_eviction method clones internally only once.
+    // Output nodes and their sources are protected with u32::MAX during
+    // finalize_consumer_counts + protect_outputs.
+    tape.execute_with_eviction(&mut arena, &tape_ctx, Some(&tape.consumer_counts))?;
 
     // Extract outputs.
     let outputs = collect_outputs(sg, &mut arena)?;

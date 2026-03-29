@@ -3,11 +3,13 @@ use crate::error::ExecResult;
 
 // ── im2col + GEMM conv2d core ────────────────────────────────────────────────
 
-/// Core conv2d using im2col + matmul pattern.
+/// Core conv2d using im2col + GEMM pattern.
 ///
-/// Replaces 8-level nested loops with two flat phases:
-/// 1. im2col: gather input patches into a column matrix
-/// 2. GEMM: weight × col → output (cache-friendly, autovectorizable)
+/// 1. im2col: gather input patches into a column matrix [kernel_size × spatial_out]
+/// 2. GEMM: weight[oc_per_group, kernel_size] × col[kernel_size, spatial_out] → out
+///
+/// The GEMM phase uses BLAS sgemm when available (Accelerate on macOS),
+/// falling back to the parallel tiled matmul kernel otherwise.
 #[allow(clippy::too_many_arguments)]
 fn conv2d_core(
     data: &[f32],
@@ -37,71 +39,114 @@ fn conv2d_core(
 
     let mut out = vec![0.0f32; n * oc * spatial_out];
 
-    // Process one batch at a time to bound col buffer size.
-    let mut col = vec![0.0f32; spatial_out * kernel_size];
+    // im2col buffer: [kernel_size × spatial_out] (column-major friendly for GEMM).
+    // We store it as row-major [kernel_size, spatial_out] so weight × col works
+    // directly with BLAS sgemm (row-major C = A × B).
+    let mut col = vec![0.0f32; kernel_size * spatial_out];
 
     for batch in 0..n {
         for g in 0..group {
-            // Phase 1: im2col — flat loop over output spatial × kernel elements.
-            for (flat, col_val) in col.iter_mut().enumerate() {
-                let out_pos = flat / kernel_size;
-                let k = flat % kernel_size;
-                let oh = out_pos / w_out;
-                let ow = out_pos % w_out;
+            // Phase 1: im2col — build col[kernel_size, spatial_out].
+            // Each row k of col contains the k-th element of every spatial patch.
+            for k in 0..kernel_size {
                 let ic_idx = k / (kh * kw);
                 let k_rem = k % (kh * kw);
                 let fh = k_rem / kw;
                 let fw = k_rem % kw;
+                let abs_ic = g * ic_per_group + ic_idx;
+                let col_row = &mut col[k * spatial_out..(k + 1) * spatial_out];
 
-                let ih = oh * sh + fh * dh;
-                let iw = ow * sw + fw * dw;
-                // Check padded bounds.
-                *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
-                    let abs_ic = g * ic_per_group + ic_idx;
-                    let d_idx = ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
-                    if d_idx < data.len() {
-                        data[d_idx]
+                for (out_pos, col_val) in col_row.iter_mut().enumerate() {
+                    let oh = out_pos / w_out;
+                    let ow = out_pos % w_out;
+                    let ih = oh * sh + fh * dh;
+                    let iw = ow * sw + fw * dw;
+
+                    *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
+                        let d_idx = ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
+                        if d_idx < data.len() {
+                            data[d_idx]
+                        } else {
+                            0.0
+                        }
                     } else {
                         0.0
-                    }
-                } else {
-                    0.0
-                };
+                    };
+                }
             }
 
             // Phase 2: GEMM — weight[oc_per_group, kernel_size] × col[kernel_size, spatial_out]
-            // ikj loop order for cache-friendly access to col and output.
-            let w_base = g * oc_per_group * kernel_size;
+            //                → out_slice[oc_per_group, spatial_out]
+            let w_slice = &weight[g * oc_per_group * kernel_size
+                ..(g * oc_per_group * kernel_size + oc_per_group * kernel_size).min(weight.len())];
             let o_base = batch * oc * spatial_out + g * oc_per_group * spatial_out;
+            let o_len = oc_per_group * spatial_out;
+            let o_slice = &mut out[o_base..o_base + o_len];
 
-            for oc_idx in 0..oc_per_group {
-                // Add bias once per output channel.
-                let abs_oc = g * oc_per_group + oc_idx;
-                let bias_val = bias.and_then(|b| b.get(abs_oc).copied()).unwrap_or(0.0);
-                let o_row_start = o_base + oc_idx * spatial_out;
-                if bias_val != 0.0 {
-                    for v in &mut out[o_row_start..o_row_start + spatial_out] {
-                        *v = bias_val;
+            // Initialize output with bias.
+            if let Some(b) = bias {
+                for oc_idx in 0..oc_per_group {
+                    let abs_oc = g * oc_per_group + oc_idx;
+                    let bias_val = b.get(abs_oc).copied().unwrap_or(0.0);
+                    if bias_val != 0.0 {
+                        let row = &mut o_slice[oc_idx * spatial_out..(oc_idx + 1) * spatial_out];
+                        for v in row.iter_mut() {
+                            *v = bias_val;
+                        }
                     }
                 }
+            }
 
-                // ikj matmul: iterate over k (inner dim) in outer loop.
-                for k in 0..kernel_size {
-                    let w_idx = w_base + oc_idx * kernel_size + k;
-                    let w_val = if w_idx < weight.len() {
-                        weight[w_idx]
-                    } else {
-                        continue;
-                    };
-                    if w_val == 0.0 {
-                        continue;
+            // GEMM: C = A × B where A=[oc_per_group, kernel_size], B=[kernel_size, spatial_out]
+            // beta=1.0 to accumulate onto bias.
+            let beta = if bias.is_some() { 1.0 } else { 0.0 };
+
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                super::matmul::blas::sgemm_full(
+                    super::matmul::GemmParams {
+                        m: oc_per_group,
+                        n: spatial_out,
+                        k: kernel_size,
+                        alpha: 1.0,
+                        beta,
+                        trans_a: false,
+                        trans_b: false,
+                    },
+                    w_slice,
+                    &col,
+                    o_slice,
+                );
+            }
+
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                // Tiled matmul kernel (parallelized via rayon when available).
+                // matmul_k_outer writes into o_slice, overwriting bias.
+                // So we save bias, compute matmul (which zeros first), then add bias back.
+                if bias.is_some() {
+                    // Bias already written to o_slice above. Save it, matmul will overwrite.
+                    let saved_bias: Vec<f32> = o_slice.to_vec();
+                    super::matmul::matmul_k_outer(
+                        w_slice,
+                        &col,
+                        o_slice,
+                        oc_per_group,
+                        kernel_size,
+                        spatial_out,
+                    );
+                    for (o, b) in o_slice.iter_mut().zip(saved_bias.iter()) {
+                        *o += b;
                     }
-                    // col is [spatial_out × kernel_size] row-major; access col[pos * kernel_size + k]
-                    // to get the k-th element of each spatial patch.
-                    let o_row = &mut out[o_row_start..o_row_start + spatial_out];
-                    for pos in 0..spatial_out {
-                        o_row[pos] += w_val * col[pos * kernel_size + k];
-                    }
+                } else {
+                    super::matmul::matmul_k_outer(
+                        w_slice,
+                        &col,
+                        o_slice,
+                        oc_per_group,
+                        kernel_size,
+                        spatial_out,
+                    );
                 }
             }
         }

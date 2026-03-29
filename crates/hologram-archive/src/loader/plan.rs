@@ -169,6 +169,27 @@ impl LoadedPlan {
         self.layer_header.as_ref()
     }
 
+    /// Extract the weight index from raw archive bytes.
+    ///
+    /// The weight index maps each tensor to its byte range in the weight blob
+    /// and its layer group. Requires the raw archive bytes since section data
+    /// is referenced by offset. Returns `None` if absent or unparseable.
+    #[must_use]
+    pub fn weight_index_from_bytes(
+        &self,
+        archive_bytes: &[u8],
+    ) -> Option<crate::weight::index::WeightIndex> {
+        let entry = self
+            .section_table
+            .find(crate::section::SECTION_WEIGHT_INDEX)?;
+        let start = entry.offset as usize;
+        let end = start + entry.size as usize;
+        if end > archive_bytes.len() {
+            return None;
+        }
+        crate::weight::index::WeightIndex::from_bytes(&archive_bytes[start..end]).ok()
+    }
+
     /// Number of nodes in the graph.
     #[must_use]
     pub fn node_count(&self) -> usize {

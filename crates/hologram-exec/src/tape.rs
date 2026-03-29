@@ -1309,7 +1309,7 @@ fn dispatch_kernel(
         }
         TapeKernel::InlineArgMax { axis, keepdims } => {
             let input = inputs.first().copied().unwrap_or(&[]);
-            let floats: &[f32] = bytemuck::cast_slice(input);
+            let floats = safe_cast_f32(input);
             // Resolve axis size from input meta or compiled value.
             let axis_size = shape_resolve::resolve_last_dim(
                 *axis,
@@ -1962,6 +1962,22 @@ fn dispatch_kernel(
     }
 }
 
+/// Cast `&[u8]` to `&[f32]`, handling misaligned buffers gracefully.
+/// Returns a `Cow` — borrowed when aligned, owned copy when not.
+#[inline(always)]
+fn safe_cast_f32(bytes: &[u8]) -> std::borrow::Cow<'_, [f32]> {
+    match bytemuck::try_cast_slice(bytes) {
+        Ok(s) => std::borrow::Cow::Borrowed(s),
+        Err(_) => {
+            let floats: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            std::borrow::Cow::Owned(floats)
+        }
+    }
+}
+
 /// Binary elementwise with broadcasting. Fast paths avoid per-element modulo.
 #[inline(always)]
 fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) -> f32) {
@@ -1979,38 +1995,36 @@ fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) 
         for (d, &y) in dst.iter_mut().zip(b.iter()) {
             *d = f(av, y);
         }
-    } else {
+    } else if !a.is_empty() && !b.is_empty() {
         for (i, d) in dst.iter_mut().enumerate() {
             *d = f(a[i % a.len()], b[i % b.len()]);
         }
     }
+    // If either input is empty, dst is left as zeros (from allocation).
 }
 
 /// Inline unary kernel — writes directly to out_buf as f32 via bytemuck cast.
 /// No dispatch overhead, no intermediate allocation.
 #[inline(always)]
 fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
-    let x: &[f32] = bytemuck::cast_slice(input);
-    let byte_len = x.len() * 4;
-    let base = out_buf.len();
-    out_buf.resize(base + byte_len, 0);
-    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    let x = safe_cast_f32(input);
+    let mut dst = vec![0.0f32; x.len()];
     for (d, &s) in dst.iter_mut().zip(x.iter()) {
         *d = f(s);
     }
+    out_buf.extend_from_slice(bytemuck::cast_slice(&dst));
 }
 
 /// Inline binary kernel — writes directly to out_buf as f32 via bytemuck cast.
 #[inline(always)]
 fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32) -> f32) {
-    let a: &[f32] = bytemuck::cast_slice(a);
-    let b: &[f32] = bytemuck::cast_slice(b);
+    let a = safe_cast_f32(a);
+    let b = safe_cast_f32(b);
     let out_len = a.len().max(b.len());
-    let byte_len = out_len * 4;
-    let base = out_buf.len();
-    out_buf.resize(base + byte_len, 0);
-    let dst: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
-    binary_broadcast(a, b, dst, f);
+    // Write into a fresh aligned Vec<f32>, then copy bytes into out_buf.
+    let mut dst = vec![0.0f32; out_len];
+    binary_broadcast(&a, &b, &mut dst, f);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&dst));
 }
 
 /// Typed unary kernel — input already cast to `&[f32]` by caller.
@@ -2568,7 +2582,7 @@ fn dispatch_kv_write(
         out_buf.extend_from_slice(input);
         return Ok(hologram_core::op::TensorMeta::infer_1d(input.len(), 4));
     }
-    let floats: &[f32] = bytemuck::cast_slice(input);
+    let floats = safe_cast_f32(input);
     let nkv = n_kv_heads as usize;
     let hd = head_dim as usize;
     let stride = nkv * hd;
@@ -2577,10 +2591,10 @@ fn dispatch_kv_write(
     // Convert to seq-first for cache storage if input is heads-first.
     let seq_first_data: Vec<f32>;
     let cache_data: &[f32] = if heads_first {
-        seq_first_data = transpose_heads_to_seq_first(floats, nkv, seq, hd);
+        seq_first_data = transpose_heads_to_seq_first(&floats, nkv, seq, hd);
         &seq_first_data
     } else {
-        floats
+        &floats
     };
 
     let mut kv = kv_cell.borrow_mut();
@@ -2747,6 +2761,16 @@ pub struct EnumTape {
     pub instructions: Vec<TapeInstruction>,
     /// Level boundaries: `level_offsets[i]..level_offsets[i+1]`.
     pub level_offsets: Vec<usize>,
+    /// Per-node remaining consumer count for liveness-based eviction.
+    /// Computed once at tape finalization. During execution, decremented
+    /// after each instruction; when a node's count reaches 0, its arena
+    /// slot is freed to reclaim memory.
+    pub(crate) consumer_counts: Vec<u32>,
+    /// Per-level weight byte ranges for madvise prefetching.
+    /// `level_weight_ranges[i] = (start_byte, end_byte)` covering all
+    /// deferred constants accessed by instructions in level `i`.
+    /// Empty if no weight index was computed.
+    pub(crate) level_weight_ranges: Vec<(u64, u64)>,
 }
 
 impl EnumTape {
@@ -2756,6 +2780,8 @@ impl EnumTape {
         Self {
             instructions: Vec::new(),
             level_offsets: vec![0],
+            consumer_counts: Vec::new(),
+            level_weight_ranges: Vec::new(),
         }
     }
 
@@ -2767,6 +2793,8 @@ impl EnumTape {
         Self {
             instructions: Vec::with_capacity(n_instructions),
             level_offsets,
+            consumer_counts: Vec::new(),
+            level_weight_ranges: Vec::new(),
         }
     }
 
@@ -2782,6 +2810,142 @@ impl EnumTape {
         self.level_offsets.push(self.instructions.len());
     }
 
+    /// Compute per-level weight byte ranges for madvise prefetching.
+    ///
+    /// For each level, scans instructions for input nodes that reference
+    /// `Deferred` constants and computes the bounding byte range in the
+    /// weight blob. The executor can then issue `MADV_WILLNEED` for the
+    /// next level's range while the current level computes.
+    pub fn compute_level_weight_ranges(
+        &mut self,
+        constants: &hologram_graph::constant::ConstantStore,
+        sg: &hologram_archive::format::graph::SerializedGraph,
+    ) {
+        use hologram_graph::constant::ConstantData;
+        use hologram_graph::graph::GraphOp;
+
+        // Build node_id → (offset, size) map for Deferred constants.
+        let mut const_ranges: std::collections::HashMap<u32, (u64, u64)> =
+            std::collections::HashMap::new();
+        for node in &sg.nodes {
+            if let GraphOp::Constant(cid) = &node.op {
+                if let Some(ConstantData::Deferred {
+                    byte_size,
+                    source_id,
+                }) = constants.get(*cid)
+                {
+                    const_ranges.insert(node.id.index(), ((*source_id), (*byte_size)));
+                }
+            }
+        }
+
+        let n_levels = self.n_levels();
+        let mut ranges = Vec::with_capacity(n_levels);
+
+        for level_idx in 0..n_levels {
+            let start = self.level_offsets[level_idx];
+            let end = self.level_offsets[level_idx + 1];
+            let mut min_offset = u64::MAX;
+            let mut max_end: u64 = 0;
+
+            for instr in &self.instructions[start..end] {
+                for &input_idx in &instr.input_indices {
+                    if let Some(&(offset, size)) = const_ranges.get(&input_idx) {
+                        min_offset = min_offset.min(offset);
+                        max_end = max_end.max(offset + size);
+                    }
+                }
+            }
+
+            if min_offset < u64::MAX {
+                ranges.push((min_offset, max_end));
+            } else {
+                ranges.push((0, 0)); // No weights in this level.
+            }
+        }
+
+        self.level_weight_ranges = ranges;
+    }
+
+    /// Compute per-node consumer counts for liveness-based arena eviction.
+    ///
+    /// Must be called after all instructions are added. During execution,
+    /// each node's count is decremented when consumed; at zero, the arena
+    /// slot is freed. Output nodes are exempt (consumer_count = u32::MAX).
+    pub fn finalize_consumer_counts_with_graph(
+        &mut self,
+        sg: &hologram_archive::format::graph::SerializedGraph,
+    ) {
+        self.finalize_consumer_counts();
+
+        // Protect graph output nodes and their inputs from eviction.
+        for &out_id in &sg.output_node_ids {
+            let idx = out_id.index() as usize;
+            if idx < self.consumer_counts.len() {
+                self.consumer_counts[idx] = u32::MAX;
+            }
+        }
+        for node in &sg.nodes {
+            if matches!(node.op, hologram_graph::graph::GraphOp::Output) {
+                let idx = node.id.index() as usize;
+                if idx < self.consumer_counts.len() {
+                    self.consumer_counts[idx] = u32::MAX;
+                }
+            }
+        }
+        // Protect passthrough inputs — data is moved, source must survive.
+        for instr in &self.instructions {
+            if instr.passthrough {
+                for &input_idx in &instr.input_indices {
+                    let idx = input_idx as usize;
+                    if idx < self.consumer_counts.len() {
+                        self.consumer_counts[idx] = u32::MAX;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn finalize_consumer_counts(&mut self) {
+        let max_idx = self
+            .instructions
+            .iter()
+            .flat_map(|i| {
+                i.input_indices
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(i.output_idx))
+            })
+            .max()
+            .unwrap_or(0) as usize;
+
+        let mut counts = vec![0u32; max_idx + 1];
+        for instr in &self.instructions {
+            for &input_idx in &instr.input_indices {
+                if (input_idx as usize) < counts.len() {
+                    counts[input_idx as usize] = counts[input_idx as usize].saturating_add(1);
+                }
+            }
+        }
+        // Passthrough and output nodes should never be evicted.
+        for instr in &self.instructions {
+            if instr.passthrough {
+                counts[instr.output_idx as usize] = u32::MAX;
+            }
+        }
+        self.consumer_counts = counts;
+    }
+
+    /// Mark specific node indices as non-evictable (e.g., graph output nodes).
+    pub fn protect_outputs(&mut self, output_node_ids: &[u32]) {
+        for &id in output_node_ids {
+            let idx = id as usize;
+            if idx < self.consumer_counts.len() {
+                self.consumer_counts[idx] = u32::MAX;
+            }
+        }
+    }
+
     /// Number of levels in the tape.
     #[must_use]
     pub fn n_levels(&self) -> usize {
@@ -2791,6 +2955,15 @@ impl EnumTape {
     /// Pre-allocate output slots in the arena so `swap_insert` has buffers
     /// to recycle from the very first instruction (eliminates first-inference
     /// allocation overhead).
+    /// Estimate total bytes that `prewarm_arena` would allocate.
+    pub fn prewarm_estimate(&self) -> u64 {
+        self.instructions
+            .iter()
+            .filter(|i| i.output_byte_hint > 0 && !i.passthrough)
+            .map(|i| i.output_byte_hint as u64)
+            .sum()
+    }
+
     pub fn prewarm_arena(&self, arena: &mut BufferArena<'_>) {
         for instr in &self.instructions {
             if instr.output_byte_hint > 0 && !instr.passthrough {
@@ -2801,6 +2974,22 @@ impl EnumTape {
                 }
             }
         }
+    }
+
+    /// Execute with liveness-based eviction of dead activation buffers.
+    ///
+    /// When `live_counts` is provided, each node's consumer count is
+    /// decremented after execution. When a count reaches 0, the node's
+    /// arena slot is freed immediately, bounding peak memory to the
+    /// maximum live activation set rather than the sum of all outputs.
+    pub fn execute_with_eviction(
+        &self,
+        arena: &mut BufferArena<'_>,
+        tape_ctx: &TapeContext<'_>,
+        live_counts: Option<&[u32]>,
+    ) -> ExecResult<()> {
+        let mut counts = live_counts.map(|c| c.to_vec());
+        self.execute_inner(arena, tape_ctx, counts.as_deref_mut())
     }
 
     /// Execute the tape against the given arena and context.
@@ -2814,15 +3003,40 @@ impl EnumTape {
         arena: &mut BufferArena<'_>,
         tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
+        self.execute_inner(arena, tape_ctx, None)
+    }
+
+    fn execute_inner(
+        &self,
+        arena: &mut BufferArena<'_>,
+        tape_ctx: &TapeContext<'_>,
+        mut live_counts: Option<&mut [u32]>,
+    ) -> ExecResult<()> {
         // Resolve backend once (not per-instruction).
         let backend = tape_ctx.backend.resolve();
         let mut out_buf: Vec<u8> = Vec::with_capacity(4096);
         let mut deferred_slots: Vec<(u32, u8)> = Vec::new();
+        let has_weight_ranges = !self.level_weight_ranges.is_empty();
 
         for level_idx in 0..self.n_levels() {
             let start = self.level_offsets[level_idx];
             let end = self.level_offsets[level_idx + 1];
             let level_instrs = &self.instructions[start..end];
+
+            // Prefetch NEXT level's weight pages while this level computes.
+            if has_weight_ranges {
+                let next = level_idx + 1;
+                if next < self.level_weight_ranges.len() {
+                    let (off, range_end) = self.level_weight_ranges[next];
+                    if range_end > off {
+                        let offset = off as usize;
+                        let len = (range_end - off) as usize;
+                        if offset + len <= tape_ctx.weights.len() {
+                            prefetch_read(tape_ctx.weights[offset..].as_ptr());
+                        }
+                    }
+                }
+            }
 
             for (i, instr) in level_instrs.iter().enumerate() {
                 let global_i = start + i;
@@ -3116,6 +3330,22 @@ impl EnumTape {
                 arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
             }
             deferred_slots.clear();
+
+            // Liveness-based eviction: decrement consumer counts for all
+            // inputs consumed in this level, and free nodes that are dead.
+            if let Some(ref mut counts) = live_counts {
+                for instr in level_instrs {
+                    for &input_idx in &instr.input_indices {
+                        let idx = input_idx as usize;
+                        if idx < counts.len() && counts[idx] != u32::MAX {
+                            counts[idx] = counts[idx].saturating_sub(1);
+                            if counts[idx] == 0 {
+                                arena.evict(NodeId::new(input_idx, 0));
+                            }
+                        }
+                    }
+                }
+            }
         } // end level loop
 
         Ok(())

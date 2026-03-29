@@ -142,6 +142,56 @@ impl HoloLoader {
     pub fn as_bytes(&self) -> &[u8] {
         &self.mmap
     }
+
+    /// Prefetch a byte range within the archive via `madvise(MADV_WILLNEED)`.
+    ///
+    /// Call this for the next layer group's weight range while the current
+    /// layer computes. The OS will asynchronously fault the pages into the
+    /// page cache so they're warm by the time the executor reads them.
+    ///
+    /// No-op on non-Unix platforms or if the range is out of bounds.
+    pub fn prefetch_range(&self, offset: usize, len: usize) {
+        #[cfg(unix)]
+        {
+            if offset + len <= self.mmap.len() {
+                let _ = self
+                    .mmap
+                    .advise_range(memmap2::Advice::WillNeed, offset, len);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (offset, len);
+        }
+    }
+
+    /// Release pages after a layer finishes.
+    ///
+    /// Uses `MADV_FREE` (lazy reclaim under memory pressure) which is
+    /// better than `MADV_DONTNEED` for file-backed mappings — avoids
+    /// unnecessary re-faults if the pages aren't actually reclaimed.
+    /// On macOS, uses `MADV_FREE_REUSABLE` (equivalent semantics).
+    pub fn release_range(&self, offset: usize, len: usize) {
+        #[cfg(unix)]
+        {
+            if offset + len <= self.mmap.len() {
+                // MADV_DONTNEED: safe for file-backed mappings — the data
+                // remains valid (backed by the file) and will be re-faulted
+                // from disk if accessed again.
+                let _ = unsafe {
+                    self.mmap.unchecked_advise_range(
+                        memmap2::UncheckedAdvice::DontNeed,
+                        offset,
+                        len,
+                    )
+                };
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (offset, len);
+        }
+    }
 }
 
 #[cfg(test)]

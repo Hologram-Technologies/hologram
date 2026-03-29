@@ -1,6 +1,7 @@
 //! Weight tensor metadata and data types.
 
 pub mod dedup;
+pub mod index;
 pub mod quantize;
 
 /// Data type of a stored tensor's elements.

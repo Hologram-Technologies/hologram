@@ -210,13 +210,22 @@ impl<'a> BufferArena<'a> {
     }
 
     /// Insert a borrowed buffer with a known element size.
+    ///
+    /// If the buffer is not aligned to `elem_size` bytes (e.g., f32 requires
+    /// 4-byte alignment), copies to an owned aligned buffer instead.
     pub fn insert_borrowed_with_elem_size(&mut self, id: NodeId, data: &'a [u8], elem_size: usize) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
+        // Ensure alignment: if the borrowed slice isn't aligned to elem_size,
+        // copy to an owned Vec<u8> (which the allocator guarantees is aligned).
+        if elem_size > 1 && !(data.as_ptr() as usize).is_multiple_of(elem_size) {
+            self.buffers[idx] = Some(ArenaBuffer::Owned(data.to_vec()));
+        } else {
+            self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
+        }
         self.elem_sizes[idx] = elem_size as u8;
         if idx < self.metas.len() {
             self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(
@@ -286,7 +295,11 @@ impl<'a> BufferArena<'a> {
     /// with native `&[f32]` without per-call casts in hot kernel loops.
     #[inline]
     pub fn get_f32(&self, id: NodeId) -> ExecResult<&[f32]> {
-        Ok(bytemuck::cast_slice(self.get(id)?))
+        let bytes = self.get(id)?;
+        if bytes.is_empty() {
+            return Ok(&[]);
+        }
+        Ok(bytemuck::cast_slice(bytes))
     }
 
     /// Get a mutable f32 slice for in-place ops (only works on `Owned` buffers).
@@ -326,7 +339,13 @@ impl<'a> BufferArena<'a> {
     /// Same requirements as [`get_unchecked`].
     #[inline(always)]
     pub unsafe fn get_f32_unchecked(&self, id: NodeId) -> &[f32] {
-        bytemuck::cast_slice(self.get_unchecked(id))
+        let bytes = self.get_unchecked(id);
+        // Empty slices from Vec::new() have dangling ptr (0x1) which
+        // fails bytemuck alignment checks. Return empty &[f32] directly.
+        if bytes.is_empty() {
+            return &[];
+        }
+        bytemuck::cast_slice(bytes)
     }
 
     /// Whether a buffer exists for the given node.
@@ -376,6 +395,17 @@ impl<'a> BufferArena<'a> {
             }
         }
         Err(ExecError::BufferNotReady(id))
+    }
+
+    /// Drop the buffer for a node, freeing its memory.
+    ///
+    /// Used by liveness-based eviction: once all consumers of a node
+    /// have executed, the node's activation buffer is no longer needed.
+    pub fn evict(&mut self, id: NodeId) {
+        let idx = id.index() as usize;
+        if idx < self.buffers.len() && self.buffers[idx].take().is_some() {
+            self.count -= 1;
+        }
     }
 
     /// Number of stored buffers.

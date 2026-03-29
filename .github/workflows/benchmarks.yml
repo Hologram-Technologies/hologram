@@ -85,10 +85,8 @@ jobs:
           # Also keep a latest.json in the date directory
           cp bench.json "${BENCH_DIR}/latest.json"
 
-          # Create/update symlink to current benchmark
-          cd /tmp/website/public/benches
-          rm -f current.json
-          ln -s "${DATE}/latest.json" current.json
+          # Copy latest benchmark as current (symlinks don't resolve on GitHub Pages)
+          cp bench.json /tmp/website/public/benches/current.json
 
           cd /tmp/website
           git config user.name "github-actions[bot]"

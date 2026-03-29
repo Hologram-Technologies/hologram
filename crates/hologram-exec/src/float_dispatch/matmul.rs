@@ -586,7 +586,7 @@ const PAR_M_TILE_THRESHOLD: usize = 8;
 
 #[inline]
 #[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
-fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
+pub(super) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
     const MR: usize = 4;
     const NR: usize = 8;
 

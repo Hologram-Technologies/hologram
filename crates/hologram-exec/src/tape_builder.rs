@@ -198,6 +198,13 @@ pub fn build_tape(
     // ── Post-pass: compute consumer counts and set optimization flags ──
     apply_reuse_flags(&mut tape);
 
+    // Compute per-node consumer counts for liveness-based eviction.
+    // Uses graph-aware variant to protect output nodes from eviction.
+    tape.finalize_consumer_counts_with_graph(sg);
+
+    // Compute per-level weight byte ranges for madvise prefetching.
+    tape.compute_level_weight_ranges(&sg.constants, sg);
+
     Ok(tape)
 }
 
