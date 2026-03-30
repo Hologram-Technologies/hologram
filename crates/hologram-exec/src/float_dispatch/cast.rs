@@ -140,7 +140,7 @@ pub(crate) fn dispatch_dequantize(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
 
 /// Dequantize Q4_0 data: each 18-byte block produces 32 f32 values.
 /// Format: 2-byte f16 scale + 16 bytes of nibble pairs (each nibble - 8).
-fn dequantize_q4_0(data: &[u8]) -> Vec<f32> {
+pub(super) fn dequantize_q4_0(data: &[u8]) -> Vec<f32> {
     let mut out = Vec::with_capacity(data.len() / 18 * 32);
     for block in data.chunks(18) {
         if block.len() < 18 {

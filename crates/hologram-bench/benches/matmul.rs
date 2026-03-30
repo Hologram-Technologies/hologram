@@ -13,13 +13,15 @@ fn bench_matmul_sizes(c: &mut Criterion) {
     // M = batch*seq (small for decode, large for prefill)
     // K = hidden_dim, N = hidden_dim or vocab_size
     let sizes: &[(usize, usize, usize)] = &[
-        (1, 64, 64),       // tiny
-        (1, 256, 256),     // small projection
-        (1, 2048, 2048),   // LLaMA decode step (single token)
-        (4, 2048, 2048),   // small batch decode
-        (32, 128, 128),    // attention Q@K^T (32 heads, seq=128)
-        (128, 2048, 2048), // prefill projection
-        (1, 2048, 8192),   // FFN up-projection (decode)
+        (1, 64, 64),        // tiny
+        (1, 256, 256),      // small projection
+        (1, 2048, 2048),    // LLaMA decode step (single token)
+        (4, 2048, 2048),    // small batch decode
+        (32, 128, 128),     // attention Q@K^T (32 heads, seq=128)
+        (128, 2048, 2048),  // prefill projection
+        (1, 2048, 8192),    // FFN up-projection (decode)
+        (1, 4096, 4096),    // large decode (L2 stress)
+        (128, 4096, 11008), // LLaMA-2 7B FFN prefill (L2 stress)
     ];
 
     for &(m, k, n) in sizes {

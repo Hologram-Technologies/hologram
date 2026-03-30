@@ -58,6 +58,11 @@ pub const COMPRESSION_FLAG: u32 = 0x0010;
 /// Flag bit: checksums use blake3 (truncated to u32) instead of CRC32.
 pub const FLAG_BLAKE3_CHECKSUMS: u32 = 1 << 2;
 
+/// Flag bit: individual tensors within the weight section are page-aligned.
+/// When set, each tensor starts at a 4096-byte boundary within the weight blob,
+/// enabling zero-copy GPU buffer creation (e.g., Metal `newBuffer(bytesNoCopy:)`).
+pub const FLAG_TENSOR_PAGE_ALIGNED: u32 = 1 << 3;
+
 /// Mask for quantum_index stored in flags bits 16-23.
 const QUANTUM_INDEX_SHIFT: u32 = 16;
 const QUANTUM_INDEX_MASK: u32 = 0xFF << QUANTUM_INDEX_SHIFT;

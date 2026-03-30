@@ -30,6 +30,10 @@ pub struct HoloWriter {
     /// When false, skip graph compression. Default: false (no compression).
     /// Enables zero-copy rkyv::access on the graph without decompression.
     compress_graph: bool,
+    /// When true, the `FLAG_TENSOR_PAGE_ALIGNED` flag is set in the header.
+    /// The caller is responsible for page-aligning tensors within the weight
+    /// blob before calling `set_weights()` (see `page_align_weight_blob`).
+    tensor_page_aligned: bool,
 }
 
 impl Default for HoloWriter {
@@ -51,6 +55,7 @@ impl HoloWriter {
             graph_pre_compressed: false,
             compress_weights: false,
             compress_graph: false,
+            tensor_page_aligned: false,
         }
     }
 
@@ -94,6 +99,17 @@ impl HoloWriter {
     #[must_use]
     pub fn set_weights(mut self, weights: Vec<u8>) -> Self {
         self.weight_bytes = Some(weights);
+        self
+    }
+
+    /// Mark that tensors within the weight blob are page-aligned.
+    ///
+    /// When enabled, sets `FLAG_TENSOR_PAGE_ALIGNED` in the archive header.
+    /// The caller must ensure tensors are actually page-aligned within the
+    /// weight blob (see [`page_align_weight_blob`]).
+    #[must_use]
+    pub fn tensor_page_aligned(mut self, enabled: bool) -> Self {
+        self.tensor_page_aligned = enabled;
         self
     }
 
@@ -192,7 +208,12 @@ impl HoloWriter {
         );
 
         let mut header = build_header(&layout, &graph_data, &weight_data);
-        header.flags = flags;
+        header.flags = flags
+            | if self.tensor_page_aligned {
+                crate::format::header::FLAG_TENSOR_PAGE_ALIGNED
+            } else {
+                0
+            };
         assemble_archive(
             header,
             &layout,

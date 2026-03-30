@@ -125,6 +125,50 @@ pub fn derive_layer_group(tensor_name: &str) -> String {
     String::from("other")
 }
 
+/// Pad a weight blob so each tensor starts at a page boundary, and return
+/// an updated `WeightIndex` with aligned offsets.
+///
+/// Tensors must be described by `index` (in blob-order).  The returned blob
+/// may be larger than the input due to inter-tensor padding.
+///
+/// # Returns
+/// `(aligned_blob, aligned_index)` — the padded weight data and the updated
+/// index with each tensor's offset bumped to the next 4096-byte boundary.
+pub fn page_align_weight_blob(blob: &[u8], index: &WeightIndex) -> (Vec<u8>, WeightIndex) {
+    use crate::format::PAGE_SIZE;
+
+    let mut aligned = Vec::with_capacity(blob.len() + index.entries.len() * PAGE_SIZE as usize);
+    let mut aligned_entries = Vec::with_capacity(index.entries.len());
+    let mut cursor = 0u64;
+
+    for entry in &index.entries {
+        // Pad cursor to page boundary.
+        let aligned_offset = crate::format::align_to_page(cursor);
+        let pad = (aligned_offset - cursor) as usize;
+        aligned.extend(std::iter::repeat_n(0u8, pad));
+        cursor = aligned_offset;
+
+        // Copy tensor data.
+        let src_start = entry.offset as usize;
+        let src_end = src_start + entry.size as usize;
+        if src_end <= blob.len() {
+            aligned.extend_from_slice(&blob[src_start..src_end]);
+        }
+        aligned_entries.push(WeightIndexEntry {
+            tensor_name: entry.tensor_name.clone(),
+            group: entry.group.clone(),
+            offset: cursor,
+            size: entry.size,
+        });
+        cursor += entry.size;
+    }
+
+    let aligned_index = WeightIndex {
+        entries: aligned_entries,
+    };
+    (aligned, aligned_index)
+}
+
 /// Extract a leading decimal number from a string (e.g., `"12.foo"` → `Some(12)`).
 fn extract_leading_number(s: &str) -> Option<u32> {
     let digits: &str = s.split(|c: char| !c.is_ascii_digit()).next()?;

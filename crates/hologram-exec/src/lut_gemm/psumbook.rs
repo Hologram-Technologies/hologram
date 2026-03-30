@@ -13,6 +13,96 @@ pub const Q4_LEVELS: usize = 16;
 /// Number of quantization levels for 8-bit weights.
 pub const Q8_LEVELS: usize = 256;
 
+// ── SIMD dot-product implementations ──────────────────────────────────
+
+/// NEON 256-element f32 dot product (aarch64).
+/// Processes 16 f32s per unrolled iteration (4×vfmaq_f32), 16 iterations total.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn dot_neon_256(a: &[f32; Q8_LEVELS], b: &[f32; Q8_LEVELS]) -> f32 {
+    use core::arch::aarch64::*;
+    unsafe {
+        let mut acc0 = vdupq_n_f32(0.0);
+        let mut acc1 = vdupq_n_f32(0.0);
+        let mut acc2 = vdupq_n_f32(0.0);
+        let mut acc3 = vdupq_n_f32(0.0);
+
+        let a_ptr = a.as_ptr();
+        let b_ptr = b.as_ptr();
+
+        for i in (0..256).step_by(16) {
+            let a0 = vld1q_f32(a_ptr.add(i));
+            let b0 = vld1q_f32(b_ptr.add(i));
+            acc0 = vfmaq_f32(acc0, a0, b0);
+
+            let a1 = vld1q_f32(a_ptr.add(i + 4));
+            let b1 = vld1q_f32(b_ptr.add(i + 4));
+            acc1 = vfmaq_f32(acc1, a1, b1);
+
+            let a2 = vld1q_f32(a_ptr.add(i + 8));
+            let b2 = vld1q_f32(b_ptr.add(i + 8));
+            acc2 = vfmaq_f32(acc2, a2, b2);
+
+            let a3 = vld1q_f32(a_ptr.add(i + 12));
+            let b3 = vld1q_f32(b_ptr.add(i + 12));
+            acc3 = vfmaq_f32(acc3, a3, b3);
+        }
+
+        // Reduce: 4 accumulators → 1 scalar.
+        let sum01 = vaddq_f32(acc0, acc1);
+        let sum23 = vaddq_f32(acc2, acc3);
+        let sum = vaddq_f32(sum01, sum23);
+        vaddvq_f32(sum)
+    }
+}
+
+/// AVX2 256-element f32 dot product (x86_64).
+/// Processes 32 f32s per unrolled iteration (4×vfmadd231ps), 8 iterations total.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[inline]
+fn dot_avx2_256(a: &[f32; Q8_LEVELS], b: &[f32; Q8_LEVELS]) -> f32 {
+    use core::arch::x86_64::*;
+    unsafe {
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+        let mut acc2 = _mm256_setzero_ps();
+        let mut acc3 = _mm256_setzero_ps();
+
+        let a_ptr = a.as_ptr();
+        let b_ptr = b.as_ptr();
+
+        for i in (0..256).step_by(32) {
+            let a0 = _mm256_loadu_ps(a_ptr.add(i));
+            let b0 = _mm256_loadu_ps(b_ptr.add(i));
+            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
+
+            let a1 = _mm256_loadu_ps(a_ptr.add(i + 8));
+            let b1 = _mm256_loadu_ps(b_ptr.add(i + 8));
+            acc1 = _mm256_fmadd_ps(a1, b1, acc1);
+
+            let a2 = _mm256_loadu_ps(a_ptr.add(i + 16));
+            let b2 = _mm256_loadu_ps(b_ptr.add(i + 16));
+            acc2 = _mm256_fmadd_ps(a2, b2, acc2);
+
+            let a3 = _mm256_loadu_ps(a_ptr.add(i + 24));
+            let b3 = _mm256_loadu_ps(b_ptr.add(i + 24));
+            acc3 = _mm256_fmadd_ps(a3, b3, acc3);
+        }
+
+        // Reduce: 4×__m256 → 1 scalar.
+        let sum01 = _mm256_add_ps(acc0, acc1);
+        let sum23 = _mm256_add_ps(acc2, acc3);
+        let sum = _mm256_add_ps(sum01, sum23);
+        let hi = _mm256_extractf128_ps(sum, 1);
+        let lo = _mm256_castps256_ps128(sum);
+        let half = _mm_add_ps(lo, hi);
+        let shuf = _mm_movehdup_ps(half);
+        let sums = _mm_add_ss(half, shuf);
+        let shuf2 = _mm_movehl_ps(sums, sums);
+        _mm_cvtss_f32(_mm_add_ss(sums, shuf2))
+    }
+}
+
 /// Partial sum book for 4-bit quantized weights.
 ///
 /// Fits in exactly one 64-byte cache line. Each slot accumulates
@@ -130,17 +220,30 @@ impl Psumbook8 {
 
     /// Dot product of accumulated sums with centroids.
     ///
-    /// Uses iterator zip+map+sum pattern which LLVM reliably autovectorizes
-    /// to SIMD (SSE/AVX2/NEON) at opt-level ≥ 2. For Q8 (256 slots),
-    /// this processes 8 f32s per SIMD lane on AVX2.
+    /// Dispatches to an explicit SIMD implementation when available (NEON on
+    /// aarch64, AVX2 on x86_64), falling back to an iterator pattern that
+    /// LLVM autovectorizes at opt-level ≥ 2.
     #[inline]
     #[must_use]
     pub fn dot(&self, centroids: &[f32; Q8_LEVELS]) -> f32 {
-        self.sums
-            .iter()
-            .zip(centroids.iter())
-            .map(|(&s, &c)| s * c)
-            .sum()
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        {
+            return dot_neon_256(&self.sums, centroids);
+        }
+
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        {
+            return dot_avx2_256(&self.sums, centroids);
+        }
+
+        #[allow(unreachable_code)]
+        {
+            self.sums
+                .iter()
+                .zip(centroids.iter())
+                .map(|(&s, &c)| s * c)
+                .sum()
+        }
     }
 
     /// Orbit-compressed dot product.
