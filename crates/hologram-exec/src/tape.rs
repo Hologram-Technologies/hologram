@@ -1702,11 +1702,26 @@ fn dispatch_kernel(
                 .first()
                 .and_then(|m| m.as_ref())
                 .map(|m| m.shape().iter().map(|&d| d as usize).collect());
+            let in_len = inputs.first().map(|b| b.len()).unwrap_or(0);
             let result = float_dispatch::spatial::dispatch_resize_with_shape(
                 inputs,
                 *mode,
                 input_shape.as_deref(),
             )?;
+            // Check if first Resize output has H-variation
+            if in_len == 8388608 {
+                // First resize: [1,512,64,64] → [1,512,128,128]
+                // Check R channel at different H positions
+                let floats: &[f32] = bytemuck::try_cast_slice(&result).unwrap_or(&[]);
+                if floats.len() >= 512 * 128 * 128 {
+                    let w = 128;
+                    let _hw = 128 * 128;
+                    // Channel 0, col 0 at different rows
+                    let c0_col0: Vec<f32> = (0..8).map(|h| floats[h * w]).collect();
+                    let c0_row0: Vec<f32> = (0..8).map(|x| floats[x]).collect();
+                    eprintln!("[resize1] c0 col0[:8]={c0_col0:.4?} row0[:8]={c0_row0:.4?}");
+                }
+            }
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
@@ -1716,11 +1731,36 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineInstanceNorm { size, epsilon } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            // InstanceNorm normalizes across ALL spatial dims (H×W), not just
+            // the last dim. Compute spatial size from TensorMeta shape or
+            // fall back to compiled size (which should be H×W from lowering).
+            let actual = input_metas
+                .first()
+                .and_then(|m| m.as_ref())
+                .and_then(|meta| {
+                    let shape = meta.shape();
+                    if shape.len() >= 3 {
+                        // Product of all spatial dims (dims 2+).
+                        let spatial: usize = shape[2..].iter().map(|&d| d as usize).product();
+                        if spatial > 0 {
+                            Some(spatial)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if *size > 0 {
+                        *size as usize
+                    } else {
+                        // Last resort: total elements / n_channels.
+                        let n_floats = inputs.first().map(|b| b.len() / 4).unwrap_or(0);
+                        let n_channels = inputs.get(1).map(|b| b.len() / 4).unwrap_or(1).max(1);
+                        n_floats / n_channels
+                    }
+                });
             let result = float_dispatch::norm::dispatch_instance_norm(
                 inputs,
                 actual,

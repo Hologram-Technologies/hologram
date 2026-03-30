@@ -1014,6 +1014,14 @@ fn pack_b_panel<const NR: usize>(
 #[inline]
 #[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
 pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
+    // M=1 fast path: dedicated vector-matrix multiply with strided SIMD.
+    // Avoids B-panel packing (single-use, copy cost > benefit) and uses
+    // SIMD directly on strided B rows.
+    if m == 1 {
+        vecmat_mul(a, b, out, k, n);
+        return;
+    }
+
     const MR: usize = 4;
     const NR: usize = 8;
 
@@ -1245,6 +1253,158 @@ fn m_remainder_tiled(
             }
         }
     }
+}
+
+// ── Specialized M=1 vector-matrix multiply ────────────────────────────
+//
+// When M=1, the matmul is a vector-matrix multiply: out[j] = Σ_k a[k]*B[k,j].
+// Avoids B-panel packing (single-use: packing overhead > benefit) and instead
+// reads B in strided layout with SIMD, using KC blocking for cache locality.
+
+/// Vector-matrix multiply: a[1×K] × B[K×N] → out[1×N].
+///
+/// Uses NR=8-wide SIMD tiles across N with KC blocking along K.
+/// No B-panel packing — each B element is read once, so packing cost isn't
+/// amortized. Strided SIMD loads are fast because KC×N panels fit in L2.
+#[allow(clippy::needless_range_loop)]
+fn vecmat_mul(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
+    const NR: usize = 8;
+    let n_tiles = n / NR;
+    let n_rem = n % NR;
+
+    // Process NR=8 columns at a time with KC blocking.
+    for jt in 0..n_tiles {
+        let j = jt * NR;
+        let mut acc = [0.0f32; NR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            vecmat_kernel_nr8(a, b, &mut acc, j, kc_start, kc_end, n);
+        }
+        out[j..j + NR].copy_from_slice(&acc);
+    }
+
+    // Remainder columns: 4-wide then scalar.
+    if n_rem > 0 {
+        let j = n_tiles * NR;
+        let mut j_off = 0;
+        if n_rem >= 4 {
+            let mut acc = [0.0f32; 4];
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                for p in kc_start..kc_end {
+                    let a_val = a[p];
+                    for jj in 0..4 {
+                        acc[jj] += a_val * b[p * n + j + jj];
+                    }
+                }
+            }
+            out[j..j + 4].copy_from_slice(&acc);
+            j_off = 4;
+        }
+        for jj in j_off..n_rem {
+            let mut acc = 0.0f32;
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                for p in kc_start..kc_end {
+                    acc += a[p] * b[p * n + j + jj];
+                }
+            }
+            out[j + jj] = acc;
+        }
+    }
+}
+
+/// Inner kernel for vecmat_mul: accumulate a[k_start..k_end] × B[k_start..k_end, j..j+8].
+///
+/// Dispatches to NEON/AVX2 on supported platforms for 8-wide SIMD FMA.
+#[inline(always)]
+#[allow(unreachable_code)]
+fn vecmat_kernel_nr8(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { vecmat_kernel_nr8_neon(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe { vecmat_kernel_nr8_avx2(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
+    // Scalar fallback — index pattern matches SIMD kernels for readability.
+    #[allow(clippy::needless_range_loop)]
+    for p in k_start..k_end {
+        let a_val = a[p];
+        let b_off = p * n + j;
+        for jj in 0..8 {
+            acc[jj] += a_val * b[b_off + jj];
+        }
+    }
+}
+
+/// NEON vecmat kernel: 8-wide FMA on strided B rows.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn vecmat_kernel_nr8_neon(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::aarch64::*;
+
+    let mut acc_lo = vld1q_f32(acc.as_ptr());
+    let mut acc_hi = vld1q_f32(acc.as_ptr().add(4));
+
+    for p in k_start..k_end {
+        let a_val = vdupq_n_f32(*a.get_unchecked(p));
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+        acc_lo = vfmaq_f32(acc_lo, a_val, b_lo);
+        acc_hi = vfmaq_f32(acc_hi, a_val, b_hi);
+    }
+
+    vst1q_f32(acc.as_mut_ptr(), acc_lo);
+    vst1q_f32(acc.as_mut_ptr().add(4), acc_hi);
+}
+
+/// AVX2+FMA vecmat kernel: 8-wide FMA on strided B rows.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+unsafe fn vecmat_kernel_nr8_avx2(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::x86_64::*;
+
+    let mut vacc = _mm256_loadu_ps(acc.as_ptr());
+
+    for p in k_start..k_end {
+        let a_val = _mm256_broadcast_ss(&*a.get_unchecked(p));
+        let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
+        vacc = _mm256_fmadd_ps(a_val, b_vec, vacc);
+    }
+
+    _mm256_storeu_ps(acc.as_mut_ptr(), vacc);
 }
 
 // ── Fused Q4_0 dequant-matmul ─────────────────────────────────────────
@@ -1899,10 +2059,13 @@ mod tests {
         matmul_dequant_q4_0(&a, &b_q4, &mut fused_out, m, k, n);
 
         for (idx, (&r, &f)) in ref_out.iter().zip(fused_out.iter()).enumerate() {
-            assert_eq!(
-                r.to_bits(),
-                f.to_bits(),
-                "m=1 mismatch at [{idx}]: ref={r}, fused={f}"
+            let diff = (r - f).abs();
+            // Q4_0 dequant introduces rounding; vecmat_mul vs m_remainder_tiled
+            // differ in FP accumulation order, so allow small relative error.
+            let tol = r.abs().max(1e-5) * 2e-3;
+            assert!(
+                diff <= tol,
+                "m=1 mismatch at [{idx}]: ref={r}, fused={f}, diff={diff}"
             );
         }
     }
@@ -2078,10 +2241,11 @@ mod tests {
         matmul_dequant_q6_k(&a, &b_q6k, &mut fused_out, m, k, n);
 
         for (idx, (&r, &f)) in ref_out.iter().zip(fused_out.iter()).enumerate() {
-            assert_eq!(
-                r.to_bits(),
-                f.to_bits(),
-                "m=1 mismatch at [{idx}]: ref={r}, fused={f}"
+            let diff = (r - f).abs();
+            let tol = r.abs().max(1e-6) * 1e-4;
+            assert!(
+                diff <= tol,
+                "m=1 mismatch at [{idx}]: ref={r}, fused={f}, diff={diff}"
             );
         }
     }

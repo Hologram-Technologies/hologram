@@ -12,10 +12,19 @@ use super::mmap_buf::MmapBuffer;
 /// dropping a buffer returns pages to the OS immediately — no allocator
 /// fragmentation. This is critical for vision models where Conv2d activations
 /// at 512×512 can be 512MB each.
+/// Size threshold below which outputs are stored as Vec (no mmap syscall).
+/// Above this, mmap is used so pages return to OS on eviction (zero fragmentation).
+/// 256 KB: below L2 cache; mmap overhead (~2-5 µs) exceeds memcpy cost at this size.
+const MMAP_THRESHOLD: usize = 256 * 1024;
+
 enum ArenaBuffer<'a> {
     /// CPU-allocated owned buffer (mmap anonymous pages on Unix).
     /// Pages returned to OS on drop via munmap — zero fragmentation.
     Owned(MmapBuffer),
+    /// Small CPU-owned buffer stored as Vec (no mmap syscall).
+    /// Used for outputs below `MMAP_THRESHOLD` to avoid mmap/munmap overhead
+    /// that dominates execution time for small tensors.
+    VecOwned(Vec<u8>),
     /// Borrowed reference to external memory (mmap'd weights, constants).
     Borrowed(&'a [u8]),
     /// Metal GPU buffer (shared memory on Apple Silicon).
@@ -30,6 +39,7 @@ impl<'a> ArenaBuffer<'a> {
     fn as_bytes(&self) -> &[u8] {
         match self {
             ArenaBuffer::Owned(m) => m.as_slice(),
+            ArenaBuffer::VecOwned(v) => v.as_slice(),
             ArenaBuffer::Borrowed(s) => s,
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
@@ -43,6 +53,7 @@ impl<'a> ArenaBuffer<'a> {
     fn into_owned(self) -> Vec<u8> {
         match self {
             ArenaBuffer::Owned(m) => m.into_vec(),
+            ArenaBuffer::VecOwned(v) => v,
             ArenaBuffer::Borrowed(s) => s.to_vec(),
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
@@ -124,14 +135,18 @@ impl<'a> BufferArena<'a> {
     }
 
     /// Insert an owned buffer for the given node.
-    /// Converts Vec<u8> to MmapBuffer so pages are returned to OS on eviction.
+    /// Small buffers stored as Vec (no syscall); large as MmapBuffer (pages return to OS).
     pub fn insert(&mut self, id: NodeId, data: Vec<u8>) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
+        if data.len() < MMAP_THRESHOLD {
+            self.buffers[idx] = Some(ArenaBuffer::VecOwned(data));
+        } else {
+            self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
+        }
     }
 
     /// Insert an owned buffer with a known element size.
@@ -141,15 +156,24 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
+        if data.len() < MMAP_THRESHOLD {
+            self.buffers[idx] = Some(ArenaBuffer::VecOwned(data));
+        } else {
+            self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
+        }
         self.elem_sizes[idx] = elem_size as u8;
     }
 
-    /// Swap-insert: copy `buf`'s data into a new MmapBuffer, store it,
-    /// and drop the previous occupant (returning pages to OS via munmap).
+    /// Swap-insert: store `buf`'s data in the arena and drop the previous occupant.
     ///
-    /// `buf` is cleared after the copy so the caller can reuse the Vec
-    /// allocation as a small staging buffer for the next instruction.
+    /// Small outputs (< MMAP_THRESHOLD): takes Vec ownership directly — no mmap
+    /// syscall, no copy. This eliminates the mmap/munmap overhead that dominates
+    /// execution time for small activation tensors.
+    ///
+    /// Large outputs (≥ MMAP_THRESHOLD): copies into mmap so pages return to OS
+    /// on eviction via munmap — zero fragmentation for large activations.
+    ///
+    /// `buf` is left empty after the call so the caller can reuse it.
     pub fn swap_insert_with_elem_size(&mut self, id: NodeId, buf: &mut Vec<u8>, elem_size: usize) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
@@ -157,16 +181,20 @@ impl<'a> BufferArena<'a> {
             self.count += 1;
         }
         let len = buf.len();
-        let mut mmap = MmapBuffer::new(len);
-        mmap.as_mut_slice().copy_from_slice(buf);
-        // Clear AND shrink the staging Vec to release its pages back to
-        // the system allocator. Without shrink, the allocator holds the
-        // pages in its free list even though the Vec is logically empty.
-        buf.clear();
-        if buf.capacity() > 64 * 1024 {
-            buf.shrink_to(4096);
+        if len < MMAP_THRESHOLD {
+            // Small: take Vec ownership — O(1), no syscall.
+            let data = std::mem::take(buf);
+            self.buffers[idx] = Some(ArenaBuffer::VecOwned(data));
+        } else {
+            // Large: copy into mmap for OS page reclaim on eviction.
+            let mut mmap = MmapBuffer::new(len);
+            mmap.as_mut_slice().copy_from_slice(buf);
+            buf.clear();
+            if buf.capacity() > 64 * 1024 {
+                buf.shrink_to(4096);
+            }
+            self.buffers[idx] = Some(ArenaBuffer::Owned(mmap));
         }
-        self.buffers[idx] = Some(ArenaBuffer::Owned(mmap));
         self.elem_sizes[idx] = elem_size as u8;
         if idx < self.metas.len() {
             self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(len, elem_size));
@@ -243,7 +271,7 @@ impl<'a> BufferArena<'a> {
         // Ensure alignment: if the borrowed slice isn't aligned to elem_size,
         // copy to an owned Vec<u8> (which the allocator guarantees is aligned).
         if elem_size > 1 && !(data.as_ptr() as usize).is_multiple_of(elem_size) {
-            self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data.to_vec())));
+            self.buffers[idx] = Some(ArenaBuffer::VecOwned(data.to_vec()));
         } else {
             self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
         }
@@ -331,8 +359,14 @@ impl<'a> BufferArena<'a> {
     pub fn get_mut_f32(&mut self, id: NodeId) -> ExecResult<&mut [f32]> {
         let idx = id.index() as usize;
         if idx < self.buffers.len() {
-            if let Some(ArenaBuffer::Owned(ref mut m)) = self.buffers[idx] {
-                return Ok(bytemuck::cast_slice_mut(m.as_mut_slice()));
+            match self.buffers[idx] {
+                Some(ArenaBuffer::Owned(ref mut m)) => {
+                    return Ok(bytemuck::cast_slice_mut(m.as_mut_slice()));
+                }
+                Some(ArenaBuffer::VecOwned(ref mut v)) => {
+                    return Ok(bytemuck::cast_slice_mut(v.as_mut_slice()));
+                }
+                _ => {}
             }
         }
         Err(ExecError::BufferNotReady(id))

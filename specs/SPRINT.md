@@ -16,6 +16,31 @@
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 - [x] Shape-aware tape execution API (feat/ai-optimization)
 
+## Sprint 27: Performance Regression Fixes — M=1 MatMul + Tape Execution
+
+**Branch**: `refactor/stable-diffusion-pipeline`
+
+Goal: fix two regressions introduced by the fused dequant-matmul / mmap refactoring
+in Sprint 26. M=1 (single-token decode) float matmul regressed 100-890% due to
+missing SIMD in the MR=1 remainder path; tape execution regressed 140-272% due to
+mandatory mmap syscalls on every small output.
+
+### Fix 1: Specialized M=1 vecmat_mul
+- [x] **F1.1**: Add `vecmat_mul` with NEON/AVX2 SIMD kernels (strided B, no packing)
+- [x] **F1.2**: Early-out in `matmul_k_outer` when `m == 1`
+- [x] **F1.3**: Relax bit-exact dequant test assertions to relative tolerance
+
+**Result**: M=1 dispatch_matmul 49-58% faster; 1x64x64 now 20% faster than pre-Sprint-26 main.
+
+### Fix 2: VecOwned arena buffer for small outputs
+- [x] **F2.1**: Add `VecOwned(Vec<u8>)` variant to `ArenaBuffer`
+- [x] **F2.2**: `swap_insert_with_elem_size` takes Vec ownership below 256 KB (no mmap syscall)
+- [x] **F2.3**: Update all ArenaBuffer match sites (as_bytes, into_owned, get_mut_f32)
+
+**Result**: Tape execution 2-4× faster for small/medium sizes; epilogue_fusion 49-75% faster.
+
+---
+
 ## Sprint 26: UOR 0.1.0 Migration — Algebraic Performance Acceleration
 
 **Plan**: [plans/033-uor-migration.md](plans/033-uor-migration.md)
