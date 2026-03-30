@@ -3395,6 +3395,19 @@ impl EnumTape {
                     .iter()
                     .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
                     .collect();
+                // Pre-allocate mmap output buffer for large outputs.
+                // Kernels write into out_buf (Vec), then we copy into the
+                // pre-allocated mmap and move it to the arena — avoiding the
+                // Vec→MmapBuffer::from_vec copy that doubles peak memory.
+                let use_mmap_out = instr.output_byte_hint as usize >= 64 * 1024;
+                let mut mmap_out: Option<crate::buffer::mmap_buf::MmapBuffer> = if use_mmap_out {
+                    Some(crate::buffer::mmap_buf::MmapBuffer::new(
+                        instr.output_byte_hint as usize,
+                    ))
+                } else {
+                    None
+                };
+
                 let dispatch_result = {
                     let input_refs: SmallVec<[&[u8]; 4]> = instr
                         .input_indices
@@ -3402,7 +3415,7 @@ impl EnumTape {
                         .map(|&idx| arena.get(NodeId::new(idx, 0)))
                         .collect::<ExecResult<SmallVec<_>>>()?;
                     out_buf.clear();
-                    if instr.output_byte_hint > 0 {
+                    if instr.output_byte_hint > 0 && !use_mmap_out {
                         out_buf.reserve(instr.output_byte_hint as usize);
                     }
                     dispatch_kernel(
@@ -3421,11 +3434,22 @@ impl EnumTape {
                 match dispatch_result {
                     DispatchResult::InOutBuf => {
                         let out_len = out_buf.len();
-                        arena.swap_insert_with_elem_size(
-                            out_id,
-                            &mut out_buf,
-                            instr.output_elem_size as usize,
-                        );
+                        if let Some(ref mut mmap) = mmap_out {
+                            let copy_len = out_len.min(mmap.len());
+                            mmap.as_mut_slice()[..copy_len].copy_from_slice(&out_buf[..copy_len]);
+                            let mmap = mmap_out.take().expect("mmap_out was Some");
+                            out_buf.clear();
+                            if out_buf.capacity() > 64 * 1024 {
+                                out_buf.shrink_to(4096);
+                            }
+                            arena.swap_insert_mmap(out_id, mmap, instr.output_elem_size as usize);
+                        } else {
+                            arena.swap_insert_with_elem_size(
+                                out_id,
+                                &mut out_buf,
+                                instr.output_elem_size as usize,
+                            );
+                        }
                         // Compute runtime meta from actual output + input metas.
                         // This ensures downstream ops get correct N-D shapes even
                         // when compiled shapes don't match runtime sizes.
@@ -3439,11 +3463,22 @@ impl EnumTape {
                         }
                     }
                     DispatchResult::InOutBufWithMeta(runtime_meta) => {
-                        arena.swap_insert_with_elem_size(
-                            out_id,
-                            &mut out_buf,
-                            instr.output_elem_size as usize,
-                        );
+                        if let Some(ref mut mmap) = mmap_out {
+                            let copy_len = out_buf.len().min(mmap.len());
+                            mmap.as_mut_slice()[..copy_len].copy_from_slice(&out_buf[..copy_len]);
+                            let mmap = mmap_out.take().expect("mmap_out was Some");
+                            out_buf.clear();
+                            if out_buf.capacity() > 64 * 1024 {
+                                out_buf.shrink_to(4096);
+                            }
+                            arena.swap_insert_mmap(out_id, mmap, instr.output_elem_size as usize);
+                        } else {
+                            arena.swap_insert_with_elem_size(
+                                out_id,
+                                &mut out_buf,
+                                instr.output_elem_size as usize,
+                            );
+                        }
                         arena.set_meta(out_id, runtime_meta);
                     }
                     #[cfg(has_metal)]
