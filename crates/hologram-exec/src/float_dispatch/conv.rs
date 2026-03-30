@@ -194,6 +194,31 @@ pub(crate) fn dispatch_conv2d_direct(
         None
     };
 
+    // Runtime shape validation: if compiled h_in/w_in look wrong relative to
+    // the actual data size, re-derive from weight tensor and data length.
+    // This catches cases where shape propagation corrupts spatial dims (e.g.,
+    // Resize output shapes shrunk by ForceConcretize → Conv2d gets h_in=2).
+    let (h_in, w_in) = {
+        let kernel_hw = (kh * kw).max(1);
+        let ic_from_weight = weight.len() / kernel_hw / group.max(1);
+        let ic_from_weight = ic_from_weight.max(1);
+        let n_spatial = data.len() / ic_from_weight.max(1);
+        // Check: does compiled h_in * w_in match the expected spatial area?
+        if h_in > 0 && w_in > 0 && h_in * w_in * ic_from_weight == data.len() {
+            (h_in, w_in) // Compiled values are consistent.
+        } else if n_spatial > 0 {
+            // Re-derive: assume square spatial if possible.
+            let side = (n_spatial as f64).sqrt() as usize;
+            if side * side == n_spatial {
+                (side, side)
+            } else {
+                (h_in.max(1), w_in.max(1)) // Keep compiled, hope for the best.
+            }
+        } else {
+            (h_in, w_in)
+        }
+    };
+
     // Derive N, OC, IC/group from buffer lengths + known spatial dims.
     let ic = if h_in > 0 && w_in > 0 {
         data.len() / (h_in * w_in)

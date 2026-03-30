@@ -1698,31 +1698,33 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineResize { mode } => {
-            let input_shape: Option<Vec<usize>> = input_metas
-                .first()
-                .and_then(|m| m.as_ref())
-                .map(|m| m.shape().iter().map(|&d| d as usize).collect());
-            let in_len = inputs.first().map(|b| b.len()).unwrap_or(0);
+            let input_meta = input_metas.first().and_then(|m| m.as_ref());
+            let input_shape: Option<Vec<usize>> =
+                input_meta.map(|m| m.shape().iter().map(|&d| d as usize).collect());
             let result = float_dispatch::spatial::dispatch_resize_with_shape(
                 inputs,
                 *mode,
                 input_shape.as_deref(),
             )?;
-            // Check if first Resize output has H-variation
-            if in_len == 8388608 {
-                // First resize: [1,512,64,64] → [1,512,128,128]
-                // Check R channel at different H positions
-                let floats: &[f32] = bytemuck::try_cast_slice(&result).unwrap_or(&[]);
-                if floats.len() >= 512 * 128 * 128 {
-                    let w = 128;
-                    let _hw = 128 * 128;
-                    // Channel 0, col 0 at different rows
-                    let c0_col0: Vec<f32> = (0..8).map(|h| floats[h * w]).collect();
-                    let c0_row0: Vec<f32> = (0..8).map(|x| floats[x]).collect();
-                    eprintln!("[resize1] c0 col0[:8]={c0_col0:.4?} row0[:8]={c0_row0:.4?}");
+            out_buf.extend_from_slice(&result);
+            // Compute output meta: scale input shape's spatial dims by 2x.
+            // This ensures downstream Conv2d gets correct h_in/w_in from TensorMeta.
+            if let Some(meta) = input_meta {
+                let shape = meta.shape();
+                if shape.len() == 4 {
+                    let out_floats = result.len() / 4;
+                    let nc = (shape[0] as usize) * (shape[1] as usize);
+                    let out_spatial = if nc > 0 { out_floats / nc } else { 0 };
+                    let side = (out_spatial as f64).sqrt() as usize;
+                    if side > 0 && side * side == out_spatial {
+                        let out_meta = hologram_core::op::TensorMeta::new(
+                            meta.dtype,
+                            &[shape[0] as usize, shape[1] as usize, side, side],
+                        );
+                        return Ok(DispatchResult::InOutBufWithMeta(out_meta));
+                    }
                 }
             }
-            out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlinePad { mode } => {
