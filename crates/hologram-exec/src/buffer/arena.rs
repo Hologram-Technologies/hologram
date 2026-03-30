@@ -4,14 +4,18 @@ use hologram_graph::graph::node::NodeId;
 
 use crate::error::{ExecError, ExecResult};
 
+use super::mmap_buf::MmapBuffer;
+
 /// Buffer storage variant — supports CPU-owned, borrowed, and GPU-backed buffers.
 ///
-/// On Apple Silicon (unified memory), `Metal` buffers are CPU-accessible via
-/// `contents()` — the GPU and CPU share the same physical RAM. This enables
-/// zero-copy between arena storage and Metal compute kernels.
+/// `Owned` uses `MmapBuffer` (anonymous mmap on Unix, Vec on WASM) so that
+/// dropping a buffer returns pages to the OS immediately — no allocator
+/// fragmentation. This is critical for vision models where Conv2d activations
+/// at 512×512 can be 512MB each.
 enum ArenaBuffer<'a> {
-    /// CPU-allocated owned buffer (computed dispatch results).
-    Owned(Vec<u8>),
+    /// CPU-allocated owned buffer (mmap anonymous pages on Unix).
+    /// Pages returned to OS on drop via munmap — zero fragmentation.
+    Owned(MmapBuffer),
     /// Borrowed reference to external memory (mmap'd weights, constants).
     Borrowed(&'a [u8]),
     /// Metal GPU buffer (shared memory on Apple Silicon).
@@ -25,7 +29,7 @@ impl<'a> ArenaBuffer<'a> {
     #[inline]
     fn as_bytes(&self) -> &[u8] {
         match self {
-            ArenaBuffer::Owned(v) => v,
+            ArenaBuffer::Owned(m) => m.as_slice(),
             ArenaBuffer::Borrowed(s) => s,
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
@@ -35,10 +39,10 @@ impl<'a> ArenaBuffer<'a> {
         }
     }
 
-    /// Convert to owned bytes (copies borrowed/Metal data).
+    /// Convert to owned Vec<u8> (copies mmap/borrowed/Metal data).
     fn into_owned(self) -> Vec<u8> {
         match self {
-            ArenaBuffer::Owned(v) => v,
+            ArenaBuffer::Owned(m) => m.into_vec(),
             ArenaBuffer::Borrowed(s) => s.to_vec(),
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
@@ -120,13 +124,14 @@ impl<'a> BufferArena<'a> {
     }
 
     /// Insert an owned buffer for the given node.
+    /// Converts Vec<u8> to MmapBuffer so pages are returned to OS on eviction.
     pub fn insert(&mut self, id: NodeId, data: Vec<u8>) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(ArenaBuffer::Owned(data));
+        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
     }
 
     /// Insert an owned buffer with a known element size.
@@ -136,37 +141,30 @@ impl<'a> BufferArena<'a> {
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        self.buffers[idx] = Some(ArenaBuffer::Owned(data));
+        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data)));
         self.elem_sizes[idx] = elem_size as u8;
     }
 
-    /// Swap-insert: take ownership of `buf`'s allocation and recycle the
-    /// previously stored buffer back into `buf`.
+    /// Swap-insert: take ownership of `buf`'s data, store as MmapBuffer,
+    /// and drop the previous occupant (returning pages to OS via munmap).
     ///
-    /// After warmup, this enables zero-allocation tape execution: the kernel
-    /// writes into `buf`, the arena takes it, and `buf` receives the old
-    /// occupant's allocation for the next instruction.
+    /// The old buffer is NOT recycled back into `buf` — mmap alloc/free
+    /// is O(1) per syscall, so recycling provides no benefit. The kernel's
+    /// `out_buf` Vec is always cleared and reused as a fresh staging buffer.
     pub fn swap_insert_with_elem_size(&mut self, id: NodeId, buf: &mut Vec<u8>, elem_size: usize) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        // Take buf's data, give it to the arena.
+        // Convert kernel output to mmap-backed buffer and store.
+        // Old occupant is dropped — munmap returns pages to OS.
         let new_data = std::mem::take(buf);
-        let old = self.buffers[idx].replace(ArenaBuffer::Owned(new_data));
-        // Recycle the old buffer's allocation into buf (if it was owned).
-        if let Some(ArenaBuffer::Owned(mut old_vec)) = old {
-            old_vec.clear();
-            *buf = old_vec;
-        }
+        let new_len = new_data.len();
+        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(new_data)));
         self.elem_sizes[idx] = elem_size as u8;
-        // Infer 1-D metadata from buffer size when no explicit meta is provided.
         if idx < self.metas.len() {
-            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(
-                buf.len(),
-                elem_size,
-            ));
+            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(new_len, elem_size));
         }
     }
 
@@ -222,7 +220,7 @@ impl<'a> BufferArena<'a> {
         // Ensure alignment: if the borrowed slice isn't aligned to elem_size,
         // copy to an owned Vec<u8> (which the allocator guarantees is aligned).
         if elem_size > 1 && !(data.as_ptr() as usize).is_multiple_of(elem_size) {
-            self.buffers[idx] = Some(ArenaBuffer::Owned(data.to_vec()));
+            self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(data.to_vec())));
         } else {
             self.buffers[idx] = Some(ArenaBuffer::Borrowed(data));
         }
@@ -310,8 +308,8 @@ impl<'a> BufferArena<'a> {
     pub fn get_mut_f32(&mut self, id: NodeId) -> ExecResult<&mut [f32]> {
         let idx = id.index() as usize;
         if idx < self.buffers.len() {
-            if let Some(ArenaBuffer::Owned(ref mut v)) = self.buffers[idx] {
-                return Ok(bytemuck::cast_slice_mut(v.as_mut_slice()));
+            if let Some(ArenaBuffer::Owned(ref mut m)) = self.buffers[idx] {
+                return Ok(bytemuck::cast_slice_mut(m.as_mut_slice()));
             }
         }
         Err(ExecError::BufferNotReady(id))

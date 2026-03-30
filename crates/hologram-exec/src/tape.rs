@@ -4148,6 +4148,9 @@ mod tests {
         arena.insert(NodeId::new(0, 0), input_bytes);
         tape.execute(&mut arena, &ctx).unwrap();
         let out = arena.get(NodeId::new(1, 0)).unwrap();
+        if out.is_empty() {
+            return vec![];
+        }
         bytemuck::cast_slice(out).to_vec()
     }
 
@@ -4175,6 +4178,9 @@ mod tests {
         arena.insert(NodeId::new(1, 0), b_bytes);
         tape.execute(&mut arena, &ctx).unwrap();
         let out = arena.get(NodeId::new(2, 0)).unwrap();
+        if out.is_empty() {
+            return vec![];
+        }
         bytemuck::cast_slice(out).to_vec()
     }
 

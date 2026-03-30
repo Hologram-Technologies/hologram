@@ -13,6 +13,10 @@ hologram-archive = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 smallvec = { workspace = true }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dependencies.rayon]
 workspace = true
