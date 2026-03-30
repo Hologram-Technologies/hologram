@@ -145,26 +145,49 @@ impl<'a> BufferArena<'a> {
         self.elem_sizes[idx] = elem_size as u8;
     }
 
-    /// Swap-insert: take ownership of `buf`'s data, store as MmapBuffer,
+    /// Swap-insert: copy `buf`'s data into a new MmapBuffer, store it,
     /// and drop the previous occupant (returning pages to OS via munmap).
     ///
-    /// The old buffer is NOT recycled back into `buf` — mmap alloc/free
-    /// is O(1) per syscall, so recycling provides no benefit. The kernel's
-    /// `out_buf` Vec is always cleared and reused as a fresh staging buffer.
+    /// `buf` is cleared after the copy so the caller can reuse the Vec
+    /// allocation as a small staging buffer for the next instruction.
     pub fn swap_insert_with_elem_size(&mut self, id: NodeId, buf: &mut Vec<u8>, elem_size: usize) {
         let idx = id.index() as usize;
         self.ensure_capacity(idx);
         if self.buffers[idx].is_none() {
             self.count += 1;
         }
-        // Convert kernel output to mmap-backed buffer and store.
-        // Old occupant is dropped — munmap returns pages to OS.
-        let new_data = std::mem::take(buf);
-        let new_len = new_data.len();
-        self.buffers[idx] = Some(ArenaBuffer::Owned(MmapBuffer::from_vec(new_data)));
+        let len = buf.len();
+        let mut mmap = MmapBuffer::new(len);
+        mmap.as_mut_slice().copy_from_slice(buf);
+        // Clear AND shrink the staging Vec to release its pages back to
+        // the system allocator. Without shrink, the allocator holds the
+        // pages in its free list even though the Vec is logically empty.
+        buf.clear();
+        if buf.capacity() > 64 * 1024 {
+            buf.shrink_to(4096);
+        }
+        self.buffers[idx] = Some(ArenaBuffer::Owned(mmap));
         self.elem_sizes[idx] = elem_size as u8;
         if idx < self.metas.len() {
-            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(new_len, elem_size));
+            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(len, elem_size));
+        }
+    }
+
+    /// Swap-insert with a pre-allocated MmapBuffer (zero-copy into arena).
+    ///
+    /// Use when the output size is known upfront. The kernel writes directly
+    /// into the MmapBuffer's slice, then this method moves it into the arena.
+    pub fn swap_insert_mmap(&mut self, id: NodeId, mmap: MmapBuffer, elem_size: usize) {
+        let idx = id.index() as usize;
+        self.ensure_capacity(idx);
+        if self.buffers[idx].is_none() {
+            self.count += 1;
+        }
+        let len = mmap.len();
+        self.buffers[idx] = Some(ArenaBuffer::Owned(mmap));
+        self.elem_sizes[idx] = elem_size as u8;
+        if idx < self.metas.len() {
+            self.metas[idx] = Some(hologram_core::op::TensorMeta::infer_1d(len, elem_size));
         }
     }
 

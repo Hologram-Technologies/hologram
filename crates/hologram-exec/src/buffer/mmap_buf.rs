@@ -84,13 +84,13 @@ impl MmapBuffer {
     /// Create from an existing `Vec<u8>`, taking ownership.
     ///
     /// Copies into a new mmap allocation and drops the Vec.
-    /// Use this at the boundary where kernels produce `Vec<u8>` output.
     pub fn from_vec(v: Vec<u8>) -> Self {
         if v.is_empty() {
             return Self::empty();
         }
         let mut buf = Self::new(v.len());
         buf.as_mut_slice().copy_from_slice(&v);
+        // Vec drops here — `free()` returns pages to OS for large allocations.
         buf
     }
 
