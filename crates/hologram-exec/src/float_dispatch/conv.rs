@@ -39,49 +39,24 @@ fn conv2d_core(
 
     let mut out = vec![0.0f32; n * oc * spatial_out];
 
-    // im2col buffer: [kernel_size × spatial_out] (column-major friendly for GEMM).
-    // We store it as row-major [kernel_size, spatial_out] so weight × col works
-    // directly with BLAS sgemm (row-major C = A × B).
-    let mut col = vec![0.0f32; kernel_size * spatial_out];
+    // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
+    // For large spatial dims (e.g., 512×512 with 256 channels), the full
+    // col buffer would be kernel_size × spatial_out ≈ 2.4GB. Tiling over
+    // the spatial dimension keeps the buffer bounded at ~16MB.
+    const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
+    let tile_size = if kernel_size > 0 {
+        (TILE_CAP / kernel_size).max(1).min(spatial_out)
+    } else {
+        spatial_out
+    };
+    let mut col = vec![0.0f32; kernel_size * tile_size];
 
     for batch in 0..n {
         for g in 0..group {
-            // Phase 1: im2col — build col[kernel_size, spatial_out].
-            // Each row k of col contains the k-th element of every spatial patch.
-            for k in 0..kernel_size {
-                let ic_idx = k / (kh * kw);
-                let k_rem = k % (kh * kw);
-                let fh = k_rem / kw;
-                let fw = k_rem % kw;
-                let abs_ic = g * ic_per_group + ic_idx;
-                let col_row = &mut col[k * spatial_out..(k + 1) * spatial_out];
-
-                for (out_pos, col_val) in col_row.iter_mut().enumerate() {
-                    let oh = out_pos / w_out;
-                    let ow = out_pos % w_out;
-                    let ih = oh * sh + fh * dh;
-                    let iw = ow * sw + fw * dw;
-
-                    *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
-                        let d_idx = ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
-                        if d_idx < data.len() {
-                            data[d_idx]
-                        } else {
-                            0.0
-                        }
-                    } else {
-                        0.0
-                    };
-                }
-            }
-
-            // Phase 2: GEMM — weight[oc_per_group, kernel_size] × col[kernel_size, spatial_out]
-            //                → out_slice[oc_per_group, spatial_out]
-            let w_slice = &weight[g * oc_per_group * kernel_size
-                ..(g * oc_per_group * kernel_size + oc_per_group * kernel_size).min(weight.len())];
+            let w_start = g * oc_per_group * kernel_size;
+            let w_end = (w_start + oc_per_group * kernel_size).min(weight.len());
+            let w_slice = &weight[w_start..w_end];
             let o_base = batch * oc * spatial_out + g * oc_per_group * spatial_out;
-            let o_len = oc_per_group * spatial_out;
-            let o_slice = &mut out[o_base..o_base + o_len];
 
             // Initialize output with bias.
             if let Some(b) = bias {
@@ -89,65 +64,99 @@ fn conv2d_core(
                     let abs_oc = g * oc_per_group + oc_idx;
                     let bias_val = b.get(abs_oc).copied().unwrap_or(0.0);
                     if bias_val != 0.0 {
-                        let row = &mut o_slice[oc_idx * spatial_out..(oc_idx + 1) * spatial_out];
-                        for v in row.iter_mut() {
+                        let start = o_base + oc_idx * spatial_out;
+                        for v in &mut out[start..start + spatial_out] {
                             *v = bias_val;
                         }
                     }
                 }
             }
 
-            // GEMM: C = A × B where A=[oc_per_group, kernel_size], B=[kernel_size, spatial_out]
-            // beta=1.0 to accumulate onto bias.
-            let beta = if bias.is_some() { 1.0 } else { 0.0 };
+            // Process spatial dimension in tiles.
+            let mut tile_start = 0;
+            while tile_start < spatial_out {
+                let tile_end = (tile_start + tile_size).min(spatial_out);
+                let tile_len = tile_end - tile_start;
 
-            #[cfg(all(feature = "accelerate", target_os = "macos"))]
-            {
-                super::matmul::blas::sgemm_full(
-                    super::matmul::GemmParams {
-                        m: oc_per_group,
-                        n: spatial_out,
-                        k: kernel_size,
-                        alpha: 1.0,
-                        beta,
-                        trans_a: false,
-                        trans_b: false,
-                    },
-                    w_slice,
-                    &col,
-                    o_slice,
-                );
-            }
+                // Phase 1: im2col for this tile — col[kernel_size, tile_len].
+                for k in 0..kernel_size {
+                    let ic_idx = k / (kh * kw);
+                    let k_rem = k % (kh * kw);
+                    let fh = k_rem / kw;
+                    let fw = k_rem % kw;
+                    let abs_ic = g * ic_per_group + ic_idx;
+                    let col_row = &mut col[k * tile_len..(k + 1) * tile_len];
 
-            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-            {
-                // Tiled matmul kernel (parallelized via rayon when available).
-                // matmul_k_outer writes into o_slice, overwriting bias.
-                // So we save bias, compute matmul (which zeros first), then add bias back.
-                if bias.is_some() {
-                    // Bias already written to o_slice above. Save it, matmul will overwrite.
-                    let saved_bias: Vec<f32> = o_slice.to_vec();
-                    super::matmul::matmul_k_outer(
-                        w_slice,
-                        &col,
-                        o_slice,
-                        oc_per_group,
-                        kernel_size,
-                        spatial_out,
-                    );
-                    for (o, b) in o_slice.iter_mut().zip(saved_bias.iter()) {
-                        *o += b;
+                    for (t, col_val) in col_row.iter_mut().enumerate() {
+                        let out_pos = tile_start + t;
+                        let oh = out_pos / w_out;
+                        let ow = out_pos % w_out;
+                        let ih = oh * sh + fh * dh;
+                        let iw = ow * sw + fw * dw;
+
+                        *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
+                            let d_idx =
+                                ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
+                            if d_idx < data.len() {
+                                data[d_idx]
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        };
                     }
-                } else {
-                    super::matmul::matmul_k_outer(
+                }
+
+                // Phase 2: GEMM for this tile.
+                // C_tile[oc_per_group, tile_len] = W[oc_per_group, kernel_size] × col[kernel_size, tile_len]
+                // Write into the correct tile slice of the output.
+                // Build a contiguous tile output slice.
+                // Output layout is [oc_per_group, spatial_out] row-major; we need
+                // columns [tile_start..tile_end] from each row. Since they're not
+                // contiguous, use a temporary tile buffer for GEMM then scatter.
+                let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
+
+                #[cfg(all(feature = "accelerate", target_os = "macos"))]
+                {
+                    super::matmul::blas::sgemm_full(
+                        super::matmul::GemmParams {
+                            m: oc_per_group,
+                            n: tile_len,
+                            k: kernel_size,
+                            alpha: 1.0,
+                            beta: 0.0, // Write to temp, add bias after.
+                            trans_a: false,
+                            trans_b: false,
+                        },
                         w_slice,
-                        &col,
-                        o_slice,
-                        oc_per_group,
-                        kernel_size,
-                        spatial_out,
+                        &col[..kernel_size * tile_len],
+                        &mut tile_out,
                     );
                 }
+
+                #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+                {
+                    super::matmul::matmul_k_outer(
+                        w_slice,
+                        &col[..kernel_size * tile_len],
+                        &mut tile_out,
+                        oc_per_group,
+                        kernel_size,
+                        tile_len,
+                    );
+                }
+
+                // Scatter tile results into output (add to bias if present).
+                for oc_idx in 0..oc_per_group {
+                    let o_row_start = o_base + oc_idx * spatial_out + tile_start;
+                    let t_row_start = oc_idx * tile_len;
+                    for t in 0..tile_len {
+                        out[o_row_start + t] += tile_out[t_row_start + t];
+                    }
+                }
+
+                tile_start = tile_end;
             }
         }
     }
@@ -175,6 +184,9 @@ pub(crate) fn dispatch_conv2d_direct(
 ) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
+    if data.is_empty() || weight.is_empty() || h_in == 0 || w_in == 0 {
+        return Ok(vec![]);
+    }
     let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
     let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
         Some(cast_f32(bias_bytes)?.to_vec())

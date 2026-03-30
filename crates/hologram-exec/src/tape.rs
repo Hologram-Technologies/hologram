@@ -1441,34 +1441,28 @@ fn dispatch_kernel(
                 return Ok(DispatchResult::InOutBuf);
             }
             let n_rows = floats.len() / axis_size;
-            // Parallel argmax over rows using rayon.
-            use rayon::prelude::*;
-            let indices: Vec<i64> = if n_rows > 64 {
-                floats
-                    .par_chunks(axis_size)
-                    .map(|row| {
-                        row.iter()
-                            .enumerate()
-                            .max_by(|(_, a), (_, b)| {
-                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .map(|(i, _)| i as i64)
-                            .unwrap_or(0)
-                    })
-                    .collect()
-            } else {
-                floats
-                    .chunks(axis_size)
-                    .map(|row| {
-                        row.iter()
-                            .enumerate()
-                            .max_by(|(_, a), (_, b)| {
-                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .map(|(i, _)| i as i64)
-                            .unwrap_or(0)
-                    })
-                    .collect()
+            let argmax_row = |row: &[f32]| -> i64 {
+                row.iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(i, _)| i as i64)
+                    .unwrap_or(0)
+            };
+            let indices: Vec<i64> = {
+                #[cfg(feature = "parallel")]
+                {
+                    if n_rows > 64 {
+                        use rayon::prelude::*;
+                        floats.par_chunks(axis_size).map(argmax_row).collect()
+                    } else {
+                        floats.chunks(axis_size).map(argmax_row).collect()
+                    }
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    let _ = n_rows;
+                    floats.chunks(axis_size).map(argmax_row).collect()
+                }
             };
             let result_bytes: Vec<u8> = indices.iter().flat_map(|&v| v.to_le_bytes()).collect();
             out_buf.extend_from_slice(&result_bytes);
@@ -1704,7 +1698,15 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineResize { mode } => {
-            let result = float_dispatch::spatial::dispatch_resize(inputs, *mode)?;
+            let input_shape: Option<Vec<usize>> = input_metas
+                .first()
+                .and_then(|m| m.as_ref())
+                .map(|m| m.shape().iter().map(|&d| d as usize).collect());
+            let result = float_dispatch::spatial::dispatch_resize_with_shape(
+                inputs,
+                *mode,
+                input_shape.as_deref(),
+            )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
@@ -3042,7 +3044,12 @@ impl EnumTape {
 
         let mut counts = vec![0u32; max_idx + 1];
         for instr in &self.instructions {
-            for &input_idx in &instr.input_indices {
+            // Dedup input indices: if an op uses the same input twice
+            // (e.g., Add(x, x)), count it only once per instruction.
+            let mut deduped: SmallVec<[u32; 4]> = instr.input_indices.iter().copied().collect();
+            deduped.sort_unstable();
+            deduped.dedup();
+            for &input_idx in &deduped {
                 if (input_idx as usize) < counts.len() {
                     counts[input_idx as usize] = counts[input_idx as usize].saturating_add(1);
                 }
@@ -3159,7 +3166,30 @@ impl EnumTape {
                 }
             }
 
+            // Per-instruction eviction: after each instruction, decrement
+            // consumer counts for its inputs and evict nodes that reach 0.
+            // Dedup input indices to avoid double-decrementing when an op
+            // uses the same input twice (e.g., Add(x, x)).
+            let mut prev_inputs: SmallVec<[u32; 4]> = SmallVec::new();
+
             for (i, instr) in level_instrs.iter().enumerate() {
+                // Evict dead inputs from the previous instruction.
+                if let Some(ref mut counts) = live_counts {
+                    prev_inputs.sort_unstable();
+                    prev_inputs.dedup();
+                    for &input_idx in &prev_inputs {
+                        let idx = input_idx as usize;
+                        if idx < counts.len() && counts[idx] != u32::MAX {
+                            counts[idx] = counts[idx].saturating_sub(1);
+                            if counts[idx] == 0 {
+                                arena.evict(NodeId::new(input_idx, 0));
+                            }
+                        }
+                    }
+                }
+                prev_inputs.clear();
+                prev_inputs.extend(instr.input_indices.iter().copied());
+
                 let global_i = start + i;
                 // Prefetch next instruction's input data and weight pages.
                 if global_i + 1 < self.instructions.len() {
@@ -3441,6 +3471,21 @@ impl EnumTape {
                 }
             } // end inner instruction loop
 
+            // Evict dead inputs from the last instruction in this level.
+            if let Some(ref mut counts) = live_counts {
+                prev_inputs.sort_unstable();
+                prev_inputs.dedup();
+                for &input_idx in &prev_inputs {
+                    let idx = input_idx as usize;
+                    if idx < counts.len() && counts[idx] != u32::MAX {
+                        counts[idx] = counts[idx].saturating_sub(1);
+                        if counts[idx] == 0 {
+                            arena.evict(NodeId::new(input_idx, 0));
+                        }
+                    }
+                }
+            }
+
             // Flush deferred GPU work at level boundary (Phase 8.2 + 8.3d).
             // Metal: commits batched command buffer, waits for completion.
             // WebGPU: submits encoder, polls device, maps+reads all staging buffers.
@@ -3451,22 +3496,6 @@ impl EnumTape {
                 arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
             }
             deferred_slots.clear();
-
-            // Liveness-based eviction: decrement consumer counts for all
-            // inputs consumed in this level, and free nodes that are dead.
-            if let Some(ref mut counts) = live_counts {
-                for instr in level_instrs {
-                    for &input_idx in &instr.input_indices {
-                        let idx = input_idx as usize;
-                        if idx < counts.len() && counts[idx] != u32::MAX {
-                            counts[idx] = counts[idx].saturating_sub(1);
-                            if counts[idx] == 0 {
-                                arena.evict(NodeId::new(input_idx, 0));
-                            }
-                        }
-                    }
-                }
-            }
         } // end level loop
 
         Ok(())
