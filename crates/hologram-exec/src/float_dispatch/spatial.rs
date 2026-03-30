@@ -103,8 +103,8 @@ pub(crate) fn dispatch_resize_with_shape(
                 return dispatch_resize_nchw_known(&data, n, c, h_in, w_in, h_out, w_out, mode);
             }
         }
-        // Fallback to heuristic NCHW
-        return dispatch_resize_nchw(&data, scales[2], scales[3], mode);
+        // No shape metadata — fall back to flat 1D resize.
+        // The heuristic NCHW path misidentifies spatial dims for large tensors.
     }
 
     // 1D fallback
