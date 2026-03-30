@@ -103,6 +103,12 @@ impl HoloHeader {
         self.flags & FLAG_WEIGHTS_COMPRESSED != 0
     }
 
+    /// Whether tensors in the weight blob are page-aligned (4096-byte boundaries).
+    #[must_use]
+    pub fn is_tensor_page_aligned(&self) -> bool {
+        self.flags & FLAG_TENSOR_PAGE_ALIGNED != 0
+    }
+
     /// Whether the magic bytes match HOLO_MAGIC.
     #[must_use]
     pub fn is_valid_magic(&self) -> bool {
@@ -201,5 +207,16 @@ mod tests {
     #[test]
     fn from_bytes_too_short() {
         assert!(HoloHeader::from_bytes(&[0u8; 10]).is_none());
+    }
+
+    #[test]
+    fn tensor_page_aligned_flag() {
+        let mut h = sample_header();
+        assert!(!h.is_tensor_page_aligned());
+        h.flags |= FLAG_TENSOR_PAGE_ALIGNED;
+        assert!(h.is_tensor_page_aligned());
+        // Other flags must remain unaffected.
+        assert!(!h.is_graph_compressed());
+        assert!(!h.is_weights_compressed());
     }
 }

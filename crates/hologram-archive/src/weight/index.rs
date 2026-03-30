@@ -315,4 +315,78 @@ mod tests {
         let restored = WeightIndex::from_bytes(&bytes).expect("deserialization");
         assert_eq!(restored, idx);
     }
+
+    // ── page_align_weight_blob ─────────────────────────────────────
+
+    #[test]
+    fn page_align_offsets_are_4096_aligned() {
+        // Three tensors of different sizes, packed contiguously.
+        let t0 = vec![1u8; 100]; // 100 bytes
+        let t1 = vec![2u8; 5000]; // 5000 bytes (crosses page)
+        let t2 = vec![3u8; 200]; // 200 bytes
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&t0);
+        blob.extend_from_slice(&t1);
+        blob.extend_from_slice(&t2);
+
+        let index = WeightIndex {
+            entries: vec![
+                WeightIndexEntry {
+                    tensor_name: "w0".into(),
+                    group: "layer.0".into(),
+                    offset: 0,
+                    size: 100,
+                },
+                WeightIndexEntry {
+                    tensor_name: "w1".into(),
+                    group: "layer.0".into(),
+                    offset: 100,
+                    size: 5000,
+                },
+                WeightIndexEntry {
+                    tensor_name: "w2".into(),
+                    group: "layer.1".into(),
+                    offset: 5100,
+                    size: 200,
+                },
+            ],
+        };
+
+        let (aligned_blob, aligned_index) = page_align_weight_blob(&blob, &index);
+
+        // Every offset must be page-aligned.
+        for entry in &aligned_index.entries {
+            assert_eq!(
+                entry.offset % 4096,
+                0,
+                "tensor '{}' at offset {} is not page-aligned",
+                entry.tensor_name,
+                entry.offset
+            );
+        }
+
+        // Data must be preserved.
+        for (orig, aligned_entry) in index.entries.iter().zip(aligned_index.entries.iter()) {
+            let orig_data = &blob[orig.offset as usize..(orig.offset + orig.size) as usize];
+            let aligned_data = &aligned_blob[aligned_entry.offset as usize
+                ..(aligned_entry.offset + aligned_entry.size) as usize];
+            assert_eq!(
+                orig_data, aligned_data,
+                "data mismatch for '{}'",
+                orig.tensor_name
+            );
+        }
+
+        // Aligned blob must be >= original.
+        assert!(aligned_blob.len() >= blob.len());
+    }
+
+    #[test]
+    fn page_align_empty_index() {
+        let blob = vec![0u8; 100];
+        let index = WeightIndex { entries: vec![] };
+        let (aligned_blob, aligned_index) = page_align_weight_blob(&blob, &index);
+        assert!(aligned_blob.is_empty());
+        assert!(aligned_index.entries.is_empty());
+    }
 }

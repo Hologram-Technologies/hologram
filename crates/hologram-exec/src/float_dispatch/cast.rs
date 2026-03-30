@@ -163,7 +163,7 @@ pub(super) fn dequantize_q4_0(data: &[u8]) -> Vec<f32> {
 /// Dequantize Q6_K data: 256 values per super-block (210 bytes each).
 /// Layout: ql[128] + qh[64] + scales[16] + d(f16)[2] = 210 bytes.
 /// Each value is a 6-bit signed integer (-32..31) scaled by (d * scale_i).
-fn dequantize_q6_k(data: &[u8]) -> Vec<f32> {
+pub(super) fn dequantize_q6_k(data: &[u8]) -> Vec<f32> {
     const QK: usize = 256;
     const BLOCK_SIZE: usize = QK / 2 + QK / 4 + QK / 16 + 2; // 128 + 64 + 16 + 2 = 210
 

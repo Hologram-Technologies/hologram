@@ -534,6 +534,23 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
         }
     }
 
+    // ── Fast path: fused Q6_K dequant-matmul ──────────────────────────
+    if quant_b == 3 && !p.trans_b && !p.trans_a && p.alpha == 1.0 && p.beta == 0.0 {
+        let b_q6k = inputs[1];
+        let expected_f32_count = b_q6k.len() / Q6_K_BLOCK_BYTES * Q6_K_BLOCK_VALUES;
+        let k = p.k;
+        if k > 0 && expected_f32_count > 0 {
+            let n = expected_f32_count / k;
+            let a = cast_f32(inputs[0])?;
+            let m = if k > 0 { a.len() / k } else { 0 };
+            if n.is_multiple_of(Q6_K_BLOCK_VALUES) && m > 0 && n > 0 {
+                let mut out = vec![0.0f32; m * n];
+                matmul_dequant_q6_k(&a, b_q6k, &mut out, m, k, n);
+                return Ok(f32_vec_to_bytes(out));
+            }
+        }
+    }
+
     // ── General path: dequantize B, then standard matmul ──────────────
     let a = cast_f32(inputs[0])?;
     let b = super::cast::decode_weights(inputs[1], quant_b)?;
@@ -609,6 +626,8 @@ const KC: usize = 256;
 
 /// Micro-kernel: accumulate A[i..i+MR, k_start..k_end] × B[k_start..k_end, j..j+NR]
 /// into `acc`. The accumulator is NOT zeroed — caller manages initialization.
+///
+/// Dispatches to SIMD on supported platforms for the primary 4×8 tile.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn micro_kernel<const MR: usize, const NR: usize>(
@@ -622,6 +641,42 @@ fn micro_kernel<const MR: usize, const NR: usize>(
     k_stride: usize,
     n: usize,
 ) {
+    #[cfg(target_arch = "aarch64")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_strided_neon(
+                a,
+                b,
+                acc.as_mut_ptr().cast(),
+                i,
+                j,
+                k_start,
+                k_end,
+                k_stride,
+                n,
+            );
+        }
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe {
+            micro_kernel_strided_avx2(
+                a,
+                b,
+                acc.as_mut_ptr().cast(),
+                i,
+                j,
+                k_start,
+                k_end,
+                k_stride,
+                n,
+            );
+        }
+        return;
+    }
+
     for p in k_start..k_end {
         let b_off = p * n + j;
         for ii in 0..MR {
@@ -633,12 +688,166 @@ fn micro_kernel<const MR: usize, const NR: usize>(
     }
 }
 
+/// NEON strided micro-kernel: B at stride N (not packed).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_strided_neon(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+    n: usize,
+) {
+    use std::arch::aarch64::*;
+
+    let mut acc0_lo = vld1q_f32(acc_ptr);
+    let mut acc0_hi = vld1q_f32(acc_ptr.add(4));
+    let mut acc1_lo = vld1q_f32(acc_ptr.add(8));
+    let mut acc1_hi = vld1q_f32(acc_ptr.add(12));
+    let mut acc2_lo = vld1q_f32(acc_ptr.add(16));
+    let mut acc2_hi = vld1q_f32(acc_ptr.add(20));
+    let mut acc3_lo = vld1q_f32(acc_ptr.add(24));
+    let mut acc3_hi = vld1q_f32(acc_ptr.add(28));
+
+    for p in k_start..k_end {
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+
+        let a0 = vdupq_n_f32(*a.get_unchecked(i * k_stride + p));
+        let a1 = vdupq_n_f32(*a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = vdupq_n_f32(*a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = vdupq_n_f32(*a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0_lo = vfmaq_f32(acc0_lo, a0, b_lo);
+        acc0_hi = vfmaq_f32(acc0_hi, a0, b_hi);
+        acc1_lo = vfmaq_f32(acc1_lo, a1, b_lo);
+        acc1_hi = vfmaq_f32(acc1_hi, a1, b_hi);
+        acc2_lo = vfmaq_f32(acc2_lo, a2, b_lo);
+        acc2_hi = vfmaq_f32(acc2_hi, a2, b_hi);
+        acc3_lo = vfmaq_f32(acc3_lo, a3, b_lo);
+        acc3_hi = vfmaq_f32(acc3_hi, a3, b_hi);
+    }
+
+    vst1q_f32(acc_ptr, acc0_lo);
+    vst1q_f32(acc_ptr.add(4), acc0_hi);
+    vst1q_f32(acc_ptr.add(8), acc1_lo);
+    vst1q_f32(acc_ptr.add(12), acc1_hi);
+    vst1q_f32(acc_ptr.add(16), acc2_lo);
+    vst1q_f32(acc_ptr.add(20), acc2_hi);
+    vst1q_f32(acc_ptr.add(24), acc3_lo);
+    vst1q_f32(acc_ptr.add(28), acc3_hi);
+}
+
+/// AVX2+FMA strided micro-kernel: B at stride N (not packed).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_strided_avx2(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+    n: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let mut acc0 = _mm256_loadu_ps(acc_ptr);
+    let mut acc1 = _mm256_loadu_ps(acc_ptr.add(8));
+    let mut acc2 = _mm256_loadu_ps(acc_ptr.add(16));
+    let mut acc3 = _mm256_loadu_ps(acc_ptr.add(24));
+
+    for p in k_start..k_end {
+        let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
+
+        let a0 = _mm256_broadcast_ss(&*a.get_unchecked(i * k_stride + p));
+        let a1 = _mm256_broadcast_ss(&*a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = _mm256_broadcast_ss(&*a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = _mm256_broadcast_ss(&*a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
+        acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
+        acc2 = _mm256_fmadd_ps(a2, b_vec, acc2);
+        acc3 = _mm256_fmadd_ps(a3, b_vec, acc3);
+    }
+
+    _mm256_storeu_ps(acc_ptr, acc0);
+    _mm256_storeu_ps(acc_ptr.add(8), acc1);
+    _mm256_storeu_ps(acc_ptr.add(16), acc2);
+    _mm256_storeu_ps(acc_ptr.add(24), acc3);
+}
+
 /// Micro-kernel operating on a packed (contiguous) B panel. The panel is
 /// laid out as `packed_b[p * NR + jj]` with stride NR, eliminating strided
 /// access to the original B matrix (stride N, which wastes cache lines when
 /// N is large).
+///
+/// Dispatches to SIMD-optimized variants on supported platforms when MR and NR
+/// match the SIMD tile size (MR=4, NR=8).
 #[inline(always)]
 fn micro_kernel_packed<const MR: usize, const NR: usize>(
+    a: &[f32],
+    packed_b: &[f32],
+    acc: &mut [[f32; NR]; MR],
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    // NEON fast path for the primary 4×8 tile on aarch64.
+    #[cfg(target_arch = "aarch64")]
+    if MR == 4 && NR == 8 {
+        // SAFETY: aarch64 always has NEON. acc layout matches f32×32.
+        unsafe {
+            micro_kernel_packed_neon(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
+    // AVX2+FMA fast path for the primary 4×8 tile on x86_64.
+    #[cfg(target_arch = "x86_64")]
+    if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        // SAFETY: feature detection passed. acc layout matches f32×32.
+        unsafe {
+            micro_kernel_packed_avx2(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback (also used for smaller tile sizes like MR=2, MR=1).
+    micro_kernel_packed_scalar::<MR, NR>(a, packed_b, acc, i, k_start, k_end, k_stride);
+}
+
+/// Scalar micro-kernel — portable fallback.
+#[inline(always)]
+fn micro_kernel_packed_scalar<const MR: usize, const NR: usize>(
     a: &[f32],
     packed_b: &[f32],
     acc: &mut [[f32; NR]; MR],
@@ -657,6 +866,119 @@ fn micro_kernel_packed<const MR: usize, const NR: usize>(
             }
         }
     }
+}
+
+// ── SIMD micro-kernels ────────────────────────────────────────────────
+
+/// NEON micro-kernel for the 4×8 packed tile on aarch64.
+///
+/// Uses 8 `float32x4` accumulators (2 per row, covering 8 columns).
+/// `vfmaq_f32` fuses multiply-add into one instruction.
+/// `acc_ptr` points to a `[[f32; 8]; 4]` (32 contiguous f32s).
+///
+/// SAFETY: caller must ensure aarch64 target and valid acc pointer.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_packed_neon(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    use std::arch::aarch64::*;
+
+    // Load 8 accumulators: 4 rows × (lo 4 cols, hi 4 cols).
+    let mut acc0_lo = vld1q_f32(acc_ptr);
+    let mut acc0_hi = vld1q_f32(acc_ptr.add(4));
+    let mut acc1_lo = vld1q_f32(acc_ptr.add(8));
+    let mut acc1_hi = vld1q_f32(acc_ptr.add(12));
+    let mut acc2_lo = vld1q_f32(acc_ptr.add(16));
+    let mut acc2_hi = vld1q_f32(acc_ptr.add(20));
+    let mut acc3_lo = vld1q_f32(acc_ptr.add(24));
+    let mut acc3_hi = vld1q_f32(acc_ptr.add(28));
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_ptr = packed_b.as_ptr().add(p * 8);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+
+        let a0 = vdupq_n_f32(*a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = vdupq_n_f32(*a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = vdupq_n_f32(*a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = vdupq_n_f32(*a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0_lo = vfmaq_f32(acc0_lo, a0, b_lo);
+        acc0_hi = vfmaq_f32(acc0_hi, a0, b_hi);
+        acc1_lo = vfmaq_f32(acc1_lo, a1, b_lo);
+        acc1_hi = vfmaq_f32(acc1_hi, a1, b_hi);
+        acc2_lo = vfmaq_f32(acc2_lo, a2, b_lo);
+        acc2_hi = vfmaq_f32(acc2_hi, a2, b_hi);
+        acc3_lo = vfmaq_f32(acc3_lo, a3, b_lo);
+        acc3_hi = vfmaq_f32(acc3_hi, a3, b_hi);
+    }
+
+    // Store accumulators back.
+    vst1q_f32(acc_ptr, acc0_lo);
+    vst1q_f32(acc_ptr.add(4), acc0_hi);
+    vst1q_f32(acc_ptr.add(8), acc1_lo);
+    vst1q_f32(acc_ptr.add(12), acc1_hi);
+    vst1q_f32(acc_ptr.add(16), acc2_lo);
+    vst1q_f32(acc_ptr.add(20), acc2_hi);
+    vst1q_f32(acc_ptr.add(24), acc3_lo);
+    vst1q_f32(acc_ptr.add(28), acc3_hi);
+}
+
+/// AVX2+FMA micro-kernel for the 4×8 packed tile on x86_64.
+///
+/// Uses 4 `__m256` accumulators (one per row, 8 f32 each).
+/// `_mm256_fmadd_ps` fuses multiply-add into one instruction.
+///
+/// SAFETY: caller must ensure AVX2+FMA support and valid acc pointer.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_packed_avx2(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let mut acc0 = _mm256_loadu_ps(acc_ptr);
+    let mut acc1 = _mm256_loadu_ps(acc_ptr.add(8));
+    let mut acc2 = _mm256_loadu_ps(acc_ptr.add(16));
+    let mut acc3 = _mm256_loadu_ps(acc_ptr.add(24));
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_vec = _mm256_loadu_ps(packed_b.as_ptr().add(p * 8));
+
+        let a0 = _mm256_broadcast_ss(&*a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = _mm256_broadcast_ss(&*a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = _mm256_broadcast_ss(&*a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = _mm256_broadcast_ss(&*a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
+        acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
+        acc2 = _mm256_fmadd_ps(a2, b_vec, acc2);
+        acc3 = _mm256_fmadd_ps(a3, b_vec, acc3);
+    }
+
+    _mm256_storeu_ps(acc_ptr, acc0);
+    _mm256_storeu_ps(acc_ptr.add(8), acc1);
+    _mm256_storeu_ps(acc_ptr.add(16), acc2);
+    _mm256_storeu_ps(acc_ptr.add(24), acc3);
 }
 
 /// Pack B[k_start..k_end, j..j+NR] into a contiguous NR-strided buffer.
@@ -778,36 +1100,25 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
         }
     };
 
-    // Parallel path: split M-tile rows across rayon threads.
-    // Each thread writes to non-overlapping output rows, so no synchronization needed.
+    // Parallel path: static duty partitioning across rayon threads.
+    // Each thread gets a contiguous block of M-tiles (equal work per tile),
+    // avoiding work-stealing overhead since all tiles cost the same.
     #[cfg(feature = "parallel")]
     if m_tiles >= PAR_M_TILE_THRESHOLD {
         use rayon::prelude::*;
         let out_ptr = SendPtr(out.as_mut_ptr());
-        // SAFETY: each iteration writes exclusively to out[i*n..(i+MR)*n],
-        // which is non-overlapping across different `it` values.
+        let n_threads = rayon::current_num_threads();
+        let duty = m_tiles.div_ceil(n_threads);
+        // SAFETY: each chunk writes exclusively to non-overlapping output rows.
         (0..m_tiles)
             .into_par_iter()
+            .with_min_len(duty)
             .for_each(|it| process_m_tile(it, out_ptr));
 
         // Remainder rows (sequential — typically ≤3 rows).
         if m_rem > 0 {
             let i = m_tiles * MR;
-            let raw = out_ptr.0;
-            for ii in 0..m_rem {
-                let row = i + ii;
-                for kc_start in (0..k).step_by(KC) {
-                    let kc_end = (kc_start + KC).min(k);
-                    for p in kc_start..kc_end {
-                        let a_val = a[row * k + p];
-                        let b_row = &b[p * n..p * n + n];
-                        let o_row = unsafe { std::slice::from_raw_parts_mut(raw.add(row * n), n) };
-                        for j in 0..n {
-                            o_row[j] += a_val * b_row[j];
-                        }
-                    }
-                }
-            }
+            m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
         }
         return;
     }
@@ -818,21 +1129,119 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
         process_m_tile(it, out_ptr);
     }
 
-    // Remainder rows: scalar k-outer with KC blocking for the bottom strip.
+    // Remainder rows: use tiled micro-kernels for better vectorization.
     if m_rem > 0 {
         let i = m_tiles * MR;
-        for ii in 0..m_rem {
-            let row = i + ii;
+        m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
+    }
+}
+
+// ── Tiled M-remainder ─────────────────────────────────────────────────
+//
+// Process the last m_rem (< MR=4) rows using smaller micro-kernel tiles
+// instead of a scalar per-row k-outer loop.  This enables NR-wide
+// vectorization for the remainder rows.
+
+/// Process `m_rem` remainder rows starting at row `i`, using MR=2 and MR=1
+/// micro-kernel tiles with KC blocking and B-panel packing.
+#[allow(clippy::too_many_arguments)]
+fn m_remainder_tiled(
+    a: &[f32],
+    b: &[f32],
+    out: &mut [f32],
+    i: usize,
+    m_rem: usize,
+    k: usize,
+    n: usize,
+    n_tiles: usize,
+    n_rem: usize,
+) {
+    const NR: usize = 8;
+    let mut packed_b = [0.0f32; KC * NR];
+    let mut row = i;
+    let mut remaining = m_rem;
+
+    // Process pairs of rows with MR=2.
+    while remaining >= 2 {
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            let mut acc = [[0.0f32; NR]; 2];
             for kc_start in (0..k).step_by(KC) {
                 let kc_end = (kc_start + KC).min(k);
-                for p in kc_start..kc_end {
-                    let a_val = a[row * k + p];
-                    let b_row = &b[p * n..(p + 1) * n];
-                    let o_row = &mut out[row * n..(row + 1) * n];
-                    for j in 0..n {
-                        o_row[j] += a_val * b_row[j];
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                micro_kernel_packed::<2, NR>(
+                    a,
+                    &packed_b[..kc_len * NR],
+                    &mut acc,
+                    row,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            }
+            for (ii, acc_row) in acc.iter().enumerate() {
+                let off = (row + ii) * n + j;
+                out[off..off + NR].copy_from_slice(acc_row);
+            }
+        }
+        // N-remainder for these rows.
+        if n_rem > 0 {
+            let j = n_tiles * NR;
+            for jj in 0..n_rem {
+                let mut acc = [0.0f32; 2];
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    for p in kc_start..kc_end {
+                        let b_val = b[p * n + j + jj];
+                        for (ii, a_acc) in acc.iter_mut().enumerate() {
+                            *a_acc += a[(row + ii) * k + p] * b_val;
+                        }
                     }
                 }
+                for (ii, &a_acc) in acc.iter().enumerate() {
+                    out[(row + ii) * n + j + jj] = a_acc;
+                }
+            }
+        }
+        row += 2;
+        remaining -= 2;
+    }
+
+    // Process last single row with MR=1 (NR-wide vectorization still applies).
+    if remaining == 1 {
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            let mut acc = [[0.0f32; NR]; 1];
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                micro_kernel_packed::<1, NR>(
+                    a,
+                    &packed_b[..kc_len * NR],
+                    &mut acc,
+                    row,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            }
+            let off = row * n + j;
+            out[off..off + NR].copy_from_slice(&acc[0]);
+        }
+        // N-remainder.
+        if n_rem > 0 {
+            let j = n_tiles * NR;
+            for jj in 0..n_rem {
+                let mut acc = 0.0f32;
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    for p in kc_start..kc_end {
+                        acc += a[row * k + p] * b[p * n + j + jj];
+                    }
+                }
+                out[row * n + j + jj] = acc;
             }
         }
     }
@@ -1050,10 +1459,15 @@ pub(crate) fn matmul_dequant_q4_0(
     if m_tiles >= PAR_M_TILE_THRESHOLD {
         use rayon::prelude::*;
         let out_ptr = SendPtr(out.as_mut_ptr());
-        (0..m_tiles).into_par_iter().for_each(|it| {
-            let ptr = out_ptr;
-            dequant_q4_0_m_strip(a, b_q4, ptr.0, it * MR, k, n, n_tiles, n_rem);
-        });
+        let n_threads = rayon::current_num_threads();
+        let duty = m_tiles.div_ceil(n_threads);
+        (0..m_tiles)
+            .into_par_iter()
+            .with_min_len(duty)
+            .for_each(|it| {
+                let ptr = out_ptr;
+                dequant_q4_0_m_strip(a, b_q4, ptr.0, it * MR, k, n, n_tiles, n_rem);
+            });
         if m_rem > 0 {
             dequant_q4_0_remainder_rows(a, b_q4, out, m_tiles * MR, m_rem, k, n);
         }
@@ -1066,6 +1480,255 @@ pub(crate) fn matmul_dequant_q4_0(
     }
     if m_rem > 0 {
         dequant_q4_0_remainder_rows(a, b_q4, out, m_tiles * MR, m_rem, k, n);
+    }
+}
+
+// ── Fused Q6_K dequant-matmul ─────────────────────────────────────────
+//
+// Same strategy as Q4_0 above: dequantize one KC×NR panel at a time into
+// the stack-allocated packed_b buffer, then run the standard micro-kernel.
+// Q6_K super-blocks are 210 bytes → 256 f32 values each.
+
+/// Q6_K super-block size in bytes.
+const Q6_K_BLOCK_BYTES: usize = 210;
+/// Number of f32 values produced by one Q6_K super-block.
+const Q6_K_BLOCK_VALUES: usize = 256;
+
+/// Dequantize one Q6_K value at position `pos_in_block` (0..255) from a
+/// 210-byte super-block.  Returns the dequantized f32.
+#[inline(always)]
+fn dequant_q6_k_value(block: &[u8], pos: usize) -> f32 {
+    let ql = &block[0..128];
+    let qh = &block[128..192];
+    let sc = &block[192..208];
+    let d = super::cast::f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+
+    // Which pass (0 or 1) and position within pass (0..127).
+    let pass = pos / 128;
+    let pos_in_pass = pos % 128;
+    // Which group of 32 within the pass (0..3).
+    let group = pos_in_pass / 32;
+    let l = pos_in_pass % 32;
+
+    let ql_off = pass * 64;
+    let qh_off = pass * 32;
+    let is = pass * 8;
+
+    let q = match group {
+        0 => ((ql[ql_off + l] & 0xF) | ((qh[qh_off + l] & 3) << 4)) as i8 - 32,
+        1 => ((ql[ql_off + l + 32] & 0xF) | (((qh[qh_off + l] >> 2) & 3) << 4)) as i8 - 32,
+        2 => ((ql[ql_off + l] >> 4) | (((qh[qh_off + l] >> 4) & 3) << 4)) as i8 - 32,
+        3 => ((ql[ql_off + l + 32] >> 4) | (((qh[qh_off + l] >> 6) & 3) << 4)) as i8 - 32,
+        _ => unreachable!(),
+    };
+    let scale_idx = is + group * 2;
+    d * sc[scale_idx] as i8 as f32 * q as f32
+}
+
+/// Dequantize a KC×NR panel of Q6_K weights directly into a packed f32 buffer.
+///
+/// Reads Q6_K super-blocks from `b_q6k` (row-major K×N layout, where each row
+/// of N elements is stored as N/256 super-blocks of 210 bytes) and writes
+/// dequantized f32s into `packed` with NR stride.
+///
+/// Requires: `n` is a multiple of `Q6_K_BLOCK_VALUES` (256).
+#[inline]
+fn dequant_pack_q6_k_panel<const NR: usize>(
+    b_q6k: &[u8],
+    packed: &mut [f32],
+    k_start: usize,
+    k_end: usize,
+    j: usize,
+    n: usize,
+) {
+    let blocks_per_row = n / Q6_K_BLOCK_VALUES;
+    let block_col = j / Q6_K_BLOCK_VALUES;
+    let pos_in_block = j % Q6_K_BLOCK_VALUES;
+
+    for p_idx in 0..(k_end - k_start) {
+        let p = k_start + p_idx;
+        let block_offset = (p * blocks_per_row + block_col) * Q6_K_BLOCK_BYTES;
+        let block = &b_q6k[block_offset..block_offset + Q6_K_BLOCK_BYTES];
+
+        let dst = &mut packed[p_idx * NR..(p_idx + 1) * NR];
+        for (jj, d) in dst.iter_mut().enumerate() {
+            *d = dequant_q6_k_value(block, pos_in_block + jj);
+        }
+    }
+}
+
+/// Dequantize a row segment of Q6_K weights into a contiguous f32 buffer.
+#[inline]
+fn dequant_q6_k_row_segment(
+    b_q6k: &[u8],
+    out: &mut [f32],
+    row: usize,
+    col_start: usize,
+    n_cols: usize,
+    n: usize,
+) {
+    let blocks_per_row = n / Q6_K_BLOCK_VALUES;
+    for (jj, o) in out.iter_mut().enumerate().take(n_cols) {
+        let col = col_start + jj;
+        let block_col = col / Q6_K_BLOCK_VALUES;
+        let pos = col % Q6_K_BLOCK_VALUES;
+        let block_offset = (row * blocks_per_row + block_col) * Q6_K_BLOCK_BYTES;
+        let block = &b_q6k[block_offset..block_offset + Q6_K_BLOCK_BYTES];
+        *o = dequant_q6_k_value(block, pos);
+    }
+}
+
+/// Process one MR-row strip: dequant-pack Q6_K B panels and run micro-kernel.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn dequant_q6_k_m_strip(
+    a: &[f32],
+    b_q6k: &[u8],
+    out_ptr: *mut f32,
+    i: usize,
+    k: usize,
+    n: usize,
+    n_tiles: usize,
+    n_rem: usize,
+) {
+    const MR: usize = 4;
+    const NR: usize = 8;
+    let mut packed_b = [0.0f32; KC * NR];
+
+    for jt in 0..n_tiles {
+        let j = jt * NR;
+        let mut acc = [[0.0f32; NR]; MR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            let kc_len = kc_end - kc_start;
+            dequant_pack_q6_k_panel::<NR>(
+                b_q6k,
+                &mut packed_b[..kc_len * NR],
+                kc_start,
+                kc_end,
+                j,
+                n,
+            );
+            micro_kernel_packed::<MR, NR>(
+                a,
+                &packed_b[..kc_len * NR],
+                &mut acc,
+                i,
+                kc_start,
+                kc_end,
+                k,
+            );
+        }
+        for (ii, acc_row) in acc.iter().enumerate() {
+            let off = (i + ii) * n + j;
+            unsafe { std::ptr::copy_nonoverlapping(acc_row.as_ptr(), out_ptr.add(off), NR) };
+        }
+    }
+
+    // Remainder columns — dequant one element at a time, accumulate scalar.
+    if n_rem > 0 {
+        let j = n_tiles * NR;
+        let mut b_val = 0.0f32;
+        for jj in 0..n_rem {
+            let mut acc = [0.0f32; MR];
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                for p in kc_start..kc_end {
+                    dequant_q6_k_row_segment(
+                        b_q6k,
+                        std::slice::from_mut(&mut b_val),
+                        p,
+                        j + jj,
+                        1,
+                        n,
+                    );
+                    for (ii, a_acc) in acc.iter_mut().enumerate() {
+                        *a_acc += a[(i + ii) * k + p] * b_val;
+                    }
+                }
+            }
+            for (ii, &a_acc) in acc.iter().enumerate() {
+                unsafe { *out_ptr.add((i + ii) * n + j + jj) = a_acc };
+            }
+        }
+    }
+}
+
+/// Process remainder rows (< MR): dequant one Q6_K B row at a time, scalar accumulate.
+fn dequant_q6_k_remainder_rows(
+    a: &[f32],
+    b_q6k: &[u8],
+    out: &mut [f32],
+    m_start: usize,
+    m_rem: usize,
+    k: usize,
+    n: usize,
+) {
+    let mut b_row = vec![0.0f32; n];
+    for ii in 0..m_rem {
+        let row = m_start + ii;
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                let a_val = a[row * k + p];
+                dequant_q6_k_row_segment(b_q6k, &mut b_row, p, 0, n, n);
+                let o_row = &mut out[row * n..(row + 1) * n];
+                for j in 0..n {
+                    o_row[j] += a_val * b_row[j];
+                }
+            }
+        }
+    }
+}
+
+/// Fused Q6_K dequantize-matmul: C[m,n] += A[m,k] × dequant(B_q6k[k,n]).
+///
+/// Same tiling structure as `matmul_dequant_q4_0` (KC=256, MR=4, NR=8) but
+/// dequantizes Q6_K super-blocks (210 bytes → 256 values) on the fly.
+/// Never materializes the full K×N f32 weight matrix.
+///
+/// Requires: `n` is a multiple of 256, `k * n / 256 * 210 == b_q6k.len()`.
+pub(crate) fn matmul_dequant_q6_k(
+    a: &[f32],
+    b_q6k: &[u8],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    const MR: usize = 4;
+    const NR: usize = 8;
+
+    let m_tiles = m / MR;
+    let n_tiles = n / NR;
+    let m_rem = m % MR;
+    let n_rem = n % NR;
+
+    #[cfg(feature = "parallel")]
+    if m_tiles >= PAR_M_TILE_THRESHOLD {
+        use rayon::prelude::*;
+        let out_ptr = SendPtr(out.as_mut_ptr());
+        let n_threads = rayon::current_num_threads();
+        let duty = m_tiles.div_ceil(n_threads);
+        (0..m_tiles)
+            .into_par_iter()
+            .with_min_len(duty)
+            .for_each(|it| {
+                let ptr = out_ptr;
+                dequant_q6_k_m_strip(a, b_q6k, ptr.0, it * MR, k, n, n_tiles, n_rem);
+            });
+        if m_rem > 0 {
+            dequant_q6_k_remainder_rows(a, b_q6k, out, m_tiles * MR, m_rem, k, n);
+        }
+        return;
+    }
+
+    let out_ptr = out.as_mut_ptr();
+    for it in 0..m_tiles {
+        dequant_q6_k_m_strip(a, b_q6k, out_ptr, it * MR, k, n, n_tiles, n_rem);
+    }
+    if m_rem > 0 {
+        dequant_q6_k_remainder_rows(a, b_q6k, out, m_tiles * MR, m_rem, k, n);
     }
 }
 
@@ -1274,6 +1937,185 @@ mod tests {
         assert!(
             max_err == 0.0,
             "large prefill max absolute error: {max_err}"
+        );
+    }
+
+    // ── Q6_K fused dequant-matmul tests ──────────────────────────────
+
+    /// Encode f32 weights into Q6_K format (210-byte super-blocks of 256 values each).
+    /// This is a simplified encoder for testing — it quantizes each value to 6-bit
+    /// signed integers using a simple abs-max scaling per super-block.
+    fn encode_q6_k(weights: &[f32], k: usize, n: usize) -> Vec<u8> {
+        assert_eq!(weights.len(), k * n);
+        assert_eq!(n % Q6_K_BLOCK_VALUES, 0, "n must be a multiple of 256");
+        let blocks_per_row = n / Q6_K_BLOCK_VALUES;
+        let mut out = vec![0u8; k * blocks_per_row * Q6_K_BLOCK_BYTES];
+
+        for row in 0..k {
+            for bc in 0..blocks_per_row {
+                let start = row * n + bc * Q6_K_BLOCK_VALUES;
+                let vals = &weights[start..start + Q6_K_BLOCK_VALUES];
+                let block_off = (row * blocks_per_row + bc) * Q6_K_BLOCK_BYTES;
+
+                // Find abs max for the super-block scale `d`.
+                let max_abs = vals.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+                let d = if max_abs == 0.0 { 1.0 } else { max_abs / 31.0 };
+
+                // For simplicity, use a uniform per-group scale of 1 (sc[i] = 1 as i8).
+                // This means each value is quantized as: round(val / d), clamped to -32..31.
+                let block = &mut out[block_off..block_off + Q6_K_BLOCK_BYTES];
+
+                // Zero the block first.
+                for b in block.iter_mut() {
+                    *b = 0;
+                }
+
+                // Set all group scales to 1 (as signed i8).
+                for i in 192..208 {
+                    block[i] = 1u8;
+                }
+
+                // Encode d as f16.
+                let d_bits = f32_to_f16_bits(d);
+                block[208] = d_bits as u8;
+                block[209] = (d_bits >> 8) as u8;
+
+                // Encode each value. Match the decoding layout exactly:
+                // pass 0: vals[0..128], pass 1: vals[128..256]
+                // Within each pass of 128: groups of 32 at offsets 0, 32, 64, 96.
+                for pass in 0..2usize {
+                    let ql_off = pass * 64;
+                    let qh_off = 128 + pass * 32;
+                    for group in 0..4usize {
+                        for l in 0..32usize {
+                            let pos = pass * 128 + group * 32 + l;
+                            // Quantize: q = round(val / d) + 32, clamped to 0..63
+                            let q_raw = (vals[pos] / d).round() as i32;
+                            let q = q_raw.clamp(-32, 31);
+                            let qu = (q + 32) as u8; // 0..63 (6-bit unsigned)
+
+                            let lo4 = qu & 0xF;
+                            let hi2 = (qu >> 4) & 0x3;
+
+                            match group {
+                                0 => {
+                                    block[ql_off + l] |= lo4;
+                                    block[qh_off + l] |= hi2;
+                                }
+                                1 => {
+                                    block[ql_off + l + 32] |= lo4;
+                                    block[qh_off + l] |= hi2 << 2;
+                                }
+                                2 => {
+                                    block[ql_off + l] |= lo4 << 4;
+                                    block[qh_off + l] |= hi2 << 4;
+                                }
+                                3 => {
+                                    block[ql_off + l + 32] |= lo4 << 4;
+                                    block[qh_off + l] |= hi2 << 6;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Fused Q6_K dequant-matmul must match dequant-then-matmul (bit-exact).
+    #[test]
+    fn dequant_matmul_q6_k_matches_reference() {
+        let m = 5; // m_tiles=1, m_rem=1
+        let k = 64;
+        let n = 256;
+
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 7 + 3) % 100) as f32 / 100.0)
+            .collect();
+        let b_f32: Vec<f32> = (0..k * n)
+            .map(|i| ((i * 13 + 5) % 100) as f32 / 100.0 - 0.5)
+            .collect();
+        let b_q6k = encode_q6_k(&b_f32, k, n);
+
+        let b_dequant = super::super::cast::dequantize_q6_k(&b_q6k);
+        let mut ref_out = vec![0.0f32; m * n];
+        matmul_k_outer(&a, &b_dequant, &mut ref_out, m, k, n);
+
+        let mut fused_out = vec![0.0f32; m * n];
+        matmul_dequant_q6_k(&a, &b_q6k, &mut fused_out, m, k, n);
+
+        for (idx, (&r, &f)) in ref_out.iter().zip(fused_out.iter()).enumerate() {
+            assert_eq!(
+                r.to_bits(),
+                f.to_bits(),
+                "mismatch at [{idx}]: ref={r}, fused={f}"
+            );
+        }
+    }
+
+    /// m=1 decode path — only remainder rows, no tiled body.
+    #[test]
+    fn dequant_matmul_q6_k_m1_decode() {
+        let m = 1;
+        let k = 128;
+        let n = 256;
+
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 11 + 2) % 100) as f32 / 100.0)
+            .collect();
+        let b_f32: Vec<f32> = (0..k * n)
+            .map(|i| ((i * 17 + 3) % 100) as f32 / 100.0 - 0.5)
+            .collect();
+        let b_q6k = encode_q6_k(&b_f32, k, n);
+
+        let b_dequant = super::super::cast::dequantize_q6_k(&b_q6k);
+        let mut ref_out = vec![0.0f32; m * n];
+        matmul_k_outer(&a, &b_dequant, &mut ref_out, m, k, n);
+
+        let mut fused_out = vec![0.0f32; m * n];
+        matmul_dequant_q6_k(&a, &b_q6k, &mut fused_out, m, k, n);
+
+        for (idx, (&r, &f)) in ref_out.iter().zip(fused_out.iter()).enumerate() {
+            assert_eq!(
+                r.to_bits(),
+                f.to_bits(),
+                "m=1 mismatch at [{idx}]: ref={r}, fused={f}"
+            );
+        }
+    }
+
+    /// Large prefill — exercises parallel path (m_tiles >= 8).
+    #[test]
+    fn dequant_matmul_q6_k_large_prefill() {
+        let m = 32;
+        let k = 256;
+        let n = 256;
+
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 7 + 1) % 200) as f32 / 200.0 - 0.5)
+            .collect();
+        let b_f32: Vec<f32> = (0..k * n)
+            .map(|i| ((i * 13 + 7) % 200) as f32 / 200.0 - 0.5)
+            .collect();
+        let b_q6k = encode_q6_k(&b_f32, k, n);
+
+        let b_dequant = super::super::cast::dequantize_q6_k(&b_q6k);
+        let mut ref_out = vec![0.0f32; m * n];
+        matmul_k_outer(&a, &b_dequant, &mut ref_out, m, k, n);
+
+        let mut fused_out = vec![0.0f32; m * n];
+        matmul_dequant_q6_k(&a, &b_q6k, &mut fused_out, m, k, n);
+
+        let max_err = ref_out
+            .iter()
+            .zip(fused_out.iter())
+            .map(|(&r, &f)| (r - f).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_err == 0.0,
+            "Q6_K large prefill max absolute error: {max_err}"
         );
     }
 }

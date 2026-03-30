@@ -129,6 +129,9 @@ pub fn dispatch_float_into(
     ctx: Option<&ExecutionContext>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
+    #[cfg(feature = "profile")]
+    let _span = tracing::info_span!("float_op", cat = ?op.category()).entered();
+
     match op.category() {
         OpCategory::UnaryElementwise => {
             // Fast path: monomorphized dispatch for common ops enables autovectorization.
