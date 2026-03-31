@@ -42,6 +42,65 @@ fn prefetch_read(ptr: *const u8) {
     }
 }
 
+/// Advise the OS to asynchronously page in a byte range (MADV_WILLNEED).
+///
+/// Used to prefetch the next level's weight pages while the current level
+/// computes. On Unix this issues madvise; on other platforms it's a no-op.
+/// The slice must be within a valid mmap'd region.
+#[inline]
+fn madvise_prefetch(slice: &[u8], offset: usize, len: usize) {
+    if offset + len > slice.len() || len == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    unsafe {
+        let ptr = slice.as_ptr().add(offset);
+        // Page-align the start downward.
+        let page = 4096usize;
+        let aligned = (ptr as usize) & !(page - 1);
+        let aligned_len = len + (ptr as usize - aligned);
+        libc::madvise(
+            aligned as *mut libc::c_void,
+            aligned_len,
+            libc::MADV_WILLNEED,
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (slice, offset, len);
+    }
+}
+
+/// Advise the OS to release physical pages for a byte range (MADV_DONTNEED).
+///
+/// On Linux, this immediately frees physical pages (they'll be faulted back
+/// from the file if accessed again). On macOS, MADV_FREE_REUSABLE marks pages
+/// as reclaimable under memory pressure.
+/// The data remains valid (file-backed mmap) — just not resident in RAM.
+#[inline]
+fn madvise_release(slice: &[u8], offset: usize, len: usize) {
+    if offset + len > slice.len() || len == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    unsafe {
+        let ptr = slice.as_ptr().add(offset);
+        let page = 4096usize;
+        let aligned = (ptr as usize) & !(page - 1);
+        let aligned_len = len + (ptr as usize - aligned);
+        // MADV_DONTNEED: on Linux frees immediately; on macOS = lazy reclaim.
+        libc::madvise(
+            aligned as *mut libc::c_void,
+            aligned_len,
+            libc::MADV_DONTNEED,
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (slice, offset, len);
+    }
+}
+
 // ── Enum-dispatch tape (Phase 8) ──────────────────────────────────────────────
 
 use std::cell::{Cell, RefCell};
@@ -3273,17 +3332,18 @@ impl EnumTape {
             let end = self.level_offsets[level_idx + 1];
             let level_instrs = &self.instructions[start..end];
 
-            // Prefetch NEXT level's weight pages while this level computes.
+            // Prefetch NEXT level's weight pages via madvise(WILLNEED).
+            // The OS asynchronously pages them in while this level computes.
             if has_weight_ranges {
                 let next = level_idx + 1;
                 if next < self.level_weight_ranges.len() {
                     let (off, range_end) = self.level_weight_ranges[next];
                     if range_end > off {
-                        let offset = off as usize;
-                        let len = (range_end - off) as usize;
-                        if offset + len <= tape_ctx.weights.len() {
-                            prefetch_read(tape_ctx.weights[offset..].as_ptr());
-                        }
+                        madvise_prefetch(
+                            tape_ctx.weights,
+                            off as usize,
+                            (range_end - off) as usize,
+                        );
                     }
                 }
             }
@@ -3653,6 +3713,16 @@ impl EnumTape {
                 arena.insert_with_elem_size(NodeId::new(out_idx, 0), data, elem_size as usize);
             }
             deferred_slots.clear();
+
+            // Release CURRENT level's weight pages via madvise(DONTNEED).
+            // These constants are already seeded in the arena — the mmap'd
+            // pages can be reclaimed by the OS to reduce RSS.
+            if has_weight_ranges && level_idx < self.level_weight_ranges.len() {
+                let (off, range_end) = self.level_weight_ranges[level_idx];
+                if range_end > off {
+                    madvise_release(tape_ctx.weights, off as usize, (range_end - off) as usize);
+                }
+            }
         } // end level loop
 
         Ok(())
