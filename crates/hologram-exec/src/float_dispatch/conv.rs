@@ -331,6 +331,192 @@ pub(crate) fn dispatch_conv2d_with_shapes(
     dispatch_conv2d_direct(inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in)
 }
 
+/// Conv2d with pre-quantized 4-bit LUT-GEMM weights (compile-time quantized).
+///
+/// The weight quantization + transpose was done at compile time. At runtime:
+/// 1. im2col: gather input patches → col[kernel_size, tile_len]
+/// 2. Transpose col → col_t[tile_len, kernel_size]
+/// 3. LUT-GEMM: col_t × pre_quantized_weights → [tile_len, oc_per_group]
+/// 4. Scatter to output
+///
+/// Zero quantization/transpose overhead at runtime.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_conv2d_lut4(
+    inputs: &[&[u8]],
+    cid: hologram_graph::constant::ConstantId,
+    tape_ctx: &crate::tape::TapeContext<'_>,
+    kh: usize,
+    kw: usize,
+    sh: usize,
+    sw: usize,
+    ph: usize,
+    pw: usize,
+    dh: usize,
+    dw: usize,
+    group: usize,
+    h_in: usize,
+    w_in: usize,
+) -> ExecResult<Vec<u8>> {
+    // On macOS with Accelerate, BLAS sgemm is faster than LUT-GEMM Q4.
+    // Fall back to the f32 BLAS path — the pre-quantized weights are still in the
+    // archive for non-BLAS targets (WASM, Linux without MKL).
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    {
+        let _ = (cid, tape_ctx);
+        dispatch_conv2d_direct(inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in)
+    }
+
+    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+    {
+        let data = cast_f32(inputs[0])?;
+        let weight = cast_f32(inputs[1])?;
+        if data.is_empty() || weight.is_empty() || h_in == 0 || w_in == 0 {
+            return Ok(vec![]);
+        }
+        let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
+        let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
+            Some(cast_f32(bias_bytes)?.to_vec())
+        } else {
+            None
+        };
+
+        // Derive N, IC, OC from spatial dims and buffer lengths.
+        // data is [N, IC, H, W], weight is [OC, IC/group, KH, KW].
+        let h_in = h_in.max(1);
+        let w_in = w_in.max(1);
+        let spatial = h_in * w_in;
+        let ic = if spatial > 0 { data.len() / spatial } else { 1 };
+        let n = if ic > 0 && spatial > 0 {
+            data.len() / (ic * spatial)
+        } else {
+            1
+        };
+        let ic_per_group = (ic / group.max(1)).max(1);
+        let kernel_size = ic_per_group * kh * kw;
+        let oc = if kernel_size > 0 {
+            weight.len() / kernel_size
+        } else {
+            1
+        };
+        let oc_per_group = oc / group.max(1);
+        let h_out = (h_in + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
+        let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
+        let spatial_out = h_out * w_out;
+
+        // Resolve pre-quantized weights from constant store.
+        let mut cache = tape_ctx.weight_cache.borrow_mut();
+        let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
+
+        // Validate quantized weight dimensions match runtime-derived dimensions.
+        // If mismatched, fall back to the non-quantized path.
+        if qw.rows as usize != kernel_size || qw.cols as usize != oc_per_group {
+            tracing::warn!(
+                qw_rows = qw.rows,
+                qw_cols = qw.cols,
+                kernel_size,
+                oc_per_group,
+                "Conv2dLut4 dimension mismatch — falling back to f32 path"
+            );
+            drop(cache);
+            return dispatch_conv2d_direct(
+                inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in,
+            );
+        }
+
+        let mut out = vec![0.0f32; n * oc * spatial_out];
+
+        // Tiled im2col (same tile sizing as conv2d_core).
+        const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
+        let tile_size = if kernel_size > 0 {
+            (TILE_CAP / kernel_size).max(1).min(spatial_out)
+        } else {
+            spatial_out
+        };
+        let mut col = vec![0.0f32; kernel_size * tile_size];
+
+        for batch in 0..n {
+            for g in 0..group {
+                let o_base = batch * oc * spatial_out + g * oc_per_group * spatial_out;
+
+                // Initialize output with bias.
+                if let Some(ref b) = bias {
+                    for oc_idx in 0..oc_per_group {
+                        let abs_oc = g * oc_per_group + oc_idx;
+                        let bias_val = b.get(abs_oc).copied().unwrap_or(0.0);
+                        if bias_val != 0.0 {
+                            let start = o_base + oc_idx * spatial_out;
+                            for v in &mut out[start..start + spatial_out] {
+                                *v = bias_val;
+                            }
+                        }
+                    }
+                }
+
+                let mut tile_start = 0;
+                while tile_start < spatial_out {
+                    let tile_end = (tile_start + tile_size).min(spatial_out);
+                    let tile_len = tile_end - tile_start;
+
+                    // Phase 1: im2col for this tile.
+                    for k in 0..kernel_size {
+                        let ic_idx = k / (kh * kw);
+                        let k_rem = k % (kh * kw);
+                        let fh = k_rem / kw;
+                        let fw = k_rem % kw;
+                        let abs_ic = g * ic_per_group + ic_idx;
+                        let col_row = &mut col[k * tile_len..(k + 1) * tile_len];
+
+                        for (t, col_val) in col_row.iter_mut().enumerate() {
+                            let out_pos = tile_start + t;
+                            let oh = out_pos / w_out;
+                            let ow = out_pos % w_out;
+                            let ih = oh * sh + fh * dh;
+                            let iw = ow * sw + fw * dw;
+
+                            *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
+                                let d_idx =
+                                    ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
+                                if d_idx < data.len() {
+                                    data[d_idx]
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                0.0
+                            };
+                        }
+                    }
+
+                    // Phase 2: Transpose col → col_t[tile_len, kernel_size] and LUT-GEMM.
+                    let mut col_t = vec![0.0f32; tile_len * kernel_size];
+                    for t in 0..tile_len {
+                        for k in 0..kernel_size {
+                            col_t[t * kernel_size + k] = col[k * tile_len + t];
+                        }
+                    }
+                    let mut lut_out = vec![0.0f32; tile_len * oc_per_group];
+                    #[cfg(feature = "parallel")]
+                    crate::lut_gemm::lut_gemm_4bit_par(&col_t, qw, &mut lut_out);
+                    #[cfg(not(feature = "parallel"))]
+                    crate::lut_gemm::lut_gemm_4bit(&col_t, qw, &mut lut_out);
+
+                    // Scatter from [tile_len, oc] to output [oc, spatial_out].
+                    for t in 0..tile_len {
+                        for oc_idx in 0..oc_per_group {
+                            let o_pos = o_base + oc_idx * spatial_out + tile_start + t;
+                            out[o_pos] += lut_out[t * oc_per_group + oc_idx];
+                        }
+                    }
+
+                    tile_start = tile_end;
+                }
+            }
+        }
+
+        Ok(f32_vec_to_bytes(out))
+    } // #[cfg(not(accelerate + macos))]
+}
+
 // ── ConvTranspose ────────────────────────────────────────────────────────────
 
 /// Transposed 2-D convolution with explicit spatial dimensions.

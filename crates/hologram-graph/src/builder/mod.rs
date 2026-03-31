@@ -167,6 +167,51 @@ impl GraphBuilder {
         self
     }
 
+    /// Add a Conv2d node with pre-quantized 4-bit LUT-GEMM weights.
+    ///
+    /// `weight_data` holds the rkyv-serialized `QuantizedWeights4`.
+    /// `inputs` should be `[activation_data, f32_weight_constant]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn conv2d_lut_4bit(
+        mut self,
+        weight_data: ConstantData,
+        inputs: &[usize],
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        input_h: u32,
+        input_w: u32,
+    ) -> Self {
+        let cid = self.graph.add_constant(weight_data);
+        let id = self.graph.add_node(GraphOp::Conv2dLut4 {
+            cid,
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        });
+        self.index_to_id.push(id);
+        for (slot, &src_idx) in inputs.iter().enumerate() {
+            if let Some(&src_id) = self.index_to_id.get(src_idx) {
+                edge::connect(&mut self.graph, src_id, id, slot);
+            }
+        }
+        self
+    }
+
     /// Add a consumer-defined custom op node wired to `inputs`.
     pub fn custom_op(mut self, id: CustomOpId, arity: u8, inputs: &[usize]) -> Self {
         let node_id = self.graph.add_node(GraphOp::Custom { id, arity });

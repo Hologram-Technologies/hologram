@@ -342,6 +342,33 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         GraphOp::MatMulLut4(cid) | GraphOp::BatchMatMulLut4(cid) => {
             Ok(TapeKernel::MatMulLut4(*cid))
         }
+        GraphOp::Conv2dLut4 {
+            cid,
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => Ok(TapeKernel::InlineConv2dLut4 {
+            cid: *cid,
+            kernel_h: *kernel_h,
+            kernel_w: *kernel_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+            dilation_h: *dilation_h,
+            dilation_w: *dilation_w,
+            group: *group,
+            input_h: *input_h,
+            input_w: *input_w,
+        }),
         GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
             Ok(TapeKernel::MatMulLut8(*cid))
         }
@@ -815,7 +842,8 @@ fn compute_weight_offset(
     let cid = match kernel {
         TapeKernel::MatMulLut4(cid)
         | TapeKernel::MatMulLut8(cid)
-        | TapeKernel::MatMulLut16(cid) => *cid,
+        | TapeKernel::MatMulLut16(cid)
+        | TapeKernel::InlineConv2dLut4 { cid, .. } => *cid,
         _ => return 0,
     };
     match constants.get(cid) {

@@ -174,6 +174,29 @@ pub enum GraphOp {
         axis: u32,
         level: RingLevel,
     },
+    /// Conv2d with pre-quantized 4-bit LUT-GEMM weights (compile-time quantized).
+    ///
+    /// Weights are already transposed to [kernel_size, oc_per_group] and quantized
+    /// via k-means Q4 at compile time. At runtime, only im2col + LUT-GEMM dispatch
+    /// is needed — zero quantization/transpose overhead.
+    ///
+    /// Two inputs: [activation_data, f32_weight_constant].
+    /// The ConstantId holds the rkyv-serialized `QuantizedWeights4`.
+    /// The f32 weight is kept as a graph input for bias and shape metadata.
+    Conv2dLut4 {
+        cid: ConstantId,
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        input_h: u32,
+        input_w: u32,
+    },
 }
 
 impl GraphOp {
@@ -201,6 +224,7 @@ impl GraphOp {
             Self::RingActivation(_, _) => 1,
             Self::RingAccumulate(_) => 3,
             Self::RingReduce { .. } => 1,
+            Self::Conv2dLut4 { .. } => 2, // [activation_data, f32_weight] (bias wired as 3rd input if present)
             Self::Prim(p) => p.arity(),
             Self::Custom { arity, .. } => *arity,
             Self::Float(f) => f.arity(),
@@ -243,6 +267,7 @@ impl GraphOp {
                 | Self::RingAccumulate(_)
                 | Self::RingReduce { .. }
                 | Self::RingPrimBinary(_, _)
+                | Self::Conv2dLut4 { .. }
         )
     }
 

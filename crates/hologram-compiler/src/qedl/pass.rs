@@ -51,7 +51,8 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::MatMulLut8Activation(_, _)
         | GraphOp::BatchMatMulLut4(_)
         | GraphOp::BatchMatMulLut8(_)
-        | GraphOp::BatchMatMulLut16(_) => Domain::Float,
+        | GraphOp::BatchMatMulLut16(_)
+        | GraphOp::Conv2dLut4 { .. } => Domain::Float,
 
         // Output, Constant, Passthrough, CallSubgraph, Custom: domain depends on context.
         GraphOp::Output

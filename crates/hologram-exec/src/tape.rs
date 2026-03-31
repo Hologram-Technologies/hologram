@@ -506,6 +506,23 @@ pub enum TapeKernel {
     },
     /// Ring-domain fused multiply-add: acc + a * b, element-wise.
     RingAccumulate { level: RingLevel },
+
+    /// Conv2d with pre-quantized 4-bit LUT-GEMM weights (compile-time quantized).
+    /// im2col → transpose col → lut_gemm_4bit_par → scatter. Zero quantization overhead.
+    InlineConv2dLut4 {
+        cid: ConstantId,
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        input_h: u32,
+        input_w: u32,
+    },
 }
 
 impl TapeKernel {
@@ -1575,6 +1592,69 @@ fn dispatch_kernel(
             )?;
             out_buf.extend_from_slice(&result);
             // Compute output meta: [N, C_out, H_out, W_out] from input + weight shapes.
+            if let (Some(in_meta), Some(w_meta)) = (
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+            ) {
+                if in_meta.ndim >= 4 && w_meta.ndim >= 1 {
+                    let n = in_meta.dims[0] as usize;
+                    let c_out = w_meta.dims[0] as usize;
+                    let sh = (*stride_h).max(1) as usize;
+                    let sw = (*stride_w).max(1) as usize;
+                    let dh = (*dilation_h).max(1) as usize;
+                    let dw = (*dilation_w).max(1) as usize;
+                    let h_out =
+                        (actual_h + 2 * (*pad_h as usize) - dh * (*kernel_h as usize - 1) - 1) / sh
+                            + 1;
+                    let w_out =
+                        (actual_w + 2 * (*pad_w as usize) - dw * (*kernel_w as usize - 1) - 1) / sw
+                            + 1;
+                    let meta = hologram_core::op::TensorMeta::new(
+                        hologram_core::op::FloatDType::F32,
+                        &[n, c_out, h_out, w_out],
+                    );
+                    return Ok(DispatchResult::InOutBufWithMeta(meta));
+                }
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineConv2dLut4 {
+            cid,
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => {
+            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
+                *input_h,
+                *input_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
+            let result = float_dispatch::conv::dispatch_conv2d_lut4(
+                inputs,
+                *cid,
+                tape_ctx,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+                actual_h,
+                actual_w,
+            )?;
+            out_buf.extend_from_slice(&result);
+            // Compute output meta: [N, C_out, H_out, W_out].
             if let (Some(in_meta), Some(w_meta)) = (
                 input_metas.first().and_then(|m| m.as_ref()),
                 input_metas.get(1).and_then(|m| m.as_ref()),

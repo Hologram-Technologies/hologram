@@ -87,6 +87,21 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
             format!("Custom(id={}, arity={})", id.raw(), arity)
         }
         GraphOp::Passthrough => "Passthrough".into(),
+        GraphOp::Conv2dLut4 {
+            cid,
+            kernel_h,
+            kernel_w,
+            group,
+            ..
+        } => {
+            format!(
+                "Conv2dLut4(id={}, {}x{}, g={})",
+                cid.raw(),
+                kernel_h,
+                kernel_w,
+                group
+            )
+        }
     }
 }
 

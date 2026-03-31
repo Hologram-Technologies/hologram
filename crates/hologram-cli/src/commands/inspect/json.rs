@@ -173,6 +173,22 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
             json!({"Custom": {"id": id.raw(), "arity": arity}})
         }
         GraphOp::Passthrough => json!("Passthrough"),
+        GraphOp::Conv2dLut4 {
+            cid,
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            group,
+            ..
+        } => {
+            json!({"Conv2dLut4": {
+                "id": cid.raw(), "kernel": [kernel_h, kernel_w],
+                "stride": [stride_h, stride_w], "pad": [pad_h, pad_w], "group": group
+            }})
+        }
     }
 }
 
