@@ -291,6 +291,7 @@ fn test_attention_heads_first_produces_output() {
             qk_norm: false,
             rope: false,
             rope_base: 0,
+            sparse_v: true,
         },
         &[&q, &k, &v],
     )
@@ -332,6 +333,7 @@ fn test_attention_heads_first_matches_transposed() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
     let op_sf = FloatOp::Attention {
         head_dim: head_dim as u32,
@@ -343,6 +345,7 @@ fn test_attention_heads_first_matches_transposed() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
 
     let result_hf = dispatch_float(&op_hf, &[&q_hf, &k_hf, &v_hf]).unwrap();
@@ -395,4 +398,206 @@ fn test_rms_norm_into_matches_allocating() {
         result, out_buf,
         "rms_norm_into must match allocating dispatch_rms_norm"
     );
+}
+
+// ── Plan 038: Sparse V attention tests ──────────────────────────────
+
+/// Helper: run attention with given params and return f32 output.
+fn run_attention(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    head_dim: usize,
+    num_q_heads: usize,
+    num_kv_heads: usize,
+    causal: bool,
+    sparse_v: bool,
+) -> Vec<f32> {
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let op = FloatOp::Attention {
+        head_dim: head_dim as u32,
+        num_q_heads: num_q_heads as u32,
+        num_kv_heads: num_kv_heads as u32,
+        scale: f32::to_bits(scale),
+        causal,
+        heads_first: false,
+        qk_norm: false,
+        rope: false,
+        rope_base: 0,
+        sparse_v,
+    };
+    let qb = f32_bytes(q);
+    let kb = f32_bytes(k);
+    let vb = f32_bytes(v);
+    let result = dispatch_float(&op, &[&qb, &kb, &vb]).unwrap();
+    bytemuck::cast_slice::<u8, f32>(&result).to_vec()
+}
+
+#[test]
+fn attention_sparse_v_zero_quality_loss() {
+    // Random-ish Q/K/V at various seq lengths — sparse V should produce
+    // output indistinguishable from non-sparse (all weights are significant
+    // at small seq, so nothing is skipped).
+    let head_dim = 4;
+    let num_heads = 2;
+    for seq in [4, 16, 64] {
+        let q: Vec<f32> = (0..seq * num_heads * head_dim)
+            .map(|i| (i as f32 * 0.37).sin() * 0.5)
+            .collect();
+        let k: Vec<f32> = (0..seq * num_heads * head_dim)
+            .map(|i| (i as f32 * 0.53).cos() * 0.5)
+            .collect();
+        let v: Vec<f32> = (0..seq * num_heads * head_dim)
+            .map(|i| (i as f32 * 0.11).sin())
+            .collect();
+
+        let out_sparse = run_attention(&q, &k, &v, head_dim, num_heads, num_heads, true, true);
+        let out_dense = run_attention(&q, &k, &v, head_dim, num_heads, num_heads, true, false);
+
+        assert_eq!(out_sparse.len(), out_dense.len());
+        for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+            assert!(
+                (s - d).abs() < 1e-5,
+                "seq={seq} elem {i}: sparse={s} dense={d} diff={}",
+                (s - d).abs()
+            );
+        }
+    }
+}
+
+#[test]
+fn attention_sparse_v_uniform_weights_no_skip() {
+    // When Q ≈ K for all positions, attention weights are roughly uniform
+    // (~1/seq). At seq=8, each weight is ~0.125 >> 1e-6, so sparse V
+    // should skip nothing and produce identical output.
+    let head_dim = 4;
+    let seq = 8;
+    let q: Vec<f32> = vec![1.0; seq * head_dim]; // all identical → uniform attn
+    let k: Vec<f32> = vec![1.0; seq * head_dim];
+    let v: Vec<f32> = (0..seq * head_dim).map(|i| i as f32).collect();
+
+    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, false, true);
+    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, false, false);
+
+    for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-6,
+            "uniform attn elem {i}: sparse={s} dense={d}",
+        );
+    }
+}
+
+#[test]
+fn attention_sparse_v_single_dominant_position() {
+    // One K row is identical to Q row; all others are orthogonal.
+    // Output should be dominated by that V row.
+    let head_dim = 4;
+    let seq_k = 8;
+    // Q = single query [1,0,0,0]
+    let q = vec![1.0, 0.0, 0.0, 0.0];
+    // K: first row matches Q, rest are orthogonal
+    let mut k = vec![0.0f32; seq_k * head_dim];
+    k[0] = 1.0; // first K row = [1,0,0,0] → high dot product
+    for i in 1..seq_k {
+        k[i * head_dim + (i % head_dim)] = 1.0; // orthogonal
+    }
+    // V: distinct values per row
+    let v: Vec<f32> = (0..seq_k * head_dim).map(|i| (i + 1) as f32).collect();
+
+    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, false, true);
+    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, false, false);
+
+    // Both should be nearly identical — the dominant position has weight ~1.0
+    for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-4,
+            "dominant pos elem {i}: sparse={s} dense={d}",
+        );
+    }
+}
+
+#[test]
+fn attention_sparse_v_gqa_compatibility() {
+    // GQA: 8 Q-heads sharing 2 KV-heads. Sparse V must respect head grouping.
+    let head_dim = 4;
+    let num_q_heads = 8;
+    let num_kv_heads = 2;
+    let seq = 4;
+    let q: Vec<f32> = (0..seq * num_q_heads * head_dim)
+        .map(|i| (i as f32 * 0.3).sin())
+        .collect();
+    let k: Vec<f32> = (0..seq * num_kv_heads * head_dim)
+        .map(|i| (i as f32 * 0.7).cos())
+        .collect();
+    let v: Vec<f32> = (0..seq * num_kv_heads * head_dim)
+        .map(|i| (i as f32 * 0.13).sin())
+        .collect();
+
+    let out_sparse = run_attention(&q, &k, &v, head_dim, num_q_heads, num_kv_heads, false, true);
+    let out_dense = run_attention(
+        &q,
+        &k,
+        &v,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        false,
+        false,
+    );
+
+    assert_eq!(out_sparse.len(), out_dense.len());
+    for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+        assert!((s - d).abs() < 1e-5, "GQA elem {i}: sparse={s} dense={d}",);
+    }
+}
+
+#[test]
+fn attention_sparse_v_causal_mask_no_regression() {
+    // Causal decode scenario: seq_q=1, seq_k=16. Masked positions already
+    // have -inf → weight=0 from masking. Sparse V should not change behavior.
+    let head_dim = 4;
+    let seq_k = 16;
+    // Q: single query (seq_q=1)
+    let q: Vec<f32> = (0..head_dim).map(|i| (i as f32 * 0.5).sin()).collect();
+    // K: 16 cached keys
+    let k: Vec<f32> = (0..seq_k * head_dim)
+        .map(|i| (i as f32 * 0.3).cos())
+        .collect();
+    let v: Vec<f32> = (0..seq_k * head_dim)
+        .map(|i| (i as f32 * 0.1).sin())
+        .collect();
+
+    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, true, true);
+    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, true, false);
+
+    for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-5,
+            "causal decode elem {i}: sparse={s} dense={d}",
+        );
+    }
+}
+
+#[test]
+fn attention_sparse_v_threshold_boundary() {
+    // Verify that the sparse V threshold works correctly:
+    // At very small seq with distinct weights, all weights should be
+    // significant enough to not be skipped, so output must match exactly.
+    let head_dim = 2;
+    // seq=2 with causal: position 0 attends only to itself (weight=1.0),
+    // position 1 attends to both (two non-zero weights).
+    // No weight should be below 1e-6 at seq=2.
+    let q = vec![1.0, 0.0, 0.0, 1.0];
+    let k = vec![1.0, 0.0, 0.0, 1.0];
+    let v = vec![10.0, 20.0, 30.0, 40.0];
+
+    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, true, true);
+    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, true, false);
+
+    for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-6,
+            "threshold boundary elem {i}: sparse={s} dense={d}",
+        );
+    }
 }

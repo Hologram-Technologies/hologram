@@ -25,7 +25,7 @@ pub use eval::{build_schedule, GraphInputs, GraphOutputs};
 pub use hologram_graph::graph::CustomOpId;
 pub use kv::WeightCache;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
-pub use kv_cache::KvCacheState;
+pub use kv_cache::{KvBits, KvCacheConfig, KvCacheState};
 pub use mmap::{
     build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
     execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached, execute_tape_with_shapes,

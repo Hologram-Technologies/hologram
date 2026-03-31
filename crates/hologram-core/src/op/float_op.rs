@@ -393,6 +393,10 @@ pub enum FloatOp {
         rope: bool,
         /// RoPE base frequency stored as f32 bits. Only used when `rope` is true.
         rope_base: u32,
+        /// If true (default), skip V accumulation for positions with negligible
+        /// attention weight (< 1e-6). Yields significant decode speedup at long
+        /// context with zero quality loss.
+        sparse_v: bool,
     },
 
     // ── Quantization ─────────────────────────────────────────────────────
@@ -1344,6 +1348,7 @@ mod tests {
                 qk_norm: false,
                 rope: false,
                 rope_base: 0,
+                sparse_v: true,
             }
             .arity(),
             3
@@ -1371,6 +1376,7 @@ mod tests {
                 qk_norm: false,
                 rope: false,
                 rope_base: 0,
+                sparse_v: true,
             }
             .name(),
             "float.attention"

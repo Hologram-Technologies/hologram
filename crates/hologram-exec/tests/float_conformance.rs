@@ -1039,6 +1039,7 @@ fn test_attention_basic() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
     let result = dispatch_float(&op, &[&q, &k, &v]).unwrap();
     let out = result_f32(&result);
@@ -1059,6 +1060,7 @@ fn test_attention_gqa_variable_seq() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
 
     // seq=2: Q=[2, 2*4]=16 floats, K=[2, 1*4]=8, V=[2, 1*4]=8
@@ -1089,6 +1091,7 @@ fn test_attention_kv_size_mismatch() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
     let q = f32_bytes(&[1.0; 16]); // 2 * 2 * 4
     let k = f32_bytes(&[1.0; 8]); // 2 * 1 * 4
@@ -1113,6 +1116,7 @@ fn test_attention_non_divisible_q() {
         qk_norm: false,
         rope: false,
         rope_base: 0,
+        sparse_v: true,
     };
     let q = f32_bytes(&[1.0; 10]); // 10 not divisible by 2*4=8
     let k = f32_bytes(&[1.0; 4]);

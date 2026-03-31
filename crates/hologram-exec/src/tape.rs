@@ -2919,21 +2919,42 @@ fn dispatch_kv_write(
         }
     } else {
         // Decode: read full cache (seq-first) and convert to output layout.
+        // For quantized layers, read_*_through returns &[] — use the owned
+        // (dequantizing) path instead.
         let total_seq = kv.write_pos() + seq;
-        let full = if is_key {
+        let borrowed = if is_key {
             kv.read_k_through(layer, seq)
         } else {
             kv.read_v_through(layer, seq)
         };
+        if !borrowed.is_empty() {
+            // F32 path: zero-copy.
+            if heads_first {
+                let heads = transpose_seq_first_to_heads(borrowed, nkv, total_seq, hd);
+                out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads));
+            } else {
+                out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(borrowed));
+            }
+        } else {
+            // Quantized path: dequantize into owned Vec.
+            let owned = if is_key {
+                kv.read_k_through_owned(layer, seq)
+            } else {
+                kv.read_v_through_owned(layer, seq)
+            };
+            if heads_first {
+                let heads = transpose_seq_first_to_heads(&owned, nkv, total_seq, hd);
+                out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads));
+            } else {
+                out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&owned));
+            }
+        }
         if heads_first {
-            let heads = transpose_seq_first_to_heads(full, nkv, total_seq, hd);
-            out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&heads));
             hologram_core::op::TensorMeta::new(
                 hologram_core::op::FloatDType::F32,
                 &[nkv, total_seq, hd],
             )
         } else {
-            out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(full));
             hologram_core::op::TensorMeta::new(
                 hologram_core::op::FloatDType::F32,
                 &[total_seq, nkv, hd],
@@ -2965,16 +2986,35 @@ fn dispatch_kv_read(
     let nkv = n_kv_heads as usize;
     let hd = head_dim as usize;
     let total_seq = kv.write_pos();
-    let k = kv.read_k(layer);
-    let v = kv.read_v(layer);
+
+    // K: try borrowed (f32) first, fall back to owned (dequantized).
+    let k_borrowed = kv.read_k(layer);
+    let k_owned;
+    let k_data: &[f32] = if !k_borrowed.is_empty() {
+        k_borrowed
+    } else {
+        k_owned = kv.read_k_owned(layer);
+        &k_owned
+    };
+
+    // V: try borrowed (f32) first, fall back to owned (dequantized).
+    let v_borrowed = kv.read_v(layer);
+    let v_owned;
+    let v_data: &[f32] = if !v_borrowed.is_empty() {
+        v_borrowed
+    } else {
+        v_owned = kv.read_v_owned(layer);
+        &v_owned
+    };
+
     if heads_first {
-        let k_heads = transpose_seq_first_to_heads(k, nkv, total_seq, hd);
-        let v_heads = transpose_seq_first_to_heads(v, nkv, total_seq, hd);
+        let k_heads = transpose_seq_first_to_heads(k_data, nkv, total_seq, hd);
+        let v_heads = transpose_seq_first_to_heads(v_data, nkv, total_seq, hd);
         out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&k_heads));
         out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&v_heads));
     } else {
-        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(k));
-        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(v));
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(k_data));
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(v_data));
     }
     Ok(())
 }

@@ -83,3 +83,7 @@ harness = false
 [[bench]]
 name = "epilogue_fusion"
 harness = false
+
+[[bench]]
+name = "kv_cache"
+harness = false

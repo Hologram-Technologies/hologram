@@ -51,6 +51,14 @@ pub struct ModelMetaSection {
     pub n_kv_heads: u32,
     /// Dimension per attention head (0 if not applicable).
     pub head_dim: u32,
+    /// KV cache K bit-width (0=F32, 1=Q8, 2=Q4). Default: 0.
+    pub kv_k_bits: u8,
+    /// KV cache V bit-width (0=F32, 1=Q8, 2=Q4). Default: 0.
+    pub kv_v_bits: u8,
+    /// Number of boundary layers kept at f32 for KV. Default: 2.
+    pub kv_boundary_layers: u8,
+    /// Whether Walsh-Hadamard rotation is applied to V before quantization.
+    pub kv_wht: bool,
 }
 
 impl ModelMetaSection {
@@ -92,6 +100,10 @@ mod tests {
             n_layers: 22,
             n_kv_heads: 4,
             head_dim: 64,
+            kv_k_bits: 0,
+            kv_v_bits: 0,
+            kv_boundary_layers: 2,
+            kv_wht: false,
         };
         let bytes = section.to_bytes();
         let deserialized = ModelMetaSection::deserialize_from(&bytes).unwrap();
@@ -112,6 +124,10 @@ mod tests {
             n_layers: 0,
             n_kv_heads: 0,
             head_dim: 0,
+            kv_k_bits: 0,
+            kv_v_bits: 0,
+            kv_boundary_layers: 2,
+            kv_wht: false,
         };
         let bytes = section.to_bytes();
         let archived = ModelMetaSection::from_bytes(&bytes).unwrap();
@@ -130,6 +146,10 @@ mod tests {
             n_layers: 0,
             n_kv_heads: 0,
             head_dim: 0,
+            kv_k_bits: 0,
+            kv_v_bits: 0,
+            kv_boundary_layers: 2,
+            kv_wht: false,
         };
         assert_eq!(section.section_kind(), SECTION_MODEL_META);
         assert_eq!(SECTION_MODEL_META, 0x1002);

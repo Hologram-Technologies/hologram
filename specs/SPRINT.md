@@ -16,6 +16,37 @@
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 - [x] Shape-aware tape execution API (feat/ai-optimization)
 
+## Sprint 28: KV Cache Quantization — Asymmetric Compression
+
+**Plan**: [plans/034-kv-cache-quantization.md](plans/034-kv-cache-quantization.md)
+
+Goal: reduce KV cache memory 2-4× via asymmetric quantization (K at f32, V at q4/q8)
+with boundary layer protection and Walsh-Hadamard pre-rotation. Based on findings
+from asymmetric KV compression research (V is robust to quantization; K errors
+propagate exponentially through softmax).
+
+### Phase 1: Boundary Layer Protection + Config
+- [ ] **1.1**: Add `KvCacheConfig` / `KvBits` types with boundary layer support
+- [ ] **1.2**: Modify `KvCacheState::new()` to accept config
+- [ ] **1.3**: Tests: boundary layers remain f32, config defaults
+
+### Phase 2: Per-Channel Min/Max Quantization
+- [ ] **2.1**: Add `QuantizedKvBuffer` (q8/q4 storage with per-head scales)
+- [ ] **2.2**: Online quantize on `write_layer()`, dequantize on `read_k()`/`read_v()`
+- [ ] **2.3**: Tests: round-trip tolerance, asymmetric K/V precision
+
+### Phase 3: Walsh-Hadamard Pre-Rotation
+- [ ] **3.1**: Implement FWHT (in-place butterfly, O(d log d))
+- [ ] **3.2**: Apply rotation before V quantization, inverse on dequantize
+- [ ] **3.3**: Tests: self-inverse property, quantization error reduction
+
+### Phase 4: Tape Integration
+- [ ] **4.1**: Wire config through `TapeContext` → `KvCacheState`
+- [ ] **4.2**: Verify KvWrite/KvRead dispatch handles quantized paths
+- [ ] **4.3**: End-to-end integration tests
+
+---
+
 ## Sprint 27: Performance Regression Fixes — M=1 MatMul + Tape Execution
 
 **Branch**: `refactor/stable-diffusion-pipeline`
