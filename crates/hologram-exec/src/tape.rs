@@ -3075,6 +3075,13 @@ pub struct EnumTape {
     /// deferred constants accessed by instructions in level `i`.
     /// Empty if no weight index was computed.
     pub(crate) level_weight_ranges: Vec<(u64, u64)>,
+    /// Activation checkpointing: maps node_idx → instruction_index.
+    ///
+    /// For nodes with multiple consumers separated by many instructions
+    /// (skip connections), the node is evicted after its first consumer
+    /// and recomputed from this instruction when the next consumer needs it.
+    /// This trades ~30% extra compute for O(layer) peak activation memory.
+    pub(crate) checkpoint_map: std::collections::HashMap<u32, usize>,
 }
 
 impl EnumTape {
@@ -3086,6 +3093,7 @@ impl EnumTape {
             level_offsets: vec![0],
             consumer_counts: Vec::new(),
             level_weight_ranges: Vec::new(),
+            checkpoint_map: std::collections::HashMap::new(),
         }
     }
 
@@ -3099,6 +3107,7 @@ impl EnumTape {
             level_offsets,
             consumer_counts: Vec::new(),
             level_weight_ranges: Vec::new(),
+            checkpoint_map: std::collections::HashMap::new(),
         }
     }
 
@@ -3207,6 +3216,74 @@ impl EnumTape {
                     }
                 }
             }
+        }
+
+        // ── Activation checkpointing ─────────────────────────────────────
+        // Identify skip-connection nodes: multi-consumer nodes where the
+        // gap between producer and last consumer is large. These get evicted
+        // after first consumer and recomputed when the distant consumer needs them.
+        const CHECKPOINT_GAP_THRESHOLD: usize = 5; // instructions between producer and last consumer
+        const CHECKPOINT_SIZE_THRESHOLD: u32 = 256 * 1024; // 256 KB minimum to bother
+
+        // Build producer map: node_idx → instruction_index.
+        let mut producer: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            producer.insert(instr.output_idx, instr_idx);
+        }
+
+        // Build last-consumer map: node_idx → instruction_index of last consumer.
+        let mut last_consumer: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
+        for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            for &input_idx in &instr.input_indices {
+                last_consumer.insert(input_idx, instr_idx);
+            }
+        }
+
+        // Identify checkpoint candidates.
+        for (&node_idx, &prod_instr) in &producer {
+            let idx = node_idx as usize;
+            // Must have multiple consumers (skip connection pattern).
+            if idx >= self.consumer_counts.len() || self.consumer_counts[idx] < 2 {
+                continue;
+            }
+            // Don't checkpoint protected nodes.
+            if self.consumer_counts[idx] == u32::MAX {
+                continue;
+            }
+            // Must be large enough to matter.
+            let byte_hint = self.instructions[prod_instr].output_byte_hint;
+            if byte_hint < CHECKPOINT_SIZE_THRESHOLD {
+                continue;
+            }
+            // Gap must be large enough.
+            if let Some(&last_con) = last_consumer.get(&node_idx) {
+                if last_con > prod_instr && (last_con - prod_instr) >= CHECKPOINT_GAP_THRESHOLD {
+                    // Verify the producer's inputs are all borrowed constants
+                    // or protected nodes (so they'll still be available for recomputation).
+                    let inputs_available =
+                        self.instructions[prod_instr]
+                            .input_indices
+                            .iter()
+                            .all(|&inp| {
+                                let i = inp as usize;
+                                // Protected (u32::MAX) nodes are always available.
+                                // Nodes without a producer entry are constants/inputs (always available).
+                                i < self.consumer_counts.len()
+                                    && (self.consumer_counts[i] == u32::MAX
+                                        || !producer.contains_key(&inp))
+                            });
+                    if inputs_available {
+                        self.checkpoint_map.insert(node_idx, prod_instr);
+                    }
+                }
+            }
+        }
+        if !self.checkpoint_map.is_empty() {
+            tracing::info!(
+                n_checkpoints = self.checkpoint_map.len(),
+                "activation checkpointing: identified recomputable skip connections"
+            );
         }
     }
 
@@ -3364,6 +3441,12 @@ impl EnumTape {
                         if idx < counts.len() && counts[idx] != u32::MAX {
                             counts[idx] = counts[idx].saturating_sub(1);
                             if counts[idx] == 0 {
+                                arena.evict(NodeId::new(input_idx, 0));
+                            } else if self.checkpoint_map.contains_key(&input_idx) {
+                                // Activation checkpointing: this node has future
+                                // consumers but is marked for recomputation.
+                                // Evict now to free memory — it'll be recomputed
+                                // when the next consumer needs it.
                                 arena.evict(NodeId::new(input_idx, 0));
                             }
                         }
@@ -3572,6 +3655,61 @@ impl EnumTape {
                 }
 
                 // ── General path: SmallVec collection + dispatch_kernel ──
+                // Activation checkpointing: recompute evicted inputs.
+                if !self.checkpoint_map.is_empty() {
+                    for &input_idx in &instr.input_indices {
+                        if arena.get(NodeId::new(input_idx, 0)).is_err() {
+                            if let Some(&prod_instr_idx) = self.checkpoint_map.get(&input_idx) {
+                                let prod = &self.instructions[prod_instr_idx];
+                                // Copy producer's inputs to owned buffers to avoid
+                                // borrow conflict with arena.swap_insert_*.
+                                let owned_inputs: SmallVec<[Vec<u8>; 4]> = prod
+                                    .input_indices
+                                    .iter()
+                                    .map(|&idx| {
+                                        arena
+                                            .get(NodeId::new(idx, 0))
+                                            .map(|b| b.to_vec())
+                                            .unwrap_or_default()
+                                    })
+                                    .collect();
+                                let prod_input_refs: SmallVec<[&[u8]; 4]> =
+                                    owned_inputs.iter().map(|v| v.as_slice()).collect();
+                                let prod_metas: crate::shape_resolve::InputMetas = prod
+                                    .input_indices
+                                    .iter()
+                                    .map(|&idx| arena.get_meta(NodeId::new(idx, 0)).copied())
+                                    .collect();
+                                let mut recomp_buf =
+                                    Vec::with_capacity(prod.output_byte_hint as usize);
+                                let result = dispatch_kernel(
+                                    &prod.kernel,
+                                    &prod_input_refs,
+                                    &prod_metas,
+                                    tape_ctx,
+                                    &*backend,
+                                    &mut recomp_buf,
+                                )?;
+                                let out_id = NodeId::new(prod.output_idx, 0);
+                                if let DispatchResult::InOutBufWithMeta(meta) = result {
+                                    arena.swap_insert_with_elem_size(
+                                        out_id,
+                                        &mut recomp_buf,
+                                        prod.output_elem_size as usize,
+                                    );
+                                    arena.set_meta(out_id, meta);
+                                } else {
+                                    arena.swap_insert_with_elem_size(
+                                        out_id,
+                                        &mut recomp_buf,
+                                        prod.output_elem_size as usize,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let input_metas: crate::shape_resolve::InputMetas = instr
                     .input_indices
                     .iter()
