@@ -3442,13 +3442,11 @@ impl EnumTape {
                             counts[idx] = counts[idx].saturating_sub(1);
                             if counts[idx] == 0 {
                                 arena.evict(NodeId::new(input_idx, 0));
-                            } else if self.checkpoint_map.contains_key(&input_idx) {
-                                // Activation checkpointing: this node has future
-                                // consumers but is marked for recomputation.
-                                // Evict now to free memory — it'll be recomputed
-                                // when the next consumer needs it.
-                                arena.evict(NodeId::new(input_idx, 0));
                             }
+                            // NOTE: Activation checkpointing (force-evict + recompute)
+                            // is identified in checkpoint_map but NOT yet active in the
+                            // eviction loop. Enabling it requires handling cascading
+                            // eviction (recompute chains). Tracked for future work.
                         }
                     }
                 }
