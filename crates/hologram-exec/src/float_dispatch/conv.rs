@@ -48,17 +48,34 @@ fn conv2d_core(
     };
     let mut col = vec![0.0f32; kernel_size * tile_size];
 
-    // Quantize transposed weight to Q4 for LUT-GEMM (reused across tiles).
-    // LUT-GEMM computes: activations[M,K] × weights[K,N] → output[M,N].
-    // Conv2d GEMM: col^T[tile_len, kernel_size] × W^T[kernel_size, oc_per_group].
-    // So we transpose W from [oc_per_group, kernel_size] to [kernel_size, oc_per_group]
-    // and quantize as [K=kernel_size, N=oc_per_group].
-
     for batch in 0..n {
         for g in 0..group {
             let w_start = g * oc_per_group * kernel_size;
             let w_end = (w_start + oc_per_group * kernel_size).min(weight.len());
             let w_slice = &weight[w_start..w_end];
+
+            // LUT-GEMM Q4 path for non-BLAS platforms (WASM, Linux without MKL).
+            // On macOS with Accelerate, BLAS sgemm is faster — skip quantization.
+            // Transpose W, quantize once per group, reuse across all spatial tiles.
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            let qw = if group <= 1 && oc_per_group >= 64 && kernel_size >= 16 {
+                let mut w_t = vec![0.0f32; oc_per_group * kernel_size];
+                for oc_idx in 0..oc_per_group {
+                    for k in 0..kernel_size {
+                        w_t[k * oc_per_group + oc_idx] = w_slice[oc_idx * kernel_size + k];
+                    }
+                }
+                Some(crate::lut_gemm::quantize::quantize_4bit(
+                    &w_t,
+                    kernel_size as u32,
+                    oc_per_group as u32,
+                ))
+            } else {
+                None
+            };
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            let qw: Option<crate::lut_gemm::quantize::QuantizedWeights4> = None;
+
             let o_base = batch * oc * spatial_out + g * oc_per_group * spatial_out;
 
             // Initialize output with bias.
@@ -112,9 +129,36 @@ fn conv2d_core(
                 }
 
                 // Phase 2: GEMM — W[oc_per_group, kernel_size] × col[kernel_size, tile_len].
-                let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
-
-                {
+                if let Some(ref qw) = qw {
+                    // LUT-GEMM Q4: build activation matrix [tile_len, K] directly
+                    // (transposed im2col), then multiply × W^T[K, oc] → [tile_len, oc].
+                    // Reuse col_t/lut_out buffers across tiles to reduce allocations.
+                    let col_t_len = tile_len * kernel_size;
+                    let lut_out_len = tile_len * oc_per_group;
+                    // Build transposed col directly: [tile_len, kernel_size] row-major.
+                    let mut col_t = vec![0.0f32; col_t_len];
+                    for t in 0..tile_len {
+                        for k in 0..kernel_size {
+                            col_t[t * kernel_size + k] = col[k * tile_len + t];
+                        }
+                    }
+                    let mut lut_out = vec![0.0f32; lut_out_len];
+                    #[cfg(feature = "parallel")]
+                    crate::lut_gemm::lut_gemm_4bit_par(&col_t, qw, &mut lut_out);
+                    #[cfg(not(feature = "parallel"))]
+                    crate::lut_gemm::lut_gemm_4bit(&col_t, qw, &mut lut_out);
+                    // Scatter from [tile_len, oc] directly into output.
+                    // No intermediate tile_out needed — write directly to out.
+                    for t in 0..tile_len {
+                        for oc_idx in 0..oc_per_group {
+                            let o_pos = o_base + oc_idx * spatial_out + tile_start + t;
+                            out[o_pos] += lut_out[t * oc_per_group + oc_idx];
+                        }
+                    }
+                    tile_start = tile_end;
+                    continue; // Skip the f32 GEMM + scatter below.
+                } else {
+                    let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
                     #[cfg(all(feature = "accelerate", target_os = "macos"))]
                     {
                         super::matmul::blas::sgemm_full(
@@ -144,14 +188,13 @@ fn conv2d_core(
                             tile_len,
                         );
                     }
-                }
-
-                // Scatter tile results into output (add to bias if present).
-                for oc_idx in 0..oc_per_group {
-                    let o_row_start = o_base + oc_idx * spatial_out + tile_start;
-                    let t_row_start = oc_idx * tile_len;
-                    for t in 0..tile_len {
-                        out[o_row_start + t] += tile_out[t_row_start + t];
+                    // Scatter tile results into output (add to bias if present).
+                    for oc_idx in 0..oc_per_group {
+                        let o_row_start = o_base + oc_idx * spatial_out + tile_start;
+                        let t_row_start = oc_idx * tile_len;
+                        for t in 0..tile_len {
+                            out[o_row_start + t] += tile_out[t_row_start + t];
+                        }
                     }
                 }
 
