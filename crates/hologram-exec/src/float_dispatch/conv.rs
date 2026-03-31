@@ -40,6 +40,7 @@ fn conv2d_core(
     let mut out = vec![0.0f32; n * oc * spatial_out];
 
     // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
+    // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
     const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
     let tile_size = if kernel_size > 0 {
         (TILE_CAP / kernel_size).max(1).min(spatial_out)
