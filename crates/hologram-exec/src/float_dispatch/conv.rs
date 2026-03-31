@@ -47,6 +47,12 @@ fn conv2d_core(
         spatial_out
     };
     let mut col = vec![0.0f32; kernel_size * tile_size];
+    // Pre-allocate tile buffers once — reused across all tiles to avoid per-tile allocation.
+    let mut tile_out = vec![0.0f32; oc_per_group * tile_size];
+    // For LUT-GEMM: col_t (transposed im2col) and lut_out (GEMM result).
+    // These need to be separate buffers since lut_gemm writes to output while reading input.
+    let mut col_t_buf = vec![0.0f32; tile_size * kernel_size];
+    let mut lut_out_buf = vec![0.0f32; tile_size * oc_per_group];
 
     for batch in 0..n {
         for g in 0..group {
@@ -130,35 +136,41 @@ fn conv2d_core(
 
                 // Phase 2: GEMM — W[oc_per_group, kernel_size] × col[kernel_size, tile_len].
                 if let Some(ref qw) = qw {
-                    // LUT-GEMM Q4: build activation matrix [tile_len, K] directly
-                    // (transposed im2col), then multiply × W^T[K, oc] → [tile_len, oc].
-                    // Reuse col_t/lut_out buffers across tiles to reduce allocations.
+                    // LUT-GEMM Q4: transpose col → col_t_buf, GEMM → lut_out_buf.
+                    // Both buffers are pre-allocated, zero per-tile allocation.
                     let col_t_len = tile_len * kernel_size;
                     let lut_out_len = tile_len * oc_per_group;
-                    // Build transposed col directly: [tile_len, kernel_size] row-major.
-                    let mut col_t = vec![0.0f32; col_t_len];
+                    // Transpose col[K, tile_len] → col_t_buf[tile_len, K].
                     for t in 0..tile_len {
                         for k in 0..kernel_size {
-                            col_t[t * kernel_size + k] = col[k * tile_len + t];
+                            col_t_buf[t * kernel_size + k] = col[k * tile_len + t];
                         }
                     }
-                    let mut lut_out = vec![0.0f32; lut_out_len];
+                    lut_out_buf[..lut_out_len].fill(0.0);
                     #[cfg(feature = "parallel")]
-                    crate::lut_gemm::lut_gemm_4bit_par(&col_t, qw, &mut lut_out);
+                    crate::lut_gemm::lut_gemm_4bit_par(
+                        &col_t_buf[..col_t_len],
+                        qw,
+                        &mut lut_out_buf[..lut_out_len],
+                    );
                     #[cfg(not(feature = "parallel"))]
-                    crate::lut_gemm::lut_gemm_4bit(&col_t, qw, &mut lut_out);
+                    crate::lut_gemm::lut_gemm_4bit(
+                        &col_t_buf[..col_t_len],
+                        qw,
+                        &mut lut_out_buf[..lut_out_len],
+                    );
                     // Scatter from [tile_len, oc] directly into output.
-                    // No intermediate tile_out needed — write directly to out.
                     for t in 0..tile_len {
                         for oc_idx in 0..oc_per_group {
                             let o_pos = o_base + oc_idx * spatial_out + tile_start + t;
-                            out[o_pos] += lut_out[t * oc_per_group + oc_idx];
+                            out[o_pos] += lut_out_buf[t * oc_per_group + oc_idx];
                         }
                     }
                     tile_start = tile_end;
                     continue; // Skip the f32 GEMM + scatter below.
                 } else {
-                    let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
+                    let to_len = oc_per_group * tile_len;
+                    tile_out[..to_len].fill(0.0);
                     #[cfg(all(feature = "accelerate", target_os = "macos"))]
                     {
                         super::matmul::blas::sgemm_full(
@@ -173,7 +185,7 @@ fn conv2d_core(
                             },
                             w_slice,
                             &col[..kernel_size * tile_len],
-                            &mut tile_out,
+                            &mut tile_out[..to_len],
                         );
                     }
 
@@ -182,7 +194,7 @@ fn conv2d_core(
                         super::matmul::matmul_k_outer(
                             w_slice,
                             &col[..kernel_size * tile_len],
-                            &mut tile_out,
+                            &mut tile_out[..to_len],
                             oc_per_group,
                             kernel_size,
                             tile_len,
@@ -433,6 +445,9 @@ pub(crate) fn dispatch_conv2d_lut4(
             spatial_out
         };
         let mut col = vec![0.0f32; kernel_size * tile_size];
+        // Pre-allocate transpose + output buffers — reused across all tiles.
+        let mut col_t_buf = vec![0.0f32; tile_size * kernel_size];
+        let mut lut_out_buf = vec![0.0f32; tile_size * oc_per_group];
 
         for batch in 0..n {
             for g in 0..group {
@@ -487,24 +502,33 @@ pub(crate) fn dispatch_conv2d_lut4(
                         }
                     }
 
-                    // Phase 2: Transpose col → col_t[tile_len, kernel_size] and LUT-GEMM.
-                    let mut col_t = vec![0.0f32; tile_len * kernel_size];
+                    // Phase 2: Transpose col → col_t_buf and LUT-GEMM → lut_out_buf.
+                    let col_t_len = tile_len * kernel_size;
+                    let lut_out_len = tile_len * oc_per_group;
                     for t in 0..tile_len {
                         for k in 0..kernel_size {
-                            col_t[t * kernel_size + k] = col[k * tile_len + t];
+                            col_t_buf[t * kernel_size + k] = col[k * tile_len + t];
                         }
                     }
-                    let mut lut_out = vec![0.0f32; tile_len * oc_per_group];
+                    lut_out_buf[..lut_out_len].fill(0.0);
                     #[cfg(feature = "parallel")]
-                    crate::lut_gemm::lut_gemm_4bit_par(&col_t, qw, &mut lut_out);
+                    crate::lut_gemm::lut_gemm_4bit_par(
+                        &col_t_buf[..col_t_len],
+                        qw,
+                        &mut lut_out_buf[..lut_out_len],
+                    );
                     #[cfg(not(feature = "parallel"))]
-                    crate::lut_gemm::lut_gemm_4bit(&col_t, qw, &mut lut_out);
+                    crate::lut_gemm::lut_gemm_4bit(
+                        &col_t_buf[..col_t_len],
+                        qw,
+                        &mut lut_out_buf[..lut_out_len],
+                    );
 
                     // Scatter from [tile_len, oc] to output [oc, spatial_out].
                     for t in 0..tile_len {
                         for oc_idx in 0..oc_per_group {
                             let o_pos = o_base + oc_idx * spatial_out + tile_start + t;
-                            out[o_pos] += lut_out[t * oc_per_group + oc_idx];
+                            out[o_pos] += lut_out_buf[t * oc_per_group + oc_idx];
                         }
                     }
 
