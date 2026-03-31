@@ -51,6 +51,7 @@ impl Default for KvCacheConfig {
 
 impl KvCacheConfig {
     /// Asymmetric config: K at f32, V at q4 with WHT rotation and boundary protection.
+    /// Best quality at q4; WHT Gaussianizes V distributions for lower quantization error.
     #[must_use]
     pub fn asymmetric_q4() -> Self {
         Self {
@@ -58,6 +59,19 @@ impl KvCacheConfig {
             v_bits: KvBits::Q4,
             boundary_layers: 2,
             wht_rotation: true,
+        }
+    }
+
+    /// Asymmetric config: K at f32, V at q4 without WHT rotation.
+    /// ~13× faster read than WHT variant. Recommended when V values are already
+    /// well-distributed (most trained LLMs) and max quality isn't critical.
+    #[must_use]
+    pub fn asymmetric_q4_fast() -> Self {
+        Self {
+            k_bits: KvBits::F32,
+            v_bits: KvBits::Q4,
+            boundary_layers: 2,
+            wht_rotation: false,
         }
     }
 
@@ -347,46 +361,48 @@ fn vec_mul_inplace(data: &mut [f32], factors: &[f32]) {
     }
 }
 
-/// Apply Walsh-Hadamard rotation to a head vector: signs ⊙ FWHT(signs ⊙ x) / √dim.
-/// Gaussianizes the distribution for better quantization efficiency.
+/// Fused Walsh-Hadamard rotation: signs ⊙ FWHT(signs ⊙ x) / √dim.
+///
+/// `signs_norm` = `signs[i] / sqrt(dim)`, precomputed at cache construction.
+/// Eliminates runtime `1/sqrt(dim)` computation and uses precomputed table
+/// for the final sign-flip + normalize pass.
+///
+/// Write path: first sign-flip → FWHT → multiply by signs_norm.
+#[inline]
+fn wht_rotate_fused(data: &mut [f32], signs: &[f32], signs_norm: &[f32]) {
+    // Pass 1: first sign flip.
+    vec_mul_inplace(data, signs);
+    // Passes 2..log2(n)+1: FWHT butterfly stages.
+    fwht_inplace(data);
+    // Final pass: second sign-flip + normalize via precomputed signs_norm.
+    vec_mul_inplace(data, signs_norm);
+}
+
+/// Fused inverse WHT for read path: data already has first sign-flip applied
+/// (fused into dequant), so skip it entirely. Just FWHT + apply signs_norm.
+///
+/// Saves one full pass over the data vs `wht_rotate_fused`.
+/// Caller must ensure `data[i]` was pre-multiplied by `signs[i]` during dequant.
+#[inline]
+fn wht_unrotate_presigned(data: &mut [f32], signs_norm: &[f32]) {
+    // Data already has signs applied — skip first sign-flip pass.
+    fwht_inplace(data);
+    // Second sign-flip + normalize.
+    vec_mul_inplace(data, signs_norm);
+}
+
+/// Standard WHT rotation (backward compatibility for tests).
+#[cfg(test)]
 #[inline]
 fn wht_rotate(data: &mut [f32], signs: &[f32]) {
     let dim = data.len();
-    // First sign flip (NEON-accelerated ±1.0 multiply).
-    vec_mul_inplace(data, signs);
-    // Forward transform (NEON-accelerated butterfly).
-    fwht_inplace(data);
-    // Second sign flip + normalize.
-    // Fused: multiply by signs[i] * norm in one pass.
     let norm = 1.0 / (dim as f32).sqrt();
-    #[cfg(target_arch = "aarch64")]
-    {
-        let chunks = dim / 4;
-        let dp = data.as_mut_ptr();
-        let sp = signs.as_ptr();
-        unsafe {
-            use core::arch::aarch64::*;
-            let nv = vdupq_n_f32(norm);
-            for c in 0..chunks {
-                let off = c * 4;
-                let d = vld1q_f32(dp.add(off));
-                let s = vld1q_f32(sp.add(off));
-                vst1q_f32(dp.add(off), vmulq_f32(vmulq_f32(d, s), nv));
-            }
-        }
-        for i in chunks * 4..dim {
-            data[i] *= signs[i] * norm;
-        }
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        for i in 0..dim {
-            data[i] *= signs[i] * norm;
-        }
-    }
+    let signs_norm: Vec<f32> = signs.iter().map(|&s| s * norm).collect();
+    wht_rotate_fused(data, signs, &signs_norm);
 }
 
-/// Inverse Walsh-Hadamard rotation: same as forward (self-inverse up to normalization).
+/// Standard inverse WHT (for tests).
+#[cfg(test)]
 #[inline]
 fn wht_unrotate(data: &mut [f32], signs: &[f32]) {
     wht_rotate(data, signs);
@@ -455,6 +471,9 @@ pub struct KvCacheState {
     config: KvCacheConfig,
     /// Cached WHT sign vectors (one per head_dim, computed once).
     wht_signs: Option<Vec<f32>>,
+    /// Precomputed `signs[i] / sqrt(dim)` — fuses second sign-flip + normalize
+    /// into a single multiply, avoiding recomputation per-head.
+    wht_signs_norm: Option<Vec<f32>>,
     /// Reusable scratch buffer for WHT rotation (avoids per-head allocation).
     /// Sized to `head_dim` on first use.
     scratch: Vec<f32>,
@@ -488,10 +507,13 @@ impl KvCacheState {
     ) -> Self {
         let k_buffers = (0..n_layers).map(|_| LayerBuffer::Empty).collect();
         let v_buffers = (0..n_layers).map(|_| LayerBuffer::Empty).collect();
-        let wht_signs = if config.wht_rotation && head_dim.is_power_of_two() {
-            Some(wht_signs(head_dim as usize))
+        let (wht_signs, wht_signs_norm) = if config.wht_rotation && head_dim.is_power_of_two() {
+            let signs = wht_signs(head_dim as usize);
+            let norm = 1.0 / (head_dim as f32).sqrt();
+            let signs_norm: Vec<f32> = signs.iter().map(|&s| s * norm).collect();
+            (Some(signs), Some(signs_norm))
         } else {
-            None
+            (None, None)
         };
         Self {
             k_buffers,
@@ -504,6 +526,7 @@ impl KvCacheState {
             advance_override: None,
             config,
             wht_signs,
+            wht_signs_norm,
             scratch: Vec::new(),
         }
     }
@@ -587,6 +610,7 @@ impl KvCacheState {
 
     /// Write data into a layer buffer at the given position range.
     /// `scratch` is a reusable buffer for WHT rotation (avoids per-head allocation).
+    /// When WHT is active, `wht_signs` and `wht_signs_norm` must both be Some.
     #[allow(clippy::too_many_arguments)]
     fn write_to_buffer(
         buf: &mut LayerBuffer,
@@ -596,6 +620,7 @@ impl KvCacheState {
         n_kv_heads: usize,
         head_dim: usize,
         wht_signs: Option<&[f32]>,
+        wht_signs_norm: Option<&[f32]>,
         scratch: &mut Vec<f32>,
     ) {
         let stride = n_kv_heads * head_dim;
@@ -611,7 +636,6 @@ impl KvCacheState {
                 heads,
             } => {
                 let n_heads = *heads;
-                // Ensure scratch is big enough; reuses the same allocation across calls.
                 if wht_signs.is_some() {
                     scratch.resize(head_dim, 0.0);
                 }
@@ -622,9 +646,9 @@ impl KvCacheState {
                     for h in 0..n_heads {
                         let s = src_off + h * head_dim;
                         let d = dst_off + h * head_dim;
-                        let src = if let Some(signs) = wht_signs {
+                        let src = if let (Some(signs), Some(sn)) = (wht_signs, wht_signs_norm) {
                             scratch.copy_from_slice(&data[s..s + head_dim]);
-                            wht_rotate(scratch, signs);
+                            wht_rotate_fused(scratch, signs, sn);
                             scratch.as_slice()
                         } else {
                             &data[s..s + head_dim]
@@ -654,9 +678,9 @@ impl KvCacheState {
                     for h in 0..n_heads {
                         let s = src_off + h * dim;
                         let d = dst_off + h * packed_dim;
-                        let src = if let Some(signs) = wht_signs {
+                        let src = if let (Some(signs), Some(sn)) = (wht_signs, wht_signs_norm) {
                             scratch.copy_from_slice(&data[s..s + dim]);
-                            wht_rotate(scratch, signs);
+                            wht_rotate_fused(scratch, signs, sn);
                             scratch.as_slice()
                         } else {
                             &data[s..s + dim]
@@ -671,7 +695,10 @@ impl KvCacheState {
     }
 
     /// Read data from a layer buffer, dequantizing if needed.
-    /// Returns owned f32 data for quantized buffers, or a copy for f32 buffers.
+    ///
+    /// When WHT is active (`wht_signs` + `wht_signs_norm` both Some), the first
+    /// sign-flip is fused into the dequant output, and `wht_unrotate_presigned`
+    /// is used — saving one full pass over the data per head.
     fn read_from_buffer(
         buf: &LayerBuffer,
         start_pos: usize,
@@ -679,6 +706,7 @@ impl KvCacheState {
         n_kv_heads: usize,
         head_dim: usize,
         wht_signs: Option<&[f32]>,
+        wht_signs_norm: Option<&[f32]>,
     ) -> Vec<f32> {
         let stride = n_kv_heads * head_dim;
         match buf {
@@ -694,6 +722,8 @@ impl KvCacheState {
             } => {
                 let n_heads = *heads;
                 let mut out = vec![0.0f32; n_tokens * stride];
+                // When WHT is active, fuse dequant + first sign-flip.
+                let fuse_signs = wht_signs.is_some();
                 for t in 0..n_tokens {
                     let idx_off = (start_pos + t) * stride;
                     let param_off = (start_pos + t) * n_heads;
@@ -706,13 +736,17 @@ impl KvCacheState {
                             &params[param_off + h],
                             &mut out[so..so + head_dim],
                         );
+                        // Fuse first sign-flip into dequant output — saves one
+                        // full pass in wht_unrotate_presigned.
+                        if fuse_signs {
+                            vec_mul_inplace(&mut out[so..so + head_dim], wht_signs.unwrap());
+                        }
                     }
                 }
-                // Batch WHT unrotation: one pass over the full output buffer.
-                // Avoids per-head function call overhead.
-                if let Some(signs) = wht_signs {
+                // WHT: skip first sign-flip (already applied), just FWHT + signs_norm.
+                if let Some(sn) = wht_signs_norm {
                     for chunk in out.chunks_exact_mut(head_dim) {
-                        wht_unrotate(chunk, signs);
+                        wht_unrotate_presigned(chunk, sn);
                     }
                 }
                 out
@@ -728,6 +762,7 @@ impl KvCacheState {
                 let packed_dim = dim.div_ceil(2);
                 let packed_stride = n_heads * packed_dim;
                 let mut out = vec![0.0f32; n_tokens * stride];
+                let fuse_signs = wht_signs.is_some();
                 for t in 0..n_tokens {
                     let p_off = (start_pos + t) * packed_stride;
                     let param_off = (start_pos + t) * n_heads;
@@ -741,12 +776,15 @@ impl KvCacheState {
                             &params[param_off + h],
                             &mut out[so..so + dim],
                         );
+                        if fuse_signs {
+                            vec_mul_inplace(&mut out[so..so + dim], wht_signs.unwrap());
+                        }
                     }
                 }
-                // Batch WHT unrotation.
-                if let Some(signs) = wht_signs {
+                // WHT: skip first sign-flip (already applied).
+                if let Some(sn) = wht_signs_norm {
                     for chunk in out.chunks_exact_mut(dim) {
-                        wht_unrotate(chunk, signs);
+                        wht_unrotate_presigned(chunk, sn);
                     }
                 }
                 out
@@ -804,15 +842,22 @@ impl KvCacheState {
                 n_heads,
                 hd,
                 None,
+                None,
                 &mut scratch,
             );
         }
         // V gets WHT rotation if configured and layer is not boundary.
         if !v_data.is_empty() {
-            let v_wht = if self.config.is_boundary_layer(layer, n_layers) {
+            let is_boundary = self.config.is_boundary_layer(layer, n_layers);
+            let v_signs = if is_boundary {
                 None
             } else {
                 self.wht_signs.as_deref()
+            };
+            let v_signs_norm = if is_boundary {
+                None
+            } else {
+                self.wht_signs_norm.as_deref()
             };
             Self::write_to_buffer(
                 &mut self.v_buffers[layer_idx],
@@ -821,7 +866,8 @@ impl KvCacheState {
                 seq_len,
                 n_heads,
                 hd,
-                v_wht,
+                v_signs,
+                v_signs_norm,
                 &mut scratch,
             );
         }
@@ -924,6 +970,7 @@ impl KvCacheState {
             self.n_kv_heads as usize,
             self.head_dim as usize,
             None,
+            None,
         )
     }
 
@@ -937,10 +984,16 @@ impl KvCacheState {
         let n_layers = self.v_buffers.len() as u32;
         let start = self.read_start();
         let n_tokens = self.visible_tokens();
-        let v_wht = if self.config.is_boundary_layer(layer, n_layers) {
+        let is_boundary = self.config.is_boundary_layer(layer, n_layers);
+        let v_signs = if is_boundary {
             None
         } else {
             self.wht_signs.as_deref()
+        };
+        let v_signs_norm = if is_boundary {
+            None
+        } else {
+            self.wht_signs_norm.as_deref()
         };
         Self::read_from_buffer(
             &self.v_buffers[layer_idx],
@@ -948,7 +1001,8 @@ impl KvCacheState {
             n_tokens,
             self.n_kv_heads as usize,
             self.head_dim as usize,
-            v_wht,
+            v_signs,
+            v_signs_norm,
         )
     }
 
@@ -1007,6 +1061,7 @@ impl KvCacheState {
             self.n_kv_heads as usize,
             self.head_dim as usize,
             None,
+            None,
         )
     }
 
@@ -1019,10 +1074,16 @@ impl KvCacheState {
         }
         let n_layers = self.v_buffers.len() as u32;
         let total_seq = (self.write_pos + pending_seq).min(self.max_seq);
-        let v_wht = if self.config.is_boundary_layer(layer, n_layers) {
+        let is_boundary = self.config.is_boundary_layer(layer, n_layers);
+        let v_signs = if is_boundary {
             None
         } else {
             self.wht_signs.as_deref()
+        };
+        let v_signs_norm = if is_boundary {
+            None
+        } else {
+            self.wht_signs_norm.as_deref()
         };
         Self::read_from_buffer(
             &self.v_buffers[layer_idx],
@@ -1030,7 +1091,8 @@ impl KvCacheState {
             total_seq,
             self.n_kv_heads as usize,
             self.head_dim as usize,
-            v_wht,
+            v_signs,
+            v_signs_norm,
         )
     }
 
@@ -1610,5 +1672,166 @@ mod tests {
 
         let v_read = cache.read_v_owned(0);
         assert_eq!(v_read.len(), 3 * stride);
+    }
+
+    // ── Plan 038: asymmetric K/V with boundary layers and WHT ────────
+
+    #[test]
+    fn asymmetric_q4_v_with_wht_and_boundary() {
+        // 4 layers, boundary_layers=1 → layers 0 and 3 stay F32, layers 1-2 use Q4+WHT for V.
+        let config = KvCacheConfig {
+            k_bits: KvBits::F32,
+            v_bits: KvBits::Q4,
+            boundary_layers: 1,
+            wht_rotation: true,
+        };
+        let n_layers = 4u32;
+        let n_kv_heads = 2u32;
+        let head_dim = 8u32; // power of 2 for WHT
+        let max_seq = 16;
+        let stride = n_kv_heads as usize * head_dim as usize;
+
+        let mut cache = KvCacheState::with_config(n_layers, n_kv_heads, head_dim, max_seq, config);
+
+        // Write 3 tokens to all layers.
+        let k_data: Vec<f32> = (0..3 * stride).map(|i| (i as f32) * 0.1).collect();
+        let v_data: Vec<f32> = (0..3 * stride).map(|i| (i as f32) * 0.05 + 1.0).collect();
+        for layer in 0..n_layers {
+            cache.write_layer(layer, &k_data, &v_data);
+        }
+        cache.advance(3);
+
+        // K is always F32 → lossless roundtrip on all layers.
+        for layer in 0..n_layers {
+            let k_read = cache.read_k(layer);
+            assert_eq!(k_read.len(), 3 * stride, "layer {layer} K length");
+            for (i, (&got, &expected)) in k_read.iter().zip(k_data.iter()).enumerate() {
+                assert!(
+                    (got - expected).abs() < 1e-6,
+                    "layer {layer} K[{i}]: got={got} expected={expected}",
+                );
+            }
+        }
+
+        // Boundary layers (0, 3): V is F32 → lossless.
+        for layer in [0u32, 3] {
+            let v_read = cache.read_v_owned(layer);
+            assert_eq!(v_read.len(), 3 * stride, "boundary layer {layer} V length");
+            for (i, (&got, &expected)) in v_read.iter().zip(v_data.iter()).enumerate() {
+                assert!(
+                    (got - expected).abs() < 1e-6,
+                    "boundary layer {layer} V[{i}]: got={got} expected={expected}",
+                );
+            }
+        }
+
+        // Inner layers (1, 2): V is Q4+WHT → lossy but close.
+        for layer in [1u32, 2] {
+            let v_read = cache.read_v_owned(layer);
+            assert_eq!(v_read.len(), 3 * stride, "inner layer {layer} V length");
+            for (i, (&got, &expected)) in v_read.iter().zip(v_data.iter()).enumerate() {
+                assert!(
+                    (got - expected).abs() < 0.5,
+                    "inner layer {layer} V[{i}]: got={got} expected={expected} (Q4 tolerance)",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn asymmetric_q8_k_q4_v() {
+        // K at Q8, V at Q4 — independent quantization paths.
+        let config = KvCacheConfig {
+            k_bits: KvBits::Q8,
+            v_bits: KvBits::Q4,
+            boundary_layers: 0, // no boundary protection
+            wht_rotation: false,
+        };
+        let mut cache = KvCacheState::with_config(1, 2, 4, 16, config);
+        let stride = 2 * 4;
+        let k_data: Vec<f32> = (0..2 * stride).map(|i| (i as f32) * 0.3 - 1.0).collect();
+        let v_data: Vec<f32> = (0..2 * stride).map(|i| (i as f32) * 0.2 + 0.5).collect();
+        cache.write_layer(0, &k_data, &v_data);
+        cache.advance(2);
+
+        // K: Q8 tolerance (~0.05 per element).
+        let k_read = cache.read_k_owned(0);
+        for (i, (&got, &expected)) in k_read.iter().zip(k_data.iter()).enumerate() {
+            assert!(
+                (got - expected).abs() < 0.05,
+                "K Q8[{i}]: got={got} expected={expected}",
+            );
+        }
+
+        // V: Q4 tolerance (~0.5 per element).
+        let v_read = cache.read_v_owned(0);
+        for (i, (&got, &expected)) in v_read.iter().zip(v_data.iter()).enumerate() {
+            assert!(
+                (got - expected).abs() < 0.5,
+                "V Q4[{i}]: got={got} expected={expected}",
+            );
+        }
+    }
+
+    #[test]
+    fn kv_cache_memory_savings() {
+        // Verify Q8 and Q4 buffers use less memory than F32.
+        let n_heads = 4usize;
+        let head_dim = 8usize;
+        let max_seq = 64;
+        let stride = n_heads * head_dim;
+
+        let cache_f32 = KvCacheState::new(1, n_heads as u32, head_dim as u32, max_seq);
+        let cache_q8 = KvCacheState::with_config(
+            1,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq,
+            KvCacheConfig {
+                k_bits: KvBits::Q8,
+                v_bits: KvBits::Q8,
+                boundary_layers: 0,
+                wht_rotation: false,
+            },
+        );
+        let cache_q4 = KvCacheState::with_config(
+            1,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq,
+            KvCacheConfig {
+                k_bits: KvBits::Q4,
+                v_bits: KvBits::Q4,
+                boundary_layers: 0,
+                wht_rotation: false,
+            },
+        );
+
+        // Trigger allocation by writing one token.
+        let data: Vec<f32> = vec![1.0; stride];
+        let mut caches = [cache_f32, cache_q8, cache_q4];
+        for c in &mut caches {
+            c.write_layer(0, &data, &data);
+        }
+
+        // F32: max_seq * stride * 4 bytes per buffer
+        let f32_size = max_seq * stride * 4;
+        // Q8: max_seq * stride * 1 byte (indices) + max_seq * n_heads * 8 bytes (params)
+        let q8_size = max_seq * stride + max_seq * n_heads * std::mem::size_of::<ChannelParams>();
+        // Q4: max_seq * n_heads * ceil(head_dim/2) + max_seq * n_heads * 8 bytes (params)
+        let q4_size = max_seq * n_heads * head_dim.div_ceil(2)
+            + max_seq * n_heads * std::mem::size_of::<ChannelParams>();
+
+        // Q8 should be at most half of F32 (indices + params overhead).
+        assert!(
+            q8_size <= f32_size / 2,
+            "Q8 ({q8_size}) should be <= F32/2 ({})",
+            f32_size / 2
+        );
+        // Q4 should be smaller than Q8.
+        assert!(
+            q4_size < q8_size,
+            "Q4 ({q4_size}) should be < Q8 ({q8_size})"
+        );
     }
 }

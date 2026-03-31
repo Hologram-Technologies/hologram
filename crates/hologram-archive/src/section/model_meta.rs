@@ -178,10 +178,38 @@ mod tests {
                 n_layers: 0,
                 n_kv_heads: 0,
                 head_dim: 0,
+                kv_k_bits: 0,
+                kv_v_bits: 0,
+                kv_boundary_layers: 2,
+                kv_wht: false,
             };
             let bytes = section.to_bytes();
             let de = ModelMetaSection::deserialize_from(&bytes).unwrap();
             assert_eq!(de.kind, kind);
         }
+    }
+
+    #[test]
+    fn kv_config_roundtrip() {
+        let section = ModelMetaSection {
+            kind: ModelKind::TextLlm,
+            arch: "llama".into(),
+            description: "test".into(),
+            max_seq_len: 2048,
+            supports_prompt: true,
+            n_layers: 32,
+            n_kv_heads: 8,
+            head_dim: 64,
+            kv_k_bits: 1, // Q8
+            kv_v_bits: 2, // Q4
+            kv_boundary_layers: 2,
+            kv_wht: true,
+        };
+        let bytes = section.to_bytes();
+        let de = ModelMetaSection::deserialize_from(&bytes).unwrap();
+        assert_eq!(de.kv_k_bits, 1);
+        assert_eq!(de.kv_v_bits, 2);
+        assert_eq!(de.kv_boundary_layers, 2);
+        assert!(de.kv_wht);
     }
 }
