@@ -2,6 +2,69 @@
 
 use hologram_graph::graph::node::NodeId;
 
+// ── Inline f16 conversion (no `half` crate dependency) ──────────────────────
+
+/// Convert f32 → f16 (IEEE 754 half-precision), returning the 16-bit pattern.
+#[inline]
+fn f32_to_f16_bits(val: f32) -> u16 {
+    let bits = val.to_bits();
+    let sign = (bits >> 16) & 0x8000;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let mantissa = bits & 0x7FFFFF;
+
+    if exp == 255 {
+        // Inf/NaN
+        return (sign | 0x7C00 | if mantissa != 0 { 0x200 } else { 0 }) as u16;
+    }
+
+    let new_exp = exp - 127 + 15;
+    if new_exp >= 31 {
+        return (sign | 0x7C00) as u16; // Overflow → Inf
+    }
+    if new_exp <= 0 {
+        if new_exp < -10 {
+            return sign as u16; // Too small → zero
+        }
+        // Denormalized
+        let m = (mantissa | 0x800000) >> (1 - new_exp);
+        return (sign | (m >> 13)) as u16;
+    }
+
+    (sign | ((new_exp as u32) << 10) | (mantissa >> 13)) as u16
+}
+
+/// Convert f16 (IEEE 754 half-precision bit pattern) → f32.
+#[inline]
+fn f16_bits_to_f32(bits: u16) -> f32 {
+    let sign = ((bits & 0x8000) as u32) << 16;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let mantissa = (bits & 0x3FF) as u32;
+
+    if exp == 0 {
+        if mantissa == 0 {
+            return f32::from_bits(sign); // ±0
+        }
+        // Denormalized: normalize
+        let mut m = mantissa;
+        let mut e = 1u32;
+        while m & 0x400 == 0 {
+            m <<= 1;
+            e += 1;
+        }
+        let m = (m & 0x3FF) << 13;
+        let e = (127 - 15 + 1 - e) << 23;
+        return f32::from_bits(sign | e | m);
+    }
+    if exp == 31 {
+        let m = if mantissa != 0 { 0x400000 } else { 0 };
+        return f32::from_bits(sign | 0x7F800000 | m); // Inf/NaN
+    }
+
+    let e = (exp + 127 - 15) << 23;
+    let m = mantissa << 13;
+    f32::from_bits(sign | e | m)
+}
+
 use crate::error::{ExecError, ExecResult};
 
 use super::mmap_buf::MmapBuffer;
@@ -17,6 +80,11 @@ use super::mmap_buf::MmapBuffer;
 /// 256 KB: below L2 cache; mmap overhead (~2-5 µs) exceeds memcpy cost at this size.
 const MMAP_THRESHOLD: usize = 256 * 1024;
 
+/// Threshold for F16 compression of activation buffers.
+/// Buffers larger than this (in bytes) are stored as f16 to halve memory.
+/// 512 KB — below this, the f16↔f32 conversion overhead isn't worth it.
+const F16_COMPRESS_THRESHOLD: usize = 512 * 1024;
+
 enum ArenaBuffer<'a> {
     /// CPU-allocated owned buffer (mmap anonymous pages on Unix).
     /// Pages returned to OS on drop via munmap — zero fragmentation.
@@ -27,6 +95,10 @@ enum ArenaBuffer<'a> {
     VecOwned(Vec<u8>),
     /// Borrowed reference to external memory (mmap'd weights, constants).
     Borrowed(&'a [u8]),
+    /// F16-compressed activation buffer — stores f32 data as f16 to halve memory.
+    /// The `f32_len` field tracks the original byte length (f32_len = f16_data.len() * 2).
+    /// On read, data is expanded f16→f32 into the arena's scratch buffer.
+    F16Compressed { data: MmapBuffer, f32_len: usize },
     /// Metal GPU buffer (shared memory on Apple Silicon).
     /// CPU-readable via `contents()` pointer — zero-copy for both directions.
     #[cfg(has_metal)]
@@ -35,17 +107,36 @@ enum ArenaBuffer<'a> {
 
 impl<'a> ArenaBuffer<'a> {
     /// Get a byte slice view of the buffer contents.
+    ///
+    /// For `F16Compressed` buffers, returns the compressed f16 data.
+    /// Callers that need f32 should use `BufferArena::get_f32_or_expand()`.
     #[inline]
     fn as_bytes(&self) -> &[u8] {
         match self {
             ArenaBuffer::Owned(m) => m.as_slice(),
             ArenaBuffer::VecOwned(v) => v.as_slice(),
             ArenaBuffer::Borrowed(s) => s,
+            ArenaBuffer::F16Compressed { data, .. } => data.as_slice(),
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
                 let ptr = buf.contents() as *const u8;
                 unsafe { std::slice::from_raw_parts(ptr, buf.length() as usize) }
             }
+        }
+    }
+
+    /// Whether this buffer is F16 compressed.
+    #[allow(dead_code)]
+    fn is_f16_compressed(&self) -> bool {
+        matches!(self, ArenaBuffer::F16Compressed { .. })
+    }
+
+    /// Original f32 byte length (for F16Compressed, this is 2× the stored data).
+    #[allow(dead_code)]
+    fn f32_byte_len(&self) -> usize {
+        match self {
+            ArenaBuffer::F16Compressed { f32_len, .. } => *f32_len,
+            other => other.as_bytes().len(),
         }
     }
 
@@ -55,6 +146,18 @@ impl<'a> ArenaBuffer<'a> {
             ArenaBuffer::Owned(m) => m.into_vec(),
             ArenaBuffer::VecOwned(v) => v,
             ArenaBuffer::Borrowed(s) => s.to_vec(),
+            ArenaBuffer::F16Compressed { data, f32_len } => {
+                // Expand f16→f32 on conversion.
+                let f16_slice = data.as_slice();
+                let n_floats = f32_len / 4;
+                let mut out = vec![0u8; f32_len];
+                let f32_out: &mut [f32] = bytemuck::cast_slice_mut(&mut out);
+                let f16_data: &[u16] = bytemuck::cast_slice(&f16_slice[..n_floats * 2]);
+                for (dst, &src) in f32_out.iter_mut().zip(f16_data.iter()) {
+                    *dst = f16_bits_to_f32(src);
+                }
+                out
+            }
             #[cfg(has_metal)]
             ArenaBuffer::Metal(buf) => {
                 let ptr = buf.contents() as *const u8;
@@ -336,6 +439,71 @@ impl<'a> BufferArena<'a> {
             }
         }
         Err(ExecError::BufferNotReady(id))
+    }
+
+    /// Compress a buffer from f32 → f16 to halve its memory footprint.
+    ///
+    /// Only compresses Owned/VecOwned buffers that are > F16_COMPRESS_THRESHOLD
+    /// and have elem_size == 4 (f32). Borrowed constants, small buffers, and
+    /// already-compressed buffers are left unchanged.
+    ///
+    /// Call after a node's output is stored but before its consumer executes,
+    /// when the node has a distant consumer (skip connection).
+    pub fn compress_f16(&mut self, id: NodeId) {
+        let idx = id.index() as usize;
+        if idx >= self.buffers.len() {
+            return;
+        }
+        // Only compress f32 buffers above threshold.
+        if self.elem_sizes.get(idx).copied().unwrap_or(0) != 4 {
+            return;
+        }
+        let src_bytes = match &self.buffers[idx] {
+            Some(ArenaBuffer::Owned(m)) if m.len() >= F16_COMPRESS_THRESHOLD => m.as_slice(),
+            Some(ArenaBuffer::VecOwned(v)) if v.len() >= F16_COMPRESS_THRESHOLD => v.as_slice(),
+            _ => return,
+        };
+        let f32_len = src_bytes.len();
+        let n_floats = f32_len / 4;
+        let f16_byte_len = n_floats * 2;
+
+        // Convert f32 → f16 into a new smaller buffer.
+        let mut f16_buf = MmapBuffer::new(f16_byte_len);
+        let src_f32: &[f32] = bytemuck::cast_slice(src_bytes);
+        let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(f16_buf.as_mut_slice());
+        for (dst, &src) in dst_u16.iter_mut().zip(src_f32.iter()) {
+            *dst = f32_to_f16_bits(src);
+        }
+
+        self.buffers[idx] = Some(ArenaBuffer::F16Compressed {
+            data: f16_buf,
+            f32_len,
+        });
+    }
+
+    /// Expand an F16-compressed buffer back to f32.
+    ///
+    /// Call before `get()` when a consumer needs the original f32 data.
+    /// No-op if the buffer is already f32.
+    pub fn expand_f32(&mut self, id: NodeId) {
+        let idx = id.index() as usize;
+        if idx >= self.buffers.len() {
+            return;
+        }
+        if !matches!(self.buffers[idx], Some(ArenaBuffer::F16Compressed { .. })) {
+            return;
+        }
+        let buf = self.buffers[idx].take().expect("checked Some");
+        if let ArenaBuffer::F16Compressed { data, f32_len } = buf {
+            let n_floats = f32_len / 4;
+            let mut f32_buf = MmapBuffer::new(f32_len);
+            let src_u16: &[u16] = bytemuck::cast_slice(data.as_slice());
+            let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(f32_buf.as_mut_slice());
+            for (dst, &src) in dst_f32.iter_mut().zip(src_u16[..n_floats].iter()) {
+                *dst = f16_bits_to_f32(src);
+            }
+            self.buffers[idx] = Some(ArenaBuffer::Owned(f32_buf));
+        }
     }
 
     /// Get the buffer for the given node as a typed f32 slice.
