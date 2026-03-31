@@ -616,7 +616,7 @@ const PAR_M_TILE_THRESHOLD: usize = 8;
 /// Wrapper to send a raw `*mut f32` across rayon threads.
 /// SAFETY: callers must guarantee non-overlapping writes per thread.
 #[derive(Clone, Copy)]
-pub(super) struct SendPtr(pub(super) *mut f32);
+struct SendPtr(*mut f32);
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
 

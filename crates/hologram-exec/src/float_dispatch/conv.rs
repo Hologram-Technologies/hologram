@@ -49,6 +49,8 @@ fn conv2d_core(
     } else {
         spatial_out
     };
+    let mut col = vec![0.0f32; kernel_size * tile_size];
+
     for batch in 0..n {
         for g in 0..group {
             let w_start = g * oc_per_group * kernel_size;
@@ -70,18 +72,13 @@ fn conv2d_core(
                 }
             }
 
-            // Process spatial dimension in tiles — parallel when possible.
-            // Each tile does: im2col → GEMM → scatter into non-overlapping output region.
-            let n_tiles = spatial_out.div_ceil(tile_size);
-
-            // Closure that processes a single tile.
-            let process_tile = |tile_idx: usize, out_slice: &mut [f32]| {
-                let tile_start = tile_idx * tile_size;
+            // Process spatial dimension in tiles.
+            let mut tile_start = 0;
+            while tile_start < spatial_out {
                 let tile_end = (tile_start + tile_size).min(spatial_out);
                 let tile_len = tile_end - tile_start;
 
-                // Phase 1: im2col for this tile.
-                let mut col = vec![0.0f32; kernel_size * tile_len];
+                // Phase 1: im2col for this tile — col[kernel_size, tile_len].
                 for k in 0..kernel_size {
                     let ic_idx = k / (kh * kw);
                     let k_rem = k % (kh * kw);
@@ -111,7 +108,13 @@ fn conv2d_core(
                     }
                 }
 
-                // Phase 2: GEMM.
+                // Phase 2: GEMM for this tile.
+                // C_tile[oc_per_group, tile_len] = W[oc_per_group, kernel_size] × col[kernel_size, tile_len]
+                // Write into the correct tile slice of the output.
+                // Build a contiguous tile output slice.
+                // Output layout is [oc_per_group, spatial_out] row-major; we need
+                // columns [tile_start..tile_end] from each row. Since they're not
+                // contiguous, use a temporary tile buffer for GEMM then scatter.
                 let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
 
                 #[cfg(all(feature = "accelerate", target_os = "macos"))]
@@ -122,7 +125,7 @@ fn conv2d_core(
                             n: tile_len,
                             k: kernel_size,
                             alpha: 1.0,
-                            beta: 0.0,
+                            beta: 0.0, // Write to temp, add bias after.
                             trans_a: false,
                             trans_b: false,
                         },
@@ -144,36 +147,16 @@ fn conv2d_core(
                     );
                 }
 
-                // Scatter into output (add to bias).
+                // Scatter tile results into output (add to bias if present).
                 for oc_idx in 0..oc_per_group {
-                    let o_row_start = oc_idx * spatial_out + tile_start;
+                    let o_row_start = o_base + oc_idx * spatial_out + tile_start;
                     let t_row_start = oc_idx * tile_len;
                     for t in 0..tile_len {
-                        out_slice[o_row_start + t] += tile_out[t_row_start + t];
+                        out[o_row_start + t] += tile_out[t_row_start + t];
                     }
                 }
-            };
 
-            let o_slice = &mut out[o_base..o_base + oc_per_group * spatial_out];
-
-            #[cfg(feature = "parallel")]
-            if n_tiles >= 2 {
-                use rayon::prelude::*;
-                // SAFETY: each tile writes to non-overlapping output positions.
-                let out_ptr = super::matmul::SendPtr(o_slice.as_mut_ptr());
-                (0..n_tiles).into_par_iter().for_each(|tile_idx| {
-                    let ptr = out_ptr;
-                    let len = oc_per_group * spatial_out;
-                    let slice = unsafe { std::slice::from_raw_parts_mut(ptr.0, len) };
-                    process_tile(tile_idx, slice);
-                });
-            } else {
-                process_tile(0, o_slice);
-            }
-
-            #[cfg(not(feature = "parallel"))]
-            for tile_idx in 0..n_tiles {
-                process_tile(tile_idx, o_slice);
+                tile_start = tile_end;
             }
         }
     }
