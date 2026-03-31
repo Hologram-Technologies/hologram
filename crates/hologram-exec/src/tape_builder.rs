@@ -578,6 +578,7 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             scale,
             causal,
             heads_first,
+            sparse_v,
             ..
         } => TapeKernel::InlineAttention {
             head_dim: *head_dim,
@@ -586,6 +587,7 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
             scale: *scale,
             causal: *causal,
             heads_first: *heads_first,
+            sparse_v: *sparse_v,
         },
         FloatOp::RotaryEmbedding { dim, base, n_heads } => TapeKernel::InlineRoPE {
             dim: *dim,

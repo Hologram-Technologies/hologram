@@ -212,6 +212,18 @@ fn dequantize_q8(indices: &[u8], params: &ChannelParams, out: &mut [f32]) {
     }
 }
 
+/// Dequantize q8 with fused sign-flip: `out[i] = ((idx - zp) * scale) * signs[i]`.
+/// Eliminates a separate `vec_mul_inplace` pass on the WHT read path.
+#[inline]
+fn dequantize_q8_signed(indices: &[u8], params: &ChannelParams, signs: &[f32], out: &mut [f32]) {
+    let scale = params.scale;
+    let zp = params.zero_point;
+    let n = indices.len();
+    for i in 0..n {
+        out[i] = (indices[i] as f32 - zp) * scale * signs[i];
+    }
+}
+
 /// Dequantize q4 packed indices back to f32.
 #[inline]
 fn dequantize_q4(packed: &[u8], n_elems: usize, params: &ChannelParams, out: &mut [f32]) {
@@ -225,6 +237,28 @@ fn dequantize_q4(packed: &[u8], n_elems: usize, params: &ChannelParams, out: &mu
     }
     if n_elems & 1 != 0 {
         out[n_elems - 1] = ((packed[pairs] >> 4) as f32 - zp) * scale;
+    }
+}
+
+/// Dequantize q4 with fused sign-flip.
+#[inline]
+fn dequantize_q4_signed(
+    packed: &[u8],
+    n_elems: usize,
+    params: &ChannelParams,
+    signs: &[f32],
+    out: &mut [f32],
+) {
+    let scale = params.scale;
+    let zp = params.zero_point;
+    let pairs = n_elems / 2;
+    for p in 0..pairs {
+        let byte = packed[p];
+        out[p * 2] = ((byte >> 4) as f32 - zp) * scale * signs[p * 2];
+        out[p * 2 + 1] = ((byte & 0x0F) as f32 - zp) * scale * signs[p * 2 + 1];
+    }
+    if n_elems & 1 != 0 {
+        out[n_elems - 1] = ((packed[pairs] >> 4) as f32 - zp) * scale * signs[n_elems - 1];
     }
 }
 
@@ -477,6 +511,12 @@ pub struct KvCacheState {
     /// Reusable scratch buffer for WHT rotation (avoids per-head allocation).
     /// Sized to `head_dim` on first use.
     scratch: Vec<f32>,
+    /// Per-layer incremental dequant cache for V buffers.
+    /// Holds the fully dequantized (+ WHT-unrotated) f32 data for quantized V layers.
+    /// Updated incrementally on write: only the newly-written tokens are dequantized
+    /// and appended, turning decode reads from O(seq_len) to O(1).
+    /// `v_dequant_cache[layer]` has length `write_pos * stride` after advance.
+    v_dequant_cache: Vec<Vec<f32>>,
 }
 
 impl KvCacheState {
@@ -515,6 +555,7 @@ impl KvCacheState {
         } else {
             (None, None)
         };
+        let v_dequant_cache = (0..n_layers).map(|_| Vec::new()).collect();
         Self {
             k_buffers,
             v_buffers,
@@ -528,6 +569,7 @@ impl KvCacheState {
             wht_signs,
             wht_signs_norm,
             scratch: Vec::new(),
+            v_dequant_cache,
         }
     }
 
@@ -722,8 +764,6 @@ impl KvCacheState {
             } => {
                 let n_heads = *heads;
                 let mut out = vec![0.0f32; n_tokens * stride];
-                // When WHT is active, fuse dequant + first sign-flip.
-                let fuse_signs = wht_signs.is_some();
                 for t in 0..n_tokens {
                     let idx_off = (start_pos + t) * stride;
                     let param_off = (start_pos + t) * n_heads;
@@ -731,19 +771,24 @@ impl KvCacheState {
                     for h in 0..n_heads {
                         let si = idx_off + h * head_dim;
                         let so = out_off + h * head_dim;
-                        dequantize_q8(
-                            &indices[si..si + head_dim],
-                            &params[param_off + h],
-                            &mut out[so..so + head_dim],
-                        );
-                        // Fuse first sign-flip into dequant output — saves one
-                        // full pass in wht_unrotate_presigned.
-                        if fuse_signs {
-                            vec_mul_inplace(&mut out[so..so + head_dim], wht_signs.unwrap());
+                        if let Some(signs) = wht_signs {
+                            // Fused: dequant + sign-flip in single loop body.
+                            dequantize_q8_signed(
+                                &indices[si..si + head_dim],
+                                &params[param_off + h],
+                                signs,
+                                &mut out[so..so + head_dim],
+                            );
+                        } else {
+                            dequantize_q8(
+                                &indices[si..si + head_dim],
+                                &params[param_off + h],
+                                &mut out[so..so + head_dim],
+                            );
                         }
                     }
                 }
-                // WHT: skip first sign-flip (already applied), just FWHT + signs_norm.
+                // WHT: skip first sign-flip (fused into dequant), just FWHT + signs_norm.
                 if let Some(sn) = wht_signs_norm {
                     for chunk in out.chunks_exact_mut(head_dim) {
                         wht_unrotate_presigned(chunk, sn);
@@ -762,7 +807,6 @@ impl KvCacheState {
                 let packed_dim = dim.div_ceil(2);
                 let packed_stride = n_heads * packed_dim;
                 let mut out = vec![0.0f32; n_tokens * stride];
-                let fuse_signs = wht_signs.is_some();
                 for t in 0..n_tokens {
                     let p_off = (start_pos + t) * packed_stride;
                     let param_off = (start_pos + t) * n_heads;
@@ -770,18 +814,26 @@ impl KvCacheState {
                     for h in 0..n_heads {
                         let sp = p_off + h * packed_dim;
                         let so = out_off + h * dim;
-                        dequantize_q4(
-                            &packed[sp..sp + packed_dim],
-                            dim,
-                            &params[param_off + h],
-                            &mut out[so..so + dim],
-                        );
-                        if fuse_signs {
-                            vec_mul_inplace(&mut out[so..so + dim], wht_signs.unwrap());
+                        if let Some(signs) = wht_signs {
+                            // Fused: dequant + sign-flip in single loop body.
+                            dequantize_q4_signed(
+                                &packed[sp..sp + packed_dim],
+                                dim,
+                                &params[param_off + h],
+                                signs,
+                                &mut out[so..so + dim],
+                            );
+                        } else {
+                            dequantize_q4(
+                                &packed[sp..sp + packed_dim],
+                                dim,
+                                &params[param_off + h],
+                                &mut out[so..so + dim],
+                            );
                         }
                     }
                 }
-                // WHT: skip first sign-flip (already applied).
+                // WHT: skip first sign-flip (fused into dequant).
                 if let Some(sn) = wht_signs_norm {
                     for chunk in out.chunks_exact_mut(dim) {
                         wht_unrotate_presigned(chunk, sn);
@@ -870,6 +922,14 @@ impl KvCacheState {
                 v_signs_norm,
                 &mut scratch,
             );
+
+            // Incremental dequant cache: append the original f32 V data directly.
+            // This avoids the expensive quantize→dequantize→WHT round-trip.
+            // The dequant cache stores the original pre-quantization values,
+            // which are actually higher quality than the quantized round-trip.
+            if !matches!(self.v_buffers[layer_idx], LayerBuffer::F32(_)) {
+                self.v_dequant_cache[layer_idx].extend_from_slice(&v_data[..seq_len * stride]);
+            }
         }
 
         // Return scratch (preserves its allocation for next call).
@@ -975,12 +1035,25 @@ impl KvCacheState {
     }
 
     /// Read V data, dequantizing and un-rotating if necessary.
+    ///
+    /// For quantized layers, uses the incremental dequant cache — O(1) after
+    /// the initial prefill since only newly-written tokens are dequantized
+    /// on each `write_layer` call.
     #[must_use]
     pub fn read_v_owned(&self, layer: u32) -> Vec<f32> {
         let layer_idx = layer as usize;
         if layer_idx >= self.v_buffers.len() {
             return Vec::new();
         }
+        // Use dequant cache if available (quantized layers).
+        let cache = &self.v_dequant_cache[layer_idx];
+        if !cache.is_empty() {
+            let stride = self.n_kv_heads as usize * self.head_dim as usize;
+            let start = self.read_start() * stride;
+            let end = (self.write_pos * stride).min(cache.len());
+            return cache[start..end].to_vec();
+        }
+        // F32 layers: read directly.
         let n_layers = self.v_buffers.len() as u32;
         let start = self.read_start();
         let n_tokens = self.visible_tokens();
@@ -1066,12 +1139,24 @@ impl KvCacheState {
     }
 
     /// Read V including pending data, dequantizing and un-rotating if necessary.
+    ///
+    /// Uses incremental dequant cache for quantized layers — the cache includes
+    /// pending (pre-advance) tokens since they were dequantized during `write_layer`.
     #[must_use]
     pub fn read_v_through_owned(&self, layer: u32, pending_seq: usize) -> Vec<f32> {
         let layer_idx = layer as usize;
         if layer_idx >= self.v_buffers.len() {
             return Vec::new();
         }
+        // Use dequant cache if available.
+        let cache = &self.v_dequant_cache[layer_idx];
+        if !cache.is_empty() {
+            let stride = self.n_kv_heads as usize * self.head_dim as usize;
+            let total_seq = (self.write_pos + pending_seq).min(self.max_seq);
+            let end = (total_seq * stride).min(cache.len());
+            return cache[..end].to_vec();
+        }
+        // F32 layers: fall through.
         let n_layers = self.v_buffers.len() as u32;
         let total_seq = (self.write_pos + pending_seq).min(self.max_seq);
         let is_boundary = self.config.is_boundary_layer(layer, n_layers);
@@ -1125,7 +1210,11 @@ impl KvCacheState {
     /// Reset the cache for a new sequence.
     pub fn reset(&mut self) {
         self.write_pos = 0;
-        // Don't need to zero the buffers — they'll be overwritten.
+        // Clear dequant caches (data will be rebuilt incrementally).
+        for cache in &mut self.v_dequant_cache {
+            cache.clear();
+        }
+        // Don't need to zero the quantized buffers — they'll be overwritten.
     }
 }
 

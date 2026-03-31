@@ -335,6 +335,7 @@ pub enum TapeKernel {
         scale: u32,
         causal: bool,
         heads_first: bool,
+        sparse_v: bool,
     },
     /// Inline RotaryEmbedding with baked params (uses position offset from TapeContext).
     InlineRoPE { dim: u32, base: u32, n_heads: u32 },
@@ -1174,6 +1175,7 @@ fn dispatch_kernel(
             scale,
             causal,
             heads_first,
+            sparse_v,
         } => {
             let result = crate::float_dispatch::attention::dispatch_attention(
                 inputs,
@@ -1183,6 +1185,7 @@ fn dispatch_kernel(
                 f32::from_bits(*scale),
                 *causal,
                 *heads_first,
+                *sparse_v,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)

@@ -288,6 +288,7 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
             scale,
             causal,
             heads_first,
+            sparse_v,
             ..
         } => {
             let result = attention::dispatch_attention(
@@ -298,6 +299,7 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
                 bits_to_f32(*scale),
                 *causal,
                 *heads_first,
+                *sparse_v,
             )?;
             out_buf.extend_from_slice(&result);
             Ok(true)
@@ -477,6 +479,7 @@ fn dispatch_custom(
             scale,
             causal,
             heads_first,
+            sparse_v,
             ..
         } => attention::dispatch_attention(
             inputs,
@@ -486,6 +489,7 @@ fn dispatch_custom(
             bits_to_f32(*scale),
             *causal,
             *heads_first,
+            *sparse_v,
         ),
         FloatOp::Dequantize => cast::dispatch_dequantize(inputs),
         // ── Vision / spatial ops ──────────────────────────────────────────

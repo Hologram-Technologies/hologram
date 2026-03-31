@@ -29,6 +29,7 @@ fn transpose_heads(data: &[f32], seq: usize, n_heads: usize, head_dim: usize) ->
 /// yields significant decode speedup with zero measurable quality loss.
 const SPARSE_V_THRESHOLD: f32 = 1e-6;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_attention(
     inputs: &[&[u8]],
     head_dim: usize,
@@ -37,6 +38,7 @@ pub(crate) fn dispatch_attention(
     scale: f32,
     causal: bool,
     heads_first: bool,
+    sparse_v: bool,
 ) -> ExecResult<Vec<u8>> {
     let q_raw = cast_f32(inputs[0])?;
     let k_raw = cast_f32(inputs[1])?;
@@ -226,7 +228,7 @@ pub(crate) fn dispatch_attention(
                     // Sparse V: skip V accumulation for negligible weights.
                     // At long context 90%+ of positions have near-zero weight;
                     // skipping them avoids head_dim multiply-adds per position.
-                    if w < SPARSE_V_THRESHOLD {
+                    if sparse_v && w < SPARSE_V_THRESHOLD {
                         continue;
                     }
 
@@ -267,7 +269,7 @@ pub(crate) fn dispatch_attention(
                     for val in row.iter_mut() {
                         *val *= inv;
                         // Sparse V: zero out negligible normalized weights.
-                        if *val < SPARSE_V_THRESHOLD {
+                        if sparse_v && *val < SPARSE_V_THRESHOLD {
                             *val = 0.0;
                         }
                     }
