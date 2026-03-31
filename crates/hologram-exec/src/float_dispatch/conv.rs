@@ -40,9 +40,6 @@ fn conv2d_core(
     let mut out = vec![0.0f32; n * oc * spatial_out];
 
     // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
-    // For large spatial dims (e.g., 512×512 with 256 channels), the full
-    // col buffer would be kernel_size × spatial_out ≈ 2.4GB. Tiling over
-    // the spatial dimension keeps the buffer bounded at ~16MB.
     const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
     let tile_size = if kernel_size > 0 {
         (TILE_CAP / kernel_size).max(1).min(spatial_out)
@@ -50,6 +47,12 @@ fn conv2d_core(
         spatial_out
     };
     let mut col = vec![0.0f32; kernel_size * tile_size];
+
+    // Quantize transposed weight to Q4 for LUT-GEMM (reused across tiles).
+    // LUT-GEMM computes: activations[M,K] × weights[K,N] → output[M,N].
+    // Conv2d GEMM: col^T[tile_len, kernel_size] × W^T[kernel_size, oc_per_group].
+    // So we transpose W from [oc_per_group, kernel_size] to [kernel_size, oc_per_group]
+    // and quantize as [K=kernel_size, N=oc_per_group].
 
     for batch in 0..n {
         for g in 0..group {
@@ -108,43 +111,39 @@ fn conv2d_core(
                     }
                 }
 
-                // Phase 2: GEMM for this tile.
-                // C_tile[oc_per_group, tile_len] = W[oc_per_group, kernel_size] × col[kernel_size, tile_len]
-                // Write into the correct tile slice of the output.
-                // Build a contiguous tile output slice.
-                // Output layout is [oc_per_group, spatial_out] row-major; we need
-                // columns [tile_start..tile_end] from each row. Since they're not
-                // contiguous, use a temporary tile buffer for GEMM then scatter.
+                // Phase 2: GEMM — W[oc_per_group, kernel_size] × col[kernel_size, tile_len].
                 let mut tile_out = vec![0.0f32; oc_per_group * tile_len];
 
-                #[cfg(all(feature = "accelerate", target_os = "macos"))]
                 {
-                    super::matmul::blas::sgemm_full(
-                        super::matmul::GemmParams {
-                            m: oc_per_group,
-                            n: tile_len,
-                            k: kernel_size,
-                            alpha: 1.0,
-                            beta: 0.0, // Write to temp, add bias after.
-                            trans_a: false,
-                            trans_b: false,
-                        },
-                        w_slice,
-                        &col[..kernel_size * tile_len],
-                        &mut tile_out,
-                    );
-                }
+                    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+                    {
+                        super::matmul::blas::sgemm_full(
+                            super::matmul::GemmParams {
+                                m: oc_per_group,
+                                n: tile_len,
+                                k: kernel_size,
+                                alpha: 1.0,
+                                beta: 0.0,
+                                trans_a: false,
+                                trans_b: false,
+                            },
+                            w_slice,
+                            &col[..kernel_size * tile_len],
+                            &mut tile_out,
+                        );
+                    }
 
-                #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-                {
-                    super::matmul::matmul_k_outer(
-                        w_slice,
-                        &col[..kernel_size * tile_len],
-                        &mut tile_out,
-                        oc_per_group,
-                        kernel_size,
-                        tile_len,
-                    );
+                    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+                    {
+                        super::matmul::matmul_k_outer(
+                            w_slice,
+                            &col[..kernel_size * tile_len],
+                            &mut tile_out,
+                            oc_per_group,
+                            kernel_size,
+                            tile_len,
+                        );
+                    }
                 }
 
                 // Scatter tile results into output (add to bias if present).
