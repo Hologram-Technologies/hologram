@@ -77,9 +77,36 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 - [ ] **5.2**: Wire workspace buffer reuse into arena allocation (not yet wired — architectural)
 
 ### Phase 6: WebGPU Kernel Parity (wasm GPU path)
-- [ ] **6.1**: Conv2d WGSL compute shader
 - [x] **6.2**: Softmax + RmsNorm already existed; GroupNorm WGSL shader added
-- [ ] **6.3**: Attention WGSL shader (tiled)
+
+---
+
+## Sprint 31: BufferArena Workspace Reuse
+
+**Plan**: [plans/038-buffer-arena-workspace-reuse.md](plans/038-buffer-arena-workspace-reuse.md)
+
+Goal: wire the compiler's `plan_workspace()` slot assignments into the executor's
+`BufferArena` so non-overlapping nodes share physical buffers. Expected 20-40%
+peak activation memory reduction with zero latency regression.
+
+### Phase 1: Thread WorkspaceLayout into EnumTape
+- [x] **1.1**: Add `slot_assignments: Vec<u32>` + `n_slots: u32` to `EnumTape`
+- [x] **1.2**: `compute_slot_assignments()` — greedy interval coloring from producer/consumer maps
+
+### Phase 2: MmapBuffer Free-List Recycling
+- [x] **2.1**: Add `free_mmaps: Vec<MmapBuffer>` free-list to `BufferArena`
+- [x] **2.2**: `evict()` pushes large MmapBuffers to free-list instead of dropping
+- [x] **2.3**: `swap_insert_with_elem_size()` reuses from free-list before allocating
+
+### Phase 3: Tests + Validation
+- [x] **3.1**: 3 new tests: evict recycles, swap_insert reuses, small evict no-recycle
+- [ ] **3.2**: Peak memory profiling (SD UNet, LLaMA 7B)
+
+---
+
+## Backlog: WebGPU Kernel Parity (wasm GPU path)
+- [ ] Conv2d WGSL compute shader (im2col + tiled GEMM in WGSL)
+- [ ] Attention WGSL shader (tiled, Flash Attention-style)
 
 ---
 

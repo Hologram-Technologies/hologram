@@ -191,6 +191,9 @@ pub struct BufferArena<'a> {
     metas: Vec<Option<hologram_core::op::TensorMeta>>,
     /// Number of populated slots.
     count: usize,
+    /// Free-list of recycled MmapBuffers. Evicted large buffers are pushed here
+    /// instead of being dropped, so `swap_insert` can reuse them without syscalls.
+    free_mmaps: Vec<MmapBuffer>,
 }
 
 impl Default for BufferArena<'_> {
@@ -208,6 +211,7 @@ impl<'a> BufferArena<'a> {
             elem_sizes: Vec::new(),
             metas: Vec::new(),
             count: 0,
+            free_mmaps: Vec::new(),
         }
     }
 
@@ -223,6 +227,7 @@ impl<'a> BufferArena<'a> {
             elem_sizes,
             metas,
             count: 0,
+            free_mmaps: Vec::new(),
         }
     }
 
@@ -289,9 +294,20 @@ impl<'a> BufferArena<'a> {
             let data = std::mem::take(buf);
             self.buffers[idx] = Some(ArenaBuffer::VecOwned(data));
         } else {
-            // Large: copy into mmap for OS page reclaim on eviction.
-            let mut mmap = MmapBuffer::new(len);
-            mmap.as_mut_slice().copy_from_slice(buf);
+            // Large: try to reuse a recycled MmapBuffer from the free-list.
+            // Pick the first one that's large enough (avoids mmap/munmap syscall).
+            let mmap = {
+                let pos = self.free_mmaps.iter().position(|m| m.len() >= len);
+                if let Some(pos) = pos {
+                    let mut recycled = self.free_mmaps.swap_remove(pos);
+                    recycled.as_mut_slice()[..len].copy_from_slice(buf);
+                    recycled
+                } else {
+                    let mut fresh = MmapBuffer::new(len);
+                    fresh.as_mut_slice().copy_from_slice(buf);
+                    fresh
+                }
+            };
             buf.clear();
             if buf.capacity() > 64 * 1024 {
                 buf.shrink_to(4096);
@@ -682,8 +698,17 @@ impl<'a> BufferArena<'a> {
     /// have executed, the node's activation buffer is no longer needed.
     pub fn evict(&mut self, id: NodeId) {
         let idx = id.index() as usize;
-        if idx < self.buffers.len() && self.buffers[idx].take().is_some() {
-            self.count -= 1;
+        if idx < self.buffers.len() {
+            if let Some(buf) = self.buffers[idx].take() {
+                self.count -= 1;
+                // Recycle large MmapBuffers to the free-list instead of dropping.
+                // Avoids mmap/munmap syscalls on reuse.
+                if let ArenaBuffer::Owned(mmap) = buf {
+                    if mmap.len() >= MMAP_THRESHOLD {
+                        self.free_mmaps.push(mmap);
+                    }
+                }
+            }
         }
     }
 
@@ -955,5 +980,49 @@ mod tests {
         arena.insert(id(1), vec![0u8; 16]);
         // Borrowed LHS can't be modified in-place.
         assert!(!arena.add_inplace(id(0), id(1)));
+    }
+
+    #[test]
+    fn evict_recycles_mmap_buffers() {
+        let mut arena = BufferArena::new();
+        // Insert a large buffer (above MMAP_THRESHOLD = 256KB).
+        let big = vec![42u8; 512 * 1024];
+        arena.insert(id(0), big);
+        assert_eq!(arena.free_mmaps.len(), 0);
+
+        // Evict — should recycle to free-list.
+        arena.evict(id(0));
+        assert_eq!(arena.free_mmaps.len(), 1);
+        assert!(arena.free_mmaps[0].len() >= 512 * 1024);
+    }
+
+    #[test]
+    fn swap_insert_reuses_recycled_mmap() {
+        let mut arena = BufferArena::new();
+        // Insert and evict a 512KB buffer to populate the free-list.
+        let big1 = vec![1u8; 512 * 1024];
+        arena.insert(id(0), big1);
+        arena.evict(id(0));
+        assert_eq!(arena.free_mmaps.len(), 1);
+
+        // Insert another buffer of same size — should reuse from free-list.
+        let mut big2 = vec![2u8; 512 * 1024];
+        arena.swap_insert_with_elem_size(id(1), &mut big2, 4);
+        assert_eq!(arena.free_mmaps.len(), 0, "free-list should be drained");
+
+        // Verify the data was written correctly.
+        let data = arena.get(id(1)).unwrap();
+        assert_eq!(data.len(), 512 * 1024);
+        assert_eq!(data[0], 2);
+    }
+
+    #[test]
+    fn small_evict_does_not_recycle() {
+        let mut arena = BufferArena::new();
+        // Insert a small buffer (below MMAP_THRESHOLD).
+        arena.insert(id(0), vec![0u8; 1024]);
+        arena.evict(id(0));
+        // Small buffers are NOT recycled (they use VecOwned, not MmapBuffer).
+        assert_eq!(arena.free_mmaps.len(), 0);
     }
 }

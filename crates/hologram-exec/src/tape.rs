@@ -3277,6 +3277,13 @@ pub struct EnumTape {
     /// are force-evicted after first consumer and recomputed when needed.
     /// Default: false (checkpoints identified but not triggered).
     pub checkpoint_enabled: bool,
+    /// Workspace slot assignments: `slot_assignments[node_idx] = slot_id`.
+    /// Nodes with the same slot_id share a physical buffer (non-overlapping lifetimes).
+    /// `u32::MAX` means no aliasing (node uses its own buffer).
+    /// Computed by `compute_slot_assignments()` after consumer counts are finalized.
+    pub(crate) slot_assignments: Vec<u32>,
+    /// Number of workspace slots. Pre-allocated in `prewarm_arena()`.
+    pub(crate) n_slots: u32,
 }
 
 impl EnumTape {
@@ -3290,6 +3297,8 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            slot_assignments: Vec::new(),
+            n_slots: 0,
         }
     }
 
@@ -3305,6 +3314,8 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            slot_assignments: Vec::new(),
+            n_slots: 0,
         }
     }
 
@@ -3480,6 +3491,104 @@ impl EnumTape {
             tracing::info!(
                 n_checkpoints = self.checkpoint_map.len(),
                 "activation checkpointing: identified recomputable skip connections"
+            );
+        }
+
+        // ── Workspace slot assignment (greedy interval coloring) ─────────
+        // Nodes with non-overlapping lifetimes can share a physical buffer.
+        // Greedy: for each node (sorted by birth), try to reuse a free slot;
+        // if none fit, allocate a new slot.
+        self.compute_slot_assignments(&producer, &last_consumer);
+    }
+
+    /// Compute workspace slot assignments using greedy interval coloring.
+    /// Nodes whose lifetimes don't overlap share the same physical buffer slot.
+    fn compute_slot_assignments(
+        &mut self,
+        producer: &std::collections::HashMap<u32, usize>,
+        last_consumer: &std::collections::HashMap<u32, usize>,
+    ) {
+        let n = self.consumer_counts.len();
+        let mut assignments = vec![u32::MAX; n]; // u32::MAX = unassigned
+                                                 // slot_end[slot_id] = instruction index where slot becomes free
+        let mut slot_ends: Vec<usize> = Vec::new();
+
+        // Build intervals for non-protected, non-constant nodes.
+        struct Interval {
+            node: u32,
+            born: usize,
+            dies: usize,
+        }
+        let mut intervals: Vec<Interval> = Vec::new();
+        for (&node_idx, &prod_instr) in producer {
+            let idx = node_idx as usize;
+            if idx >= self.consumer_counts.len() {
+                continue;
+            }
+            // Skip protected nodes (constants, outputs).
+            if self.consumer_counts[idx] == u32::MAX {
+                continue;
+            }
+            // Skip checkpointed nodes (they get evicted/recomputed).
+            if self.checkpoint_map.contains_key(&node_idx) {
+                continue;
+            }
+            let dies = last_consumer.get(&node_idx).copied().unwrap_or(prod_instr);
+            intervals.push(Interval {
+                node: node_idx,
+                born: prod_instr,
+                dies,
+            });
+        }
+
+        // Sort by birth time (greedy scheduling).
+        intervals.sort_by_key(|iv| iv.born);
+
+        for iv in &intervals {
+            // Try to reuse a free slot (one that ended before this interval starts).
+            // Prefer smallest slot that fits (best-fit to reduce waste).
+            let mut best_slot = None;
+            for (slot_id, &end) in slot_ends.iter().enumerate() {
+                if end < iv.born {
+                    best_slot = match best_slot {
+                        None => Some(slot_id),
+                        Some(prev) => {
+                            // Already found one — pick whichever; first-fit is fine.
+                            Some(prev)
+                        }
+                    };
+                    if best_slot.is_some() {
+                        break; // first-fit
+                    }
+                }
+            }
+
+            let slot_id = match best_slot {
+                Some(id) => {
+                    slot_ends[id] = iv.dies;
+                    id
+                }
+                None => {
+                    let id = slot_ends.len();
+                    slot_ends.push(iv.dies);
+                    id
+                }
+            };
+
+            assignments[iv.node as usize] = slot_id as u32;
+        }
+
+        self.n_slots = slot_ends.len() as u32;
+        self.slot_assignments = assignments;
+
+        if self.n_slots > 0 {
+            let total_nodes = intervals.len();
+            tracing::info!(
+                slots = self.n_slots,
+                nodes = total_nodes,
+                "workspace: {total_nodes} nodes → {} slots ({:.0}% memory reduction)",
+                self.n_slots,
+                (1.0 - self.n_slots as f64 / total_nodes.max(1) as f64) * 100.0,
             );
         }
     }
