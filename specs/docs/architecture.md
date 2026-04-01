@@ -161,15 +161,94 @@ and weight pages are prefetched into cache.
 
 ### Fusion — Path Shortening
 
-Before tape compilation, optimisation passes shorten the graph:
+Before tape compilation, a single topological pass applies five complementary optimisation passes
+that shorten the graph, eliminate intermediate buffers, and reduce dispatch overhead. Topological
+order guarantees that predecessors are processed before their successors, so both forward-looking
+(epilogue) and backward-walking (view) fusions compose correctly in one pass.
 
-- **View fusion**: chains of unary ops (e.g. Sigmoid → Relu) are composed into a single 256-byte
-  LUT via `fuse_unary_chains()`, replacing multiple nodes with one `FusedView` node.
-- **CSE**: duplicate subexpressions are merged, eliminating redundant computation paths.
+**Key entry point**: `fusion::fuse()` (`hologram-graph/src/fusion/mod.rs`)
 
-These reduce both the instruction count and the critical path length.
+#### 1. Constant Folding
 
-**Key types**: `fuse_unary_chains()` (`hologram-graph/src/fusion/view_fusion.rs`)
+Operations whose inputs are all compile-time constants are evaluated immediately and replaced with
+a single `Const` node. Handles unary/binary `LutOp`, `PrimOp`, `FusedView`, and
+`RingPrimUnary`/`RingPrimBinary` variants.
+
+**Effect**: eliminates computation entirely and shrinks the graph.
+
+**Key file**: `hologram-graph/src/fusion/constant.rs`
+
+#### 2. View Fusion (Q0 — byte domain)
+
+Backward-walks each node to find chains of byte-domain unary ops and composes them into a single
+256-byte lookup table (`ElementWiseView`). A chain like `Sigmoid → Relu → Gelu` becomes one
+`FusedView` node — one array access regardless of chain length.
+
+- **Algebraic fast path**: involutions such as `Neg∘Neg` and `Bnot∘Bnot` are detected and replaced
+  with `Passthrough` (zero-cost identity) without materialising a table.
+- **Size**: each `ElementWiseView` is exactly 256 bytes, cache-line aligned for efficient L1 access.
+
+**Effect**: replaces N-node chains with a single node; eliminates all intermediate buffers.
+
+**Key file**: `hologram-graph/src/fusion/view_fusion.rs`
+
+#### 3. Q1 View Fusion (16-bit domain)
+
+Mirrors Q0 view fusion for operations at the Q1 ring level (`RingPrimUnary`/`RingPrimBinary` with
+`RingLevel::Q1`). Produces a 128 KB `ElementWiseView16` table (heap-allocated via `Box` to avoid
+stack overflow). The same involution fast path applies at Q1.
+
+- **Ring-level safety**: never fuses across ring-level boundaries (Q0 → Q1 remains intact).
+
+**Key file**: `hologram-graph/src/fusion/q1_view_fusion.rs`
+
+#### 4. Epilogue Fusion (MatMul / Conv2d / Norm + Activation)
+
+Detects linear-algebra ops whose sole successor is an element-wise activation (and optionally a
+bias add in between) and merges them into a single fused node. The activation is applied
+**in-register** during accumulation, avoiding a round-trip to memory for the intermediate buffer.
+
+Supported patterns:
+
+| Pattern | Fused node |
+|---------|------------|
+| `MatMul → Activation` | `FusedMatMulActivation` |
+| `MatMul → Add(bias) → Activation` | `FusedMatMulBiasActivation` |
+| `Conv2d → Activation` | `FusedConv2dActivation` |
+| `Conv2d → Add(bias) → Activation` | `FusedConv2dBiasActivation` |
+| `RmsNorm / LayerNorm / GroupNorm → Activation` | `Fused{Norm}Activation` |
+| `MatMulLut4 / MatMulLut8 → Activation` | `MatMulLut{4,8}Activation` |
+
+Detection rule: the predecessor has exactly one successor, and that successor has exactly one
+predecessor (no fan-out / fan-in). The successor absorbs the predecessor's inputs and the
+predecessor is removed.
+
+**Effect**: eliminates large intermediate buffers. For example, in Stable Diffusion's UNet
+(512×512, 320 channels), one Conv2d + Activation fusion saves ~335 MB of memory bandwidth;
+across 23 ResNet blocks that totals ~7.7 GB saved per inference step.
+
+**Key file**: `hologram-graph/src/fusion/float_fusion.rs`
+
+#### 5. Common Subexpression Elimination (CSE)
+
+Hash-based deduplication of nodes with identical `(op, sorted_predecessors)` signatures. All
+successors of a duplicate node are rewired to the canonical node.
+
+- **Commutative-aware**: predecessor lists are only sorted for commutative ops (`Add`, `Mul`) to
+  preserve semantics of non-commutative ops (`Sub`, `Div`).
+- **Purity check**: only deduplicates pure ops; skips `Input`, `Output`, `CallSubgraph`.
+
+**Key file**: `hologram-graph/src/fusion/cse.rs`
+
+#### Fusion → Tape mapping
+
+The fused graph is lowered into a flat tape of `TapeKernel` instructions. Each fused graph node
+maps to a specific kernel variant — `LutView`, `LutView16`, `InlineMatMulActivation`,
+`InlineConv2dBiasActivation`, `FusedRmsNormActivation`, etc. — so the executor sees fully
+resolved instructions with **zero pattern-detection overhead** at runtime.
+
+**Key types**: `TapeKernel` (`hologram-exec/src/tape.rs`), tape builder
+(`hologram-exec/src/tape_builder.rs`)
 
 ### Prism Grounding
 

@@ -87,8 +87,18 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
             continue; // MatMul consumed — skip 2-node fusion.
         }
 
+        // 3b. Conv2d + bias + activation (3-node, same priority as matmul bias fusion)
+        if float_fusion::try_fuse_conv2d_bias_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+            continue;
+        }
+
         // 4. MatMul + activation epilogue fusion (forward: matmul absorbs successor)
         if float_fusion::try_fuse_matmul_activation(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+        }
+        // 4b. Conv2d + activation epilogue fusion
+        if float_fusion::try_fuse_conv2d_activation(graph, id, &succ_index) {
             stats.matmul_activations_fused += 1;
         }
         if float_fusion::try_fuse_lut_gemm_activation(graph, id, &succ_index) {

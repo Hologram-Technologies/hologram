@@ -16,6 +16,35 @@
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 - [x] Shape-aware tape execution API (feat/ai-optimization)
 
+## Sprint 29: Conv2d Epilogue Fusion — Accelerate SD UNet Chain
+
+**Plan**: [plans/035-conv2d-epilogue-fusion.md](plans/035-conv2d-epilogue-fusion.md)
+
+Goal: fuse Conv2d + Activation (and Conv2d + Bias + Activation) into single tape
+kernels, eliminating intermediate buffer materialization. GroupNorm → SiLU is already
+fused (Sprint 23). For 512×512 SD inference with 23 ResNet blocks, this eliminates
+~7.7GB of unnecessary memory traffic per step.
+
+### Phase 1: Conv2d + Activation Epilogue Fusion
+- [ ] **1.1**: Add `FusedConv2dActivation` GraphOp variant
+- [ ] **1.2**: Add `try_fuse_conv2d_activation()` fusion pattern
+- [ ] **1.3**: Add `InlineConv2dActivation` TapeKernel + dispatch
+- [ ] **1.4**: Wire tape builder + exhaustive match coverage
+- [ ] **1.5**: Tests: fusion detection, no-fuse (fan-out), correctness
+
+### Phase 2: Conv2d + Bias + Activation (3-node)
+- [ ] **2.1**: Add `FusedConv2dBiasActivation` GraphOp variant
+- [ ] **2.2**: Add `try_fuse_conv2d_bias_activation()` fusion pattern
+- [ ] **2.3**: Add `InlineConv2dBiasActivation` TapeKernel + dispatch
+- [ ] **2.4**: Tests: 3-node pattern, non-constant bias rejection
+
+### Phase 3: Validation
+- [ ] **3.1**: Verify `can_reuse_input` for Attention → MatMul handoff
+- [ ] **3.2**: Conv2d fusion benchmark
+- [ ] **3.3**: End-to-end SD UNet latency comparison
+
+---
+
 ## Sprint 28: KV Cache Quantization — Asymmetric Compression
 
 **Plan**: [plans/034-kv-cache-quantization.md](plans/034-kv-cache-quantization.md)

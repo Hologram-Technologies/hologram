@@ -306,6 +306,57 @@ impl KvStore {
                 Ok(Self::apply_unary(&view, inputs[0]))
             }
             GraphOp::RingPrimBinary(p, _level) => Self::apply_binary(*p, inputs[0], inputs[1]),
+            GraphOp::FusedConv2dActivation { activation, .. }
+            | GraphOp::FusedConv2dBiasActivation { activation, .. } => {
+                // Conv2d fusion is dispatched via tape path for full spatial support;
+                // in KV store fallback, dispatch as regular Conv2d + apply activation.
+                let conv_op = match op {
+                    GraphOp::FusedConv2dActivation {
+                        kernel_h,
+                        kernel_w,
+                        stride_h,
+                        stride_w,
+                        pad_h,
+                        pad_w,
+                        dilation_h,
+                        dilation_w,
+                        group,
+                        ..
+                    }
+                    | GraphOp::FusedConv2dBiasActivation {
+                        kernel_h,
+                        kernel_w,
+                        stride_h,
+                        stride_w,
+                        pad_h,
+                        pad_w,
+                        dilation_h,
+                        dilation_w,
+                        group,
+                        ..
+                    } => FloatOp::Conv2d {
+                        kernel_h: *kernel_h,
+                        kernel_w: *kernel_w,
+                        stride_h: *stride_h,
+                        stride_w: *stride_w,
+                        pad_h: *pad_h,
+                        pad_w: *pad_w,
+                        dilation_h: *dilation_h,
+                        dilation_w: *dilation_w,
+                        group: *group,
+                        input_h: 0,
+                        input_w: 0,
+                    },
+                    _ => unreachable!(),
+                };
+                let mut result = crate::float_dispatch::dispatch_float_ctx(&conv_op, inputs, ctx)?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
             GraphOp::RingActivation(_, _)
             | GraphOp::RingAccumulate(_)
             | GraphOp::RingReduce { .. }

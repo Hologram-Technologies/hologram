@@ -377,6 +377,235 @@ pub fn try_fuse_lut_gemm_activation(
     true
 }
 
+/// Try to fuse a Conv2d + Add(constant bias) + Activation into a single
+/// `FusedConv2dBiasActivation` node. Same 3-node pattern as matmul bias fusion.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_conv2d_bias_activation(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let conv_params = match &node.op {
+        GraphOp::Float(FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            ..
+        }) => (
+            *kernel_h,
+            *kernel_w,
+            *stride_h,
+            *stride_w,
+            *pad_h,
+            *pad_w,
+            *dilation_h,
+            *dilation_w,
+            *group,
+        ),
+        _ => return false,
+    };
+
+    // Conv2d must have exactly one successor (the Add).
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let add_id = succs[0];
+
+    let add_node = match graph.get(add_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    if !matches!(&add_node.op, GraphOp::Float(FloatOp::Add)) {
+        return false;
+    }
+
+    if add_node.inputs.len() != 2 {
+        return false;
+    }
+
+    // Find the bias constant.
+    let bias_node_id = {
+        let mut found = None;
+        for slot in &add_node.inputs {
+            if let InputSource::Node(pred_id) = &slot.source {
+                if *pred_id == id {
+                    continue;
+                }
+                if let Some(pred_node) = graph.get(*pred_id) {
+                    if matches!(&pred_node.op, GraphOp::Constant(_)) {
+                        found = Some(*pred_id);
+                    }
+                }
+            }
+        }
+        match found {
+            Some(nid) => nid,
+            None => return false,
+        }
+    };
+
+    // Add must have exactly one successor (the Activation).
+    let add_succs = Graph::successors_from_index(add_id, succ_index);
+    if add_succs.len() != 1 {
+        return false;
+    }
+    let act_id = add_succs[0];
+
+    let act_node = match graph.get(act_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let activation = match &act_node.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+
+    let act_preds: Vec<NodeId> = act_node.dependencies().collect();
+    if act_preds.len() != 1 {
+        return false;
+    }
+
+    // Build fused inputs: [conv_data, conv_weight, bias_constant].
+    // Conv2d has 3 inputs [data, weight, original_bias]; replace original_bias with the Add's bias.
+    let mut fused_inputs = node.inputs.clone();
+    // If Conv2d already had a bias input, replace it. Otherwise append.
+    if fused_inputs.len() >= 3 {
+        fused_inputs[2] = crate::graph::node::InputSlot {
+            source: InputSource::Node(bias_node_id),
+            output_port: 0,
+        };
+    } else {
+        fused_inputs.push(crate::graph::node::InputSlot {
+            source: InputSource::Node(bias_node_id),
+            output_port: 0,
+        });
+    }
+
+    let (kh, kw, sh, sw, ph, pw, dh, dw, g) = conv_params;
+    graph.replace_op(
+        act_id,
+        GraphOp::FusedConv2dBiasActivation {
+            kernel_h: kh,
+            kernel_w: kw,
+            stride_h: sh,
+            stride_w: sw,
+            pad_h: ph,
+            pad_w: pw,
+            dilation_h: dh,
+            dilation_w: dw,
+            group: g,
+            activation,
+        },
+    );
+    if let Some(act_node) = graph.get_mut(act_id) {
+        act_node.inputs = fused_inputs;
+    }
+
+    graph.remove_node(id);
+    graph.remove_node(add_id);
+    true
+}
+
+/// Try to fuse a Conv2d forward into a successor unary activation.
+/// Same 2-node pattern as `try_fuse_matmul_activation`.
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_conv2d_activation(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let conv_params = match &node.op {
+        GraphOp::Float(FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            ..
+        }) => (
+            *kernel_h,
+            *kernel_w,
+            *stride_h,
+            *stride_w,
+            *pad_h,
+            *pad_w,
+            *dilation_h,
+            *dilation_w,
+            *group,
+        ),
+        _ => return false,
+    };
+
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let succ_id = succs[0];
+
+    let succ = match graph.get(succ_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let activation = match &succ.op {
+        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
+        _ => return false,
+    };
+
+    let succ_preds: Vec<NodeId> = succ.dependencies().collect();
+    if succ_preds.len() != 1 {
+        return false;
+    }
+
+    let conv_inputs = node.inputs.clone();
+    let (kh, kw, sh, sw, ph, pw, dh, dw, g) = conv_params;
+    graph.replace_op(
+        succ_id,
+        GraphOp::FusedConv2dActivation {
+            kernel_h: kh,
+            kernel_w: kw,
+            stride_h: sh,
+            stride_w: sw,
+            pad_h: ph,
+            pad_w: pw,
+            dilation_h: dh,
+            dilation_w: dw,
+            group: g,
+            activation,
+        },
+    );
+    if let Some(succ_node) = graph.get_mut(succ_id) {
+        succ_node.inputs = conv_inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,5 +890,123 @@ mod tests {
             }
         }
         assert_eq!(fused, 0);
+    }
+
+    // ── Conv2d fusion tests ──────────────────────────────────────────
+
+    fn make_conv2d_op() -> GraphOp {
+        GraphOp::Float(FloatOp::Conv2d {
+            kernel_h: 3,
+            kernel_w: 3,
+            stride_h: 1,
+            stride_w: 1,
+            pad_h: 1,
+            pad_w: 1,
+            dilation_h: 1,
+            dilation_w: 1,
+            group: 1,
+            input_h: 32,
+            input_w: 32,
+        })
+    }
+
+    #[test]
+    fn fuse_conv2d_silu() {
+        // Input, Weight, Bias → Conv2d → SiLU → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0: data
+            .node(GraphOp::Input) // 1: weight
+            .node(GraphOp::Input) // 2: bias
+            .node_with_inputs(make_conv2d_op(), &[0, 1, 2]) // 3: Conv2d
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[3]) // 4: SiLU
+            .node_with_inputs(GraphOp::Output, &[4]) // 5: Output
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_conv2d_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+        // Input, Weight, Bias, FusedConv2dActivation, Output = 5 nodes
+        assert_eq!(g.node_count(), 5);
+
+        let fused_node = g
+            .node_ids()
+            .into_iter()
+            .find(|&id| matches!(g.get(id).unwrap().op, GraphOp::FusedConv2dActivation { .. }))
+            .expect("should have FusedConv2dActivation");
+        if let GraphOp::FusedConv2dActivation {
+            activation,
+            kernel_h,
+            kernel_w,
+            ..
+        } = &g.get(fused_node).unwrap().op
+        {
+            assert_eq!(*activation, FloatOp::Silu);
+            assert_eq!((*kernel_h, *kernel_w), (3, 3));
+        }
+    }
+
+    #[test]
+    fn no_fuse_conv2d_fan_out() {
+        // Conv2d has 2 successors → should NOT fuse.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(make_conv2d_op(), &[0, 1, 2])
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[3])
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[3])
+            .node_with_inputs(GraphOp::Output, &[4])
+            .node_with_inputs(GraphOp::Output, &[5])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_conv2d_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 0);
+    }
+
+    #[test]
+    fn fuse_conv2d_via_full_pass() {
+        // Verify Conv2d fusion works through the full `fuse()` pass.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(make_conv2d_op(), &[0, 1, 2])
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[3])
+            .node_with_inputs(GraphOp::Output, &[4])
+            .build();
+
+        let stats = crate::fusion::fuse(&mut g).unwrap();
+        assert!(
+            stats.matmul_activations_fused >= 1,
+            "Conv2d+SiLU should fuse via full pass"
+        );
+
+        let has_fused = g
+            .node_ids()
+            .into_iter()
+            .any(|id| matches!(g.get(id).unwrap().op, GraphOp::FusedConv2dActivation { .. }));
+        assert!(
+            has_fused,
+            "should have FusedConv2dActivation after full fuse()"
+        );
     }
 }

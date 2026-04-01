@@ -139,6 +139,34 @@ pub enum GraphOp {
         n: u32,
         activation: FloatOp,
     },
+    /// Fused Conv2d + activation (epilogue fusion).
+    /// Three inputs (same as Conv2d): [data, weight, bias].
+    FusedConv2dActivation {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        activation: FloatOp,
+    },
+    /// Fused Conv2d + bias add + activation (3-node epilogue fusion).
+    /// Three inputs: [data, weight, bias_constant].
+    FusedConv2dBiasActivation {
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+        activation: FloatOp,
+    },
     /// Identity passthrough — zero-copy forward of input to output.
     ///
     /// Produced by view fusion when two involutions compose to identity
@@ -231,6 +259,8 @@ impl GraphOp {
             Self::FusedFloatChain(_) => 1,
             Self::FusedMatMulActivation { .. } => 2,
             Self::FusedMatMulBiasActivation { .. } => 3,
+            Self::FusedConv2dActivation { .. } => 3, // data, weight, bias (same as Conv2d)
+            Self::FusedConv2dBiasActivation { .. } => 3,
             Self::FusedRmsNormActivation { .. } => 2,
             Self::FusedLayerNormActivation { .. } | Self::FusedGroupNormActivation { .. } => 3,
         }
@@ -259,6 +289,8 @@ impl GraphOp {
                 | Self::FusedFloatChain(_)
                 | Self::FusedMatMulActivation { .. }
                 | Self::FusedMatMulBiasActivation { .. }
+                | Self::FusedConv2dActivation { .. }
+                | Self::FusedConv2dBiasActivation { .. }
                 | Self::FusedRmsNormActivation { .. }
                 | Self::FusedLayerNormActivation { .. }
                 | Self::FusedGroupNormActivation { .. }

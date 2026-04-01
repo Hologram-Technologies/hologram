@@ -26,14 +26,24 @@ f64 ──[embed: pi]──► u8 ──[LUT: F]──► u8 ──[lift: lambda
 
 Four encoding strategies cover periodic (angle), signed-range (signed), unit-interval (unsigned), and pass-through (raw) domains.
 
-### View fusion
+### Compile-time fusion
 
-`ElementWiseView` composes arbitrary chains of unary tables into a single 256-byte lookup at build time:
+Five optimisation passes run during graph compilation, before any code executes:
+
+1. **Constant folding** — ops on compile-time constants are evaluated and replaced with a single `Const` node.
+2. **View fusion (Q0)** — chains of byte-domain unary ops are composed into a single 256-byte lookup table. Involutions like `Neg∘Neg` cancel to zero-cost identity.
+3. **Q1 view fusion** — same composition for 16-bit ring operations (128 KB table). Never fuses across ring-level boundaries.
+4. **Epilogue fusion** — `MatMul`, `Conv2d`, and normalisation ops absorb their successor activation (and optional bias add) so the activation is applied in-register, eliminating intermediate buffers.
+5. **Common subexpression elimination** — duplicate subexpressions are hash-deduplicated.
+
+View fusion example:
 
 ```rust
 let fused = view_sin.then(view_relu).then(view_sigmoid);
 // fused.apply(x) performs one array access regardless of chain length
 ```
+
+Epilogue fusion is the biggest memory-bandwidth win: in Stable Diffusion's UNet (512×512, 320 channels), Conv2d + Activation fusion saves ~7.7 GB of memory traffic per inference step across 23 ResNet blocks.
 
 ### LUT-GEMM
 

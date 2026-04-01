@@ -169,6 +169,12 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         } => {
             json!({"FusedGroupNormActivation": {"num_groups": num_groups, "epsilon": epsilon, "activation": activation.name()}})
         }
+        GraphOp::FusedConv2dActivation { activation, .. } => {
+            json!({"FusedConv2dActivation": {"activation": activation.name()}})
+        }
+        GraphOp::FusedConv2dBiasActivation { activation, .. } => {
+            json!({"FusedConv2dBiasActivation": {"activation": activation.name()}})
+        }
         GraphOp::Custom { id, arity } => {
             json!({"Custom": {"id": id.raw(), "arity": arity}})
         }

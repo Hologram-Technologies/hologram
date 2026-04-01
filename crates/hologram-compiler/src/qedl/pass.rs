@@ -41,6 +41,8 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::FusedFloatChain(_)
         | GraphOp::FusedMatMulActivation { .. }
         | GraphOp::FusedMatMulBiasActivation { .. }
+        | GraphOp::FusedConv2dActivation { .. }
+        | GraphOp::FusedConv2dBiasActivation { .. }
         | GraphOp::FusedRmsNormActivation { .. }
         | GraphOp::FusedLayerNormActivation { .. }
         | GraphOp::FusedGroupNormActivation { .. }
