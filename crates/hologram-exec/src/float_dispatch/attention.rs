@@ -5,6 +5,283 @@ use super::helpers::*;
 use super::matmul::GemmParams;
 use crate::error::{ExecError, ExecResult};
 
+// ── SIMD-accelerated attention primitives ────────────────────────────────
+// Functions are conditionally compiled per target — suppress dead_code warnings
+// from cfg branches that don't apply to the current compilation target.
+
+/// Dot product of two f32 slices, using SIMD where available.
+///
+/// Falls back to scalar on unsupported platforms. The slices must have
+/// the same length (typically `head_dim`, 64-128 for most models).
+#[allow(dead_code)] // Used in non-BLAS path and tests
+#[inline(always)]
+pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len());
+    #[cfg(target_arch = "aarch64")]
+    {
+        dot_f32_neon(a, b)
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    {
+        dot_f32_avx2_fma(a, b)
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            target_feature = "fma"
+        )
+    )))]
+    {
+        dot_f32_scalar(a, b)
+    }
+}
+
+/// Fused `out[i] += w * v[i]` using SIMD where available.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn accumulate_weighted(out: &mut [f32], v: &[f32], w: f32) {
+    debug_assert_eq!(out.len(), v.len());
+    #[cfg(target_arch = "aarch64")]
+    {
+        accumulate_weighted_neon(out, v, w);
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    {
+        accumulate_weighted_avx2_fma(out, v, w);
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            target_feature = "fma"
+        )
+    )))]
+    {
+        accumulate_weighted_scalar(out, v, w);
+    }
+}
+
+/// Scale all elements: `out[i] *= factor`.
+#[allow(dead_code)]
+#[inline(always)]
+fn scale_slice(out: &mut [f32], factor: f32) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        scale_slice_neon(out, factor);
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    {
+        scale_slice_avx2(out, factor);
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            target_feature = "fma"
+        )
+    )))]
+    {
+        for val in out.iter_mut() {
+            *val *= factor;
+        }
+    }
+}
+
+// ── Scalar fallbacks (used on platforms without SIMD) ────────────────────
+
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn dot_f32_scalar(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn accumulate_weighted_scalar(out: &mut [f32], v: &[f32], w: f32) {
+    for (o, &val) in out.iter_mut().zip(v.iter()) {
+        *o += w * val;
+    }
+}
+
+// ── NEON (aarch64) ──────────────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)] // Used in non-BLAS path
+#[inline(always)]
+fn dot_f32_neon(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::aarch64::*;
+    let n = a.len();
+    let chunks = n / 4;
+    let remainder = n % 4;
+    unsafe {
+        let mut acc = vdupq_n_f32(0.0);
+        let a_ptr = a.as_ptr();
+        let b_ptr = b.as_ptr();
+        for i in 0..chunks {
+            let va = vld1q_f32(a_ptr.add(i * 4));
+            let vb = vld1q_f32(b_ptr.add(i * 4));
+            acc = vfmaq_f32(acc, va, vb);
+        }
+        let mut sum = vaddvq_f32(acc);
+        for i in 0..remainder {
+            sum += a[chunks * 4 + i] * b[chunks * 4 + i];
+        }
+        sum
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
+#[inline(always)]
+fn accumulate_weighted_neon(out: &mut [f32], v: &[f32], w: f32) {
+    use std::arch::aarch64::*;
+    let n = out.len();
+    let chunks = n / 4;
+    let remainder = n % 4;
+    unsafe {
+        let vw = vdupq_n_f32(w);
+        let o_ptr = out.as_mut_ptr();
+        let v_ptr = v.as_ptr();
+        for i in 0..chunks {
+            let off = i * 4;
+            let vo = vld1q_f32(o_ptr.add(off));
+            let vv = vld1q_f32(v_ptr.add(off));
+            vst1q_f32(o_ptr.add(off), vfmaq_f32(vo, vw, vv));
+        }
+        for i in 0..remainder {
+            let idx = chunks * 4 + i;
+            out[idx] += w * v[idx];
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
+#[inline(always)]
+fn scale_slice_neon(out: &mut [f32], factor: f32) {
+    use std::arch::aarch64::*;
+    let n = out.len();
+    let chunks = n / 4;
+    let remainder = n % 4;
+    unsafe {
+        let vf = vdupq_n_f32(factor);
+        let ptr = out.as_mut_ptr();
+        for i in 0..chunks {
+            let off = i * 4;
+            let v = vld1q_f32(ptr.add(off));
+            vst1q_f32(ptr.add(off), vmulq_f32(v, vf));
+        }
+        for i in 0..remainder {
+            out[chunks * 4 + i] *= factor;
+        }
+    }
+}
+
+// ── AVX2 + FMA (x86_64) ────────────────────────────────────────────────
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    target_feature = "fma"
+))]
+#[inline(always)]
+fn dot_f32_avx2_fma(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::x86_64::*;
+    let n = a.len();
+    let chunks = n / 8;
+    let remainder = n % 8;
+    unsafe {
+        let mut acc = _mm256_setzero_ps();
+        let a_ptr = a.as_ptr();
+        let b_ptr = b.as_ptr();
+        for i in 0..chunks {
+            let va = _mm256_loadu_ps(a_ptr.add(i * 8));
+            let vb = _mm256_loadu_ps(b_ptr.add(i * 8));
+            acc = _mm256_fmadd_ps(va, vb, acc);
+        }
+        // Horizontal sum: 8 → 4 → 2 → 1
+        let hi = _mm256_extractf128_ps(acc, 1);
+        let lo = _mm256_castps256_ps128(acc);
+        let sum4 = _mm_add_ps(lo, hi);
+        let sum2 = _mm_add_ps(sum4, _mm_movehl_ps(sum4, sum4));
+        let sum1 = _mm_add_ss(sum2, _mm_shuffle_ps(sum2, sum2, 1));
+        let mut sum = _mm_cvtss_f32(sum1);
+        for i in 0..remainder {
+            sum += a[chunks * 8 + i] * b[chunks * 8 + i];
+        }
+        sum
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    target_feature = "fma"
+))]
+#[inline(always)]
+fn accumulate_weighted_avx2_fma(out: &mut [f32], v: &[f32], w: f32) {
+    use std::arch::x86_64::*;
+    let n = out.len();
+    let chunks = n / 8;
+    let remainder = n % 8;
+    unsafe {
+        let vw = _mm256_set1_ps(w);
+        let o_ptr = out.as_mut_ptr();
+        let v_ptr = v.as_ptr();
+        for i in 0..chunks {
+            let off = i * 8;
+            let vo = _mm256_loadu_ps(o_ptr.add(off));
+            let vv = _mm256_loadu_ps(v_ptr.add(off));
+            _mm256_storeu_ps(o_ptr.add(off), _mm256_fmadd_ps(vw, vv, vo));
+        }
+        for i in 0..remainder {
+            let idx = chunks * 8 + i;
+            out[idx] += w * v[idx];
+        }
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    target_feature = "fma"
+))]
+#[inline(always)]
+fn scale_slice_avx2(out: &mut [f32], factor: f32) {
+    use std::arch::x86_64::*;
+    let n = out.len();
+    let chunks = n / 8;
+    let remainder = n % 8;
+    unsafe {
+        let vf = _mm256_set1_ps(factor);
+        let ptr = out.as_mut_ptr();
+        for i in 0..chunks {
+            let off = i * 8;
+            let v = _mm256_loadu_ps(ptr.add(off));
+            _mm256_storeu_ps(ptr.add(off), _mm256_mul_ps(v, vf));
+        }
+        for i in 0..remainder {
+            out[chunks * 8 + i] *= factor;
+        }
+    }
+}
+
 /// Transpose from [seq, n_heads, head_dim] to [n_heads, seq, head_dim].
 ///
 /// Single flat loop with index decomposition — avoids triple-nested loops
@@ -203,7 +480,7 @@ pub(crate) fn dispatch_attention(
 
                 for j in 0..limit {
                     let k_row = &k_head[j * head_dim..(j + 1) * head_dim];
-                    let dot: f32 = q_row.iter().zip(k_row).map(|(a, b)| a * b).sum();
+                    let dot = dot_f32(q_row, k_row);
                     let mut score = dot * scale;
                     if let Some(ref m) = mask {
                         let mask_idx = i * seq_k + j;
@@ -214,11 +491,8 @@ pub(crate) fn dispatch_attention(
                     // rescale the accumulated output and sum.
                     if score > row_max {
                         let correction = (row_max - score).exp();
-                        // Rescale running sum and accumulated output.
                         row_sum *= correction;
-                        for val in o_row.iter_mut().take(head_dim) {
-                            *val *= correction;
-                        }
+                        scale_slice(o_row, correction);
                         row_max = score;
                     }
 
@@ -232,19 +506,14 @@ pub(crate) fn dispatch_attention(
                         continue;
                     }
 
-                    // Accumulate weighted V into output.
+                    // Accumulate weighted V into output (SIMD-accelerated).
                     let v_row = &v_head[j * head_dim..(j + 1) * head_dim];
-                    for (o, &v) in o_row.iter_mut().zip(v_row.iter()) {
-                        *o += w * v;
-                    }
+                    accumulate_weighted(o_row, v_row, w);
                 }
 
                 // Normalize by sum.
                 if row_sum > 0.0 {
-                    let inv = 1.0 / row_sum;
-                    for val in o_row.iter_mut().take(head_dim) {
-                        *val *= inv;
-                    }
+                    scale_slice(o_row, 1.0 / row_sum);
                 }
             }
         }

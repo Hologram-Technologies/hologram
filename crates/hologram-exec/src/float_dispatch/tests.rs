@@ -602,6 +602,53 @@ fn attention_sparse_v_threshold_boundary() {
     }
 }
 
+// ── Plan 040: SIMD attention primitive tests ────────────────────────
+
+#[test]
+fn simd_dot_f32_matches_scalar() {
+    use super::attention::{dot_f32, dot_f32_scalar};
+    // Test with head_dim=128 (typical for Llama)
+    let a: Vec<f32> = (0..128).map(|i| (i as f32) * 0.01 - 0.64).collect();
+    let b: Vec<f32> = (0..128).map(|i| (i as f32) * 0.007 + 0.1).collect();
+    let scalar = dot_f32_scalar(&a, &b);
+    let simd = dot_f32(&a, &b);
+    assert!(
+        (scalar - simd).abs() < 1e-3,
+        "dot product mismatch: scalar={scalar} simd={simd}"
+    );
+    // Test with head_dim=64
+    let scalar64 = dot_f32_scalar(&a[..64], &b[..64]);
+    let simd64 = dot_f32(&a[..64], &b[..64]);
+    assert!(
+        (scalar64 - simd64).abs() < 1e-4,
+        "dot64 mismatch: scalar={scalar64} simd={simd64}"
+    );
+    // Test with non-aligned length (head_dim=65)
+    let scalar65 = dot_f32_scalar(&a[..65], &b[..65]);
+    let simd65 = dot_f32(&a[..65], &b[..65]);
+    assert!(
+        (scalar65 - simd65).abs() < 1e-4,
+        "dot65 mismatch: scalar={scalar65} simd={simd65}"
+    );
+}
+
+#[test]
+fn simd_accumulate_weighted_matches_scalar() {
+    use super::attention::{accumulate_weighted, accumulate_weighted_scalar};
+    let v: Vec<f32> = (0..128).map(|i| (i as f32) * 0.01).collect();
+    let w = 0.35f32;
+    let mut out_scalar = vec![1.0f32; 128];
+    let mut out_simd = vec![1.0f32; 128];
+    accumulate_weighted_scalar(&mut out_scalar, &v, w);
+    accumulate_weighted(&mut out_simd, &v, w);
+    for (i, (&s, &d)) in out_scalar.iter().zip(out_simd.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-6,
+            "accumulate mismatch at {i}: scalar={s} simd={d}"
+        );
+    }
+}
+
 // ── Plan 039: GroupNorm _into tests ─────────────────────────────────
 
 #[test]
