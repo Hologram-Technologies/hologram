@@ -276,6 +276,14 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
                     instr.can_reuse_input = true;
                 }
             }
+            // Binary element-wise Add: reuse first input buffer in-place if
+            // it's single-consumed. This enables Attention → Add(residual) to
+            // write directly into the attention output buffer without allocation.
+            TapeKernel::InlineAdd if instr.input_indices.len() == 2 => {
+                if is_single_consumer(instr.input_indices[0]) {
+                    instr.can_reuse_input = true;
+                }
+            }
             _ => {}
         }
     }

@@ -608,6 +608,62 @@ impl<'a> BufferArena<'a> {
         }
     }
 
+    /// In-place element-wise add: `lhs[i] += rhs[i % rhs_len]` with broadcast.
+    ///
+    /// Operates on two different arena slots without allocation. Uses pointer
+    /// arithmetic to avoid the simultaneous `&mut`/`&` borrow conflict that
+    /// would arise from calling `get_mut_f32` and `get_f32` on the same arena.
+    ///
+    /// # Safety
+    /// Safe as long as `lhs_id != rhs_id` (no aliasing). Panics on same-slot.
+    pub fn add_inplace(&mut self, lhs_id: NodeId, rhs_id: NodeId) -> bool {
+        let lhs_idx = lhs_id.index() as usize;
+        let rhs_idx = rhs_id.index() as usize;
+        assert_ne!(
+            lhs_idx, rhs_idx,
+            "add_inplace: lhs and rhs must be different slots"
+        );
+
+        if lhs_idx >= self.buffers.len() || rhs_idx >= self.buffers.len() {
+            return false;
+        }
+
+        // Get raw pointers to both buffers to bypass borrow checker.
+        // Safe because indices are different — no aliasing.
+        let (lhs_ptr, lhs_len) = {
+            let buf = match &mut self.buffers[lhs_idx] {
+                Some(ArenaBuffer::Owned(m)) => m.as_mut_slice(),
+                Some(ArenaBuffer::VecOwned(v)) => v.as_mut_slice(),
+                _ => return false,
+            };
+            (buf.as_mut_ptr(), buf.len())
+        };
+
+        let (rhs_ptr, rhs_len) = {
+            let buf = match &self.buffers[rhs_idx] {
+                Some(b) => b.as_bytes(),
+                None => return false,
+            };
+            (buf.as_ptr(), buf.len())
+        };
+
+        if lhs_len % 4 != 0 || rhs_len % 4 != 0 || rhs_len == 0 {
+            return false;
+        }
+
+        let lhs_floats = lhs_len / 4;
+        let rhs_floats = rhs_len / 4;
+
+        unsafe {
+            let lhs = std::slice::from_raw_parts_mut(lhs_ptr as *mut f32, lhs_floats);
+            let rhs = std::slice::from_raw_parts(rhs_ptr as *const f32, rhs_floats);
+            for (i, v) in lhs.iter_mut().enumerate() {
+                *v += rhs[i % rhs_floats];
+            }
+        }
+        true
+    }
+
     /// Remove and return the buffer for the given node as owned bytes.
     pub fn take(&mut self, id: NodeId) -> ExecResult<Vec<u8>> {
         let idx = id.index() as usize;
@@ -853,5 +909,51 @@ mod tests {
         // Change to u8 — 12 bytes → 12 elements
         arena.set_elem_size(id(0), 1);
         assert_eq!(arena.elem_count(id(0)).unwrap(), 12);
+    }
+
+    #[test]
+    fn add_inplace_basic() {
+        let mut arena = BufferArena::new();
+        let lhs: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0, 3.0, 4.0]).to_vec();
+        let rhs: Vec<u8> = bytemuck::cast_slice(&[10.0f32, 20.0, 30.0, 40.0]).to_vec();
+        arena.insert(id(0), lhs);
+        arena.insert(id(1), rhs);
+
+        assert!(arena.add_inplace(id(0), id(1)));
+
+        let result: &[f32] = bytemuck::cast_slice(arena.get(id(0)).unwrap());
+        assert_eq!(result, &[11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    fn add_inplace_broadcast() {
+        let mut arena = BufferArena::new();
+        let lhs: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0, 3.0, 4.0]).to_vec();
+        let rhs: Vec<u8> = bytemuck::cast_slice(&[100.0f32, 200.0]).to_vec();
+        arena.insert(id(0), lhs);
+        arena.insert(id(1), rhs);
+
+        assert!(arena.add_inplace(id(0), id(1)));
+
+        let result: &[f32] = bytemuck::cast_slice(arena.get(id(0)).unwrap());
+        assert_eq!(result, &[101.0, 202.0, 103.0, 204.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "add_inplace: lhs and rhs must be different slots")]
+    fn add_inplace_same_slot_panics() {
+        let mut arena = BufferArena::new();
+        arena.insert(id(0), vec![0u8; 16]);
+        arena.add_inplace(id(0), id(0));
+    }
+
+    #[test]
+    fn add_inplace_returns_false_for_borrowed() {
+        let arena_data = vec![0u8; 16];
+        let mut arena = BufferArena::new();
+        arena.insert_borrowed(id(0), &arena_data);
+        arena.insert(id(1), vec![0u8; 16]);
+        // Borrowed LHS can't be modified in-place.
+        assert!(!arena.add_inplace(id(0), id(1)));
     }
 }

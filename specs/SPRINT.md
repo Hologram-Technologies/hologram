@@ -16,6 +16,34 @@
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 - [x] Shape-aware tape execution API (feat/ai-optimization)
 
+## Sprint 31: GEMM / MatMul / Conv2D Kernel Performance
+
+**Plan**: [plans/037-gemm-conv2d-perf.md](plans/037-gemm-conv2d-perf.md)
+
+Goal: maximize GEMM, MatMul, and Conv2D kernel throughput while keeping memory
+usage flat. 10 optimizations across 4 phases targeting cache efficiency, SIMD
+coverage, parallelism, and allocation elimination.
+
+### Phase 1: Foundational (highest impact)
+- [ ] **1.1**: Shared B-panel packing across M-tiles in matmul_k_outer
+- [ ] **1.2**: Enable LUT-GEMM + Conv2D in dispatch_kernel_par (parallel level dispatch)
+
+### Phase 2: Quick Wins
+- [ ] **2.1**: Winograd batched GEMM parallelism (par_chunks_mut over 16 elements)
+- [ ] **2.2**: N-dimension parallelism + lower PAR_M_TILE_THRESHOLD
+- [ ] **2.3**: Eliminate per-call allocations in Conv2D (bias borrow, scratch reuse)
+
+### Phase 3: Conv2D Kernel Improvements
+- [ ] **3.1**: SIMD depthwise Conv2D (interior/border split + vectorization)
+- [ ] **3.2**: Fast im2col (memcpy interior for stride=1)
+- [ ] **3.3**: Cache Winograd weight transform (1-entry LRU, 16MB max)
+
+### Phase 4: Polish
+- [ ] **4.1**: A-panel packing (contiguous MR-strided buffer, +1KB stack)
+- [ ] **4.2**: wasm32 SIMD128 micro-kernels (MR=4, NR=4)
+
+---
+
 ## Sprint 30: CPU Optimization Sweep — Fusion, Prefetch, Parallelism
 
 **Plan**: [plans/036-cpu-optimization-sweep.md](plans/036-cpu-optimization-sweep.md)
@@ -26,7 +54,7 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 ### Phase 1: Fusion Gaps
 - [x] **1.1**: AddRmsNorm + Activation fusion (GraphOp + TapeKernel + dispatch)
 - [x] **1.1b**: InstanceNorm + Activation fusion (same pattern)
-- [ ] **1.2**: Attention + Residual Add fusion
+- [x] **1.2**: Binary in-place Add (zero-alloc Attention→Add(residual) via arena.add_inplace)
 - [x] **1.3**: Transpose elimination (inverse transpose pairs → Passthrough)
 
 ### Phase 2: Multi-Level Weight Prefetch

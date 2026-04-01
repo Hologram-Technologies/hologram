@@ -3706,10 +3706,24 @@ impl EnumTape {
                     }
                 }
 
-                // ── Fast path: In-place unary op (typed f32, reuse input buffer) ──
+                // ── Fast path: In-place op (typed f32, reuse input buffer) ──
                 if instr.can_reuse_input {
                     let src_id = NodeId::new(instr.input_indices[0], 0);
                     let out_id = NodeId::new(instr.output_idx, 0);
+
+                    // Binary in-place Add: lhs[i] += rhs[i] with zero allocation.
+                    // Eliminates output buffer for Attention→Add(residual) pattern.
+                    if matches!(instr.kernel, TapeKernel::InlineAdd)
+                        && instr.input_indices.len() == 2
+                    {
+                        let rhs_id = NodeId::new(instr.input_indices[1], 0);
+                        if arena.add_inplace(src_id, rhs_id) {
+                            arena.move_slot(src_id, out_id);
+                            continue;
+                        }
+                    }
+
+                    // Unary in-place: apply kernel to single buffer.
                     if let Ok(floats) = arena.get_mut_f32(src_id) {
                         dispatch_inplace(&instr.kernel, floats);
                         arena.move_slot(src_id, out_id);
