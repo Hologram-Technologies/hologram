@@ -10,3 +10,4 @@
 **/target
 specs/scratch.md
 external
+.hypergrep/

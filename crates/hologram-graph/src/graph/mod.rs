@@ -129,6 +129,18 @@ pub enum GraphOp {
         epsilon: u32,
         activation: FloatOp,
     },
+    /// Fused AddRmsNorm + activation (residual + normalize + activation).
+    FusedAddRmsNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused InstanceNorm + activation (epilogue fusion).
+    FusedInstanceNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
     /// Fused matmul + bias add + activation (full epilogue fusion).
     /// Three inputs: [activation_input, weight_constant, bias_constant].
     /// Bias is read directly from arena (zero-copy mmap'd constant).
@@ -262,7 +274,10 @@ impl GraphOp {
             Self::FusedConv2dActivation { .. } => 3, // data, weight, bias (same as Conv2d)
             Self::FusedConv2dBiasActivation { .. } => 3,
             Self::FusedRmsNormActivation { .. } => 2,
-            Self::FusedLayerNormActivation { .. } | Self::FusedGroupNormActivation { .. } => 3,
+            Self::FusedLayerNormActivation { .. }
+            | Self::FusedGroupNormActivation { .. }
+            | Self::FusedAddRmsNormActivation { .. }
+            | Self::FusedInstanceNormActivation { .. } => 3,
         }
     }
 
@@ -294,6 +309,8 @@ impl GraphOp {
                 | Self::FusedRmsNormActivation { .. }
                 | Self::FusedLayerNormActivation { .. }
                 | Self::FusedGroupNormActivation { .. }
+                | Self::FusedAddRmsNormActivation { .. }
+                | Self::FusedInstanceNormActivation { .. }
                 | Self::RingPrimUnary(_, _)
                 | Self::RingActivation(_, _)
                 | Self::RingAccumulate(_)

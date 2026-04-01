@@ -287,6 +287,22 @@ pub fn try_fuse_norm_activation(graph: &mut Graph, id: NodeId, succ_index: &[Vec
                 activation: act,
             })
         }
+        GraphOp::Float(FloatOp::AddRmsNorm { size, epsilon }) => {
+            let (s, e) = (*size, *epsilon);
+            Box::new(move |act| GraphOp::FusedAddRmsNormActivation {
+                size: s,
+                epsilon: e,
+                activation: act,
+            })
+        }
+        GraphOp::Float(FloatOp::InstanceNorm { size, epsilon }) => {
+            let (s, e) = (*size, *epsilon);
+            Box::new(move |act| GraphOp::FusedInstanceNormActivation {
+                size: s,
+                epsilon: e,
+                activation: act,
+            })
+        }
         _ => return false,
     };
 
@@ -1007,6 +1023,120 @@ mod tests {
         assert!(
             has_fused,
             "should have FusedConv2dActivation after full fuse()"
+        );
+    }
+
+    // ── AddRmsNorm + InstanceNorm fusion tests ───────────────────────
+
+    #[test]
+    fn fuse_add_rms_norm_silu() {
+        // Input, Residual, Weight → AddRmsNorm → SiLU → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0: x
+            .node(GraphOp::Input) // 1: residual
+            .node(GraphOp::Input) // 2: weight
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::AddRmsNorm {
+                    size: 64,
+                    epsilon: f32::to_bits(1e-5),
+                }),
+                &[0, 1, 2],
+            ) // 3
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[3]) // 4
+            .node_with_inputs(GraphOp::Output, &[4]) // 5
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_norm_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+
+        let has_fused = g.node_ids().into_iter().any(|id| {
+            matches!(
+                g.get(id).unwrap().op,
+                GraphOp::FusedAddRmsNormActivation { .. }
+            )
+        });
+        assert!(has_fused, "should have FusedAddRmsNormActivation");
+    }
+
+    #[test]
+    fn fuse_instance_norm_relu() {
+        // Input, Scale, Bias → InstanceNorm → Relu → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::InstanceNorm {
+                    size: 256,
+                    epsilon: f32::to_bits(1e-5),
+                }),
+                &[0, 1, 2],
+            )
+            .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[3])
+            .node_with_inputs(GraphOp::Output, &[4])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_norm_activation(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+
+        let has_fused = g.node_ids().into_iter().any(|id| {
+            matches!(
+                g.get(id).unwrap().op,
+                GraphOp::FusedInstanceNormActivation { .. }
+            )
+        });
+        assert!(has_fused, "should have FusedInstanceNormActivation");
+    }
+
+    #[test]
+    fn fuse_add_rms_norm_via_full_pass() {
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::AddRmsNorm {
+                    size: 64,
+                    epsilon: f32::to_bits(1e-5),
+                }),
+                &[0, 1, 2],
+            )
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[3])
+            .node_with_inputs(GraphOp::Output, &[4])
+            .build();
+
+        let stats = crate::fusion::fuse(&mut g).unwrap();
+        assert!(stats.matmul_activations_fused >= 1);
+
+        let has_fused = g.node_ids().into_iter().any(|id| {
+            matches!(
+                g.get(id).unwrap().op,
+                GraphOp::FusedAddRmsNormActivation { .. }
+            )
+        });
+        assert!(
+            has_fused,
+            "should have FusedAddRmsNormActivation after full fuse()"
         );
     }
 }

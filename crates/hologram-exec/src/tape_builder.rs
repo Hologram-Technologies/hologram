@@ -399,6 +399,24 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             epsilon: *epsilon,
             activation: *activation,
         }),
+        GraphOp::FusedAddRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => Ok(TapeKernel::InlineAddRmsNormActivation {
+            size: *size,
+            epsilon: *epsilon,
+            activation: *activation,
+        }),
+        GraphOp::FusedInstanceNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => Ok(TapeKernel::InlineInstanceNormActivation {
+            size: *size,
+            epsilon: *epsilon,
+            activation: *activation,
+        }),
         GraphOp::FusedConv2dActivation {
             kernel_h,
             kernel_w,

@@ -44,6 +44,8 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::FusedConv2dActivation { .. }
         | GraphOp::FusedConv2dBiasActivation { .. }
         | GraphOp::FusedRmsNormActivation { .. }
+        | GraphOp::FusedAddRmsNormActivation { .. }
+        | GraphOp::FusedInstanceNormActivation { .. }
         | GraphOp::FusedLayerNormActivation { .. }
         | GraphOp::FusedGroupNormActivation { .. }
         | GraphOp::MatMulLut4(_)

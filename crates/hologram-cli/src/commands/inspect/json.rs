@@ -169,6 +169,20 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         } => {
             json!({"FusedGroupNormActivation": {"num_groups": num_groups, "epsilon": epsilon, "activation": activation.name()}})
         }
+        GraphOp::FusedAddRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            json!({"FusedAddRmsNormActivation": {"size": size, "epsilon": epsilon, "activation": activation.name()}})
+        }
+        GraphOp::FusedInstanceNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            json!({"FusedInstanceNormActivation": {"size": size, "epsilon": epsilon, "activation": activation.name()}})
+        }
         GraphOp::FusedConv2dActivation { activation, .. } => {
             json!({"FusedConv2dActivation": {"activation": activation.name()}})
         }

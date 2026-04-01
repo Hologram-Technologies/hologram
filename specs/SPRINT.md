@@ -16,6 +16,45 @@
 - [x] Bias fusion (MatMul+Bias+Activation) — [plan](plans/031-bias-fusion.md)
 - [x] Shape-aware tape execution API (feat/ai-optimization)
 
+## Sprint 30: CPU Optimization Sweep — Fusion, Prefetch, Parallelism
+
+**Plan**: [plans/036-cpu-optimization-sweep.md](plans/036-cpu-optimization-sweep.md)
+
+Goal: close remaining CPU-side optimization gaps across fusion, memory prefetch,
+and parallelism. All changes are platform-agnostic (wasm + native).
+
+### Phase 1: Fusion Gaps
+- [x] **1.1**: AddRmsNorm + Activation fusion (GraphOp + TapeKernel + dispatch)
+- [x] **1.1b**: InstanceNorm + Activation fusion (same pattern)
+- [ ] **1.2**: Attention + Residual Add fusion
+- [ ] **1.3**: Transpose elimination (involution detection + Attention heads_first absorption)
+
+### Phase 2: Multi-Level Weight Prefetch
+- [x] **2.1**: 2-level lookahead in execute_inner (MADV_WILLNEED for i+1, i+2)
+- [x] **2.2**: Early release already exists (MADV_DONTNEED for current level)
+
+### Phase 3: Lock-Free LUT-GEMM Parallelism
+- [ ] **3.1**: Replace RefCell<WeightCache> with thread-safe alternative
+- [ ] **3.2**: Enable rayon for LUT-GEMM levels
+- [ ] **3.3**: Per-thread Psumbook scratch
+
+### Phase 4: Additional Fusion + Tuning
+- [ ] **4.1**: SwiGLU fusion from Split + Silu + Mul pattern
+- [ ] **4.2**: Adaptive sparse_v threshold (configurable per model/context)
+- [ ] **4.3**: Activation checkpointing validation (verify compiler populates checkpoint_map)
+- [ ] **4.4**: InstanceNorm + Activation fusion
+
+### Phase 5: Memory Optimizations
+- [ ] **5.1**: Wire F16 activation compression into execution loop (50% activation mem)
+- [ ] **5.2**: Verify workspace buffer reuse drives arena allocation (20-40% peak mem)
+
+### Phase 6: WebGPU Kernel Parity (wasm GPU path)
+- [ ] **6.1**: Conv2d WGSL compute shader
+- [ ] **6.2**: Softmax + RmsNorm + GroupNorm WGSL shaders
+- [ ] **6.3**: Attention WGSL shader (tiled)
+
+---
+
 ## Sprint 29: Conv2d Epilogue Fusion — Accelerate SD UNet Chain
 
 **Plan**: [plans/035-conv2d-epilogue-fusion.md](plans/035-conv2d-epilogue-fusion.md)

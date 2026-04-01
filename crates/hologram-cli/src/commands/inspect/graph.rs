@@ -83,6 +83,12 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::FusedGroupNormActivation { activation, .. } => {
             format!("GroupNorm+{}", activation.name())
         }
+        GraphOp::FusedAddRmsNormActivation { activation, .. } => {
+            format!("AddRmsNorm+{}", activation.name())
+        }
+        GraphOp::FusedInstanceNormActivation { activation, .. } => {
+            format!("InstanceNorm+{}", activation.name())
+        }
         GraphOp::FusedConv2dActivation { activation, .. } => {
             format!("Conv2d+{}", activation.name())
         }

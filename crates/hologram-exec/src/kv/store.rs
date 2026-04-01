@@ -277,6 +277,40 @@ impl KvStore {
                 }
                 Ok(result)
             }
+            GraphOp::FusedAddRmsNormActivation {
+                size,
+                epsilon,
+                activation,
+            } => {
+                let mut result = crate::float_dispatch::norm::dispatch_add_rms_norm(
+                    inputs,
+                    *size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
+            GraphOp::FusedInstanceNormActivation {
+                size,
+                epsilon,
+                activation,
+            } => {
+                let mut result = crate::float_dispatch::norm::dispatch_instance_norm(
+                    inputs,
+                    *size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut result)
+                    .map_err(|_| ExecError::UnsupportedOp("f32 align".into()))?;
+                for v in floats.iter_mut() {
+                    *v = activation.apply_unary(*v);
+                }
+                Ok(result)
+            }
             GraphOp::MatMulLut4Activation(cid, activation) => {
                 let mut out_buf = dispatch_lut_gemm_4(inputs[0], *cid, constants, weights)?;
                 let floats: &mut [f32] = bytemuck::try_cast_slice_mut(&mut out_buf)

@@ -356,6 +356,118 @@ pub(crate) fn dispatch_group_norm(
     Ok(f32_vec_to_bytes(out))
 }
 
+/// GroupNorm writing directly into out_buf (zero intermediate Vec).
+pub(crate) fn dispatch_group_norm_into(
+    inputs: &[&[u8]],
+    num_groups: usize,
+    epsilon: f32,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let data = cast_f32(inputs[0])?;
+    let scale = cast_f32(inputs[1])?;
+    let bias = cast_f32(inputs[2])?;
+
+    let n_channels = scale.len();
+    if num_groups == 0 || n_channels == 0 {
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&data));
+        return Ok(());
+    }
+    let channels_per_group = n_channels / num_groups;
+    let spatial = data.len() / n_channels;
+
+    let out = alloc_f32_in(out_buf, data.len());
+    out.copy_from_slice(&data);
+
+    for g in 0..num_groups {
+        let group_size = channels_per_group * spatial;
+        let mut sum: f64 = 0.0;
+        let mut sum_sq: f64 = 0.0;
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for &v in &out[start..end] {
+                let v64 = v as f64;
+                sum += v64;
+                sum_sq += v64 * v64;
+            }
+        }
+        let mean = (sum / group_size as f64) as f32;
+        let var = (sum_sq / group_size as f64 - (mean as f64 * mean as f64)) as f32;
+        let inv_std = 1.0 / (var + epsilon).sqrt();
+
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let s = if c < scale.len() { scale[c] } else { 1.0 };
+            let b = if c < bias.len() { bias[c] } else { 0.0 };
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for v in out[start..end].iter_mut() {
+                *v = (*v - mean) * inv_std * s + b;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fused GroupNorm + activation writing directly into out_buf.
+/// Applies the activation function inline during the normalize-and-scale
+/// loop — one pass instead of three (alloc + copy + separate activation).
+pub(crate) fn dispatch_group_norm_activation_into(
+    inputs: &[&[u8]],
+    num_groups: usize,
+    epsilon: f32,
+    activation: &hologram_core::op::FloatOp,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let data = cast_f32(inputs[0])?;
+    let scale = cast_f32(inputs[1])?;
+    let bias = cast_f32(inputs[2])?;
+
+    let n_channels = scale.len();
+    if num_groups == 0 || n_channels == 0 {
+        out_buf.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&data));
+        return Ok(());
+    }
+    let channels_per_group = n_channels / num_groups;
+    let spatial = data.len() / n_channels;
+
+    let out = alloc_f32_in(out_buf, data.len());
+    out.copy_from_slice(&data);
+
+    for g in 0..num_groups {
+        let group_size = channels_per_group * spatial;
+        let mut sum: f64 = 0.0;
+        let mut sum_sq: f64 = 0.0;
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for &v in &out[start..end] {
+                let v64 = v as f64;
+                sum += v64;
+                sum_sq += v64 * v64;
+            }
+        }
+        let mean = (sum / group_size as f64) as f32;
+        let var = (sum_sq / group_size as f64 - (mean as f64 * mean as f64)) as f32;
+        let inv_std = 1.0 / (var + epsilon).sqrt();
+
+        // Normalize, scale, bias, AND apply activation in the same loop.
+        for c_local in 0..channels_per_group {
+            let c = g * channels_per_group + c_local;
+            let s = if c < scale.len() { scale[c] } else { 1.0 };
+            let b = if c < bias.len() { bias[c] } else { 0.0 };
+            let start = c * spatial;
+            let end = (start + spatial).min(out.len());
+            for v in out[start..end].iter_mut() {
+                *v = activation.apply_unary((*v - mean) * inv_std * s + b);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn dispatch_lrn(
     inputs: &[&[u8]],
     size: usize,

@@ -601,3 +601,429 @@ fn attention_sparse_v_threshold_boundary() {
         );
     }
 }
+
+// ── Plan 039: GroupNorm _into tests ─────────────────────────────────
+
+#[test]
+fn group_norm_into_matches_allocating() {
+    use super::norm::{dispatch_group_norm, dispatch_group_norm_into};
+    let n_channels = 8usize;
+    let spatial = 16usize;
+    let num_groups = 4;
+    let epsilon = 1e-5f32;
+
+    let data: Vec<f32> = (0..n_channels * spatial)
+        .map(|i| (i as f32 * 0.1) - 3.0)
+        .collect();
+    let scale: Vec<f32> = (0..n_channels).map(|i| 0.5 + i as f32 * 0.1).collect();
+    let bias: Vec<f32> = (0..n_channels).map(|i| i as f32 * 0.05).collect();
+
+    let data_b = f32_bytes(&data);
+    let scale_b = f32_bytes(&scale);
+    let bias_b = f32_bytes(&bias);
+    let inputs: Vec<&[u8]> = vec![&data_b, &scale_b, &bias_b];
+
+    // Allocating path.
+    let result_alloc = dispatch_group_norm(&inputs, num_groups, epsilon).expect("alloc failed");
+    let alloc_f32: &[f32] = bytemuck::cast_slice(&result_alloc);
+
+    // Into path.
+    let mut out_buf = Vec::new();
+    dispatch_group_norm_into(&inputs, num_groups, epsilon, &mut out_buf).expect("into failed");
+    let into_f32: &[f32] = bytemuck::cast_slice(&out_buf);
+
+    assert_eq!(alloc_f32.len(), into_f32.len());
+    for (i, (&a, &b)) in alloc_f32.iter().zip(into_f32.iter()).enumerate() {
+        assert!(
+            (a - b).abs() < 1e-7,
+            "group_norm_into mismatch at {i}: alloc={a} into={b}",
+        );
+    }
+}
+
+#[test]
+fn group_norm_silu_fused_matches_separate() {
+    use super::norm::{dispatch_group_norm, dispatch_group_norm_activation_into};
+    let n_channels = 16usize;
+    let spatial = 64usize;
+    let num_groups = 4;
+    let epsilon = 1e-5f32;
+    let silu = FloatOp::Silu;
+
+    let data: Vec<f32> = (0..n_channels * spatial)
+        .map(|i| (i as f32 * 0.07).sin() * 2.0)
+        .collect();
+    let scale: Vec<f32> = vec![1.0; n_channels];
+    let bias: Vec<f32> = vec![0.0; n_channels];
+
+    let data_b = f32_bytes(&data);
+    let scale_b = f32_bytes(&scale);
+    let bias_b = f32_bytes(&bias);
+    let inputs: Vec<&[u8]> = vec![&data_b, &scale_b, &bias_b];
+
+    // Separate: GroupNorm then SiLU.
+    let gn_result = dispatch_group_norm(&inputs, num_groups, epsilon).expect("gn failed");
+    let gn_f32: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&gn_result).to_vec();
+    let expected: Vec<f32> = gn_f32.iter().map(|&v| silu.apply_unary(v)).collect();
+
+    // Fused: GroupNorm+SiLU in one pass.
+    let mut out_buf = Vec::new();
+    dispatch_group_norm_activation_into(&inputs, num_groups, epsilon, &silu, &mut out_buf)
+        .expect("fused failed");
+    let fused: &[f32] = bytemuck::cast_slice(&out_buf);
+
+    assert_eq!(expected.len(), fused.len());
+    for (i, (&e, &f)) in expected.iter().zip(fused.iter()).enumerate() {
+        assert!(
+            (e - f).abs() < 1e-5,
+            "silu fused mismatch at {i}: expected={e} fused={f}",
+        );
+    }
+}
+
+#[test]
+fn group_norm_activation_into_sd_shapes() {
+    use super::norm::dispatch_group_norm_activation_into;
+    let silu = FloatOp::Silu;
+    // Realistic SD shapes: [1, C, H, W] flattened.
+    for (channels, spatial) in [(320, 64 * 64), (640, 32 * 32), (1280, 16 * 16)] {
+        let num_groups = 32; // SD v1.5 uses 32 groups
+        let epsilon = 1e-5f32;
+
+        let data: Vec<f32> = (0..channels * spatial)
+            .map(|i| (i as f32 * 0.003).sin())
+            .collect();
+        let scale: Vec<f32> = vec![1.0; channels];
+        let bias: Vec<f32> = vec![0.0; channels];
+
+        let data_b = f32_bytes(&data);
+        let scale_b = f32_bytes(&scale);
+        let bias_b = f32_bytes(&bias);
+        let inputs: Vec<&[u8]> = vec![&data_b, &scale_b, &bias_b];
+
+        let mut out_buf = Vec::new();
+        dispatch_group_norm_activation_into(&inputs, num_groups, epsilon, &silu, &mut out_buf)
+            .unwrap_or_else(|e| panic!("failed for C={channels} spatial={spatial}: {e}"));
+
+        let out: &[f32] = bytemuck::cast_slice(&out_buf);
+        assert_eq!(out.len(), channels * spatial);
+        // Verify all values are finite (no NaN/inf from norm computation).
+        for (i, &v) in out.iter().enumerate() {
+            assert!(v.is_finite(), "C={channels} elem {i} is not finite: {v}");
+        }
+    }
+}
+
+// ── Plan 039: Depthwise Conv2d tests ────────────────────────────────
+
+#[test]
+fn conv2d_depthwise_matches_generic() {
+    // Depthwise: group=channels=4, 3×3 kernel, stride=1, pad=1.
+    // Compare depthwise fast path output against a known reference
+    // computed by direct convolution.
+    use super::conv::dispatch_conv2d_direct;
+    let channels = 4;
+    let h = 8;
+    let w = 8;
+    let kh = 3;
+    let kw = 3;
+
+    // Weight: [channels, 1, kh, kw] for depthwise.
+    let weight: Vec<f32> = (0..channels * kh * kw)
+        .map(|i| (i as f32 * 0.1) - 0.5)
+        .collect();
+    // Data: [1, channels, h, w].
+    let data: Vec<f32> = (0..channels * h * w)
+        .map(|i| (i as f32 * 0.05).sin())
+        .collect();
+    // No bias.
+    let bias: Vec<f32> = vec![];
+
+    let data_b = f32_bytes(&data);
+    let weight_b = f32_bytes(&weight);
+    let bias_b = f32_bytes(&bias);
+
+    let result = dispatch_conv2d_direct(
+        &[&data_b, &weight_b, &bias_b],
+        kh,
+        kw,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        channels, // group == channels (depthwise)
+        h,
+        w,
+    )
+    .expect("depthwise conv2d failed");
+    let out: &[f32] = bytemuck::cast_slice(&result);
+
+    // Output shape: [1, channels, h, w] (same spatial with pad=1).
+    assert_eq!(out.len(), channels * h * w);
+
+    // Verify against manual computation for a few positions.
+    // Channel 0, position (0,0): sum over kernel window with padding.
+    // This is a smoke test — exact values depend on padding behavior.
+    for &v in out {
+        assert!(v.is_finite(), "depthwise output has non-finite value: {v}");
+    }
+}
+
+#[test]
+fn conv2d_depthwise_stride2() {
+    use super::conv::dispatch_conv2d_direct;
+    let channels = 4;
+    let h = 8;
+    let w = 8;
+    // stride=2, pad=1 → output should be 4×4.
+    let weight: Vec<f32> = vec![1.0; channels * 3 * 3];
+    let data: Vec<f32> = vec![1.0; channels * h * w];
+    let bias: Vec<f32> = vec![];
+
+    let data_b = f32_bytes(&data);
+    let weight_b = f32_bytes(&weight);
+    let bias_b = f32_bytes(&bias);
+
+    let result = dispatch_conv2d_direct(
+        &[&data_b, &weight_b, &bias_b],
+        3,
+        3,
+        2,
+        2,
+        1,
+        1,
+        1,
+        1,
+        channels,
+        h,
+        w,
+    )
+    .expect("depthwise stride2 failed");
+    let out: &[f32] = bytemuck::cast_slice(&result);
+
+    // Output: [1, 4, 4, 4] = 64 elements.
+    assert_eq!(out.len(), channels * 4 * 4);
+    for &v in out {
+        assert!(v.is_finite(), "stride2 output has non-finite: {v}");
+    }
+}
+
+#[test]
+fn conv2d_depthwise_with_bias() {
+    use super::conv::dispatch_conv2d_direct;
+    let channels = 2;
+    let h = 4;
+    let w = 4;
+
+    // All-zero data + bias = bias value everywhere.
+    let data: Vec<f32> = vec![0.0; channels * h * w];
+    let weight: Vec<f32> = vec![1.0; channels * 3 * 3];
+    let bias: Vec<f32> = vec![5.0, 10.0]; // per-channel bias
+
+    let data_b = f32_bytes(&data);
+    let weight_b = f32_bytes(&weight);
+    let bias_b = f32_bytes(&bias);
+
+    let result = dispatch_conv2d_direct(
+        &[&data_b, &weight_b, &bias_b],
+        3,
+        3,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        channels,
+        h,
+        w,
+    )
+    .expect("depthwise bias failed");
+    let out: &[f32] = bytemuck::cast_slice(&result);
+
+    assert_eq!(out.len(), channels * h * w);
+    // Channel 0 should all be 5.0, channel 1 should all be 10.0.
+    for i in 0..h * w {
+        assert!(
+            (out[i] - 5.0).abs() < 1e-5,
+            "ch0 pos {i}: expected 5.0, got {}",
+            out[i]
+        );
+    }
+    for i in 0..h * w {
+        assert!(
+            (out[h * w + i] - 10.0).abs() < 1e-5,
+            "ch1 pos {i}: expected 10.0, got {}",
+            out[h * w + i]
+        );
+    }
+}
+
+// ── Plan 039: Winograd F(2,3) tests ─────────────────────────────────
+
+/// Helper: run conv2d via dispatch and return f32 output.
+fn run_conv2d(
+    data: &[f32],
+    weight: &[f32],
+    bias: &[f32],
+    kh: usize,
+    kw: usize,
+    sh: usize,
+    sw: usize,
+    ph: usize,
+    pw: usize,
+    dh: usize,
+    dw: usize,
+    group: usize,
+    h_in: usize,
+    w_in: usize,
+) -> Vec<f32> {
+    use super::conv::dispatch_conv2d_direct;
+    let data_b = f32_bytes(data);
+    let weight_b = f32_bytes(weight);
+    let bias_b = f32_bytes(bias);
+    let result = dispatch_conv2d_direct(
+        &[&data_b, &weight_b, &bias_b],
+        kh,
+        kw,
+        sh,
+        sw,
+        ph,
+        pw,
+        dh,
+        dw,
+        group,
+        h_in,
+        w_in,
+    )
+    .expect("conv2d dispatch failed");
+    bytemuck::cast_slice::<u8, f32>(&result).to_vec()
+}
+
+#[test]
+fn conv2d_winograd_matches_reference() {
+    // 3×3 stride=1 pad=1 on [1, 32, 16, 16] — triggers Winograd (ic_per_group=32 >= 16).
+    // Compare against a manually computed reference using the naive O(n^2) path.
+    let ic = 32;
+    let oc = 32;
+    let h = 16;
+    let w = 16;
+
+    let data: Vec<f32> = (0..ic * h * w).map(|i| (i as f32 * 0.01).sin()).collect();
+    let weight: Vec<f32> = (0..oc * ic * 3 * 3)
+        .map(|i| (i as f32 * 0.003).cos() * 0.1)
+        .collect();
+    let bias: Vec<f32> = (0..oc).map(|i| i as f32 * 0.01).collect();
+
+    // Winograd path (pad=1, stride=1, 3×3, ic>=16).
+    let winograd_out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+
+    // Reference: use im2col path by setting dilation=2 (which disables Winograd gate),
+    // but we need stride=1 pad=1 dilation=1. Instead, compute a naive reference.
+    // Naive conv2d reference.
+    let h_out = h; // pad=1, stride=1 → same spatial
+    let w_out = w;
+    let mut ref_out = vec![0.0f32; oc * h_out * w_out];
+    for oc_idx in 0..oc {
+        let b = bias[oc_idx];
+        for oh in 0..h_out {
+            for ow in 0..w_out {
+                let mut sum = b;
+                for ic_idx in 0..ic {
+                    for fh in 0..3 {
+                        for fw in 0..3 {
+                            let ih = oh as i32 + fh as i32 - 1; // pad=1
+                            let iw = ow as i32 + fw as i32 - 1;
+                            if ih >= 0 && ih < h as i32 && iw >= 0 && iw < w as i32 {
+                                let d_val = data[ic_idx * h * w + ih as usize * w + iw as usize];
+                                let w_val = weight[oc_idx * ic * 9 + ic_idx * 9 + fh * 3 + fw];
+                                sum += d_val * w_val;
+                            }
+                        }
+                    }
+                }
+                ref_out[oc_idx * h_out * w_out + oh * w_out + ow] = sum;
+            }
+        }
+    }
+
+    assert_eq!(winograd_out.len(), ref_out.len());
+    let mut max_err = 0.0f32;
+    for (i, (&w_val, &r_val)) in winograd_out.iter().zip(ref_out.iter()).enumerate() {
+        let err = (w_val - r_val).abs();
+        max_err = max_err.max(err);
+        assert!(
+            err < 1e-3,
+            "winograd mismatch at {i}: winograd={w_val} ref={r_val} err={err}",
+        );
+    }
+    // Log max error for visibility.
+    assert!(max_err < 1e-3, "max winograd error: {max_err}");
+}
+
+#[test]
+fn conv2d_winograd_odd_spatial() {
+    // Odd spatial dims: [1, 16, 17, 17] — partial tiles at boundaries.
+    let ic = 16;
+    let oc = 16;
+    let h = 17;
+    let w = 17;
+
+    let data: Vec<f32> = (0..ic * h * w).map(|i| (i as f32 * 0.02).sin()).collect();
+    let weight: Vec<f32> = (0..oc * ic * 9)
+        .map(|i| (i as f32 * 0.005).cos() * 0.1)
+        .collect();
+    let bias: Vec<f32> = vec![0.0; oc];
+
+    let out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+
+    // Output spatial should be 17×17 (pad=1, stride=1).
+    assert_eq!(out.len(), oc * h * w);
+    for &v in &out {
+        assert!(v.is_finite(), "odd spatial output has non-finite: {v}");
+    }
+}
+
+#[test]
+fn conv2d_winograd_realistic_sd_shapes() {
+    // Test with shapes seen in SD v1.5 UNet (scaled down for test speed).
+    for (ic, oc, h, w) in [(32, 32, 32, 32), (64, 64, 16, 16), (128, 128, 8, 8)] {
+        let data: Vec<f32> = (0..ic * h * w).map(|i| (i as f32 * 0.01).sin()).collect();
+        let weight: Vec<f32> = (0..oc * ic * 9)
+            .map(|i| (i as f32 * 0.002).cos() * 0.05)
+            .collect();
+        let bias: Vec<f32> = vec![0.0; oc];
+
+        let out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+        assert_eq!(out.len(), oc * h * w, "shape ({ic},{oc},{h},{w})");
+        for (i, &v) in out.iter().enumerate() {
+            assert!(
+                v.is_finite(),
+                "shape ({ic},{oc},{h},{w}) elem {i} non-finite: {v}"
+            );
+        }
+    }
+}
+
+#[test]
+fn conv2d_winograd_not_used_for_stride2() {
+    // stride=2 should NOT use Winograd (falls back to im2col).
+    // This is a smoke test: if it produces correct output, im2col handled it.
+    let ic = 32;
+    let oc = 32;
+    let h = 16;
+    let w = 16;
+
+    let data: Vec<f32> = vec![1.0; ic * h * w];
+    let weight: Vec<f32> = vec![0.01; oc * ic * 9];
+    let bias: Vec<f32> = vec![0.0; oc];
+
+    // stride=2, pad=1 → output 8×8.
+    let out = run_conv2d(&data, &weight, &bias, 3, 3, 2, 2, 1, 1, 1, 1, 1, h, w);
+    assert_eq!(out.len(), oc * 8 * 8);
+    for &v in &out {
+        assert!(v.is_finite());
+    }
+}

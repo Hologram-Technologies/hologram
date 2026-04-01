@@ -580,6 +580,18 @@ pub enum TapeKernel {
         epsilon: u32,
         activation: FloatOp,
     },
+    /// Fused AddRmsNorm + activation (residual + normalize + activation).
+    InlineAddRmsNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
+    /// Fused InstanceNorm + activation.
+    InlineInstanceNormActivation {
+        size: u32,
+        epsilon: u32,
+        activation: FloatOp,
+    },
 
     /// Ring-arithmetic unary op. Stays in ring domain (Z/2^nZ), no float conversion.
     /// Q0: applies PrimOp via LUT (apply_unary). Q1: native wrapping u16 ops.
@@ -2024,12 +2036,12 @@ fn dispatch_kernel(
             num_groups,
             epsilon,
         } => {
-            let result = float_dispatch::norm::dispatch_group_norm(
+            float_dispatch::norm::dispatch_group_norm_into(
                 inputs,
                 *num_groups as usize,
                 f32::from_bits(*epsilon),
+                out_buf,
             )?;
-            out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
 
@@ -2078,9 +2090,38 @@ fn dispatch_kernel(
             epsilon,
             activation,
         } => {
-            let result = float_dispatch::norm::dispatch_group_norm(
+            float_dispatch::norm::dispatch_group_norm_activation_into(
                 inputs,
                 *num_groups as usize,
+                f32::from_bits(*epsilon),
+                activation,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+
+        TapeKernel::InlineAddRmsNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            let result = float_dispatch::norm::dispatch_add_rms_norm(
+                inputs,
+                *size as usize,
+                f32::from_bits(*epsilon),
+            )?;
+            out_buf.extend_from_slice(&result);
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineInstanceNormActivation {
+            size,
+            epsilon,
+            activation,
+        } => {
+            let result = float_dispatch::norm::dispatch_instance_norm(
+                inputs,
+                *size as usize,
                 f32::from_bits(*epsilon),
             )?;
             out_buf.extend_from_slice(&result);
@@ -3232,6 +3273,10 @@ pub struct EnumTape {
     /// and recomputed from this instruction when the next consumer needs it.
     /// This trades ~30% extra compute for O(layer) peak activation memory.
     pub(crate) checkpoint_map: std::collections::HashMap<u32, usize>,
+    /// When true, activation checkpointing is active: skip-connection buffers
+    /// are force-evicted after first consumer and recomputed when needed.
+    /// Default: false (checkpoints identified but not triggered).
+    pub checkpoint_enabled: bool,
 }
 
 impl EnumTape {
@@ -3244,6 +3289,7 @@ impl EnumTape {
             consumer_counts: Vec::new(),
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
+            checkpoint_enabled: false,
         }
     }
 
@@ -3258,6 +3304,7 @@ impl EnumTape {
             consumer_counts: Vec::new(),
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
+            checkpoint_enabled: false,
         }
     }
 
@@ -3559,18 +3606,21 @@ impl EnumTape {
             let end = self.level_offsets[level_idx + 1];
             let level_instrs = &self.instructions[start..end];
 
-            // Prefetch NEXT level's weight pages via madvise(WILLNEED).
-            // The OS asynchronously pages them in while this level computes.
+            // 2-level lookahead: prefetch weight pages for levels i+1 AND i+2.
+            // The OS pages them in asynchronously while the current level computes.
+            // Two levels of lookahead hides latency for large weight blocks (>4MB).
             if has_weight_ranges {
-                let next = level_idx + 1;
-                if next < self.level_weight_ranges.len() {
-                    let (off, range_end) = self.level_weight_ranges[next];
-                    if range_end > off {
-                        madvise_prefetch(
-                            tape_ctx.weights,
-                            off as usize,
-                            (range_end - off) as usize,
-                        );
+                for lookahead in 1..=2 {
+                    let target = level_idx + lookahead;
+                    if target < self.level_weight_ranges.len() {
+                        let (off, range_end) = self.level_weight_ranges[target];
+                        if range_end > off {
+                            madvise_prefetch(
+                                tape_ctx.weights,
+                                off as usize,
+                                (range_end - off) as usize,
+                            );
+                        }
                     }
                 }
             }
@@ -3592,11 +3642,15 @@ impl EnumTape {
                             counts[idx] = counts[idx].saturating_sub(1);
                             if counts[idx] == 0 {
                                 arena.evict(NodeId::new(input_idx, 0));
+                            } else if self.checkpoint_enabled
+                                && self.checkpoint_map.contains_key(&input_idx)
+                            {
+                                // Activation checkpointing: force-evict after first
+                                // consumer even though distant consumers remain. The
+                                // recompute path (below) re-executes the producer when
+                                // a later consumer finds the buffer missing.
+                                arena.evict(NodeId::new(input_idx, 0));
                             }
-                            // NOTE: Activation checkpointing (force-evict + recompute)
-                            // is identified in checkpoint_map but NOT yet active in the
-                            // eviction loop. Enabling it requires handling cascading
-                            // eviction (recompute chains). Tracked for future work.
                         }
                     }
                 }
