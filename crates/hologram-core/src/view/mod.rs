@@ -119,6 +119,11 @@ impl ElementWiseView {
             return simd::apply_neon(self, data);
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if data.len() >= 16 {
+            return simd::apply_wasm_simd128(self, data);
+        }
+
         for byte in data {
             *byte = self.apply(*byte);
         }
@@ -139,6 +144,11 @@ impl ElementWiseView {
         #[cfg(all(target_arch = "x86_64", target_feature = "sse4.2"))]
         if input.len() >= 16 {
             return simd::apply_to_sse42(self, input, output);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if input.len() >= 16 {
+            return simd::apply_to_wasm_simd128(self, input, output);
         }
 
         for (i, &byte) in input.iter().enumerate() {

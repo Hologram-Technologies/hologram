@@ -228,6 +228,91 @@ pub fn apply_neon(view: &super::ElementWiseView, data: &mut [u8]) {
     }
 }
 
+/// WASM SIMD128 in-place apply: process 16 bytes at a time via `i8x16_swizzle`.
+///
+/// Uses the same subtable strategy as NEON/SSE4.2: split the 256-byte table
+/// into 16 subtables of 16 bytes. For each input chunk, extract high/low nibbles,
+/// lookup via `i8x16_swizzle`, mask-select by high nibble, and OR into result.
+#[cfg(target_arch = "wasm32")]
+pub fn apply_wasm_simd128(view: &super::ElementWiseView, data: &mut [u8]) {
+    use core::arch::wasm32::*;
+
+    let table = view.table();
+    let len = data.len();
+    let chunks = len / 16;
+    let remainder = chunks * 16;
+
+    let low_mask = u8x16_splat(0x0F);
+
+    for chunk in 0..chunks {
+        let off = chunk * 16;
+        // Safety: off..off+16 is within bounds (chunk < chunks = len/16),
+        // and pointers are derived from valid slice references.
+        unsafe {
+            let input = v128_load(data[off..].as_ptr() as *const v128);
+            let lo = v128_and(input, low_mask);
+            let hi = v128_and(u8x16_shr(input, 4), low_mask);
+            let mut result = u8x16_splat(0);
+
+            for sub in 0..16u8 {
+                let base = (sub as usize) * 16;
+                let subtable = v128_load(table[base..].as_ptr() as *const v128);
+                let match_val = u8x16_splat(sub);
+                let mask = u8x16_eq(hi, match_val);
+                let shuffled = i8x16_swizzle(subtable, lo);
+                result = v128_or(result, v128_and(mask, shuffled));
+            }
+
+            v128_store(data[off..].as_mut_ptr() as *mut v128, result);
+        }
+    }
+
+    // Scalar remainder
+    for byte in &mut data[remainder..] {
+        *byte = view.apply(*byte);
+    }
+}
+
+/// WASM SIMD128 separate input/output apply.
+#[cfg(target_arch = "wasm32")]
+pub fn apply_to_wasm_simd128(view: &super::ElementWiseView, input: &[u8], output: &mut [u8]) {
+    use core::arch::wasm32::*;
+
+    let table = view.table();
+    let len = input.len();
+    let chunks = len / 16;
+    let remainder = chunks * 16;
+
+    let low_mask = u8x16_splat(0x0F);
+
+    for chunk in 0..chunks {
+        let off = chunk * 16;
+        // Safety: same bounds guarantee as apply_wasm_simd128.
+        unsafe {
+            let inv = v128_load(input[off..].as_ptr() as *const v128);
+            let lo = v128_and(inv, low_mask);
+            let hi = v128_and(u8x16_shr(inv, 4), low_mask);
+            let mut result = u8x16_splat(0);
+
+            for sub in 0..16u8 {
+                let base = (sub as usize) * 16;
+                let subtable = v128_load(table[base..].as_ptr() as *const v128);
+                let match_val = u8x16_splat(sub);
+                let mask = u8x16_eq(hi, match_val);
+                let shuffled = i8x16_swizzle(subtable, lo);
+                result = v128_or(result, v128_and(mask, shuffled));
+            }
+
+            v128_store(output[off..].as_mut_ptr() as *mut v128, result);
+        }
+    }
+
+    // Scalar remainder
+    for i in remainder..len {
+        output[i] = view.apply(input[i]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(any(
