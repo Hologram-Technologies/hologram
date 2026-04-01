@@ -2776,20 +2776,25 @@ fn dispatch_inplace(kernel: &TapeKernel, buf: &mut [f32]) -> bool {
 
 /// Sync-safe dispatch for parallelizable ops (no RefCell access).
 ///
-/// Only handles Float, FusedChain, Output, LutView, PrimUnary, PrimBinary.
-/// LUT-GEMM and KvCache ops are excluded from parallel levels.
+/// Handles Float, FusedChain, Output, LutView, PrimUnary, PrimBinary,
+/// LUT-GEMM (Q4/Q8/Q16), MatMul, Conv2D, and inline unary/binary ops.
+/// Only KvWrite/KvRead are excluded (need exclusive &mut KvCacheState).
 #[cfg(feature = "parallel")]
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn dispatch_kernel_par(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
     input_metas: &crate::shape_resolve::InputMetas,
     _ctx: Option<&ExecutionContext>,
     constants: &ConstantStore,
+    weights: &[u8],
+    weight_cache: &parking_lot::RwLock<WeightCache>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     use crate::float_dispatch;
     use crate::kv::KvStore;
+    use crate::shape_resolve;
 
     match kernel {
         TapeKernel::FusedFloatChain(chain) => {
@@ -2922,12 +2927,218 @@ fn dispatch_kernel_par(
                 out_buf,
             )
         }
+        TapeKernel::InlineMatMulBiasActivation {
+            m,
+            k,
+            n,
+            activation,
+        } => {
+            let bias: &[f32] = bytemuck::try_cast_slice(inputs[2]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("bias not f32-aligned".into())
+            })?;
+            let a_floats = inputs[0].len() / 4;
+            let b_floats = inputs[1].len() / 4;
+            let meta_dims = shape_resolve::resolve_matmul_dims(
+                *m,
+                *k,
+                *n,
+                input_metas.first().and_then(|m| m.as_ref()),
+                input_metas.get(1).and_then(|m| m.as_ref()),
+                inputs[0].len(),
+                inputs[1].len(),
+            );
+            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
+                && a_floats > 0
+                && b_floats > 0
+                && a_floats.is_multiple_of(meta_dims.1)
+                && b_floats.is_multiple_of(meta_dims.1)
+            {
+                meta_dims
+            } else {
+                crate::float_dispatch::matmul::infer_matmul_dims(
+                    *m as usize,
+                    *k as usize,
+                    *n as usize,
+                    a_floats,
+                    b_floats,
+                )
+            };
+            crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
+                &inputs[..2],
+                actual_m,
+                actual_k,
+                actual_n,
+                bias,
+                activation,
+                out_buf,
+            )
+        }
+        // LUT-GEMM quantized matmul ops.
+        TapeKernel::MatMulLut4(cid) => {
+            let mut cache = weight_cache.write();
+            let qw = cache.get_q4(*cid, constants, weights)?;
+            let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
+            })?;
+            let k = qw.rows as usize;
+            let n = qw.cols as usize;
+            let m = if k > 0 { activations.len() / k } else { 0 };
+            let mut output = vec![0.0f32; m * n];
+            crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            Ok(())
+        }
+        TapeKernel::MatMulLut8(cid) => {
+            let mut cache = weight_cache.write();
+            let qw = cache.get_q8(*cid, constants, weights)?;
+            let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("Q8: activation not f32-aligned".into())
+            })?;
+            let k = qw.rows as usize;
+            let n = qw.cols as usize;
+            let m = if k > 0 { activations.len() / k } else { 0 };
+            let mut output = vec![0.0f32; m * n];
+            crate::lut_gemm::lut_gemm_8bit(activations, qw, &mut output);
+            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            Ok(())
+        }
+        TapeKernel::MatMulLut16(cid) => {
+            let mut cache = weight_cache.write();
+            let qw = cache.get_q16(*cid, constants, weights)?;
+            let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("Q16: activation not f32-aligned".into())
+            })?;
+            let k = qw.rows as usize;
+            let n = qw.cols as usize;
+            let m = if k > 0 { activations.len() / k } else { 0 };
+            let mut output = vec![0.0f32; m * n];
+            crate::lut_gemm::lut_gemm_16bit(activations, qw, &mut output);
+            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            Ok(())
+        }
+        TapeKernel::MatMulLut4Activation(cid, activation) => {
+            let mut cache = weight_cache.write();
+            let qw = cache.get_q4(*cid, constants, weights)?;
+            let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
+            })?;
+            let k = qw.rows as usize;
+            let n = qw.cols as usize;
+            let m = if k > 0 { activations.len() / k } else { 0 };
+            let mut output = vec![0.0f32; m * n];
+            crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(())
+        }
+        TapeKernel::MatMulLut8Activation(cid, activation) => {
+            let mut cache = weight_cache.write();
+            let qw = cache.get_q8(*cid, constants, weights)?;
+            let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+                crate::error::ExecError::UnsupportedOp("Q8: activation not f32-aligned".into())
+            })?;
+            let k = qw.rows as usize;
+            let n = qw.cols as usize;
+            let m = if k > 0 { activations.len() / k } else { 0 };
+            let mut output = vec![0.0f32; m * n];
+            crate::lut_gemm::lut_gemm_8bit(activations, qw, &mut output);
+            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(())
+        }
+        // Conv2D ops — stateless, fully parallelizable.
+        TapeKernel::InlineConv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => {
+            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
+                *input_h,
+                *input_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
+            let result = float_dispatch::conv::dispatch_conv2d_direct(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+                actual_h,
+                actual_w,
+            )?;
+            out_buf.extend_from_slice(&result);
+            Ok(())
+        }
+        TapeKernel::InlineConv2dActivation {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+            activation,
+        }
+        | TapeKernel::InlineConv2dBiasActivation {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+            activation,
+        } => {
+            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
+                *input_h,
+                *input_w,
+                input_metas.first().and_then(|m| m.as_ref()),
+            );
+            let result = float_dispatch::conv::dispatch_conv2d_direct(
+                inputs,
+                *kernel_h as usize,
+                *kernel_w as usize,
+                *stride_h as usize,
+                *stride_w as usize,
+                *pad_h as usize,
+                *pad_w as usize,
+                *dilation_h as usize,
+                *dilation_w as usize,
+                *group as usize,
+                actual_h,
+                actual_w,
+            )?;
+            out_buf.extend_from_slice(&result);
+            apply_activation_to_out_buf(out_buf, activation);
+            Ok(())
+        }
         TapeKernel::Custom(handler) => {
             let result = handler(inputs, constants)?;
             out_buf.extend_from_slice(&result);
             Ok(())
         }
-        // These should never appear in parallel levels (filtered by needs_shared_state).
+        // KvWrite/KvRead are excluded by needs_shared_state check in execute_parallel.
         _ => Err(crate::error::ExecError::UnsupportedOp(
             "non-parallelizable op in parallel level".into(),
         )),
@@ -4226,9 +4437,11 @@ impl EnumTape {
 
             if level_instrs.len() >= PAR_THRESHOLD && !needs_shared_state {
                 // Parallel: each instruction independently gathers inputs and dispatches.
-                // For parallel dispatch, we pass only the execution context ref (Sync-safe)
-                // since parallel levels never contain LUT-GEMM or KvCache ops.
+                // All Sync-safe ops are supported: Float, LUT-GEMM (via RwLock), Conv2D.
+                // Only KvWrite/KvRead are excluded (need exclusive &mut KvCacheState).
                 let exec_ctx = tape_ctx.ctx.as_ref();
+                let wc = tape_ctx.weight_cache;
+                let weights = tape_ctx.weights;
                 let results: ExecResult<Vec<(u32, Vec<u8>, u8)>> = level_instrs
                     .par_iter()
                     .map(|instr| {
@@ -4253,6 +4466,8 @@ impl EnumTape {
                             &input_metas,
                             exec_ctx,
                             tape_ctx.constants,
+                            weights,
+                            wc,
                             &mut out_buf,
                         )?;
                         Ok((instr.output_idx, out_buf, instr.output_elem_size))

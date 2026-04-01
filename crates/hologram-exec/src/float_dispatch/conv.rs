@@ -1,13 +1,30 @@
 use super::helpers::*;
 use crate::error::ExecResult;
 
+// ── Winograd weight transform cache ─────────────────────────────────────────
+//
+// 1-entry thread-local cache for the Winograd U matrix (transformed weights).
+// Keyed by (weight data pointer, weight length, group, oc_per_group, ic_per_group).
+// Eliminates redundant weight transforms across repeated inference calls
+// (e.g., 20-50 diffusion steps with the same Conv2d weights).
+
+struct WinogradCacheEntry {
+    key: (usize, usize, usize, usize, usize), // (ptr, len, group, oc_pg, ic_pg)
+    u_all: Vec<f32>,
+}
+
+std::thread_local! {
+    static WINOGRAD_CACHE: std::cell::RefCell<Option<WinogradCacheEntry>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 // ── Depthwise conv2d fast path ───────────────────────────────────────────────
 
 /// Fast path for depthwise convolutions (group == in_channels, 1 channel per group).
 ///
 /// Avoids im2col entirely — direct nested loop over the kernel window for each
-/// output position. Significantly faster than im2col+GEMM when the inner product
-/// per output pixel is just a single channel.
+/// output position. Splits the spatial loop into interior (no bounds checks,
+/// auto-vectorizable) and border (bounds-checked) regions for ~3-4× speedup.
 #[allow(clippy::too_many_arguments)]
 fn conv2d_depthwise(
     data: &[f32],
@@ -31,6 +48,26 @@ fn conv2d_depthwise(
     let spatial_out = h_out * w_out;
     let mut out = vec![0.0f32; n * channels * spatial_out];
 
+    // Compute interior region where ALL kernel elements land within input bounds.
+    // For oh in [oh_safe_start, oh_safe_end): all fh in [0, kh) give valid ih.
+    //   ih = oh*sh + fh*dh - ph  must be in [0, h_in)
+    //   fh=0:      oh*sh >= ph           → oh >= ceil(ph / sh)
+    //   fh=kh-1:   oh*sh + (kh-1)*dh < h_in + ph  → oh < (h_in + ph - (kh-1)*dh - 1) / sh + 1
+    let oh_safe_start = if sh > 0 { ph.div_ceil(sh) } else { 0 };
+    let oh_safe_end = if sh > 0 && h_in + ph > (kh - 1) * dh {
+        (h_in + ph - (kh - 1) * dh - 1) / sh + 1
+    } else {
+        0
+    }
+    .min(h_out);
+    let ow_safe_start = if sw > 0 { pw.div_ceil(sw) } else { 0 };
+    let ow_safe_end = if sw > 0 && w_in + pw > (kw - 1) * dw {
+        (w_in + pw - (kw - 1) * dw - 1) / sw + 1
+    } else {
+        0
+    }
+    .min(w_out);
+
     for batch in 0..n {
         for c in 0..channels {
             let bias_val = bias.map_or(0.0, |b| b.get(c).copied().unwrap_or(0.0));
@@ -38,8 +75,37 @@ fn conv2d_depthwise(
             let d_base = (batch * channels + c) * h_in * w_in;
             let o_base = (batch * channels + c) * spatial_out;
 
+            // ── Interior region: no bounds checks needed ──────────────────
+            // All kernel positions are guaranteed in-bounds. The branch-free
+            // inner loop enables LLVM auto-vectorization.
+            if oh_safe_start < oh_safe_end && ow_safe_start < ow_safe_end {
+                for oh in oh_safe_start..oh_safe_end {
+                    for ow in ow_safe_start..ow_safe_end {
+                        let mut sum = bias_val;
+                        for fh in 0..kh {
+                            let ih_actual = oh * sh + fh * dh - ph;
+                            let row_base = d_base + ih_actual * w_in;
+                            let w_row = w_base + fh * kw;
+                            for fw in 0..kw {
+                                let iw_actual = ow * sw + fw * dw - pw;
+                                sum += data[row_base + iw_actual] * weight[w_row + fw];
+                            }
+                        }
+                        out[o_base + oh * w_out + ow] = sum;
+                    }
+                }
+            }
+
+            // ── Border regions: bounds-checked ────────────────────────────
             for oh in 0..h_out {
+                // Skip interior rows (already processed).
+                let in_h_interior = oh >= oh_safe_start && oh < oh_safe_end;
+
                 for ow in 0..w_out {
+                    // Skip fully interior pixels.
+                    if in_h_interior && ow >= ow_safe_start && ow < ow_safe_end {
+                        continue;
+                    }
                     let mut sum = bias_val;
                     for fh in 0..kh {
                         let ih = oh * sh + fh * dh;
@@ -66,6 +132,64 @@ fn conv2d_depthwise(
         }
     }
     out
+}
+
+// ── Winograd weight transform ────────────────────────────────────────────────
+
+/// Compute the Winograd F(2,3) weight transform: U = G × g × G^T for all groups.
+/// Returns u_all[group * 16 * oc_per_group * ic_per_group].
+#[allow(clippy::identity_op, clippy::erasing_op)]
+fn compute_winograd_weight_transform(
+    weight: &[f32],
+    group: usize,
+    oc_per_group: usize,
+    ic_per_group: usize,
+) -> Vec<f32> {
+    let mut u_all = vec![0.0f32; group * 16 * oc_per_group * ic_per_group];
+
+    for g_idx in 0..group {
+        for oc_idx in 0..oc_per_group {
+            for ic_idx in 0..ic_per_group {
+                let abs_oc = g_idx * oc_per_group + oc_idx;
+                let w_base = abs_oc * ic_per_group * 9 + ic_idx * 9;
+
+                let mut g_k = [0.0f32; 9];
+                for (i, gv) in g_k.iter_mut().enumerate() {
+                    let idx = w_base + i;
+                    *gv = if idx < weight.len() { weight[idx] } else { 0.0 };
+                }
+
+                // G × g (4×3 × 3×3 → 4×3).
+                let mut gg = [0.0f32; 12];
+                for col in 0..3 {
+                    gg[0 * 3 + col] = g_k[0 * 3 + col];
+                    gg[1 * 3 + col] =
+                        0.5 * (g_k[0 * 3 + col] + g_k[1 * 3 + col] + g_k[2 * 3 + col]);
+                    gg[2 * 3 + col] =
+                        0.5 * (g_k[0 * 3 + col] - g_k[1 * 3 + col] + g_k[2 * 3 + col]);
+                    gg[3 * 3 + col] = g_k[2 * 3 + col];
+                }
+
+                // (G × g) × G^T (4×3 × 3×4 → 4×4).
+                let mut u = [0.0f32; 16];
+                for row in 0..4 {
+                    u[row * 4 + 0] = gg[row * 3 + 0];
+                    u[row * 4 + 1] = 0.5 * (gg[row * 3 + 0] + gg[row * 3 + 1] + gg[row * 3 + 2]);
+                    u[row * 4 + 2] = 0.5 * (gg[row * 3 + 0] - gg[row * 3 + 1] + gg[row * 3 + 2]);
+                    u[row * 4 + 3] = gg[row * 3 + 2];
+                }
+
+                let u_group_base = g_idx * 16 * oc_per_group * ic_per_group;
+                for e in 0..16 {
+                    u_all[u_group_base
+                        + e * oc_per_group * ic_per_group
+                        + oc_idx * ic_per_group
+                        + ic_idx] = u[e];
+                }
+            }
+        }
+    }
+    u_all
 }
 
 // ── Winograd F(2,3) for 3×3 stride=1 convolutions ────────────────────────��──
@@ -110,59 +234,31 @@ fn conv2d_winograd_f23(
 
     let mut out = vec![0.0f32; n * oc * spatial_out];
 
-    // ── Step 1: Transform weights ──────────────────────────────────────
-    // U[e][oc_per_group][ic_per_group] for each of 16 Winograd elements,
-    // for each group. Weight transform: U = G × g × G^T.
-    // G = [[1,0,0],[0.5,0.5,0.5],[0.5,-0.5,0.5],[0,0,1]]
-    let mut u_all = vec![0.0f32; group * 16 * oc_per_group * ic_per_group];
-
-    for g_idx in 0..group {
-        for oc_idx in 0..oc_per_group {
-            for ic_idx in 0..ic_per_group {
-                let abs_oc = g_idx * oc_per_group + oc_idx;
-                let w_base = abs_oc * ic_per_group * 9 + ic_idx * 9;
-
-                // Read 3×3 kernel.
-                let mut g_k = [0.0f32; 9];
-                for (i, gv) in g_k.iter_mut().enumerate() {
-                    let idx = w_base + i;
-                    *gv = if idx < weight.len() { weight[idx] } else { 0.0 };
-                }
-
-                // Compute G × g (4×3 × 3×3 → 4×3).
-                // G rows: [1,0,0], [½,½,½], [½,-½,½], [0,0,1]
-                let mut gg = [0.0f32; 12]; // 4×3
-                for col in 0..3 {
-                    gg[0 * 3 + col] = g_k[0 * 3 + col];
-                    gg[1 * 3 + col] =
-                        0.5 * (g_k[0 * 3 + col] + g_k[1 * 3 + col] + g_k[2 * 3 + col]);
-                    gg[2 * 3 + col] =
-                        0.5 * (g_k[0 * 3 + col] - g_k[1 * 3 + col] + g_k[2 * 3 + col]);
-                    gg[3 * 3 + col] = g_k[2 * 3 + col];
-                }
-
-                // Compute (G × g) × G^T (4×3 × 3×4 → 4×4).
-                // G^T cols: [1,½,½,0], [0,½,-½,0], [0,½,½,1]
-                // → G^T rows: [1,0,0], [½,½,½], [½,-½,½], [0,0,1]  (same as G)
-                let mut u = [0.0f32; 16]; // 4×4
-                for row in 0..4 {
-                    u[row * 4 + 0] = gg[row * 3 + 0];
-                    u[row * 4 + 1] = 0.5 * (gg[row * 3 + 0] + gg[row * 3 + 1] + gg[row * 3 + 2]);
-                    u[row * 4 + 2] = 0.5 * (gg[row * 3 + 0] - gg[row * 3 + 1] + gg[row * 3 + 2]);
-                    u[row * 4 + 3] = gg[row * 3 + 2];
-                }
-
-                // Store in [group, 16, oc_per_group, ic_per_group] layout.
-                let u_group_base = g_idx * 16 * oc_per_group * ic_per_group;
-                for e in 0..16 {
-                    u_all[u_group_base
-                        + e * oc_per_group * ic_per_group
-                        + oc_idx * ic_per_group
-                        + ic_idx] = u[e];
-                }
+    // ── Step 1: Transform weights (cached) ──────────────────────────────
+    // U[e][oc_per_group][ic_per_group] for each of 16 Winograd elements.
+    // Weight transform: U = G × g × G^T. Cached per (weight pointer, length)
+    // to skip redundant transforms across repeated inference calls.
+    let cache_key = (
+        weight.as_ptr() as usize,
+        weight.len(),
+        group,
+        oc_per_group,
+        ic_per_group,
+    );
+    let u_all = WINOGRAD_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(ref entry) = *cache {
+            if entry.key == cache_key {
+                return entry.u_all.clone();
             }
         }
-    }
+        let u = compute_winograd_weight_transform(weight, group, oc_per_group, ic_per_group);
+        *cache = Some(WinogradCacheEntry {
+            key: cache_key,
+            u_all: u.clone(),
+        });
+        u
+    });
 
     // ── Per-batch, per-group processing ────────────────────────────────
     // Allocate tile workspace once and reuse.
@@ -246,14 +342,16 @@ fn conv2d_winograd_f23(
             //   U[e]: [oc_per_group, ic_per_group]
             //   V[e]: [ic_per_group, n_tiles]
             //   M[e]: [oc_per_group, n_tiles]
+            //
+            // The 16 GEMMs are independent (disjoint slices of u_all, v_buf, m_buf).
+            // Parallelize with rayon when each GEMM is large enough to justify it.
             let u_group_base = g_idx * 16 * oc_per_group * ic_per_group;
+            let gemm_size = oc_per_group * n_tiles;
 
-            for e in 0..16 {
+            let do_one_gemm = |e: usize, m_slice: &mut [f32]| {
                 let u_slice = &u_all[u_group_base + e * oc_per_group * ic_per_group
                     ..u_group_base + (e + 1) * oc_per_group * ic_per_group];
                 let v_slice = &v_buf[e * ic_per_group * n_tiles..(e + 1) * ic_per_group * n_tiles];
-                let m_slice =
-                    &mut m_buf[e * oc_per_group * n_tiles..(e + 1) * oc_per_group * n_tiles];
                 m_slice.fill(0.0);
 
                 #[cfg(all(feature = "accelerate", target_os = "macos"))]
@@ -284,6 +382,26 @@ fn conv2d_winograd_f23(
                         n_tiles,
                     );
                 }
+            };
+
+            // Parallel path: 16 independent GEMMs via par_chunks_mut.
+            // Gate: only parallelize when each GEMM is substantial (>= 1024 output elements).
+            #[cfg(feature = "parallel")]
+            if gemm_size >= 1024 {
+                use rayon::prelude::*;
+                m_buf
+                    .par_chunks_mut(gemm_size)
+                    .enumerate()
+                    .for_each(|(e, m_slice)| do_one_gemm(e, m_slice));
+            } else {
+                for e in 0..16 {
+                    do_one_gemm(e, &mut m_buf[e * gemm_size..(e + 1) * gemm_size]);
+                }
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            for e in 0..16 {
+                do_one_gemm(e, &mut m_buf[e * gemm_size..(e + 1) * gemm_size]);
             }
 
             // ── Step 4: Output transform + scatter ─────────────────────
@@ -479,6 +597,10 @@ fn conv2d_core(
                 let tile_len = tile_end - tile_start;
 
                 // Phase 1: im2col for this tile — col[kernel_size, tile_len].
+                // Fast path for stride=1, dilation=1: consecutive output positions
+                // within a row map to consecutive input positions, enabling memcpy.
+                let use_fast_im2col = sh == 1 && sw == 1 && dh == 1 && dw == 1;
+
                 for k in 0..kernel_size {
                     let ic_idx = k / (kh * kw);
                     let k_rem = k % (kh * kw);
@@ -487,24 +609,97 @@ fn conv2d_core(
                     let abs_ic = g * ic_per_group + ic_idx;
                     let col_row = &mut col[k * tile_len..(k + 1) * tile_len];
 
-                    for (t, col_val) in col_row.iter_mut().enumerate() {
-                        let out_pos = tile_start + t;
-                        let oh = out_pos / w_out;
-                        let ow = out_pos % w_out;
-                        let ih = oh * sh + fh * dh;
-                        let iw = ow * sw + fw * dw;
+                    if use_fast_im2col {
+                        let d_channel_base = (batch * ic + abs_ic) * h_in * w_in;
+                        // For each output row in this tile, compute the contiguous
+                        // interior range where both h and w are in-bounds, then memcpy.
+                        let mut t = 0;
+                        while t < tile_len {
+                            let out_pos = tile_start + t;
+                            let oh = out_pos / w_out;
+                            let ow_start = out_pos % w_out;
+                            // How many positions remain in this output row within the tile.
+                            let row_remaining = (w_out - ow_start).min(tile_len - t);
 
-                        *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
-                            let d_idx =
-                                ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
-                            if d_idx < data.len() {
-                                data[d_idx]
+                            let ih = oh + fh;
+                            if ih < ph || ih >= h_in + ph {
+                                // Entire row segment is padding — zero fill.
+                                col_row[t..t + row_remaining].fill(0.0);
+                                t += row_remaining;
+                                continue;
+                            }
+                            let ih_actual = ih - ph;
+
+                            // Width range in-bounds: iw_actual = ow + fw - pw must be in [0, w_in).
+                            // → ow >= pw - fw  and  ow < w_in + pw - fw
+                            let ow_valid_lo = pw.saturating_sub(fw);
+                            let ow_valid_hi = (w_in + pw - fw).min(w_out);
+                            let ow_end = ow_start + row_remaining;
+
+                            // Leading zeros (left padding).
+                            if ow_start < ow_valid_lo {
+                                let zero_end = ow_valid_lo.min(ow_end);
+                                let zlen = zero_end - ow_start;
+                                col_row[t..t + zlen].fill(0.0);
+                                t += zlen;
+                                if t >= tile_len
+                                    || ow_start + (t - (tile_start + out_pos - ow_start)) >= ow_end
+                                {
+                                    continue;
+                                }
+                            }
+
+                            // Interior: contiguous copy from data.
+                            let cur_ow = ow_start + (t - (tile_start + out_pos - ow_start));
+                            if cur_ow < ow_valid_hi && cur_ow < ow_end {
+                                let copy_end = ow_valid_hi.min(ow_end);
+                                let copy_len = copy_end - cur_ow;
+                                let iw_start = cur_ow + fw - pw;
+                                let src_start = d_channel_base + ih_actual * w_in + iw_start;
+                                let src_end = src_start + copy_len;
+                                if src_end <= data.len() {
+                                    col_row[t..t + copy_len]
+                                        .copy_from_slice(&data[src_start..src_end]);
+                                } else {
+                                    // Fallback: element-wise with bounds check.
+                                    for i in 0..copy_len {
+                                        let idx = src_start + i;
+                                        col_row[t + i] =
+                                            if idx < data.len() { data[idx] } else { 0.0 };
+                                    }
+                                }
+                                t += copy_len;
+                            }
+
+                            // Trailing zeros (right padding).
+                            let final_ow = ow_start + (t - (tile_start + out_pos - ow_start));
+                            if final_ow < ow_end {
+                                let zlen = ow_end - final_ow;
+                                col_row[t..t + zlen].fill(0.0);
+                                t += zlen;
+                            }
+                        }
+                    } else {
+                        // General path: per-element with division and bounds checks.
+                        for (t, col_val) in col_row.iter_mut().enumerate() {
+                            let out_pos = tile_start + t;
+                            let oh = out_pos / w_out;
+                            let ow = out_pos % w_out;
+                            let ih = oh * sh + fh * dh;
+                            let iw = ow * sw + fw * dw;
+
+                            *col_val = if ih >= ph && ih < h_in + ph && iw >= pw && iw < w_in + pw {
+                                let d_idx =
+                                    ((batch * ic + abs_ic) * h_in + (ih - ph)) * w_in + (iw - pw);
+                                if d_idx < data.len() {
+                                    data[d_idx]
+                                } else {
+                                    0.0
+                                }
                             } else {
                                 0.0
-                            }
-                        } else {
-                            0.0
-                        };
+                            };
+                        }
                     }
                 }
 
@@ -616,8 +811,8 @@ pub(crate) fn dispatch_conv2d_direct(
         return Ok(vec![]);
     }
     let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
-    let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
-        Some(cast_f32(bias_bytes)?.to_vec())
+    let bias = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
+        Some(cast_f32(bias_bytes)?)
     } else {
         None
     };
@@ -751,8 +946,8 @@ pub(crate) fn dispatch_conv2d_lut4(
             return Ok(vec![]);
         }
         let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);
-        let bias: Option<Vec<f32>> = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
-            Some(cast_f32(bias_bytes)?.to_vec())
+        let bias = if !bias_bytes.is_empty() && bias_bytes.len() >= 4 {
+            Some(cast_f32(bias_bytes)?)
         } else {
             None
         };

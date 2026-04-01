@@ -21,26 +21,25 @@
 **Plan**: [plans/037-gemm-conv2d-perf.md](plans/037-gemm-conv2d-perf.md)
 
 Goal: maximize GEMM, MatMul, and Conv2D kernel throughput while keeping memory
-usage flat. 10 optimizations across 4 phases targeting cache efficiency, SIMD
-coverage, parallelism, and allocation elimination.
+usage flat. 10 optimizations across 4 phases.
 
-### Phase 1: Foundational (highest impact)
-- [ ] **1.1**: Shared B-panel packing across M-tiles in matmul_k_outer
-- [ ] **1.2**: Enable LUT-GEMM + Conv2D in dispatch_kernel_par (parallel level dispatch)
+### Phase 1: Bug Fix + Trivial Win
+- [x] **1.1**: Complete LUT-GEMM + Conv2D in dispatch_kernel_par (BUG: catch-all error since ad7df78)
+- [x] **1.2**: Eliminate per-call bias `.to_vec()` in Conv2D (borrow instead)
 
-### Phase 2: Quick Wins
-- [ ] **2.1**: Winograd batched GEMM parallelism (par_chunks_mut over 16 elements)
-- [ ] **2.2**: N-dimension parallelism + lower PAR_M_TILE_THRESHOLD
-- [ ] **2.3**: Eliminate per-call allocations in Conv2D (bias borrow, scratch reuse)
+### Phase 2: GEMM Parallelism
+- [x] **2.1**: Shared B-panel packing across M-tiles in matmul_k_outer
+- [x] **2.2**: N-dimension parallelism in vecmat_mul + lower PAR_M_TILE_THRESHOLD
 
 ### Phase 3: Conv2D Kernel Improvements
-- [ ] **3.1**: SIMD depthwise Conv2D (interior/border split + vectorization)
-- [ ] **3.2**: Fast im2col (memcpy interior for stride=1)
-- [ ] **3.3**: Cache Winograd weight transform (1-entry LRU, 16MB max)
+- [x] **3.1**: Winograd batched GEMM parallelism (par_chunks_mut over 16 elements)
+- [x] **3.2**: SIMD depthwise Conv2D (interior/border split + vectorization)
+- [x] **3.3**: Fast im2col (memcpy interior for stride=1)
 
 ### Phase 4: Polish
-- [ ] **4.1**: A-panel packing (contiguous MR-strided buffer, +1KB stack)
-- [ ] **4.2**: wasm32 SIMD128 micro-kernels (MR=4, NR=4)
+- [x] **4.1**: Cache Winograd weight transform (1-entry thread-local, 16MB max)
+- [x] **4.2**: A-panel packing — skipped (SIMD broadcast already fast, marginal gain vs complexity)
+- [x] **4.3**: wasm32 SIMD128 micro-kernels (4×8 as two 4×4 halves)
 
 ---
 

@@ -610,8 +610,10 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
 // ── Shared matmul kernel ────────────────────────────────────────────────
 
 // Minimum M-tile rows to justify rayon threads (thread overhead threshold).
+// Lowered from 8 to 2 (M >= 8): rayon overhead is ~5µs, a single M=8 GEMM
+// with K=4096, N=4096 takes ~1ms — 0.5% overhead is acceptable.
 #[allow(dead_code)]
-const PAR_M_TILE_THRESHOLD: usize = 8;
+const PAR_M_TILE_THRESHOLD: usize = 2;
 
 /// Wrapper to send a raw `*mut f32` across rayon threads.
 /// SAFETY: callers must guarantee non-overlapping writes per thread.
@@ -663,6 +665,24 @@ fn micro_kernel<const MR: usize, const NR: usize>(
     if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
         unsafe {
             micro_kernel_strided_avx2(
+                a,
+                b,
+                acc.as_mut_ptr().cast(),
+                i,
+                j,
+                k_start,
+                k_end,
+                k_stride,
+                n,
+            );
+        }
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_strided_wasm32(
                 a,
                 b,
                 acc.as_mut_ptr().cast(),
@@ -788,6 +808,63 @@ unsafe fn micro_kernel_strided_avx2(
     _mm256_storeu_ps(acc_ptr.add(24), acc3);
 }
 
+/// wasm32 SIMD128 strided micro-kernel: B at stride N (not packed).
+/// Processes the 4×8 tile as two 4×4 halves using 128-bit SIMD.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_strided_wasm32(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+    n: usize,
+) {
+    use std::arch::wasm32::*;
+
+    let mut acc0_lo = v128_load(acc_ptr as *const v128);
+    let mut acc0_hi = v128_load(acc_ptr.add(4) as *const v128);
+    let mut acc1_lo = v128_load(acc_ptr.add(8) as *const v128);
+    let mut acc1_hi = v128_load(acc_ptr.add(12) as *const v128);
+    let mut acc2_lo = v128_load(acc_ptr.add(16) as *const v128);
+    let mut acc2_hi = v128_load(acc_ptr.add(20) as *const v128);
+    let mut acc3_lo = v128_load(acc_ptr.add(24) as *const v128);
+    let mut acc3_hi = v128_load(acc_ptr.add(28) as *const v128);
+
+    for p in k_start..k_end {
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+
+        let a0 = f32x4_splat(*a.get_unchecked(i * k_stride + p));
+        let a1 = f32x4_splat(*a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = f32x4_splat(*a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = f32x4_splat(*a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0_lo = f32x4_add(acc0_lo, f32x4_mul(a0, b_lo));
+        acc0_hi = f32x4_add(acc0_hi, f32x4_mul(a0, b_hi));
+        acc1_lo = f32x4_add(acc1_lo, f32x4_mul(a1, b_lo));
+        acc1_hi = f32x4_add(acc1_hi, f32x4_mul(a1, b_hi));
+        acc2_lo = f32x4_add(acc2_lo, f32x4_mul(a2, b_lo));
+        acc2_hi = f32x4_add(acc2_hi, f32x4_mul(a2, b_hi));
+        acc3_lo = f32x4_add(acc3_lo, f32x4_mul(a3, b_lo));
+        acc3_hi = f32x4_add(acc3_hi, f32x4_mul(a3, b_hi));
+    }
+
+    v128_store(acc_ptr as *mut v128, acc0_lo);
+    v128_store(acc_ptr.add(4) as *mut v128, acc0_hi);
+    v128_store(acc_ptr.add(8) as *mut v128, acc1_lo);
+    v128_store(acc_ptr.add(12) as *mut v128, acc1_hi);
+    v128_store(acc_ptr.add(16) as *mut v128, acc2_lo);
+    v128_store(acc_ptr.add(20) as *mut v128, acc2_hi);
+    v128_store(acc_ptr.add(24) as *mut v128, acc3_lo);
+    v128_store(acc_ptr.add(28) as *mut v128, acc3_hi);
+}
+
 /// Micro-kernel operating on a packed (contiguous) B panel. The panel is
 /// laid out as `packed_b[p * NR + jj]` with stride NR, eliminating strided
 /// access to the original B matrix (stride N, which wastes cache lines when
@@ -841,8 +918,84 @@ fn micro_kernel_packed<const MR: usize, const NR: usize>(
         return;
     }
 
+    // wasm32 SIMD128 path: process 4×8 as two 4×4 halves.
+    #[cfg(target_arch = "wasm32")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_packed_wasm32(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
     // Scalar fallback (also used for smaller tile sizes like MR=2, MR=1).
     micro_kernel_packed_scalar::<MR, NR>(a, packed_b, acc, i, k_start, k_end, k_stride);
+}
+
+/// wasm32 SIMD128 micro-kernel for the 4×8 packed tile.
+///
+/// wasm SIMD128 has 128-bit vectors (4 floats), so the 8-wide NR is processed
+/// as two 4-wide halves. Uses `f32x4_mul` + `f32x4_add` (no FMA on wasm128).
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn micro_kernel_packed_wasm32(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    use std::arch::wasm32::*;
+
+    // Load 8 accumulators: 4 rows × (lo 4 cols, hi 4 cols).
+    let mut acc0_lo = v128_load(acc_ptr as *const v128);
+    let mut acc0_hi = v128_load(acc_ptr.add(4) as *const v128);
+    let mut acc1_lo = v128_load(acc_ptr.add(8) as *const v128);
+    let mut acc1_hi = v128_load(acc_ptr.add(12) as *const v128);
+    let mut acc2_lo = v128_load(acc_ptr.add(16) as *const v128);
+    let mut acc2_hi = v128_load(acc_ptr.add(20) as *const v128);
+    let mut acc3_lo = v128_load(acc_ptr.add(24) as *const v128);
+    let mut acc3_hi = v128_load(acc_ptr.add(28) as *const v128);
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_ptr = packed_b.as_ptr().add(p * 8);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+
+        let a0 = f32x4_splat(*a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = f32x4_splat(*a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = f32x4_splat(*a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = f32x4_splat(*a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0_lo = f32x4_add(acc0_lo, f32x4_mul(a0, b_lo));
+        acc0_hi = f32x4_add(acc0_hi, f32x4_mul(a0, b_hi));
+        acc1_lo = f32x4_add(acc1_lo, f32x4_mul(a1, b_lo));
+        acc1_hi = f32x4_add(acc1_hi, f32x4_mul(a1, b_hi));
+        acc2_lo = f32x4_add(acc2_lo, f32x4_mul(a2, b_lo));
+        acc2_hi = f32x4_add(acc2_hi, f32x4_mul(a2, b_hi));
+        acc3_lo = f32x4_add(acc3_lo, f32x4_mul(a3, b_lo));
+        acc3_hi = f32x4_add(acc3_hi, f32x4_mul(a3, b_hi));
+    }
+
+    v128_store(acc_ptr as *mut v128, acc0_lo);
+    v128_store(acc_ptr.add(4) as *mut v128, acc0_hi);
+    v128_store(acc_ptr.add(8) as *mut v128, acc1_lo);
+    v128_store(acc_ptr.add(12) as *mut v128, acc1_hi);
+    v128_store(acc_ptr.add(16) as *mut v128, acc2_lo);
+    v128_store(acc_ptr.add(20) as *mut v128, acc2_hi);
+    v128_store(acc_ptr.add(24) as *mut v128, acc3_lo);
+    v128_store(acc_ptr.add(28) as *mut v128, acc3_hi);
 }
 
 /// Scalar micro-kernel — portable fallback.
@@ -1002,12 +1155,11 @@ fn pack_b_panel<const NR: usize>(
 /// Cache-friendly register-blocked matmul with L2 cache blocking:
 /// C[m,n] += A[m,k] × B[k,n].
 ///
-/// Uses Goto/BLIS-style loop ordering: each thread owns a strip of M-tile
-/// rows, then iterates over K-blocks (KC=256) and N-tiles internally. This
-/// keeps B panels resident in L2 across all N-tile iterations within a
-/// K-block, giving ~2x improvement for K≥512 vs the unblocked kernel.
-///
-/// For K < KC the K-loop executes a single iteration with no overhead.
+/// Uses Goto/BLIS-style loop ordering with shared B-panel packing:
+/// for each K-block and N-tile, pack B once into a shared buffer, then
+/// fan out all M-tiles over the same packed panel (parallel or sequential).
+/// This eliminates redundant B-panel packing across M-tiles — previously
+/// each M-tile packed independently, duplicating work m_tiles× per N-tile.
 ///
 /// Processes MR×NR output tiles (4×8) in registers. Falls back to scalar
 /// k-outer for remainder rows/columns that don't fill a complete tile.
@@ -1015,8 +1167,6 @@ fn pack_b_panel<const NR: usize>(
 #[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
 pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
     // M=1 fast path: dedicated vector-matrix multiply with strided SIMD.
-    // Avoids B-panel packing (single-use, copy cost > benefit) and uses
-    // SIMD directly on strided B rows.
     if m == 1 {
         vecmat_mul(a, b, out, k, n);
         return;
@@ -1034,96 +1184,83 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
     // reuse the same packed panel (amortizes the copy cost).
     let use_packing = m_tiles > 1;
 
-    // Core logic for one strip of M-tile rows (used by both parallel and sequential paths).
-    // Each strip processes all N-tiles × K-blocks, keeping B panels L2-resident.
-    let process_m_tile = |it: usize, out_ptr: SendPtr| {
-        let out_ptr = out_ptr.0;
-        let i = it * MR;
-        // Stack-allocated packed B panel: KC × NR = 256 × 8 = 8 KB.
-        let mut packed_b = [0.0f32; KC * NR];
+    // Shared packed B panel: KC × NR = 256 × 8 = 8 KB.
+    // Packed once per (K-block, N-tile), shared read-only across all M-tiles.
+    let mut packed_b = [0.0f32; KC * NR];
 
-        // Tiled body: MR×NR output tiles with KC blocking.
-        for jt in 0..n_tiles {
-            let j = jt * NR;
+    // Process one M-tile against the pre-packed B panel for a single (jt, kc) block.
+    // Accumulates into the output buffer directly.
+    let process_m_tile_kc =
+        |it: usize, j: usize, kc_start: usize, kc_end: usize, packed: &[f32], out_ptr: SendPtr| {
+            let out_ptr = out_ptr.0;
+            let i = it * MR;
             let mut acc = [[0.0f32; NR]; MR];
-            for kc_start in (0..k).step_by(KC) {
-                let kc_end = (kc_start + KC).min(k);
-                if use_packing {
-                    let kc_len = kc_end - kc_start;
-                    pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
-                    micro_kernel_packed::<MR, NR>(
-                        a,
-                        &packed_b[..kc_len * NR],
-                        &mut acc,
-                        i,
-                        kc_start,
-                        kc_end,
-                        k,
-                    );
-                } else {
-                    micro_kernel::<MR, NR>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
+            // Load existing accumulator from output (for K-block accumulation).
+            if kc_start > 0 {
+                for (ii, acc_row) in acc.iter_mut().enumerate() {
+                    let off = (i + ii) * n + j;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(out_ptr.add(off), acc_row.as_mut_ptr(), NR);
+                    }
                 }
             }
+            if use_packing {
+                let kc_len = kc_end - kc_start;
+                micro_kernel_packed::<MR, NR>(
+                    a,
+                    &packed[..kc_len * NR],
+                    &mut acc,
+                    i,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            } else {
+                micro_kernel::<MR, NR>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
+            }
+            // Store accumulator back to output.
             for (ii, acc_row) in acc.iter().enumerate() {
                 let off = (i + ii) * n + j;
                 unsafe {
                     std::ptr::copy_nonoverlapping(acc_row.as_ptr(), out_ptr.add(off), NR);
                 }
             }
-        }
-        // Remainder columns: use MR×4 tile when possible (4-wide autovectorizable),
-        // then scalar for the last 0-3 columns.
-        if n_rem > 0 {
-            let j = n_tiles * NR;
-            let mut j_off = 0;
-            // MR×4 tile for first 4 remainder columns.
-            if n_rem >= 4 {
-                let mut acc = [[0.0f32; 4]; MR];
-                for kc_start in (0..k).step_by(KC) {
-                    let kc_end = (kc_start + KC).min(k);
-                    micro_kernel::<MR, 4>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
-                }
-                for (ii, acc_row) in acc.iter().enumerate() {
-                    for (jj, &v) in acc_row.iter().enumerate() {
-                        unsafe { *out_ptr.add((i + ii) * n + j + jj) = v };
-                    }
-                }
-                j_off = 4;
-            }
-            // Scalar for remaining 0-3 columns.
-            for jj in j_off..n_rem {
-                let mut acc = [0.0f32; MR];
-                for kc_start in (0..k).step_by(KC) {
-                    let kc_end = (kc_start + KC).min(k);
-                    for p in kc_start..kc_end {
-                        for (ii, a_acc) in acc.iter_mut().enumerate() {
-                            *a_acc += a[(i + ii) * k + p] * b[p * n + j + jj];
-                        }
-                    }
-                }
-                for (ii, &a_acc) in acc.iter().enumerate() {
-                    unsafe { *out_ptr.add((i + ii) * n + j + jj) = a_acc };
-                }
-            }
-        }
-    };
+        };
 
-    // Parallel path: static duty partitioning across rayon threads.
-    // Each thread gets a contiguous block of M-tiles (equal work per tile),
-    // avoiding work-stealing overhead since all tiles cost the same.
+    // ── Main tiled body ──────────────────────────────────────────────────
+    // Loop order: K-block → N-tile → pack B once → all M-tiles.
+    let out_ptr = SendPtr(out.as_mut_ptr());
+
     #[cfg(feature = "parallel")]
     if m_tiles >= PAR_M_TILE_THRESHOLD {
         use rayon::prelude::*;
-        let out_ptr = SendPtr(out.as_mut_ptr());
         let n_threads = rayon::current_num_threads();
         let duty = m_tiles.div_ceil(n_threads);
-        // SAFETY: each chunk writes exclusively to non-overlapping output rows.
-        (0..m_tiles)
-            .into_par_iter()
-            .with_min_len(duty)
-            .for_each(|it| process_m_tile(it, out_ptr));
 
-        // Remainder rows (sequential — typically ≤3 rows).
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for jt in 0..n_tiles {
+                let j = jt * NR;
+                if use_packing {
+                    let kc_len = kc_end - kc_start;
+                    pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                }
+                let packed_ref = &packed_b[..];
+                // SAFETY: each M-tile writes exclusively to non-overlapping output rows.
+                (0..m_tiles)
+                    .into_par_iter()
+                    .with_min_len(duty)
+                    .for_each(|it| process_m_tile_kc(it, j, kc_start, kc_end, packed_ref, out_ptr));
+            }
+        }
+
+        // Remainder columns (sequential — not worth packing for < NR columns).
+        if n_rem > 0 {
+            for it in 0..m_tiles {
+                m_tile_n_remainder(a, b, out_ptr, it * MR, k, n, n_tiles, n_rem);
+            }
+        }
+        // Remainder rows.
         if m_rem > 0 {
             let i = m_tiles * MR;
             m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
@@ -1131,16 +1268,76 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
         return;
     }
 
-    // Sequential path: same KC-blocked tiling without rayon.
-    let out_ptr = SendPtr(out.as_mut_ptr());
-    for it in 0..m_tiles {
-        process_m_tile(it, out_ptr);
+    // Sequential path: same shared-pack loop without rayon.
+    for kc_start in (0..k).step_by(KC) {
+        let kc_end = (kc_start + KC).min(k);
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            if use_packing {
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+            }
+            for it in 0..m_tiles {
+                process_m_tile_kc(it, j, kc_start, kc_end, &packed_b, out_ptr);
+            }
+        }
     }
 
-    // Remainder rows: use tiled micro-kernels for better vectorization.
+    // Remainder columns.
+    if n_rem > 0 {
+        for it in 0..m_tiles {
+            m_tile_n_remainder(a, b, out_ptr, it * MR, k, n, n_tiles, n_rem);
+        }
+    }
+    // Remainder rows.
     if m_rem > 0 {
         let i = m_tiles * MR;
         m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
+    }
+}
+
+/// Process remainder N columns (< NR) for a single M-tile. Not packed.
+#[allow(clippy::too_many_arguments)]
+fn m_tile_n_remainder(
+    a: &[f32],
+    b: &[f32],
+    out_ptr: SendPtr,
+    i: usize,
+    k: usize,
+    n: usize,
+    n_tiles: usize,
+    n_rem: usize,
+) {
+    const MR: usize = 4;
+    let out_ptr = out_ptr.0;
+    let j = n_tiles * 8;
+    let mut j_off = 0;
+    if n_rem >= 4 {
+        let mut acc = [[0.0f32; 4]; MR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            micro_kernel::<MR, 4>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
+        }
+        for (ii, acc_row) in acc.iter().enumerate() {
+            for (jj, &v) in acc_row.iter().enumerate() {
+                unsafe { *out_ptr.add((i + ii) * n + j + jj) = v };
+            }
+        }
+        j_off = 4;
+    }
+    for jj in j_off..n_rem {
+        let mut acc = [0.0f32; MR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                for (ii, a_acc) in acc.iter_mut().enumerate() {
+                    *a_acc += a[(i + ii) * k + p] * b[p * n + j + jj];
+                }
+            }
+        }
+        for (ii, &a_acc) in acc.iter().enumerate() {
+            unsafe { *out_ptr.add((i + ii) * n + j + jj) = a_acc };
+        }
     }
 }
 
@@ -1261,18 +1458,52 @@ fn m_remainder_tiled(
 // Avoids B-panel packing (single-use: packing overhead > benefit) and instead
 // reads B in strided layout with SIMD, using KC blocking for cache locality.
 
+/// Minimum N-tiles to justify rayon parallelism for vecmat_mul.
+/// 16 N-tiles = 128 output columns. Each tile does KC×NR FMA ops.
+#[cfg(feature = "parallel")]
+const PAR_N_TILE_THRESHOLD: usize = 16;
+
 /// Vector-matrix multiply: a[1×K] × B[K×N] → out[1×N].
 ///
 /// Uses NR=8-wide SIMD tiles across N with KC blocking along K.
 /// No B-panel packing — each B element is read once, so packing cost isn't
 /// amortized. Strided SIMD loads are fast because KC×N panels fit in L2.
+///
+/// When N is large enough (>= PAR_N_TILE_THRESHOLD tiles), parallelizes
+/// over N-tiles with rayon. Each thread gets a contiguous chunk of N-tiles,
+/// writing to non-overlapping output columns.
 #[allow(clippy::needless_range_loop)]
 fn vecmat_mul(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
     const NR: usize = 8;
     let n_tiles = n / NR;
     let n_rem = n % NR;
 
-    // Process NR=8 columns at a time with KC blocking.
+    #[cfg(feature = "parallel")]
+    if n_tiles >= PAR_N_TILE_THRESHOLD {
+        use rayon::prelude::*;
+        // Partition output into NR-wide chunks. Each chunk is one N-tile.
+        // par_chunks_mut gives each thread a contiguous &mut [f32] of NR elements.
+        out[..n_tiles * NR]
+            .par_chunks_mut(NR)
+            .enumerate()
+            .for_each(|(jt, out_chunk)| {
+                let j = jt * NR;
+                let mut acc = [0.0f32; NR];
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    vecmat_kernel_nr8(a, b, &mut acc, j, kc_start, kc_end, n);
+                }
+                out_chunk.copy_from_slice(&acc);
+            });
+
+        // Remainder columns (sequential — < NR columns, not worth threading).
+        if n_rem > 0 {
+            vecmat_n_remainder(a, b, out, k, n, n_tiles, n_rem);
+        }
+        return;
+    }
+
+    // Sequential path.
     for jt in 0..n_tiles {
         let j = jt * NR;
         let mut acc = [0.0f32; NR];
@@ -1283,34 +1514,46 @@ fn vecmat_mul(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
         out[j..j + NR].copy_from_slice(&acc);
     }
 
-    // Remainder columns: 4-wide then scalar.
     if n_rem > 0 {
-        let j = n_tiles * NR;
-        let mut j_off = 0;
-        if n_rem >= 4 {
-            let mut acc = [0.0f32; 4];
-            for kc_start in (0..k).step_by(KC) {
-                let kc_end = (kc_start + KC).min(k);
-                for p in kc_start..kc_end {
-                    let a_val = a[p];
-                    for jj in 0..4 {
-                        acc[jj] += a_val * b[p * n + j + jj];
-                    }
+        vecmat_n_remainder(a, b, out, k, n, n_tiles, n_rem);
+    }
+}
+
+/// Process remainder N columns (< NR) for vecmat_mul.
+fn vecmat_n_remainder(
+    a: &[f32],
+    b: &[f32],
+    out: &mut [f32],
+    k: usize,
+    n: usize,
+    n_tiles: usize,
+    n_rem: usize,
+) {
+    let j = n_tiles * 8;
+    let mut j_off = 0;
+    if n_rem >= 4 {
+        let mut acc = [0.0f32; 4];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                let a_val = a[p];
+                for jj in 0..4 {
+                    acc[jj] += a_val * b[p * n + j + jj];
                 }
             }
-            out[j..j + 4].copy_from_slice(&acc);
-            j_off = 4;
         }
-        for jj in j_off..n_rem {
-            let mut acc = 0.0f32;
-            for kc_start in (0..k).step_by(KC) {
-                let kc_end = (kc_start + KC).min(k);
-                for p in kc_start..kc_end {
-                    acc += a[p] * b[p * n + j + jj];
-                }
+        out[j..j + 4].copy_from_slice(&acc);
+        j_off = 4;
+    }
+    for jj in j_off..n_rem {
+        let mut acc = 0.0f32;
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                acc += a[p] * b[p * n + j + jj];
             }
-            out[j + jj] = acc;
         }
+        out[j + jj] = acc;
     }
 }
 
@@ -1340,6 +1583,12 @@ fn vecmat_kernel_nr8(
         return;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        unsafe { vecmat_kernel_nr8_wasm32(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
     // Scalar fallback — index pattern matches SIMD kernels for readability.
     #[allow(clippy::needless_range_loop)]
     for p in k_start..k_end {
@@ -1349,6 +1598,36 @@ fn vecmat_kernel_nr8(
             acc[jj] += a_val * b[b_off + jj];
         }
     }
+}
+
+/// wasm32 SIMD128 vecmat kernel: 8-wide as two 4-wide halves.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+unsafe fn vecmat_kernel_nr8_wasm32(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::wasm32::*;
+
+    let mut acc_lo = v128_load(acc.as_ptr() as *const v128);
+    let mut acc_hi = v128_load(acc.as_ptr().add(4) as *const v128);
+
+    for p in k_start..k_end {
+        let a_val = f32x4_splat(*a.get_unchecked(p));
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+        acc_lo = f32x4_add(acc_lo, f32x4_mul(a_val, b_lo));
+        acc_hi = f32x4_add(acc_hi, f32x4_mul(a_val, b_hi));
+    }
+
+    v128_store(acc.as_mut_ptr() as *mut v128, acc_lo);
+    v128_store(acc.as_mut_ptr().add(4) as *mut v128, acc_hi);
 }
 
 /// NEON vecmat kernel: 8-wide FMA on strided B rows.
