@@ -313,6 +313,45 @@ fn rms_norm(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+/// GroupNorm kernel: input, scale, bias, output, params { total, channels, group_size, spatial, epsilon }.
+const SHADER_GROUP_NORM: &str = r#"
+struct GroupNormParams { total: u32, channels: u32, group_size: u32, spatial: u32, epsilon: f32 }
+
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> scale: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read_write> output: array<f32>;
+@group(0) @binding(4) var<uniform> params: GroupNormParams;
+
+@compute @workgroup_size(256)
+fn group_norm(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.total) { return; }
+    // Determine which group this element belongs to.
+    let c = (gid.x / params.spatial) % params.channels;
+    let group = c / params.group_size;
+    let n = gid.x / (params.channels * params.spatial);
+    let group_start = n * params.channels * params.spatial + group * params.group_size * params.spatial;
+    let group_elems = params.group_size * params.spatial;
+
+    // Compute mean and variance for this group.
+    var mean: f32 = 0.0;
+    for (var i: u32 = 0u; i < group_elems; i = i + 1u) {
+        mean = mean + input[group_start + i];
+    }
+    mean = mean / f32(group_elems);
+
+    var variance: f32 = 0.0;
+    for (var i: u32 = 0u; i < group_elems; i = i + 1u) {
+        let diff = input[group_start + i] - mean;
+        variance = variance + diff * diff;
+    }
+    variance = variance / f32(group_elems);
+
+    let inv_std = inverseSqrt(variance + params.epsilon);
+    output[gid.x] = (input[gid.x] - mean) * inv_std * scale[c] + bias[c];
+}
+"#;
+
 // ── WebGpuBackend ────────────────────────────────────────────────────────────
 
 /// A single deferred GPU dispatch awaiting readback.
@@ -396,6 +435,7 @@ impl WebGpuBackend {
             (SHADER_BATCHED_SGEMM, &["batched_sgemm"]),
             (SHADER_SOFTMAX, &["softmax"]),
             (SHADER_RMS_NORM, &["rms_norm"]),
+            (SHADER_GROUP_NORM, &["group_norm"]),
         ];
 
         let mut pipelines = HashMap::new();

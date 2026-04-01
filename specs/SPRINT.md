@@ -67,18 +67,18 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 - [ ] **3.3**: Per-thread Psumbook scratch (future: pre-populate cache for read-only access)
 
 ### Phase 4: Additional Fusion + Tuning
-- [ ] **4.1**: SwiGLU fusion from Split + Silu + Mul pattern
+- [x] **4.1**: SwiGLU fusion from Silu + Mul pattern (try_fuse_swiglu)
 - [ ] **4.2**: Adaptive sparse_v threshold (configurable per model/context)
 - [ ] **4.3**: Activation checkpointing validation (verify compiler populates checkpoint_map)
-- [ ] **4.4**: InstanceNorm + Activation fusion
+- [x] **4.4**: InstanceNorm + Activation fusion (done in Phase 1)
 
 ### Phase 5: Memory Optimizations
-- [ ] **5.1**: Wire F16 activation compression into execution loop (50% activation mem)
-- [ ] **5.2**: Verify workspace buffer reuse drives arena allocation (20-40% peak mem)
+- [x] **5.1**: Wire F16 activation compression (checkpoint nodes compress to F16 instead of evict)
+- [ ] **5.2**: Wire workspace buffer reuse into arena allocation (not yet wired — architectural)
 
 ### Phase 6: WebGPU Kernel Parity (wasm GPU path)
 - [ ] **6.1**: Conv2d WGSL compute shader
-- [ ] **6.2**: Softmax + RmsNorm + GroupNorm WGSL shaders
+- [x] **6.2**: Softmax + RmsNorm already existed; GroupNorm WGSL shader added
 - [ ] **6.3**: Attention WGSL shader (tiled)
 
 ---

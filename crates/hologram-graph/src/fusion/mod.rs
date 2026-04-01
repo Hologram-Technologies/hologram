@@ -107,6 +107,10 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
         if float_fusion::try_fuse_conv2d_activation(graph, id, &succ_index) {
             stats.matmul_activations_fused += 1;
         }
+        // 4c. Silu + Mul → FusedSwiGLU
+        if float_fusion::try_fuse_swiglu(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1;
+        }
         if float_fusion::try_fuse_lut_gemm_activation(graph, id, &succ_index) {
             stats.matmul_activations_fused += 1;
         }

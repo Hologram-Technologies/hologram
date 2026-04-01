@@ -454,6 +454,79 @@ pub fn try_eliminate_inverse_transpose(
     true
 }
 
+/// Try to fuse a Silu → Mul pattern into FusedSwiGLU.
+///
+/// Detects: Silu(gate) with single successor Mul, where Mul's other input
+/// is the "up" path. Replaces with Float(FusedSwiGLU) taking [gate, up].
+///
+/// Returns `true` if fusion occurred.
+pub fn try_fuse_swiglu(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Current node must be Silu.
+    if !matches!(&node.op, GraphOp::Float(FloatOp::Silu)) {
+        return false;
+    }
+
+    // Silu must have exactly one successor.
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let mul_id = succs[0];
+
+    let mul_node = match graph.get(mul_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    // Successor must be Mul.
+    if !matches!(&mul_node.op, GraphOp::Float(FloatOp::Mul)) {
+        return false;
+    }
+
+    // Mul must have exactly 2 inputs.
+    if mul_node.inputs.len() != 2 {
+        return false;
+    }
+
+    // Find the "up" input (the Mul input that isn't the Silu output).
+    let up_slot = {
+        let mut found = None;
+        for (i, slot) in mul_node.inputs.iter().enumerate() {
+            if let InputSource::Node(pred_id) = &slot.source {
+                if *pred_id != id {
+                    found = Some((i, slot.clone()));
+                }
+            }
+        }
+        match found {
+            Some((_, slot)) => slot,
+            None => return false,
+        }
+    };
+
+    // Silu's input is the "gate" path.
+    let gate_slot = match node.inputs.first() {
+        Some(slot) => slot.clone(),
+        None => return false,
+    };
+
+    // Replace Mul with FusedSwiGLU([gate, up]).
+    graph.replace_op(mul_id, GraphOp::Float(FloatOp::FusedSwiGLU));
+    if let Some(mul_node) = graph.get_mut(mul_id) {
+        let mut inputs = tinyvec::TinyVec::new();
+        inputs.push(gate_slot);
+        inputs.push(up_slot);
+        mul_node.inputs = inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
 /// Try to fuse a Conv2d + Add(constant bias) + Activation into a single
 /// `FusedConv2dBiasActivation` node. Same 3-node pattern as matmul bias fusion.
 ///
@@ -1317,5 +1390,90 @@ mod tests {
             eliminated, 0,
             "non-inverse transposes should NOT be eliminated"
         );
+    }
+
+    // ── SwiGLU fusion tests ──────────────────────────────────────────
+
+    #[test]
+    fn fuse_silu_mul_to_swiglu() {
+        // gate_input → Silu → Mul(silu_out, up_input) → Output
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input) // 0: gate
+            .node(GraphOp::Input) // 1: up
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[0]) // 2: Silu(gate)
+            .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[2, 1]) // 3: Mul(silu, up)
+            .node_with_inputs(GraphOp::Output, &[3]) // 4
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_swiglu(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+        // Input(gate), Input(up), FusedSwiGLU, Output = 4 nodes
+        assert_eq!(g.node_count(), 4);
+
+        let has_swiglu = g
+            .node_ids()
+            .into_iter()
+            .any(|id| matches!(g.get(id).unwrap().op, GraphOp::Float(FloatOp::FusedSwiGLU)));
+        assert!(has_swiglu, "should have FusedSwiGLU");
+    }
+
+    #[test]
+    fn no_fuse_silu_with_fan_out() {
+        // Silu has 2 successors → should NOT fuse.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[0])
+            .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[2, 1])
+            .node_with_inputs(GraphOp::Float(FloatOp::Add), &[2, 1])
+            .node_with_inputs(GraphOp::Output, &[3])
+            .node_with_inputs(GraphOp::Output, &[4])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_fuse_swiglu(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 0);
+    }
+
+    #[test]
+    fn fuse_swiglu_via_full_pass() {
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node(GraphOp::Input)
+            .node_with_inputs(GraphOp::Float(FloatOp::Silu), &[0])
+            .node_with_inputs(GraphOp::Float(FloatOp::Mul), &[2, 1])
+            .node_with_inputs(GraphOp::Output, &[3])
+            .build();
+
+        let stats = crate::fusion::fuse(&mut g).unwrap();
+        assert!(
+            stats.matmul_activations_fused >= 1,
+            "Silu+Mul should fuse to SwiGLU"
+        );
+
+        let has_swiglu = g
+            .node_ids()
+            .into_iter()
+            .any(|id| matches!(g.get(id).unwrap().op, GraphOp::Float(FloatOp::FusedSwiGLU)));
+        assert!(has_swiglu, "should have FusedSwiGLU after full fuse()");
     }
 }

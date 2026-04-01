@@ -3645,11 +3645,11 @@ impl EnumTape {
                             } else if self.checkpoint_enabled
                                 && self.checkpoint_map.contains_key(&input_idx)
                             {
-                                // Activation checkpointing: force-evict after first
-                                // consumer even though distant consumers remain. The
-                                // recompute path (below) re-executes the producer when
-                                // a later consumer finds the buffer missing.
-                                arena.evict(NodeId::new(input_idx, 0));
+                                // Activation checkpointing: compress to F16 after first
+                                // consumer to halve memory while distant consumers remain.
+                                // Falls back to evict+recompute if compression fails
+                                // (e.g., buffer is borrowed or too small).
+                                arena.compress_f16(NodeId::new(input_idx, 0));
                             }
                         }
                     }
