@@ -781,7 +781,7 @@ pub(crate) fn dispatch_conv2d_lut4(
         let spatial_out = h_out * w_out;
 
         // Resolve pre-quantized weights from constant store.
-        let mut cache = tape_ctx.weight_cache.borrow_mut();
+        let mut cache = tape_ctx.weight_cache.write();
         let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
 
         // Validate quantized weight dimensions match runtime-derived dimensions.

@@ -773,6 +773,7 @@ dependencies = [
  "hologram-ring",
  "libc",
  "metal 0.33.0",
+ "parking_lot",
  "pollster",
  "rayon",
  "rkyv",

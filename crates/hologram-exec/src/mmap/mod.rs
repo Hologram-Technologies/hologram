@@ -71,7 +71,7 @@ pub fn execute_tape(
     }
 
     // Build tape context with weight access for LUT-GEMM ops.
-    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
 
     // Execute the tape with liveness-based eviction: free activation
@@ -127,7 +127,7 @@ pub fn execute_tape_with_shapes(
     )?;
     tape.prewarm_arena(&mut arena);
 
-    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
     tape_ctx.shape_overrides = shape_overrides.clone();
     tape.execute(&mut arena, &tape_ctx)?;
@@ -170,7 +170,7 @@ pub fn execute_tape_with_kv_and_shapes(
     if position_offset == 0 {
         tape.prewarm_arena(&mut arena);
     }
-    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let mut tape_ctx =
         crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, &wc, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
@@ -327,7 +327,7 @@ pub fn execute_tape_with_kv(
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
 ) -> ExecResult<GraphOutputs> {
-    let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+    let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     execute_tape_with_kv_impl(tape, plan, inputs, kv_state, &wc)
 }
 
@@ -341,7 +341,7 @@ pub fn execute_tape_with_kv_cached(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
-    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+    weight_cache: &parking_lot::RwLock<crate::kv::WeightCache>,
 ) -> ExecResult<GraphOutputs> {
     execute_tape_with_kv_impl(tape, plan, inputs, kv_state, weight_cache)
 }
@@ -351,7 +351,7 @@ fn execute_tape_with_kv_impl(
     plan: &LoadedPlan,
     inputs: &GraphInputs,
     kv_state: &mut KvCacheState,
-    weight_cache: &std::cell::RefCell<crate::kv::WeightCache>,
+    weight_cache: &parking_lot::RwLock<crate::kv::WeightCache>,
 ) -> ExecResult<GraphOutputs> {
     let sg = plan.graph();
     let weights = plan.weights();

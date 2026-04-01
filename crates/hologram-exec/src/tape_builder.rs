@@ -1001,7 +1001,7 @@ mod tests {
         }
         tape.prewarm_arena(&mut arena);
         let constants = ConstantStore::default();
-        let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+        let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
         let tape_ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &tape_ctx)
             .expect("tape execution should succeed");
@@ -1138,7 +1138,7 @@ mod tests {
 
         tape.prewarm_arena(&mut arena);
         let constants = ConstantStore::default();
-        let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+        let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
         let tape_ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &tape_ctx)
             .expect("tape execution should succeed");
@@ -1207,7 +1207,7 @@ mod tests {
 
         tape.prewarm_arena(&mut arena);
         let constants = ConstantStore::default();
-        let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+        let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
         let tape_ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &tape_ctx)
             .expect("tape execution should succeed");
@@ -1281,7 +1281,7 @@ mod tests {
 
         tape.prewarm_arena(&mut arena);
         let constants = ConstantStore::default();
-        let wc = std::cell::RefCell::new(crate::kv::WeightCache::new());
+        let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
         let tape_ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &tape_ctx)
             .expect("tape execution should succeed");

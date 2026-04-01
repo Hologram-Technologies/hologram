@@ -87,7 +87,13 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
             continue; // MatMul consumed — skip 2-node fusion.
         }
 
-        // 3b. Conv2d + bias + activation (3-node, same priority as matmul bias fusion)
+        // 3b. Transpose elimination (inverse transpose pairs → Passthrough)
+        if float_fusion::try_eliminate_inverse_transpose(graph, id, &succ_index) {
+            stats.matmul_activations_fused += 1; // reuse counter for structural opts
+            continue;
+        }
+
+        // 3c. Conv2d + bias + activation (3-node, same priority as matmul bias fusion)
         if float_fusion::try_fuse_conv2d_bias_activation(graph, id, &succ_index) {
             stats.matmul_activations_fused += 1;
             continue;

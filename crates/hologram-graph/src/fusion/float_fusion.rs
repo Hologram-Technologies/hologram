@@ -393,6 +393,67 @@ pub fn try_fuse_lut_gemm_activation(
     true
 }
 
+/// Try to eliminate a Transpose whose single successor is another Transpose
+/// that is the exact inverse permutation. The composition is identity →
+/// replace with Passthrough.
+///
+/// Returns `true` if elimination occurred.
+pub fn try_eliminate_inverse_transpose(
+    graph: &mut Graph,
+    id: NodeId,
+    succ_index: &[Vec<NodeId>],
+) -> bool {
+    let node = match graph.get(id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let (perm1, ndim1) = match &node.op {
+        GraphOp::Float(FloatOp::Transpose { perm, ndim }) => (*perm, *ndim as usize),
+        _ => return false,
+    };
+
+    // Must have exactly one successor.
+    let succs = Graph::successors_from_index(id, succ_index);
+    if succs.len() != 1 {
+        return false;
+    }
+    let succ_id = succs[0];
+
+    let succ = match graph.get(succ_id) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let (perm2, ndim2) = match &succ.op {
+        GraphOp::Float(FloatOp::Transpose { perm, ndim }) => (*perm, *ndim as usize),
+        _ => return false,
+    };
+
+    if ndim1 != ndim2 {
+        return false;
+    }
+
+    // Check if perm2 is the inverse of perm1: perm2[perm1[i]] == i for all i.
+    let is_inverse = (0..ndim1).all(|i| {
+        let p1 = perm1[i] as usize;
+        p1 < ndim2 && perm2[p1] as usize == i
+    });
+
+    if !is_inverse {
+        return false;
+    }
+
+    // Compose to identity → replace successor with Passthrough, remove current.
+    let transpose_inputs = node.inputs.clone();
+    graph.replace_op(succ_id, GraphOp::Passthrough);
+    if let Some(succ_node) = graph.get_mut(succ_id) {
+        succ_node.inputs = transpose_inputs;
+    }
+    graph.remove_node(id);
+    true
+}
+
 /// Try to fuse a Conv2d + Add(constant bias) + Activation into a single
 /// `FusedConv2dBiasActivation` node. Same 3-node pattern as matmul bias fusion.
 ///
@@ -1137,6 +1198,124 @@ mod tests {
         assert!(
             has_fused,
             "should have FusedAddRmsNormActivation after full fuse()"
+        );
+    }
+
+    // ── Transpose elimination tests ──────────────────────────────────
+
+    #[test]
+    fn eliminate_inverse_transpose_pair() {
+        // Input → Transpose([1,0,2]) → Transpose([1,0,2]) → Output
+        // [1,0,2] is its own inverse → should collapse to Passthrough.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [1, 0, 2, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[0],
+            )
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [1, 0, 2, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[1],
+            )
+            .node_with_inputs(GraphOp::Output, &[2])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut eliminated = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_eliminate_inverse_transpose(&mut g, id, &succ_index) {
+                eliminated += 1;
+            }
+        }
+        assert_eq!(eliminated, 1);
+        // Should have: Input, Passthrough, Output (3 nodes).
+        assert_eq!(g.node_count(), 3);
+    }
+
+    #[test]
+    fn eliminate_transpose_via_full_pass() {
+        // Verify transpose elimination works through the full fuse() pass.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [1, 0, 2, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[0],
+            )
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [1, 0, 2, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[1],
+            )
+            .node_with_inputs(GraphOp::Output, &[2])
+            .build();
+
+        let stats = crate::fusion::fuse(&mut g).unwrap();
+        assert!(
+            stats.matmul_activations_fused >= 1,
+            "inverse transpose pair should be eliminated"
+        );
+
+        let has_passthrough = g
+            .node_ids()
+            .into_iter()
+            .any(|id| matches!(g.get(id).unwrap().op, GraphOp::Passthrough));
+        assert!(
+            has_passthrough,
+            "should have Passthrough after eliminating inverse transposes"
+        );
+    }
+
+    #[test]
+    fn no_eliminate_non_inverse_transpose() {
+        // [0,2,1] followed by [2,0,1] — NOT inverses → should NOT eliminate.
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [0, 2, 1, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[0],
+            )
+            .node_with_inputs(
+                GraphOp::Float(FloatOp::Transpose {
+                    perm: [2, 0, 1, 0, 0, 0, 0, 0],
+                    ndim: 3,
+                }),
+                &[1],
+            )
+            .node_with_inputs(GraphOp::Output, &[2])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut eliminated = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            if try_eliminate_inverse_transpose(&mut g, id, &succ_index) {
+                eliminated += 1;
+            }
+        }
+        assert_eq!(
+            eliminated, 0,
+            "non-inverse transposes should NOT be eliminated"
         );
     }
 }

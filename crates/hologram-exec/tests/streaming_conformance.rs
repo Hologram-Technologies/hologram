@@ -9,14 +9,14 @@ use hologram_core::carry::CurvatureFlux;
 use hologram_core::op::RingLevel;
 use hologram_exec::kv::weight_cache::WeightCache;
 use hologram_exec::tape::TapeContext;
-use std::cell::RefCell;
+use parking_lot::RwLock;
 
 // ── TapeContext Flux Integration ────────────────────────────────────────────
 
 #[test]
 fn tape_context_has_flux() {
     let store = hologram_graph::constant::ConstantStore::new();
-    let wc = RefCell::new(WeightCache::default());
+    let wc = RwLock::new(WeightCache::default());
     let ctx = TapeContext::new(&store, &[], &wc);
     // Flux starts at zero — Q0 level
     assert_eq!(ctx.flux.get().required_level(), RingLevel::Q0);
@@ -25,7 +25,7 @@ fn tape_context_has_flux() {
 #[test]
 fn tape_context_flux_reset() {
     let store = hologram_graph::constant::ConstantStore::new();
-    let wc = RefCell::new(WeightCache::default());
+    let wc = RwLock::new(WeightCache::default());
     let ctx = TapeContext::new(&store, &[], &wc);
 
     // Accumulate carry

@@ -129,7 +129,7 @@ pub struct TapeContext<'a> {
     /// Borrowed from the caller so it persists across execution calls.
     /// For LUT-GEMM, the first call deserializes weights; subsequent calls
     /// reuse them — eliminating per-step rkyv deserialization overhead.
-    pub weight_cache: &'a RefCell<WeightCache>,
+    pub weight_cache: &'a parking_lot::RwLock<WeightCache>,
     /// Optional KV cache for autoregressive generation (KvWrite/KvRead ops).
     pub kv_state: Option<RefCell<KvCacheState>>,
     /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
@@ -153,7 +153,7 @@ impl<'a> TapeContext<'a> {
     pub fn new(
         constants: &'a ConstantStore,
         weights: &'a [u8],
-        weight_cache: &'a RefCell<WeightCache>,
+        weight_cache: &'a parking_lot::RwLock<WeightCache>,
     ) -> Self {
         TapeContext {
             ctx: None,
@@ -172,7 +172,7 @@ impl<'a> TapeContext<'a> {
     pub fn with_kv_cache(
         constants: &'a ConstantStore,
         weights: &'a [u8],
-        weight_cache: &'a RefCell<WeightCache>,
+        weight_cache: &'a parking_lot::RwLock<WeightCache>,
         kv: KvCacheState,
     ) -> Self {
         TapeContext {
@@ -2952,7 +2952,7 @@ fn dispatch_lut_gemm_4(
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
-    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
@@ -2973,7 +2973,7 @@ fn dispatch_lut_gemm_8(
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
-    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q8: activation not f32-aligned".into())
@@ -2994,7 +2994,7 @@ fn dispatch_lut_gemm_16(
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
-    let mut cache = tape_ctx.weight_cache.borrow_mut();
+    let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q16(cid, tape_ctx.constants, tape_ctx.weights)?;
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q16: activation not f32-aligned".into())
@@ -4091,18 +4091,13 @@ impl EnumTape {
             let end = self.level_offsets[level_idx + 1];
             let level_instrs = &self.instructions[start..end];
 
-            // Check if any instruction needs shared mutable state (RefCell).
-            // LUT-GEMM and KvCache ops cannot be parallelized.
+            // Check if any instruction needs exclusive mutable state.
+            // KvCache ops need exclusive &mut borrow — cannot be parallelized.
+            // LUT-GEMM is now safe: WeightCache uses parking_lot::RwLock.
             let needs_shared_state = level_instrs.iter().any(|instr| {
                 matches!(
                     instr.kernel,
-                    TapeKernel::MatMulLut4(_)
-                        | TapeKernel::MatMulLut8(_)
-                        | TapeKernel::MatMulLut4Activation(..)
-                        | TapeKernel::MatMulLut8Activation(..)
-                        | TapeKernel::InlineMatMulBiasActivation { .. }
-                        | TapeKernel::KvWrite { .. }
-                        | TapeKernel::KvRead { .. }
+                    TapeKernel::KvWrite { .. } | TapeKernel::KvRead { .. }
                 )
             });
 
@@ -4340,7 +4335,7 @@ mod tests {
         let tape = EnumTape::new();
         let mut arena = BufferArena::new();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         assert!(tape.execute(&mut arena, &ctx).is_ok());
     }
@@ -4365,7 +4360,7 @@ mod tests {
         arena.insert(NodeId::new(0, 0), vec![10, 20, 30]);
 
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
@@ -4405,7 +4400,7 @@ mod tests {
         arena.insert(NodeId::new(0, 0), input_bytes);
 
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
@@ -4437,7 +4432,7 @@ mod tests {
         arena.insert(NodeId::new(0, 0), vec![0, 128, 255]);
 
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
@@ -4483,7 +4478,7 @@ mod tests {
         arena.insert(NodeId::new(0, 0), input);
 
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
 
@@ -4510,7 +4505,7 @@ mod tests {
         tape.end_level();
 
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Run 1
@@ -4536,7 +4531,7 @@ mod tests {
     fn inline_relu_matches_generic() {
         let input: Vec<u8> = [(-2.0f32).to_le_bytes(), 3.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Inline path
@@ -4588,7 +4583,7 @@ mod tests {
         let a: Vec<u8> = [1.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat();
         let b: Vec<u8> = [10.0f32.to_le_bytes(), 20.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
 
         // Inline path
@@ -4620,7 +4615,7 @@ mod tests {
         let input: Vec<u8> = [0.0f32.to_le_bytes()].concat(); // sigmoid(0) = 0.5
         let two: Vec<u8> = [2.0f32.to_le_bytes()].concat();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
 
         let mut tape = EnumTape::new();
@@ -4696,7 +4691,7 @@ mod tests {
     fn run_unary_tape(kernel: TapeKernel, input: &[f32]) -> Vec<f32> {
         let input_bytes: Vec<u8> = bytemuck::cast_slice(input).to_vec();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4725,7 +4720,7 @@ mod tests {
         let a_bytes: Vec<u8> = bytemuck::cast_slice(a).to_vec();
         let b_bytes: Vec<u8> = bytemuck::cast_slice(b).to_vec();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4828,7 +4823,7 @@ mod tests {
         let w: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 1.0, 1.0]).to_vec();
         let b: Vec<u8> = bytemuck::cast_slice(&[0.0f32, 0.0, 0.0]).to_vec();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4865,7 +4860,7 @@ mod tests {
         // LogSoftmax of [0, 0, 0] → [-ln(3), -ln(3), -ln(3)]
         let x = [0.0f32, 0.0, 0.0];
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4896,7 +4891,7 @@ mod tests {
         // Verify InlineSoftmax writes correct values and sums to 1.
         let x = [1.0f32, 2.0, 3.0];
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4936,7 +4931,7 @@ mod tests {
         let idx_vals: [i64; 2] = [2, 0];
         let indices: Vec<u8> = bytemuck::cast_slice(&idx_vals).to_vec();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -4972,7 +4967,7 @@ mod tests {
         let a: Vec<u8> = bytemuck::cast_slice(&[1.0f32, 2.0]).to_vec();
         let b: Vec<u8> = bytemuck::cast_slice(&[3.0f32, 4.0, 5.0]).to_vec();
         let constants = empty_constants();
-        let wc = std::cell::RefCell::new(WeightCache::new());
+        let wc = parking_lot::RwLock::new(WeightCache::new());
         let ctx = TapeContext::new(&constants, &[], &wc);
         let mut tape = EnumTape::new();
         tape.push(TapeInstruction {
@@ -5033,7 +5028,7 @@ mod tests {
         let mut arena = BufferArena::new();
         arena.insert(NodeId::new(0, 0), vec![255u8]);
         arena.insert(NodeId::new(1, 0), vec![1u8]);
-        let wc = RefCell::new(WeightCache::default());
+        let wc = parking_lot::RwLock::new(WeightCache::default());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
         assert_eq!(arena.get(NodeId::new(2, 0)).unwrap(), &[0u8]);
@@ -5052,7 +5047,7 @@ mod tests {
         let mut arena = BufferArena::new();
         arena.insert(NodeId::new(0, 0), vec![200u8]);
         arena.insert(NodeId::new(1, 0), vec![2u8]);
-        let wc = RefCell::new(WeightCache::default());
+        let wc = parking_lot::RwLock::new(WeightCache::default());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
         assert_eq!(arena.get(NodeId::new(2, 0)).unwrap(), &[144u8]);
@@ -5070,7 +5065,7 @@ mod tests {
         );
         let mut arena = BufferArena::new();
         arena.insert(NodeId::new(0, 0), vec![1u8, 128u8, 0u8]);
-        let wc = RefCell::new(WeightCache::default());
+        let wc = parking_lot::RwLock::new(WeightCache::default());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
         assert_eq!(arena.get(NodeId::new(1, 0)).unwrap(), &[255u8, 128u8, 0u8]);
@@ -5089,7 +5084,7 @@ mod tests {
         let mut arena = BufferArena::new();
         arena.insert(NodeId::new(0, 0), 65535u16.to_le_bytes().to_vec()); // 0xFF 0xFF
         arena.insert(NodeId::new(1, 0), 1u16.to_le_bytes().to_vec()); // 0x01 0x00
-        let wc = RefCell::new(WeightCache::default());
+        let wc = parking_lot::RwLock::new(WeightCache::default());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
         let out = arena.get(NodeId::new(2, 0)).unwrap();
@@ -5108,7 +5103,7 @@ mod tests {
         );
         let mut arena = BufferArena::new();
         arena.insert(NodeId::new(0, 0), 1u16.to_le_bytes().to_vec());
-        let wc = RefCell::new(WeightCache::default());
+        let wc = parking_lot::RwLock::new(WeightCache::default());
         let ctx = TapeContext::new(&constants, &[], &wc);
         tape.execute(&mut arena, &ctx).unwrap();
         let out = arena.get(NodeId::new(1, 0)).unwrap();
@@ -5131,7 +5126,7 @@ mod tests {
                 let mut arena = BufferArena::new();
                 arena.insert(NodeId::new(0, 0), vec![a]);
                 arena.insert(NodeId::new(1, 0), vec![b]);
-                let wc = RefCell::new(WeightCache::default());
+                let wc = parking_lot::RwLock::new(WeightCache::default());
                 let ctx = TapeContext::new(&constants, &[], &wc);
                 tape.execute(&mut arena, &ctx).unwrap();
                 let ring_out = arena.get(NodeId::new(2, 0)).unwrap()[0];

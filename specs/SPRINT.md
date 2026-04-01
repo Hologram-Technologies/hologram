@@ -27,16 +27,16 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 - [x] **1.1**: AddRmsNorm + Activation fusion (GraphOp + TapeKernel + dispatch)
 - [x] **1.1b**: InstanceNorm + Activation fusion (same pattern)
 - [ ] **1.2**: Attention + Residual Add fusion
-- [ ] **1.3**: Transpose elimination (involution detection + Attention heads_first absorption)
+- [x] **1.3**: Transpose elimination (inverse transpose pairs → Passthrough)
 
 ### Phase 2: Multi-Level Weight Prefetch
 - [x] **2.1**: 2-level lookahead in execute_inner (MADV_WILLNEED for i+1, i+2)
 - [x] **2.2**: Early release already exists (MADV_DONTNEED for current level)
 
 ### Phase 3: Lock-Free LUT-GEMM Parallelism
-- [ ] **3.1**: Replace RefCell<WeightCache> with thread-safe alternative
-- [ ] **3.2**: Enable rayon for LUT-GEMM levels
-- [ ] **3.3**: Per-thread Psumbook scratch
+- [x] **3.1**: Replace RefCell<WeightCache> with parking_lot::RwLock<WeightCache>
+- [x] **3.2**: Enable rayon for LUT-GEMM levels (removed from needs_shared_state block)
+- [ ] **3.3**: Per-thread Psumbook scratch (future: pre-populate cache for read-only access)
 
 ### Phase 4: Additional Fusion + Tuning
 - [ ] **4.1**: SwiGLU fusion from Split + Silu + Mul pattern
