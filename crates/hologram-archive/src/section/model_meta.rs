@@ -68,9 +68,46 @@ impl ModelMetaSection {
     }
 
     /// Deserialize from raw section bytes into an owned value.
+    ///
+    /// Backward compatible: if deserialization fails (e.g., archive compiled
+    /// before KV config fields were added), tries the legacy format and fills
+    /// new fields with defaults.
     pub fn deserialize_from(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error> {
-        rkyv::from_bytes::<Self, rkyv::rancor::Error>(bytes)
+        // Try current format first.
+        if let Ok(v) = rkyv::from_bytes::<Self, rkyv::rancor::Error>(bytes) {
+            return Ok(v);
+        }
+        // Fallback: try legacy format (without kv_* fields).
+        let legacy = rkyv::from_bytes::<ModelMetaSectionLegacy, rkyv::rancor::Error>(bytes)?;
+        Ok(Self {
+            kind: legacy.kind,
+            arch: legacy.arch,
+            description: legacy.description,
+            max_seq_len: legacy.max_seq_len,
+            supports_prompt: legacy.supports_prompt,
+            n_layers: legacy.n_layers,
+            n_kv_heads: legacy.n_kv_heads,
+            head_dim: legacy.head_dim,
+            kv_k_bits: 0,
+            kv_v_bits: 0,
+            kv_boundary_layers: 2,
+            kv_wht: false,
+        })
     }
+}
+
+/// Legacy format for backward-compatible deserialization of archives compiled
+/// before the KV cache config fields were added.
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+struct ModelMetaSectionLegacy {
+    pub kind: ModelKind,
+    pub arch: String,
+    pub description: String,
+    pub max_seq_len: u32,
+    pub supports_prompt: bool,
+    pub n_layers: u32,
+    pub n_kv_heads: u32,
+    pub head_dim: u32,
 }
 
 impl EmbeddableSection for ModelMetaSection {
