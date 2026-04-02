@@ -3289,31 +3289,30 @@ impl EnumTape {
                 continue;
             }
 
-            // Gather inputs into owned copies to avoid borrow conflict.
-            // TODO: use split_at_mut or unsafe pointer aliasing to avoid copies.
-            let owned_inputs: SmallVec<[Vec<u8>; 4]> = instr
+            // Zero-copy input gathering + mutable output access.
+            // SAFETY: output_idx != any input_idx in a valid DAG.
+            let out_idx = instr.output_idx as usize;
+            let bufs_ptr = bufs.as_mut_ptr();
+            let bufs_len = bufs.len();
+
+            let input_refs: SmallVec<[&[u8]; 4]> = instr
                 .input_indices
                 .iter()
                 .map(|&idx| {
                     let i = idx as usize;
-                    if i < bufs.len() && !bufs[i].is_empty() {
-                        bufs[i].clone()
-                    } else {
-                        arena
-                            .get(NodeId::new(idx, 0))
-                            .map(|d| d.to_vec())
-                            .unwrap_or_default()
+                    if i < bufs_len {
+                        let buf = unsafe { &*bufs_ptr.add(i) };
+                        if !buf.is_empty() {
+                            return buf.as_slice();
+                        }
                     }
+                    arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
                 })
                 .collect();
-            let input_refs: SmallVec<[&[u8]; 4]> =
-                owned_inputs.iter().map(|v| v.as_slice()).collect();
 
-            // Clear output buffer for kernel to write into.
-            let out_idx = instr.output_idx as usize;
-            bufs[out_idx].clear();
+            let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
+            out_buf.clear();
 
-            // Single dispatch.
             let input_metas: crate::shape_resolve::InputMetas = SmallVec::new();
             dispatch_kernel(
                 &instr.kernel,
@@ -3321,7 +3320,7 @@ impl EnumTape {
                 &input_metas,
                 tape_ctx,
                 &*tape_ctx.backend.resolve(),
-                &mut bufs[out_idx],
+                out_buf,
             )?;
         }
 
