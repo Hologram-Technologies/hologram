@@ -180,6 +180,19 @@ pub fn build_tape(
                 hologram_core::op::TensorMeta::new(dtype, shape)
             });
 
+            // Debug: count kernel types at tape build time.
+            match &kernel {
+                TapeKernel::InlineMatMul { m, k, n } => {
+                    tracing::info!(m, k, n, "tape_build: InlineMatMul");
+                }
+                TapeKernel::InlineGemm { m, k, n, .. } => {
+                    tracing::info!(m, k, n, "tape_build: InlineGemm");
+                }
+                TapeKernel::InlineMatMulActivation { m, k, n, .. } => {
+                    tracing::info!(m, k, n, "tape_build: InlineMatMulActivation");
+                }
+                _ => {}
+            }
             tape.push(TapeInstruction {
                 kernel,
                 output_idx: node_id.index(),

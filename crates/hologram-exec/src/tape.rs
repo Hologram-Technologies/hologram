@@ -710,6 +710,19 @@ fn dispatch_kernel(
     use crate::kv::KvStore;
     use crate::shape_resolve;
 
+    // Debug: log first few non-trivial dispatches.
+    static DK_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dk = DK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if dk < 5 {
+        let name = match kernel {
+            TapeKernel::InlineMatMul { m, k, n } => format!("InlineMatMul m={m} k={k} n={n}"),
+            TapeKernel::InlineGemm { m, k, n, .. } => format!("InlineGemm m={m} k={k} n={n}"),
+            TapeKernel::Custom(_) => "Custom".into(),
+            _ => format!("{:?}", std::mem::discriminant(kernel)),
+        };
+        tracing::info!(dk, name, "dispatch_kernel");
+    }
+
     match kernel {
         TapeKernel::FusedFloatChain(chain) => {
             float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)?;
@@ -2244,12 +2257,24 @@ fn dispatch_kernel(
             let baked_k = *k as usize;
             let baked_n = *n as usize;
 
-            // Fast path: direct BLAS when k is known and inputs are aligned.
-            // Skips resolve_matmul_dims, infer_matmul_dims, infer_matmul_k,
-            // cast_f32/Cow, and batch detection — ~0.8ms saved per call.
             let used_fast_path = {
                 #[cfg(all(feature = "accelerate", target_os = "macos"))]
                 {
+                    // Debug: log first 10 large matmuls to diagnose fast path misses.
+                    static DBG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if DBG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
+                        let b_exp = baked_k * baked_n * 4;
+                        tracing::info!(
+                            baked_k,
+                            baked_n,
+                            a_len = inputs[0].len(),
+                            b_len = inputs[1].len(),
+                            b_exp,
+                            a_ok = inputs[0].len().is_multiple_of(baked_k * 4),
+                            b_ok = inputs[1].len() >= b_exp,
+                            "InlineMatMul dims"
+                        );
+                    }
                     if baked_k > 0
                         && baked_n > 0
                         && inputs[0].len().is_multiple_of(baked_k * 4)
@@ -4143,6 +4168,17 @@ impl EnumTape {
             let mut prev_inputs: SmallVec<[u32; 4]> = SmallVec::new();
 
             for (i, instr) in level_instrs.iter().enumerate() {
+                // Debug: count total instructions dispatched.
+                static TOTAL_INSTRS: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
+                let ti = TOTAL_INSTRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if ti == 0 {
+                    tracing::info!(
+                        n_levels = self.n_levels(),
+                        total = self.instructions.len(),
+                        "execute_inner started"
+                    );
+                }
                 // Evict dead inputs from the previous instruction.
                 if let Some(ref mut counts) = live_counts {
                     prev_inputs.sort_unstable();
@@ -4464,6 +4500,22 @@ impl EnumTape {
                     out_buf.clear();
                     if instr.output_byte_hint > 0 && !use_mmap_out {
                         out_buf.reserve(instr.output_byte_hint as usize);
+                    }
+                    // Debug: log general-path dispatches.
+                    static GP_COUNT: std::sync::atomic::AtomicU32 =
+                        std::sync::atomic::AtomicU32::new(0);
+                    if GP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
+                        let kname = match &instr.kernel {
+                            TapeKernel::InlineMatMul { m, k, n } => {
+                                format!("InlineMatMul m={m} k={k} n={n}")
+                            }
+                            TapeKernel::InlineGemm { m, k, n, .. } => {
+                                format!("InlineGemm m={m} k={k} n={n}")
+                            }
+                            TapeKernel::Custom(_) => "Custom".into(),
+                            _ => format!("{:?}", std::mem::discriminant(&instr.kernel)),
+                        };
+                        tracing::info!(kname, "general_path dispatch");
                     }
                     dispatch_kernel(
                         &instr.kernel,
