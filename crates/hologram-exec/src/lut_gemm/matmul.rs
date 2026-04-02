@@ -66,12 +66,36 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
             let n_bytes = n / 2;
             let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
 
-            for (b, &packed) in idx_row.iter().enumerate() {
-                let hi = (packed >> 4) as usize;
-                let lo = (packed & 0x0F) as usize;
+            // Unrolled inner loop: 4 bytes (8 columns) per iteration.
+            // The CPU's OoO execution overlaps load/add across iterations.
+            let chunks4 = n_bytes / 4;
+            let out_ptr = out_row.as_mut_ptr();
+            let premul_ptr = premul.as_ptr();
+            for chunk in 0..chunks4 {
+                let base = chunk * 4;
+                unsafe {
+                    let b0 = *idx_row.get_unchecked(base);
+                    let b1 = *idx_row.get_unchecked(base + 1);
+                    let b2 = *idx_row.get_unchecked(base + 2);
+                    let b3 = *idx_row.get_unchecked(base + 3);
+
+                    let c = base * 2;
+                    *out_ptr.add(c)     += *premul_ptr.add((b0 >> 4) as usize);
+                    *out_ptr.add(c + 1) += *premul_ptr.add((b0 & 0xF) as usize);
+                    *out_ptr.add(c + 2) += *premul_ptr.add((b1 >> 4) as usize);
+                    *out_ptr.add(c + 3) += *premul_ptr.add((b1 & 0xF) as usize);
+                    *out_ptr.add(c + 4) += *premul_ptr.add((b2 >> 4) as usize);
+                    *out_ptr.add(c + 5) += *premul_ptr.add((b2 & 0xF) as usize);
+                    *out_ptr.add(c + 6) += *premul_ptr.add((b3 >> 4) as usize);
+                    *out_ptr.add(c + 7) += *premul_ptr.add((b3 & 0xF) as usize);
+                }
+            }
+            // Remainder.
+            for b in (chunks4 * 4)..n_bytes {
+                let packed = idx_row[b];
                 let col = b * 2;
-                out_row[col] += premul[hi];
-                out_row[col + 1] += premul[lo];
+                out_row[col] += premul[(packed >> 4) as usize];
+                out_row[col + 1] += premul[(packed & 0x0F) as usize];
             }
         }
     }
