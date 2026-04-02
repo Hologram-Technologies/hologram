@@ -42,61 +42,174 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
     let m = activations.len() / k;
     let centroids = &weights.centroids;
 
-    // hologram LUT-native Q4 vecmat with NibbleView.
-    //
-    // For each K-row:
-    //   1. Pre-multiply centroids by activation → premul[0..16] (f32)
-    //   2. Quantize premul to int8 with per-row scale
-    //   3. Use NEON vqtbl1q_u8 for 16 centroid lookups per instruction
-    //   4. Widen int8 → int16 → int32, accumulate
-    //   5. After all K rows: convert int32 accum to f32 with cumulative scale
-    //
-    // Data read: 0.5 GB Q4 indices (8x less than f32 BLAS).
-    // vqtbl1q_u8 does 16 lookups per instruction = 32 columns per pair.
-    // Fully pipelined, no data-dependent stalls.
+    #[cfg(target_arch = "aarch64")]
+    {
+        lut_gemm_4bit_neon_nibbleview(activations, weights, output, m, k, n, centroids);
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        lut_gemm_4bit_scalar_premul(activations, weights, output, m, k, n, centroids);
+    }
+}
+
+/// NEON NibbleView Q4 kernel: vqtbl1q_s8 for 16 lookups per instruction.
+///
+/// Per K-row: quantize premul to int8, use NEON table lookup to process
+/// 32 output columns per instruction pair. Accumulate in int16 (flushed
+/// to f32 every 128 rows to prevent overflow).
+#[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
+fn lut_gemm_4bit_neon_nibbleview(
+    activations: &[f32],
+    weights: &QuantizedWeights4,
+    output: &mut [f32],
+    m: usize, k: usize, n: usize,
+    centroids: &[f32; super::psumbook::Q4_LEVELS],
+) {
+    use std::arch::aarch64::*;
+
+    let n_bytes = n / 2;
+    // Flush interval: accumulate int8 lookups into int16, flush to f32 every
+    // FLUSH_INTERVAL rows. Max int16 value: 127 * FLUSH_INTERVAL < 32767.
+    const FLUSH_INTERVAL: usize = 128;
 
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
         let out_row = &mut output[i * n..(i + 1) * n];
         out_row.fill(0.0);
 
-        // We accumulate in f32 directly (not int32) to avoid precision issues
-        // from int8 quantization of premul. The inner loop uses the unrolled
-        // scalar approach which the compiler can auto-vectorize when appropriate.
-        for (l, &a_val) in a_row.iter().enumerate() {
-            let mut premul = [0.0f32; 16];
-            for c in 0..16 {
-                premul[c] = a_val * centroids[c];
-            }
+        // Process K rows in chunks of FLUSH_INTERVAL.
+        let mut k_start = 0;
+        while k_start < k {
+            let k_end = (k_start + FLUSH_INTERVAL).min(k);
 
-            let byte_start = (l * n) / 2;
-            let n_bytes = n / 2;
-            let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
+            // f32 scale accumulator for this chunk.
+            // Each row has its own int8 scale — we accumulate the product.
+            // Simpler: use a single scale per chunk (max of all row scales).
+            // Even simpler: compute scale per row and accumulate f32 directly
+            // from the int8 results per row.
 
-            // Unrolled 4x: 4 bytes (8 columns) per iteration.
-            let chunks4 = n_bytes / 4;
-            let out_ptr = out_row.as_mut_ptr();
-            let premul_ptr = premul.as_ptr();
-            for chunk in 0..chunks4 {
-                let base = chunk * 4;
+            for l in k_start..k_end {
+                let a_val = *unsafe { a_row.get_unchecked(l) };
+
+                // Pre-multiply centroids.
+                let mut premul = [0.0f32; 16];
+                for c in 0..16 {
+                    premul[c] = a_val * centroids[c];
+                }
+
+                // Quantize premul to int8 with per-row scale.
+                let scale = premul.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+                if scale < 1e-12 { continue; }
+                let inv_scale = 127.0 / scale;
+                let dequant_scale = scale / 127.0;
+
+                let mut table_i8 = [0i8; 16];
+                for c in 0..16 {
+                    table_i8[c] = (premul[c] * inv_scale).round() as i8;
+                }
+
+                let byte_start = l * n_bytes;
+                let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
+
+                let chunks16 = n_bytes / 16;
+
                 unsafe {
-                    let b0 = *idx_row.get_unchecked(base);
-                    let b1 = *idx_row.get_unchecked(base + 1);
-                    let b2 = *idx_row.get_unchecked(base + 2);
-                    let b3 = *idx_row.get_unchecked(base + 3);
-                    let c = base * 2;
-                    *out_ptr.add(c)     += *premul_ptr.add((b0 >> 4) as usize);
-                    *out_ptr.add(c + 1) += *premul_ptr.add((b0 & 0xF) as usize);
-                    *out_ptr.add(c + 2) += *premul_ptr.add((b1 >> 4) as usize);
-                    *out_ptr.add(c + 3) += *premul_ptr.add((b1 & 0xF) as usize);
-                    *out_ptr.add(c + 4) += *premul_ptr.add((b2 >> 4) as usize);
-                    *out_ptr.add(c + 5) += *premul_ptr.add((b2 & 0xF) as usize);
-                    *out_ptr.add(c + 6) += *premul_ptr.add((b3 >> 4) as usize);
-                    *out_ptr.add(c + 7) += *premul_ptr.add((b3 & 0xF) as usize);
+                    let tbl = vld1q_s8(table_i8.as_ptr());
+                    let mask_lo = vdupq_n_u8(0x0F);
+                    let v_dequant = vdupq_n_f32(dequant_scale);
+
+                    for chunk in 0..chunks16 {
+                        let base = chunk * 16;
+                        let col_base = base * 2;
+                        let packed = vld1q_u8(idx_row.as_ptr().add(base));
+
+                        // Split nibbles.
+                        let lo_idx = vandq_u8(packed, mask_lo);
+                        let hi_idx = vshrq_n_u8(packed, 4);
+
+                        // 16-way int8 table lookup (hologram's core operation).
+                        let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
+                        let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
+
+                        // Widen int8 → int16 (lower half).
+                        let hi_lo_s16 = vmovl_s8(vget_low_s8(hi_i8));
+                        let lo_lo_s16 = vmovl_s8(vget_low_s8(lo_i8));
+                        // Widen int8 → int16 (upper half).
+                        let hi_hi_s16 = vmovl_s8(vget_high_s8(hi_i8));
+                        let lo_hi_s16 = vmovl_s8(vget_high_s8(lo_i8));
+
+                        // Process 4 groups of 8 output columns each.
+                        // Group 0: hi_lo_s16 low 4 + lo_lo_s16 low 4 → 8 columns.
+                        macro_rules! process_group {
+                            ($hi_s16:expr, $lo_s16:expr, $lane:expr, $col_off:expr) => {
+                                let hi_s32 = if $lane == 0 {
+                                    vmovl_s16(vget_low_s16($hi_s16))
+                                } else {
+                                    vmovl_s16(vget_high_s16($hi_s16))
+                                };
+                                let lo_s32 = if $lane == 0 {
+                                    vmovl_s16(vget_low_s16($lo_s16))
+                                } else {
+                                    vmovl_s16(vget_high_s16($lo_s16))
+                                };
+                                let hi_f32 = vmulq_f32(vcvtq_f32_s32(hi_s32), v_dequant);
+                                let lo_f32 = vmulq_f32(vcvtq_f32_s32(lo_s32), v_dequant);
+                                // Interleave: even cols from hi, odd from lo.
+                                let zip1 = vzip1q_f32(hi_f32, lo_f32);
+                                let zip2 = vzip2q_f32(hi_f32, lo_f32);
+                                let col = col_base + $col_off;
+                                let e1 = vld1q_f32(out_row.as_ptr().add(col));
+                                let e2 = vld1q_f32(out_row.as_ptr().add(col + 4));
+                                vst1q_f32(out_row.as_mut_ptr().add(col), vaddq_f32(e1, zip1));
+                                vst1q_f32(out_row.as_mut_ptr().add(col + 4), vaddq_f32(e2, zip2));
+                            };
+                        }
+                        process_group!(hi_lo_s16, lo_lo_s16, 0, 0);
+                        process_group!(hi_lo_s16, lo_lo_s16, 1, 8);
+                        process_group!(hi_hi_s16, lo_hi_s16, 0, 16);
+                        process_group!(hi_hi_s16, lo_hi_s16, 1, 24);
+                    }
+
+                    // Scalar remainder.
+                    for (b, &packed) in idx_row.iter().enumerate().skip(chunks16 * 16) {
+                        
+                        let col = b * 2;
+                        if col < n {
+                            out_row[col] += premul[(packed >> 4) as usize];
+                        }
+                        if col + 1 < n {
+                            out_row[col + 1] += premul[(packed & 0x0F) as usize];
+                        }
+                    }
                 }
             }
-            for b in (chunks4 * 4)..n_bytes {
-                let packed = idx_row[b];
+            k_start = k_end;
+        }
+    }
+}
+
+/// Scalar fallback with pre-multiplied centroid table.
+#[allow(dead_code, clippy::too_many_arguments)]
+fn lut_gemm_4bit_scalar_premul(
+    activations: &[f32],
+    weights: &QuantizedWeights4,
+    output: &mut [f32],
+    m: usize, k: usize, n: usize,
+    centroids: &[f32; super::psumbook::Q4_LEVELS],
+) {
+    let n_bytes = n / 2;
+    for i in 0..m {
+        let a_row = &activations[i * k..(i + 1) * k];
+        let out_row = &mut output[i * n..(i + 1) * n];
+        out_row.fill(0.0);
+        for (l, &a_val) in a_row.iter().enumerate() {
+            let mut premul = [0.0f32; 16];
+            for c in 0..16 { premul[c] = a_val * centroids[c]; }
+            let byte_start = l * n_bytes;
+            let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
+            for (b, &packed) in idx_row.iter().enumerate() {
                 let col = b * 2;
                 out_row[col] += premul[(packed >> 4) as usize];
                 out_row[col + 1] += premul[(packed & 0x0F) as usize];
