@@ -1454,6 +1454,61 @@ fn dispatch_kernel(
             trans_b,
             quant_b,
         } => {
+            #[allow(unused_variables)]
+            let baked_k = *k as usize;
+            #[allow(unused_variables)]
+            let baked_n = *n as usize;
+            let alpha_f = hologram_core::op::bits_to_f32(*alpha);
+            let beta_f = hologram_core::op::bits_to_f32(*beta);
+
+            // Fast path: direct BLAS for standard Gemm (alpha=1, beta=0, no quant).
+            // Handles both trans_b=false and trans_b=true (common ONNX pattern).
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            if !*trans_a
+                && *quant_b == 0
+                && alpha_f == 1.0
+                && beta_f == 0.0
+                && baked_k > 0
+                && baked_n > 0
+            {
+                // B layout: [k, n] if !trans_b, [n, k] if trans_b.
+                let b_expected = baked_k * baked_n * 4;
+                let a_k = baked_k;
+                if inputs[0].len().is_multiple_of(a_k * 4)
+                    && inputs.get(1).map(|b| b.len()).unwrap_or(0) >= b_expected
+                {
+                    let actual_m = inputs[0].len() / (a_k * 4);
+                    if actual_m > 0 {
+                        let a: &[f32] = bytemuck::cast_slice(inputs[0]);
+                        let b: &[f32] = bytemuck::cast_slice(&inputs[1][..b_expected]);
+                        let out = crate::float_dispatch::helpers::alloc_f32_in(
+                            out_buf,
+                            actual_m * baked_n,
+                        );
+                        crate::float_dispatch::matmul::blas::sgemm_full(
+                            crate::float_dispatch::matmul::GemmParams {
+                                m: actual_m,
+                                n: baked_n,
+                                k: baked_k,
+                                alpha: 1.0,
+                                beta: 0.0,
+                                trans_a: false,
+                                trans_b: *trans_b,
+                            },
+                            a,
+                            b,
+                            out,
+                        );
+                        let meta = hologram_core::op::TensorMeta::new(
+                            hologram_core::op::FloatDType::F32,
+                            &[actual_m, baked_n],
+                        );
+                        return Ok(DispatchResult::InOutBufWithMeta(meta));
+                    }
+                }
+            }
+
+            // General path.
             let (actual_m, actual_k, actual_n) = shape_resolve::resolve_matmul_dims(
                 *m,
                 *k,
@@ -1469,8 +1524,8 @@ fn dispatch_kernel(
                     m: actual_m,
                     n: actual_n,
                     k: actual_k,
-                    alpha: hologram_core::op::bits_to_f32(*alpha),
-                    beta: hologram_core::op::bits_to_f32(*beta),
+                    alpha: alpha_f,
+                    beta: beta_f,
                     trans_a: *trans_a,
                     trans_b: *trans_b,
                 },
@@ -2186,42 +2241,93 @@ fn dispatch_kernel(
         // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
         // Try backend (GPU) first, then direct CPU kernel call.
         TapeKernel::InlineMatMul { m, k, n } => {
-            // Try N-D metadata first, then fall back to buffer-length heuristic.
-            let meta_dims = shape_resolve::resolve_matmul_dims(
-                *m,
-                *k,
-                *n,
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-                inputs[0].len(),
-                inputs[1].len(),
-            );
-            // Validate: k must divide both buffers cleanly.
-            let a_floats = inputs[0].len() / 4;
-            let b_floats = inputs[1].len() / 4;
-            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
-                && a_floats > 0
-                && b_floats > 0
-                && a_floats.is_multiple_of(meta_dims.1)
-                && b_floats.is_multiple_of(meta_dims.1)
-            {
-                meta_dims
-            } else {
-                // Fall back to buffer-length inference.
-                crate::float_dispatch::matmul::infer_matmul_dims(
-                    *m as usize,
-                    *k as usize,
-                    *n as usize,
-                    a_floats,
-                    b_floats,
-                )
+            let baked_k = *k as usize;
+            let baked_n = *n as usize;
+
+            // Fast path: direct BLAS when k is known and inputs are aligned.
+            // Skips resolve_matmul_dims, infer_matmul_dims, infer_matmul_k,
+            // cast_f32/Cow, and batch detection — ~0.8ms saved per call.
+            let used_fast_path = {
+                #[cfg(all(feature = "accelerate", target_os = "macos"))]
+                {
+                    if baked_k > 0
+                        && baked_n > 0
+                        && inputs[0].len().is_multiple_of(baked_k * 4)
+                        && inputs[1].len() >= baked_k * baked_n * 4
+                    {
+                        let actual_m = inputs[0].len() / (baked_k * 4);
+                        if actual_m > 0 {
+                            let a: &[f32] = bytemuck::cast_slice(inputs[0]);
+                            let b: &[f32] =
+                                bytemuck::cast_slice(&inputs[1][..baked_k * baked_n * 4]);
+                            let out = crate::float_dispatch::helpers::alloc_f32_in(
+                                out_buf,
+                                actual_m * baked_n,
+                            );
+                            crate::float_dispatch::matmul::blas::sgemm(
+                                actual_m, baked_n, baked_k, a, b, out,
+                            );
+                            static LOGGED: std::sync::atomic::AtomicBool =
+                                std::sync::atomic::AtomicBool::new(false);
+                            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                tracing::info!(
+                                    actual_m,
+                                    baked_k,
+                                    baked_n,
+                                    "FAST PATH HIT: direct BLAS sgemm"
+                                );
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+                {
+                    false
+                }
             };
-            // Skip backend dispatch — use CPU for now to validate correctness.
-            // TODO: re-enable backend.dispatch_matmul with adapted dims once validated.
-            crate::float_dispatch::matmul::dispatch_matmul_into(
-                inputs, actual_m, actual_k, actual_n, out_buf,
-            )?;
+
+            let (actual_m, actual_k, actual_n) = if used_fast_path {
+                let actual_m = inputs[0].len() / (baked_k * 4);
+                (actual_m, baked_k, baked_n)
+            } else {
+                // General path with dim resolution.
+                let meta_dims = shape_resolve::resolve_matmul_dims(
+                    *m,
+                    *k,
+                    *n,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    input_metas.get(1).and_then(|m| m.as_ref()),
+                    inputs[0].len(),
+                    inputs[1].len(),
+                );
+                let a_floats = inputs[0].len() / 4;
+                let b_floats = inputs[1].len() / 4;
+                let (am, ak, an) = if meta_dims.1 > 0
+                    && a_floats > 0
+                    && b_floats > 0
+                    && a_floats.is_multiple_of(meta_dims.1)
+                    && b_floats.is_multiple_of(meta_dims.1)
+                {
+                    meta_dims
+                } else {
+                    crate::float_dispatch::matmul::infer_matmul_dims(
+                        *m as usize,
+                        *k as usize,
+                        *n as usize,
+                        a_floats,
+                        b_floats,
+                    )
+                };
+                crate::float_dispatch::matmul::dispatch_matmul_into(inputs, am, ak, an, out_buf)?;
+                (am, ak, an)
+            };
             // Compute output meta: [batch, M, N] from resolved dims.
+            let a_floats = inputs[0].len() / 4;
             let batch = if actual_m > 0 && actual_k > 0 {
                 a_floats / (actual_m * actual_k)
             } else {
@@ -2885,27 +2991,59 @@ fn dispatch_kernel_par(
         }
         // Inline custom ops — CPU-only in parallel context (no backend).
         TapeKernel::InlineMatMul { m, k, n } => {
-            crate::float_dispatch::matmul::dispatch_matmul_into(
-                inputs,
-                *m as usize,
-                *k as usize,
-                *n as usize,
-                out_buf,
-            )
+            let m = *m as usize;
+            let k = *k as usize;
+            let n = *n as usize;
+            // Fast path: direct BLAS with zero-copy when inputs are aligned and
+            // match the baked dimensions exactly. Skips infer_matmul_k, batch
+            // detection, and Cow<[f32]> overhead (~0.8ms saved per call).
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                let b_expected = k * n * 4;
+                if k > 0 && inputs[1].len() >= b_expected && inputs[0].len().is_multiple_of(k * 4) {
+                    let actual_m = inputs[0].len() / (k * 4);
+                    if actual_m > 0 {
+                        let a: &[f32] = bytemuck::cast_slice(inputs[0]);
+                        let b: &[f32] = bytemuck::cast_slice(&inputs[1][..b_expected]);
+                        let out =
+                            crate::float_dispatch::helpers::alloc_f32_in(out_buf, actual_m * n);
+                        crate::float_dispatch::matmul::blas::sgemm(actual_m, n, k, a, b, out);
+                        return Ok(());
+                    }
+                }
+            }
+            // Fallback: general dispatch with inference.
+            crate::float_dispatch::matmul::dispatch_matmul_into(inputs, m, k, n, out_buf)
         }
         TapeKernel::InlineMatMulActivation {
             m,
             k,
             n,
             activation,
-        } => crate::float_dispatch::matmul::dispatch_matmul_activation_into(
-            inputs,
-            *m as usize,
-            *k as usize,
-            *n as usize,
-            activation,
-            out_buf,
-        ),
+        } => {
+            let m = *m as usize;
+            let k = *k as usize;
+            let n = *n as usize;
+            // Fast path: direct BLAS + inline activation.
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                let a_expected = m * k * 4;
+                let b_expected = k * n * 4;
+                if inputs[0].len() >= a_expected && inputs[1].len() >= b_expected {
+                    let a: &[f32] = bytemuck::cast_slice(&inputs[0][..a_expected]);
+                    let b: &[f32] = bytemuck::cast_slice(&inputs[1][..b_expected]);
+                    let actual_m = inputs[0].len() / (k * 4);
+                    let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, actual_m * n);
+                    crate::float_dispatch::matmul::blas::sgemm(actual_m, n, k, a, b, out);
+                    // Apply activation in-place.
+                    apply_activation_to_out_buf(out_buf, activation);
+                    return Ok(());
+                }
+            }
+            crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+                inputs, m, k, n, activation, out_buf,
+            )
+        }
         TapeKernel::InlineSoftmax { size } => {
             let actual = crate::shape_resolve::resolve_last_dim(
                 *size,
