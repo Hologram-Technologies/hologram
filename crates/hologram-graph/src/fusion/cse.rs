@@ -24,10 +24,13 @@ struct NodeSignature {
 /// For each node in the given topological order, if a node with the same
 /// (op, sorted_preds) already exists, rewire all successors to the canonical
 /// node and remove the duplicate. Returns the number of nodes eliminated.
-pub fn eliminate_common_subexpressions(graph: &mut Graph, order: &[NodeId]) -> usize {
+pub fn eliminate_common_subexpressions(
+    graph: &mut Graph,
+    order: &[NodeId],
+    succ_index: &[Vec<NodeId>],
+) -> usize {
     let mut canonical: HashMap<NodeSignature, NodeId> = HashMap::new();
     let mut eliminated = 0;
-    let succ_index = graph.build_successor_index();
 
     for &id in order {
         let node = match graph.get(id) {
@@ -86,8 +89,9 @@ mod tests {
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 2 (dup of 1)
             .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[1, 2]) // 3
             .build();
-        let order = toposort::toposort(&g).unwrap();
-        let count = eliminate_common_subexpressions(&mut g, &order);
+        let succ_index = g.build_successor_index();
+        let order = toposort::toposort_with_index(&g, &succ_index).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order, &succ_index);
         assert_eq!(count, 1);
         // 3 live nodes remain: Input, Relu, Add
         assert_eq!(g.node_count(), 3);
@@ -100,8 +104,9 @@ mod tests {
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 1
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0]) // 2
             .build();
-        let order = toposort::toposort(&g).unwrap();
-        let count = eliminate_common_subexpressions(&mut g, &order);
+        let succ_index = g.build_successor_index();
+        let order = toposort::toposort_with_index(&g, &succ_index).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order, &succ_index);
         assert_eq!(count, 0);
         assert_eq!(g.node_count(), 3);
     }
@@ -113,8 +118,9 @@ mod tests {
             .node(GraphOp::Input) // 0
             .node(GraphOp::Input) // 1
             .build();
-        let order = toposort::toposort(&g).unwrap();
-        let count = eliminate_common_subexpressions(&mut g, &order);
+        let succ_index = g.build_successor_index();
+        let order = toposort::toposort_with_index(&g, &succ_index).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order, &succ_index);
         assert_eq!(count, 0);
         assert_eq!(g.node_count(), 2);
     }
@@ -128,8 +134,9 @@ mod tests {
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 2
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0]) // 3
             .build();
-        let order = toposort::toposort(&g).unwrap();
-        let count = eliminate_common_subexpressions(&mut g, &order);
+        let succ_index = g.build_successor_index();
+        let order = toposort::toposort_with_index(&g, &succ_index).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order, &succ_index);
         assert_eq!(count, 2);
         assert_eq!(g.node_count(), 2);
     }
@@ -143,8 +150,9 @@ mod tests {
             .node_with_inputs(GraphOp::Prim(PrimOp::Sub), &[0, 1]) // 2
             .node_with_inputs(GraphOp::Prim(PrimOp::Sub), &[1, 0]) // 3 (reversed)
             .build();
-        let order = toposort::toposort(&g).unwrap();
-        let count = eliminate_common_subexpressions(&mut g, &order);
+        let succ_index = g.build_successor_index();
+        let order = toposort::toposort_with_index(&g, &succ_index).unwrap();
+        let count = eliminate_common_subexpressions(&mut g, &order, &succ_index);
         assert_eq!(count, 0);
         assert_eq!(g.node_count(), 4);
     }

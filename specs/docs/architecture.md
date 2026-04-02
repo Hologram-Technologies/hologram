@@ -184,6 +184,52 @@ The tape pipeline realises several Prism identities:
 
 ---
 
+## Cascade Compilation Pipeline
+
+All compilation routes through the 7-stage cascade engine (`hologram-cascade`), implementing
+the UOR cascade pipeline from uor-foundation v0.1.3. The cascade is the sole compilation path;
+there is no separate imperative pipeline.
+
+### Entry Points
+
+| Entry Point | Use Case |
+|-------------|----------|
+| `compile(graph)` | Raw Graph — wraps in CompileUnit via `unit_from_graph()` → cascade |
+| `CompilerBuilder::from_unit(unit, graph)` | Pre-built CompileUnit + pre-lowered Graph → cascade |
+| `CompilerBuilder::from_source(source, ...)` | UOR term language → parse → preflight → lower → cascade |
+| `compile_from_source(source, ...)` | Convenience wrapper for `from_source` |
+
+### 7 Cascade Stages
+
+| Stage | Name | Ontology | Role |
+|-------|------|----------|------|
+| 0 | Init (Ω⁰) | `stage_initialization` | Certificate cache check; on hit, skip to Extract |
+| 1 | Declare (Ω¹) | `stage_declare` | Ring-level precision promotion via `promote_prim_ring_levels()` |
+| 2 | Factorize (Ω²) | `stage_factorize` | Fusion passes: constant folding, view fusion, CSE |
+| 3 | Resolve (Ω³) | `stage_resolve` | Build execution schedule via Kahn's algorithm |
+| 4 | Attest (Ω⁴) | `stage_attest` | Liveness analysis, workspace planning, QEDL boundaries, assertion verification |
+| 5 | Extract (Ω⁵) | `stage_extract` | Build execution tape from graph + schedule |
+| 6 | Converge (π) | `stage_convergence` | Emit `.holo` archive with LayerHeader + CompileUnitMeta sections |
+
+### Certificate Memoization
+
+Keyed by `(unit_address: [u8; 32], quantum_level: RingLevel)`. On cache hit at Stage 0,
+stages 1-4 are skipped entirely. `unit_from_graph()` computes deterministic BLAKE3 hashes
+from graph structure (node ops + edges), enabling memoization across identical graphs.
+The `CertificateStore` supports dynamic resizing (doubles at 75% load) and disk persistence.
+
+### Archive Sections
+
+Compiled archives include:
+- `SECTION_LAYER_HEADER` (kind 2): Layer descriptors and execution schedule
+- `SECTION_COMPILE_UNIT_META` (kind 5): Unit address, quantum level, budget, term/binding/assertion counts
+
+**Key types**: `CascadeState`, `CascadeStage`, `CascadeResult` (`hologram-cascade/src/stage.rs`),
+`run_cascade_with_graph()` (`hologram-cascade/src/engine.rs`),
+`CompilerBuilder` (`hologram-compiler/src/compiler/mod.rs`)
+
+---
+
 ## Quantum Level Strategy
 
 Hologram implements UOR's quantum level hierarchy for ring-arithmetic acceleration:

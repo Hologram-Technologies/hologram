@@ -10,7 +10,7 @@ pub const HOLO_MAGIC: [u8; 4] = *b"HOLO";
 pub const PAGE_SIZE: u64 = 4096;
 
 /// Current archive format version.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Align an offset to the next page boundary.
 #[inline]

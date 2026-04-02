@@ -127,7 +127,7 @@ fn bench_triple_ring(c: &mut Criterion) {
 }
 
 fn bench_precision_pass(c: &mut Criterion) {
-    use hologram_compiler::precision::promote_prim_ring_levels;
+    use hologram_cascade::promote_prim_ring_levels;
     use hologram_graph::builder::GraphBuilder;
     use hologram_graph::graph::GraphOp;
 

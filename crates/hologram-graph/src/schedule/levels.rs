@@ -25,7 +25,17 @@ pub struct ParallelLevel {
 ///
 /// Level N nodes have all dependencies in levels < N,
 /// so all nodes within a level can execute concurrently.
+/// Build parallel execution levels. O(V + E). Builds successor index internally.
 pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
+    let succ_index = graph.build_successor_index();
+    build_parallel_levels_with_index(graph, &succ_index)
+}
+
+/// Build parallel execution levels with a pre-built successor index.
+pub fn build_parallel_levels_with_index(
+    graph: &Graph,
+    succ_index: &[Vec<NodeId>],
+) -> GraphResult<Vec<ParallelLevel>> {
     let ids = graph.node_ids();
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -36,8 +46,6 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
     let mut in_degree = vec![0u32; total];
     for node in graph.nodes() {
         if let Some(&pos) = id_to_pos.get(&node.id) {
-            // Count each unique predecessor once, matching successors() which
-            // also returns each successor at most once.
             let mut seen = std::collections::HashSet::new();
             for dep in node.dependencies() {
                 if id_to_pos.contains_key(&dep) && seen.insert(dep) {
@@ -47,15 +55,12 @@ pub fn build_parallel_levels(graph: &Graph) -> GraphResult<Vec<ParallelLevel>> {
         }
     }
 
-    // Cursor-based level batching
     let mut ready: Vec<usize> = Vec::new();
     for (pos, &deg) in in_degree.iter().enumerate() {
         if deg == 0 {
             ready.push(pos);
         }
     }
-
-    let succ_index = graph.build_successor_index();
     let mut levels = Vec::new();
     let mut cursor = 0;
     let mut visited = 0usize;

@@ -99,7 +99,7 @@ fn conv2d_core(
 
             // GEMM: C = A × B where A=[oc_per_group, kernel_size], B=[kernel_size, spatial_out]
             // beta=1.0 to accumulate onto bias.
-            let beta = if bias.is_some() { 1.0 } else { 0.0 };
+            let _beta = if bias.is_some() { 1.0 } else { 0.0 };
 
             #[cfg(all(feature = "accelerate", target_os = "macos"))]
             {

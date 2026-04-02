@@ -1,10 +1,8 @@
-//! QEDL boundary insertion pass.
+//! QEDL (Quantize/Encode/Dequantize/Lift) boundary analysis.
 //!
-//! Walks the graph in topological order. For each edge that crosses from
-//! byte-domain to float-domain (or vice versa), emits a boundary annotation
-//! with the optimal encoding for that crossing.
-//!
-//! Replaces the `Vec::new()` stub in `compiler/mod.rs`.
+//! Detects domain crossings between byte-domain (Z/256Z) ops and float-domain ops.
+//! For each crossing, selects the minimum-error encoding based on the upstream
+//! op's curvature profile.
 
 use hologram_core::op::FloatOp;
 use hologram_core::view::ElementWiseView;
@@ -12,8 +10,82 @@ use hologram_graph::graph::node::NodeId;
 use hologram_graph::graph::GraphOp;
 use hologram_graph::Graph;
 
-use super::{compute_profile, select_encoding, EncodingId};
-use crate::compiler::QedlBoundary;
+/// QEDL boundary type: direction of domain crossing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QedlBoundary {
+    /// Dequantize: byte-domain -> float-domain.
+    Dequantize,
+    /// Quantize: float-domain -> byte-domain.
+    Quantize,
+}
+
+/// Encoding identifier for a QEDL dequantize boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EncodingId {
+    Raw = 0,
+    Unsigned = 1,
+    Signed = 2,
+    Angle = 3,
+}
+
+/// Algebraic profile of a byte-domain op's output distribution.
+#[derive(Clone, Copy, Debug)]
+pub struct CurvatureProfile {
+    pub mean_trailing_ones: f32,
+    pub output_entropy: f32,
+    pub zero_crossing: bool,
+    pub is_bijective: bool,
+}
+
+/// Compute `CurvatureProfile` from an `ElementWiseView` output LUT.
+#[must_use]
+pub fn compute_profile(view: &ElementWiseView) -> CurvatureProfile {
+    let table = view.table();
+    let mean_trailing_ones = table.iter().map(|&x| x.trailing_ones() as f32).sum::<f32>() / 256.0;
+
+    let mut counts = [0u32; 256];
+    for &x in table.iter() {
+        counts[x as usize] += 1;
+    }
+    let output_entropy = -counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f32 / 256.0;
+            p * p.log2()
+        })
+        .sum::<f32>()
+        / 8.0;
+
+    let zero_crossing = table.iter().any(|&x| x >= 128) && table.iter().any(|&x| x < 128);
+
+    CurvatureProfile {
+        mean_trailing_ones,
+        output_entropy,
+        zero_crossing,
+        is_bijective: view.is_bijective(),
+    }
+}
+
+/// Select the minimum-error encoding for a QEDL dequantize boundary.
+#[must_use]
+pub fn select_encoding(profile: &CurvatureProfile, downstream: &FloatOp) -> EncodingId {
+    let downstream_is_additive = matches!(downstream, FloatOp::Add | FloatOp::Sub);
+    if profile.zero_crossing && downstream_is_additive {
+        return EncodingId::Signed;
+    }
+    if profile.is_bijective && !profile.zero_crossing {
+        return EncodingId::Raw;
+    }
+    if profile.mean_trailing_ones < 1.5 {
+        return EncodingId::Raw;
+    }
+    if profile.output_entropy < 0.3 {
+        return EncodingId::Unsigned;
+    }
+    EncodingId::Signed
+}
 
 /// Domain classification for a `GraphOp`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -23,7 +95,6 @@ enum Domain {
     Unknown,
 }
 
-/// Classify the output domain of a `GraphOp`.
 fn domain(op: &GraphOp) -> Domain {
     match op {
         GraphOp::Input
@@ -50,7 +121,6 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::BatchMatMulLut8(_)
         | GraphOp::BatchMatMulLut16(_) => Domain::Float,
 
-        // Output, Constant, Passthrough, CallSubgraph, Custom: domain depends on context.
         GraphOp::Output
         | GraphOp::Constant(_)
         | GraphOp::Passthrough
@@ -59,7 +129,6 @@ fn domain(op: &GraphOp) -> Domain {
     }
 }
 
-/// Extract the `FloatOp` from a node if it is a float-domain op.
 fn as_float_op(op: &GraphOp) -> Option<FloatOp> {
     match op {
         GraphOp::Float(f) => Some(*f),
@@ -68,13 +137,7 @@ fn as_float_op(op: &GraphOp) -> Option<FloatOp> {
     }
 }
 
-/// Walk the graph in topological order, emitting a QEDL boundary annotation
-/// for each edge that crosses between byte-domain and float-domain.
-///
-/// Annotations are placed on the *consuming* node (the node whose input crosses
-/// the boundary). The encoding is derived from the predecessor's output LUT profile.
-///
-/// Replaces `Vec::new()` in `emit_stage`.
+/// Walk the graph in topological order, emitting QEDL boundary annotations.
 #[must_use]
 pub fn insert_qedl_boundaries(
     graph: &Graph,
@@ -91,7 +154,6 @@ pub fn insert_qedl_boundaries(
         if this_domain == Domain::Unknown {
             continue;
         }
-        // Downstream FloatOp for encoding selection (falls back to Add for non-float consumers).
         let downstream_float_op = as_float_op(&node.op).unwrap_or(FloatOp::Add);
 
         for input_slot in node.inputs.iter() {
@@ -107,14 +169,12 @@ pub fn insert_qedl_boundaries(
 
             match (pred_domain, this_domain) {
                 (Domain::Byte, Domain::Float) => {
-                    // Dequantize boundary: byte → float.
                     let view = pred.op.to_view().unwrap_or_else(ElementWiseView::identity);
                     let profile = compute_profile(&view);
                     let enc = select_encoding(&profile, &downstream_float_op);
                     result.push((id, QedlBoundary::Dequantize, enc));
                 }
                 (Domain::Float, Domain::Byte) => {
-                    // Quantize boundary: float → byte. Unsigned encoding for re-quantize.
                     result.push((id, QedlBoundary::Quantize, EncodingId::Unsigned));
                 }
                 _ => {}
@@ -129,9 +189,8 @@ pub fn insert_qedl_boundaries(
 mod tests {
     use super::*;
     use hologram_core::op::LutOp;
-    use hologram_graph::graph::{Graph, GraphOp};
+    use hologram_graph::graph::Graph;
 
-    /// Collect all NodeIds from a schedule in topological order.
     fn schedule_order(schedule: &hologram_graph::schedule::ExecutionSchedule) -> Vec<NodeId> {
         schedule
             .levels
@@ -140,8 +199,8 @@ mod tests {
             .collect()
     }
 
-    /// Build a graph: Input → Relu(Lut/byte) → MatMulLut8(float) → Output
-    fn build_lut_then_float_graph() -> Graph {
+    #[test]
+    fn qedl_non_empty_for_mixed_graph() {
         let mut g = Graph::new();
         let input = g.add_node(GraphOp::Input);
         let relu = g.add_node(GraphOp::Lut(LutOp::Relu));
@@ -151,31 +210,16 @@ mod tests {
         g.add_edge(input, relu);
         g.add_edge(relu, matmul);
         g.add_edge(matmul, output);
-        g
-    }
 
-    #[test]
-    fn qedl_pass_non_empty_for_mixed_graph() {
-        let g = build_lut_then_float_graph();
         let schedule = hologram_graph::schedule::ExecutionSchedule::build(&g).unwrap();
         let order = schedule_order(&schedule);
         let boundaries = insert_qedl_boundaries(&g, &order);
-        // The Relu→MatMulLut8 edge is a byte→float crossing → at least one Dequantize.
-        assert!(
-            !boundaries.is_empty(),
-            "QEDL pass should annotate domain crossings"
-        );
-        assert!(
-            boundaries
-                .iter()
-                .any(|(_, b, _)| *b == QedlBoundary::Dequantize),
-            "should find at least one Dequantize boundary"
-        );
+        assert!(!boundaries.is_empty());
+        assert!(boundaries.iter().any(|(_, b, _)| *b == QedlBoundary::Dequantize));
     }
 
     #[test]
-    fn qedl_pass_empty_for_pure_byte_graph() {
-        // Input → Relu → Relu → Output: no float ops → no QEDL boundaries.
+    fn qedl_empty_for_pure_byte_graph() {
         let mut g = Graph::new();
         let input = g.add_node(GraphOp::Input);
         let r1 = g.add_node(GraphOp::Lut(LutOp::Relu));
@@ -184,12 +228,30 @@ mod tests {
         g.add_edge(input, r1);
         g.add_edge(r1, r2);
         g.add_edge(r2, output);
+
         let schedule = hologram_graph::schedule::ExecutionSchedule::build(&g).unwrap();
         let order = schedule_order(&schedule);
         let boundaries = insert_qedl_boundaries(&g, &order);
-        assert!(
-            boundaries.is_empty(),
-            "pure byte graph should have no QEDL boundaries"
-        );
+        assert!(boundaries.is_empty());
+    }
+
+    #[test]
+    fn profile_identity_view() {
+        let id = ElementWiseView::identity();
+        let p = compute_profile(&id);
+        assert!(p.is_bijective);
+        assert!((p.output_entropy - 1.0).abs() < 1e-3);
+        assert!(p.zero_crossing);
+    }
+
+    #[test]
+    fn encoding_bijective_no_crossing_is_raw() {
+        let profile = CurvatureProfile {
+            mean_trailing_ones: 0.5,
+            output_entropy: 1.0,
+            zero_crossing: false,
+            is_bijective: true,
+        };
+        assert_eq!(select_encoding(&profile, &FloatOp::Mul), EncodingId::Raw);
     }
 }

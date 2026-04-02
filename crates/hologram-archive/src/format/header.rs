@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use super::{FORMAT_VERSION, HOLO_MAGIC};
 
 /// Fixed size of the serialized header in bytes.
-pub const HEADER_SIZE: usize = 136;
+pub const HEADER_SIZE: usize = 184;
 
 /// On-disk header for a .holo archive.
 ///
@@ -36,10 +36,20 @@ pub struct HoloHeader {
     pub section_table_size: u64,
     /// Total archive size in bytes.
     pub total_size: u64,
+    /// Byte offset of the embedded cascade certificate section.
+    /// Zero if no certificate is embedded.
+    pub certificate_offset: u64,
+    /// Byte size of the embedded cascade certificate section.
+    /// Zero if no certificate is embedded.
+    pub certificate_size: u64,
     /// BLAKE3 hash of the graph section bytes.
     pub graph_checksum: [u8; 32],
     /// BLAKE3 hash of the weights section bytes.
     pub weights_checksum: [u8; 32],
+    /// Content-addressed identifier of the root term graph (CS_7).
+    /// BLAKE3 hash of `canonicalBytes(transitiveClosure(rootTerm))`.
+    /// All zeros if not computed.
+    pub unit_address: [u8; 32],
     /// Number of entries in the section table.
     pub section_count: u32,
     /// Reserved flags for future use.
@@ -112,6 +122,9 @@ mod tests {
             weights_size: 1024,
             graph_checksum: [0xDE; 32],
             weights_checksum: [0xCA; 32],
+            unit_address: [0u8; 32],
+            certificate_offset: 0,
+            certificate_size: 0,
             section_count: 0,
             section_table_offset: 0,
             section_table_size: 0,

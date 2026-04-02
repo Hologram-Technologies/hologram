@@ -332,8 +332,11 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         section_table_offset: layout.section_table_offset,
         section_table_size: layout.section_table_size,
         total_size: layout.total_size,
+        certificate_offset: 0,
+        certificate_size: 0,
         graph_checksum: checksum::checksum(graph_data),
         weights_checksum: checksum::checksum(weight_data),
+        unit_address: [0u8; 32],
         section_count: layout.section_offsets.len() as u32,
         flags: 0,
     }

@@ -503,7 +503,7 @@ impl TapeKernel {
     /// Returns the inline arity if this is an inline unary (1) or binary (2) op.
     /// Returns `None` for all other kernels (Float, Lut, MatMul, KvCache, etc.).
     #[inline]
-    fn inline_arity(&self) -> Option<u8> {
+    pub(crate) fn inline_arity(&self) -> Option<u8> {
         match self {
             TapeKernel::InlineRelu
             | TapeKernel::InlineNeg
@@ -1320,36 +1320,25 @@ fn dispatch_kernel(
                 return Ok(DispatchResult::InOutBuf);
             }
             let n_rows = floats.len() / axis_size;
-            // Parallel argmax over rows using rayon.
-            use rayon::prelude::*;
-            let indices: Vec<i64> = if n_rows > 64 {
-                floats
-                    .par_chunks(axis_size)
-                    .map(|row| {
-                        row.iter()
-                            .enumerate()
-                            .max_by(|(_, a), (_, b)| {
-                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .map(|(i, _)| i as i64)
-                            .unwrap_or(0)
+            let argmax_row = |row: &[f32]| -> i64 {
+                row.iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .collect()
-            } else {
-                floats
-                    .chunks(axis_size)
-                    .map(|row| {
-                        row.iter()
-                            .enumerate()
-                            .max_by(|(_, a), (_, b)| {
-                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .map(|(i, _)| i as i64)
-                            .unwrap_or(0)
-                    })
-                    .collect()
+                    .map(|(i, _)| i as i64)
+                    .unwrap_or(0)
             };
-            let result_bytes: Vec<u8> = indices.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            #[cfg(feature = "parallel")]
+            let indices: Vec<i64> = if n_rows > 64 {
+                use rayon::prelude::*;
+                floats.par_chunks(axis_size).map(argmax_row).collect()
+            } else {
+                floats.chunks(axis_size).map(argmax_row).collect()
+            };
+            #[cfg(not(feature = "parallel"))]
+            let indices: Vec<i64> = floats.chunks(axis_size).map(argmax_row).collect();
+            let result_bytes: Vec<u8> = indices.iter().flat_map(|v| v.to_le_bytes()).collect();
             out_buf.extend_from_slice(&result_bytes);
             let _ = keepdims; // Shape adjustment handled by output meta.
             Ok(DispatchResult::InOutBuf)
@@ -2719,6 +2708,40 @@ fn transpose_seq_first_to_heads(
     out
 }
 
+/// Pre-resolved dispatch path for a tape instruction. Determined at build time
+/// from kernel variant + reuse flags. Eliminates per-instruction arity matching.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(u8)]
+pub enum FastPath {
+    /// Zero-copy buffer move (Output, Passthrough with single consumer).
+    Passthrough = 0,
+    /// In-place unary mutation (single-consumer unary inline op).
+    InPlaceUnary = 1,
+    /// Inline unary — direct f32 arena access, no SmallVec.
+    InlineUnary = 2,
+    /// Inline binary — direct f32 arena access for 2 inputs.
+    InlineBinary = 3,
+    /// Reshape/cast — zero-copy data, adjust shape metadata.
+    Reshape = 4,
+    /// General dispatch — gather inputs into SmallVec, dispatch to backend.
+    #[default]
+    General = 5,
+}
+
+/// Pre-resolved shape resolution strategy. Determined at tape build time
+/// based on available compile-time shape information.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(u8)]
+pub enum ShapeSource {
+    /// Use compile-time TensorMeta directly (fastest — no runtime work).
+    #[default]
+    Compiled = 0,
+    /// Derive from input[0]'s runtime metadata (element-preserving ops).
+    InputMeta = 1,
+    /// Infer from output buffer byte length (fallback for unresolved shapes).
+    BufferLength = 2,
+}
+
 /// A single instruction in the enum-dispatch tape.
 pub struct TapeInstruction {
     /// The kernel to execute (enum variant, no heap allocation).
@@ -2749,6 +2772,10 @@ pub struct TapeInstruction {
     /// Pre-computed output tensor metadata (shape + dtype) from compiled graph.
     /// `None` = not available (infer from buffer size at runtime).
     pub output_meta: Option<hologram_core::op::TensorMeta>,
+    /// Pre-resolved dispatch path (set by apply_reuse_flags at build time).
+    pub fast_path: FastPath,
+    /// Pre-resolved shape resolution strategy (set at build time).
+    pub shape_source: ShapeSource,
 }
 
 /// Pre-compiled execution tape using enum dispatch.
@@ -2942,6 +2969,23 @@ impl EnumTape {
             let idx = id as usize;
             if idx < self.consumer_counts.len() {
                 self.consumer_counts[idx] = u32::MAX;
+            }
+        }
+    }
+
+    /// Bake shape overrides into instruction `output_meta` fields.
+    ///
+    /// Call this once before execution instead of passing a `shape_overrides`
+    /// HashMap on every `execute()` call. Each override is resolved to a
+    /// `TensorMeta` and stored directly on the instruction.
+    pub fn apply_shape_overrides(&mut self, overrides: &std::collections::HashMap<u32, Vec<usize>>) {
+        for instr in &mut self.instructions {
+            if let Some(shape) = overrides.get(&instr.output_idx) {
+                let dtype = instr
+                    .output_meta
+                    .map(|m| m.dtype)
+                    .unwrap_or(hologram_core::op::FloatDType::F32);
+                instr.output_meta = Some(hologram_core::op::TensorMeta::new(dtype, shape));
             }
         }
     }
@@ -3275,12 +3319,13 @@ impl EnumTape {
                             &mut out_buf,
                             instr.output_elem_size as usize,
                         );
-                        // Compute runtime meta from actual output + input metas.
-                        // This ensures downstream ops get correct N-D shapes even
-                        // when compiled shapes don't match runtime sizes.
-                        if let Some(meta) = crate::shape_resolve::compute_output_meta(
+                        // Use pre-resolved output_meta when available (compile-time shape).
+                        // Falls back to runtime resolution only when no compiled shape exists.
+                        if let Some(meta) = instr.output_meta {
+                            arena.set_meta(out_id, meta);
+                        } else if let Some(meta) = crate::shape_resolve::compute_output_meta(
                             &input_metas,
-                            instr.output_meta,
+                            None,
                             out_len,
                             instr.output_elem_size as usize,
                         ) {
@@ -3553,9 +3598,11 @@ impl EnumTape {
                                 &mut out_buf,
                                 instr.output_elem_size as usize,
                             );
-                            if let Some(meta) = crate::shape_resolve::compute_output_meta(
+                            if let Some(meta) = instr.output_meta {
+                                arena.set_meta(out_id, meta);
+                            } else if let Some(meta) = crate::shape_resolve::compute_output_meta(
                                 &input_metas,
-                                instr.output_meta,
+                                None,
                                 out_len,
                                 instr.output_elem_size as usize,
                             ) {
@@ -3641,6 +3688,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3668,6 +3717,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.push(TapeInstruction {
             kernel: TapeKernel::Output,
@@ -3679,6 +3730,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3713,6 +3766,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3744,6 +3799,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -3756,6 +3813,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3789,6 +3848,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3834,6 +3895,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -3853,6 +3916,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape2.end_level();
         let mut arena2 = BufferArena::new();
@@ -3886,6 +3951,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -3917,6 +3984,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         tape.push(TapeInstruction {
@@ -3929,6 +3998,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
 
@@ -3992,6 +4063,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4018,6 +4091,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4121,6 +4196,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4155,6 +4232,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4186,6 +4265,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4230,6 +4311,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4266,6 +4349,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         let mut arena = BufferArena::new();
@@ -4292,6 +4377,8 @@ mod tests {
             passthrough: false,
             can_reuse_input: false,
             output_meta: None,
+            fast_path: FastPath::default(),
+            shape_source: ShapeSource::default(),
         });
         tape.end_level();
         (tape, empty_constants())

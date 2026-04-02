@@ -178,19 +178,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for TripleRing {
-    #[inline]
-    fn commutator_formula(&self) -> &str {
-        "[a,b] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for TripleRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for TripleRing {
-    #[inline]
-    fn associator_formula(&self) -> &str {
-        "[a,b,c] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for TripleRing {}
 
 impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for TripleRing {
     type NormedDivisionAlgebra = crate::ring::HoloDivisionAlgebra;

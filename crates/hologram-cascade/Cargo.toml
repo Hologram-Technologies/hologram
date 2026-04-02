@@ -1,18 +1,19 @@
 [package]
-name = "hologram-compiler"
+name = "hologram-cascade"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Compilation pipeline: Graph → optimized .holo archive"
+description = "Cascade state machine: 7-stage evaluation pipeline with certificate memoization"
 
 [dependencies]
 hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
 hologram-archive = { workspace = true }
-hologram-cascade = { workspace = true }
+hologram-exec = { workspace = true }
 blake3 = { workspace = true }
+smallvec = { workspace = true }
 rayon = { workspace = true, optional = true }
 uor-foundation = { workspace = true }
 
 [features]
-parallel = ["dep:rayon", "hologram-graph/parallel", "hologram-archive/parallel"]
+parallel = ["dep:rayon", "hologram-graph/parallel", "hologram-exec/parallel"]

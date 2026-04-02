@@ -1,5 +1,6 @@
 //! Extensible section system for archive metadata.
 
+pub mod compile_unit_meta;
 pub mod model_meta;
 pub mod table;
 pub mod tokenizer;
@@ -12,6 +13,8 @@ pub const SECTION_LAYER_HEADER: u32 = 2;
 pub const SECTION_PIPELINE: u32 = 3;
 /// Well-known section kind: weight deduplication index.
 pub const SECTION_WEIGHT_DEDUP: u32 = 4;
+/// Well-known section kind: CompileUnit metadata.
+pub const SECTION_COMPILE_UNIT_META: u32 = 5;
 /// Base kind for custom sections.
 pub const SECTION_CUSTOM_BASE: u32 = 0x1000;
 
@@ -34,6 +37,7 @@ mod tests {
             SECTION_LAYER_HEADER,
             SECTION_PIPELINE,
             SECTION_WEIGHT_DEDUP,
+            SECTION_COMPILE_UNIT_META,
             SECTION_CUSTOM_BASE,
         ];
         for (i, a) in kinds.iter().enumerate() {

@@ -2,7 +2,8 @@
 
 use crate::fmt::format_bytes;
 use hologram_archive::section::{
-    SECTION_CUSTOM_BASE, SECTION_LAYER_HEADER, SECTION_PIPELINE, SECTION_WEIGHT_INDEX,
+    SECTION_COMPILE_UNIT_META, SECTION_CUSTOM_BASE, SECTION_LAYER_HEADER, SECTION_PIPELINE,
+    SECTION_WEIGHT_DEDUP, SECTION_WEIGHT_INDEX,
 };
 use hologram_archive::LoadedPlan;
 
@@ -37,6 +38,8 @@ fn section_kind_name(kind: u32) -> &'static str {
         SECTION_WEIGHT_INDEX => "weight_index",
         SECTION_LAYER_HEADER => "layer_header",
         SECTION_PIPELINE => "pipeline",
+        SECTION_WEIGHT_DEDUP => "weight_dedup",
+        SECTION_COMPILE_UNIT_META => "compile_unit_meta",
         k if k >= SECTION_CUSTOM_BASE => "custom",
         _ => "unknown",
     }

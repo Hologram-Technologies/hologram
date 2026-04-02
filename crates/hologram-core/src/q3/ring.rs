@@ -187,19 +187,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for OctonionRing {
-    #[inline]
-    fn commutator_formula(&self) -> &str {
-        "[a,b] = a*b - b*a != 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for OctonionRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for OctonionRing {
-    #[inline]
-    fn associator_formula(&self) -> &str {
-        "[a,b,c] = (a*b)*c - a*(b*c) != 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for OctonionRing {}
 
 #[cfg(test)]
 mod tests {

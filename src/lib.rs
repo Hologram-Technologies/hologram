@@ -70,7 +70,10 @@ pub use hologram_archive::{
 
 // Compiler (gated)
 #[cfg(feature = "compiler")]
-pub use hologram_compiler::{compile, CompilationOutput, CompilerBuilder};
+pub use hologram_compiler::{
+    compile, compile_from_source, unit_from_graph, unit_from_graph_with, CascadeInfo,
+    CertificateStore, CompilationOutput, CompilationStats, CompilerBuilder,
+};
 
 // Async (gated)
 #[cfg(feature = "async")]

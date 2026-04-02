@@ -56,9 +56,9 @@ impl FusionStats {
 /// Applies constant folding, view fusion, and CSE in a single topological walk.
 /// Returns statistics about optimizations applied.
 pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
-    let order = toposort::toposort(graph)?;
-    let mut stats = FusionStats::default();
     let succ_index = graph.build_successor_index();
+    let order = toposort::toposort_with_index(graph, &succ_index)?;
+    let mut stats = FusionStats::default();
 
     for &id in &order {
         if graph.get(id).is_none() {
@@ -107,7 +107,7 @@ pub fn fuse(graph: &mut Graph) -> GraphResult<FusionStats> {
     // 5. CSE — reuses original topo order. Removed nodes are skipped via
     //    graph.get(id).is_none() inside CSE. Topo invariant holds because
     //    fusion only removes nodes, never adds new dependencies.
-    stats.cse_eliminated = cse::eliminate_common_subexpressions(graph, &order);
+    stats.cse_eliminated = cse::eliminate_common_subexpressions(graph, &order, &succ_index);
 
     Ok(stats)
 }

@@ -19,12 +19,18 @@ pub struct ExecutionSchedule {
 
 impl ExecutionSchedule {
     /// Build an execution schedule from a graph. O(V + E).
+    ///
+    /// Builds the successor index once and shares it across toposort, level
+    /// construction, and critical path computation — avoiding redundant rebuilds.
     pub fn build(graph: &Graph) -> GraphResult<Self> {
+        let succ_index = graph.build_successor_index();
+        let order = toposort::toposort_with_index(graph, &succ_index)?;
+
         #[cfg(feature = "parallel")]
         {
             let (levels, cp) = rayon::join(
-                || levels::build_parallel_levels(graph),
-                || critical_path::critical_path_length(graph),
+                || levels::build_parallel_levels_with_index(graph, &succ_index),
+                || critical_path::critical_path_from_order(graph, &order),
             );
             Ok(Self {
                 levels: levels?,
@@ -33,8 +39,8 @@ impl ExecutionSchedule {
         }
         #[cfg(not(feature = "parallel"))]
         {
-            let levels = levels::build_parallel_levels(graph)?;
-            let cp = critical_path::critical_path_length(graph)?;
+            let levels = levels::build_parallel_levels_with_index(graph, &succ_index)?;
+            let cp = critical_path::critical_path_from_order(graph, &order)?;
             Ok(Self {
                 levels,
                 critical_path: cp,

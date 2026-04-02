@@ -155,6 +155,9 @@ pub struct ByteAddress {
 }
 
 impl ByteAddress {
+    /// The zero address (byte value 0).
+    pub const ZERO: Self = Self::from_byte(0);
+
     /// Create a Braille address from a byte value.
     #[must_use]
     pub const fn from_byte(value: u8) -> Self {
