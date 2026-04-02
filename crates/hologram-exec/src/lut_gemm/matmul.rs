@@ -91,15 +91,13 @@ fn lut_gemm_4bit_neon_nibbleview(
         let chunks16 = n_bytes / 16;
 
         unsafe {
-            // Fixed int8 centroid table — computed ONCE, reused for all K rows.
+            // Compile-time int8 centroid table loaded into NEON register ONCE.
             let tbl = vld1q_s8(fixed_table_i8.as_ptr());
             let mask_lo = vdupq_n_u8(0x0F);
 
             for l in 0..k {
                 let a_val = *a_row.get_unchecked(l);
-                // Scale: int8 centroid lookup result × (a_val * centroid_dequant) = f32 output.
                 let v_scale = vdupq_n_f32(a_val * centroid_dequant);
-
                 let byte_start = l * n_bytes;
                 let idx_ptr = weights.indices.as_ptr().add(byte_start);
 
@@ -108,19 +106,18 @@ fn lut_gemm_4bit_neon_nibbleview(
                     let col_base = base * 2;
                     let packed = vld1q_u8(idx_ptr.add(base));
 
-                    // NEON nibble split + table lookup: 32 centroid lookups in 4 instructions.
                     let lo_idx = vandq_u8(packed, mask_lo);
                     let hi_idx = vshrq_n_u8(packed, 4);
                     let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
                     let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
 
-                    // Widen int8 → int16.
+                    // Widen to int16 and accumulate as int16 × a_val_scale.
+                    // Since we must multiply by a_val per row, we convert to f32 per row.
                     let hi_lo_s16 = vmovl_s8(vget_low_s8(hi_i8));
                     let lo_lo_s16 = vmovl_s8(vget_low_s8(lo_i8));
                     let hi_hi_s16 = vmovl_s8(vget_high_s8(hi_i8));
                     let lo_hi_s16 = vmovl_s8(vget_high_s8(lo_i8));
 
-                    // Widen int16 → int32 → f32 → scale → interleave → accumulate.
                     macro_rules! process_group {
                         ($hi_s16:expr, $lo_s16:expr, $lane:expr, $col_off:expr) => {
                             let hi_s32 = if $lane == 0 {
