@@ -2501,18 +2501,39 @@ fn dispatch_lut_gemm_4(
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
-    let mut cache = tape_ctx.weight_cache.write();
-    let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
     })?;
-    let k = qw.rows as usize;
-    let n = qw.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
-    let mut output = vec![0.0f32; m * n];
-    crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
-    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
-    Ok(())
+
+    // On macOS with Accelerate: dequant Q4 centroids → f32 (cached), then BLAS sgemm.
+    // First call dequants and caches in WeightCache; subsequent calls reuse the
+    // cached f32 buffer (zero dequant cost after warmup).
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    {
+        let mut cache = tape_ctx.weight_cache.write();
+        let (k, n) = {
+            let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
+            (qw.rows as usize, qw.cols as usize)
+        };
+        let dequantized = cache.get_dequantized_f32(cid, tape_ctx.constants, tape_ctx.weights)?;
+        let m = if k > 0 { activations.len() / k } else { 0 };
+        let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
+        crate::float_dispatch::matmul::blas::sgemm(m, n, k, activations, dequantized, out);
+        return Ok(());
+    }
+
+    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+    {
+        let mut cache = tape_ctx.weight_cache.write();
+        let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
+        let k = qw.rows as usize;
+        let n = qw.cols as usize;
+        let m = if k > 0 { activations.len() / k } else { 0 };
+        let mut output = vec![0.0f32; m * n];
+        crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+        out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+        Ok(())
+    }
 }
 
 /// LUT-GEMM Q8 dispatch for tape kernels.
