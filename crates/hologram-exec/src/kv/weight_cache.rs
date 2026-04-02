@@ -24,6 +24,11 @@ enum CachedWeight {
 /// Eliminates repeated `rkyv::from_bytes()` calls in the LUT-GEMM hot path.
 pub struct WeightCache {
     entries: HashMap<u32, CachedWeight>,
+    /// Cached dequantized f32 weights for BLAS dispatch on platforms with
+    /// hardware matrix multiply (AMX). Populated lazily on first access.
+    /// Key: ConstantId raw value. Value: dequantized [k, n] f32 row-major.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    dequantized_f32: HashMap<u32, Vec<f32>>,
 }
 
 impl WeightCache {
@@ -32,7 +37,39 @@ impl WeightCache {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            dequantized_f32: HashMap::new(),
         }
+    }
+
+    /// Get or create a cached dequantized f32 buffer for a Q4 weight.
+    ///
+    /// First access deserializes Q4 and dequantizes centroids → f32.
+    /// Subsequent accesses return the cached buffer (zero-cost).
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    pub fn get_dequantized_f32(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&[f32]> {
+        let key = cid.raw();
+        if !self.dequantized_f32.contains_key(&key) {
+            let qw = self.get_q4(cid, constants, weights)?;
+            let total = qw.rows as usize * qw.cols as usize;
+            let mut buf = vec![0.0f32; total];
+            for (i, o) in buf.iter_mut().enumerate() {
+                let byte_idx = i / 2;
+                let idx = if i % 2 == 0 {
+                    (qw.indices[byte_idx] >> 4) as usize
+                } else {
+                    (qw.indices[byte_idx] & 0x0F) as usize
+                };
+                *o = qw.centroids[idx];
+            }
+            self.dequantized_f32.insert(key, buf);
+        }
+        Ok(self.dequantized_f32.get(&key).expect("just inserted"))
     }
 
     /// Get or deserialize a Q4 weight constant.

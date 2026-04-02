@@ -16,7 +16,7 @@ pub struct GemmParams {
 }
 
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
-pub(super) mod blas {
+pub(crate) mod blas {
     use super::GemmParams;
 
     #[allow(non_camel_case_types)]

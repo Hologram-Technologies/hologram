@@ -2975,17 +2975,45 @@ fn dispatch_kernel_par(
         }
         // LUT-GEMM quantized matmul ops.
         TapeKernel::MatMulLut4(cid) => {
-            let mut cache = weight_cache.write();
-            let qw = cache.get_q4(*cid, constants, weights)?;
             let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
                 crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
             })?;
-            let k = qw.rows as usize;
-            let n = qw.cols as usize;
-            let m = if k > 0 { activations.len() / k } else { 0 };
-            let mut output = vec![0.0f32; m * n];
-            crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
-            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+
+            // On macOS with Accelerate: dequant Q4 → f32 (cached), then BLAS sgemm.
+            // First call dequants centroids and caches the f32 buffer;
+            // subsequent calls reuse it (zero dequant overhead).
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                let mut cache = weight_cache.write();
+                let (k, n) = {
+                    let qw = cache.get_q4(*cid, constants, weights)?;
+                    (qw.rows as usize, qw.cols as usize)
+                };
+                let dequantized = cache.get_dequantized_f32(*cid, constants, weights)?;
+                let m = if k > 0 { activations.len() / k } else { 0 };
+                let mut output = vec![0.0f32; m * n];
+                crate::float_dispatch::matmul::blas::sgemm(
+                    m,
+                    n,
+                    k,
+                    activations,
+                    dequantized,
+                    &mut output,
+                );
+                out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                let mut cache = weight_cache.write();
+                let qw = cache.get_q4(*cid, constants, weights)?;
+                let k = qw.rows as usize;
+                let n = qw.cols as usize;
+                let m = if k > 0 { activations.len() / k } else { 0 };
+                let mut output = vec![0.0f32; m * n];
+                crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+                out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            }
+
             Ok(())
         }
         TapeKernel::MatMulLut8(cid) => {
@@ -3017,17 +3045,42 @@ fn dispatch_kernel_par(
             Ok(())
         }
         TapeKernel::MatMulLut4Activation(cid, activation) => {
-            let mut cache = weight_cache.write();
-            let qw = cache.get_q4(*cid, constants, weights)?;
             let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
                 crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
             })?;
-            let k = qw.rows as usize;
-            let n = qw.cols as usize;
-            let m = if k > 0 { activations.len() / k } else { 0 };
-            let mut output = vec![0.0f32; m * n];
-            crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
-            out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                let mut cache = weight_cache.write();
+                let (k, n) = {
+                    let qw = cache.get_q4(*cid, constants, weights)?;
+                    (qw.rows as usize, qw.cols as usize)
+                };
+                let dequantized = cache.get_dequantized_f32(*cid, constants, weights)?;
+                let m = if k > 0 { activations.len() / k } else { 0 };
+                let mut output = vec![0.0f32; m * n];
+                crate::float_dispatch::matmul::blas::sgemm(
+                    m,
+                    n,
+                    k,
+                    activations,
+                    dequantized,
+                    &mut output,
+                );
+                out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                let mut cache = weight_cache.write();
+                let qw = cache.get_q4(*cid, constants, weights)?;
+                let k = qw.rows as usize;
+                let n = qw.cols as usize;
+                let m = if k > 0 { activations.len() / k } else { 0 };
+                let mut output = vec![0.0f32; m * n];
+                crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
+                out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+            }
+
             apply_activation_to_out_buf(out_buf, activation);
             Ok(())
         }
