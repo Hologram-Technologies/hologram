@@ -2516,6 +2516,8 @@ fn dispatch_lut_gemm_4(
     // native LUT for small N or non-BLAS platforms.
     // Threshold: BLAS overhead is ~0.05ms per call. For N < 1024, the LUT
     // kernel's lower bandwidth dominates. For N >= 1024, AMX throughput wins.
+    // Hybrid: BLAS for large Q4 matmuls (AMX throughput dominates),
+    // native LUT for small Q4 matmuls (table lookup faster than BLAS overhead).
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if n >= 1024 {
         drop(cache);
