@@ -71,121 +71,99 @@ fn lut_gemm_4bit_neon_nibbleview(
 
     let n_bytes = n / 2;
     // Flush interval: accumulate int8 lookups into int16, flush to f32 every
-    // FLUSH_INTERVAL rows. Max int16 value: 127 * FLUSH_INTERVAL < 32767.
-    const FLUSH_INTERVAL: usize = 128;
+
+    // Pre-compute fixed int8 centroid table ONCE (not per K-row).
+    // centroid_scale converts int8 back to f32: f32_val = int8_val * centroid_scale.
+    let centroid_max = centroids.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+    let centroid_inv_scale = if centroid_max > 1e-12 { 127.0 / centroid_max } else { 0.0 };
+    let centroid_dequant = centroid_max / 127.0;
+
+    let mut fixed_table_i8 = [0i8; 16];
+    for c in 0..16 {
+        fixed_table_i8[c] = (centroids[c] * centroid_inv_scale).round() as i8;
+    }
 
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
         let out_row = &mut output[i * n..(i + 1) * n];
         out_row.fill(0.0);
 
-        // Process K rows in chunks of FLUSH_INTERVAL.
-        let mut k_start = 0;
-        while k_start < k {
-            let k_end = (k_start + FLUSH_INTERVAL).min(k);
+        let chunks16 = n_bytes / 16;
 
-            // f32 scale accumulator for this chunk.
-            // Each row has its own int8 scale — we accumulate the product.
-            // Simpler: use a single scale per chunk (max of all row scales).
-            // Even simpler: compute scale per row and accumulate f32 directly
-            // from the int8 results per row.
+        unsafe {
+            // Fixed int8 centroid table — computed ONCE, reused for all K rows.
+            let tbl = vld1q_s8(fixed_table_i8.as_ptr());
+            let mask_lo = vdupq_n_u8(0x0F);
 
-            for l in k_start..k_end {
-                let a_val = *unsafe { a_row.get_unchecked(l) };
-
-                // Pre-multiply centroids.
-                let mut premul = [0.0f32; 16];
-                for c in 0..16 {
-                    premul[c] = a_val * centroids[c];
-                }
-
-                // Quantize premul to int8 with per-row scale.
-                let scale = premul.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
-                if scale < 1e-12 { continue; }
-                let inv_scale = 127.0 / scale;
-                let dequant_scale = scale / 127.0;
-
-                let mut table_i8 = [0i8; 16];
-                for c in 0..16 {
-                    table_i8[c] = (premul[c] * inv_scale).round() as i8;
-                }
+            for l in 0..k {
+                let a_val = *a_row.get_unchecked(l);
+                // Scale: int8 centroid lookup result × (a_val * centroid_dequant) = f32 output.
+                let v_scale = vdupq_n_f32(a_val * centroid_dequant);
 
                 let byte_start = l * n_bytes;
-                let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
+                let idx_ptr = weights.indices.as_ptr().add(byte_start);
 
-                let chunks16 = n_bytes / 16;
+                for chunk in 0..chunks16 {
+                    let base = chunk * 16;
+                    let col_base = base * 2;
+                    let packed = vld1q_u8(idx_ptr.add(base));
 
-                unsafe {
-                    let tbl = vld1q_s8(table_i8.as_ptr());
-                    let mask_lo = vdupq_n_u8(0x0F);
-                    let v_dequant = vdupq_n_f32(dequant_scale);
+                    // NEON nibble split + table lookup: 32 centroid lookups in 4 instructions.
+                    let lo_idx = vandq_u8(packed, mask_lo);
+                    let hi_idx = vshrq_n_u8(packed, 4);
+                    let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
+                    let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
 
-                    for chunk in 0..chunks16 {
-                        let base = chunk * 16;
-                        let col_base = base * 2;
-                        let packed = vld1q_u8(idx_row.as_ptr().add(base));
+                    // Widen int8 → int16.
+                    let hi_lo_s16 = vmovl_s8(vget_low_s8(hi_i8));
+                    let lo_lo_s16 = vmovl_s8(vget_low_s8(lo_i8));
+                    let hi_hi_s16 = vmovl_s8(vget_high_s8(hi_i8));
+                    let lo_hi_s16 = vmovl_s8(vget_high_s8(lo_i8));
 
-                        // Split nibbles.
-                        let lo_idx = vandq_u8(packed, mask_lo);
-                        let hi_idx = vshrq_n_u8(packed, 4);
-
-                        // 16-way int8 table lookup (hologram's core operation).
-                        let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
-                        let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
-
-                        // Widen int8 → int16 (lower half).
-                        let hi_lo_s16 = vmovl_s8(vget_low_s8(hi_i8));
-                        let lo_lo_s16 = vmovl_s8(vget_low_s8(lo_i8));
-                        // Widen int8 → int16 (upper half).
-                        let hi_hi_s16 = vmovl_s8(vget_high_s8(hi_i8));
-                        let lo_hi_s16 = vmovl_s8(vget_high_s8(lo_i8));
-
-                        // Process 4 groups of 8 output columns each.
-                        // Group 0: hi_lo_s16 low 4 + lo_lo_s16 low 4 → 8 columns.
-                        macro_rules! process_group {
-                            ($hi_s16:expr, $lo_s16:expr, $lane:expr, $col_off:expr) => {
-                                let hi_s32 = if $lane == 0 {
-                                    vmovl_s16(vget_low_s16($hi_s16))
-                                } else {
-                                    vmovl_s16(vget_high_s16($hi_s16))
-                                };
-                                let lo_s32 = if $lane == 0 {
-                                    vmovl_s16(vget_low_s16($lo_s16))
-                                } else {
-                                    vmovl_s16(vget_high_s16($lo_s16))
-                                };
-                                let hi_f32 = vmulq_f32(vcvtq_f32_s32(hi_s32), v_dequant);
-                                let lo_f32 = vmulq_f32(vcvtq_f32_s32(lo_s32), v_dequant);
-                                // Interleave: even cols from hi, odd from lo.
-                                let zip1 = vzip1q_f32(hi_f32, lo_f32);
-                                let zip2 = vzip2q_f32(hi_f32, lo_f32);
-                                let col = col_base + $col_off;
-                                let e1 = vld1q_f32(out_row.as_ptr().add(col));
-                                let e2 = vld1q_f32(out_row.as_ptr().add(col + 4));
-                                vst1q_f32(out_row.as_mut_ptr().add(col), vaddq_f32(e1, zip1));
-                                vst1q_f32(out_row.as_mut_ptr().add(col + 4), vaddq_f32(e2, zip2));
+                    // Widen int16 → int32 → f32 → scale → interleave → accumulate.
+                    macro_rules! process_group {
+                        ($hi_s16:expr, $lo_s16:expr, $lane:expr, $col_off:expr) => {
+                            let hi_s32 = if $lane == 0 {
+                                vmovl_s16(vget_low_s16($hi_s16))
+                            } else {
+                                vmovl_s16(vget_high_s16($hi_s16))
                             };
-                        }
-                        process_group!(hi_lo_s16, lo_lo_s16, 0, 0);
-                        process_group!(hi_lo_s16, lo_lo_s16, 1, 8);
-                        process_group!(hi_hi_s16, lo_hi_s16, 0, 16);
-                        process_group!(hi_hi_s16, lo_hi_s16, 1, 24);
+                            let lo_s32 = if $lane == 0 {
+                                vmovl_s16(vget_low_s16($lo_s16))
+                            } else {
+                                vmovl_s16(vget_high_s16($lo_s16))
+                            };
+                            let hi_f32 = vmulq_f32(vcvtq_f32_s32(hi_s32), v_scale);
+                            let lo_f32 = vmulq_f32(vcvtq_f32_s32(lo_s32), v_scale);
+                            let zip1 = vzip1q_f32(hi_f32, lo_f32);
+                            let zip2 = vzip2q_f32(hi_f32, lo_f32);
+                            let col = col_base + $col_off;
+                            let e1 = vld1q_f32(out_row.as_ptr().add(col));
+                            let e2 = vld1q_f32(out_row.as_ptr().add(col + 4));
+                            vst1q_f32(out_row.as_mut_ptr().add(col), vaddq_f32(e1, zip1));
+                            vst1q_f32(out_row.as_mut_ptr().add(col + 4), vaddq_f32(e2, zip2));
+                        };
                     }
+                    process_group!(hi_lo_s16, lo_lo_s16, 0, 0);
+                    process_group!(hi_lo_s16, lo_lo_s16, 1, 8);
+                    process_group!(hi_hi_s16, lo_hi_s16, 0, 16);
+                    process_group!(hi_hi_s16, lo_hi_s16, 1, 24);
+                }
 
-                    // Scalar remainder.
-                    for (b, &packed) in idx_row.iter().enumerate().skip(chunks16 * 16) {
-                        
-                        let col = b * 2;
-                        if col < n {
-                            out_row[col] += premul[(packed >> 4) as usize];
-                        }
-                        if col + 1 < n {
-                            out_row[col + 1] += premul[(packed & 0x0F) as usize];
-                        }
+                // Scalar remainder.
+                let scale_f32 = a_val * centroid_dequant;
+                for (b, &packed) in weights.indices[byte_start..byte_start + n_bytes]
+                    .iter().enumerate().skip(chunks16 * 16)
+                {
+                    let col = b * 2;
+                    if col < n {
+                        out_row[col] += fixed_table_i8[(packed >> 4) as usize] as f32 * scale_f32;
+                    }
+                    if col + 1 < n {
+                        out_row[col + 1] += fixed_table_i8[(packed & 0x0F) as usize] as f32 * scale_f32;
                     }
                 }
             }
-            k_start = k_end;
         }
     }
 }
