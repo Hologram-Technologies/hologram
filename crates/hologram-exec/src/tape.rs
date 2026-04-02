@@ -2505,14 +2505,26 @@ fn dispatch_lut_gemm_4(
         crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
     })?;
 
-    // hologram LUT-native Q4 kernel: pre-multiplied centroid table, row-major
-    // streaming through 0.5 GB Q4 indices (8x less than f32 BLAS).
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
     let m = if k > 0 { activations.len() / k } else { 0 };
     let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
+
+    // Choose kernel: BLAS (cached dequant) for large N where AMX wins,
+    // native LUT for small N or non-BLAS platforms.
+    // Threshold: BLAS overhead is ~0.05ms per call. For N < 1024, the LUT
+    // kernel's lower bandwidth dominates. For N >= 1024, AMX throughput wins.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    if n >= 1024 {
+        drop(cache);
+        let mut cache = tape_ctx.weight_cache.write();
+        let dequantized = cache.get_dequantized_f32(cid, tape_ctx.constants, tape_ctx.weights)?;
+        crate::float_dispatch::matmul::blas::sgemm(m, n, k, activations, dequantized, out);
+        return Ok(());
+    }
+
     crate::lut_gemm::lut_gemm_4bit(activations, qw, out);
     Ok(())
 }
