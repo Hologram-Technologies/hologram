@@ -74,14 +74,9 @@ pub fn execute_tape(
     let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
 
-    // Execute the tape with liveness-based eviction: free activation
-    // buffers as soon as all consumers have executed.
-    // Protect graph output nodes from eviction so collect_outputs can read them.
-    // Liveness-based eviction: pass consumer counts as a borrowed slice.
-    // The execute_with_eviction method clones internally only once.
-    // Output nodes and their sources are protected with u32::MAX during
-    // finalize_consumer_counts + protect_outputs.
-    tape.execute_with_eviction(&mut arena, &tape_ctx, Some(&tape.consumer_counts))?;
+    // Single-path direct execution: pre-allocated buffers, one dispatch match,
+    // no eviction, no checkpoint, no GPU backend indirection.
+    tape.execute_direct(&mut arena, &tape_ctx)?;
 
     // Extract outputs.
     let outputs = collect_outputs(sg, &mut arena)?;
@@ -130,7 +125,7 @@ pub fn execute_tape_with_shapes(
     let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
     tape_ctx.shape_overrides = shape_overrides.clone();
-    tape.execute(&mut arena, &tape_ctx)?;
+    tape.execute_direct(&mut arena, &tape_ctx)?;
 
     collect_outputs(sg, &mut arena)
 }
@@ -176,7 +171,7 @@ pub fn execute_tape_with_kv_and_shapes(
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
     tape_ctx.shape_overrides = shape_overrides.clone();
 
-    tape.execute(&mut arena, &tape_ctx)?;
+    tape.execute_direct(&mut arena, &tape_ctx)?;
 
     let mut kv_out = tape_ctx.kv_state.expect("kv_state was set").into_inner();
     let seq_written = infer_kv_seq_written(inputs);
@@ -379,7 +374,7 @@ fn execute_tape_with_kv_impl(
         crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, weight_cache, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
 
-    tape.execute(&mut arena, &tape_ctx)?;
+    tape.execute_direct(&mut arena, &tape_ctx)?;
 
     // Swap the updated KV state back out and advance write_pos.
     // KvWrite ops write data to the cache but don't advance — the caller

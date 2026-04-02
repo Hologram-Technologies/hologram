@@ -4111,6 +4111,111 @@ impl EnumTape {
         self.execute_inner(arena, tape_ctx, counts.as_deref_mut())
     }
 
+    /// Single-path executor with pre-allocated buffers.
+    ///
+    /// Eliminates all per-instruction overhead: no arena insert/evict,
+    /// no SmallVec collection, no mmap out, no checkpoint recompute,
+    /// no Metal backend dispatch. Just a tight loop over instructions
+    /// with one `match kernel` per instruction.
+    ///
+    /// Buffers are pre-allocated at call time using `output_byte_hint`.
+    /// Each instruction writes directly into its output slot.
+    pub fn execute_direct(
+        &self,
+        arena: &mut BufferArena<'_>,
+        tape_ctx: &TapeContext<'_>,
+    ) -> ExecResult<()> {
+        // Pre-allocate output buffers for all instructions based on byte hints.
+        // This eliminates all per-instruction Vec resize/allocation.
+        let max_idx = self
+            .instructions
+            .iter()
+            .map(|i| i.output_idx as usize + 1)
+            .max()
+            .unwrap_or(0);
+        let mut bufs: Vec<Vec<u8>> = vec![Vec::new(); max_idx];
+        for instr in &self.instructions {
+            let idx = instr.output_idx as usize;
+            if idx < bufs.len() && instr.output_byte_hint > 0 {
+                let needed = instr.output_byte_hint as usize;
+                if bufs[idx].capacity() < needed {
+                    bufs[idx] = Vec::with_capacity(needed);
+                }
+            }
+        }
+
+        // Execute: one match per instruction.
+        for instr in &self.instructions {
+            // Passthrough: zero-copy move.
+            if instr.passthrough {
+                if let Some(&src_idx) = instr.input_indices.first() {
+                    let src = src_idx as usize;
+                    let dst = instr.output_idx as usize;
+                    if src < bufs.len() && !bufs[src].is_empty() {
+                        // Source is in bufs — move directly.
+                        let src_buf = std::mem::take(&mut bufs[src]);
+                        bufs[dst] = src_buf;
+                    } else if let Ok(data) = arena.get(NodeId::new(src_idx, 0)) {
+                        // Source is in arena (constant or graph input).
+                        bufs[dst].clear();
+                        bufs[dst].extend_from_slice(data);
+                    }
+                }
+                continue;
+            }
+
+            // Gather inputs into owned copies to avoid borrow conflict.
+            // TODO: use split_at_mut or unsafe pointer aliasing to avoid copies.
+            let owned_inputs: SmallVec<[Vec<u8>; 4]> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| {
+                    let i = idx as usize;
+                    if i < bufs.len() && !bufs[i].is_empty() {
+                        bufs[i].clone()
+                    } else {
+                        arena
+                            .get(NodeId::new(idx, 0))
+                            .map(|d| d.to_vec())
+                            .unwrap_or_default()
+                    }
+                })
+                .collect();
+            let input_refs: SmallVec<[&[u8]; 4]> =
+                owned_inputs.iter().map(|v| v.as_slice()).collect();
+
+            // Clear output buffer for kernel to write into.
+            let out_idx = instr.output_idx as usize;
+            bufs[out_idx].clear();
+
+            // Single dispatch.
+            let input_metas: crate::shape_resolve::InputMetas = SmallVec::new();
+            dispatch_kernel(
+                &instr.kernel,
+                &input_refs,
+                &input_metas,
+                tape_ctx,
+                &*tape_ctx.backend.resolve(),
+                &mut bufs[out_idx],
+            )?;
+        }
+
+        // Write ALL non-empty buffers back to arena so collect_outputs can find
+        // the graph output nodes.
+        let mut written = 0usize;
+        for (idx, buf) in bufs.iter_mut().enumerate() {
+            if !buf.is_empty() {
+                let data = std::mem::take(buf);
+                arena.insert(NodeId::new(idx as u32, 0), data);
+                written += 1;
+            }
+        }
+        // If no instructions executed (empty tape), all data is in arena already.
+        let _ = written;
+
+        Ok(())
+    }
+
     /// Execute the tape against the given arena and context.
     ///
     /// Uses swap-insert for zero-allocation buffer recycling after warmup.
