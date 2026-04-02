@@ -9,6 +9,7 @@ use super::quantize::{get_q4_index, QuantizedWeights, QuantizedWeights4, Quantiz
 use super::quantize_q1::QuantizedWeights16;
 
 /// Compute one output element for Q4: build psumbook, dot with centroids.
+#[allow(dead_code)]
 fn compute_element_q4(a_row: &[f32], weights: &QuantizedWeights4, col: u32) -> f32 {
     let mut book = Psumbook4::new();
     for (l, &a_val) in a_row.iter().enumerate() {
@@ -39,10 +40,39 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
     let k = weights.rows as usize;
     let n = weights.cols as usize;
     let m = activations.len() / k;
+    let centroids = &weights.centroids;
+
+    // hologram LUT approach: row-major streaming with pre-multiplied centroid table.
+    // For each K-row: premul[c] = activation[k] * centroids[c], then stream through
+    // packed index bytes accumulating premul[idx] into output columns.
+    //
+    // Data read: 0.5 GB Q4 indices (8x less than f32 BLAS).
+    // Centroids (64 bytes) + premul (64 bytes) in L1.
+    // Output vector (N×4 bytes) in L1/L2.
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
-        for j in 0..n {
-            output[i * n + j] = compute_element_q4(a_row, weights, j as u32);
+        let out_row = &mut output[i * n..(i + 1) * n];
+        out_row.fill(0.0);
+
+        for (l, &a_val) in a_row.iter().enumerate() {
+            // Pre-multiply all 16 centroids by this activation value.
+            let mut premul = [0.0f32; 16];
+            for c in 0..16 {
+                premul[c] = a_val * centroids[c];
+            }
+
+            // Stream through this row's packed index bytes.
+            let byte_start = (l * n) / 2;
+            let n_bytes = n / 2;
+            let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
+
+            for (b, &packed) in idx_row.iter().enumerate() {
+                let hi = (packed >> 4) as usize;
+                let lo = (packed & 0x0F) as usize;
+                let col = b * 2;
+                out_row[col] += premul[hi];
+                out_row[col + 1] += premul[lo];
+            }
         }
     }
 }
