@@ -25,7 +25,16 @@ pub(crate) fn transpose_f32(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 pub(crate) fn cast_f32(bytes: &[u8]) -> ExecResult<std::borrow::Cow<'_, [f32]>> {
     match bytemuck::try_cast_slice(bytes) {
         Ok(s) => Ok(std::borrow::Cow::Borrowed(s)),
-        Err(_) => Ok(std::borrow::Cow::Owned(cast_f32_unaligned(bytes))),
+        Err(_) => {
+            // Log misalignment — this is a performance bug, not expected in production.
+            // Archive weights should be 4-byte aligned to avoid this copy.
+            tracing::warn!(
+                bytes_len = bytes.len(),
+                ptr_mod4 = bytes.as_ptr() as usize % 4,
+                "cast_f32: misaligned buffer forces copy — fix archive alignment"
+            );
+            Ok(std::borrow::Cow::Owned(cast_f32_unaligned(bytes)))
+        }
     }
 }
 
