@@ -301,10 +301,20 @@ fn transpose_heads(data: &[f32], seq: usize, n_heads: usize, head_dim: usize) ->
     out
 }
 
-/// Threshold below which an unnormalized softmax weight is considered negligible.
+/// Threshold below which a normalized softmax weight is considered negligible.
 /// At long context, 90%+ of positions fall below this — skipping their V accumulation
 /// yields significant decode speedup with zero measurable quality loss.
-const SPARSE_V_THRESHOLD: f32 = 1e-6;
+/// Override at runtime via `HOLOGRAM_sparse_v_threshold()` env var (e.g. `1e-4`
+/// for more aggressive pruning at very long contexts).
+fn sparse_v_threshold() -> f32 {
+    static THRESHOLD: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("HOLOGRAM_sparse_v_threshold()")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1e-6)
+    })
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_attention(
@@ -502,7 +512,7 @@ pub(crate) fn dispatch_attention(
                     // Sparse V: skip V accumulation for negligible weights.
                     // At long context 90%+ of positions have near-zero weight;
                     // skipping them avoids head_dim multiply-adds per position.
-                    if sparse_v && w < SPARSE_V_THRESHOLD {
+                    if sparse_v && w < sparse_v_threshold() {
                         continue;
                     }
 
@@ -538,7 +548,7 @@ pub(crate) fn dispatch_attention(
                     for val in row.iter_mut() {
                         *val *= inv;
                         // Sparse V: zero out negligible normalized weights.
-                        if sparse_v && *val < SPARSE_V_THRESHOLD {
+                        if sparse_v && *val < sparse_v_threshold() {
                             *val = 0.0;
                         }
                     }

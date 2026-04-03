@@ -3499,8 +3499,48 @@ impl EnumTape {
         let mut profile_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
             std::collections::HashMap::new();
 
+        // Weight prefetch: issue madvise(WILLNEED) for the next level's
+        // weight range when we start a new level. This gives the OS time to
+        // page in weights while the current level computes.
+        let has_levels = self.level_offsets.len() > 1;
+        let has_prefetch = has_levels && !self.level_weight_ranges.is_empty();
+        let mut current_level = 0usize;
+        let mut next_level_boundary = if has_levels {
+            self.level_offsets.get(1).copied().unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+
         // Execute: one match per instruction.
-        for instr in &self.instructions {
+        for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            // Check if we've crossed a level boundary → prefetch next level's weights.
+            if has_prefetch && instr_idx >= next_level_boundary {
+                current_level += 1;
+                next_level_boundary = self
+                    .level_offsets
+                    .get(current_level + 1)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+
+                // Prefetch weights for level current_level + 1 (look-ahead).
+                let prefetch_level = current_level + 1;
+                if prefetch_level < self.level_weight_ranges.len() {
+                    let (start, end) = self.level_weight_ranges[prefetch_level];
+                    if end > start {
+                        prefetch_weight_range(tape_ctx.weights, start, end);
+                    }
+                }
+                // Release weights from level current_level - 2 (look-behind).
+                if current_level >= 2 {
+                    let release_level = current_level - 2;
+                    if release_level < self.level_weight_ranges.len() {
+                        let (start, end) = self.level_weight_ranges[release_level];
+                        if end > start {
+                            release_weight_range(tape_ctx.weights, start, end);
+                        }
+                    }
+                }
+            }
             // Passthrough: zero-copy move.
             if instr.passthrough {
                 if let Some(&src_idx) = instr.input_indices.first() {
@@ -4434,6 +4474,50 @@ mod tests {
                 let expected = PrimOp::Add.apply_binary(a, b);
                 assert_eq!(ring_out, expected, "ring Q0 Add mismatch at ({a},{b})");
             }
+        }
+    }
+}
+
+// ── Weight prefetch helpers ────────────────────────────────────────────────
+
+/// Issue madvise(WILLNEED) for a byte range within the weight blob.
+/// Tells the OS to page in these bytes asynchronously.
+#[inline]
+fn prefetch_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_WILLNEED);
+        }
+    }
+}
+
+/// Issue madvise(DONTNEED) for a byte range within the weight blob.
+/// Tells the OS these pages can be reclaimed.
+#[inline]
+fn release_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        // MADV_DONTNEED on mmap'd memory allows OS to reclaim pages; the
+        // next access will re-fault them in (zero-cost for mmap).
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
         }
     }
 }
