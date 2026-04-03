@@ -44,150 +44,245 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
 
     #[cfg(target_arch = "aarch64")]
     {
-        lut_gemm_4bit_neon_nibbleview(activations, weights, output, m, k, n, centroids);
+        lut_gemm_4bit_neon_int8(activations, weights, output, m, k, n, centroids);
     }
 
     #[cfg(not(target_arch = "aarch64"))]
     {
-        lut_gemm_4bit_scalar_premul(activations, weights, output, m, k, n, centroids);
+        lut_gemm_4bit_scalar_int8(activations, weights, output, m, k, n, centroids);
     }
 }
 
-/// NEON NibbleView Q4 kernel: vqtbl1q_s8 for 16 lookups per instruction.
+/// Quantize f32 activation row to int8 (per-row symmetric quantization).
+/// Returns the dequant scale: `f32_val ≈ int8_val * scale`.
+#[inline]
+fn quantize_activation_row(a_row: &[f32], a_i8: &mut [i8]) -> f32 {
+    let a_max = a_row.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+    if a_max < 1e-12 {
+        a_i8.iter_mut().for_each(|v| *v = 0);
+        return 0.0;
+    }
+    let inv_scale = 127.0 / a_max;
+    for (i, &v) in a_row.iter().enumerate() {
+        a_i8[i] = (v * inv_scale).round().clamp(-127.0, 127.0) as i8;
+    }
+    a_max / 127.0
+}
+
+/// NEON int8 Q4 kernel: both activations and centroids are int8.
 ///
-/// Per K-row: quantize premul to int8, use NEON table lookup to process
-/// 32 output columns per instruction pair. Accumulate in int16 (flushed
-/// to f32 every 128 rows to prevent overflow).
+/// Inner loop: vqtbl1q_s8 (table lookup) → vmull_s8 (int8×int8→int16) →
+/// vaddw_s16 (accumulate in int32). f32 conversion happens ONCE per output
+/// element instead of per K-row. K-loop unrolled by 4 for ILP.
+///
+/// Op count: 18 NEON ops per 32 columns per K-row (vs 36 in the old f32 kernel).
 #[cfg(target_arch = "aarch64")]
 #[allow(clippy::too_many_arguments)]
-fn lut_gemm_4bit_neon_nibbleview(
+fn lut_gemm_4bit_neon_int8(
     activations: &[f32],
     weights: &QuantizedWeights4,
     output: &mut [f32],
-    m: usize, k: usize, n: usize,
+    m: usize,
+    k: usize,
+    n: usize,
     centroids: &[f32; super::psumbook::Q4_LEVELS],
 ) {
     use std::arch::aarch64::*;
 
     let n_bytes = n / 2;
-    // Flush interval: accumulate int8 lookups into int16, flush to f32 every
 
-    // Pre-compute fixed int8 centroid table ONCE (not per K-row).
-    // centroid_scale converts int8 back to f32: f32_val = int8_val * centroid_scale.
+    // Pre-compute fixed int8 centroid table ONCE.
     let centroid_max = centroids.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
-    let centroid_inv_scale = if centroid_max > 1e-12 { 127.0 / centroid_max } else { 0.0 };
+    let centroid_inv_scale = if centroid_max > 1e-12 {
+        127.0 / centroid_max
+    } else {
+        0.0
+    };
     let centroid_dequant = centroid_max / 127.0;
 
     let mut fixed_table_i8 = [0i8; 16];
     for c in 0..16 {
-        fixed_table_i8[c] = (centroids[c] * centroid_inv_scale).round() as i8;
+        fixed_table_i8[c] = (centroids[c] * centroid_inv_scale)
+            .round()
+            .clamp(-127.0, 127.0) as i8;
     }
+
+    // Reusable activation buffer (avoid allocation per row for M>1).
+    let mut a_i8_buf = vec![0i8; k];
 
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
         let out_row = &mut output[i * n..(i + 1) * n];
-        out_row.fill(0.0);
 
-        let chunks16 = n_bytes / 16;
+        // Quantize activation row to int8.
+        let a_scale = quantize_activation_row(a_row, &mut a_i8_buf);
+        let combined_scale = a_scale * centroid_dequant;
+
+        let chunks16 = n_bytes / 16; // Each chunk = 16 packed bytes = 32 output columns.
 
         unsafe {
-            // Compile-time int8 centroid table loaded into NEON register ONCE.
             let tbl = vld1q_s8(fixed_table_i8.as_ptr());
             let mask_lo = vdupq_n_u8(0x0F);
 
-            for l in 0..k {
-                let a_val = *a_row.get_unchecked(l);
-                let v_scale = vdupq_n_f32(a_val * centroid_dequant);
-                let byte_start = l * n_bytes;
-                let idx_ptr = weights.indices.as_ptr().add(byte_start);
+            for chunk in 0..chunks16 {
+                let base = chunk * 16;
+                let col_base = base * 2;
 
-                for chunk in 0..chunks16 {
-                    let base = chunk * 16;
-                    let col_base = base * 2;
-                    let packed = vld1q_u8(idx_ptr.add(base));
+                // int32 accumulators: 8 registers for 32 output columns.
+                // Layout: [lo_low_0..3, lo_high_0..3, hi_low_0..3, hi_high_0..3]
+                // lo = even columns (low nibble), hi = odd columns (high nibble)
+                let mut acc_lo_0 = vdupq_n_s32(0);
+                let mut acc_lo_1 = vdupq_n_s32(0);
+                let mut acc_lo_2 = vdupq_n_s32(0);
+                let mut acc_lo_3 = vdupq_n_s32(0);
+                let mut acc_hi_0 = vdupq_n_s32(0);
+                let mut acc_hi_1 = vdupq_n_s32(0);
+                let mut acc_hi_2 = vdupq_n_s32(0);
+                let mut acc_hi_3 = vdupq_n_s32(0);
 
-                    let lo_idx = vandq_u8(packed, mask_lo);
-                    let hi_idx = vshrq_n_u8(packed, 4);
-                    let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
-                    let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
+                // Macro for processing one K-row: lookup + widening multiply-accumulate.
+                macro_rules! process_k_row {
+                    ($ll:expr) => {
+                        let a_val = vdup_n_s8(*a_i8_buf.get_unchecked($ll));
+                        let idx_ptr = weights.indices.as_ptr().add($ll * n_bytes + base);
+                        let packed = vld1q_u8(idx_ptr);
 
-                    // Widen to int16 and accumulate as int16 × a_val_scale.
-                    // Since we must multiply by a_val per row, we convert to f32 per row.
-                    let hi_lo_s16 = vmovl_s8(vget_low_s8(hi_i8));
-                    let lo_lo_s16 = vmovl_s8(vget_low_s8(lo_i8));
-                    let hi_hi_s16 = vmovl_s8(vget_high_s8(hi_i8));
-                    let lo_hi_s16 = vmovl_s8(vget_high_s8(lo_i8));
+                        let lo_idx = vandq_u8(packed, mask_lo);
+                        let hi_idx = vshrq_n_u8(packed, 4);
+                        let lo_i8 = vqtbl1q_s8(tbl, lo_idx);
+                        let hi_i8 = vqtbl1q_s8(tbl, hi_idx);
 
-                    macro_rules! process_group {
-                        ($hi_s16:expr, $lo_s16:expr, $lane:expr, $col_off:expr) => {
-                            let hi_s32 = if $lane == 0 {
-                                vmovl_s16(vget_low_s16($hi_s16))
-                            } else {
-                                vmovl_s16(vget_high_s16($hi_s16))
-                            };
-                            let lo_s32 = if $lane == 0 {
-                                vmovl_s16(vget_low_s16($lo_s16))
-                            } else {
-                                vmovl_s16(vget_high_s16($lo_s16))
-                            };
-                            let hi_f32 = vmulq_f32(vcvtq_f32_s32(hi_s32), v_scale);
-                            let lo_f32 = vmulq_f32(vcvtq_f32_s32(lo_s32), v_scale);
-                            let zip1 = vzip1q_f32(hi_f32, lo_f32);
-                            let zip2 = vzip2q_f32(hi_f32, lo_f32);
-                            let col = col_base + $col_off;
-                            let e1 = vld1q_f32(out_row.as_ptr().add(col));
-                            let e2 = vld1q_f32(out_row.as_ptr().add(col + 4));
-                            vst1q_f32(out_row.as_mut_ptr().add(col), vaddq_f32(e1, zip1));
-                            vst1q_f32(out_row.as_mut_ptr().add(col + 4), vaddq_f32(e2, zip2));
-                        };
-                    }
-                    process_group!(hi_lo_s16, lo_lo_s16, 0, 0);
-                    process_group!(hi_lo_s16, lo_lo_s16, 1, 8);
-                    process_group!(hi_hi_s16, lo_hi_s16, 0, 16);
-                    process_group!(hi_hi_s16, lo_hi_s16, 1, 24);
+                        // vmull_s8: int8 × int8 → int16 (8 products each)
+                        let lo_prod_low = vmull_s8(vget_low_s8(lo_i8), a_val);
+                        let lo_prod_high = vmull_s8(vget_high_s8(lo_i8), a_val);
+                        let hi_prod_low = vmull_s8(vget_low_s8(hi_i8), a_val);
+                        let hi_prod_high = vmull_s8(vget_high_s8(hi_i8), a_val);
+
+                        // vaddw_s16: int32 += int16 (widen and accumulate)
+                        acc_lo_0 = vaddw_s16(acc_lo_0, vget_low_s16(lo_prod_low));
+                        acc_lo_1 = vaddw_s16(acc_lo_1, vget_high_s16(lo_prod_low));
+                        acc_lo_2 = vaddw_s16(acc_lo_2, vget_low_s16(lo_prod_high));
+                        acc_lo_3 = vaddw_s16(acc_lo_3, vget_high_s16(lo_prod_high));
+                        acc_hi_0 = vaddw_s16(acc_hi_0, vget_low_s16(hi_prod_low));
+                        acc_hi_1 = vaddw_s16(acc_hi_1, vget_high_s16(hi_prod_low));
+                        acc_hi_2 = vaddw_s16(acc_hi_2, vget_low_s16(hi_prod_high));
+                        acc_hi_3 = vaddw_s16(acc_hi_3, vget_high_s16(hi_prod_high));
+                    };
                 }
 
-                // Scalar remainder.
-                let scale_f32 = a_val * centroid_dequant;
-                for (b, &packed) in weights.indices[byte_start..byte_start + n_bytes]
-                    .iter().enumerate().skip(chunks16 * 16)
-                {
-                    let col = b * 2;
-                    if col < n {
-                        out_row[col] += fixed_table_i8[(packed >> 4) as usize] as f32 * scale_f32;
-                    }
-                    if col + 1 < n {
-                        out_row[col + 1] += fixed_table_i8[(packed & 0x0F) as usize] as f32 * scale_f32;
-                    }
+                // K-loop with unroll-by-4 for instruction-level parallelism.
+                let k_main = k - (k % 4);
+                let mut l = 0usize;
+                while l < k_main {
+                    process_k_row!(l);
+                    process_k_row!(l + 1);
+                    process_k_row!(l + 2);
+                    process_k_row!(l + 3);
+                    l += 4;
+                }
+
+                // K-loop remainder (0-3 rows).
+                while l < k {
+                    process_k_row!(l);
+                    l += 1;
+                }
+
+                // Final conversion: int32 → f32, apply combined scale, interleave hi/lo.
+                let v_scale = vdupq_n_f32(combined_scale);
+
+                macro_rules! write_group {
+                    ($hi_acc:expr, $lo_acc:expr, $col_off:expr) => {
+                        let hi_f32 = vmulq_f32(vcvtq_f32_s32($hi_acc), v_scale);
+                        let lo_f32 = vmulq_f32(vcvtq_f32_s32($lo_acc), v_scale);
+                        let z1 = vzip1q_f32(hi_f32, lo_f32);
+                        let z2 = vzip2q_f32(hi_f32, lo_f32);
+                        let col = col_base + $col_off;
+                        vst1q_f32(out_row.as_mut_ptr().add(col), z1);
+                        vst1q_f32(out_row.as_mut_ptr().add(col + 4), z2);
+                    };
+                }
+                write_group!(acc_hi_0, acc_lo_0, 0);
+                write_group!(acc_hi_1, acc_lo_1, 8);
+                write_group!(acc_hi_2, acc_lo_2, 16);
+                write_group!(acc_hi_3, acc_lo_3, 24);
+            }
+
+            // Scalar remainder for columns not covered by 32-wide chunks.
+            let rem_start = chunks16 * 16;
+            for b in rem_start..n_bytes {
+                let col = b * 2;
+                let mut sum_hi = 0i32;
+                let mut sum_lo = 0i32;
+                for (l, &a_val_i8) in a_i8_buf.iter().enumerate().take(k) {
+                    let a_val = a_val_i8 as i32;
+                    let packed = weights.indices[l * n_bytes + b];
+                    sum_hi += a_val * fixed_table_i8[(packed >> 4) as usize] as i32;
+                    sum_lo += a_val * fixed_table_i8[(packed & 0x0F) as usize] as i32;
+                }
+                if col < n {
+                    out_row[col] = sum_hi as f32 * combined_scale;
+                }
+                if col + 1 < n {
+                    out_row[col + 1] = sum_lo as f32 * combined_scale;
                 }
             }
         }
     }
 }
 
-/// Scalar fallback with pre-multiplied centroid table.
+/// Scalar fallback with int8 activation quantization.
+///
+/// Same algorithm as the NEON kernel but without SIMD: quantize activations
+/// to int8, multiply int8×int8→int32, convert to f32 once per output element.
 #[allow(dead_code, clippy::too_many_arguments)]
-fn lut_gemm_4bit_scalar_premul(
+fn lut_gemm_4bit_scalar_int8(
     activations: &[f32],
     weights: &QuantizedWeights4,
     output: &mut [f32],
-    m: usize, k: usize, n: usize,
+    m: usize,
+    k: usize,
+    n: usize,
     centroids: &[f32; super::psumbook::Q4_LEVELS],
 ) {
     let n_bytes = n / 2;
+
+    let centroid_max = centroids.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+    let centroid_inv_scale = if centroid_max > 1e-12 {
+        127.0 / centroid_max
+    } else {
+        0.0
+    };
+    let centroid_dequant = centroid_max / 127.0;
+
+    let mut fixed_table_i8 = [0i8; 16];
+    for c in 0..16 {
+        fixed_table_i8[c] = (centroids[c] * centroid_inv_scale)
+            .round()
+            .clamp(-127.0, 127.0) as i8;
+    }
+
+    let mut a_i8_buf = vec![0i8; k];
+
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
         let out_row = &mut output[i * n..(i + 1) * n];
-        out_row.fill(0.0);
-        for (l, &a_val) in a_row.iter().enumerate() {
-            let mut premul = [0.0f32; 16];
-            for c in 0..16 { premul[c] = a_val * centroids[c]; }
-            let byte_start = l * n_bytes;
-            let idx_row = &weights.indices[byte_start..byte_start + n_bytes];
-            for (b, &packed) in idx_row.iter().enumerate() {
-                let col = b * 2;
-                out_row[col] += premul[(packed >> 4) as usize];
-                out_row[col + 1] += premul[(packed & 0x0F) as usize];
+
+        let a_scale = quantize_activation_row(a_row, &mut a_i8_buf);
+        let combined_scale = a_scale * centroid_dequant;
+
+        for b in 0..n_bytes {
+            let col = b * 2;
+            let mut sum_hi = 0i32;
+            let mut sum_lo = 0i32;
+            for (l, &a_val_i8) in a_i8_buf.iter().enumerate().take(k) {
+                let a_val = a_val_i8 as i32;
+                let packed = weights.indices[l * n_bytes + b];
+                sum_hi += a_val * fixed_table_i8[(packed >> 4) as usize] as i32;
+                sum_lo += a_val * fixed_table_i8[(packed & 0x0F) as usize] as i32;
+            }
+            out_row[col] = sum_hi as f32 * combined_scale;
+            if col + 1 < n {
+                out_row[col + 1] = sum_lo as f32 * combined_scale;
             }
         }
     }

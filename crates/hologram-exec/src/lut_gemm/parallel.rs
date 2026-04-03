@@ -100,8 +100,11 @@ mod tests {
         let mut par_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut seq_out);
         lut_gemm_4bit_par(&activations, &qw, &mut par_out);
+        // Tolerance: int8 activation quantization in the sequential kernel adds
+        // ~0.4% error vs the f32 Psumbook path in the parallel kernel.
         for (s, p) in seq_out.iter().zip(par_out.iter()) {
-            assert!((s - p).abs() < 1e-5, "mismatch: {s} vs {p}");
+            let tol = s.abs().max(1.0) * 0.01;
+            assert!((s - p).abs() < tol, "mismatch: {s} vs {p}");
         }
     }
 
@@ -164,8 +167,10 @@ mod tests {
         let mut par_out = vec![0.0f32; m * n];
         lut_gemm_4bit(&activations, &qw, &mut seq_out);
         lut_gemm_4bit_par(&activations, &qw, &mut par_out);
+        // Tolerance: int8 activation quantization in sequential kernel.
         for (s, p) in seq_out.iter().zip(par_out.iter()) {
-            assert!((s - p).abs() < 1e-4, "mismatch: {s} vs {p}");
+            let tol = s.abs().max(1.0) * 0.01;
+            assert!((s - p).abs() < tol, "mismatch: {s} vs {p}");
         }
     }
 }

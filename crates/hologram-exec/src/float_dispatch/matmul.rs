@@ -251,6 +251,77 @@ pub(crate) fn infer_matmul_dims(
     }
 }
 
+/// NEON f32 vecmat: out[j] = Σ_l a[l] * b[l*n + j], for M=1 decode.
+///
+/// Processes 16 output columns per iteration (4 × vfmaq_f32). K-unrolled by 4
+/// for instruction-level parallelism. Avoids BLAS function call overhead which
+/// is significant for M=1 vecmat (~0.02ms per call × 111 calls = 2.2ms).
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
+pub(crate) fn vecmat_neon(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
+    use std::arch::aarch64::*;
+
+    let n16 = n - (n % 16);
+    let k4 = k - (k % 4);
+
+    unsafe {
+        // Process 16 output columns at a time.
+        let mut j = 0usize;
+        while j < n16 {
+            let mut acc0 = vdupq_n_f32(0.0);
+            let mut acc1 = vdupq_n_f32(0.0);
+            let mut acc2 = vdupq_n_f32(0.0);
+            let mut acc3 = vdupq_n_f32(0.0);
+
+            // K-unrolled by 4.
+            let mut l = 0usize;
+            while l < k4 {
+                macro_rules! k_step {
+                    ($ll:expr) => {
+                        let av = vdupq_n_f32(*a.get_unchecked($ll));
+                        let bp = b.as_ptr().add($ll * n + j);
+                        acc0 = vfmaq_f32(acc0, av, vld1q_f32(bp));
+                        acc1 = vfmaq_f32(acc1, av, vld1q_f32(bp.add(4)));
+                        acc2 = vfmaq_f32(acc2, av, vld1q_f32(bp.add(8)));
+                        acc3 = vfmaq_f32(acc3, av, vld1q_f32(bp.add(12)));
+                    };
+                }
+                k_step!(l);
+                k_step!(l + 1);
+                k_step!(l + 2);
+                k_step!(l + 3);
+                l += 4;
+            }
+            // K remainder.
+            while l < k {
+                let av = vdupq_n_f32(*a.get_unchecked(l));
+                let bp = b.as_ptr().add(l * n + j);
+                acc0 = vfmaq_f32(acc0, av, vld1q_f32(bp));
+                acc1 = vfmaq_f32(acc1, av, vld1q_f32(bp.add(4)));
+                acc2 = vfmaq_f32(acc2, av, vld1q_f32(bp.add(8)));
+                acc3 = vfmaq_f32(acc3, av, vld1q_f32(bp.add(12)));
+                l += 1;
+            }
+
+            let op = out.as_mut_ptr().add(j);
+            vst1q_f32(op, acc0);
+            vst1q_f32(op.add(4), acc1);
+            vst1q_f32(op.add(8), acc2);
+            vst1q_f32(op.add(12), acc3);
+            j += 16;
+        }
+
+        // Remainder columns (< 16).
+        for jj in j..n {
+            let mut sum = 0.0f32;
+            for l in 0..k {
+                sum += *a.get_unchecked(l) * *b.get_unchecked(l * n + jj);
+            }
+            *out.get_unchecked_mut(jj) = sum;
+        }
+    }
+}
+
 pub fn dispatch_matmul_into(
     inputs: &[&[u8]],
     m: usize,
@@ -259,14 +330,14 @@ pub fn dispatch_matmul_into(
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<()> {
     // ── Fast path: when m, k, n are all known and consistent with input sizes,
-    // skip infer_matmul_k and batch detection entirely. This eliminates ~0.8ms
-    // of overhead per matmul call (9.5x faster than the general path).
+    // skip infer_matmul_k and batch detection entirely.
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if m > 0 && k > 0 && n > 0 {
         let a_expected = m * k * 4;
         let b_expected = k * n * 4;
         if inputs[0].len() == a_expected && inputs[1].len() == b_expected {
             // Direct zero-copy BLAS call — no Cow, no inference, no batch detection.
+            // AMX hardware is faster than software NEON even for M=1 vecmat.
             let a: &[f32] = bytemuck::cast_slice(inputs[0]);
             let b: &[f32] = bytemuck::cast_slice(inputs[1]);
             let out = alloc_f32_in(out_buf, m * n);

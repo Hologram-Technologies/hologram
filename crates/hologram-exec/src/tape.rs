@@ -543,7 +543,51 @@ pub enum TapeKernel {
     },
 }
 
-impl TapeKernel {}
+impl TapeKernel {
+    /// Short name for profiling output.
+    fn profile_name(&self) -> String {
+        match self {
+            Self::MatMulLut4(_) => "MatMulLut4".into(),
+            Self::MatMulLut8(_) => "MatMulLut8".into(),
+            Self::MatMulLut4Activation(_, _) => "MatMulLut4Act".into(),
+            Self::MatMulLut8Activation(_, _) => "MatMulLut8Act".into(),
+            Self::MatMulLut16(_) => "MatMulLut16".into(),
+            Self::InlineMatMul { m, k, n } => format!("MatMul({m}x{k}x{n})"),
+            Self::InlineMatMulActivation { m, k, n, .. } => format!("MatMulAct({m}x{k}x{n})"),
+            Self::InlineMatMulBiasActivation { m, k, n, .. } => {
+                format!("MatMulBiasAct({m}x{k}x{n})")
+            }
+            Self::InlineAttention {
+                num_q_heads,
+                num_kv_heads,
+                head_dim,
+                ..
+            } => {
+                format!("Attention(q{num_q_heads}kv{num_kv_heads}d{head_dim})")
+            }
+            Self::InlineSoftmax { size } => format!("Softmax({size})"),
+            Self::InlineRmsNorm { size, .. } => format!("RmsNorm({size})"),
+            Self::InlineAddRmsNorm { size, .. } => format!("AddRmsNorm({size})"),
+            Self::InlineLayerNorm { size, .. } => format!("LayerNorm({size})"),
+            Self::InlineRoPE { dim, n_heads, .. } => format!("RoPE({dim}x{n_heads})"),
+            Self::InlineGather { .. } => "Gather".into(),
+            Self::InlineConcat { .. } => "Concat".into(),
+            Self::InlineTranspose { .. } => "Transpose".into(),
+            Self::KvWrite { layer, .. } => format!("KvWrite(L{layer})"),
+            Self::KvRead { layer, .. } => format!("KvRead(L{layer})"),
+            Self::FusedFloatChain(_) => "FusedChain".into(),
+            Self::InlineAdd => "Add".into(),
+            Self::InlineMul => "Mul".into(),
+            Self::InlineSub => "Sub".into(),
+            Self::InlineDiv => "Div".into(),
+            Self::InlineRelu => "Relu".into(),
+            Self::InlineSilu => "Silu".into(),
+            Self::InlineSigmoid => "Sigmoid".into(),
+            Self::InlineGelu => "Gelu".into(),
+            _ => format!("{:?}", std::mem::discriminant(self)),
+        }
+    }
+}
 
 /// Result of kernel dispatch — tells the execute loop how to store the output.
 #[allow(dead_code)] // Fields read by dispatch_kernel callers; execute_direct ignores result.
@@ -2495,6 +2539,14 @@ fn apply_activation_to_out_buf(out_buf: &mut [u8], activation: &FloatOp) {
 }
 
 /// LUT-GEMM Q4 dispatch for tape kernels.
+/// Q4 LUT-GEMM dispatch: LUT provides compact storage + fast dequant,
+/// BLAS/AMX provides hardware-accelerated matmul where available.
+///
+/// Single pipeline: LUT dequant Q4→f32 (cached) → BLAS sgemm (AMX hardware).
+/// Non-BLAS platforms: int8 LUT kernel (pure integer accumulation via NEON/scalar).
+///
+/// LUT is always the data layer — hologram's core value (compact Q4 weights
+/// with centroid table lookup). BLAS augments LUT with hardware matrix compute.
 fn dispatch_lut_gemm_4(
     inputs: &[&[u8]],
     cid: ConstantId,
@@ -2512,14 +2564,10 @@ fn dispatch_lut_gemm_4(
     let m = if k > 0 { activations.len() / k } else { 0 };
     let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
 
-    // Choose kernel: BLAS (cached dequant) for large N where AMX wins,
-    // native LUT for small N or non-BLAS platforms.
-    // Threshold: BLAS overhead is ~0.05ms per call. For N < 1024, the LUT
-    // kernel's lower bandwidth dominates. For N >= 1024, AMX throughput wins.
-    // Hybrid: BLAS for large Q4 matmuls (AMX throughput dominates),
-    // native LUT for small Q4 matmuls (table lookup faster than BLAS overhead).
+    // LUT + BLAS pipeline: LUT handles Q4→f32 dequant (cached), BLAS handles matmul.
+    // AMX hardware outperforms software NEON for all matmul sizes including M=1.
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
-    if n >= 1024 {
+    {
         drop(cache);
         let mut cache = tape_ctx.weight_cache.write();
         let dequantized = cache.get_dequantized_f32(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2527,7 +2575,11 @@ fn dispatch_lut_gemm_4(
         return Ok(());
     }
 
-    crate::lut_gemm::lut_gemm_4bit(activations, qw, out);
+    // Non-BLAS: int8 LUT kernel (NEON table lookup + integer accumulation).
+    #[allow(unreachable_code)]
+    {
+        crate::lut_gemm::lut_gemm_4bit(activations, qw, out);
+    }
     Ok(())
 }
 
@@ -3285,6 +3337,11 @@ impl EnumTape {
             }
         }
 
+        // Per-kernel-type profiling (enabled via HOLOGRAM_PROFILE=1 env var).
+        let profile = std::env::var("HOLOGRAM_PROFILE").is_ok_and(|v| v == "1");
+        let mut profile_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
+            std::collections::HashMap::new();
+
         // Execute: one match per instruction.
         for instr in &self.instructions {
             // Passthrough: zero-copy move.
@@ -3329,6 +3386,8 @@ impl EnumTape {
             let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
             out_buf.clear();
 
+            let t0 = std::time::Instant::now();
+
             let input_metas: crate::shape_resolve::InputMetas = SmallVec::new();
             dispatch_kernel(
                 &instr.kernel,
@@ -3338,6 +3397,30 @@ impl EnumTape {
                 &*tape_ctx.backend.resolve(),
                 out_buf,
             )?;
+
+            if profile {
+                let elapsed = t0.elapsed();
+                let key = instr.kernel.profile_name();
+                let entry = profile_times
+                    .entry(key)
+                    .or_insert((std::time::Duration::ZERO, 0));
+                entry.0 += elapsed;
+                entry.1 += 1;
+            }
+        }
+
+        if profile {
+            let mut entries: Vec<_> = profile_times.into_iter().collect();
+            entries.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            let total: std::time::Duration = entries.iter().map(|(_, (d, _))| *d).sum();
+            tracing::info!("PROFILE total={:.1}ms", total.as_secs_f64() * 1000.0);
+            for (name, (dur, count)) in &entries {
+                let pct = dur.as_secs_f64() / total.as_secs_f64() * 100.0;
+                tracing::info!(
+                    "  {name}: {:.2}ms ({count}x, {pct:.1}%)",
+                    dur.as_secs_f64() * 1000.0
+                );
+            }
         }
 
         // Write all instruction output buffers back to arena so callers
