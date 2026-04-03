@@ -250,12 +250,10 @@ fn seed_arena<'a>(
                     .filter(|n| matches!(n.op, GraphOp::Input))
                     .position(|n| n.id == node.id);
                 if let Some(idx) = input_idx {
-                    let data = inputs
-                        .get(idx as u32)
-                        .ok_or(ExecError::MissingInput {
-                            node: node.id,
-                            slot: idx,
-                        })?;
+                    let data = inputs.get(idx as u32).ok_or(ExecError::MissingInput {
+                        node: node.id,
+                        slot: idx,
+                    })?;
                     let es = compiled_dtypes
                         .get(&node.id)
                         .map(|d| d.byte_size())

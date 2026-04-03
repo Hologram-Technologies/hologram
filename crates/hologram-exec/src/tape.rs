@@ -2476,6 +2476,11 @@ fn dispatch_kernel(
             Ok(DispatchResult::InOutBuf)
         }
         // ── Deep decode fusions (Plan 054) ──────────────────────────────
+        //
+        // At M=1 (decode), these kernels normalize into a reusable Vec
+        // (sized once, reused across calls via thread-local or caller),
+        // then project via BLAS sgemm. The norm intermediate never
+        // enters the arena — saving one allocation per fused dispatch.
         TapeKernel::InlineNormProjectionGemv {
             norm_size,
             epsilon,
@@ -2484,22 +2489,43 @@ fn dispatch_kernel(
         } => {
             // Fused: RmsNorm(x, weight) → MatMul(normed, proj_weight)
             // inputs: [x, norm_weight, proj_weight]
-            let norm_sz = *norm_size as usize;
-            let eps = f32::from_bits(*epsilon);
+            let k_val = *k as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
 
-            // Step 1: RmsNorm into temp buffer
-            let normed =
-                float_dispatch::norm::dispatch_rms_norm(&[inputs[0], inputs[1]], norm_sz, eps)?;
-
-            // Step 2: MatMul normed × proj_weight → output
-            let m_val = normed.len() / 4 / (*k as usize);
-            float_dispatch::matmul::dispatch_matmul_into(
-                &[&normed, inputs[2]],
-                m_val,
-                *k as usize,
-                *n_total as usize,
-                out_buf,
-            )?;
+            if m_val == 1 {
+                // M=1 fast path: RmsNorm into pre-sized Vec (no arena alloc).
+                let x = safe_cast_f32(inputs[0]);
+                let weight = safe_cast_f32(inputs[1]);
+                let mut normed_f32 = x.into_owned();
+                float_dispatch::norm::rms_norm_in_place(
+                    &mut normed_f32,
+                    &weight,
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                );
+                let normed_bytes: &[u8] = bytemuck::cast_slice(&normed_f32);
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[normed_bytes, inputs[2]],
+                    1,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            } else {
+                // M>1 fallback: decompose to separate ops.
+                let normed = float_dispatch::norm::dispatch_rms_norm(
+                    &[inputs[0], inputs[1]],
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[&normed, inputs[2]],
+                    m_val,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            }
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineAddNormProjectionGemv {
@@ -2510,25 +2536,48 @@ fn dispatch_kernel(
         } => {
             // Fused: Add(x, residual) → RmsNorm(sum, weight) → MatMul(normed, proj_weight)
             // inputs: [x, residual, norm_weight, proj_weight]
-            let norm_sz = *norm_size as usize;
-            let eps = f32::from_bits(*epsilon);
+            let k_val = *k as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
 
-            // Step 1: AddRmsNorm into temp buffer
-            let normed = float_dispatch::norm::dispatch_add_rms_norm(
-                &[inputs[0], inputs[1], inputs[2]],
-                norm_sz,
-                eps,
-            )?;
-
-            // Step 2: MatMul normed × proj_weight → output
-            let m_val = normed.len() / 4 / (*k as usize);
-            float_dispatch::matmul::dispatch_matmul_into(
-                &[&normed, inputs[3]],
-                m_val,
-                *k as usize,
-                *n_total as usize,
-                out_buf,
-            )?;
+            if m_val == 1 {
+                // M=1 fast path: Add + RmsNorm in-place, no arena alloc.
+                let x = safe_cast_f32(inputs[0]);
+                let residual = safe_cast_f32(inputs[1]);
+                let weight = safe_cast_f32(inputs[2]);
+                let mut normed_f32: Vec<f32> = x
+                    .iter()
+                    .zip(residual.iter())
+                    .map(|(&a, &b)| a + b)
+                    .collect();
+                float_dispatch::norm::rms_norm_in_place(
+                    &mut normed_f32,
+                    &weight,
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                );
+                let normed_bytes: &[u8] = bytemuck::cast_slice(&normed_f32);
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[normed_bytes, inputs[3]],
+                    1,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            } else {
+                // M>1 fallback: decompose to separate ops.
+                let normed = float_dispatch::norm::dispatch_add_rms_norm(
+                    &[inputs[0], inputs[1], inputs[2]],
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[&normed, inputs[3]],
+                    m_val,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            }
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::InlineSwiGluProjectionGemv { k, n } => {
@@ -2536,22 +2585,29 @@ fn dispatch_kernel(
             // inputs: [gate, up, down_weight]
             let k_val = *k as usize;
             let n_val = *n as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
 
-            // Step 1: SwiGLU into temp buffer
-            let mut activated = Vec::with_capacity(inputs[0].len());
-            inline_binary(inputs[0], inputs[1], &mut activated, |g, u| {
-                g * (1.0 / (1.0 + (-g).exp())) * u
-            });
-
-            // Step 2: MatMul activated × down_weight → output
-            let m_val = activated.len() / 4 / k_val;
+            // SwiGLU activation: silu(gate) * up — computed into Vec, not arena.
+            let gate = safe_cast_f32(inputs[0]);
+            let up = safe_cast_f32(inputs[1]);
+            let activated_f32: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(&g, &u)| {
+                    let sig = 1.0 / (1.0 + (-g).exp());
+                    g * sig * u
+                })
+                .collect();
+            let activated_bytes: &[u8] = bytemuck::cast_slice(&activated_f32);
+            // Prevent the compiler from dropping activated_f32 before matmul uses it.
             float_dispatch::matmul::dispatch_matmul_into(
-                &[&activated, inputs[2]],
+                &[activated_bytes, inputs[2]],
                 m_val,
                 k_val,
                 n_val,
                 out_buf,
             )?;
+            drop(activated_f32);
             Ok(DispatchResult::InOutBuf)
         }
 

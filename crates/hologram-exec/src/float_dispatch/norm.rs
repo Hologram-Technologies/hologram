@@ -541,7 +541,7 @@ fn softmax_in_place(out: &mut [f32], size: usize) {
 
 /// RmsNorm in-place on a mutable f32 slice.
 #[inline]
-fn rms_norm_in_place(out: &mut [f32], weight: &[f32], size: usize, epsilon: f32) {
+pub(crate) fn rms_norm_in_place(out: &mut [f32], weight: &[f32], size: usize, epsilon: f32) {
     for row in out.chunks_mut(size) {
         let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
         let inv_rms = fast_rsqrt(ms + epsilon);
