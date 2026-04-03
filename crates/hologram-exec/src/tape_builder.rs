@@ -183,13 +183,13 @@ pub fn build_tape(
             // Debug: count kernel types at tape build time.
             match &kernel {
                 TapeKernel::InlineMatMul { m, k, n } => {
-                    tracing::info!(m, k, n, "tape_build: InlineMatMul");
+                    tracing::debug!(m, k, n, "tape_build: InlineMatMul");
                 }
                 TapeKernel::InlineGemm { m, k, n, .. } => {
-                    tracing::info!(m, k, n, "tape_build: InlineGemm");
+                    tracing::debug!(m, k, n, "tape_build: InlineGemm");
                 }
                 TapeKernel::InlineMatMulActivation { m, k, n, .. } => {
-                    tracing::info!(m, k, n, "tape_build: InlineMatMulActivation");
+                    tracing::debug!(m, k, n, "tape_build: InlineMatMulActivation");
                 }
                 _ => {}
             }

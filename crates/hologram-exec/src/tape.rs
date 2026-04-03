@@ -634,7 +634,7 @@ fn dispatch_kernel(
             TapeKernel::Custom(_) => "Custom".into(),
             _ => format!("{:?}", std::mem::discriminant(kernel)),
         };
-        tracing::info!(dk, name, "dispatch_kernel");
+        tracing::debug!(dk, name, "dispatch_kernel");
     }
 
     match kernel {
@@ -2178,7 +2178,7 @@ fn dispatch_kernel(
                     static DBG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                     if DBG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
                         let b_exp = baked_k * baked_n * 4;
-                        tracing::info!(
+                        tracing::debug!(
                             baked_k,
                             baked_n,
                             a_len = inputs[0].len(),
@@ -2209,7 +2209,7 @@ fn dispatch_kernel(
                             static LOGGED: std::sync::atomic::AtomicBool =
                                 std::sync::atomic::AtomicBool::new(false);
                             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                                tracing::info!(
+                                tracing::debug!(
                                     actual_m,
                                     baked_k,
                                     baked_n,
