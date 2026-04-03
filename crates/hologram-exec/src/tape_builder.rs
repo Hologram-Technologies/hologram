@@ -874,6 +874,33 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
 
         // Transpose is handled separately (before this function).
         FloatOp::Transpose { .. } => TapeKernel::Passthrough,
+
+        // ── Deep decode fusions (Plan 054) ──────────────────────────────
+        FloatOp::NormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => TapeKernel::InlineNormProjectionGemv {
+            norm_size: *norm_size,
+            epsilon: *epsilon,
+            k: *k,
+            n_total: *n_total,
+        },
+        FloatOp::AddNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => TapeKernel::InlineAddNormProjectionGemv {
+            norm_size: *norm_size,
+            epsilon: *epsilon,
+            k: *k,
+            n_total: *n_total,
+        },
+        FloatOp::SwiGluProjectionGemv { k, n } => {
+            TapeKernel::InlineSwiGluProjectionGemv { k: *k, n: *n }
+        }
     }
 }
 

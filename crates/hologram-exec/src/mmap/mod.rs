@@ -250,23 +250,24 @@ fn seed_arena<'a>(
                     .filter(|n| matches!(n.op, GraphOp::Input))
                     .position(|n| n.id == node.id);
                 if let Some(idx) = input_idx {
-                    if let Some(data) = inputs.get(idx as u32) {
-                        let es = compiled_dtypes
+                    let data = inputs
+                        .get(idx as u32)
+                        .ok_or(ExecError::MissingInput {
+                            node: node.id,
+                            slot: idx,
+                        })?;
+                    let es = compiled_dtypes
+                        .get(&node.id)
+                        .map(|d| d.byte_size())
+                        .unwrap_or(8);
+                    arena.insert_borrowed_with_elem_size(node.id, data, es);
+                    // Set N-D metadata from GraphInputs shape if available.
+                    if let Some(shape) = inputs.shape(idx as u32) {
+                        let dtype = compiled_dtypes
                             .get(&node.id)
-                            .map(|d| d.byte_size())
-                            .unwrap_or(8);
-                        arena.insert_borrowed_with_elem_size(node.id, data, es);
-                        // Set N-D metadata from GraphInputs shape if available.
-                        if let Some(shape) = inputs.shape(idx as u32) {
-                            let dtype = compiled_dtypes
-                                .get(&node.id)
-                                .copied()
-                                .unwrap_or(hologram_core::op::FloatDType::F32);
-                            arena.set_meta(
-                                node.id,
-                                hologram_core::op::TensorMeta::new(dtype, shape),
-                            );
-                        }
+                            .copied()
+                            .unwrap_or(hologram_core::op::FloatDType::F32);
+                        arena.set_meta(node.id, hologram_core::op::TensorMeta::new(dtype, shape));
                     }
                 }
             }

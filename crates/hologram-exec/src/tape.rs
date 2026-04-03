@@ -509,6 +509,27 @@ pub enum TapeKernel {
         activation: FloatOp,
     },
 
+    // ── Deep decode fusions (Plan 054) ─────────────────────────────────
+    /// Fused RmsNorm → projection GEMV.
+    /// Inputs: [x, norm_weight, proj_weight]. Output: [M, n_total].
+    InlineNormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused Add + RmsNorm → projection GEMV.
+    /// Inputs: [x, residual, norm_weight, proj_weight]. Output: [M, n_total].
+    InlineAddNormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused SwiGLU + down projection GEMV.
+    /// Inputs: [gate, up, down_weight]. Output: [M, n].
+    InlineSwiGluProjectionGemv { k: u32, n: u32 },
+
     /// Ring-arithmetic unary op. Stays in ring domain (Z/2^nZ), no float conversion.
     /// Q0: applies PrimOp via LUT (apply_unary). Q1: native wrapping u16 ops.
     RingPrimUnary { op: PrimOp, level: RingLevel },
@@ -2454,6 +2475,86 @@ fn dispatch_kernel(
             )?;
             Ok(DispatchResult::InOutBuf)
         }
+        // ── Deep decode fusions (Plan 054) ──────────────────────────────
+        TapeKernel::InlineNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => {
+            // Fused: RmsNorm(x, weight) → MatMul(normed, proj_weight)
+            // inputs: [x, norm_weight, proj_weight]
+            let norm_sz = *norm_size as usize;
+            let eps = f32::from_bits(*epsilon);
+
+            // Step 1: RmsNorm into temp buffer
+            let normed =
+                float_dispatch::norm::dispatch_rms_norm(&[inputs[0], inputs[1]], norm_sz, eps)?;
+
+            // Step 2: MatMul normed × proj_weight → output
+            let m_val = normed.len() / 4 / (*k as usize);
+            float_dispatch::matmul::dispatch_matmul_into(
+                &[&normed, inputs[2]],
+                m_val,
+                *k as usize,
+                *n_total as usize,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAddNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => {
+            // Fused: Add(x, residual) → RmsNorm(sum, weight) → MatMul(normed, proj_weight)
+            // inputs: [x, residual, norm_weight, proj_weight]
+            let norm_sz = *norm_size as usize;
+            let eps = f32::from_bits(*epsilon);
+
+            // Step 1: AddRmsNorm into temp buffer
+            let normed = float_dispatch::norm::dispatch_add_rms_norm(
+                &[inputs[0], inputs[1], inputs[2]],
+                norm_sz,
+                eps,
+            )?;
+
+            // Step 2: MatMul normed × proj_weight → output
+            let m_val = normed.len() / 4 / (*k as usize);
+            float_dispatch::matmul::dispatch_matmul_into(
+                &[&normed, inputs[3]],
+                m_val,
+                *k as usize,
+                *n_total as usize,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSwiGluProjectionGemv { k, n } => {
+            // Fused: SwiGLU(gate, up) → MatMul(activated, W_down)
+            // inputs: [gate, up, down_weight]
+            let k_val = *k as usize;
+            let n_val = *n as usize;
+
+            // Step 1: SwiGLU into temp buffer
+            let mut activated = Vec::with_capacity(inputs[0].len());
+            inline_binary(inputs[0], inputs[1], &mut activated, |g, u| {
+                g * (1.0 / (1.0 + (-g).exp())) * u
+            });
+
+            // Step 2: MatMul activated × down_weight → output
+            let m_val = activated.len() / 4 / k_val;
+            float_dispatch::matmul::dispatch_matmul_into(
+                &[&activated, inputs[2]],
+                m_val,
+                k_val,
+                n_val,
+                out_buf,
+            )?;
+            Ok(DispatchResult::InOutBuf)
+        }
+
         TapeKernel::Custom(handler) => {
             let result = handler(inputs, tape_ctx.constants)?;
             out_buf.extend_from_slice(&result);

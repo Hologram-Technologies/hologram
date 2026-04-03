@@ -523,6 +523,31 @@ pub enum FloatOp {
     /// ArgMax: index of the maximum value along an axis.
     /// Output dtype is I64. `axis` is the reduction axis.
     ArgMax { axis: u32, keepdims: bool },
+
+    // ── Deep decode fusions (Plan 054) ──────────────────────────────────
+    /// Fused RmsNorm → multi-output projection (GEMV at M=1, decomposed at M>1).
+    /// Inputs: [x, norm_weight, projection_weight].
+    /// Output: concatenated projection [M, n_total] where n_total = sum(split_sizes).
+    /// Caller slices output via Slice nodes (zero-copy at M=1).
+    NormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused Add + RmsNorm → multi-output projection.
+    /// Inputs: [x, residual, norm_weight, projection_weight].
+    /// Output: concatenated projection [M, n_total].
+    AddNormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused SwiGLU (silu(gate)*up) → down projection.
+    /// Inputs: [gate, up, down_weight].
+    /// Output: [M, n] down-projected result. Activation computed in-register.
+    SwiGluProjectionGemv { k: u32, n: u32 },
 }
 
 impl FloatOp {
@@ -624,6 +649,11 @@ impl FloatOp {
             // KV cache
             Self::KvWrite { .. } => 2, // K, V
             Self::KvRead { .. } => 0,  // reads from state, no tensor inputs
+
+            // Deep decode fusions (Plan 054)
+            Self::NormProjectionGemv { .. } => 3, // x, norm_weight, proj_weight
+            Self::AddNormProjectionGemv { .. } => 4, // x, residual, norm_weight, proj_weight
+            Self::SwiGluProjectionGemv { .. } => 3, // gate, up, down_weight
         }
     }
 
@@ -714,6 +744,9 @@ impl FloatOp {
             Self::ReverseSequence { .. } => "float.reverse_sequence",
             Self::KvWrite { .. } => "float.kv_write",
             Self::KvRead { .. } => "float.kv_read",
+            Self::NormProjectionGemv { .. } => "float.norm_projection_gemv",
+            Self::AddNormProjectionGemv { .. } => "float.add_norm_projection_gemv",
+            Self::SwiGluProjectionGemv { .. } => "float.swiglu_projection_gemv",
         }
     }
 }
@@ -838,6 +871,11 @@ impl FloatOp {
             // KV cache: KvWrite passes K through, KvRead shape is runtime-determined.
             Self::KvWrite { .. } => ShapeSpec::SameAs(0),
             Self::KvRead { .. } => ShapeSpec::Custom,
+
+            // Deep decode fusions: output = [M, n_total] or [M, n], custom shape.
+            Self::NormProjectionGemv { .. }
+            | Self::AddNormProjectionGemv { .. }
+            | Self::SwiGluProjectionGemv { .. } => ShapeSpec::Custom,
         }
     }
 
@@ -964,6 +1002,11 @@ impl FloatOp {
 
             // KV cache: passes through f32 K/V data.
             Self::KvWrite { .. } | Self::KvRead { .. } => FloatDType::F32,
+
+            // Deep decode fusions: always produce F32.
+            Self::NormProjectionGemv { .. }
+            | Self::AddNormProjectionGemv { .. }
+            | Self::SwiGluProjectionGemv { .. } => FloatDType::F32,
         }
     }
 
@@ -1286,6 +1329,9 @@ impl FloatOp {
             Self::KvWrite { .. } => "KvWrite",
             Self::KvRead { .. } => "KvRead",
             Self::ArgMax { .. } => "ArgMax",
+            Self::NormProjectionGemv { .. } => "NormProjGemv",
+            Self::AddNormProjectionGemv { .. } => "AddNormProjGemv",
+            Self::SwiGluProjectionGemv { .. } => "SwiGluProjGemv",
         }
     }
 }
