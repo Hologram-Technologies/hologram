@@ -12,6 +12,7 @@ hologram-archive = { workspace = true }
 hologram-exec = { workspace = true }
 hologram-compiler = { workspace = true }
 clap = { workspace = true }
+parking_lot = { workspace = true }
 tokio = { workspace = true }
 rkyv = { workspace = true }
 serde_json = { workspace = true }

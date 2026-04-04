@@ -8,7 +8,7 @@ use hologram_archive::section::model_meta::{ModelMetaSection, SECTION_MODEL_META
 use hologram_archive::section::tokenizer::{MiniBpeEncoder, TokenizerSection, SECTION_TOKENIZER};
 use hologram_archive::weight::WeightDType;
 use hologram_archive::{HoloLoader, LoadedPlan};
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
+use hologram_exec::mmap::{build_tape_from_plan, execute_tape, execute_tape_with_weight_cache};
 use hologram_exec::{GraphInputs, GraphOutputs};
 use std::io::Write;
 use std::path::PathBuf;
@@ -395,6 +395,10 @@ fn run_generation(
     // Build execution tape once (pre-compiled dispatch).
     let tape = build_tape_from_plan(plan)?;
 
+    // Persistent weight cache — deserialized quantized weights are reused
+    // across decode steps, eliminating per-step rkyv overhead for LUT-GEMM.
+    let weight_cache = parking_lot::RwLock::new(hologram_exec::WeightCache::new());
+
     // Get compiled input sequence length from TensorPort shape.
     // Static-shape ONNX models (no KV-cache) require inputs padded to the
     // compiled seq_len. The model will process the full padded sequence and
@@ -451,7 +455,7 @@ fn run_generation(
             inputs.set_with_shape(slot, mask_bytes, vec![1, padded_len]);
         }
 
-        let outputs = execute_tape(&tape, plan, &inputs)?;
+        let outputs = execute_tape_with_weight_cache(&tape, plan, &inputs, &weight_cache)?;
 
         // Argmax over the last real-token position's logits.
         // For padded inputs, logits are [1, padded_len, vocab_size] and we want

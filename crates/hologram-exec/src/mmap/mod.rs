@@ -83,6 +83,44 @@ pub fn execute_tape(
     Ok(outputs)
 }
 
+/// Execute a tape with a caller-owned weight cache.
+///
+/// Like [`execute_tape`] but uses an externally-owned `WeightCache` that
+/// persists across calls. For LUT-GEMM models the first call deserializes
+/// quantized weights; subsequent calls reuse them, eliminating per-step
+/// rkyv deserialization overhead.
+pub fn execute_tape_with_weight_cache(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    weight_cache: &parking_lot::RwLock<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
+
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+
+    let total_prewarm: u64 = tape.prewarm_estimate();
+    if total_prewarm < 2 * 1024 * 1024 * 1024 {
+        tape.prewarm_arena(&mut arena);
+    }
+
+    let tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, weight_cache);
+    tape.execute_direct(&mut arena, &tape_ctx)?;
+
+    collect_outputs(sg, &mut arena)
+}
+
 /// Execute a tape with pre-computed shape overrides from a `ShapeContextGraph`.
 ///
 /// Like [`execute_tape`] but applies `shape_overrides` to the arena after seeding,

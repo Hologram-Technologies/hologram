@@ -12,6 +12,6 @@ specs/scratch.md
 external
 .hypergrep/
 **/.gitignore
-!.gitignore
+!/.gitignore
 opencode.jsonc
 .opencode

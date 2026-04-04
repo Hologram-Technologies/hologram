@@ -729,6 +729,7 @@ dependencies = [
  "hologram-core",
  "hologram-exec",
  "hologram-graph",
+ "parking_lot",
  "rkyv",
  "serde_json",
  "tokio",
