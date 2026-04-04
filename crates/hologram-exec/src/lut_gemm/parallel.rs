@@ -33,12 +33,23 @@ pub fn lut_gemm_4bit_par(activations: &[f32], weights: &QuantizedWeights4, outpu
 /// Compute single Q4 output column (used by parallel path).
 #[cfg(feature = "parallel")]
 fn compute_col_q4(a_row: &[f32], w: &QuantizedWeights4, col: u32) -> f32 {
-    let mut book = Psumbook4::new();
-    for (l, &a_val) in a_row.iter().enumerate() {
-        let idx = get_q4_index(&w.indices, l as u32, col, w.cols);
-        book.accumulate(idx, a_val);
+    let has_row_scales = !w.row_scales.is_empty();
+    if has_row_scales {
+        // Per-row-scaled: can't use psumbook (scales vary per row).
+        let mut sum = 0.0f32;
+        for (l, &a_val) in a_row.iter().enumerate() {
+            let idx = get_q4_index(&w.indices, l as u32, col, w.cols);
+            sum += a_val * w.centroids[idx as usize] * w.row_scales[l];
+        }
+        sum
+    } else {
+        let mut book = Psumbook4::new();
+        for (l, &a_val) in a_row.iter().enumerate() {
+            let idx = get_q4_index(&w.indices, l as u32, col, w.cols);
+            book.accumulate(idx, a_val);
+        }
+        book.dot(&w.centroids)
     }
-    book.dot(&w.centroids)
 }
 
 /// Column-parallel LUT-GEMM with 8-bit quantized weights.

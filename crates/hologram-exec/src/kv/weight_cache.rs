@@ -43,6 +43,35 @@ impl WeightCache {
         }
     }
 
+    /// Pre-warm the dequant cache for all Q4 constants in a tape.
+    ///
+    /// Scans tape instructions for MatMulLut4 ConstantIds and pre-populates
+    /// the dequantized f32 cache. Called once at model load time so decode
+    /// steps never pay the dequant overhead. Aligns with "never run an
+    /// operation more than once at runtime" principle.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    pub fn prewarm_q4(
+        &mut self,
+        tape: &crate::tape::EnumTape,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) {
+        use crate::tape::TapeKernel;
+        for instr in &tape.instructions {
+            let cid = match &instr.kernel {
+                TapeKernel::MatMulLut4(c)
+                | TapeKernel::MatMulLut4Activation(c, _) => Some(*c),
+                _ => None,
+            };
+            if let Some(cid) = cid {
+                let key = cid.raw();
+                if !self.dequantized_f32.contains_key(&key) {
+                    let _ = self.get_dequantized_f32(cid, constants, weights);
+                }
+            }
+        }
+    }
+
     /// Get or create a cached dequantized f32 buffer for a Q4 weight.
     ///
     /// First access deserializes Q4 and dequantizes centroids → f32.

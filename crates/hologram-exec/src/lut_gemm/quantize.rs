@@ -294,10 +294,11 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
     let r = rows as usize;
     let c = cols as usize;
 
-    // Fixed uniform centroids in [-1, 1]: 16 levels centered at 0.
+    // Fixed uniform centroids in [-1, 1]: 16 levels.
+    // Index 0 = -1.0, index 7 = -1/15, index 8 = 1/15, index 15 = 1.0
     let mut centroids = [0.0f32; Q4_LEVELS];
     for (i, c) in centroids.iter_mut().enumerate() {
-        *c = (i as f32 - 8.0) / 8.0; // [-1.0, -0.875, ..., 0, ..., 0.875]
+        *c = (2.0 * i as f32 / 15.0) - 1.0; // [-1.0, -0.867, ..., 0.867, 1.0]
     }
 
     // Per-row quantization.
@@ -308,12 +309,12 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
         let row = &weights[i * c..(i + 1) * c];
         let max_abs = row.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
         row_scales[i] = if max_abs > 1e-12 { max_abs } else { 1.0 };
-        let inv = 8.0 / row_scales[i]; // maps to [-8, 8] range
+        let inv = 1.0 / row_scales[i]; // normalize to [-1, 1]
 
         for (j, &v) in row.iter().enumerate() {
-            // Symmetric quantization: round to nearest centroid index.
-            let scaled = (v * inv).round().clamp(-8.0, 7.0) as i8;
-            let idx = (scaled + 8) as u8; // shift to [0, 15]
+            // Map normalized value [-1, 1] to centroid index [0, 15].
+            let normalized = (v * inv).clamp(-1.0, 1.0);
+            let idx = ((normalized + 1.0) * 7.5).round() as u8; // [0, 15]
             assignments[i * c + j] = idx.min(15);
         }
     }
@@ -411,11 +412,16 @@ pub fn quantize_auto(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights 
 /// Relative RMSE of Q4 quantization.
 #[must_use]
 pub fn dequantize_error_q4(original: &[f32], qw: &QuantizedWeights4) -> f32 {
+    let cols = qw.cols as usize;
+    let has_row_scales = !qw.row_scales.is_empty();
     let mut sq_err = 0.0f32;
     let mut sq_orig = 0.0f32;
     for (i, &w) in original.iter().enumerate() {
         let idx = get_q4_flat_index(&qw.indices, i);
-        let recon = qw.centroids[idx as usize];
+        let mut recon = qw.centroids[idx as usize];
+        if has_row_scales && cols > 0 {
+            recon *= qw.row_scales[i / cols];
+        }
         sq_err += (w - recon) * (w - recon);
         sq_orig += w * w;
     }
