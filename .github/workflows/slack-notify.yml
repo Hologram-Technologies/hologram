@@ -59,10 +59,10 @@ jobs:
             END {
               for (b in counts) printf "%s\t%d\n", b, counts[b];
             }
-          ' | sort -k2,2nr -k1,1 | head -5 | awk '{plural=($2>1?"s":""); printf "• %s: %d file%s\n", $1, $2, plural}')
+          ' | sort -k2,2nr -k1,1 | head -5 | awk '{plural=($2>1?"s":""); printf "• %s: %d file%s\n", $1, $2, plural}' || true)
 
           # Highlight most-changed files (top 5 by line delta)
-          FILE_STAT=$(git diff --stat ${DIFF_RANGE} | sed '$d' | sort -t'|' -k2,2nr | head -5 | sed 's/[[:space:]]*$//' )
+          FILE_STAT=$(git diff --stat ${DIFF_RANGE} | sed '$d' | sort -t'|' -k2,2nr | head -5 | sed 's/[[:space:]]*$//' || true)
 
           # Extract affected crates from diff
           AFFECTED_CRATES=$(git diff --name-only ${DIFF_RANGE} | grep -E '^crates/[^/]+/' | sed 's|crates/\([^/]*\)/.*|\1|' | sort -u | tr '\n' ', ' | sed 's/,$//' | sed 's/,/, /g' || true)
