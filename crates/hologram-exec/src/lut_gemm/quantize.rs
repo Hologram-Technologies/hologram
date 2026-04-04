@@ -5,7 +5,7 @@
 //! At inference time, these indices drive Psumbook accumulation.
 
 use super::orbit::{build_orbit_map_q4, build_orbit_map_q8, OrbitMap4, OrbitMap8};
-use super::psumbook::{Q4_LEVELS, Q8_LEVELS};
+use super::psumbook::{Q2_LEVELS, Q4_LEVELS, Q8_LEVELS};
 
 /// Number of k-means iterations for quantization.
 const KMEANS_ITERS: usize = 10;
@@ -71,6 +71,26 @@ pub struct QuantizedWeights8 {
     /// Dihedral orbit map built after k-means convergence.
     /// Enables `dot_orbits` for compressed centroid dot products.
     pub orbits: OrbitMap8,
+}
+
+/// 2-bit quantized weight matrix (4 centroids).
+///
+/// Each byte packs 4 weight indices (2 bits each, MSB first):
+/// byte = (idx0 << 6) | (idx1 << 4) | (idx2 << 2) | idx3
+///
+/// 4x compression vs f32, 2x vs Q4. Trades accuracy for bandwidth.
+#[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct QuantizedWeights2 {
+    /// Packed indices: 4 per byte (2-bit, MSB first).
+    pub indices: Vec<u8>,
+    /// 4 cluster centroids learned via k-means.
+    pub centroids: [f32; Q2_LEVELS],
+    /// Number of rows (k dimension).
+    pub rows: u32,
+    /// Number of columns (n dimension).
+    pub cols: u32,
+    /// Dihedral orbit map for centroid dot product compression.
+    pub orbits: super::orbit::OrbitMap2,
 }
 
 /// Unified quantized weights (Q4 or Q8).
@@ -168,6 +188,70 @@ fn min_max(data: &[f32]) -> (f32, f32) {
 }
 
 // --- Public quantization API ---
+
+// --- Q2 packing helpers ---
+
+/// Pack four 2-bit indices into one byte (MSB first):
+/// byte = (a << 6) | (b << 4) | (c << 2) | d
+#[inline]
+#[must_use]
+pub const fn pack_q2(a: u8, b: u8, c: u8, d: u8) -> u8 {
+    ((a & 0x03) << 6) | ((b & 0x03) << 4) | ((c & 0x03) << 2) | (d & 0x03)
+}
+
+/// Unpack one byte into four 2-bit indices.
+#[inline]
+#[must_use]
+pub const fn unpack_q2(packed: u8) -> (u8, u8, u8, u8) {
+    (
+        (packed >> 6) & 0x03,
+        (packed >> 4) & 0x03,
+        (packed >> 2) & 0x03,
+        packed & 0x03,
+    )
+}
+
+/// Pack u8 assignments into 2-bit-packed bytes (4 weights per byte).
+fn pack_assignments_q2(assignments: &[u8]) -> Vec<u8> {
+    assignments
+        .chunks(4)
+        .map(|chunk| {
+            let a = chunk[0];
+            let b = chunk.get(1).copied().unwrap_or(0);
+            let c = chunk.get(2).copied().unwrap_or(0);
+            let d = chunk.get(3).copied().unwrap_or(0);
+            pack_q2(a, b, c, d)
+        })
+        .collect()
+}
+
+/// Quantize weights to 2-bit (4 centroids) via k-means.
+///
+/// 4x compression vs f32, 2x vs Q4. Use more k-means iterations
+/// because 4 centroids are harder to converge than 16.
+#[must_use]
+pub fn quantize_2bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights2 {
+    use super::orbit::build_orbit_map_q2;
+    let mut centroids_vec = init_centroids(weights, Q2_LEVELS);
+    let mut assignments = assign_all(weights, &centroids_vec);
+    // More iterations for Q2 — fewer centroids means k-means needs more
+    // iterations to converge to good representatives.
+    for _ in 0..(KMEANS_ITERS * 2) {
+        update_centroids(weights, &assignments, &mut centroids_vec);
+        assignments = assign_all(weights, &centroids_vec);
+    }
+    let mut centroids = [0.0f32; Q2_LEVELS];
+    centroids.copy_from_slice(&centroids_vec);
+    let orbits = build_orbit_map_q2(&centroids);
+    let indices = pack_assignments_q2(&assignments);
+    QuantizedWeights2 {
+        indices,
+        centroids,
+        rows,
+        cols,
+        orbits,
+    }
+}
 
 /// Quantize weights to 4-bit (16 centroids) via k-means.
 #[must_use]
