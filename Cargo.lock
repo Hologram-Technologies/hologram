@@ -659,7 +659,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "hologram"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "bytemuck",
  "hologram-archive",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-archive"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-async"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "hologram-archive",
  "hologram-compiler",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bench"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "criterion",
  "hologram-archive",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-cli"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "clap",
  "hologram-archive",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compiler"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "hologram-archive",
  "hologram-core",
@@ -747,14 +747,14 @@ dependencies = [
 
 [[package]]
 name = "hologram-compression"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "hologram-core",
 ]
 
 [[package]]
 name = "hologram-core"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "bytemuck",
  "hologram-ring",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-exec"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "bytemuck",
  "hologram-archive",
@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "hologram-archive",
  "hologram-compiler",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "hologram-core",
  "rayon",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ring"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "rkyv",
  "uor-foundation",
