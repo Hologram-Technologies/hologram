@@ -648,47 +648,88 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
     } else {
         std::borrow::Cow::Owned(vec![])
     };
-    // Derive m and n from actual inputs — compile-time values may be wrong.
+    // Derive m, n, and batch from actual inputs.
     let k = p.k;
-    let n = if k > 0 { b.len() / k } else { 0 };
-    let m = if k > 0 { a.len() / k } else { 0 };
-    let mut out = vec![0.0f32; m * n];
+    let flat_n = if k > 0 { b.len() / k } else { 0 };
+    let flat_m = if k > 0 { a.len() / k } else { 0 };
 
-    // Copy bias (C) into output — BLAS computes C := alpha*A*B + beta*C in-place.
-    if p.beta != 0.0 {
-        for (idx, o) in out.iter_mut().enumerate() {
-            *o = if idx < c.len() { c[idx] } else { 0.0 };
+    // Detect batched Gemm: if compiled m/n are set and total elements exceed
+    // m*k / k*n, there are batch dimensions (e.g., 4D multi-head attention).
+    let (batch, m, n) = if p.m > 0 && p.n > 0 && k > 0 {
+        let mk = p.m * k;
+        let kn = k * p.n;
+        if mk > 0 && kn > 0 && a.len() > mk && a.len().is_multiple_of(mk) {
+            let batch_a = a.len() / mk;
+            let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+                b.len() / kn
+            } else {
+                1
+            };
+            if batch_a == batch_b || batch_b == 1 {
+                (batch_a, p.m, p.n)
+            } else {
+                (1, flat_m, flat_n)
+            }
+        } else {
+            (1, flat_m, flat_n)
         }
-    }
+    } else {
+        (1, flat_m, flat_n)
+    };
 
-    #[cfg(all(feature = "accelerate", target_os = "macos"))]
-    {
-        blas::sgemm_full(GemmParams { m, n, k, ..p }, &a, &b, &mut out);
-    }
+    let mut out = vec![0.0f32; batch * m * n];
 
-    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-    {
-        // Pre-transpose to row-major if needed (one-time cost), then use
-        // the cache-friendly k-outer loop. This is 3-5x faster than the
-        // previous i,j-outer loop with runtime transpose conditionals.
-        let a_rm = if p.trans_a {
-            std::borrow::Cow::Owned(transpose_f32(&a, k, m))
-        } else {
-            std::borrow::Cow::Borrowed(&*a)
-        };
-        let b_rm = if p.trans_b {
-            std::borrow::Cow::Owned(transpose_f32(&b, n, k))
-        } else {
-            std::borrow::Cow::Borrowed(&*b)
-        };
+    let mk = m * k;
+    let kn = k * n;
+    let mn = m * n;
 
-        matmul_k_outer(&a_rm, &b_rm, &mut out, m, k, n);
+    // B may be broadcast (batch_b=1) across all batches of A.
+    let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+        b.len() / kn
+    } else {
+        1
+    };
 
-        // Apply alpha/beta scaling if needed.
-        if p.alpha != 1.0 || p.beta != 0.0 {
-            for (idx, o) in out.iter_mut().enumerate() {
-                let c_val = if idx < c.len() { c[idx] } else { 0.0 };
-                *o = p.alpha * *o + p.beta * c_val;
+    for bi in 0..batch {
+        let a_off = bi * mk;
+        let b_off = if batch_b > 1 { bi * kn } else { 0 };
+        let o_off = bi * mn;
+        let a_slice = &a[a_off..a_off + mk];
+        let b_slice = &b[b_off..b_off + kn];
+        let out_slice = &mut out[o_off..o_off + mn];
+
+        // Copy bias (C) into output — BLAS computes C := alpha*A*B + beta*C in-place.
+        if p.beta != 0.0 {
+            for (idx, o) in out_slice.iter_mut().enumerate() {
+                *o = if idx < c.len() { c[idx] } else { 0.0 };
+            }
+        }
+
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm_full(GemmParams { m, n, k, ..p }, a_slice, b_slice, out_slice);
+        }
+
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            let a_rm = if p.trans_a {
+                std::borrow::Cow::Owned(transpose_f32(a_slice, k, m))
+            } else {
+                std::borrow::Cow::Borrowed(a_slice)
+            };
+            let b_rm = if p.trans_b {
+                std::borrow::Cow::Owned(transpose_f32(b_slice, n, k))
+            } else {
+                std::borrow::Cow::Borrowed(b_slice)
+            };
+
+            matmul_k_outer(&a_rm, &b_rm, out_slice, m, k, n);
+
+            if p.alpha != 1.0 || p.beta != 0.0 {
+                for (idx, o) in out_slice.iter_mut().enumerate() {
+                    let c_val = if idx < c.len() { c[idx] } else { 0.0 };
+                    *o = p.alpha * *o + p.beta * c_val;
+                }
             }
         }
     }
