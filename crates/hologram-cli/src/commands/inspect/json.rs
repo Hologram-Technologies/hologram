@@ -148,6 +148,10 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::MatMulLut8Activation(id, act) => json!({"MatMulLut8Activation": {
             "id": id.raw(), "activation": act.name()
         }}),
+        GraphOp::MatMulLut2(id) => json!({"MatMulLut2": id.raw()}),
+        GraphOp::MatMulLut2Activation(id, act) => json!({"MatMulLut2Activation": {
+            "id": id.raw(), "activation": act.name()
+        }}),
         GraphOp::FusedRmsNormActivation {
             size,
             epsilon,

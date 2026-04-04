@@ -497,6 +497,10 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
             Ok(TapeKernel::MatMulLut16(*cid))
         }
+        GraphOp::MatMulLut2(cid) => Ok(TapeKernel::MatMulLut2(*cid)),
+        GraphOp::MatMulLut2Activation(cid, activation) => {
+            Ok(TapeKernel::MatMulLut2Activation(*cid, *activation))
+        }
         GraphOp::RingPrimUnary(p, level) => Ok(TapeKernel::RingPrimUnary {
             op: *p,
             level: *level,
@@ -961,6 +965,7 @@ fn compute_weight_offset(
         TapeKernel::MatMulLut4(cid)
         | TapeKernel::MatMulLut8(cid)
         | TapeKernel::MatMulLut16(cid)
+        | TapeKernel::MatMulLut2(cid)
         | TapeKernel::InlineConv2dLut4 { cid, .. } => *cid,
         _ => return 0,
     };

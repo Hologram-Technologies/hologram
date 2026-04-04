@@ -74,6 +74,10 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::MatMulLut8Activation(id, act) => {
             format!("MatMulLut8(id={})+{}", id.raw(), act.name())
         }
+        GraphOp::MatMulLut2(id) => format!("MatMulLut2(id={})", id.raw()),
+        GraphOp::MatMulLut2Activation(id, act) => {
+            format!("MatMulLut2(id={})+{}", id.raw(), act.name())
+        }
         GraphOp::FusedRmsNormActivation { activation, .. } => {
             format!("RmsNorm+{}", activation.name())
         }

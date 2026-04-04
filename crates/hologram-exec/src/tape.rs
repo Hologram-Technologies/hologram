@@ -139,6 +139,10 @@ pub enum TapeKernel {
     MatMulLut8Activation(ConstantId, FloatOp),
     /// 16-bit hierarchical quantized LUT-GEMM matmul.
     MatMulLut16(ConstantId),
+    /// 2-bit quantized LUT-GEMM matmul (pure integer kernel, no BLAS).
+    MatMulLut2(ConstantId),
+    /// 2-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
+    MatMulLut2Activation(ConstantId, FloatOp),
     /// KV cache write (autoregressive generation).
     KvWrite {
         layer: u32,
@@ -573,6 +577,8 @@ impl TapeKernel {
             Self::MatMulLut4Activation(_, _) => "MatMulLut4Act".into(),
             Self::MatMulLut8Activation(_, _) => "MatMulLut8Act".into(),
             Self::MatMulLut16(_) => "MatMulLut16".into(),
+            Self::MatMulLut2(_) => "MatMulLut2".into(),
+            Self::MatMulLut2Activation(_, _) => "MatMulLut2Act".into(),
             Self::InlineMatMul { m, k, n } => format!("MatMul({m}x{k}x{n})"),
             Self::InlineMatMulActivation { m, k, n, .. } => format!("MatMulAct({m}x{k}x{n})"),
             Self::InlineMatMulBiasActivation { m, k, n, .. } => {
@@ -958,6 +964,15 @@ fn dispatch_kernel(
         }
         TapeKernel::MatMulLut16(cid) => {
             dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut2(cid) => {
+            dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut2Activation(cid, activation) => {
+            dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
+            apply_activation_to_out_buf(out_buf, activation);
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::KvWrite {
@@ -2778,6 +2793,30 @@ fn dispatch_lut_gemm_16(
     let m = if k > 0 { activations.len() / k } else { 0 };
     let mut output = vec![0.0f32; m * n];
     crate::lut_gemm::lut_gemm_16bit(activations, qw, &mut output);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    Ok(())
+}
+
+/// LUT-GEMM Q2 dispatch for tape kernels.
+///
+/// Always uses the pure integer LUT kernel — no BLAS dequant path.
+/// The whole point of Q2 is to bypass BLAS and use the pure integer kernel.
+fn dispatch_lut_gemm_2(
+    inputs: &[&[u8]],
+    cid: ConstantId,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let mut cache = tape_ctx.weight_cache.write();
+    let qw = cache.get_q2(cid, tape_ctx.constants, tape_ctx.weights)?;
+    let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+        crate::error::ExecError::UnsupportedOp("Q2: activation not f32-aligned".into())
+    })?;
+    let k = qw.rows as usize;
+    let n = qw.cols as usize;
+    let m = if k > 0 { activations.len() / k } else { 0 };
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_2bit(activations, qw, &mut output);
     out_buf.extend_from_slice(bytemuck::cast_slice(&output));
     Ok(())
 }
