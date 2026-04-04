@@ -552,7 +552,8 @@ pub fn try_fuse_conv2d_bias_activation(
             dilation_h,
             dilation_w,
             group,
-            ..
+            input_h,
+            input_w,
         }) => (
             *kernel_h,
             *kernel_w,
@@ -563,6 +564,8 @@ pub fn try_fuse_conv2d_bias_activation(
             *dilation_h,
             *dilation_w,
             *group,
+            *input_h,
+            *input_w,
         ),
         _ => return false,
     };
@@ -646,7 +649,7 @@ pub fn try_fuse_conv2d_bias_activation(
         });
     }
 
-    let (kh, kw, sh, sw, ph, pw, dh, dw, g) = conv_params;
+    let (kh, kw, sh, sw, ph, pw, dh, dw, g, ih, iw) = conv_params;
     graph.replace_op(
         act_id,
         GraphOp::FusedConv2dBiasActivation {
@@ -659,6 +662,8 @@ pub fn try_fuse_conv2d_bias_activation(
             dilation_h: dh,
             dilation_w: dw,
             group: g,
+            input_h: ih,
+            input_w: iw,
             activation,
         },
     );
@@ -696,7 +701,8 @@ pub fn try_fuse_conv2d_activation(
             dilation_h,
             dilation_w,
             group,
-            ..
+            input_h,
+            input_w,
         }) => (
             *kernel_h,
             *kernel_w,
@@ -707,6 +713,8 @@ pub fn try_fuse_conv2d_activation(
             *dilation_h,
             *dilation_w,
             *group,
+            *input_h,
+            *input_w,
         ),
         _ => return false,
     };
@@ -733,7 +741,7 @@ pub fn try_fuse_conv2d_activation(
     }
 
     let conv_inputs = node.inputs.clone();
-    let (kh, kw, sh, sw, ph, pw, dh, dw, g) = conv_params;
+    let (kh, kw, sh, sw, ph, pw, dh, dw, g, ih, iw) = conv_params;
     graph.replace_op(
         succ_id,
         GraphOp::FusedConv2dActivation {
@@ -746,6 +754,8 @@ pub fn try_fuse_conv2d_activation(
             dilation_h: dh,
             dilation_w: dw,
             group: g,
+            input_h: ih,
+            input_w: iw,
             activation,
         },
     );

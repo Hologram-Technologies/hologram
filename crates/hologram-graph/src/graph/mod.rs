@@ -168,6 +168,8 @@ pub enum GraphOp {
         dilation_h: u32,
         dilation_w: u32,
         group: u32,
+        input_h: u32,
+        input_w: u32,
         activation: FloatOp,
     },
     /// Fused Conv2d + bias add + activation (3-node epilogue fusion).
@@ -182,6 +184,8 @@ pub enum GraphOp {
         dilation_h: u32,
         dilation_w: u32,
         group: u32,
+        input_h: u32,
+        input_w: u32,
         activation: FloatOp,
     },
     /// Identity passthrough — zero-copy forward of input to output.

@@ -448,6 +448,8 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             dilation_h,
             dilation_w,
             group,
+            input_h,
+            input_w,
             activation,
         } => Ok(TapeKernel::InlineConv2dActivation {
             kernel_h: *kernel_h,
@@ -459,8 +461,8 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             dilation_h: *dilation_h,
             dilation_w: *dilation_w,
             group: *group,
-            input_h: 0,
-            input_w: 0,
+            input_h: *input_h,
+            input_w: *input_w,
             activation: *activation,
         }),
         GraphOp::FusedConv2dBiasActivation {
@@ -473,6 +475,8 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             dilation_h,
             dilation_w,
             group,
+            input_h,
+            input_w,
             activation,
         } => Ok(TapeKernel::InlineConv2dBiasActivation {
             kernel_h: *kernel_h,
@@ -484,8 +488,8 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             dilation_h: *dilation_h,
             dilation_w: *dilation_w,
             group: *group,
-            input_h: 0,
-            input_w: 0,
+            input_h: *input_h,
+            input_w: *input_w,
             activation: *activation,
         }),
         GraphOp::MatMulLut4Activation(cid, activation) => {
