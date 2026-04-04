@@ -947,6 +947,15 @@ impl KvCacheState {
         self.write_pos = (self.write_pos + n).min(self.max_seq);
     }
 
+    /// Reset write position to an earlier value (for speculative decoding).
+    ///
+    /// After generating draft tokens, the write position is rolled back to
+    /// the pre-draft state before verification. Cached K/V data beyond
+    /// `pos` remains in the buffers but will be overwritten on the next write.
+    pub fn truncate_to(&mut self, pos: usize) {
+        self.write_pos = pos.min(self.write_pos);
+    }
+
     /// Set an override for the next `advance` call.
     ///
     /// For padded prefill: the model processes `padded_len` tokens but only

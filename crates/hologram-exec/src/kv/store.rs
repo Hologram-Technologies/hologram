@@ -174,6 +174,11 @@ impl KvStore {
             GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
                 dispatch_lut_gemm_16(inputs[0], *cid, constants, weights)
             }
+            GraphOp::MatMulLut2(cid) => dispatch_lut_gemm_2(inputs[0], *cid, constants, weights),
+            GraphOp::MatMulLut2Activation(cid, _activation) => {
+                // Q2 + activation: dispatch Q2 matmul, then apply activation.
+                dispatch_lut_gemm_2(inputs[0], *cid, constants, weights)
+            }
             GraphOp::Float(ref f) => {
                 if input_shapes.len() >= 2 {
                     crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
@@ -416,6 +421,25 @@ fn dispatch_lut_gemm_4(
     let n = qw.cols as usize;
     let mut output = vec![0.0f32; m * n];
     lut_gemm_4bit(activations, &qw, &mut output);
+    Ok(crate::float_dispatch::f32_vec_to_bytes(output))
+}
+
+/// Resolve constant and run 2-bit LUT-GEMM.
+fn dispatch_lut_gemm_2(
+    activation_bytes: &[u8],
+    cid: hologram_graph::constant::ConstantId,
+    constants: &ConstantStore,
+    weights: &[u8],
+) -> ExecResult<Vec<u8>> {
+    use crate::lut_gemm::quantize::QuantizedWeights2;
+    let weight_bytes = resolve_constant_bytes(cid, constants, weights)?;
+    let qw = rkyv::from_bytes::<QuantizedWeights2, rkyv::rancor::Error>(weight_bytes)
+        .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+    let activations = cast_f32(activation_bytes)?;
+    let m = activations.len() / qw.rows as usize;
+    let n = qw.cols as usize;
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_2bit(activations, &qw, &mut output);
     Ok(crate::float_dispatch::f32_vec_to_bytes(output))
 }
 

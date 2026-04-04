@@ -183,13 +183,13 @@ pub fn build_tape(
             // Debug: count kernel types at tape build time.
             match &kernel {
                 TapeKernel::InlineMatMul { m, k, n } => {
-                    tracing::info!(m, k, n, "tape_build: InlineMatMul");
+                    tracing::debug!(m, k, n, "tape_build: InlineMatMul");
                 }
                 TapeKernel::InlineGemm { m, k, n, .. } => {
-                    tracing::info!(m, k, n, "tape_build: InlineGemm");
+                    tracing::debug!(m, k, n, "tape_build: InlineGemm");
                 }
                 TapeKernel::InlineMatMulActivation { m, k, n, .. } => {
-                    tracing::info!(m, k, n, "tape_build: InlineMatMulActivation");
+                    tracing::debug!(m, k, n, "tape_build: InlineMatMulActivation");
                 }
                 _ => {}
             }
@@ -496,6 +496,10 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
         }
         GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
             Ok(TapeKernel::MatMulLut16(*cid))
+        }
+        GraphOp::MatMulLut2(cid) => Ok(TapeKernel::MatMulLut2(*cid)),
+        GraphOp::MatMulLut2Activation(cid, activation) => {
+            Ok(TapeKernel::MatMulLut2Activation(*cid, *activation))
         }
         GraphOp::RingPrimUnary(p, level) => Ok(TapeKernel::RingPrimUnary {
             op: *p,
@@ -874,6 +878,33 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
 
         // Transpose is handled separately (before this function).
         FloatOp::Transpose { .. } => TapeKernel::Passthrough,
+
+        // ── Deep decode fusions (Plan 054) ──────────────────────────────
+        FloatOp::NormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => TapeKernel::InlineNormProjectionGemv {
+            norm_size: *norm_size,
+            epsilon: *epsilon,
+            k: *k,
+            n_total: *n_total,
+        },
+        FloatOp::AddNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => TapeKernel::InlineAddNormProjectionGemv {
+            norm_size: *norm_size,
+            epsilon: *epsilon,
+            k: *k,
+            n_total: *n_total,
+        },
+        FloatOp::SwiGluProjectionGemv { k, n } => {
+            TapeKernel::InlineSwiGluProjectionGemv { k: *k, n: *n }
+        }
     }
 }
 
@@ -934,6 +965,7 @@ fn compute_weight_offset(
         TapeKernel::MatMulLut4(cid)
         | TapeKernel::MatMulLut8(cid)
         | TapeKernel::MatMulLut16(cid)
+        | TapeKernel::MatMulLut2(cid)
         | TapeKernel::InlineConv2dLut4 { cid, .. } => *cid,
         _ => return 0,
     };

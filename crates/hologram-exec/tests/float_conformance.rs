@@ -172,6 +172,10 @@ fn ensure_all_ops_covered() {
         FloatOp::ReverseSequence { .. } => {}
         FloatOp::KvWrite { .. } => {}
         FloatOp::KvRead { .. } => {}
+        // Deep decode fusions (Plan 054)
+        FloatOp::NormProjectionGemv { .. } => {}
+        FloatOp::AddNormProjectionGemv { .. } => {}
+        FloatOp::SwiGluProjectionGemv { .. } => {}
     }
 }
 

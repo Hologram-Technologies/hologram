@@ -42,6 +42,12 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
     let m = activations.len() / k;
     let centroids = &weights.centroids;
 
+    // Per-row-scaled weights need f32 dequant per K-row — can't use int8 kernel.
+    if !weights.row_scales.is_empty() {
+        lut_gemm_4bit_f32_rowscale(activations, weights, output, m, k, n);
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     {
         lut_gemm_4bit_neon_int8(activations, weights, output, m, k, n, centroids);
@@ -50,6 +56,38 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
     #[cfg(not(target_arch = "aarch64"))]
     {
         lut_gemm_4bit_scalar_int8(activations, weights, output, m, k, n, centroids);
+    }
+}
+
+/// F32 LUT-GEMM for per-row-scaled weights.
+/// Applies centroid[idx] * row_scale[row] at each K position.
+fn lut_gemm_4bit_f32_rowscale(
+    activations: &[f32],
+    weights: &QuantizedWeights4,
+    output: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    let n_bytes = n / 2;
+    for i in 0..m {
+        let a_row = &activations[i * k..(i + 1) * k];
+        let out_row = &mut output[i * n..(i + 1) * n];
+        out_row.fill(0.0);
+        for (l, &a_val) in a_row.iter().enumerate().take(k) {
+            let row_scale = weights.row_scales[l];
+            let scaled_a = a_val * row_scale;
+            for b in 0..n_bytes {
+                let packed = weights.indices[l * n_bytes + b];
+                let hi_idx = (packed >> 4) as usize;
+                let lo_idx = (packed & 0x0F) as usize;
+                let col = b * 2;
+                out_row[col] += scaled_a * weights.centroids[hi_idx];
+                if col + 1 < n {
+                    out_row[col + 1] += scaled_a * weights.centroids[lo_idx];
+                }
+            }
+        }
     }
 }
 
@@ -436,6 +474,110 @@ pub fn lut_gemm_16bit(activations: &[f32], weights: &QuantizedWeights16, output:
                 book.accumulate(idx, a_row[l]);
             }
             output[i * n + j] = book.dot(&weights.params);
+        }
+    }
+}
+
+// ── Q2 (2-bit, 4 centroids) ──────────────────────────────────────────────
+
+use super::quantize::QuantizedWeights2;
+
+/// LUT-GEMM with 2-bit quantized weights (4 centroids).
+///
+/// `activations`: row-major M×K matrix (f32).
+/// `weights`: K×N quantized weight matrix (2-bit indices, 4 per byte).
+/// `output`: row-major M×N output buffer (f32).
+///
+/// Pure integer inner loop: quantize activations to int8, table-lookup
+/// centroid int8 values, multiply-accumulate in int32. f32 conversion
+/// happens once per output element.
+///
+/// Memory reads per K-row × 32 output columns: 8 bytes (Q2) vs 16 (Q4).
+pub fn lut_gemm_2bit(activations: &[f32], weights: &QuantizedWeights2, output: &mut [f32]) {
+    let k = weights.rows as usize;
+    let n = weights.cols as usize;
+    let m = activations.len() / k;
+    let centroids = &weights.centroids;
+
+    lut_gemm_2bit_scalar_int8(activations, weights, output, m, k, n, centroids);
+}
+
+/// Scalar int8 Q2 kernel: processes 4 indices per packed byte.
+///
+/// Each byte contains 4 weight indices:
+///   byte = (idx0 << 6) | (idx1 << 4) | (idx2 << 2) | idx3
+///
+/// Inner loop: for each K-row, read packed byte, extract 4 indices,
+/// table-lookup centroid int8 values, multiply by int8 activation,
+/// accumulate in int32.
+fn lut_gemm_2bit_scalar_int8(
+    activations: &[f32],
+    weights: &QuantizedWeights2,
+    output: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    centroids: &[f32; super::psumbook::Q2_LEVELS],
+) {
+    // Bytes per row of packed Q2 indices: n/4 (4 indices per byte).
+    let n_bytes = n.div_ceil(4);
+
+    // Quantize centroids to int8 for integer inner loop.
+    let centroid_max = centroids.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+    let centroid_inv_scale = if centroid_max > 1e-12 {
+        127.0 / centroid_max
+    } else {
+        0.0
+    };
+    let centroid_dequant = centroid_max / 127.0;
+
+    let mut fixed_table_i8 = [0i8; 4];
+    for c in 0..4 {
+        fixed_table_i8[c] = (centroids[c] * centroid_inv_scale)
+            .round()
+            .clamp(-127.0, 127.0) as i8;
+    }
+
+    let mut a_i8_buf = vec![0i8; k];
+
+    for i in 0..m {
+        let a_row = &activations[i * k..(i + 1) * k];
+        let out_row = &mut output[i * n..(i + 1) * n];
+
+        let a_scale = quantize_activation_row(a_row, &mut a_i8_buf);
+        let combined_scale = a_scale * centroid_dequant;
+
+        // Process 4 output columns per packed byte.
+        for b in 0..n_bytes {
+            let base_col = b * 4;
+            let mut sum0 = 0i32;
+            let mut sum1 = 0i32;
+            let mut sum2 = 0i32;
+            let mut sum3 = 0i32;
+
+            for (l, &a_val_i8) in a_i8_buf.iter().enumerate().take(k) {
+                let a_val = a_val_i8 as i32;
+                let packed = weights.indices[l * n_bytes + b];
+                let idx0 = (packed >> 6) & 0x03;
+                let idx1 = (packed >> 4) & 0x03;
+                let idx2 = (packed >> 2) & 0x03;
+                let idx3 = packed & 0x03;
+                sum0 += a_val * fixed_table_i8[idx0 as usize] as i32;
+                sum1 += a_val * fixed_table_i8[idx1 as usize] as i32;
+                sum2 += a_val * fixed_table_i8[idx2 as usize] as i32;
+                sum3 += a_val * fixed_table_i8[idx3 as usize] as i32;
+            }
+
+            out_row[base_col] = sum0 as f32 * combined_scale;
+            if base_col + 1 < n {
+                out_row[base_col + 1] = sum1 as f32 * combined_scale;
+            }
+            if base_col + 2 < n {
+                out_row[base_col + 2] = sum2 as f32 * combined_scale;
+            }
+            if base_col + 3 < n {
+                out_row[base_col + 3] = sum3 as f32 * combined_scale;
+            }
         }
     }
 }

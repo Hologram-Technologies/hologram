@@ -86,6 +86,11 @@ pub enum GraphOp {
     MatMulLut16(ConstantId),
     /// Batched LUT-GEMM with 16-bit hierarchical quantized weights.
     BatchMatMulLut16(ConstantId),
+    /// LUT-GEMM matmul with 2-bit quantized weights (4 centroids).
+    /// Pure integer inner loop — no dequant to f32. Half the bandwidth of Q4.
+    MatMulLut2(ConstantId),
+    /// Fused 2-bit LUT-GEMM + activation (epilogue fusion).
+    MatMulLut2Activation(ConstantId, FloatOp),
     /// Consumer-defined op. Dispatched via `CustomOpRegistry` at execution time.
     ///
     /// The `arity` field must match the number of edges wired to this node.
@@ -257,7 +262,9 @@ impl GraphOp {
             | Self::BatchMatMulLut4(_)
             | Self::BatchMatMulLut8(_)
             | Self::MatMulLut16(_)
-            | Self::BatchMatMulLut16(_) => 1,
+            | Self::BatchMatMulLut16(_)
+            | Self::MatMulLut2(_)
+            | Self::MatMulLut2Activation(..) => 1,
             Self::FusedView16(_) => 1,
             Self::RingPrimUnary(_, _) => 1,
             Self::RingPrimBinary(_, _) => 2,
@@ -293,8 +300,10 @@ impl GraphOp {
                 | Self::Passthrough
                 | Self::MatMulLut4(_)
                 | Self::MatMulLut8(_)
+                | Self::MatMulLut2(_)
                 | Self::MatMulLut4Activation(..)
                 | Self::MatMulLut8Activation(..)
+                | Self::MatMulLut2Activation(..)
                 | Self::BatchMatMulLut4(_)
                 | Self::BatchMatMulLut8(_)
                 | Self::MatMulLut16(_)

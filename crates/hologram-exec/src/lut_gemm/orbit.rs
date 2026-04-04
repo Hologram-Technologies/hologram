@@ -60,6 +60,49 @@ pub struct OrbitMap8 {
     pub rep_count: u16,
 }
 
+/// Dihedral orbit map for Q2 (4 centroids).
+///
+/// Same semantics as `OrbitMap4` but for 4 entries.
+/// With only 4 centroids, orbit compression gives modest benefit
+/// (rep_count ≈ 2 for symmetric distributions).
+///
+/// Fixed-size, `Copy`, zero heap.
+#[derive(Clone, Copy, Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[repr(C)]
+pub struct OrbitMap2 {
+    /// `(rep_index, sign)` for each of the 4 centroid indices.
+    pub entries: [(u8, i8); 4],
+    /// Number of unique canonical representatives (≤ 4).
+    pub rep_count: u8,
+}
+
+/// Build a Q2 dihedral orbit map from quantized centroids.
+///
+/// Called once after k-means convergence in `quantize_2bit`. O(4).
+#[must_use]
+pub fn build_orbit_map_q2(centroids: &[f32; 4]) -> OrbitMap2 {
+    let mut entries = [(0u8, 1i8); 4];
+    let mut visited = [false; 4];
+    let mut rep_count = 0u8;
+
+    for i in 0..4usize {
+        if visited[i] {
+            continue;
+        }
+        let neg_i = (4usize.wrapping_sub(i)) & 3;
+        entries[i] = (i as u8, 1);
+        visited[i] = true;
+        rep_count += 1;
+
+        if neg_i != i && !visited[neg_i] && centroid_symmetric(centroids[i], centroids[neg_i]) {
+            entries[neg_i] = (i as u8, -1);
+            visited[neg_i] = true;
+        }
+    }
+
+    OrbitMap2 { entries, rep_count }
+}
+
 /// Build a Q4 dihedral orbit map from quantized centroids.
 ///
 /// Called once after k-means convergence in `quantize_4bit`. O(16).

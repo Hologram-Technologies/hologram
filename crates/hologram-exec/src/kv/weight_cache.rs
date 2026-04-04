@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use hologram_graph::constant::{ConstantData, ConstantId, ConstantStore};
 
 use crate::error::{ExecError, ExecResult};
-use crate::lut_gemm::quantize::{QuantizedWeights4, QuantizedWeights8};
+use crate::lut_gemm::quantize::{QuantizedWeights2, QuantizedWeights4, QuantizedWeights8};
 use crate::lut_gemm::quantize_q1::QuantizedWeights16;
 
 /// Cached quantized weight variants.
@@ -16,6 +16,7 @@ enum CachedWeight {
     Q4(QuantizedWeights4),
     Q8(Box<QuantizedWeights8>),
     Q16(Box<QuantizedWeights16>),
+    Q2(QuantizedWeights2),
 }
 
 /// Cache for deserialized quantized weights.
@@ -42,6 +43,35 @@ impl WeightCache {
         }
     }
 
+    /// Pre-warm the dequant cache for all Q4 constants in a tape.
+    ///
+    /// Scans tape instructions for MatMulLut4 ConstantIds and pre-populates
+    /// the dequantized f32 cache. Called once at model load time so decode
+    /// steps never pay the dequant overhead. Aligns with "never run an
+    /// operation more than once at runtime" principle.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    pub fn prewarm_q4(
+        &mut self,
+        tape: &crate::tape::EnumTape,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) {
+        use crate::tape::TapeKernel;
+        for instr in &tape.instructions {
+            let cid = match &instr.kernel {
+                TapeKernel::MatMulLut4(c)
+                | TapeKernel::MatMulLut4Activation(c, _) => Some(*c),
+                _ => None,
+            };
+            if let Some(cid) = cid {
+                let key = cid.raw();
+                if !self.dequantized_f32.contains_key(&key) {
+                    let _ = self.get_dequantized_f32(cid, constants, weights);
+                }
+            }
+        }
+    }
+
     /// Get or create a cached dequantized f32 buffer for a Q4 weight.
     ///
     /// First access deserializes Q4 and dequantizes centroids → f32.
@@ -56,7 +86,10 @@ impl WeightCache {
         let key = cid.raw();
         if !self.dequantized_f32.contains_key(&key) {
             let qw = self.get_q4(cid, constants, weights)?;
-            let total = qw.rows as usize * qw.cols as usize;
+            let rows = qw.rows as usize;
+            let cols = qw.cols as usize;
+            let total = rows * cols;
+            let has_row_scales = !qw.row_scales.is_empty();
             let mut buf = vec![0.0f32; total];
             for (i, o) in buf.iter_mut().enumerate() {
                 let byte_idx = i / 2;
@@ -65,7 +98,13 @@ impl WeightCache {
                 } else {
                     (qw.indices[byte_idx] & 0x0F) as usize
                 };
-                *o = qw.centroids[idx];
+                let centroid = qw.centroids[idx];
+                if has_row_scales {
+                    let row = i / cols;
+                    *o = centroid * qw.row_scales[row];
+                } else {
+                    *o = centroid;
+                }
             }
             self.dequantized_f32.insert(key, buf);
         }
@@ -120,6 +159,33 @@ impl WeightCache {
         };
         match entry {
             CachedWeight::Q8(qw) => Ok(qw),
+            _ => Err(ExecError::InvalidQuantization(
+                "weight type mismatch".to_string(),
+            )),
+        }
+    }
+
+    /// Get or deserialize a Q2 weight constant.
+    ///
+    /// Single hash probe per access via the `Entry` API — no double lookup.
+    pub fn get_q2(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&QuantizedWeights2> {
+        let key = cid.raw();
+        let entry = match self.entries.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let bytes = resolve_constant_bytes(cid, constants, weights)?;
+                let qw = rkyv::from_bytes::<QuantizedWeights2, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| ExecError::InvalidQuantization(e.to_string()))?;
+                e.insert(CachedWeight::Q2(qw))
+            }
+        };
+        match entry {
+            CachedWeight::Q2(qw) => Ok(qw),
             _ => Err(ExecError::InvalidQuantization(
                 "weight type mismatch".to_string(),
             )),

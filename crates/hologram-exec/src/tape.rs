@@ -139,6 +139,10 @@ pub enum TapeKernel {
     MatMulLut8Activation(ConstantId, FloatOp),
     /// 16-bit hierarchical quantized LUT-GEMM matmul.
     MatMulLut16(ConstantId),
+    /// 2-bit quantized LUT-GEMM matmul (pure integer kernel, no BLAS).
+    MatMulLut2(ConstantId),
+    /// 2-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
+    MatMulLut2Activation(ConstantId, FloatOp),
     /// KV cache write (autoregressive generation).
     KvWrite {
         layer: u32,
@@ -509,6 +513,27 @@ pub enum TapeKernel {
         activation: FloatOp,
     },
 
+    // ── Deep decode fusions (Plan 054) ─────────────────────────────────
+    /// Fused RmsNorm → projection GEMV.
+    /// Inputs: [x, norm_weight, proj_weight]. Output: [M, n_total].
+    InlineNormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused Add + RmsNorm → projection GEMV.
+    /// Inputs: [x, residual, norm_weight, proj_weight]. Output: [M, n_total].
+    InlineAddNormProjectionGemv {
+        norm_size: u32,
+        epsilon: u32,
+        k: u32,
+        n_total: u32,
+    },
+    /// Fused SwiGLU + down projection GEMV.
+    /// Inputs: [gate, up, down_weight]. Output: [M, n].
+    InlineSwiGluProjectionGemv { k: u32, n: u32 },
+
     /// Ring-arithmetic unary op. Stays in ring domain (Z/2^nZ), no float conversion.
     /// Q0: applies PrimOp via LUT (apply_unary). Q1: native wrapping u16 ops.
     RingPrimUnary { op: PrimOp, level: RingLevel },
@@ -552,6 +577,8 @@ impl TapeKernel {
             Self::MatMulLut4Activation(_, _) => "MatMulLut4Act".into(),
             Self::MatMulLut8Activation(_, _) => "MatMulLut8Act".into(),
             Self::MatMulLut16(_) => "MatMulLut16".into(),
+            Self::MatMulLut2(_) => "MatMulLut2".into(),
+            Self::MatMulLut2Activation(_, _) => "MatMulLut2Act".into(),
             Self::InlineMatMul { m, k, n } => format!("MatMul({m}x{k}x{n})"),
             Self::InlineMatMulActivation { m, k, n, .. } => format!("MatMulAct({m}x{k}x{n})"),
             Self::InlineMatMulBiasActivation { m, k, n, .. } => {
@@ -584,7 +611,72 @@ impl TapeKernel {
             Self::InlineSilu => "Silu".into(),
             Self::InlineSigmoid => "Sigmoid".into(),
             Self::InlineGelu => "Gelu".into(),
-            _ => format!("{:?}", std::mem::discriminant(self)),
+            Self::InlineFusedSwiGLU => "FusedSwiGLU".into(),
+            Self::InlineNormProjectionGemv { .. } => "NormProjGemv".into(),
+            Self::InlineAddNormProjectionGemv { .. } => "AddNormProjGemv".into(),
+            Self::InlineSwiGluProjectionGemv { .. } => "SwiGluProjGemv".into(),
+            Self::InlineSlice { .. } => "Slice".into(),
+            Self::InlineReshape => "Reshape".into(),
+            Self::Passthrough => "Passthrough".into(),
+            Self::Output => "Output".into(),
+            Self::InlineNeg => "Neg".into(),
+            Self::InlineTanh => "Tanh".into(),
+            Self::InlineExp => "Exp".into(),
+            Self::InlineAbs => "Abs".into(),
+            Self::InlineReciprocal => "Reciprocal".into(),
+            Self::InlineGemm { m, k, n, .. } => format!("Gemm({m}x{k}x{n})"),
+            Self::Custom(_) => "Custom".into(),
+            Self::InlineConv2d { .. } => "Conv2d".into(),
+            Self::InlineConv2dActivation { .. } => "Conv2dAct".into(),
+            Self::InlineConv2dBiasActivation { .. } => "Conv2dBiasAct".into(),
+            Self::InlineConvTranspose { .. } => "ConvTranspose".into(),
+            Self::InlineMaxPool2d { .. } => "MaxPool2d".into(),
+            Self::InlineAvgPool2d { .. } => "AvgPool2d".into(),
+            Self::InlineGlobalAvgPool { .. } => "GlobalAvgPool".into(),
+            Self::InlineResize { .. } => "Resize".into(),
+            Self::InlinePad { .. } => "Pad".into(),
+            Self::InlineInstanceNorm { .. } => "InstanceNorm".into(),
+            Self::InlineGroupNorm { .. } => "GroupNorm".into(),
+            Self::InlineArgMax { .. } => "ArgMax".into(),
+            Self::InlineLRN { .. } => "LRN".into(),
+            Self::InlineLogSoftmax { .. } => "LogSoftmax".into(),
+            Self::InlineCast { .. } => "Cast".into(),
+            Self::InlineEmbed { .. } => "Embed".into(),
+            Self::InlineWhere => "Where".into(),
+            Self::InlineRange => "Range".into(),
+            Self::InlineShape { .. } => "Shape".into(),
+            Self::InlineDequantize => "Dequantize".into(),
+            Self::InlineGatherND => "GatherND".into(),
+            Self::InlineReduceSum { .. } => "ReduceSum".into(),
+            Self::InlineReduceMean { .. } => "ReduceMean".into(),
+            Self::InlineReduceMax { .. } => "ReduceMax".into(),
+            Self::InlineReduceMin { .. } => "ReduceMin".into(),
+            Self::InlineReduceProd { .. } => "ReduceProd".into(),
+            Self::InlinePow => "Pow".into(),
+            Self::InlineMod => "Mod".into(),
+            Self::InlineClip { .. } => "Clip".into(),
+            Self::InlineIsNaN => "IsNaN".into(),
+            Self::InlineNot => "Not".into(),
+            Self::InlineAnd => "And".into(),
+            Self::InlineOr => "Or".into(),
+            Self::InlineXor => "Xor".into(),
+            Self::InlineEqual => "Equal".into(),
+            Self::InlineLess => "Less".into(),
+            Self::InlineLessOrEqual => "LessOrEqual".into(),
+            Self::InlineGreater => "Greater".into(),
+            Self::InlineGreaterOrEqual => "GreaterOrEqual".into(),
+            Self::InlineMin => "Min".into(),
+            Self::InlineMax => "Max".into(),
+            Self::InlineLog => "Log".into(),
+            Self::InlineSqrt => "Sqrt".into(),
+            Self::InlineCos => "Cos".into(),
+            Self::InlineSin => "Sin".into(),
+            Self::InlineSign => "Sign".into(),
+            Self::InlineFloor => "Floor".into(),
+            Self::InlineCeil => "Ceil".into(),
+            Self::InlineRound => "Round".into(),
+            Self::InlineErf => "Erf".into(),
+            _ => format!("Unknown({:?})", std::mem::discriminant(self)),
         }
     }
 }
@@ -634,7 +726,7 @@ fn dispatch_kernel(
             TapeKernel::Custom(_) => "Custom".into(),
             _ => format!("{:?}", std::mem::discriminant(kernel)),
         };
-        tracing::info!(dk, name, "dispatch_kernel");
+        tracing::debug!(dk, name, "dispatch_kernel");
     }
 
     match kernel {
@@ -937,6 +1029,15 @@ fn dispatch_kernel(
         }
         TapeKernel::MatMulLut16(cid) => {
             dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut2(cid) => {
+            dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::MatMulLut2Activation(cid, activation) => {
+            dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
+            apply_activation_to_out_buf(out_buf, activation);
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::KvWrite {
@@ -2178,7 +2279,7 @@ fn dispatch_kernel(
                     static DBG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                     if DBG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
                         let b_exp = baked_k * baked_n * 4;
-                        tracing::info!(
+                        tracing::debug!(
                             baked_k,
                             baked_n,
                             a_len = inputs[0].len(),
@@ -2209,7 +2310,7 @@ fn dispatch_kernel(
                             static LOGGED: std::sync::atomic::AtomicBool =
                                 std::sync::atomic::AtomicBool::new(false);
                             if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                                tracing::info!(
+                                tracing::debug!(
                                     actual_m,
                                     baked_k,
                                     baked_n,
@@ -2454,6 +2555,142 @@ fn dispatch_kernel(
             )?;
             Ok(DispatchResult::InOutBuf)
         }
+        // ── Deep decode fusions (Plan 054) ──────────────────────────────
+        //
+        // At M=1 (decode), these kernels normalize into a reusable Vec
+        // (sized once, reused across calls via thread-local or caller),
+        // then project via BLAS sgemm. The norm intermediate never
+        // enters the arena — saving one allocation per fused dispatch.
+        TapeKernel::InlineNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => {
+            // Fused: RmsNorm(x, weight) → MatMul(normed, proj_weight)
+            // inputs: [x, norm_weight, proj_weight]
+            let k_val = *k as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
+
+            if m_val == 1 {
+                // M=1 fast path: RmsNorm into pre-sized Vec (no arena alloc).
+                let x = safe_cast_f32(inputs[0]);
+                let weight = safe_cast_f32(inputs[1]);
+                let mut normed_f32 = x.into_owned();
+                float_dispatch::norm::rms_norm_in_place(
+                    &mut normed_f32,
+                    &weight,
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                );
+                let normed_bytes: &[u8] = bytemuck::cast_slice(&normed_f32);
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[normed_bytes, inputs[2]],
+                    1,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            } else {
+                // M>1 fallback: decompose to separate ops.
+                let normed = float_dispatch::norm::dispatch_rms_norm(
+                    &[inputs[0], inputs[1]],
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[&normed, inputs[2]],
+                    m_val,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineAddNormProjectionGemv {
+            norm_size,
+            epsilon,
+            k,
+            n_total,
+        } => {
+            // Fused: Add(x, residual) → RmsNorm(sum, weight) → MatMul(normed, proj_weight)
+            // inputs: [x, residual, norm_weight, proj_weight]
+            let k_val = *k as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
+
+            if m_val == 1 {
+                // M=1 fast path: Add + RmsNorm in-place, no arena alloc.
+                let x = safe_cast_f32(inputs[0]);
+                let residual = safe_cast_f32(inputs[1]);
+                let weight = safe_cast_f32(inputs[2]);
+                let mut normed_f32: Vec<f32> = x
+                    .iter()
+                    .zip(residual.iter())
+                    .map(|(&a, &b)| a + b)
+                    .collect();
+                float_dispatch::norm::rms_norm_in_place(
+                    &mut normed_f32,
+                    &weight,
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                );
+                let normed_bytes: &[u8] = bytemuck::cast_slice(&normed_f32);
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[normed_bytes, inputs[3]],
+                    1,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            } else {
+                // M>1 fallback: decompose to separate ops.
+                let normed = float_dispatch::norm::dispatch_add_rms_norm(
+                    &[inputs[0], inputs[1], inputs[2]],
+                    *norm_size as usize,
+                    f32::from_bits(*epsilon),
+                )?;
+                float_dispatch::matmul::dispatch_matmul_into(
+                    &[&normed, inputs[3]],
+                    m_val,
+                    k_val,
+                    *n_total as usize,
+                    out_buf,
+                )?;
+            }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineSwiGluProjectionGemv { k, n } => {
+            // Fused: SwiGLU(gate, up) → MatMul(activated, W_down)
+            // inputs: [gate, up, down_weight]
+            let k_val = *k as usize;
+            let n_val = *n as usize;
+            let m_val = inputs[0].len() / 4 / k_val;
+
+            // SwiGLU activation: silu(gate) * up — computed into Vec, not arena.
+            let gate = safe_cast_f32(inputs[0]);
+            let up = safe_cast_f32(inputs[1]);
+            let activated_f32: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(&g, &u)| {
+                    let sig = 1.0 / (1.0 + (-g).exp());
+                    g * sig * u
+                })
+                .collect();
+            let activated_bytes: &[u8] = bytemuck::cast_slice(&activated_f32);
+            // Prevent the compiler from dropping activated_f32 before matmul uses it.
+            float_dispatch::matmul::dispatch_matmul_into(
+                &[activated_bytes, inputs[2]],
+                m_val,
+                k_val,
+                n_val,
+                out_buf,
+            )?;
+            drop(activated_f32);
+            Ok(DispatchResult::InOutBuf)
+        }
+
         TapeKernel::Custom(handler) => {
             let result = handler(inputs, tape_ctx.constants)?;
             out_buf.extend_from_slice(&result);
@@ -2621,6 +2858,30 @@ fn dispatch_lut_gemm_16(
     let m = if k > 0 { activations.len() / k } else { 0 };
     let mut output = vec![0.0f32; m * n];
     crate::lut_gemm::lut_gemm_16bit(activations, qw, &mut output);
+    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    Ok(())
+}
+
+/// LUT-GEMM Q2 dispatch for tape kernels.
+///
+/// Always uses the pure integer LUT kernel — no BLAS dequant path.
+/// The whole point of Q2 is to bypass BLAS and use the pure integer kernel.
+fn dispatch_lut_gemm_2(
+    inputs: &[&[u8]],
+    cid: ConstantId,
+    tape_ctx: &TapeContext<'_>,
+    out_buf: &mut Vec<u8>,
+) -> ExecResult<()> {
+    let mut cache = tape_ctx.weight_cache.write();
+    let qw = cache.get_q2(cid, tape_ctx.constants, tape_ctx.weights)?;
+    let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
+        crate::error::ExecError::UnsupportedOp("Q2: activation not f32-aligned".into())
+    })?;
+    let k = qw.rows as usize;
+    let n = qw.cols as usize;
+    let m = if k > 0 { activations.len() / k } else { 0 };
+    let mut output = vec![0.0f32; m * n];
+    crate::lut_gemm::lut_gemm_2bit(activations, qw, &mut output);
     out_buf.extend_from_slice(bytemuck::cast_slice(&output));
     Ok(())
 }
@@ -3342,8 +3603,48 @@ impl EnumTape {
         let mut profile_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
             std::collections::HashMap::new();
 
+        // Weight prefetch: issue madvise(WILLNEED) for the next level's
+        // weight range when we start a new level. This gives the OS time to
+        // page in weights while the current level computes.
+        let has_levels = self.level_offsets.len() > 1;
+        let has_prefetch = has_levels && !self.level_weight_ranges.is_empty();
+        let mut current_level = 0usize;
+        let mut next_level_boundary = if has_levels {
+            self.level_offsets.get(1).copied().unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+
         // Execute: one match per instruction.
-        for instr in &self.instructions {
+        for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            // Check if we've crossed a level boundary → prefetch next level's weights.
+            if has_prefetch && instr_idx >= next_level_boundary {
+                current_level += 1;
+                next_level_boundary = self
+                    .level_offsets
+                    .get(current_level + 1)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+
+                // Prefetch weights for level current_level + 1 (look-ahead).
+                let prefetch_level = current_level + 1;
+                if prefetch_level < self.level_weight_ranges.len() {
+                    let (start, end) = self.level_weight_ranges[prefetch_level];
+                    if end > start {
+                        prefetch_weight_range(tape_ctx.weights, start, end);
+                    }
+                }
+                // Release weights from level current_level - 2 (look-behind).
+                if current_level >= 2 {
+                    let release_level = current_level - 2;
+                    if release_level < self.level_weight_ranges.len() {
+                        let (start, end) = self.level_weight_ranges[release_level];
+                        if end > start {
+                            release_weight_range(tape_ctx.weights, start, end);
+                        }
+                    }
+                }
+            }
             // Passthrough: zero-copy move.
             if instr.passthrough {
                 if let Some(&src_idx) = instr.input_indices.first() {
@@ -4277,6 +4578,50 @@ mod tests {
                 let expected = PrimOp::Add.apply_binary(a, b);
                 assert_eq!(ring_out, expected, "ring Q0 Add mismatch at ({a},{b})");
             }
+        }
+    }
+}
+
+// ── Weight prefetch helpers ────────────────────────────────────────────────
+
+/// Issue madvise(WILLNEED) for a byte range within the weight blob.
+/// Tells the OS to page in these bytes asynchronously.
+#[inline]
+fn prefetch_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_WILLNEED);
+        }
+    }
+}
+
+/// Issue madvise(DONTNEED) for a byte range within the weight blob.
+/// Tells the OS these pages can be reclaimed.
+#[inline]
+fn release_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        // MADV_DONTNEED on mmap'd memory allows OS to reclaim pages; the
+        // next access will re-fault them in (zero-cost for mmap).
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
         }
     }
 }

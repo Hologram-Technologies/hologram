@@ -7,6 +7,9 @@
 //! weight index. After accumulation, a dot product with centroids produces
 //! the matmul output element in O(Q) instead of O(k).
 
+/// Number of quantization levels for 2-bit weights.
+pub const Q2_LEVELS: usize = 4;
+
 /// Number of quantization levels for 4-bit weights.
 pub const Q4_LEVELS: usize = 16;
 
