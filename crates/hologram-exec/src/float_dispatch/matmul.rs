@@ -880,10 +880,10 @@ unsafe fn micro_kernel_strided_avx2(
     for p in k_start..k_end {
         let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
 
-        let a0 = _mm256_broadcast_ss(&*a.get_unchecked(i * k_stride + p));
-        let a1 = _mm256_broadcast_ss(&*a.get_unchecked((i + 1) * k_stride + p));
-        let a2 = _mm256_broadcast_ss(&*a.get_unchecked((i + 2) * k_stride + p));
-        let a3 = _mm256_broadcast_ss(&*a.get_unchecked((i + 3) * k_stride + p));
+        let a0 = _mm256_broadcast_ss(a.get_unchecked(i * k_stride + p));
+        let a1 = _mm256_broadcast_ss(a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = _mm256_broadcast_ss(a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = _mm256_broadcast_ss(a.get_unchecked((i + 3) * k_stride + p));
 
         acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
         acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
@@ -1206,10 +1206,10 @@ unsafe fn micro_kernel_packed_avx2(
     for p in 0..kc_len {
         let b_vec = _mm256_loadu_ps(packed_b.as_ptr().add(p * 8));
 
-        let a0 = _mm256_broadcast_ss(&*a.get_unchecked(i * k_stride + k_start + p));
-        let a1 = _mm256_broadcast_ss(&*a.get_unchecked((i + 1) * k_stride + k_start + p));
-        let a2 = _mm256_broadcast_ss(&*a.get_unchecked((i + 2) * k_stride + k_start + p));
-        let a3 = _mm256_broadcast_ss(&*a.get_unchecked((i + 3) * k_stride + k_start + p));
+        let a0 = _mm256_broadcast_ss(a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = _mm256_broadcast_ss(a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = _mm256_broadcast_ss(a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = _mm256_broadcast_ss(a.get_unchecked((i + 3) * k_stride + k_start + p));
 
         acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
         acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
@@ -1767,7 +1767,7 @@ unsafe fn vecmat_kernel_nr8_avx2(
     let mut vacc = _mm256_loadu_ps(acc.as_ptr());
 
     for p in k_start..k_end {
-        let a_val = _mm256_broadcast_ss(&*a.get_unchecked(p));
+        let a_val = _mm256_broadcast_ss(a.get_unchecked(p));
         let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
         vacc = _mm256_fmadd_ps(a_val, b_vec, vacc);
     }
