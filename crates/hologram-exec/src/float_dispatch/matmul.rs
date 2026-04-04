@@ -2502,8 +2502,8 @@ mod tests {
                 }
 
                 // Set all group scales to 1 (as signed i8).
-                for i in 192..208 {
-                    block[i] = 1u8;
+                for b in &mut block[192..208] {
+                    *b = 1u8;
                 }
 
                 // Encode d as f16.

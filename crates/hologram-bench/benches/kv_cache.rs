@@ -125,7 +125,7 @@ fn bench_read(c: &mut Criterion) {
         .collect();
 
     for (name, cache) in &mut caches {
-        group.bench_function(&format!("{name}/read_v"), |b| {
+        group.bench_function(format!("{name}/read_v"), |b| {
             b.iter(|| {
                 for layer in 0..N_LAYERS {
                     let borrowed = cache.read_v(layer);
@@ -175,7 +175,7 @@ fn bench_single_layer(c: &mut Criterion) {
 
     for (name, config) in &configs {
         // Write benchmark (single layer, 512 tokens).
-        group.bench_function(&format!("{name}/write_512tok"), |b| {
+        group.bench_function(format!("{name}/write_512tok"), |b| {
             let mut cache =
                 KvCacheState::with_config(N_LAYERS, N_KV_HEADS, HEAD_DIM, 2048, config.clone());
             b.iter(|| {
@@ -186,7 +186,7 @@ fn bench_single_layer(c: &mut Criterion) {
         });
 
         // Read benchmark (single layer, 512 tokens pre-filled).
-        group.bench_function(&format!("{name}/read_512tok"), |b| {
+        group.bench_function(format!("{name}/read_512tok"), |b| {
             let mut cache =
                 KvCacheState::with_config(N_LAYERS, N_KV_HEADS, HEAD_DIM, 2048, config.clone());
             cache.write_layer(layer, &data, &data);

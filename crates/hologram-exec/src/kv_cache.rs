@@ -1471,7 +1471,8 @@ mod tests {
     #[test]
     fn constant_channel_quantization() {
         // All-same values should not panic or produce NaN.
-        let data = vec![3.14f32; 64];
+        let val = std::f32::consts::PI;
+        let data = vec![val; 64];
 
         let mut q8_idx = vec![0u8; 64];
         let p8 = quantize_channel_q8(&data, &mut q8_idx);
@@ -1479,7 +1480,7 @@ mod tests {
         dequantize_q8(&q8_idx, &p8, &mut r8);
         for &v in &r8 {
             assert!(!v.is_nan());
-            assert!((v - 3.14).abs() < 0.01);
+            assert!((v - val).abs() < 0.01);
         }
 
         let mut q4_packed = vec![0u8; 32];
@@ -1488,7 +1489,7 @@ mod tests {
         dequantize_q4(&q4_packed, 64, &p4, &mut r4);
         for &v in &r4 {
             assert!(!v.is_nan());
-            assert!((v - 3.14).abs() < 0.01);
+            assert!((v - val).abs() < 0.01);
         }
     }
 

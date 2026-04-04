@@ -3767,6 +3767,50 @@ pub type BoxedInstruction = TapeInstruction;
 /// Backward-compatible alias for [`EnumTape`].
 pub type BoxedTape = EnumTape;
 
+// ── Weight prefetch helpers ────────────────────────────────────────────────
+
+/// Issue madvise(WILLNEED) for a byte range within the weight blob.
+/// Tells the OS to page in these bytes asynchronously.
+#[inline]
+fn prefetch_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_WILLNEED);
+        }
+    }
+}
+
+/// Issue madvise(DONTNEED) for a byte range within the weight blob.
+/// Tells the OS these pages can be reclaimed.
+#[inline]
+fn release_weight_range(weights: &[u8], start: u64, end: u64) {
+    let start = start as usize;
+    let end = (end as usize).min(weights.len());
+    if start >= end {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let ptr = weights[start..].as_ptr();
+        let len = end - start;
+        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
+        // MADV_DONTNEED on mmap'd memory allows OS to reclaim pages; the
+        // next access will re-fault them in (zero-cost for mmap).
+        unsafe {
+            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4578,50 +4622,6 @@ mod tests {
                 let expected = PrimOp::Add.apply_binary(a, b);
                 assert_eq!(ring_out, expected, "ring Q0 Add mismatch at ({a},{b})");
             }
-        }
-    }
-}
-
-// ── Weight prefetch helpers ────────────────────────────────────────────────
-
-/// Issue madvise(WILLNEED) for a byte range within the weight blob.
-/// Tells the OS to page in these bytes asynchronously.
-#[inline]
-fn prefetch_weight_range(weights: &[u8], start: u64, end: u64) {
-    let start = start as usize;
-    let end = (end as usize).min(weights.len());
-    if start >= end {
-        return;
-    }
-    #[cfg(unix)]
-    {
-        let ptr = weights[start..].as_ptr();
-        let len = end - start;
-        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
-        unsafe {
-            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_WILLNEED);
-        }
-    }
-}
-
-/// Issue madvise(DONTNEED) for a byte range within the weight blob.
-/// Tells the OS these pages can be reclaimed.
-#[inline]
-fn release_weight_range(weights: &[u8], start: u64, end: u64) {
-    let start = start as usize;
-    let end = (end as usize).min(weights.len());
-    if start >= end {
-        return;
-    }
-    #[cfg(unix)]
-    {
-        let ptr = weights[start..].as_ptr();
-        let len = end - start;
-        // SAFETY: ptr is within the weights slice, len doesn't extend past it.
-        // MADV_DONTNEED on mmap'd memory allows OS to reclaim pages; the
-        // next access will re-fault them in (zero-cost for mmap).
-        unsafe {
-            libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
         }
     }
 }

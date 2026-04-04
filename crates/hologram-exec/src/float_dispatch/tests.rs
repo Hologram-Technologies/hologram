@@ -403,6 +403,7 @@ fn test_rms_norm_into_matches_allocating() {
 // ── Plan 038: Sparse V attention tests ──────────────────────────────
 
 /// Helper: run attention with given params and return f32 output.
+#[allow(clippy::too_many_arguments)]
 fn run_attention(
     q: &[f32],
     k: &[f32],
@@ -892,18 +893,16 @@ fn conv2d_depthwise_with_bias() {
 
     assert_eq!(out.len(), channels * h * w);
     // Channel 0 should all be 5.0, channel 1 should all be 10.0.
-    for i in 0..h * w {
+    for (i, val) in out[..h * w].iter().enumerate() {
         assert!(
-            (out[i] - 5.0).abs() < 1e-5,
-            "ch0 pos {i}: expected 5.0, got {}",
-            out[i]
+            (val - 5.0).abs() < 1e-5,
+            "ch0 pos {i}: expected 5.0, got {val}",
         );
     }
-    for i in 0..h * w {
+    for (i, val) in out[h * w..2 * h * w].iter().enumerate() {
         assert!(
-            (out[h * w + i] - 10.0).abs() < 1e-5,
-            "ch1 pos {i}: expected 10.0, got {}",
-            out[h * w + i]
+            (val - 10.0).abs() < 1e-5,
+            "ch1 pos {i}: expected 10.0, got {val}",
         );
     }
 }
@@ -911,6 +910,7 @@ fn conv2d_depthwise_with_bias() {
 // ── Plan 039: Winograd F(2,3) tests ─────────────────────────────────
 
 /// Helper: run conv2d via dispatch and return f32 output.
+#[allow(clippy::too_many_arguments)]
 fn run_conv2d(
     data: &[f32],
     weight: &[f32],

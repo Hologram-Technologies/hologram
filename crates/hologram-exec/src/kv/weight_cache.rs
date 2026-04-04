@@ -59,8 +59,7 @@ impl WeightCache {
         use crate::tape::TapeKernel;
         for instr in &tape.instructions {
             let cid = match &instr.kernel {
-                TapeKernel::MatMulLut4(c)
-                | TapeKernel::MatMulLut4Activation(c, _) => Some(*c),
+                TapeKernel::MatMulLut4(c) | TapeKernel::MatMulLut4Activation(c, _) => Some(*c),
                 _ => None,
             };
             if let Some(cid) = cid {

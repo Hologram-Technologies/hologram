@@ -202,6 +202,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // Vec<u8> fallback on Windows has no page-alignment guarantee
     fn alignment_is_page() {
         let buf = MmapBuffer::new(4096);
         assert_eq!(buf.as_slice().as_ptr() as usize % 4096, 0);
