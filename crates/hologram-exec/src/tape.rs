@@ -566,6 +566,9 @@ pub enum TapeKernel {
         input_h: u32,
         input_w: u32,
     },
+
+    /// Broadcast-expand: physically replicate data along dims where input=1.
+    InlineExpand { ndim: u8, target_shape: [u32; 8] },
 }
 
 impl TapeKernel {
@@ -1360,6 +1363,17 @@ fn dispatch_kernel(
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
+            Ok(DispatchResult::InOutBuf)
+        }
+        TapeKernel::InlineExpand { ndim, target_shape } => {
+            let result = crate::float_dispatch::dispatch_float(
+                &FloatOp::Expand {
+                    ndim: *ndim,
+                    target_shape: *target_shape,
+                },
+                inputs,
+            )?;
+            out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
         }
 

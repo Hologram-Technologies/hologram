@@ -883,6 +883,12 @@ fn resolve_float_kernel(fop: &FloatOp) -> TapeKernel {
         // Transpose is handled separately (before this function).
         FloatOp::Transpose { .. } => TapeKernel::Passthrough,
 
+        // Expand: broadcast-replicate data along dims where input=1.
+        FloatOp::Expand { ndim, target_shape } => TapeKernel::InlineExpand {
+            ndim: *ndim,
+            target_shape: *target_shape,
+        },
+
         // ── Deep decode fusions (Plan 054) ──────────────────────────────
         FloatOp::NormProjectionGemv {
             norm_size,

@@ -383,6 +383,84 @@ pub fn dispatch_fused_chain_into(
     Ok(())
 }
 
+/// Broadcast-expand: physically replicate data along dims where input_size=1.
+fn dispatch_expand(inputs: &[&[u8]], ndim: u8, target_shape: &[u32; 8]) -> ExecResult<Vec<u8>> {
+    let input = inputs
+        .first()
+        .ok_or_else(|| crate::error::ExecError::UnsupportedOp("Expand: missing input".into()))?;
+    let src: &[f32] = bytemuck::cast_slice(input);
+
+    let nd = ndim as usize;
+    let target = &target_shape[..nd];
+    let total_out: usize = target.iter().map(|&d| d as usize).product();
+
+    if src.len() == total_out {
+        // No expansion needed — pass through.
+        return Ok(input.to_vec());
+    }
+
+    // Infer input shape: for each target dim, input dim is either target dim or 1.
+    // Work backwards to infer from src.len() and target.
+    let mut in_shape = vec![0usize; nd];
+    let mut remaining = src.len();
+    for i in (0..nd).rev() {
+        let t = target[i] as usize;
+        if remaining.is_multiple_of(t) {
+            in_shape[i] = t;
+            remaining /= t;
+        } else {
+            in_shape[i] = 1;
+        }
+    }
+
+    let mut out = vec![0.0f32; total_out];
+    expand_recursive(src, &mut out, &in_shape, target, nd, 0, 0, 0);
+    Ok(bytemuck::cast_slice(&out).to_vec())
+}
+
+/// Recursive N-dimensional broadcast copy for Expand.
+#[allow(clippy::too_many_arguments)]
+fn expand_recursive(
+    src: &[f32],
+    dst: &mut [f32],
+    in_shape: &[usize],
+    out_shape: &[u32],
+    ndim: usize,
+    dim: usize,
+    src_offset: usize,
+    dst_offset: usize,
+) {
+    if dim == ndim {
+        dst[dst_offset] = src[src_offset];
+        return;
+    }
+
+    let in_dim = in_shape[dim];
+    let out_dim = out_shape[dim] as usize;
+
+    // Compute strides for remaining dimensions.
+    let src_stride: usize = in_shape[dim + 1..].iter().product::<usize>().max(1);
+    let dst_stride: usize = out_shape[dim + 1..]
+        .iter()
+        .map(|&d| d as usize)
+        .product::<usize>()
+        .max(1);
+
+    for i in 0..out_dim {
+        let si = if in_dim == 1 { 0 } else { i };
+        expand_recursive(
+            src,
+            dst,
+            in_shape,
+            out_shape,
+            ndim,
+            dim + 1,
+            src_offset + si * src_stride,
+            dst_offset + i * dst_stride,
+        );
+    }
+}
+
 /// Dispatch ops that need dedicated kernel logic.
 fn dispatch_custom(
     op: &FloatOp,
@@ -449,6 +527,7 @@ fn dispatch_custom(
             dtype,
         } => gather_concat::dispatch_concat(inputs, *size_a as usize, *size_b as usize, *dtype),
         FloatOp::Reshape => Ok(inputs[0].to_vec()),
+        FloatOp::Expand { ndim, target_shape } => dispatch_expand(inputs, *ndim, target_shape),
         FloatOp::Transpose { .. } => {
             // Flat dispatch path has no shape metadata — passthrough.
             // The tape executor uses InlineTranspose with baked shapes instead.

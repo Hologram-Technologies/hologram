@@ -176,6 +176,7 @@ fn ensure_all_ops_covered() {
         FloatOp::NormProjectionGemv { .. } => {}
         FloatOp::AddNormProjectionGemv { .. } => {}
         FloatOp::SwiGluProjectionGemv { .. } => {}
+        FloatOp::Expand { .. } => {}
     }
 }
 

@@ -548,6 +548,10 @@ pub enum FloatOp {
     /// Inputs: [gate, up, down_weight].
     /// Output: [M, n] down-projected result. Activation computed in-register.
     SwiGluProjectionGemv { k: u32, n: u32 },
+
+    /// Broadcast-expand: physically replicate data along dimensions where input=1.
+    /// `target_shape` is the output shape (max 8 dims, `ndim` entries valid).
+    Expand { ndim: u8, target_shape: [u32; 8] },
 }
 
 impl FloatOp {
@@ -589,7 +593,8 @@ impl FloatOp {
             | Self::Shape { .. }
             | Self::Slice { .. }
             | Self::GatherND
-            | Self::Dequantize => 1,
+            | Self::Dequantize
+            | Self::Expand { .. } => 1,
 
             // Binary
             Self::Add
@@ -747,6 +752,7 @@ impl FloatOp {
             Self::NormProjectionGemv { .. } => "float.norm_projection_gemv",
             Self::AddNormProjectionGemv { .. } => "float.add_norm_projection_gemv",
             Self::SwiGluProjectionGemv { .. } => "float.swiglu_projection_gemv",
+            Self::Expand { .. } => "float.expand",
         }
     }
 }
@@ -876,6 +882,9 @@ impl FloatOp {
             Self::NormProjectionGemv { .. }
             | Self::AddNormProjectionGemv { .. }
             | Self::SwiGluProjectionGemv { .. } => ShapeSpec::Custom,
+
+            // Expand: output shape is the target_shape (custom).
+            Self::Expand { .. } => ShapeSpec::Custom,
         }
     }
 
@@ -952,7 +961,9 @@ impl FloatOp {
             Self::Shape { .. } => FloatDType::I64,
 
             // ── Type-preserving structural ops: output dtype = input[0] dtype ──
-            Self::GatherND | Self::Transpose { .. } | Self::Slice { .. } => input0,
+            Self::GatherND | Self::Transpose { .. } | Self::Slice { .. } | Self::Expand { .. } => {
+                input0
+            }
 
             // Where(condition, true_val, false_val): output dtype = true_val dtype
             Self::Where => input_dtypes.get(1).copied().unwrap_or(input0),
@@ -1332,6 +1343,7 @@ impl FloatOp {
             Self::NormProjectionGemv { .. } => "NormProjGemv",
             Self::AddNormProjectionGemv { .. } => "AddNormProjGemv",
             Self::SwiGluProjectionGemv { .. } => "SwiGluProjGemv",
+            Self::Expand { .. } => "Expand",
         }
     }
 }
