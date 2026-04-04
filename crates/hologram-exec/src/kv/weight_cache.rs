@@ -57,7 +57,10 @@ impl WeightCache {
         let key = cid.raw();
         if !self.dequantized_f32.contains_key(&key) {
             let qw = self.get_q4(cid, constants, weights)?;
-            let total = qw.rows as usize * qw.cols as usize;
+            let rows = qw.rows as usize;
+            let cols = qw.cols as usize;
+            let total = rows * cols;
+            let has_row_scales = !qw.row_scales.is_empty();
             let mut buf = vec![0.0f32; total];
             for (i, o) in buf.iter_mut().enumerate() {
                 let byte_idx = i / 2;
@@ -66,7 +69,13 @@ impl WeightCache {
                 } else {
                     (qw.indices[byte_idx] & 0x0F) as usize
                 };
-                *o = qw.centroids[idx];
+                let centroid = qw.centroids[idx];
+                if has_row_scales {
+                    let row = i / cols;
+                    *o = centroid * qw.row_scales[row];
+                } else {
+                    *o = centroid;
+                }
             }
             self.dequantized_f32.insert(key, buf);
         }

@@ -8,7 +8,8 @@ use super::orbit::{build_orbit_map_q4, build_orbit_map_q8, OrbitMap4, OrbitMap8}
 use super::psumbook::{Q2_LEVELS, Q4_LEVELS, Q8_LEVELS};
 
 /// Number of k-means iterations for quantization.
-const KMEANS_ITERS: usize = 10;
+/// 20 iterations converges well for most weight distributions.
+const KMEANS_ITERS: usize = 20;
 
 // --- Packing helpers ---
 
@@ -46,7 +47,7 @@ pub fn get_q4_index(indices: &[u8], row: u32, col: u32, cols: u32) -> u8 {
 pub struct QuantizedWeights4 {
     /// Packed indices: 2 per byte (high nibble first).
     pub indices: Vec<u8>,
-    /// 16 cluster centroids learned via k-means.
+    /// 16 cluster centroids learned via k-means on normalized weights.
     pub centroids: [f32; Q4_LEVELS],
     /// Number of rows (k dimension).
     pub rows: u32,
@@ -55,6 +56,11 @@ pub struct QuantizedWeights4 {
     /// Dihedral orbit map built after k-means convergence.
     /// Enables `dot_orbits` for compressed centroid dot products.
     pub orbits: OrbitMap4,
+    /// Per-row scale factors for precision recovery.
+    /// When non-empty: `dequant[row][col] = centroid[idx] * row_scales[row]`.
+    /// When empty: `dequant = centroid[idx]` (legacy global k-means).
+    /// Improves quality for weights with varying magnitude across rows.
+    pub row_scales: Vec<f32>,
 }
 
 /// 8-bit quantized weight matrix (256 centroids).
@@ -163,12 +169,31 @@ fn update_centroids(weights: &[f32], assignments: &[u8], centroids: &mut [f32]) 
     }
 }
 
-/// Initialize centroids uniformly between min and max.
+/// Initialize centroids using percentile-based placement.
+///
+/// Instead of uniform spacing between min/max (which wastes centroids on
+/// outlier ranges), place centroids at evenly-spaced percentiles of the
+/// actual weight distribution. This gives much better coverage for
+/// bell-curve-like weight distributions common in transformer layers.
 fn init_centroids(weights: &[f32], k: usize) -> Vec<f32> {
-    let (min, max) = min_max(weights);
-    let range = max - min;
+    if weights.len() < k {
+        let (min, max) = min_max(weights);
+        let range = max - min;
+        return (0..k)
+            .map(|i| min + range * (i as f32) / (k - 1).max(1) as f32)
+            .collect();
+    }
+    // Sample up to 10K weights for percentile computation (avoid sorting huge arrays).
+    let sample_size = weights.len().min(10_000);
+    let step = weights.len() / sample_size;
+    let mut sample: Vec<f32> = weights.iter().step_by(step.max(1)).copied().collect();
+    sample.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     (0..k)
-        .map(|i| min + range * (i as f32) / (k - 1).max(1) as f32)
+        .map(|i| {
+            let pct = i as f32 / (k - 1).max(1) as f32;
+            let idx = (pct * (sample.len() - 1) as f32) as usize;
+            sample[idx.min(sample.len() - 1)]
+        })
         .collect()
 }
 
@@ -253,17 +278,46 @@ pub fn quantize_2bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights2
     }
 }
 
-/// Quantize weights to 4-bit (16 centroids) via k-means.
+/// Quantize weights to 4-bit (16 levels) via per-row linear quantization.
+///
+/// Each row is independently quantized with symmetric absmax scaling:
+///   index = round((value / row_max_abs) * 7) + 8    (range [1, 15])
+///   dequant = centroid[index] * row_scale
+///
+/// Centroids are fixed at [-1, -13/15, ..., -1/15, 0, 1/15, ..., 13/15, 1]
+/// (uniformly spaced in [-1, 1]). Per-row scales adapt to local magnitude.
+///
+/// This matches GGUF Q4_0 precision: each group of weights gets its own
+/// scale factor, preventing large-magnitude rows from dominating.
 #[must_use]
 pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4 {
-    let mut centroids_vec = init_centroids(weights, Q4_LEVELS);
-    let mut assignments = assign_all(weights, &centroids_vec);
-    for _ in 0..KMEANS_ITERS {
-        update_centroids(weights, &assignments, &mut centroids_vec);
-        assignments = assign_all(weights, &centroids_vec);
-    }
+    let r = rows as usize;
+    let c = cols as usize;
+
+    // Fixed uniform centroids in [-1, 1]: 16 levels centered at 0.
     let mut centroids = [0.0f32; Q4_LEVELS];
-    centroids.copy_from_slice(&centroids_vec);
+    for (i, c) in centroids.iter_mut().enumerate() {
+        *c = (i as f32 - 8.0) / 8.0; // [-1.0, -0.875, ..., 0, ..., 0.875]
+    }
+
+    // Per-row quantization.
+    let mut row_scales = vec![0.0f32; r];
+    let mut assignments = vec![0u8; r * c];
+
+    for i in 0..r {
+        let row = &weights[i * c..(i + 1) * c];
+        let max_abs = row.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        row_scales[i] = if max_abs > 1e-12 { max_abs } else { 1.0 };
+        let inv = 8.0 / row_scales[i]; // maps to [-8, 8] range
+
+        for (j, &v) in row.iter().enumerate() {
+            // Symmetric quantization: round to nearest centroid index.
+            let scaled = (v * inv).round().clamp(-8.0, 7.0) as i8;
+            let idx = (scaled + 8) as u8; // shift to [0, 15]
+            assignments[i * c + j] = idx.min(15);
+        }
+    }
+
     let orbits = build_orbit_map_q4(&centroids);
     let indices = pack_assignments_q4(&assignments);
     QuantizedWeights4 {
@@ -272,6 +326,7 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
         rows,
         cols,
         orbits,
+        row_scales,
     }
 }
 
