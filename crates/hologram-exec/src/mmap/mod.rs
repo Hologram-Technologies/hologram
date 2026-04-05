@@ -221,6 +221,57 @@ pub fn execute_tape_with_kv_and_shapes(
     collect_outputs(sg, &mut arena)
 }
 
+/// Execute a tape with KV cache, shape overrides, and a persistent weight cache.
+///
+/// Combines [`execute_tape_with_kv_and_shapes`] with a caller-owned weight cache
+/// that persists across calls, eliminating per-step rkyv deserialization for Q4.
+pub fn execute_tape_with_kv_shapes_cached(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    kv_state: &mut KvCacheState,
+    shape_overrides: &std::collections::HashMap<u32, Vec<usize>>,
+    weight_cache: &parking_lot::RwLock<crate::kv::WeightCache>,
+) -> ExecResult<GraphOutputs> {
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
+
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+
+    let kv_owned = std::mem::replace(kv_state, KvCacheState::new(0, 0, 0, 0));
+    let position_offset = kv_owned.write_pos() as u32;
+
+    if position_offset == 0 {
+        tape.prewarm_arena(&mut arena);
+    }
+
+    let mut tape_ctx =
+        crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, weight_cache, kv_owned);
+    tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
+    tape_ctx.shape_overrides = shape_overrides.clone();
+
+    tape.execute_direct(&mut arena, &tape_ctx)?;
+
+    let mut kv_out = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+    let seq_written = infer_kv_seq_written(inputs);
+    if seq_written > 0 {
+        kv_out.advance(seq_written);
+    }
+    *kv_state = kv_out;
+
+    collect_outputs(sg, &mut arena)
+}
+
 /// Collect graph outputs from the arena.
 ///
 /// Seed the arena with constants and graph inputs from the serialized graph.

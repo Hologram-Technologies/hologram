@@ -3703,7 +3703,26 @@ impl EnumTape {
 
             let t0 = std::time::Instant::now();
 
-            let input_metas: crate::shape_resolve::InputMetas = SmallVec::new();
+            // Build input_metas from shape_overrides when available.
+            // This provides correct N-D metadata to dispatch functions so they
+            // can resolve variable-length dimensions instead of using heuristics.
+            let input_metas: crate::shape_resolve::InputMetas =
+                if tape_ctx.shape_overrides.is_empty() {
+                    SmallVec::new()
+                } else {
+                    instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| {
+                            tape_ctx.shape_overrides.get(&idx).map(|shape| {
+                                hologram_core::op::TensorMeta::new(
+                                    hologram_core::op::FloatDType::F32,
+                                    shape,
+                                )
+                            })
+                        })
+                        .collect()
+                };
             dispatch_kernel(
                 &instr.kernel,
                 &input_refs,
