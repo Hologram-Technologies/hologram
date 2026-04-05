@@ -4,6 +4,7 @@
 mod float_op;
 mod lut_op;
 mod prim;
+pub mod shape_projection;
 mod shape_spec;
 
 pub use float_op::{
