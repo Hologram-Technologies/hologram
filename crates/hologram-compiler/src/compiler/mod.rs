@@ -137,8 +137,22 @@ fn emit_stage(
     let intervals = liveness::compute_liveness(&schedule, graph);
     let layout = workspace::plan_workspace(&intervals);
     let stats = build_stats(graph, &schedule, &layout, fusion_stats, ring_prims_promoted);
-    let layer_header = build_layer_header(graph, &schedule);
-    let archive = write_archive(graph, &layer_header)?;
+
+    // Compute post-fusion shapes: walk the graph in topological order and
+    // project each node's output shape from its inputs. This produces a
+    // complete shape map covering every node that will appear in the tape.
+    let post_fusion_shapes = compute_post_fusion_shapes(graph, &schedule);
+
+    // Merge projected shapes into the graph's node_shapes so they are
+    // embedded in the archive. Existing shapes (from lowering) are preserved;
+    // projected shapes fill gaps for nodes created/modified by fusion.
+    let mut graph_with_shapes = graph.clone();
+    for (nid, shape) in &post_fusion_shapes {
+        graph_with_shapes.set_node_shape(*nid, shape.clone());
+    }
+
+    let layer_header = build_layer_header(&graph_with_shapes, &schedule);
+    let archive = write_archive(&graph_with_shapes, &layer_header)?;
 
     // Run QEDL pass: collect domain-crossing boundary annotations.
     let topo_order: Vec<NodeId> = schedule
@@ -154,6 +168,173 @@ fn emit_stage(
         schedule,
         qedl_boundaries,
     })
+}
+
+/// Walk the post-fusion graph in topological order and project each node's
+/// output shape from its inputs using `float_output_shape()`.
+///
+/// Seeds from `graph.node_shapes()` (populated during lowering) and
+/// `graph.constant_shapes()`. Projects forward through all ops, filling
+/// in shapes for nodes created or modified by fusion.
+fn compute_post_fusion_shapes(
+    graph: &Graph,
+    schedule: &ExecutionSchedule,
+) -> std::collections::HashMap<NodeId, Vec<usize>> {
+    use hologram_core::op::shape_projection::float_output_shape;
+    use hologram_graph::graph::GraphOp;
+
+    let mut shape_map: std::collections::HashMap<NodeId, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    // Seed from existing node shapes (from lowering).
+    for (&nid, shape) in graph.node_shapes() {
+        shape_map.insert(nid, shape.clone());
+    }
+
+    // Seed constant shapes: find Constant nodes and map ConstantId → NodeId.
+    for node in graph.nodes() {
+        if let GraphOp::Constant(cid) = &node.op {
+            if let Some(shape) = graph.constant_shapes().get(cid) {
+                shape_map.entry(node.id).or_insert_with(|| shape.clone());
+            }
+        }
+    }
+
+    // Topological walk: project output shapes from inputs.
+    for level in &schedule.levels {
+        for &nid in &level.node_ids {
+            if shape_map.contains_key(&nid) {
+                continue; // already seeded
+            }
+
+            let node = match graph.get(nid) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let preds = graph.predecessors(nid);
+            let input_shapes: Vec<Vec<usize>> = preds
+                .iter()
+                .map(|&pred| shape_map.get(&pred).cloned().unwrap_or_default())
+                .collect();
+            let input_refs: Vec<&[usize]> = input_shapes.iter().map(|s| s.as_slice()).collect();
+
+            let projected = match &node.op {
+                // Float ops: use the shape projection function.
+                GraphOp::Float(f) => float_output_shape(f, &input_refs),
+
+                // Fused float chain: element-preserving (all unary).
+                GraphOp::FusedFloatChain(_) => input_refs.first().map(|s| s.to_vec()),
+
+                // Fused matmul variants: output [m, n].
+                GraphOp::FusedMatMulActivation { m, n, .. }
+                | GraphOp::FusedMatMulBiasActivation { m, n, .. } => {
+                    Some(vec![*m as usize, *n as usize])
+                }
+
+                // Fused norm+activation: shape-preserving.
+                GraphOp::FusedRmsNormActivation { .. }
+                | GraphOp::FusedLayerNormActivation { .. }
+                | GraphOp::FusedGroupNormActivation { .. }
+                | GraphOp::FusedAddRmsNormActivation { .. }
+                | GraphOp::FusedInstanceNormActivation { .. } => {
+                    input_refs.first().map(|s| s.to_vec())
+                }
+
+                // Fused conv+activation: delegate to Conv2d projection.
+                GraphOp::FusedConv2dActivation {
+                    kernel_h,
+                    kernel_w,
+                    stride_h,
+                    stride_w,
+                    pad_h,
+                    pad_w,
+                    dilation_h,
+                    dilation_w,
+                    input_h,
+                    input_w,
+                    ..
+                }
+                | GraphOp::FusedConv2dBiasActivation {
+                    kernel_h,
+                    kernel_w,
+                    stride_h,
+                    stride_w,
+                    pad_h,
+                    pad_w,
+                    dilation_h,
+                    dilation_w,
+                    input_h,
+                    input_w,
+                    ..
+                } => {
+                    let conv = hologram_core::op::FloatOp::Conv2d {
+                        kernel_h: *kernel_h,
+                        kernel_w: *kernel_w,
+                        stride_h: *stride_h,
+                        stride_w: *stride_w,
+                        pad_h: *pad_h,
+                        pad_w: *pad_w,
+                        dilation_h: *dilation_h,
+                        dilation_w: *dilation_w,
+                        group: 1,
+                        input_h: *input_h,
+                        input_w: *input_w,
+                    };
+                    float_output_shape(&conv, &input_refs)
+                }
+
+                // Byte-domain unary: shape-preserving.
+                GraphOp::Lut(_)
+                | GraphOp::FusedView(_)
+                | GraphOp::FusedView16(_)
+                | GraphOp::Passthrough
+                | GraphOp::Output
+                | GraphOp::RingPrimUnary(..)
+                | GraphOp::RingActivation(..)
+                | GraphOp::RingAccumulate(..) => input_refs.first().map(|s| s.to_vec()),
+
+                // Byte-domain binary: same shape (no broadcast in byte domain).
+                GraphOp::Prim(_) | GraphOp::RingPrimBinary(..) => {
+                    input_refs.first().map(|s| s.to_vec())
+                }
+
+                // Ring reduce: drops one dim.
+                GraphOp::RingReduce { .. } => input_refs.first().map(|input| {
+                    if input.len() <= 1 {
+                        vec![1]
+                    } else {
+                        input[..input.len() - 1].to_vec()
+                    }
+                }),
+
+                // LUT-GEMM: use compiled node_shapes (these are weight-baked).
+                GraphOp::MatMulLut4(_)
+                | GraphOp::MatMulLut8(_)
+                | GraphOp::MatMulLut16(_)
+                | GraphOp::MatMulLut2(_)
+                | GraphOp::BatchMatMulLut4(_)
+                | GraphOp::BatchMatMulLut8(_)
+                | GraphOp::BatchMatMulLut16(_)
+                | GraphOp::MatMulLut4Activation(..)
+                | GraphOp::MatMulLut8Activation(..)
+                | GraphOp::MatMulLut2Activation(..)
+                | GraphOp::Conv2dLut4 { .. } => None, // shape from lowering
+
+                // Input, Constant: already seeded.
+                GraphOp::Input | GraphOp::Constant(_) => None,
+
+                // Subgraph, Custom: can't project.
+                GraphOp::CallSubgraph(_) | GraphOp::Custom { .. } => None,
+            };
+
+            if let Some(shape) = projected {
+                shape_map.insert(nid, shape);
+            }
+        }
+    }
+
+    shape_map
 }
 
 /// Build execution schedule from graph.
