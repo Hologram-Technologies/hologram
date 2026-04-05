@@ -2307,7 +2307,7 @@ fn dispatch_kernel(
                     if baked_k > 0
                         && baked_n > 0
                         && inputs[0].len().is_multiple_of(baked_k * 4)
-                        && inputs[1].len() >= baked_k * baked_n * 4
+                        && inputs[1].len() == baked_k * baked_n * 4
                     {
                         let actual_m = inputs[0].len() / (baked_k * 4);
                         if actual_m > 0 {
