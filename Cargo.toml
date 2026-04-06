@@ -24,7 +24,7 @@ hologram-cascade = { path = "crates/hologram-cascade" }
 hologram-compression = { path = "crates/hologram-compression" }
 
 # UOR Foundation
-uor-foundation = "0.1.3"
+uor-foundation = "0.1.4"
 
 # Serialization (rkyv only)
 rkyv = { version = "0.8", features = ["tinyvec-1"] }

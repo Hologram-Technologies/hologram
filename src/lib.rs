@@ -54,8 +54,8 @@ pub use hologram_graph::{
 pub use hologram_exec::{
     build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
     execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached, execute_tape_with_shapes,
-    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState, KvStore,
-    WeightCache,
+    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, InferenceSession,
+    KvCacheState, KvStore, WeightCache,
 };
 
 // Archive

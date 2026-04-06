@@ -3,8 +3,8 @@
 //!
 //! Validates structural invariants before cascade admission.
 
-use hologram_core::op::RingLevel;
 use hologram_core::term::{HoloCompileUnit, TermArena, TermId, TermKind};
+use uor_foundation::QuantumLevel;
 
 /// Shape validation error.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +20,7 @@ pub enum ShapeError {
         term_id: u32,
         value: i64,
         max_value: u64,
-        level: RingLevel,
+        level: QuantumLevel,
     },
     /// Type declaration is invalid.
     InvalidTypeDecl(String),
@@ -92,13 +92,13 @@ pub fn validate_shape(unit: &HoloCompileUnit) -> Result<(), ShapeError> {
 fn validate_literal_range(
     arena: &TermArena,
     _root: TermId,
-    level: RingLevel,
+    level: QuantumLevel,
 ) -> Result<(), ShapeError> {
-    let max_value: u64 = match level {
-        RingLevel::Q0 => 255,
-        RingLevel::Q1 => 65535,
-        RingLevel::Q2 => 0x00FF_FFFF,
-        RingLevel::Q3 => u32::MAX as u64,
+    let max_value: u64 = match level.index() {
+        0 => 255,
+        1 => 65535,
+        2 => 0x00FF_FFFF,
+        _ => u32::MAX as u64,
     };
 
     // Iterate all nodes in the arena (O(n), sequential, cache-friendly).
@@ -137,27 +137,21 @@ mod tests {
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
 
-    fn make_unit(root_kind: TermKind, level: RingLevel, budget: f64) -> HoloCompileUnit {
+    fn make_unit(root_kind: TermKind, level: QuantumLevel, budget: f64) -> HoloCompileUnit {
         let mut arena = TermArena::new();
         let root = arena.alloc(root_kind);
-        HoloCompileUnit::new(
-            arena,
-            root,
-            level,
-            budget,
-            &[VerificationDomain::Algebraic],
-        )
+        HoloCompileUnit::new(arena, root, level, budget, &[VerificationDomain::Algebraic])
     }
 
     #[test]
     fn valid_unit_passes() {
-        let unit = make_unit(TermKind::IntLit(42), RingLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, 6.0);
         assert!(validate_shape(&unit).is_ok());
     }
 
     #[test]
     fn invalid_budget_nan() {
-        let unit = make_unit(TermKind::IntLit(42), RingLevel::Q0, f64::NAN);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, f64::NAN);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::InvalidBudget(v)) if v.is_nan()
@@ -166,33 +160,27 @@ mod tests {
 
     #[test]
     fn invalid_budget_zero() {
-        let unit = make_unit(TermKind::IntLit(42), RingLevel::Q0, 0.0);
-        assert_eq!(
-            validate_shape(&unit),
-            Err(ShapeError::InvalidBudget(0.0))
-        );
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, 0.0);
+        assert_eq!(validate_shape(&unit), Err(ShapeError::InvalidBudget(0.0)));
     }
 
     #[test]
     fn invalid_budget_negative() {
-        let unit = make_unit(TermKind::IntLit(42), RingLevel::Q0, -1.0);
-        assert_eq!(
-            validate_shape(&unit),
-            Err(ShapeError::InvalidBudget(-1.0))
-        );
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, -1.0);
+        assert_eq!(validate_shape(&unit), Err(ShapeError::InvalidBudget(-1.0)));
     }
 
     #[test]
     fn no_target_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        let unit = HoloCompileUnit::new(arena, root, RingLevel::Q0, 6.0, &[]);
+        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
         assert_eq!(validate_shape(&unit), Err(ShapeError::NoTargetDomains));
     }
 
     #[test]
     fn literal_out_of_range_q0() {
-        let unit = make_unit(TermKind::IntLit(256), RingLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::Q0, 6.0);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::LiteralOutOfRange { .. })
@@ -201,13 +189,13 @@ mod tests {
 
     #[test]
     fn literal_fits_q1() {
-        let unit = make_unit(TermKind::IntLit(256), RingLevel::Q1, 12.0);
+        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::Q1, 12.0);
         assert!(validate_shape(&unit).is_ok());
     }
 
     #[test]
     fn negative_literal_rejected() {
-        let unit = make_unit(TermKind::IntLit(-1), RingLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(-1), QuantumLevel::Q0, 6.0);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::LiteralOutOfRange { .. })

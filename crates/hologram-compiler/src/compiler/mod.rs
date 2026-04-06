@@ -20,6 +20,7 @@ use hologram_graph::schedule::ExecutionSchedule;
 use hologram_core::op::RingLevel;
 use hologram_core::term::{HoloAddress, HoloCompileUnit, TermArena, TermKind};
 use uor_foundation::enums::VerificationDomain;
+use uor_foundation::QuantumLevel;
 
 use crate::error::{CompileError, CompileResult};
 
@@ -78,7 +79,7 @@ enum CompilerInput {
     /// UOR term language source text.
     Source {
         source: String,
-        level: RingLevel,
+        level: QuantumLevel,
         budget: f64,
         domains: Vec<VerificationDomain>,
     },
@@ -123,7 +124,7 @@ impl CompilerBuilder {
     #[must_use]
     pub fn from_source(
         source: &str,
-        level: RingLevel,
+        level: QuantumLevel,
         budget: f64,
         domains: &[VerificationDomain],
     ) -> Self {
@@ -174,13 +175,8 @@ impl CompilerBuilder {
                 let parsed = crate::term_parser::parse(&source)
                     .map_err(|e| CompileError::Validation(e.to_string()))?;
 
-                let mut unit = HoloCompileUnit::new(
-                    parsed.arena,
-                    parsed.root,
-                    level,
-                    budget,
-                    &domains,
-                );
+                let mut unit =
+                    HoloCompileUnit::new(parsed.arena, parsed.root, level, budget, &domains);
                 unit.bindings = parsed.bindings;
                 unit.binding_count = parsed.binding_count;
                 unit.assertions = parsed.assertions;
@@ -205,6 +201,45 @@ pub fn compile(graph: Graph) -> CompileResult<CompilationOutput> {
     CompilerBuilder::new(graph).build()
 }
 
+/// Compile from a `uor!` macro expansion (enforcement `TermArena`).
+///
+/// The `uor!` macro parses EBNF surface syntax at compile time and produces a
+/// typed `enforcement::TermArena`. This function converts it to hologram's
+/// arena, runs preflight (including enforcement validation), lowers to a Graph,
+/// and runs the 7-stage cascade.
+///
+/// Per PRISM Section 1: stages 1-4 (parse, build AST, resolve names, type
+/// check) are handled at compile time by the `uor!` proc macro. This function
+/// implements stages 5-7 (desugar, reify, emit runtime plan).
+pub fn compile_uor_arena<const CAP: usize>(
+    enforcement_arena: &uor_foundation::enforcement::TermArena<CAP>,
+    root_index: u32,
+    level: RingLevel,
+    budget: f64,
+    domains: &[VerificationDomain],
+) -> CompileResult<CompilationOutput> {
+    // Phase 2 bridge: enforcement → hologram term arena
+    let (arena, root) = hologram_core::term::enforcement_bridge::convert_enforcement_arena(
+        enforcement_arena,
+        root_index,
+    )
+    .map_err(|e| CompileError::Validation(format!("enforcement bridge: {e:?}")))?;
+
+    // Build CompileUnit
+    let mut unit = HoloCompileUnit::new(arena, root, level.into(), budget, domains);
+
+    // Phase 3 preflight (includes enforcement validation)
+    crate::preflight::run_preflight(&mut unit)
+        .map_err(|e| CompileError::Validation(e.to_string()))?;
+
+    // Lower to graph
+    let graph = crate::term_lower::lower_to_graph(&unit)?;
+
+    // Cascade
+    let mut store = CertificateStore::new(64);
+    compile_via_cascade(unit, graph, &mut store, false)
+}
+
 /// Build a `HoloCompileUnit` from a `Graph`.
 ///
 /// This is the primary integration point for consumers like hologram-ai
@@ -218,13 +253,18 @@ pub fn compile(graph: Graph) -> CompileResult<CompilationOutput> {
 /// - Budget: `f64::MAX` (unconstrained for graph-based compilation)
 /// - Domains: `[Algebraic]`
 pub fn unit_from_graph(graph: &Graph) -> HoloCompileUnit {
-    unit_from_graph_with(graph, RingLevel::Q0, f64::MAX, &[VerificationDomain::Algebraic])
+    unit_from_graph_with(
+        graph,
+        QuantumLevel::Q0,
+        f64::MAX,
+        &[VerificationDomain::Algebraic],
+    )
 }
 
 /// Build a `HoloCompileUnit` from a `Graph` with explicit parameters.
 pub fn unit_from_graph_with(
     graph: &Graph,
-    level: RingLevel,
+    level: QuantumLevel,
     budget: f64,
     domains: &[VerificationDomain],
 ) -> HoloCompileUnit {
@@ -234,8 +274,8 @@ pub fn unit_from_graph_with(
 
     // Compute content-addressed hash from graph structure.
     // Uses Hash trait on GraphOp (zero-allocation) instead of Debug formatting.
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     let mut hasher = blake3::Hasher::new();
     hasher.update(&(graph.node_count() as u64).to_le_bytes());
@@ -253,7 +293,6 @@ pub fn unit_from_graph_with(
     unit
 }
 
-
 /// Core compilation via the cascade engine.
 fn compile_via_cascade(
     unit: HoloCompileUnit,
@@ -268,15 +307,12 @@ fn compile_via_cascade(
 
     let archive = state.archive_bytes.unwrap_or_default();
 
-    let schedule = state
-        .schedule
-        .unwrap_or_else(|| ExecutionSchedule { levels: vec![], critical_path: 0 });
+    let schedule = state.schedule.unwrap_or_else(|| ExecutionSchedule {
+        levels: vec![],
+        critical_path: 0,
+    });
 
-    let total_nodes = state
-        .graph
-        .as_ref()
-        .map(|g| g.node_count())
-        .unwrap_or(0);
+    let total_nodes = state.graph.as_ref().map(|g| g.node_count()).unwrap_or(0);
 
     let peak_live = schedule
         .levels

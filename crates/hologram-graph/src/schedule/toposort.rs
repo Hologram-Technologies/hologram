@@ -14,10 +14,7 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
 
 /// Topological sort using a pre-built successor index. Avoids redundant
 /// `build_successor_index()` calls when the caller already has one.
-pub fn toposort_with_index(
-    graph: &Graph,
-    succ_index: &[Vec<NodeId>],
-) -> GraphResult<Vec<NodeId>> {
+pub fn toposort_with_index(graph: &Graph, succ_index: &[Vec<NodeId>]) -> GraphResult<Vec<NodeId>> {
     let ids = graph.node_ids();
     if ids.is_empty() {
         return Ok(Vec::new());

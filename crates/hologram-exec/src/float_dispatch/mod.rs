@@ -1,7 +1,7 @@
 //! Float-domain kernel dispatch for `FloatOp` graph operations.
 //!
 //! All kernels operate on `&[u8]` inputs interpreted as `&[f32]` via bytemuck,
-//! matching the pattern used by `MatMulLut4`/`MatMulLut8`.
+//! matching the pattern used by `MatMulLut`.
 
 pub(crate) mod attention;
 pub(crate) mod cast;

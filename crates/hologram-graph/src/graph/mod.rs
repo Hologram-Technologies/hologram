@@ -74,18 +74,10 @@ pub enum GraphOp {
     Constant(ConstantId),
     /// Invoke a subgraph template (flattened before scheduling).
     CallSubgraph(SubgraphId),
-    /// LUT-GEMM matmul with 4-bit quantized weights (stored as constant).
-    MatMulLut4(ConstantId),
-    /// LUT-GEMM matmul with 8-bit quantized weights (stored as constant).
-    MatMulLut8(ConstantId),
-    /// Batched LUT-GEMM with 4-bit quantized weights.
-    BatchMatMulLut4(ConstantId),
-    /// Batched LUT-GEMM with 8-bit quantized weights.
-    BatchMatMulLut8(ConstantId),
-    /// LUT-GEMM matmul with 16-bit hierarchical quantized weights (stored as constant).
-    MatMulLut16(ConstantId),
-    /// Batched LUT-GEMM with 16-bit hierarchical quantized weights.
-    BatchMatMulLut16(ConstantId),
+    /// LUT-GEMM matmul with quantized weights at specified bit width.
+    MatMulLut { bits: u8, cid: ConstantId },
+    /// Batched LUT-GEMM with quantized weights.
+    BatchMatMulLut { bits: u8, cid: ConstantId },
     /// Consumer-defined op. Dispatched via `CustomOpRegistry` at execution time.
     ///
     /// The `arity` field must match the number of edges wired to this node.
@@ -107,10 +99,12 @@ pub enum GraphOp {
         n: u32,
         activation: FloatOp,
     },
-    /// Fused 4-bit LUT-GEMM + activation (epilogue fusion).
-    MatMulLut4Activation(ConstantId, FloatOp),
-    /// Fused 8-bit LUT-GEMM + activation (epilogue fusion).
-    MatMulLut8Activation(ConstantId, FloatOp),
+    /// Fused LUT-GEMM + activation.
+    MatMulLutActivation {
+        bits: u8,
+        cid: ConstantId,
+        activation: FloatOp,
+    },
     /// Fused RmsNorm + activation (epilogue fusion).
     FusedRmsNormActivation {
         size: u32,
@@ -173,14 +167,9 @@ impl GraphOp {
             | Self::FusedView(_)
             | Self::Passthrough
             | Self::CallSubgraph(_)
-            | Self::MatMulLut4(_)
-            | Self::MatMulLut8(_)
-            | Self::MatMulLut4Activation(..)
-            | Self::MatMulLut8Activation(..)
-            | Self::BatchMatMulLut4(_)
-            | Self::BatchMatMulLut8(_)
-            | Self::MatMulLut16(_)
-            | Self::BatchMatMulLut16(_) => 1,
+            | Self::MatMulLut { .. }
+            | Self::BatchMatMulLut { .. }
+            | Self::MatMulLutActivation { .. } => 1,
             Self::FusedView16(_) => 1,
             Self::RingPrimUnary(_, _) => 1,
             Self::RingPrimBinary(_, _) => 2,
@@ -205,14 +194,9 @@ impl GraphOp {
                 | Self::FusedView(_)
                 | Self::FusedView16(_)
                 | Self::Passthrough
-                | Self::MatMulLut4(_)
-                | Self::MatMulLut8(_)
-                | Self::MatMulLut4Activation(..)
-                | Self::MatMulLut8Activation(..)
-                | Self::BatchMatMulLut4(_)
-                | Self::BatchMatMulLut8(_)
-                | Self::MatMulLut16(_)
-                | Self::BatchMatMulLut16(_)
+                | Self::MatMulLut { .. }
+                | Self::BatchMatMulLut { .. }
+                | Self::MatMulLutActivation { .. }
                 | Self::Custom { .. }
                 | Self::Float(_)
                 | Self::FusedFloatChain(_)
@@ -256,7 +240,7 @@ impl GraphOp {
         match self {
             Self::RingPrimUnary(p, RingLevel::Q1) => {
                 Some(hologram_core::q1::view::ElementWiseView16::from_fn(|x| {
-                    p.apply_unary_q1(x)
+                    p.apply_unary_u64(x as u64, 2) as u16
                 }))
             }
             Self::FusedView16(v) => Some((**v).clone()),

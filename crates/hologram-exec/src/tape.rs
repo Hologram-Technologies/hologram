@@ -9,8 +9,13 @@
 //! This is Phase 0.7 of the Compile-Time-First Acceleration plan.
 
 use smallvec::SmallVec;
+use std::sync::LazyLock;
 
 use hologram_core::op::FloatOp;
+
+/// Static empty shape map — avoids allocating a HashMap when no overrides exist.
+static EMPTY_SHAPE_MAP: LazyLock<std::collections::HashMap<u32, Vec<usize>>> =
+    LazyLock::new(std::collections::HashMap::new);
 use hologram_graph::graph::node::NodeId;
 
 use crate::buffer::BufferArena;
@@ -47,6 +52,7 @@ fn prefetch_read(ptr: *const u8) {
 use std::cell::{Cell, RefCell};
 
 use hologram_core::op::{PrimOp, RingLevel};
+use hologram_core::ring::byte_io::{read_le_u64, write_le_u64};
 use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 
@@ -79,7 +85,8 @@ pub struct TapeContext<'a> {
     /// Pre-computed shape overrides from `ShapeContextGraph`.
     /// Keyed by raw node index. When present, the executor sets this as the
     /// output `TensorMeta` after dispatch, overriding any heuristic inference.
-    pub shape_overrides: std::collections::HashMap<u32, Vec<usize>>,
+    /// Borrowed (not owned) to eliminate per-call HashMap cloning.
+    pub shape_overrides: &'a std::collections::HashMap<u32, Vec<usize>>,
     /// Carry flux for dynamic precision — tracks accumulated carry across
     /// ring operations. Per-frame: call `reset_flux()` at frame boundaries
     /// in streaming workloads. Uses `Cell` for interior mutability (zero-cost
@@ -103,7 +110,7 @@ impl<'a> TapeContext<'a> {
             weight_cache,
             kv_state: None,
             backend: BackendSelector::Auto,
-            shape_overrides: std::collections::HashMap::new(),
+            shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
         }
     }
@@ -123,7 +130,7 @@ impl<'a> TapeContext<'a> {
             weight_cache,
             kv_state: Some(RefCell::new(kv)),
             backend: BackendSelector::Auto,
-            shape_overrides: std::collections::HashMap::new(),
+            shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
         }
     }
@@ -154,16 +161,12 @@ pub enum TapeKernel {
     PrimUnary(ElementWiseView),
     /// Byte-domain binary prim.
     PrimBinary(PrimOp),
-    /// 4-bit quantized LUT-GEMM matmul.
-    MatMulLut4(ConstantId),
-    /// 8-bit quantized LUT-GEMM matmul.
-    MatMulLut8(ConstantId),
-    /// 4-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
-    MatMulLut4Activation(ConstantId, FloatOp),
-    /// 8-bit quantized LUT-GEMM matmul + fused activation (epilogue fusion).
-    MatMulLut8Activation(ConstantId, FloatOp),
-    /// 16-bit hierarchical quantized LUT-GEMM matmul.
-    MatMulLut16(ConstantId),
+    /// LUT-GEMM at any bit width, with optional fused activation.
+    MatMulLut {
+        bits: u8,
+        cid: ConstantId,
+        activation: Option<FloatOp>,
+    },
     /// KV cache write (autoregressive generation).
     KvWrite {
         layer: u32,
@@ -613,67 +616,25 @@ fn dispatch_kernel(
         TapeKernel::RingPrimUnary { op, level } => {
             let input = inputs[0];
             let base = out_buf.len();
-            // Dynamic precision: if carry flux demands higher level, promote.
-            let effective_level = {
-                let flux = tape_ctx.flux.get();
-                let flux_level = flux.required_level();
-                if (flux_level as u8) > (*level as u8) {
-                    flux_level
-                } else {
-                    *level
-                }
-            };
-            match effective_level {
-                RingLevel::Q0 => {
-                    out_buf.resize(base + input.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for (i, &x) in input.iter().enumerate() {
-                        dst[i] = op.apply_unary(x);
-                    }
-                }
-                RingLevel::Q1 => {
-                    out_buf.resize(base + input.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for chunk in input.chunks_exact(2).zip(dst.chunks_exact_mut(2)) {
-                        let (c_in, c_out) = chunk;
-                        let val = u16::from_le_bytes([c_in[0], c_in[1]]);
-                        let r = op.apply_unary_q1(val);
-                        let b = r.to_le_bytes();
-                        c_out[0] = b[0];
-                        c_out[1] = b[1];
-                    }
-                }
-                RingLevel::Q2 => {
-                    out_buf.resize(base + input.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for chunk in input.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
-                        let (c_in, c_out) = chunk;
-                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], 0]);
-                        let r = op.apply_unary_q2(val);
-                        let b = r.to_le_bytes();
-                        c_out[0] = b[0];
-                        c_out[1] = b[1];
-                        c_out[2] = b[2];
-                    }
-                }
-                RingLevel::Q3 => {
-                    out_buf.resize(base + input.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for chunk in input.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
-                        let (c_in, c_out) = chunk;
-                        let val = u32::from_le_bytes([c_in[0], c_in[1], c_in[2], c_in[3]]);
-                        let r = op.apply_unary_q3(val);
-                        let b = r.to_le_bytes();
-                        c_out.copy_from_slice(&b);
-                    }
-                }
+            // Dynamic precision: promote byte width if carry flux demands it.
+            let compiled_bw = level.byte_width();
+            let flux_bw = tape_ctx.flux.get().required_level().byte_width();
+            let bw = compiled_bw.max(flux_bw) as usize;
+
+            // Single loop for all quantum levels — parameterized by byte width.
+            out_buf.resize(base + input.len(), 0);
+            let dst = &mut out_buf[base..];
+            for (c_in, c_out) in input.chunks_exact(bw).zip(dst.chunks_exact_mut(bw)) {
+                let val = read_le_u64(c_in, bw);
+                let result = op.apply_unary_u64(val, bw as u8);
+                write_le_u64(c_out, result, bw);
             }
+
             // Accumulate curvature: XOR first byte of input/output, popcount.
-            // O(1) — single XOR + popcount = 2 instructions.
             if !input.is_empty() && out_buf.len() > base {
                 let curvature = (input[0] ^ out_buf[base]).count_ones() as u8;
                 let mut flux = tape_ctx.flux.get();
-                flux.accumulate(curvature, effective_level);
+                flux.accumulate_at(curvature, level.to_quantum());
                 tape_ctx.flux.set(flux);
             }
             Ok(DispatchResult::InOutBuf)
@@ -687,89 +648,49 @@ fn dispatch_kernel(
                 });
             }
             let base = out_buf.len();
-            let effective_level = {
-                let flux = tape_ctx.flux.get();
-                let flux_level = flux.required_level();
-                if (flux_level as u8) > (*level as u8) {
-                    flux_level
-                } else {
-                    *level
-                }
-            };
-            match effective_level {
-                RingLevel::Q0 => {
-                    out_buf.resize(base + lhs.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for i in 0..lhs.len() {
-                        dst[i] = op.apply_binary(lhs[i], rhs[i]);
-                    }
-                }
-                RingLevel::Q1 => {
-                    out_buf.resize(base + lhs.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for i in (0..lhs.len()).step_by(2) {
-                        let a = u16::from_le_bytes([lhs[i], lhs[i + 1]]);
-                        let b_val = u16::from_le_bytes([rhs[i], rhs[i + 1]]);
-                        let r = op.apply_binary_q1(a, b_val);
-                        let bytes = r.to_le_bytes();
-                        dst[i] = bytes[0];
-                        dst[i + 1] = bytes[1];
-                    }
-                }
-                RingLevel::Q2 => {
-                    out_buf.resize(base + lhs.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for i in (0..lhs.len()).step_by(3) {
-                        let a = u32::from_le_bytes([lhs[i], lhs[i + 1], lhs[i + 2], 0]);
-                        let b_val = u32::from_le_bytes([rhs[i], rhs[i + 1], rhs[i + 2], 0]);
-                        let r = op.apply_binary_q2(a, b_val);
-                        let bytes = r.to_le_bytes();
-                        dst[i] = bytes[0];
-                        dst[i + 1] = bytes[1];
-                        dst[i + 2] = bytes[2];
-                    }
-                }
-                RingLevel::Q3 => {
-                    out_buf.resize(base + lhs.len(), 0);
-                    let dst = &mut out_buf[base..];
-                    for i in (0..lhs.len()).step_by(4) {
-                        let a = u32::from_le_bytes([lhs[i], lhs[i + 1], lhs[i + 2], lhs[i + 3]]);
-                        let b_val =
-                            u32::from_le_bytes([rhs[i], rhs[i + 1], rhs[i + 2], rhs[i + 3]]);
-                        let r = op.apply_binary_q3(a, b_val);
-                        dst[i..i + 4].copy_from_slice(&r.to_le_bytes());
-                    }
-                }
+            // Dynamic precision: promote byte width if carry flux demands it.
+            let compiled_bw = level.byte_width();
+            let flux_bw = tape_ctx.flux.get().required_level().byte_width();
+            let bw = compiled_bw.max(flux_bw) as usize;
+
+            // Single loop for all quantum levels — parameterized by byte width.
+            out_buf.resize(base + lhs.len(), 0);
+            let dst = &mut out_buf[base..];
+            for i in (0..lhs.len()).step_by(bw) {
+                let a = read_le_u64(&lhs[i..], bw);
+                let b_val = read_le_u64(&rhs[i..], bw);
+                let r = op.apply_binary_u64(a, b_val, bw as u8);
+                write_le_u64(&mut dst[i..], r, bw);
             }
+
             // Accumulate curvature for binary op.
             if !lhs.is_empty() && out_buf.len() > base {
                 let curvature = (lhs[0] ^ out_buf[base]).count_ones() as u8;
                 let mut flux = tape_ctx.flux.get();
-                flux.accumulate(curvature, effective_level);
+                flux.accumulate_at(curvature, level.to_quantum());
                 tape_ctx.flux.set(flux);
             }
             Ok(DispatchResult::InOutBuf)
         }
-        TapeKernel::MatMulLut4(cid) => {
-            dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
-        }
-        TapeKernel::MatMulLut8(cid) => {
-            dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
-        }
-        TapeKernel::MatMulLut4Activation(cid, activation) => {
-            dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
-            apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
-        }
-        TapeKernel::MatMulLut8Activation(cid, activation) => {
-            dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
-            apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
-        }
-        TapeKernel::MatMulLut16(cid) => {
-            dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?;
+        TapeKernel::MatMulLut {
+            bits,
+            cid,
+            activation,
+        } => {
+            match bits {
+                4 => dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?,
+                8 => dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?,
+                16 => dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?,
+                _ => {
+                    return Err(crate::error::ExecError::UnsupportedOp(format!(
+                        "MatMulLut bits={}",
+                        bits
+                    )))
+                }
+            }
+            if let Some(act) = activation {
+                apply_activation_to_out_buf(out_buf, act);
+            }
             Ok(DispatchResult::InOutBuf)
         }
         TapeKernel::KvWrite {
@@ -1323,9 +1244,7 @@ fn dispatch_kernel(
             let argmax_row = |row: &[f32]| -> i64 {
                 row.iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| {
-                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                    })
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .map(|(i, _)| i as i64)
                     .unwrap_or(0)
             };
@@ -1750,8 +1669,8 @@ fn dispatch_kernel(
                     b_floats,
                 )
             };
-            // Skip backend dispatch — use CPU for now to validate correctness.
-            // TODO: re-enable backend.dispatch_matmul with adapted dims once validated.
+            // CPU dispatch: uses register-blocked K-tiled matmul with rayon parallelism.
+            // GPU backend dispatch deferred pending dimension adaptation validation.
             crate::float_dispatch::matmul::dispatch_matmul_into(
                 inputs, actual_m, actual_k, actual_n, out_buf,
             )?;
@@ -2494,9 +2413,15 @@ fn dispatch_lut_gemm_4(
     let k = qw.rows as usize;
     let n = qw.cols as usize;
     let m = if k > 0 { activations.len() / k } else { 0 };
-    let mut output = vec![0.0f32; m * n];
-    crate::lut_gemm::lut_gemm_4bit(activations, qw, &mut output);
-    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    // Write directly into out_buf — zero intermediate allocation.
+    let output_bytes = m * n * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + output_bytes, 0);
+    let output_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    #[cfg(feature = "parallel")]
+    crate::lut_gemm::lut_gemm_4bit_par(activations, qw, output_slice);
+    #[cfg(not(feature = "parallel"))]
+    crate::lut_gemm::lut_gemm_4bit(activations, qw, output_slice);
     Ok(())
 }
 
@@ -2515,9 +2440,14 @@ fn dispatch_lut_gemm_8(
     let k = qw.rows as usize;
     let n = qw.cols as usize;
     let m = if k > 0 { activations.len() / k } else { 0 };
-    let mut output = vec![0.0f32; m * n];
-    crate::lut_gemm::lut_gemm_8bit(activations, qw, &mut output);
-    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    let output_bytes = m * n * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + output_bytes, 0);
+    let output_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    #[cfg(feature = "parallel")]
+    crate::lut_gemm::lut_gemm_8bit_par(activations, qw, output_slice);
+    #[cfg(not(feature = "parallel"))]
+    crate::lut_gemm::lut_gemm_8bit(activations, qw, output_slice);
     Ok(())
 }
 
@@ -2536,9 +2466,11 @@ fn dispatch_lut_gemm_16(
     let k = qw.rows as usize;
     let n = qw.cols as usize;
     let m = if k > 0 { activations.len() / k } else { 0 };
-    let mut output = vec![0.0f32; m * n];
-    crate::lut_gemm::lut_gemm_16bit(activations, qw, &mut output);
-    out_buf.extend_from_slice(bytemuck::cast_slice(&output));
+    let output_bytes = m * n * 4;
+    let base = out_buf.len();
+    out_buf.resize(base + output_bytes, 0);
+    let output_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
+    crate::lut_gemm::lut_gemm_16bit(activations, qw, output_slice);
     Ok(())
 }
 
@@ -2978,7 +2910,10 @@ impl EnumTape {
     /// Call this once before execution instead of passing a `shape_overrides`
     /// HashMap on every `execute()` call. Each override is resolved to a
     /// `TensorMeta` and stored directly on the instruction.
-    pub fn apply_shape_overrides(&mut self, overrides: &std::collections::HashMap<u32, Vec<usize>>) {
+    pub fn apply_shape_overrides(
+        &mut self,
+        overrides: &std::collections::HashMap<u32, Vec<usize>>,
+    ) {
         for instr in &mut self.instructions {
             if let Some(shape) = overrides.get(&instr.output_idx) {
                 let dtype = instr
@@ -3424,10 +3359,7 @@ impl EnumTape {
             let needs_shared_state = level_instrs.iter().any(|instr| {
                 matches!(
                     instr.kernel,
-                    TapeKernel::MatMulLut4(_)
-                        | TapeKernel::MatMulLut8(_)
-                        | TapeKernel::MatMulLut4Activation(..)
-                        | TapeKernel::MatMulLut8Activation(..)
+                    TapeKernel::MatMulLut { .. }
                         | TapeKernel::InlineMatMulBiasActivation { .. }
                         | TapeKernel::KvWrite { .. }
                         | TapeKernel::KvRead { .. }

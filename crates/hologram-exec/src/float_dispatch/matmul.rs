@@ -660,51 +660,62 @@ pub(super) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
         return;
     }
 
-    // Sequential path: original register-blocked tiling.
-    for it in 0..m_tiles {
-        let i = it * MR;
-        for jt in 0..n_tiles {
-            let j = jt * NR;
-            let mut acc = [[0.0f32; NR]; MR];
-            for p in 0..k {
-                let b_off = p * n + j;
-                for ii in 0..MR {
-                    let a_val = a[(i + ii) * k + p];
-                    for jj in 0..NR {
-                        acc[ii][jj] += a_val * b[b_off + jj];
-                    }
-                }
-            }
-            for (ii, acc_row) in acc.iter().enumerate() {
-                out[(i + ii) * n + j..(i + ii) * n + j + NR].copy_from_slice(acc_row);
-            }
-        }
-        // Remainder columns for tiled rows.
-        if n_rem > 0 {
-            let j = n_tiles * NR;
-            for ii in 0..MR {
-                let row = i + ii;
-                for p in 0..k {
-                    let a_val = a[row * k + p];
-                    for jj in 0..n_rem {
-                        out[row * n + j + jj] += a_val * b[p * n + j + jj];
-                    }
-                }
-            }
-        }
-    }
+    // Sequential path: register-blocked tiling with K-dimension cache blocking.
+    // KC tiles the K dimension so B-panel reads fit in L1 cache (~32KB).
+    // KC=256 → B-panel = 256 × 8 × 4 = 8KB per register tile.
+    const KC: usize = 256;
 
-    // Remainder rows: scalar k-outer for the bottom strip.
-    if m_rem > 0 {
-        let i = m_tiles * MR;
-        for ii in 0..m_rem {
-            let row = i + ii;
-            for p in 0..k {
-                let a_val = a[row * k + p];
-                let b_row = &b[p * n..(p + 1) * n];
-                let o_row = &mut out[row * n..(row + 1) * n];
-                for j in 0..n {
-                    o_row[j] += a_val * b_row[j];
+    for k_start in (0..k).step_by(KC) {
+        let k_end = (k_start + KC).min(k);
+        for it in 0..m_tiles {
+            let i = it * MR;
+            for jt in 0..n_tiles {
+                let j = jt * NR;
+                let mut acc = [[0.0f32; NR]; MR];
+                for p in k_start..k_end {
+                    let b_off = p * n + j;
+                    for ii in 0..MR {
+                        let a_val = a[(i + ii) * k + p];
+                        for jj in 0..NR {
+                            acc[ii][jj] += a_val * b[b_off + jj];
+                        }
+                    }
+                }
+                // Accumulate partial K-tile results into output (not overwrite).
+                for ii in 0..MR {
+                    let off = (i + ii) * n + j;
+                    for jj in 0..NR {
+                        out[off + jj] += acc[ii][jj];
+                    }
+                }
+            }
+            // Remainder columns for tiled rows.
+            if n_rem > 0 {
+                let j = n_tiles * NR;
+                for ii in 0..MR {
+                    let row = i + ii;
+                    for p in k_start..k_end {
+                        let a_val = a[row * k + p];
+                        for jj in 0..n_rem {
+                            out[row * n + j + jj] += a_val * b[p * n + j + jj];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remainder rows for this K-tile.
+        if m_rem > 0 {
+            let i = m_tiles * MR;
+            for ii in 0..m_rem {
+                let row = i + ii;
+                for p in k_start..k_end {
+                    let a_val = a[row * k + p];
+                    let b_row = &b[p * n..(p + 1) * n];
+                    let o_row = &mut out[row * n..(row + 1) * n];
+                    for j in 0..n {
+                        o_row[j] += a_val * b_row[j];
+                    }
                 }
             }
         }

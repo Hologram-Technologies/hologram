@@ -141,7 +141,7 @@ fn handle_init(
 /// Cost: O(n) where n = graph node count.
 fn handle_declare(
     state: &mut CascadeState,
-    _unit: &HoloCompileUnit,
+    unit: &HoloCompileUnit,
     _store: &CertificateStore,
 ) -> Transition {
     if let Some(ref mut graph) = state.graph {
@@ -151,6 +151,25 @@ fn handle_declare(
         state.budget_consumed += cost;
     } else {
         state.budget_consumed += core::f64::consts::LN_2;
+    }
+
+    // Register effect declarations from the compile unit
+    for i in 0..unit.effect_decl_count as usize {
+        let decl = &unit.effect_decls[i];
+        let _ = state.effect_store.register(
+            "",
+            &decl.target_fibers[..decl.fiber_count as usize],
+            decl.budget_delta,
+            decl.commutes,
+        );
+    }
+
+    // Register dispatch declarations from the compile unit
+    for i in 0..unit.dispatch_decl_count as usize {
+        let decl = &unit.dispatch_decls[i];
+        let _ = state
+            .dispatch_registry
+            .register(&[], "", decl.resolver_id, decl.priority);
     }
 
     if state.budget_exceeded() {
@@ -252,8 +271,20 @@ fn handle_attest(
 
         // Recursively evaluate both sides of the assertion.
         if let (Some(lhs_val), Some(rhs_val)) = (
-            eval_term(&unit.arena, &*unit.bindings, unit.binding_count, assertion.lhs, 0),
-            eval_term(&unit.arena, &*unit.bindings, unit.binding_count, assertion.rhs, 0),
+            eval_term(
+                &unit.arena,
+                &*unit.bindings,
+                unit.binding_count,
+                assertion.lhs,
+                0,
+            ),
+            eval_term(
+                &unit.arena,
+                &*unit.bindings,
+                unit.binding_count,
+                assertion.rhs,
+                0,
+            ),
         ) {
             if lhs_val != rhs_val {
                 return Transition::Halt(HaltReason::Contradiction(format!(
@@ -292,6 +323,24 @@ fn handle_attest(
         state.liveness_intervals = Some(intervals);
         state.workspace_layout = Some(layout);
         state.qedl_boundaries = Some(qedl);
+
+        // Validate grounding at QEDL Dequantize boundaries
+        if let Some(ref boundaries) = state.qedl_boundaries {
+            for (_, boundary, _) in boundaries {
+                if matches!(boundary, crate::qedl::QedlBoundary::Dequantize) {
+                    let level = hologram_core::op::RingLevel::from(state.quantum_level);
+                    let bw = level.byte_width() as usize;
+                    let test = vec![0u8; bw];
+                    if hologram_core::ring::grounding::ground_at_level(level, &test).is_none() {
+                        return Transition::Halt(HaltReason::StageFailure {
+                            stage: CascadeStage::Attest,
+                            message: "grounding not available at declared quantum level".into(),
+                        });
+                    }
+                    break; // Only need to validate once per level
+                }
+            }
+        }
     } else {
         state.budget_consumed += core::f64::consts::LN_2;
     }
@@ -355,7 +404,7 @@ fn handle_converge(
         let layer_header = build_layer_header(graph, &state.schedule);
         let unit_meta = hologram_archive::section::compile_unit_meta::CompileUnitMeta {
             unit_address: state.unit_address,
-            quantum_level: state.quantum_level as u8,
+            quantum_level: state.quantum_level.index() as u8,
             budget: state.budget_allocated,
             domain_count: unit.target_domain_count,
             term_count: unit.arena.len(),
@@ -479,8 +528,7 @@ fn run_cascade_loop(
                 state.stage = state.stage.next();
             }
             Transition::Skip(target) => {
-                cache_hit = target == CascadeStage::Extract
-                    && state.stage == CascadeStage::Init;
+                cache_hit = target == CascadeStage::Extract && state.stage == CascadeStage::Init;
                 state.stage = target;
             }
             Transition::Converged => {
@@ -502,9 +550,9 @@ fn run_cascade_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_core::op::RingLevel;
     use hologram_core::term::{TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
+    use uor_foundation::QuantumLevel;
 
     fn make_unit(budget: f64) -> HoloCompileUnit {
         let mut arena = TermArena::new();
@@ -512,7 +560,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             budget,
             &[VerificationDomain::Algebraic],
         );
@@ -540,7 +588,7 @@ mod tests {
 
         run_cascade(&unit, &mut store).unwrap();
 
-        let cert = store.get(&unit.unit_address, RingLevel::Q0);
+        let cert = store.get(&unit.unit_address, QuantumLevel::Q0);
         assert!(cert.is_some());
         assert!(cert.unwrap().converged);
     }
@@ -599,7 +647,7 @@ mod tests {
     fn different_levels_no_cache_hit() {
         let unit_q0 = make_unit(100.0);
         let mut unit_q1 = make_unit(100.0);
-        unit_q1.quantum_level = RingLevel::Q1;
+        unit_q1.quantum_level = QuantumLevel::Q1;
         unit_q1.unit_address = unit_q0.unit_address;
         unit_q1.address = hologram_core::term::HoloAddress::from_hash(unit_q0.unit_address);
 
@@ -661,7 +709,11 @@ mod tests {
         let result = run_cascade_with_graph(&unit, graph, &mut store).unwrap();
 
         assert!(
-            result.state.liveness_intervals.as_ref().map_or(false, |v| !v.is_empty()),
+            result
+                .state
+                .liveness_intervals
+                .as_ref()
+                .map_or(false, |v| !v.is_empty()),
             "liveness_intervals should be populated"
         );
         assert!(

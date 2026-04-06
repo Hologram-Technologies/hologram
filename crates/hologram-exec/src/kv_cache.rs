@@ -109,11 +109,14 @@ impl KvCacheState {
         let start = self.write_pos * stride;
         let end = start + seq_len * stride;
 
-        let cap = self.max_seq * stride;
-        // Lazy allocation: allocate on first write to this layer.
-        if self.k_buffers[layer].is_empty() && cap > 0 {
-            self.k_buffers[layer] = vec![0.0f32; cap];
-            self.v_buffers[layer] = vec![0.0f32; cap];
+        // Grow to max(needed, 2×current) for amortized O(1) per token
+        let needed = (self.write_pos + seq_len) * stride;
+        if self.k_buffers[layer].len() < needed {
+            let new_cap = needed
+                .max(self.k_buffers[layer].len() * 2)
+                .min(self.max_seq * stride);
+            self.k_buffers[layer].resize(new_cap, 0.0);
+            self.v_buffers[layer].resize(new_cap, 0.0);
         }
 
         if end > self.k_buffers[layer].len() {

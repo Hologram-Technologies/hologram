@@ -36,12 +36,8 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::FusedView16(_) => "FusedView16 (128KB Q1 table)".into(),
         GraphOp::Constant(id) => format_constant(id, constants),
         GraphOp::CallSubgraph(s) => format!("CallSubgraph({})", s.raw()),
-        GraphOp::MatMulLut4(id) => format!("MatMulLut4(id={})", id.raw()),
-        GraphOp::MatMulLut8(id) => format!("MatMulLut8(id={})", id.raw()),
-        GraphOp::BatchMatMulLut4(id) => format!("BatchMatMulLut4(id={})", id.raw()),
-        GraphOp::BatchMatMulLut8(id) => format!("BatchMatMulLut8(id={})", id.raw()),
-        GraphOp::MatMulLut16(id) => format!("MatMulLut16(id={})", id.raw()),
-        GraphOp::BatchMatMulLut16(id) => format!("BatchMatMulLut16(id={})", id.raw()),
+        GraphOp::MatMulLut { bits, cid } => format!("MatMulLut{bits}(id={})", cid.raw()),
+        GraphOp::BatchMatMulLut { bits, cid } => format!("BatchMatMulLut{bits}(id={})", cid.raw()),
         GraphOp::RingPrimUnary(p, level) => format!("RingPrimUnary({}, {:?})", p.name(), level),
         GraphOp::RingPrimBinary(p, level) => format!("RingPrimBinary({}, {:?})", p.name(), level),
         GraphOp::Float(f) => f.name().to_string(),
@@ -63,11 +59,12 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         } => {
             format!("MatMul[{m},{k},{n}]+Bias+{}", activation.name())
         }
-        GraphOp::MatMulLut4Activation(id, act) => {
-            format!("MatMulLut4(id={})+{}", id.raw(), act.name())
-        }
-        GraphOp::MatMulLut8Activation(id, act) => {
-            format!("MatMulLut8(id={})+{}", id.raw(), act.name())
+        GraphOp::MatMulLutActivation {
+            bits,
+            cid,
+            activation,
+        } => {
+            format!("MatMulLut{bits}(id={})+{}", cid.raw(), activation.name())
         }
         GraphOp::FusedRmsNormActivation { activation, .. } => {
             format!("RmsNorm+{}", activation.name())

@@ -61,5 +61,11 @@ fn bench_lex_1000(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_parse_10, bench_parse_100, bench_parse_1000, bench_lex_1000);
+criterion_group!(
+    benches,
+    bench_parse_10,
+    bench_parse_100,
+    bench_parse_1000,
+    bench_lex_1000
+);
 criterion_main!(benches);

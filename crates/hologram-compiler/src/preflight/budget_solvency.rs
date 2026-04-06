@@ -5,26 +5,16 @@
 //!
 //! O(1) — a single comparison. No tree walk required.
 
-use hologram_core::op::RingLevel;
 use hologram_core::term::HoloCompileUnit;
-use uor_foundation::enums::QuantumLevel;
+use uor_foundation::QuantumLevel;
 
 /// Compute the minimum viable thermodynamic budget for a quantum level.
 ///
 /// `min = bitsWidth(Q_k) × ln(2)` in k_B T units.
-/// - Q0 (8-bit):  8 × ln(2) ≈ 5.545
-/// - Q1 (16-bit): 16 × ln(2) ≈ 11.090
-/// - Q2 (24-bit): 24 × ln(2) ≈ 16.636
-/// - Q3 (32-bit): 32 × ln(2) ≈ 22.181
+/// Works for any quantum level, not just Q0–Q3.
 #[inline]
-pub fn minimum_budget(level: RingLevel) -> f64 {
-    let ql = match level {
-        RingLevel::Q0 => QuantumLevel::Q0,
-        RingLevel::Q1 => QuantumLevel::Q1,
-        RingLevel::Q2 => QuantumLevel::Q2,
-        RingLevel::Q3 => QuantumLevel::Q3,
-    };
-    (ql.bits_width() as f64) * core::f64::consts::LN_2
+pub fn minimum_budget(level: QuantumLevel) -> f64 {
+    (level.bits_width() as f64) * core::f64::consts::LN_2
 }
 
 /// CS_6: Budget solvency check. O(1).
@@ -45,78 +35,72 @@ mod tests {
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
 
-    fn make_unit(level: RingLevel, budget: f64) -> HoloCompileUnit {
+    fn make_unit(level: QuantumLevel, budget: f64) -> HoloCompileUnit {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        HoloCompileUnit::new(
-            arena,
-            root,
-            level,
-            budget,
-            &[VerificationDomain::Algebraic],
-        )
+        HoloCompileUnit::new(arena, root, level, budget, &[VerificationDomain::Algebraic])
     }
 
     #[test]
     fn q0_minimum_budget() {
-        let min = minimum_budget(RingLevel::Q0);
+        let min = minimum_budget(QuantumLevel::Q0);
         assert!((min - 5.545).abs() < 0.001, "Q0 min = {}", min);
     }
 
     #[test]
     fn q1_minimum_budget() {
-        let min = minimum_budget(RingLevel::Q1);
+        let min = minimum_budget(QuantumLevel::Q1);
         assert!((min - 11.090).abs() < 0.001, "Q1 min = {}", min);
     }
 
     #[test]
     fn q2_minimum_budget() {
-        let min = minimum_budget(RingLevel::Q2);
+        let min = minimum_budget(QuantumLevel::Q2);
         assert!((min - 16.636).abs() < 0.001, "Q2 min = {}", min);
     }
 
     #[test]
     fn q3_minimum_budget() {
-        let min = minimum_budget(RingLevel::Q3);
+        let min = minimum_budget(QuantumLevel::Q3);
         assert!((min - 22.181).abs() < 0.001, "Q3 min = {}", min);
     }
 
     #[test]
     fn q0_passes_at_minimum() {
-        let unit = make_unit(RingLevel::Q0, 5.546);
+        let unit = make_unit(QuantumLevel::Q0, 5.546);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q0_fails_below_minimum() {
-        let unit = make_unit(RingLevel::Q0, 5.0);
+        let unit = make_unit(QuantumLevel::Q0, 5.0);
         assert!(!check_budget_solvency(&unit));
     }
 
     #[test]
     fn q0_passes_exact_minimum() {
-        let min = minimum_budget(RingLevel::Q0);
-        let unit = make_unit(RingLevel::Q0, min);
+        let min = minimum_budget(QuantumLevel::Q0);
+        let unit = make_unit(QuantumLevel::Q0, min);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q3_passes_at_minimum() {
-        let min = minimum_budget(RingLevel::Q3);
-        let unit = make_unit(RingLevel::Q3, min);
+        let min = minimum_budget(QuantumLevel::Q3);
+        let unit = make_unit(QuantumLevel::Q3, min);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q3_fails_below_minimum() {
-        let unit = make_unit(RingLevel::Q3, 22.0);
+        let unit = make_unit(QuantumLevel::Q3, 22.0);
         assert!(!check_budget_solvency(&unit));
     }
 
     #[test]
     fn budget_solvency_performance() {
         // Performance contract: 10M checks < 50ms (< 5ns each, O(1))
-        let unit = make_unit(RingLevel::Q0, 6.0);
+        let unit = make_unit(QuantumLevel::Q0, 6.0);
         let start = std::time::Instant::now();
         for _ in 0..10_000_000 {
             let _ = check_budget_solvency(&unit);

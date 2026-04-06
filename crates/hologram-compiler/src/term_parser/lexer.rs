@@ -126,15 +126,42 @@ impl<'src> Lexer<'src> {
 
         // Single-character tokens
         match b {
-            b'(' => { self.pos += 1; return Ok(Token::LParen); }
-            b')' => { self.pos += 1; return Ok(Token::RParen); }
-            b'{' => { self.pos += 1; return Ok(Token::LBrace); }
-            b'}' => { self.pos += 1; return Ok(Token::RBrace); }
-            b',' => { self.pos += 1; return Ok(Token::Comma); }
-            b':' => { self.pos += 1; return Ok(Token::Colon); }
-            b';' => { self.pos += 1; return Ok(Token::Semi); }
-            b'@' => { self.pos += 1; return Ok(Token::At); }
-            b'=' => { self.pos += 1; return Ok(Token::Eq); }
+            b'(' => {
+                self.pos += 1;
+                return Ok(Token::LParen);
+            }
+            b')' => {
+                self.pos += 1;
+                return Ok(Token::RParen);
+            }
+            b'{' => {
+                self.pos += 1;
+                return Ok(Token::LBrace);
+            }
+            b'}' => {
+                self.pos += 1;
+                return Ok(Token::RBrace);
+            }
+            b',' => {
+                self.pos += 1;
+                return Ok(Token::Comma);
+            }
+            b':' => {
+                self.pos += 1;
+                return Ok(Token::Colon);
+            }
+            b';' => {
+                self.pos += 1;
+                return Ok(Token::Semi);
+            }
+            b'@' => {
+                self.pos += 1;
+                return Ok(Token::At);
+            }
+            b'=' => {
+                self.pos += 1;
+                return Ok(Token::Eq);
+            }
             _ => {}
         }
 
@@ -382,10 +409,7 @@ mod tests {
     #[test]
     fn lex_quantum_literal() {
         let tokens = lex_all("42@Q1");
-        assert_eq!(
-            tokens,
-            vec![Token::Int(42), Token::At, Token::Q1]
-        );
+        assert_eq!(tokens, vec![Token::Int(42), Token::At, Token::Q1]);
     }
 
     #[test]
@@ -394,9 +418,16 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Neg, Token::Bnot, Token::Succ, Token::Pred,
-                Token::Add, Token::Sub, Token::Mul, Token::Xor,
-                Token::And, Token::Or,
+                Token::Neg,
+                Token::Bnot,
+                Token::Succ,
+                Token::Pred,
+                Token::Add,
+                Token::Sub,
+                Token::Mul,
+                Token::Xor,
+                Token::And,
+                Token::Or,
             ]
         );
     }
@@ -407,8 +438,12 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Add, Token::LParen, Token::Int(1), Token::Comma,
-                Token::Int(2), Token::RParen,
+                Token::Add,
+                Token::LParen,
+                Token::Int(1),
+                Token::Comma,
+                Token::Int(2),
+                Token::RParen,
             ]
         );
     }
@@ -419,8 +454,12 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Add, Token::LParen, Token::Int(1), Token::Comma,
-                Token::Int(2), Token::RParen,
+                Token::Add,
+                Token::LParen,
+                Token::Int(1),
+                Token::Comma,
+                Token::Int(2),
+                Token::RParen,
             ]
         );
     }
@@ -437,8 +476,12 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Residue, Token::Carry, Token::Hamming,
-                Token::Depth, Token::Fiber, Token::Affine,
+                Token::Residue,
+                Token::Carry,
+                Token::Hamming,
+                Token::Depth,
+                Token::Fiber,
+                Token::Affine,
             ]
         );
     }
@@ -449,8 +492,13 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::Type, Token::Ident("MyType"), Token::LBrace,
-                Token::Residue, Token::Colon, Token::Int(0), Token::Semi,
+                Token::Type,
+                Token::Ident("MyType"),
+                Token::LBrace,
+                Token::Residue,
+                Token::Colon,
+                Token::Int(0),
+                Token::Semi,
                 Token::RBrace,
             ]
         );

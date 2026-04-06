@@ -335,9 +335,8 @@ pub fn try_fuse_lut_gemm_activation(
     };
 
     // Current node must be a LUT-GEMM variant.
-    let (is_q4, cid) = match &node.op {
-        GraphOp::MatMulLut4(cid) => (true, *cid),
-        GraphOp::MatMulLut8(cid) => (false, *cid),
+    let (bits, cid) = match &node.op {
+        GraphOp::MatMulLut { bits, cid } => (*bits, *cid),
         _ => return false,
     };
 
@@ -364,10 +363,10 @@ pub fn try_fuse_lut_gemm_activation(
     }
 
     let lut_inputs = node.inputs.clone();
-    let fused_op = if is_q4 {
-        GraphOp::MatMulLut4Activation(cid, activation)
-    } else {
-        GraphOp::MatMulLut8Activation(cid, activation)
+    let fused_op = GraphOp::MatMulLutActivation {
+        bits,
+        cid,
+        activation,
     };
     graph.replace_op(succ_id, fused_op);
     if let Some(succ_node) = graph.get_mut(succ_id) {

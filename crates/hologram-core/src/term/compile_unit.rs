@@ -7,12 +7,12 @@
 extern crate alloc;
 use alloc::boxed::Box;
 
-use crate::op::RingLevel;
 use crate::HoloPrimitives;
 
 use super::{Assertion, Binding, TermArena, TermId, TypeId};
 
-use uor_foundation::enums::{QuantumLevel, VerificationDomain};
+use uor_foundation::enums::VerificationDomain;
+use uor_foundation::QuantumLevel;
 
 /// Maximum number of let-bindings per compile unit.
 pub const MAX_BINDINGS: usize = 64;
@@ -20,8 +20,28 @@ pub const MAX_BINDINGS: usize = 64;
 pub const MAX_ASSERTIONS: usize = 32;
 /// Maximum number of type declarations per compile unit.
 pub const MAX_TYPE_DECLS: usize = 16;
+/// Maximum effect declarations per compile unit.
+pub const MAX_EFFECT_DECLS: usize = 32;
+/// Maximum dispatch declarations per compile unit.
+pub const MAX_DISPATCH_DECLS: usize = 16;
 /// Maximum number of target verification domains (all 12 defined by the ontology).
 pub const MAX_DOMAINS: usize = 12;
+
+/// A declared effect for cascade registration.
+#[derive(Clone, Copy, Debug)]
+pub struct EffectDecl {
+    pub budget_delta: i64,
+    pub commutes: bool,
+    pub fiber_count: u8,
+    pub target_fibers: [u32; 8],
+}
+
+/// A declared dispatch rule for cascade registration.
+#[derive(Clone, Copy, Debug)]
+pub struct DispatchDecl {
+    pub resolver_id: u16,
+    pub priority: u16,
+}
 
 /// The typed input to the cascade pipeline.
 ///
@@ -29,7 +49,7 @@ pub const MAX_DOMAINS: usize = 12;
 /// the verification domains the submitter requires, and a thermodynamic
 /// budget authorizing the maximum Landauer cost of resolution.
 ///
-/// Mirrors `cascade:CompileUnit` from uor-foundation v0.1.3.
+/// Mirrors `cascade:CompileUnit` from uor-foundation v0.1.4.
 #[derive(Debug)]
 pub struct HoloCompileUnit {
     /// The root term of the computation.
@@ -50,8 +70,17 @@ pub struct HoloCompileUnit {
     pub type_decls: Box<[super::TypeDecl; MAX_TYPE_DECLS]>,
     pub type_decl_count: u8,
 
-    /// Quantum level (Q0/Q1/Q2/Q3). Maps to `cascade:unitQuantumLevel`.
-    pub quantum_level: RingLevel,
+    /// Effect declarations. Boxed to reduce stack footprint.
+    pub effect_decls: [EffectDecl; MAX_EFFECT_DECLS],
+    pub effect_decl_count: u8,
+
+    /// Dispatch declarations. Boxed to reduce stack footprint.
+    pub dispatch_decls: [DispatchDecl; MAX_DISPATCH_DECLS],
+    pub dispatch_decl_count: u8,
+
+    /// Quantum level. Maps to `cascade:unitQuantumLevel`.
+    /// Supports any level (Q0–Q7+), not limited to Q0–Q3.
+    pub quantum_level: QuantumLevel,
 
     /// Target verification domains. Materialized array for trait compliance
     /// (`CompileUnit::target_domains()` returns `&[VerificationDomain]`).
@@ -106,6 +135,8 @@ impl PreflightStatus {
     pub const PREFLIGHT_TIMING: u8 = 4;
     /// `cascade:RuntimeTiming` — preflightOrder 5.
     pub const RUNTIME_TIMING: u8 = 5;
+    /// Enforcement-level validation (v0.1.4 builder) — preflightOrder 6.
+    pub const ENFORCEMENT_VALIDATE: u8 = 6;
 
     /// Mark a check as passed.
     #[inline]
@@ -143,6 +174,7 @@ impl PreflightStatus {
 pub struct HoloTerm;
 
 impl uor_foundation::kernel::schema::Term<HoloPrimitives> for HoloTerm {}
+impl uor_foundation::kernel::schema::TermExpression<HoloPrimitives> for HoloTerm {}
 
 /// Singleton for `CompileUnit::root_term()` return.
 static HOLO_TERM_SINGLETON: HoloTerm = HoloTerm;
@@ -238,30 +270,23 @@ impl core::fmt::Debug for HoloAddress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use raw hex bytes directly instead of trait method to avoid import requirement.
         let hex = unsafe { core::str::from_utf8_unchecked(&self.digest_hex[..64]) };
-        f.debug_struct("HoloAddress")
-            .field("digest", &hex)
-            .finish()
+        f.debug_struct("HoloAddress").field("digest", &hex).finish()
     }
 }
 
 // ── CompileUnit trait implementation ──────────────────────────────────────────
 
 impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompileUnit {
-    type Term = HoloTerm;
+    type TermExpression = HoloTerm;
 
     #[inline]
-    fn root_term(&self) -> &Self::Term {
+    fn root_term(&self) -> &Self::TermExpression {
         &HOLO_TERM_SINGLETON
     }
 
     #[inline]
     fn unit_quantum_level(&self) -> QuantumLevel {
-        match self.quantum_level {
-            RingLevel::Q0 => QuantumLevel::Q0,
-            RingLevel::Q1 => QuantumLevel::Q1,
-            RingLevel::Q2 => QuantumLevel::Q2,
-            RingLevel::Q3 => QuantumLevel::Q3,
-        }
+        self.quantum_level
     }
 
     fn target_domains(&self) -> &[VerificationDomain] {
@@ -287,7 +312,7 @@ impl HoloCompileUnit {
     pub fn new(
         arena: TermArena,
         root_term: TermId,
-        quantum_level: RingLevel,
+        quantum_level: QuantumLevel,
         thermodynamic_budget: f64,
         target_domains: &[VerificationDomain],
     ) -> Self {
@@ -298,24 +323,42 @@ impl HoloCompileUnit {
         Self {
             root_term,
             arena,
-            bindings: Box::new([Binding {
-                var: super::VarId(0),
-                ty: TypeId::UNCONSTRAINED,
-                rhs: TermId(0),
-            }; MAX_BINDINGS]),
+            bindings: Box::new(
+                [Binding {
+                    var: super::VarId(0),
+                    ty: TypeId::UNCONSTRAINED,
+                    rhs: TermId(0),
+                }; MAX_BINDINGS],
+            ),
             binding_count: 0,
-            assertions: Box::new([Assertion {
-                lhs: TermId(0),
-                rhs: TermId(0),
-                canonical: false,
-            }; MAX_ASSERTIONS]),
+            assertions: Box::new(
+                [Assertion {
+                    lhs: TermId(0),
+                    rhs: TermId(0),
+                    canonical: false,
+                }; MAX_ASSERTIONS],
+            ),
             assertion_count: 0,
-            type_decls: Box::new([super::TypeDecl {
-                name_id: super::VarId(0),
-                constraint: super::ConstraintKind::Residue,
-                value: TermId(0),
-            }; MAX_TYPE_DECLS]),
+            type_decls: Box::new(
+                [super::TypeDecl {
+                    name_id: super::VarId(0),
+                    constraint: super::ConstraintKind::Residue,
+                    value: TermId(0),
+                }; MAX_TYPE_DECLS],
+            ),
             type_decl_count: 0,
+            effect_decls: [EffectDecl {
+                budget_delta: 0,
+                commutes: true,
+                fiber_count: 0,
+                target_fibers: [0; 8],
+            }; MAX_EFFECT_DECLS],
+            effect_decl_count: 0,
+            dispatch_decls: [DispatchDecl {
+                resolver_id: 0,
+                priority: 0,
+            }; MAX_DISPATCH_DECLS],
+            dispatch_decl_count: 0,
             quantum_level,
             target_domains_array,
             target_domain_count: count as u8,
@@ -332,6 +375,7 @@ mod tests {
     use super::*;
     use crate::op::PrimOp;
     use crate::term::TermKind;
+    use uor_foundation::QuantumLevel;
 
     #[test]
     fn preflight_status_bitmask() {
@@ -363,13 +407,13 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0, // > 5.545 minimum for Q0
             &[VerificationDomain::Algebraic],
         );
 
         assert_eq!(unit.root_term, root);
-        assert_eq!(unit.quantum_level, RingLevel::Q0);
+        assert_eq!(unit.quantum_level, QuantumLevel::Q0);
         assert_eq!(unit.thermodynamic_budget, 6.0);
         assert_eq!(unit.target_domain_count, 1);
         assert_eq!(unit.arena.len(), 3);
@@ -385,7 +429,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q1,
+            QuantumLevel::Q1,
             12.0,
             &[
                 VerificationDomain::Algebraic,

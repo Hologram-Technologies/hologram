@@ -410,14 +410,22 @@ fn softmax_in_place(out: &mut [f32], size: usize) {
             }
             continue;
         }
+        // Pass 1: subtract max — pure f32 subtraction, auto-vectorizes to SIMD.
+        for v in row.iter_mut() {
+            *v -= max;
+        }
+        // Pass 2: exp + accumulate sum.
         let mut sum = 0.0f32;
         for v in row.iter_mut() {
-            *v = (*v - max).exp();
-            sum += *v;
+            let e = v.exp();
+            *v = e;
+            sum += e;
         }
+        // Pass 3: normalize via reciprocal multiply (1 division vs N divisions).
         if sum > 0.0 {
+            let inv_sum = 1.0 / sum;
             for v in row.iter_mut() {
-                *v /= sum;
+                *v *= inv_sum;
             }
         } else {
             for v in row.iter_mut() {
@@ -434,7 +442,7 @@ fn rms_norm_in_place(out: &mut [f32], weight: &[f32], size: usize, epsilon: f32)
         let ms: f32 = row.iter().map(|v| v * v).sum::<f32>() / size as f32;
         let inv_rms = fast_rsqrt(ms + epsilon);
         for (v, &w) in row.iter_mut().zip(weight.iter()) {
-            *v = *v * inv_rms * w;
+            *v *= inv_rms * w;
         }
     }
 }

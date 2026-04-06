@@ -112,14 +112,9 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::FusedRmsNormActivation { .. }
         | GraphOp::FusedLayerNormActivation { .. }
         | GraphOp::FusedGroupNormActivation { .. }
-        | GraphOp::MatMulLut4(_)
-        | GraphOp::MatMulLut8(_)
-        | GraphOp::MatMulLut16(_)
-        | GraphOp::MatMulLut4Activation(_, _)
-        | GraphOp::MatMulLut8Activation(_, _)
-        | GraphOp::BatchMatMulLut4(_)
-        | GraphOp::BatchMatMulLut8(_)
-        | GraphOp::BatchMatMulLut16(_) => Domain::Float,
+        | GraphOp::MatMulLut { .. }
+        | GraphOp::BatchMatMulLut { .. }
+        | GraphOp::MatMulLutActivation { .. } => Domain::Float,
 
         GraphOp::Output
         | GraphOp::Constant(_)
@@ -205,7 +200,7 @@ mod tests {
         let input = g.add_node(GraphOp::Input);
         let relu = g.add_node(GraphOp::Lut(LutOp::Relu));
         let cid = hologram_graph::constant::ConstantId::new(1);
-        let matmul = g.add_node(GraphOp::MatMulLut8(cid));
+        let matmul = g.add_node(GraphOp::MatMulLut { bits: 8, cid });
         let output = g.add_node(GraphOp::Output);
         g.add_edge(input, relu);
         g.add_edge(relu, matmul);
@@ -215,7 +210,9 @@ mod tests {
         let order = schedule_order(&schedule);
         let boundaries = insert_qedl_boundaries(&g, &order);
         assert!(!boundaries.is_empty());
-        assert!(boundaries.iter().any(|(_, b, _)| *b == QedlBoundary::Dequantize));
+        assert!(boundaries
+            .iter()
+            .any(|(_, b, _)| *b == QedlBoundary::Dequantize));
     }
 
     #[test]

@@ -63,13 +63,14 @@ pub fn compute_unit_address(arena: &TermArena, root: TermId) -> [u8; 32] {
             | TermKind::Passthrough(arg) => {
                 stack.push(arg);
             }
-            TermKind::BinaryApp { lhs, rhs, .. }
-            | TermKind::RingBinaryApp { lhs, rhs, .. } => {
+            TermKind::BinaryApp { lhs, rhs, .. } | TermKind::RingBinaryApp { lhs, rhs, .. } => {
                 stack.push(rhs);
                 stack.push(lhs);
             }
             TermKind::FloatApp { arg0, arg1, .. } => {
-                if arg1.0 != u32::MAX { stack.push(arg1); }
+                if arg1.0 != u32::MAX {
+                    stack.push(arg1);
+                }
                 stack.push(arg0);
             }
             TermKind::Var(vid) => {
@@ -135,7 +136,12 @@ fn canonical_bytes(kind: &TermKind) -> [u8; 16] {
             buf[2] = *level as u8;
             buf[3..7].copy_from_slice(&arg.0.to_le_bytes());
         }
-        TermKind::RingBinaryApp { op, level, lhs, rhs } => {
+        TermKind::RingBinaryApp {
+            op,
+            level,
+            lhs,
+            rhs,
+        } => {
             buf[0] = 9;
             buf[1] = primop_byte(*op);
             buf[2] = *level as u8;
@@ -289,7 +295,10 @@ mod tests {
         });
         let addr2 = compute_unit_address(&a2, r2);
 
-        assert_ne!(addr1, addr2, "IntLit and QuantumLit should have different addresses");
+        assert_ne!(
+            addr1, addr2,
+            "IntLit and QuantumLit should have different addresses"
+        );
     }
 
     #[test]
@@ -314,6 +323,9 @@ mod tests {
         });
         let addr2 = compute_unit_address(&a2, r2);
 
-        assert_ne!(addr1, addr2, "sub(1,2) and sub(2,1) must have different addresses");
+        assert_ne!(
+            addr1, addr2,
+            "sub(1,2) and sub(2,1) must have different addresses"
+        );
     }
 }

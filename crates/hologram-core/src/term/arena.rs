@@ -42,6 +42,9 @@ pub struct TermArena {
     /// Side table for fused ElementWiseView values (indexed by `ViewRef`).
     #[cfg(not(feature = "no_alloc"))]
     views: alloc::vec::Vec<ElementWiseView>,
+    /// Side table for Try error handlers: (body_term_id, handler_term_id).
+    #[cfg(not(feature = "no_alloc"))]
+    error_handlers: alloc::vec::Vec<(super::TermId, super::TermId)>,
 }
 
 #[cfg(not(feature = "no_alloc"))]
@@ -55,6 +58,7 @@ impl TermArena {
             nodes: alloc::vec::Vec::new(),
             float_ops: alloc::vec::Vec::new(),
             views: alloc::vec::Vec::new(),
+            error_handlers: alloc::vec::Vec::new(),
         }
     }
 
@@ -65,6 +69,7 @@ impl TermArena {
             nodes: alloc::vec::Vec::with_capacity(cap),
             float_ops: alloc::vec::Vec::new(),
             views: alloc::vec::Vec::new(),
+            error_handlers: alloc::vec::Vec::new(),
         }
     }
 
@@ -183,6 +188,21 @@ impl TermArena {
         &self.views[r.0 as usize]
     }
 
+    /// Register a Try error handler: maps body term → handler term.
+    #[cfg(not(feature = "no_alloc"))]
+    pub fn register_error_handler(&mut self, body: super::TermId, handler: super::TermId) {
+        self.error_handlers.push((body, handler));
+    }
+
+    /// Look up the error handler for a body term, if any.
+    #[cfg(not(feature = "no_alloc"))]
+    pub fn error_handler_for(&self, body: super::TermId) -> Option<super::TermId> {
+        self.error_handlers
+            .iter()
+            .find(|(b, _)| *b == body)
+            .map(|(_, h)| *h)
+    }
+
     /// Iterate over all allocated nodes with their IDs.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (TermId, &TermNode)> {
@@ -219,9 +239,9 @@ impl core::fmt::Debug for TermArena {
 #[cfg(test)]
 mod tests {
     extern crate alloc;
-    use alloc::vec::Vec;
     use super::*;
     use crate::op::PrimOp;
+    use alloc::vec::Vec;
 
     #[test]
     fn alloc_and_get() {

@@ -1,11 +1,12 @@
 //! Preflight pipeline for CompileUnit admission.
 //!
-//! Implements the cascade admission sequence from uor-foundation v0.1.3:
+//! Implements the cascade admission sequence from uor-foundation v0.1.4:
 //! 1. Shape validation (`conformance:CompileUnitShape`)
 //! 2. Budget solvency check (`cascade:BudgetSolvencyCheck`, preflightOrder 0, CS_6)
 //! 3. Unit address computation (`op:CS_7`)
 
 pub mod budget_solvency;
+pub mod enforcement_validate;
 pub mod shape;
 pub mod type_check;
 pub mod unit_address;
@@ -23,10 +24,9 @@ pub enum PreflightError {
     /// Shape validation failed.
     Shape(ShapeError),
     /// CS_6: thermodynamic budget is below the Landauer minimum.
-    BudgetInsufficient {
-        declared: f64,
-        minimum: f64,
-    },
+    BudgetInsufficient { declared: f64, minimum: f64 },
+    /// Enforcement-level validation failed (v0.1.4 builder).
+    EnforcementViolation(uor_foundation::enforcement::ShapeViolation),
 }
 
 impl core::fmt::Display for PreflightError {
@@ -37,6 +37,11 @@ impl core::fmt::Display for PreflightError {
                 f,
                 "budget solvency failed: declared {} < minimum {}",
                 declared, minimum
+            ),
+            Self::EnforcementViolation(v) => write!(
+                f,
+                "enforcement validation failed: {} ({})",
+                v.property_iri, v.kind
             ),
         }
     }
@@ -52,7 +57,7 @@ impl From<ShapeError> for PreflightError {
 
 /// Run the full preflight pipeline on a CompileUnit.
 ///
-/// Sequence (per uor-foundation v0.1.3 cascade admission):
+/// Sequence (per uor-foundation v0.1.4 cascade admission):
 /// 1. Shape validation (`CompileUnitShape` — 4 PropertyConstraints)
 /// 2. Budget solvency check (CS_6, preflightOrder 0)
 /// 3. Unit address computation (CS_7)
@@ -62,6 +67,18 @@ impl From<ShapeError> for PreflightError {
 pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
     // Step 0: Shape validation (structural precondition).
     validate_shape(unit)?;
+
+    // Step 0b: Enforcement-level validation (v0.1.4 declarative preflight).
+    match enforcement_validate::enforcement_validate(unit) {
+        Ok(()) => unit
+            .preflight
+            .mark_passed(PreflightStatus::ENFORCEMENT_VALIDATE),
+        Err(violation) => {
+            unit.preflight
+                .mark_failed(PreflightStatus::ENFORCEMENT_VALIDATE);
+            return Err(PreflightError::EnforcementViolation(violation));
+        }
+    }
 
     // Step 1: Budget solvency (preflightOrder 0, identity CS_6).
     if check_budget_solvency(unit) {
@@ -76,9 +93,12 @@ pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
 
     // Step 2: Type constraint validation (preflightOrder 2).
     match check_type_constraints(unit) {
-        Ok(()) => unit.preflight.mark_passed(PreflightStatus::DISPATCH_COVERAGE),
+        Ok(()) => unit
+            .preflight
+            .mark_passed(PreflightStatus::DISPATCH_COVERAGE),
         Err(msg) => {
-            unit.preflight.mark_failed(PreflightStatus::DISPATCH_COVERAGE);
+            unit.preflight
+                .mark_failed(PreflightStatus::DISPATCH_COVERAGE);
             return Err(PreflightError::Shape(ShapeError::InvalidTypeDecl(msg)));
         }
     }
@@ -93,9 +113,10 @@ pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_core::op::{PrimOp, RingLevel};
+    use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
+    use uor_foundation::QuantumLevel;
 
     #[test]
     fn preflight_passes_valid_unit() {
@@ -110,7 +131,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -127,7 +148,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             5.0, // below Q0 minimum of 5.545
             &[VerificationDomain::Algebraic],
         );
@@ -145,11 +166,14 @@ mod tests {
     fn preflight_rejects_missing_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        let mut unit = HoloCompileUnit::new(arena, root, RingLevel::Q0, 6.0, &[]);
+        let mut unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
 
         let result = run_preflight(&mut unit);
         assert!(result.is_err());
-        assert!(matches!(result, Err(PreflightError::Shape(ShapeError::NoTargetDomains))));
+        assert!(matches!(
+            result,
+            Err(PreflightError::Shape(ShapeError::NoTargetDomains))
+        ));
     }
 
     #[test]
@@ -159,7 +183,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -179,7 +203,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -190,7 +214,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             10.0, // different budget — should not affect address
             &[
                 VerificationDomain::Algebraic,
@@ -212,7 +236,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -223,7 +247,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );

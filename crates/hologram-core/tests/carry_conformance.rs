@@ -4,36 +4,41 @@
 //! These tests define the dynamic precision contract: CurvatureFlux must
 //! select the correct ring level for any (model, actor) workload.
 
-use hologram_core::carry::{
-    lift_q0_to_q1, lift_q0_to_q2, lift_q1_to_q2, lower_q1_to_q0, lower_q2_to_q1, CurvatureFlux,
-};
+use hologram_core::carry::{lift, lower, CurvatureFlux};
 use hologram_core::op::RingLevel;
+use uor_foundation::QuantumLevel;
 
 // ── DC_5: Exact Lift/Lower Round-Trips ──────────────────────────────────────
 
 #[test]
 fn lift_lower_round_trip_exhaustive_q0() {
     for x in 0u8..=255 {
-        let q1 = lift_q0_to_q1(x);
-        let back = lower_q1_to_q0(q1).expect("Q0→Q1→Q0 round-trip must succeed");
-        assert_eq!(back, x, "round-trip failed at {x}");
+        let q1 = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
+        let back = lower(q1, QuantumLevel::Q1, QuantumLevel::Q0)
+            .expect("Q0→Q1→Q0 round-trip must succeed");
+        assert_eq!(back as u8, x, "round-trip failed at {x}");
     }
 }
 
 #[test]
 fn lift_lower_round_trip_q1_q2() {
     for x in (0u16..=u16::MAX).step_by(257) {
-        let q2 = lift_q1_to_q2(x);
-        let back = lower_q2_to_q1(q2).expect("Q1→Q2→Q1 round-trip must succeed");
-        assert_eq!(back, x, "round-trip failed at {x}");
+        let q2 = lift(x as u64, QuantumLevel::Q1, QuantumLevel::Q2);
+        let back = lower(q2, QuantumLevel::Q2, QuantumLevel::Q1)
+            .expect("Q1→Q2→Q1 round-trip must succeed");
+        assert_eq!(back as u16, x, "round-trip failed at {x}");
     }
 }
 
 #[test]
 fn lift_composition_exact() {
     for x in 0u8..=255 {
-        let direct = lift_q0_to_q2(x);
-        let stepped = lift_q1_to_q2(lift_q0_to_q1(x));
+        let direct = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q2);
+        let stepped = lift(
+            lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1),
+            QuantumLevel::Q1,
+            QuantumLevel::Q2,
+        );
         assert_eq!(direct, stepped, "lift composition not exact at {x}");
     }
 }
@@ -115,13 +120,11 @@ fn flux_model_actor_headroom_gpt2_small() {
 
 // ── Q3 Carry Tracking (Phase 2A) ───────────────────────────────────────────
 
-// This test will FAIL until CurvatureFlux is extended with q3_carry field.
-// Currently Q3 carry is lumped with Q2 in the accumulate() match arm.
 #[test]
 fn flux_extends_to_q3() {
     let mut flux = CurvatureFlux::ZERO;
     flux.accumulate(1, RingLevel::Q3);
-    // After Phase 2A: Q3 carry must promote to Q3, not Q2
+    // Q3 carry must promote to Q3
     assert_eq!(
         flux.required_level(),
         RingLevel::Q3,

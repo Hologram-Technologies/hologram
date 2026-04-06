@@ -17,7 +17,11 @@ pub fn critical_path_from_order(graph: &Graph, order: &[NodeId]) -> GraphResult<
     if order.is_empty() {
         return Ok(0);
     }
-    let max_idx = order.iter().map(|id| id.index() as usize + 1).max().unwrap_or(0);
+    let max_idx = order
+        .iter()
+        .map(|id| id.index() as usize + 1)
+        .max()
+        .unwrap_or(0);
     let mut longest = vec![0usize; max_idx];
     for &id in order {
         let pred_max = graph

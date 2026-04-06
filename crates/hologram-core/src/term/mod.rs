@@ -9,9 +9,13 @@
 
 mod arena;
 pub mod compile_unit;
+pub mod enforcement_bridge;
 
 pub use arena::TermArena;
-pub use compile_unit::{HoloAddress, HoloCompileUnit, PreflightStatus};
+pub use compile_unit::{
+    DispatchDecl, EffectDecl, HoloAddress, HoloCompileUnit, PreflightStatus, MAX_DISPATCH_DECLS,
+    MAX_EFFECT_DECLS,
+};
 
 use crate::op::{LutOp, PrimOp, RingLevel};
 
@@ -75,7 +79,11 @@ pub enum TermKind {
 
     /// Binary application — `op(lhs, rhs)`.
     /// Grammar: `binary-application ::= binary-op "(" term "," term ")"`.
-    BinaryApp { op: PrimOp, lhs: TermId, rhs: TermId },
+    BinaryApp {
+        op: PrimOp,
+        lhs: TermId,
+        rhs: TermId,
+    },
 
     /// Variable reference by de Bruijn index.
     /// Grammar: `variable ::= identifier`.
@@ -86,17 +94,29 @@ pub enum TermKind {
     LutApp { op: LutOp, arg: TermId },
 
     // ── Compiler IR variants (produced by lowering/fusion, not user-parseable) ──
-
     /// Float operation application. The `FloatOpRef` indexes into the arena's
     /// float op table (avoids bloating TermKind with large FloatOp variants).
     /// `arg1` is `TermId(u32::MAX)` for unary float ops.
-    FloatApp { op: FloatOpRef, arg0: TermId, arg1: TermId },
+    FloatApp {
+        op: FloatOpRef,
+        arg0: TermId,
+        arg1: TermId,
+    },
 
     /// Ring-level tagged unary operation (produced by precision promotion pass).
-    RingUnaryApp { op: PrimOp, level: RingLevel, arg: TermId },
+    RingUnaryApp {
+        op: PrimOp,
+        level: RingLevel,
+        arg: TermId,
+    },
 
     /// Ring-level tagged binary operation (produced by precision promotion pass).
-    RingBinaryApp { op: PrimOp, level: RingLevel, lhs: TermId, rhs: TermId },
+    RingBinaryApp {
+        op: PrimOp,
+        level: RingLevel,
+        lhs: TermId,
+        rhs: TermId,
+    },
 
     /// Reference to a constant in the constant store.
     Constant(ConstRef),

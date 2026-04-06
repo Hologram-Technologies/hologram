@@ -4,7 +4,7 @@
 //! `SaturationCertificate` already exists for the pair `(unitAddress, unitQuantumLevel)`,
 //! the cascade can skip to Extract without executing stages 1-4.
 
-use hologram_core::op::RingLevel;
+use uor_foundation::QuantumLevel;
 
 /// Proof that a CompileUnit has been fully resolved through the cascade.
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub struct Certificate {
     /// Content-addressed identifier of the root term graph.
     pub unit_address: [u8; 32],
     /// Quantum level at which the computation was verified.
-    pub quantum_level: RingLevel,
+    pub quantum_level: QuantumLevel,
     /// Total Landauer cost consumed during cascade evaluation.
     pub budget_consumed: f64,
     /// Whether the cascade converged successfully.
@@ -23,14 +23,14 @@ pub struct Certificate {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct CertKey {
     address: [u8; 32],
-    level: RingLevel,
+    level: QuantumLevel,
 }
 
 impl core::hash::Hash for CertKey {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         state.write(&self.address);
-        state.write_u8(self.level as u8);
+        state.write_u32(self.level.index());
     }
 }
 
@@ -76,7 +76,7 @@ impl CertificateStore {
     /// Look up a certificate by `(unit_address, quantum_level)`.
     ///
     /// O(1) amortized — FNV-style hash on the 33-byte key followed by linear probing.
-    pub fn get(&self, address: &[u8; 32], level: RingLevel) -> Option<&Certificate> {
+    pub fn get(&self, address: &[u8; 32], level: QuantumLevel) -> Option<&Certificate> {
         let key = CertKey {
             address: *address,
             level,
@@ -185,7 +185,7 @@ impl CertificateStore {
             h ^= u64::from_le_bytes(buf);
             h = h.wrapping_mul(0x100000001b3); // FNV prime
         }
-        h ^= key.level as u64;
+        h ^= key.level.index() as u64;
         h = h.wrapping_mul(0x100000001b3);
         (h as usize) & self.mask
     }
@@ -203,7 +203,7 @@ impl CertificateStore {
         for slot in &self.slots {
             if let Some((key, cert)) = slot {
                 buf.extend_from_slice(&key.address);
-                buf.push(key.level as u8);
+                buf.push(key.level.index() as u8);
                 buf.extend_from_slice(&cert.budget_consumed.to_le_bytes());
                 buf.push(if cert.converged { 1 } else { 0 });
             }
@@ -230,13 +230,7 @@ impl CertificateStore {
             }
             let mut address = [0u8; 32];
             address.copy_from_slice(&data[offset..offset + 32]);
-            let level = match data[offset + 32] {
-                0 => hologram_core::op::RingLevel::Q0,
-                1 => hologram_core::op::RingLevel::Q1,
-                2 => hologram_core::op::RingLevel::Q2,
-                3 => hologram_core::op::RingLevel::Q3,
-                _ => hologram_core::op::RingLevel::Q0,
-            };
+            let level = QuantumLevel::new(data[offset + 32] as u32);
             let budget = f64::from_le_bytes([
                 data[offset + 33],
                 data[offset + 34],
@@ -273,7 +267,7 @@ impl core::fmt::Debug for CertificateStore {
 mod tests {
     use super::*;
 
-    fn make_cert(addr_byte: u8, level: RingLevel) -> Certificate {
+    fn make_cert(addr_byte: u8, level: QuantumLevel) -> Certificate {
         let mut address = [0u8; 32];
         address[0] = addr_byte;
         Certificate {
@@ -287,10 +281,10 @@ mod tests {
     #[test]
     fn insert_and_lookup() {
         let mut store = CertificateStore::new(64);
-        let cert = make_cert(42, RingLevel::Q0);
+        let cert = make_cert(42, QuantumLevel::Q0);
         store.insert(cert.clone());
 
-        let result = store.get(&cert.unit_address, RingLevel::Q0);
+        let result = store.get(&cert.unit_address, QuantumLevel::Q0);
         assert!(result.is_some());
         assert_eq!(result.unwrap().unit_address[0], 42);
         assert!(result.unwrap().converged);
@@ -301,17 +295,17 @@ mod tests {
         let store = CertificateStore::new(64);
         let mut addr = [0u8; 32];
         addr[0] = 99;
-        assert!(store.get(&addr, RingLevel::Q0).is_none());
+        assert!(store.get(&addr, QuantumLevel::Q0).is_none());
     }
 
     #[test]
     fn different_levels_different_entries() {
         let mut store = CertificateStore::new(64);
-        let cert_q0 = make_cert(1, RingLevel::Q0);
+        let cert_q0 = make_cert(1, QuantumLevel::Q0);
         let cert_q1 = Certificate {
-            quantum_level: RingLevel::Q1,
+            quantum_level: QuantumLevel::Q1,
             budget_consumed: 10.0,
-            ..make_cert(1, RingLevel::Q1)
+            ..make_cert(1, QuantumLevel::Q1)
         };
 
         store.insert(cert_q0.clone());
@@ -319,27 +313,32 @@ mod tests {
 
         assert_eq!(store.len(), 2);
 
-        let r0 = store.get(&cert_q0.unit_address, RingLevel::Q0).unwrap();
+        let r0 = store.get(&cert_q0.unit_address, QuantumLevel::Q0).unwrap();
         assert_eq!(r0.budget_consumed, 5.0);
 
-        let r1 = store.get(&cert_q1.unit_address, RingLevel::Q1).unwrap();
+        let r1 = store.get(&cert_q1.unit_address, QuantumLevel::Q1).unwrap();
         assert_eq!(r1.budget_consumed, 10.0);
     }
 
     #[test]
     fn update_existing() {
         let mut store = CertificateStore::new(64);
-        let cert1 = make_cert(1, RingLevel::Q0);
+        let cert1 = make_cert(1, QuantumLevel::Q0);
         store.insert(cert1);
 
         let cert2 = Certificate {
             budget_consumed: 99.0,
-            ..make_cert(1, RingLevel::Q0)
+            ..make_cert(1, QuantumLevel::Q0)
         };
         store.insert(cert2);
 
         assert_eq!(store.len(), 1); // no duplicate
-        let r = store.get(&make_cert(1, RingLevel::Q0).unit_address, RingLevel::Q0).unwrap();
+        let r = store
+            .get(
+                &make_cert(1, QuantumLevel::Q0).unit_address,
+                QuantumLevel::Q0,
+            )
+            .unwrap();
         assert_eq!(r.budget_consumed, 99.0);
     }
 
@@ -347,7 +346,7 @@ mod tests {
     fn many_entries() {
         let mut store = CertificateStore::new(256);
         for i in 0..200u8 {
-            store.insert(make_cert(i, RingLevel::Q0));
+            store.insert(make_cert(i, QuantumLevel::Q0));
         }
         assert_eq!(store.len(), 200);
 
@@ -356,7 +355,7 @@ mod tests {
             let mut addr = [0u8; 32];
             addr[0] = i;
             assert!(
-                store.get(&addr, RingLevel::Q0).is_some(),
+                store.get(&addr, QuantumLevel::Q0).is_some(),
                 "missing entry for byte {}",
                 i
             );
@@ -380,9 +379,9 @@ mod tests {
     #[test]
     fn save_load_round_trip() {
         let mut store = CertificateStore::new(64);
-        store.insert(make_cert(1, RingLevel::Q0));
-        store.insert(make_cert(2, RingLevel::Q1));
-        store.insert(make_cert(3, RingLevel::Q0));
+        store.insert(make_cert(1, QuantumLevel::Q0));
+        store.insert(make_cert(2, QuantumLevel::Q1));
+        store.insert(make_cert(3, QuantumLevel::Q0));
 
         let dir = std::env::temp_dir();
         let path = dir.join("test_cert_store.bin");
@@ -393,13 +392,13 @@ mod tests {
 
         let mut addr1 = [0u8; 32];
         addr1[0] = 1;
-        let cert = loaded.get(&addr1, RingLevel::Q0).unwrap();
+        let cert = loaded.get(&addr1, QuantumLevel::Q0).unwrap();
         assert!(cert.converged);
         assert_eq!(cert.budget_consumed, 5.0);
 
         let mut addr2 = [0u8; 32];
         addr2[0] = 2;
-        assert!(loaded.get(&addr2, RingLevel::Q1).is_some());
+        assert!(loaded.get(&addr2, QuantumLevel::Q1).is_some());
 
         std::fs::remove_file(&path).ok();
     }
@@ -409,14 +408,14 @@ mod tests {
         // Performance contract: 1M lookups < 50ms (< 50ns each)
         let mut store = CertificateStore::new(1024);
         for i in 0..200u8 {
-            store.insert(make_cert(i, RingLevel::Q0));
+            store.insert(make_cert(i, QuantumLevel::Q0));
         }
         let mut addr = [0u8; 32];
         addr[0] = 100;
 
         let start = std::time::Instant::now();
         for _ in 0..1_000_000 {
-            let _ = store.get(&addr, RingLevel::Q0);
+            let _ = store.get(&addr, QuantumLevel::Q0);
         }
         let elapsed = start.elapsed();
         assert!(
@@ -431,7 +430,7 @@ mod tests {
         let mut store = CertificateStore::new(16);
         assert_eq!(store.capacity(), 16);
         for i in 0..13u8 {
-            store.insert(make_cert(i, RingLevel::Q0));
+            store.insert(make_cert(i, QuantumLevel::Q0));
         }
         assert!(store.capacity() >= 32, "store should have grown");
         assert_eq!(store.len(), 13);
@@ -439,7 +438,7 @@ mod tests {
             let mut addr = [0u8; 32];
             addr[0] = i;
             assert!(
-                store.get(&addr, RingLevel::Q0).is_some(),
+                store.get(&addr, QuantumLevel::Q0).is_some(),
                 "missing entry {} after grow",
                 i
             );

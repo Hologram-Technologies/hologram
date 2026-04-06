@@ -398,11 +398,12 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
                 Ok(TapeKernel::PrimBinary(*p))
             }
         }
-        GraphOp::MatMulLut4(cid) | GraphOp::BatchMatMulLut4(cid) => {
-            Ok(TapeKernel::MatMulLut4(*cid))
-        }
-        GraphOp::MatMulLut8(cid) | GraphOp::BatchMatMulLut8(cid) => {
-            Ok(TapeKernel::MatMulLut8(*cid))
+        GraphOp::MatMulLut { bits, cid } | GraphOp::BatchMatMulLut { bits, cid } => {
+            Ok(TapeKernel::MatMulLut {
+                bits: *bits,
+                cid: *cid,
+                activation: None,
+            })
         }
         GraphOp::FusedRmsNormActivation {
             size,
@@ -431,15 +432,15 @@ fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResu
             epsilon: *epsilon,
             activation: *activation,
         }),
-        GraphOp::MatMulLut4Activation(cid, activation) => {
-            Ok(TapeKernel::MatMulLut4Activation(*cid, *activation))
-        }
-        GraphOp::MatMulLut8Activation(cid, activation) => {
-            Ok(TapeKernel::MatMulLut8Activation(*cid, *activation))
-        }
-        GraphOp::MatMulLut16(cid) | GraphOp::BatchMatMulLut16(cid) => {
-            Ok(TapeKernel::MatMulLut16(*cid))
-        }
+        GraphOp::MatMulLutActivation {
+            bits,
+            cid,
+            activation,
+        } => Ok(TapeKernel::MatMulLut {
+            bits: *bits,
+            cid: *cid,
+            activation: Some(*activation),
+        }),
         GraphOp::RingPrimUnary(p, level) => Ok(TapeKernel::RingPrimUnary {
             op: *p,
             level: *level,
@@ -864,9 +865,7 @@ fn compute_weight_offset(
     constants: &hologram_graph::constant::ConstantStore,
 ) -> u32 {
     let cid = match kernel {
-        TapeKernel::MatMulLut4(cid)
-        | TapeKernel::MatMulLut8(cid)
-        | TapeKernel::MatMulLut16(cid) => *cid,
+        TapeKernel::MatMulLut { cid, .. } => *cid,
         _ => return 0,
     };
     match constants.get(cid) {

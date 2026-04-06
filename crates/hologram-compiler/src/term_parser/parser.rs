@@ -37,23 +37,29 @@ impl<'src> Parser<'src> {
             arena: TermArena::with_capacity(256),
             var_names: [""; MAX_VARS],
             var_count: 0,
-            bindings: Box::new([Binding {
-                var: VarId(0),
-                ty: TypeId::UNCONSTRAINED,
-                rhs: TermId(0),
-            }; 64]),
+            bindings: Box::new(
+                [Binding {
+                    var: VarId(0),
+                    ty: TypeId::UNCONSTRAINED,
+                    rhs: TermId(0),
+                }; 64],
+            ),
             binding_count: 0,
-            assertions: Box::new([Assertion {
-                lhs: TermId(0),
-                rhs: TermId(0),
-                canonical: false,
-            }; 32]),
+            assertions: Box::new(
+                [Assertion {
+                    lhs: TermId(0),
+                    rhs: TermId(0),
+                    canonical: false,
+                }; 32],
+            ),
             assertion_count: 0,
-            type_decls: Box::new([TypeDecl {
-                name_id: VarId(0),
-                constraint: ConstraintKind::Residue,
-                value: TermId(0),
-            }; 16]),
+            type_decls: Box::new(
+                [TypeDecl {
+                    name_id: VarId(0),
+                    constraint: ConstraintKind::Residue,
+                    value: TermId(0),
+                }; 16],
+            ),
             type_decl_count: 0,
         }
     }
@@ -205,21 +211,33 @@ impl<'src> Parser<'src> {
         let tok = self.lexer.peek()?;
         match tok {
             // Unary operations
-            Token::Neg | Token::Bnot | Token::Succ | Token::Pred => {
-                self.parse_unary_application()
-            }
+            Token::Neg | Token::Bnot | Token::Succ | Token::Pred => self.parse_unary_application(),
             // Binary operations
             Token::Add | Token::Sub | Token::Mul | Token::Xor | Token::And | Token::Or => {
                 self.parse_binary_application()
             }
             // LUT activation functions
-            Token::Sigmoid | Token::Tanh | Token::Exp | Token::Log | Token::Relu
-            | Token::Sqrt | Token::Abs | Token::Gelu | Token::Silu
-            | Token::Sin | Token::Cos | Token::Tan | Token::Asin | Token::Acos | Token::Atan
-            | Token::Log2 | Token::Log10 | Token::Exp2 | Token::Exp10
-            | Token::Square | Token::Cube => {
-                self.parse_lut_application()
-            }
+            Token::Sigmoid
+            | Token::Tanh
+            | Token::Exp
+            | Token::Log
+            | Token::Relu
+            | Token::Sqrt
+            | Token::Abs
+            | Token::Gelu
+            | Token::Silu
+            | Token::Sin
+            | Token::Cos
+            | Token::Tan
+            | Token::Asin
+            | Token::Acos
+            | Token::Atan
+            | Token::Log2
+            | Token::Log10
+            | Token::Exp2
+            | Token::Exp10
+            | Token::Square
+            | Token::Cube => self.parse_lut_application(),
             // Integer literal (possibly quantum-tagged)
             Token::Int(_) => self.parse_literal(),
             // Negative integer

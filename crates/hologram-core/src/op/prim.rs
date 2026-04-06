@@ -105,92 +105,57 @@ impl PrimOp {
         }
     }
 
-    /// Apply a unary primitive operation in Z/65536Z (Q1 ring).
+    // ── Unified ring arithmetic (dynamic precision) ──────────────────────────
+
+    /// Apply a unary ring operation at any byte width (1–8).
     ///
-    /// No float conversion — exact ring arithmetic on u16 values.
-    #[inline]
+    /// The mask `(1u64 << (byte_width * 8)) - 1` truncates to the ring modulus
+    /// Z/(2^(byte_width*8))Z. For byte_width == 8 (Q7), mask is u64::MAX.
+    ///
+    /// This is the single fast path for all quantum levels Q0–Q7.
+    #[inline(always)]
     #[must_use]
-    pub const fn apply_unary_q1(self, x: u16) -> u16 {
-        match self {
+    pub fn apply_unary_u64(self, x: u64, byte_width: u8) -> u64 {
+        let bits = (byte_width as u32) * 8;
+        let mask = if bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        let r = match self {
             Self::Neg => x.wrapping_neg(),
             Self::Bnot => !x,
             Self::Succ => x.wrapping_add(1),
             Self::Pred => x.wrapping_sub(1),
-            _ => 0, // binary ops: caller error
-        }
+            _ => 0,
+        };
+        r & mask
     }
 
-    /// Apply a binary primitive operation in Z/65536Z (Q1 ring).
+    /// Apply a binary ring operation at any byte width (1–8).
     ///
-    /// No float conversion — uses add_q1/mul_q1 native wrapping ops.
-    #[inline]
+    /// Uses native wrapping arithmetic on u64. For byte_width < 8, the result
+    /// is masked to the ring modulus. This produces identical results to the
+    /// per-level functions (which also use wrapping arithmetic + mask).
+    #[inline(always)]
     #[must_use]
-    pub fn apply_binary_q1(self, a: u16, b: u16) -> u16 {
-        match self {
-            Self::Add => crate::q1::arith::add_q1(a, b),
-            Self::Sub => crate::q1::arith::sub_q1(a, b),
-            Self::Mul => crate::q1::arith::mul_q1(a, b),
+    pub fn apply_binary_u64(self, a: u64, b: u64, byte_width: u8) -> u64 {
+        let bits = (byte_width as u32) * 8;
+        let mask = if bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        let r = match self {
+            Self::Add => a.wrapping_add(b),
+            Self::Sub => a.wrapping_sub(b),
+            Self::Mul => a.wrapping_mul(b),
             Self::Xor => a ^ b,
             Self::And => a & b,
             Self::Or => a | b,
-            _ => 0, // unary ops: caller error
-        }
-    }
-
-    /// Apply a unary primitive operation in Z/2^24 Z (Q2 ring).
-    #[inline(always)]
-    #[must_use]
-    pub const fn apply_unary_q2(self, x: u32) -> u32 {
-        match self {
-            Self::Neg => crate::q2::arith::neg_q2(x),
-            Self::Bnot => crate::q2::arith::bnot_q2(x),
-            Self::Succ => crate::q2::arith::succ_q2(x),
-            Self::Pred => crate::q2::arith::pred_q2(x),
-            _ => 0, // binary ops: caller error
-        }
-    }
-
-    /// Apply a binary primitive operation in Z/2^24 Z (Q2 ring).
-    #[inline(always)]
-    #[must_use]
-    pub fn apply_binary_q2(self, a: u32, b: u32) -> u32 {
-        match self {
-            Self::Add => crate::q2::arith::add_q2(a, b),
-            Self::Sub => crate::q2::arith::sub_q2(a, b),
-            Self::Mul => crate::q2::arith::mul_q2(a, b),
-            Self::Xor => (a ^ b) & 0x00FF_FFFF,
-            Self::And => a & b & 0x00FF_FFFF,
-            Self::Or => (a | b) & 0x00FF_FFFF,
-            _ => 0, // unary ops: caller error
-        }
-    }
-
-    /// Apply a unary primitive operation in Z/2^32 Z (Q3 ring).
-    #[inline(always)]
-    #[must_use]
-    pub const fn apply_unary_q3(self, x: u32) -> u32 {
-        match self {
-            Self::Neg => crate::quantum::q3_neg(x),
-            Self::Bnot => !x,
-            Self::Succ => x.wrapping_add(1),
-            Self::Pred => x.wrapping_sub(1),
-            _ => 0, // binary ops: caller error
-        }
-    }
-
-    /// Apply a binary primitive operation in Z/2^32 Z (Q3 ring).
-    #[inline(always)]
-    #[must_use]
-    pub fn apply_binary_q3(self, a: u32, b: u32) -> u32 {
-        match self {
-            Self::Add => crate::quantum::q3_add(a, b),
-            Self::Sub => crate::quantum::q3_sub(a, b),
-            Self::Mul => crate::quantum::q3_mul(a, b),
-            Self::Xor => a ^ b,
-            Self::And => a & b,
-            Self::Or => a | b,
-            _ => 0, // unary ops: caller error
-        }
+            _ => 0,
+        };
+        r & mask
     }
 
     /// Convert to uor-foundation PrimitiveOp.
@@ -343,57 +308,63 @@ mod tests {
 
     #[test]
     fn unary_q1_neg() {
-        assert_eq!(PrimOp::Neg.apply_unary_q1(0), 0);
-        assert_eq!(PrimOp::Neg.apply_unary_q1(1), 65535);
-        assert_eq!(PrimOp::Neg.apply_unary_q1(32768), 32768);
+        assert_eq!(PrimOp::Neg.apply_unary_u64(0, 2) as u16, 0);
+        assert_eq!(PrimOp::Neg.apply_unary_u64(1, 2) as u16, 65535);
+        assert_eq!(PrimOp::Neg.apply_unary_u64(32768, 2) as u16, 32768);
     }
 
     #[test]
     fn unary_q1_bnot() {
-        assert_eq!(PrimOp::Bnot.apply_unary_q1(0), 65535);
-        assert_eq!(PrimOp::Bnot.apply_unary_q1(0x00FF), 0xFF00);
+        assert_eq!(PrimOp::Bnot.apply_unary_u64(0, 2) as u16, 65535);
+        assert_eq!(PrimOp::Bnot.apply_unary_u64(0x00FF, 2) as u16, 0xFF00);
     }
 
     #[test]
     fn binary_q1_add_wrapping() {
-        assert_eq!(PrimOp::Add.apply_binary_q1(65535, 1), 0);
-        assert_eq!(PrimOp::Add.apply_binary_q1(100, 200), 300);
+        assert_eq!(PrimOp::Add.apply_binary_u64(65535, 1, 2) as u16, 0);
+        assert_eq!(PrimOp::Add.apply_binary_u64(100, 200, 2) as u16, 300);
     }
 
     #[test]
     fn binary_q1_mul_wrapping() {
-        assert_eq!(PrimOp::Mul.apply_binary_q1(256, 256), 0); // 65536 mod 65536
-        assert_eq!(PrimOp::Mul.apply_binary_q1(3, 3), 9);
+        assert_eq!(PrimOp::Mul.apply_binary_u64(256, 256, 2) as u16, 0); // 65536 mod 65536
+        assert_eq!(PrimOp::Mul.apply_binary_u64(3, 3, 2) as u16, 9);
     }
 
     #[test]
     fn unary_q2_neg_involution() {
-        for x in [0u32, 1, 255, 0xFFFF, 0xFFFFFF] {
-            let neg = PrimOp::Neg.apply_unary_q2(x);
-            assert_eq!(PrimOp::Neg.apply_unary_q2(neg), x & 0x00FF_FFFF);
+        for x in [0u64, 1, 255, 0xFFFF, 0xFFFFFF] {
+            let neg = PrimOp::Neg.apply_unary_u64(x, 3);
+            assert_eq!(PrimOp::Neg.apply_unary_u64(neg, 3), x & 0x00FF_FFFF);
         }
     }
 
     #[test]
     fn binary_q2_add_inverse() {
-        for a in [0u32, 1, 255, 65535, 0xFFFFFF] {
-            let neg_a = PrimOp::Neg.apply_unary_q2(a);
-            assert_eq!(PrimOp::Add.apply_binary_q2(a, neg_a), 0);
+        for a in [0u64, 1, 255, 65535, 0xFFFFFF] {
+            let neg_a = PrimOp::Neg.apply_unary_u64(a, 3);
+            assert_eq!(PrimOp::Add.apply_binary_u64(a, neg_a, 3), 0);
         }
     }
 
     #[test]
     fn unary_q3_neg_involution() {
-        for x in [0u32, 1, 127, u32::MAX / 2, u32::MAX] {
-            assert_eq!(PrimOp::Neg.apply_unary_q3(PrimOp::Neg.apply_unary_q3(x)), x);
+        for x in [0u64, 1, 127, (u32::MAX / 2) as u64, u32::MAX as u64] {
+            assert_eq!(
+                PrimOp::Neg.apply_unary_u64(PrimOp::Neg.apply_unary_u64(x, 4), 4),
+                x
+            );
         }
     }
 
     #[test]
     fn binary_q3_add_wrapping() {
-        assert_eq!(PrimOp::Add.apply_binary_q3(u32::MAX, 1), 0);
-        assert_eq!(PrimOp::Sub.apply_binary_q3(0, 1), u32::MAX);
-        assert_eq!(PrimOp::Mul.apply_binary_q3(2, 3), 6);
+        assert_eq!(
+            PrimOp::Add.apply_binary_u64(u32::MAX as u64, 1, 4) as u32,
+            0
+        );
+        assert_eq!(PrimOp::Sub.apply_binary_u64(0, 1, 4) as u32, u32::MAX);
+        assert_eq!(PrimOp::Mul.apply_binary_u64(2, 3, 4) as u32, 6);
     }
 
     #[test]
@@ -428,5 +399,153 @@ mod tests {
         assert!(!PrimOp::Sub.commutative());
         assert!(PrimOp::Xor.associative());
         assert!(!PrimOp::Sub.associative());
+    }
+
+    // ── Unified u64 arithmetic conformance ──────────────────────────────
+
+    #[test]
+    fn u64_unary_matches_q0_exhaustive() {
+        for x in 0..=255u8 {
+            let xw = x as u64;
+            assert_eq!(
+                PrimOp::Neg.apply_unary_u64(xw, 1) as u8,
+                PrimOp::Neg.apply_unary(x)
+            );
+            assert_eq!(
+                PrimOp::Bnot.apply_unary_u64(xw, 1) as u8,
+                PrimOp::Bnot.apply_unary(x)
+            );
+            assert_eq!(
+                PrimOp::Succ.apply_unary_u64(xw, 1) as u8,
+                PrimOp::Succ.apply_unary(x)
+            );
+            assert_eq!(
+                PrimOp::Pred.apply_unary_u64(xw, 1) as u8,
+                PrimOp::Pred.apply_unary(x)
+            );
+        }
+    }
+
+    #[test]
+    fn u64_binary_add_matches_q0_exhaustive() {
+        for a in 0..=255u8 {
+            for b in 0..=255u8 {
+                assert_eq!(
+                    PrimOp::Add.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                    PrimOp::Add.apply_binary(a, b),
+                    "Add({a}, {b}) mismatch"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn u64_binary_all_ops_q0_spot_check() {
+        let pairs = [
+            (0u8, 0u8),
+            (1, 1),
+            (127, 128),
+            (200, 100),
+            (255, 255),
+            (255, 1),
+        ];
+        for (a, b) in pairs {
+            assert_eq!(
+                PrimOp::Sub.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                PrimOp::Sub.apply_binary(a, b)
+            );
+            assert_eq!(
+                PrimOp::Mul.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                PrimOp::Mul.apply_binary(a, b)
+            );
+            assert_eq!(
+                PrimOp::Xor.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                PrimOp::Xor.apply_binary(a, b)
+            );
+            assert_eq!(
+                PrimOp::And.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                PrimOp::And.apply_binary(a, b)
+            );
+            assert_eq!(
+                PrimOp::Or.apply_binary_u64(a as u64, b as u64, 1) as u8,
+                PrimOp::Or.apply_binary(a, b)
+            );
+        }
+    }
+
+    #[test]
+    fn u64_binary_q1_spot_check() {
+        let pairs = [
+            (0u16, 0u16),
+            (1, 1),
+            (255, 256),
+            (60000, 10000),
+            (u16::MAX, 1),
+        ];
+        for (a, b) in pairs {
+            // Add wraps at 16 bits
+            let sum = PrimOp::Add.apply_binary_u64(a as u64, b as u64, 2) as u16;
+            assert_eq!(sum, a.wrapping_add(b), "Q1 Add({a}, {b}) mismatch");
+        }
+    }
+
+    #[test]
+    fn u64_binary_q3_spot_check() {
+        let pairs = [(0u32, 0u32), (1, 1), (u32::MAX, 1), (u32::MAX, u32::MAX)];
+        for (a, b) in pairs {
+            let sum = PrimOp::Add.apply_binary_u64(a as u64, b as u64, 4) as u32;
+            assert_eq!(sum, a.wrapping_add(b), "Q3 Add({a}, {b}) mismatch");
+        }
+    }
+
+    #[test]
+    fn u64_critical_identity_all_widths() {
+        // neg(bnot(x)) = succ(x) for all x in Z/(2^(w*8))Z
+        for width in 1..=8u8 {
+            let max_val = if width >= 8 {
+                255u64
+            } else {
+                (1u64 << (width as u64 * 8)) - 1
+            };
+            // Test boundary values
+            for x in [0u64, 1, max_val / 2, max_val - 1, max_val] {
+                let lhs =
+                    PrimOp::Neg.apply_unary_u64(PrimOp::Bnot.apply_unary_u64(x, width), width);
+                let rhs = PrimOp::Succ.apply_unary_u64(x, width);
+                assert_eq!(lhs, rhs, "critical identity failed at width={width}, x={x}");
+            }
+        }
+        // Exhaustive at width=1 (Q0)
+        for x in 0..=255u64 {
+            let lhs = PrimOp::Neg.apply_unary_u64(PrimOp::Bnot.apply_unary_u64(x, 1), 1);
+            let rhs = PrimOp::Succ.apply_unary_u64(x, 1);
+            assert_eq!(lhs, rhs, "critical identity Q0 exhaustive failed at x={x}");
+        }
+    }
+
+    #[test]
+    fn u64_ring_closure_width8() {
+        // Q7 (64-bit): verify wrapping arithmetic at u64 boundaries
+        let max = u64::MAX;
+        assert_eq!(PrimOp::Add.apply_binary_u64(max, 1, 8), 0);
+        assert_eq!(PrimOp::Sub.apply_binary_u64(0, 1, 8), max);
+        assert_eq!(PrimOp::Neg.apply_unary_u64(1, 8), max);
+        assert_eq!(PrimOp::Bnot.apply_unary_u64(0, 8), max);
+    }
+
+    #[test]
+    fn u64_performance() {
+        let start = std::time::Instant::now();
+        let mut acc = 0u64;
+        for i in 0..1_000_000u64 {
+            acc = PrimOp::Add.apply_binary_u64(acc, i, 4);
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 50,
+            "1M apply_binary_u64 calls took {}ms (target < 50ms)",
+            elapsed.as_millis()
+        );
+        let _ = acc; // prevent optimization
     }
 }

@@ -6,9 +6,9 @@
 //! Stage dispatch uses a 7-entry function pointer table for O(1) transitions
 //! with zero branching in the hot loop.
 
-use hologram_core::op::RingLevel;
-use hologram_graph::graph::node::NodeId;
 use hologram_graph::fusion::FusionStats;
+use hologram_graph::graph::node::NodeId;
+use uor_foundation::QuantumLevel;
 
 use crate::liveness::LivenessInterval;
 use crate::qedl::{EncodingId, QedlBoundary};
@@ -104,18 +104,34 @@ pub enum HaltReason {
     /// Contradiction detected during attestation.
     Contradiction(String),
     /// Stage-specific failure.
-    StageFailure { stage: CascadeStage, message: String },
+    StageFailure {
+        stage: CascadeStage,
+        message: String,
+    },
 }
 
 impl core::fmt::Display for HaltReason {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::BudgetExhausted { consumed, allocated } => {
-                write!(f, "budget exhausted: consumed {} > allocated {}", consumed, allocated)
+            Self::BudgetExhausted {
+                consumed,
+                allocated,
+            } => {
+                write!(
+                    f,
+                    "budget exhausted: consumed {} > allocated {}",
+                    consumed, allocated
+                )
             }
             Self::Contradiction(msg) => write!(f, "contradiction: {}", msg),
             Self::StageFailure { stage, message } => {
-                write!(f, "stage {} ({}): {}", stage.name(), stage.expected_phase(), message)
+                write!(
+                    f,
+                    "stage {} ({}): {}",
+                    stage.name(),
+                    stage.expected_phase(),
+                    message
+                )
             }
         }
     }
@@ -131,7 +147,7 @@ pub struct CascadeState {
     /// Content-addressed identifier of the root term graph (BLAKE3).
     pub unit_address: [u8; 32],
     /// Quantum level of the computation.
-    pub quantum_level: RingLevel,
+    pub quantum_level: QuantumLevel,
     /// Thermodynamic budget allocated by the submitter (k_B T units).
     pub budget_allocated: f64,
     /// Cumulative Landauer cost consumed so far.
@@ -162,6 +178,10 @@ pub struct CascadeState {
     pub skip_fusion: bool,
     /// Number of Prim nodes promoted to ring-level variants by Declare (Ω¹).
     pub ring_prims_promoted: usize,
+    /// Effect declarations registered during Declare stage (v0.1.4).
+    pub effect_store: crate::effect_decl::EffectStore,
+    /// Dispatch declarations registered during Declare stage (v0.1.4).
+    pub dispatch_registry: crate::dispatch_decl::DispatchRegistry,
 }
 
 impl core::fmt::Debug for CascadeState {
@@ -176,18 +196,17 @@ impl core::fmt::Debug for CascadeState {
             .field("has_tape", &self.tape.is_some())
             .field("has_archive", &self.archive_bytes.is_some())
             .field("skip_fusion", &self.skip_fusion)
-            .field("qedl_boundaries", &self.qedl_boundaries.as_ref().map_or(0, |v| v.len()))
+            .field(
+                "qedl_boundaries",
+                &self.qedl_boundaries.as_ref().map_or(0, |v| v.len()),
+            )
             .finish()
     }
 }
 
 impl CascadeState {
     /// Create initial state from a CompileUnit's parameters.
-    pub fn from_unit(
-        unit_address: [u8; 32],
-        quantum_level: RingLevel,
-        budget: f64,
-    ) -> Self {
+    pub fn from_unit(unit_address: [u8; 32], quantum_level: QuantumLevel, budget: f64) -> Self {
         Self {
             stage: CascadeStage::Init,
             unit_address,
@@ -205,6 +224,8 @@ impl CascadeState {
             qedl_boundaries: None,
             skip_fusion: false,
             ring_prims_promoted: 0,
+            effect_store: crate::effect_decl::EffectStore::new(),
+            dispatch_registry: crate::dispatch_decl::DispatchRegistry::new(),
         }
     }
 
@@ -262,7 +283,7 @@ mod tests {
 
     #[test]
     fn state_budget_tracking() {
-        let mut state = CascadeState::from_unit([0u8; 32], RingLevel::Q0, 10.0);
+        let mut state = CascadeState::from_unit([0u8; 32], QuantumLevel::Q0, 10.0);
         assert!(!state.budget_exceeded());
         assert_eq!(state.budget_remaining(), 10.0);
 

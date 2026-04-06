@@ -100,12 +100,10 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
             json!({"Constant": {"id": id.raw(), "byte_size": size}})
         }
         GraphOp::CallSubgraph(s) => json!({"CallSubgraph": s.raw()}),
-        GraphOp::MatMulLut4(id) => json!({"MatMulLut4": id.raw()}),
-        GraphOp::MatMulLut8(id) => json!({"MatMulLut8": id.raw()}),
-        GraphOp::BatchMatMulLut4(id) => json!({"BatchMatMulLut4": id.raw()}),
-        GraphOp::BatchMatMulLut8(id) => json!({"BatchMatMulLut8": id.raw()}),
-        GraphOp::MatMulLut16(id) => json!({"MatMulLut16": id.raw()}),
-        GraphOp::BatchMatMulLut16(id) => json!({"BatchMatMulLut16": id.raw()}),
+        GraphOp::MatMulLut { bits, cid } => json!({"MatMulLut": {"bits": bits, "id": cid.raw()}}),
+        GraphOp::BatchMatMulLut { bits, cid } => {
+            json!({"BatchMatMulLut": {"bits": bits, "id": cid.raw()}})
+        }
         GraphOp::RingPrimUnary(p, level) => {
             json!({"RingPrimUnary": {"op": p.name(), "level": format!("{:?}", level)}})
         }
@@ -133,11 +131,12 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         } => {
             json!({"FusedMatMulBiasActivation": {"m": m, "k": k, "n": n, "activation": activation.name()}})
         }
-        GraphOp::MatMulLut4Activation(id, act) => json!({"MatMulLut4Activation": {
-            "id": id.raw(), "activation": act.name()
-        }}),
-        GraphOp::MatMulLut8Activation(id, act) => json!({"MatMulLut8Activation": {
-            "id": id.raw(), "activation": act.name()
+        GraphOp::MatMulLutActivation {
+            bits,
+            cid,
+            activation,
+        } => json!({"MatMulLutActivation": {
+            "bits": bits, "id": cid.raw(), "activation": activation.name()
         }}),
         GraphOp::FusedRmsNormActivation {
             size,

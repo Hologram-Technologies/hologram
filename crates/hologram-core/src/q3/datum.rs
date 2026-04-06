@@ -224,8 +224,8 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for QuadDatum {
         self.value.count_ones() as u64
     }
 
-    fn spectrum(&self) -> &str {
-        self.spectrum()
+    fn spectrum(&self) -> u64 {
+        self.value as u64
     }
 
     type Address = QuadAddress;

@@ -92,7 +92,10 @@ mod tests {
             TermKind::UnaryApp { op, arg } => {
                 assert_eq!(op, PrimOp::Neg);
                 match unit.arena.get(arg).kind {
-                    TermKind::UnaryApp { op: inner_op, arg: inner_arg } => {
+                    TermKind::UnaryApp {
+                        op: inner_op,
+                        arg: inner_arg,
+                    } => {
                         assert_eq!(inner_op, PrimOp::Neg);
                         assert_eq!(unit.arena.get(inner_arg).kind, TermKind::IntLit(42));
                     }
@@ -141,7 +144,10 @@ mod tests {
     fn parse_type_declaration() {
         let unit = parse("type MyT { residue : 0 ; }").unwrap();
         assert_eq!(unit.type_decl_count, 1);
-        assert_eq!(unit.type_decls[0].constraint, hologram_core::term::ConstraintKind::Residue);
+        assert_eq!(
+            unit.type_decls[0].constraint,
+            hologram_core::term::ConstraintKind::Residue
+        );
     }
 
     #[test]

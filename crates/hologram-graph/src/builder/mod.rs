@@ -144,7 +144,7 @@ impl GraphBuilder {
     /// Add a 4-bit LUT-GEMM matmul node with pre-serialized weights.
     pub fn matmul_lut_4bit(mut self, weight_data: ConstantData, inputs: &[usize]) -> Self {
         let cid = self.graph.add_constant(weight_data);
-        let id = self.graph.add_node(GraphOp::MatMulLut4(cid));
+        let id = self.graph.add_node(GraphOp::MatMulLut { bits: 4, cid });
         self.index_to_id.push(id);
         for (slot, &src_idx) in inputs.iter().enumerate() {
             if let Some(&src_id) = self.index_to_id.get(src_idx) {
@@ -157,7 +157,7 @@ impl GraphBuilder {
     /// Add an 8-bit LUT-GEMM matmul node with pre-serialized weights.
     pub fn matmul_lut_8bit(mut self, weight_data: ConstantData, inputs: &[usize]) -> Self {
         let cid = self.graph.add_constant(weight_data);
-        let id = self.graph.add_node(GraphOp::MatMulLut8(cid));
+        let id = self.graph.add_node(GraphOp::MatMulLut { bits: 8, cid });
         self.index_to_id.push(id);
         for (slot, &src_idx) in inputs.iter().enumerate() {
             if let Some(&src_id) = self.index_to_id.get(src_idx) {

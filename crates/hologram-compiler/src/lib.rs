@@ -25,15 +25,15 @@ pub use compiler::{
 pub use error::{CompileError, CompileResult};
 pub use hologram_cascade::certificate::CertificateStore;
 
-use hologram_core::op::RingLevel;
 use uor_foundation::enums::VerificationDomain;
+use uor_foundation::QuantumLevel;
 
 /// Compile from UOR term language source text.
 ///
 /// Convenience wrapper around `CompilerBuilder::from_source(...).build()`.
 pub fn compile_from_source(
     source: &str,
-    quantum_level: RingLevel,
+    quantum_level: QuantumLevel,
     thermodynamic_budget: f64,
     target_domains: &[VerificationDomain],
 ) -> CompileResult<CompilationOutput> {

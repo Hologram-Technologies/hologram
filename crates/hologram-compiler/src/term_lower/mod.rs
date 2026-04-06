@@ -82,18 +82,62 @@ fn lower_term(
             graph.add_node(GraphOp::Constant(cid))
         }
         TermKind::UnaryApp { op, arg } => {
-            let arg_nid = lower_term(arena, bindings, arg, graph, node_map)?;
-            let nid = graph.add_node(GraphOp::Prim(op));
-            edge::connect(graph, arg_nid, nid, 0);
-            nid
+            // Constant fold: if operand is a literal, evaluate at compile time.
+            if let TermKind::IntLit(a) = arena.get(arg).kind {
+                let result = op.apply_unary_u64(a as u64, 1);
+                let bytes = encode_literal(result as i64, RingLevel::Q0);
+                let cid = graph.add_constant(ConstantData::Bytes(bytes));
+                graph.add_node(GraphOp::Constant(cid))
+            } else {
+                let arg_nid = lower_term(arena, bindings, arg, graph, node_map)?;
+                let nid = graph.add_node(GraphOp::Prim(op));
+                edge::connect(graph, arg_nid, nid, 0);
+                nid
+            }
         }
         TermKind::BinaryApp { op, lhs, rhs } => {
-            let lhs_nid = lower_term(arena, bindings, lhs, graph, node_map)?;
-            let rhs_nid = lower_term(arena, bindings, rhs, graph, node_map)?;
-            let nid = graph.add_node(GraphOp::Prim(op));
-            edge::connect(graph, lhs_nid, nid, 0);
-            edge::connect(graph, rhs_nid, nid, 1);
-            nid
+            // Constant fold: if both operands are literals, evaluate at compile time.
+            let lhs_kind = arena.get(lhs).kind;
+            let rhs_kind = arena.get(rhs).kind;
+            if let (TermKind::IntLit(a), TermKind::IntLit(b)) = (lhs_kind, rhs_kind) {
+                let result = op.apply_binary_u64(a as u64, b as u64, 1);
+                let bytes = encode_literal(result as i64, RingLevel::Q0);
+                let cid = graph.add_constant(ConstantData::Bytes(bytes));
+                graph.add_node(GraphOp::Constant(cid))
+            } else if let (
+                TermKind::QuantumLit {
+                    level: la,
+                    value: va,
+                },
+                TermKind::QuantumLit {
+                    level: lb,
+                    value: vb,
+                },
+            ) = (lhs_kind, rhs_kind)
+            {
+                if la == lb {
+                    let bw = la.byte_width();
+                    let result = op.apply_binary_u64(va as u64, vb as u64, bw);
+                    let bytes = encode_literal(result as i64, la);
+                    let cid = graph.add_constant(ConstantData::Bytes(bytes));
+                    graph.add_node(GraphOp::Constant(cid))
+                } else {
+                    // Different levels: can't fold, lower normally
+                    let lhs_nid = lower_term(arena, bindings, lhs, graph, node_map)?;
+                    let rhs_nid = lower_term(arena, bindings, rhs, graph, node_map)?;
+                    let nid = graph.add_node(GraphOp::Prim(op));
+                    edge::connect(graph, lhs_nid, nid, 0);
+                    edge::connect(graph, rhs_nid, nid, 1);
+                    nid
+                }
+            } else {
+                let lhs_nid = lower_term(arena, bindings, lhs, graph, node_map)?;
+                let rhs_nid = lower_term(arena, bindings, rhs, graph, node_map)?;
+                let nid = graph.add_node(GraphOp::Prim(op));
+                edge::connect(graph, lhs_nid, nid, 0);
+                edge::connect(graph, rhs_nid, nid, 1);
+                nid
+            }
         }
         TermKind::LutApp { op, arg } => {
             let arg_nid = lower_term(arena, bindings, arg, graph, node_map)?;
@@ -118,7 +162,12 @@ fn lower_term(
             edge::connect(graph, arg_nid, nid, 0);
             nid
         }
-        TermKind::RingBinaryApp { op, level, lhs, rhs } => {
+        TermKind::RingBinaryApp {
+            op,
+            level,
+            lhs,
+            rhs,
+        } => {
             let lhs_nid = lower_term(arena, bindings, lhs, graph, node_map)?;
             let rhs_nid = lower_term(arena, bindings, rhs, graph, node_map)?;
             let nid = graph.add_node(GraphOp::RingPrimBinary(op, level));
@@ -130,9 +179,7 @@ fn lower_term(
             let cid = hologram_graph::ConstantId::new(cref.0);
             graph.add_node(GraphOp::Constant(cid))
         }
-        TermKind::GraphInput(_) => {
-            graph.add_node(GraphOp::Input)
-        }
+        TermKind::GraphInput(_) => graph.add_node(GraphOp::Input),
         TermKind::GraphOutput(inner) => {
             let inner_nid = lower_term(arena, bindings, inner, graph, node_map)?;
             let nid = graph.add_node(GraphOp::Output);
@@ -200,6 +247,7 @@ mod tests {
     use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
+    use uor_foundation::QuantumLevel;
 
     #[test]
     fn lower_integer_literal() {
@@ -208,7 +256,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -229,14 +277,14 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
 
         let graph = lower_to_graph(&unit).unwrap();
-        // Constant(42) → Neg → Output = 3 nodes
-        assert_eq!(graph.node_count(), 3);
+        // Constant-folded: neg(42) → Constant(214) + Output = 2 nodes
+        assert_eq!(graph.node_count(), 2);
     }
 
     #[test]
@@ -252,14 +300,14 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
 
         let graph = lower_to_graph(&unit).unwrap();
-        // Constant(1) + Constant(2) → Add → Output = 4 nodes
-        assert_eq!(graph.node_count(), 4);
+        // Constant-folded: add(1, 2) → Constant(3) + Output = 2 nodes
+        assert_eq!(graph.node_count(), 2);
     }
 
     #[test]
@@ -286,14 +334,16 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
 
         let graph = lower_to_graph(&unit).unwrap();
-        // 3 constants + Mul + Neg + Add + Output = 7 nodes
-        assert_eq!(graph.node_count(), 7);
+        // Leaf-level constant fold: mul(2,3)→Constant(6), neg(1)→Constant(255)
+        // Outer add sees BinaryApp/UnaryApp in arena (not IntLit) → not folded
+        // Constant(6) + Constant(255) + Prim(Add) + Output = 4 nodes
+        assert_eq!(graph.node_count(), 4);
     }
 
     #[test]
@@ -306,7 +356,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q1,
+            QuantumLevel::Q1,
             12.0,
             &[VerificationDomain::Algebraic],
         );
@@ -330,7 +380,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                RingLevel::Q0,
+                QuantumLevel::Q0,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -366,7 +416,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                RingLevel::Q0,
+                QuantumLevel::Q0,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -396,7 +446,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -414,7 +464,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            RingLevel::Q0,
+            QuantumLevel::Q0,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -439,5 +489,81 @@ mod tests {
     fn encode_literal_q3() {
         let bytes = encode_literal(0x12345678, RingLevel::Q3);
         assert_eq!(bytes, 0x12345678u32.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn fold_binary_literals() {
+        // add(3, 5) should constant-fold to a single Constant(8) node
+        let mut arena = TermArena::new();
+        let a = arena.alloc(TermKind::IntLit(3));
+        let b = arena.alloc(TermKind::IntLit(5));
+        let root = arena.alloc(TermKind::BinaryApp {
+            op: PrimOp::Add,
+            lhs: a,
+            rhs: b,
+        });
+        let unit = HoloCompileUnit::new(
+            arena,
+            root,
+            QuantumLevel::Q0,
+            6.0,
+            &[VerificationDomain::Algebraic],
+        );
+
+        let graph = lower_to_graph(&unit).unwrap();
+        // Folded: 1 Constant + 1 Output = 2 nodes (not 2 Constant + 1 Prim + 1 Output = 4)
+        assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn fold_unary_literal() {
+        // neg(1) should constant-fold to Constant(255) at Q0
+        let mut arena = TermArena::new();
+        let a = arena.alloc(TermKind::IntLit(1));
+        let root = arena.alloc(TermKind::UnaryApp {
+            op: PrimOp::Neg,
+            arg: a,
+        });
+        let unit = HoloCompileUnit::new(
+            arena,
+            root,
+            QuantumLevel::Q0,
+            6.0,
+            &[VerificationDomain::Algebraic],
+        );
+
+        let graph = lower_to_graph(&unit).unwrap();
+        // Folded: 1 Constant + 1 Output = 2 nodes (not 1 Constant + 1 Prim + 1 Output = 3)
+        assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn no_fold_when_not_both_literals() {
+        // add(3, x) should NOT fold — x is a variable
+        let mut arena = TermArena::new();
+        let lit = arena.alloc(TermKind::IntLit(3));
+        let var = arena.alloc(TermKind::Var(hologram_core::term::VarId(0)));
+        let root = arena.alloc(TermKind::BinaryApp {
+            op: PrimOp::Add,
+            lhs: lit,
+            rhs: var,
+        });
+        let mut unit = HoloCompileUnit::new(
+            arena,
+            root,
+            QuantumLevel::Q0,
+            6.0,
+            &[VerificationDomain::Algebraic],
+        );
+        unit.bindings[0] = hologram_core::term::Binding {
+            var: hologram_core::term::VarId(0),
+            ty: hologram_core::term::TypeId::UNCONSTRAINED,
+            rhs: hologram_core::term::TermId(0), // points to lit
+        };
+        unit.binding_count = 1;
+
+        let graph = lower_to_graph(&unit).unwrap();
+        // Not folded: Constant(3) + Constant(3 via binding) + Prim(Add) + Output = 4 nodes
+        assert!(graph.node_count() >= 3);
     }
 }
