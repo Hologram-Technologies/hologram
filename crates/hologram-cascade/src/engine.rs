@@ -713,7 +713,7 @@ mod tests {
                 .state
                 .liveness_intervals
                 .as_ref()
-                .map_or(false, |v| !v.is_empty()),
+                .is_some_and(|v| !v.is_empty()),
             "liveness_intervals should be populated"
         );
         assert!(

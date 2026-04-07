@@ -454,7 +454,8 @@ mod tests {
                 level: QuantumLevel::Q0,
             })
             .unwrap();
-        let i5 = src
+        // i5: slot consumed implicitly via `len: 2` in the Application below.
+        let _i5 = src
             .push(EnfTerm::Literal {
                 value: 5,
                 level: QuantumLevel::Q0,
@@ -608,7 +609,8 @@ mod tests {
                 level: QuantumLevel::Q0,
             })
             .unwrap();
-        let i2 = src
+        // i2: slot consumed implicitly via `len: 2` in the Application below.
+        let _i2 = src
             .push(EnfTerm::Literal {
                 value: 2,
                 level: QuantumLevel::Q0,
@@ -658,7 +660,8 @@ mod tests {
                     level: QuantumLevel::Q0,
                 })
                 .unwrap();
-            let i2 = src
+            // i2: slot consumed implicitly via `len: 2` in the Application below.
+            let _i2 = src
                 .push(EnfTerm::Literal {
                     value: 2,
                     level: QuantumLevel::Q0,
@@ -696,19 +699,20 @@ mod tests {
                 level: QuantumLevel::Q0,
             })
             .unwrap();
-        let body0 = src
+        // body0 / pat1 / body1: arms consumed implicitly via `len: 4` on the Match below.
+        let _body0 = src
             .push(EnfTerm::Literal {
                 value: 10,
                 level: QuantumLevel::Q0,
             })
             .unwrap();
-        let pat1 = src
+        let _pat1 = src
             .push(EnfTerm::Literal {
                 value: 1,
                 level: QuantumLevel::Q0,
             })
             .unwrap();
-        let body1 = src
+        let _body1 = src
             .push(EnfTerm::Literal {
                 value: 20,
                 level: QuantumLevel::Q0,
