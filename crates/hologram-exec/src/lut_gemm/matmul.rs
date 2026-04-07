@@ -59,8 +59,13 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
     }
 }
 
-/// F32 LUT-GEMM for per-row-scaled weights.
-/// Applies centroid[idx] * row_scale[row] at each K position.
+/// F32 LUT-GEMM for per-group-scaled weights.
+///
+/// Weight matrix is `[k, n]` (rows × cols). Each weight element at
+/// `(row, col)` is reconstructed as `centroid[idx] * scale[row * groups_per_row + col / group_size]`
+/// where `group_size` defaults to `n` (legacy per-row) when 0.
+///
+/// Computes `output[m, n] = activations[m, k] * dequant[k, n]`.
 fn lut_gemm_4bit_f32_rowscale(
     activations: &[f32],
     weights: &QuantizedWeights4,
@@ -70,21 +75,30 @@ fn lut_gemm_4bit_f32_rowscale(
     n: usize,
 ) {
     let n_bytes = n / 2;
+    let gs = if weights.group_size > 0 {
+        weights.group_size as usize
+    } else {
+        n // legacy per-row
+    };
+    let groups_per_row = if gs > 0 { n.div_ceil(gs) } else { 1 };
     for i in 0..m {
         let a_row = &activations[i * k..(i + 1) * k];
         let out_row = &mut output[i * n..(i + 1) * n];
         out_row.fill(0.0);
+        // Loop order: l (K position) → b (column byte). For each weight element
+        // we look up its group scale by its row (= l) and column (= b * 2 or
+        // b * 2 + 1) within the [k, n] weight matrix.
         for (l, &a_val) in a_row.iter().enumerate().take(k) {
-            let row_scale = weights.row_scales[l];
-            let scaled_a = a_val * row_scale;
             for b in 0..n_bytes {
                 let packed = weights.indices[l * n_bytes + b];
                 let hi_idx = (packed >> 4) as usize;
                 let lo_idx = (packed & 0x0F) as usize;
                 let col = b * 2;
-                out_row[col] += scaled_a * weights.centroids[hi_idx];
+                let scale_hi = weights.row_scales[l * groups_per_row + col / gs];
+                out_row[col] += a_val * weights.centroids[hi_idx] * scale_hi;
                 if col + 1 < n {
-                    out_row[col + 1] += scaled_a * weights.centroids[lo_idx];
+                    let scale_lo = weights.row_scales[l * groups_per_row + (col + 1) / gs];
+                    out_row[col + 1] += a_val * weights.centroids[lo_idx] * scale_lo;
                 }
             }
         }

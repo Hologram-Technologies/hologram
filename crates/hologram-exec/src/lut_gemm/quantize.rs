@@ -56,11 +56,15 @@ pub struct QuantizedWeights4 {
     /// Dihedral orbit map built after k-means convergence.
     /// Enables `dot_orbits` for compressed centroid dot products.
     pub orbits: OrbitMap4,
-    /// Per-row scale factors for precision recovery.
-    /// When non-empty: `dequant[row][col] = centroid[idx] * row_scales[row]`.
+    /// Per-group scale factors for precision recovery.
+    /// Groups of `group_size` consecutive elements share one scale.
+    /// `dequant[i] = centroid[idx] * row_scales[i / group_size]`.
     /// When empty: `dequant = centroid[idx]` (legacy global k-means).
-    /// Improves quality for weights with varying magnitude across rows.
     pub row_scales: Vec<f32>,
+    /// Number of elements per quantization group. Defaults to `cols` (per-row)
+    /// when 0, matching legacy behavior. When >0, each row is divided into
+    /// `ceil(cols / group_size)` groups, each with its own scale factor.
+    pub group_size: u32,
 }
 
 /// 8-bit quantized weight matrix (256 centroids).
@@ -293,31 +297,39 @@ pub fn quantize_2bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights2
 pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4 {
     let r = rows as usize;
     let c = cols as usize;
+    let gs: usize = 32; // group size — matches GGUF Q4_0
 
-    // Fixed uniform centroids in [-1, 1]: 16 levels.
-    // Index 0 = -1.0, index 7 = -1/15, index 8 = 1/15, index 15 = 1.0
-    let mut centroids = [0.0f32; Q4_LEVELS];
-    for (i, c) in centroids.iter_mut().enumerate() {
-        *c = (2.0 * i as f32 / 15.0) - 1.0; // [-1.0, -0.867, ..., 0.867, 1.0]
-    }
-
-    // Per-row quantization.
-    let mut row_scales = vec![0.0f32; r];
-    let mut assignments = vec![0u8; r * c];
+    // Per-group quantization: each group of `gs` elements gets its own scale.
+    // First pass: compute scales and normalize.
+    let groups_per_row = c.div_ceil(gs);
+    let mut group_scales = vec![0.0f32; r * groups_per_row];
+    let mut normalized = vec![0.0f32; r * c];
 
     for i in 0..r {
-        let row = &weights[i * c..(i + 1) * c];
-        let max_abs = row.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
-        row_scales[i] = if max_abs > 1e-12 { max_abs } else { 1.0 };
-        let inv = 1.0 / row_scales[i]; // normalize to [-1, 1]
-
-        for (j, &v) in row.iter().enumerate() {
-            // Map normalized value [-1, 1] to centroid index [0, 15].
-            let normalized = (v * inv).clamp(-1.0, 1.0);
-            let idx = ((normalized + 1.0) * 7.5).round() as u8; // [0, 15]
-            assignments[i * c + j] = idx.min(15);
+        for g in 0..groups_per_row {
+            let start = g * gs;
+            let end = (start + gs).min(c);
+            let group = &weights[i * c + start..i * c + end];
+            let max_abs = group.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            let scale = if max_abs > 1e-12 { max_abs } else { 1.0 };
+            group_scales[i * groups_per_row + g] = scale;
+            let inv = 1.0 / scale;
+            for (j, &v) in group.iter().enumerate() {
+                normalized[i * c + start + j] = (v * inv).clamp(-1.0, 1.0);
+            }
         }
     }
+
+    // Learn 16 centroids from the normalized weight distribution via k-means.
+    let mut centroids_vec = init_centroids(&normalized, Q4_LEVELS);
+    let mut assignments = assign_all(&normalized, &centroids_vec);
+    for _ in 0..KMEANS_ITERS {
+        update_centroids(&normalized, &assignments, &mut centroids_vec);
+        assignments = assign_all(&normalized, &centroids_vec);
+    }
+
+    let mut centroids = [0.0f32; Q4_LEVELS];
+    centroids.copy_from_slice(&centroids_vec);
 
     let orbits = build_orbit_map_q4(&centroids);
     let indices = pack_assignments_q4(&assignments);
@@ -327,7 +339,8 @@ pub fn quantize_4bit(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights4
         rows,
         cols,
         orbits,
-        row_scales,
+        row_scales: group_scales,
+        group_size: gs as u32,
     }
 }
 
@@ -413,14 +426,23 @@ pub fn quantize_auto(weights: &[f32], rows: u32, cols: u32) -> QuantizedWeights 
 #[must_use]
 pub fn dequantize_error_q4(original: &[f32], qw: &QuantizedWeights4) -> f32 {
     let cols = qw.cols as usize;
-    let has_row_scales = !qw.row_scales.is_empty();
+    let has_scales = !qw.row_scales.is_empty();
+    let gs = if qw.group_size > 0 {
+        qw.group_size as usize
+    } else {
+        cols
+    };
+    let groups_per_row = if gs > 0 { cols.div_ceil(gs) } else { 1 };
     let mut sq_err = 0.0f32;
     let mut sq_orig = 0.0f32;
     for (i, &w) in original.iter().enumerate() {
         let idx = get_q4_flat_index(&qw.indices, i);
         let mut recon = qw.centroids[idx as usize];
-        if has_row_scales && cols > 0 {
-            recon *= qw.row_scales[i / cols];
+        if has_scales && cols > 0 {
+            let row = i / cols;
+            let col = i % cols;
+            let group = col / gs;
+            recon *= qw.row_scales[row * groups_per_row + group];
         }
         sq_err += (w - recon) * (w - recon);
         sq_orig += w * w;

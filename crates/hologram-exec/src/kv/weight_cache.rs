@@ -88,7 +88,13 @@ impl WeightCache {
             let rows = qw.rows as usize;
             let cols = qw.cols as usize;
             let total = rows * cols;
-            let has_row_scales = !qw.row_scales.is_empty();
+            let has_scales = !qw.row_scales.is_empty();
+            let gs = if qw.group_size > 0 {
+                qw.group_size as usize
+            } else {
+                cols // legacy per-row
+            };
+            let groups_per_row = if gs > 0 { cols.div_ceil(gs) } else { 1 };
             let mut buf = vec![0.0f32; total];
             for (i, o) in buf.iter_mut().enumerate() {
                 let byte_idx = i / 2;
@@ -98,9 +104,11 @@ impl WeightCache {
                     (qw.indices[byte_idx] & 0x0F) as usize
                 };
                 let centroid = qw.centroids[idx];
-                if has_row_scales {
+                if has_scales {
                     let row = i / cols;
-                    *o = centroid * qw.row_scales[row];
+                    let col = i % cols;
+                    let group = col / gs;
+                    *o = centroid * qw.row_scales[row * groups_per_row + group];
                 } else {
                     *o = centroid;
                 }
