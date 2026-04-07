@@ -1217,17 +1217,19 @@ impl ComputeBackend for WebGpuBackend {
         Ok(super::KernelOutput::WgpuDeferred)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn dispatch_batched_matmul(
         &self,
         inputs: &[&[u8]],
-        batch: usize,
-        m: usize,
-        k: usize,
-        n: usize,
-        b_broadcast: bool,
+        dims: super::BatchedMatmulDims,
         _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
+        let super::BatchedMatmulDims {
+            batch,
+            m,
+            k,
+            n,
+            b_broadcast,
+        } = dims;
         let total_output = batch * m * n;
         if total_output < 4096 || inputs.len() < 2 {
             return Ok(super::KernelOutput::Skipped);

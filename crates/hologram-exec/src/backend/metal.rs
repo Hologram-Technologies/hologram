@@ -834,13 +834,16 @@ impl ComputeBackend for MetalBackend {
     fn dispatch_batched_matmul(
         &self,
         inputs: &[&[u8]],
-        batch: usize,
-        m: usize,
-        k: usize,
-        n: usize,
-        b_broadcast: bool,
+        dims: super::BatchedMatmulDims,
         _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
+        let super::BatchedMatmulDims {
+            batch,
+            m,
+            k,
+            n,
+            b_broadcast,
+        } = dims;
         // Batched matmul is worthwhile when total compute exceeds GPU launch cost.
         // On Apple Silicon, crossover is ~batch*m*n > 4096 elements total output.
         let total_output = batch * m * n;

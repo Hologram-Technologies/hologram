@@ -7,6 +7,76 @@ use crate::graph::node::NodeId;
 use crate::graph::{CustomOpId, Graph, GraphOp, SubgraphId};
 use crate::subgraph::SubgraphDef;
 
+/// Parameters for [`GraphBuilder::conv2d_lut_4bit`].
+///
+/// Build with [`Conv2dLut4Params::new`] (required: kernel + input spatial
+/// dims) and chain the `with_*` setters for the stride / padding / dilation
+/// / group knobs. Defaults mirror PyTorch: `stride=1`, `pad=0`, `dilation=1`,
+/// `group=1`.
+#[derive(Debug, Clone, Copy)]
+pub struct Conv2dLut4Params {
+    pub kernel_h: u32,
+    pub kernel_w: u32,
+    pub stride_h: u32,
+    pub stride_w: u32,
+    pub pad_h: u32,
+    pub pad_w: u32,
+    pub dilation_h: u32,
+    pub dilation_w: u32,
+    pub group: u32,
+    pub input_h: u32,
+    pub input_w: u32,
+}
+
+impl Conv2dLut4Params {
+    /// New params for kernel `(kernel_h × kernel_w)` on a
+    /// `(input_h × input_w)` feature map. Stride 1, no padding, dilation 1,
+    /// ungrouped.
+    #[must_use]
+    pub fn new(kernel_h: u32, kernel_w: u32, input_h: u32, input_w: u32) -> Self {
+        Self {
+            kernel_h,
+            kernel_w,
+            stride_h: 1,
+            stride_w: 1,
+            pad_h: 0,
+            pad_w: 0,
+            dilation_h: 1,
+            dilation_w: 1,
+            group: 1,
+            input_h,
+            input_w,
+        }
+    }
+
+    #[must_use]
+    pub fn with_stride(mut self, stride_h: u32, stride_w: u32) -> Self {
+        self.stride_h = stride_h;
+        self.stride_w = stride_w;
+        self
+    }
+
+    #[must_use]
+    pub fn with_padding(mut self, pad_h: u32, pad_w: u32) -> Self {
+        self.pad_h = pad_h;
+        self.pad_w = pad_w;
+        self
+    }
+
+    #[must_use]
+    pub fn with_dilation(mut self, dilation_h: u32, dilation_w: u32) -> Self {
+        self.dilation_h = dilation_h;
+        self.dilation_w = dilation_w;
+        self
+    }
+
+    #[must_use]
+    pub fn with_group(mut self, group: u32) -> Self {
+        self.group = group;
+        self
+    }
+}
+
 /// Fluent builder for constructing `Graph` instances.
 ///
 /// Nodes are referenced by builder index (insertion order, 0-based).
@@ -184,23 +254,25 @@ impl GraphBuilder {
     ///
     /// `weight_data` holds the rkyv-serialized `QuantizedWeights4`.
     /// `inputs` should be `[activation_data, f32_weight_constant]`.
-    #[allow(clippy::too_many_arguments)]
     pub fn conv2d_lut_4bit(
         mut self,
         weight_data: ConstantData,
         inputs: &[usize],
-        kernel_h: u32,
-        kernel_w: u32,
-        stride_h: u32,
-        stride_w: u32,
-        pad_h: u32,
-        pad_w: u32,
-        dilation_h: u32,
-        dilation_w: u32,
-        group: u32,
-        input_h: u32,
-        input_w: u32,
+        params: Conv2dLut4Params,
     ) -> Self {
+        let Conv2dLut4Params {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } = params;
         let cid = self.graph.add_constant(weight_data);
         let id = self.graph.add_node(GraphOp::Conv2dLut4 {
             cid,

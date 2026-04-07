@@ -1025,11 +1025,9 @@ fn dispatch_kernel(
         } => {
             let kv_meta = dispatch_kv_write(
                 inputs,
-                *layer,
-                *n_kv_heads,
-                *head_dim,
-                *is_key,
-                *heads_first,
+                KvWriteParams::new(*layer, *n_kv_heads, *head_dim)
+                    .with_is_key(*is_key)
+                    .with_heads_first(*heads_first),
                 tape_ctx,
                 out_buf,
             )?;
@@ -1225,13 +1223,15 @@ fn dispatch_kernel(
         } => {
             let result = crate::float_dispatch::attention::dispatch_attention(
                 inputs,
-                *head_dim as usize,
-                *num_q_heads as usize,
-                *num_kv_heads as usize,
-                f32::from_bits(*scale),
-                *causal,
-                *heads_first,
-                *sparse_v,
+                crate::float_dispatch::attention::AttentionParams::new(
+                    *head_dim as usize,
+                    *num_q_heads as usize,
+                    *num_kv_heads as usize,
+                )
+                .with_scale(f32::from_bits(*scale))
+                .with_causal(*causal)
+                .with_heads_first(*heads_first)
+                .with_sparse_v(*sparse_v),
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -1752,15 +1752,11 @@ fn dispatch_kernel(
             );
             let result = float_dispatch::conv::dispatch_conv2d_direct(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
-                *dilation_h as usize,
-                *dilation_w as usize,
-                *group as usize,
+                float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize)
+                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                    .with_group(*group as usize),
                 actual_h,
                 actual_w,
             )?;
@@ -1827,15 +1823,11 @@ fn dispatch_kernel(
             );
             let result = float_dispatch::conv::dispatch_conv2d_direct(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
-                *dilation_h as usize,
-                *dilation_w as usize,
-                *group as usize,
+                float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize)
+                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                    .with_group(*group as usize),
                 actual_h,
                 actual_w,
             )?;
@@ -1892,15 +1884,11 @@ fn dispatch_kernel(
                 inputs,
                 *cid,
                 tape_ctx,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
-                *dilation_h as usize,
-                *dilation_w as usize,
-                *group as usize,
+                float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize)
+                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                    .with_group(*group as usize),
                 actual_h,
                 actual_w,
             )?;
@@ -1954,17 +1942,13 @@ fn dispatch_kernel(
             );
             let result = float_dispatch::conv::dispatch_conv_transpose(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
-                *dilation_h as usize,
-                *dilation_w as usize,
-                *group as usize,
-                *output_pad_h as usize,
-                *output_pad_w as usize,
+                float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize)
+                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                    .with_group(*group as usize),
+                float_dispatch::conv::ConvTransposeOutputPad::new()
+                    .with_hw(*output_pad_h as usize, *output_pad_w as usize),
                 actual_h,
                 actual_w,
             )?;
@@ -1981,12 +1965,9 @@ fn dispatch_kernel(
         } => {
             let result = float_dispatch::pool::dispatch_max_pool_2d(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
+                float_dispatch::pool::Pool2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize),
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -2001,12 +1982,9 @@ fn dispatch_kernel(
         } => {
             let result = float_dispatch::pool::dispatch_avg_pool_2d(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
+                float_dispatch::pool::Pool2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize),
             )?;
             out_buf.extend_from_slice(&result);
             Ok(DispatchResult::InOutBuf)
@@ -2880,6 +2858,44 @@ fn dispatch_lut_gemm_2(
     Ok(())
 }
 
+/// Parameters for [`dispatch_kv_write`] that describe the KV slot being
+/// written. Built with [`KvWriteParams::new`] (required: layer + head shape)
+/// and chained [`Self::with_is_key`] / [`Self::with_heads_first`] to flip
+/// the two layout/role flags. Default is "write V in seq-first layout".
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KvWriteParams {
+    pub layer: u32,
+    pub n_kv_heads: u32,
+    pub head_dim: u32,
+    pub is_key: bool,
+    pub heads_first: bool,
+}
+
+impl KvWriteParams {
+    #[inline]
+    pub fn new(layer: u32, n_kv_heads: u32, head_dim: u32) -> Self {
+        Self {
+            layer,
+            n_kv_heads,
+            head_dim,
+            is_key: false,
+            heads_first: false,
+        }
+    }
+
+    #[inline]
+    pub fn with_is_key(mut self, is_key: bool) -> Self {
+        self.is_key = is_key;
+        self
+    }
+
+    #[inline]
+    pub fn with_heads_first(mut self, heads_first: bool) -> Self {
+        self.heads_first = heads_first;
+        self
+    }
+}
+
 /// KvWrite dispatch: store K/V to cache, output for downstream attention.
 ///
 /// `heads_first` determines the input layout and output format:
@@ -2888,17 +2904,19 @@ fn dispatch_lut_gemm_2(
 /// - `false`: input is `[seq, heads, dim]`, store directly, output seq-first.
 ///
 /// Returns the actual output TensorMeta (runtime shape, not compiled).
-#[allow(clippy::too_many_arguments)]
 fn dispatch_kv_write(
     inputs: &[&[u8]],
-    layer: u32,
-    n_kv_heads: u32,
-    head_dim: u32,
-    is_key: bool,
-    heads_first: bool,
+    params: KvWriteParams,
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut Vec<u8>,
 ) -> ExecResult<hologram_core::op::TensorMeta> {
+    let KvWriteParams {
+        layer,
+        n_kv_heads,
+        head_dim,
+        is_key,
+        heads_first,
+    } = params;
     let Some(kv_cell) = &tape_ctx.kv_state else {
         return Err(crate::error::ExecError::UnsupportedOp(
             "KvWrite requires TapeContext with kv_state".into(),

@@ -64,6 +64,48 @@ impl KernelOutput {
     }
 }
 
+/// Shape + broadcast flags for [`ComputeBackend::dispatch_batched_matmul`].
+///
+/// Grouped into a builder so the trait method doesn't take 7+ positional
+/// arguments — per the project rule forbidding
+/// `#[allow(clippy::too_many_arguments)]`. Construct with
+/// [`BatchedMatmulDims::new`] and chain [`Self::with_b_broadcast`] to enable
+/// single-weight broadcast across the batch dimension.
+#[derive(Debug, Clone, Copy)]
+pub struct BatchedMatmulDims {
+    pub batch: usize,
+    pub m: usize,
+    pub k: usize,
+    pub n: usize,
+    /// If true, the `b` operand is a single 2-D weight matrix broadcast across
+    /// every batch slice (e.g. weight-sharing MatMul). If false, `b` has its
+    /// own per-batch slice.
+    pub b_broadcast: bool,
+}
+
+impl BatchedMatmulDims {
+    /// New dims with `b_broadcast = false` (independent per-batch B slices).
+    #[inline]
+    #[must_use]
+    pub fn new(batch: usize, m: usize, k: usize, n: usize) -> Self {
+        Self {
+            batch,
+            m,
+            k,
+            n,
+            b_broadcast: false,
+        }
+    }
+
+    /// Enable broadcast of the B operand across the batch dimension.
+    #[inline]
+    #[must_use]
+    pub fn with_b_broadcast(mut self, b_broadcast: bool) -> Self {
+        self.b_broadcast = b_broadcast;
+        self
+    }
+}
+
 /// Compute backend for tape kernel dispatch.
 ///
 /// Each backend implements dispatch for the op types it supports.
@@ -88,17 +130,11 @@ pub trait ComputeBackend: Send + Sync {
     ) -> ExecResult<KernelOutput>;
 
     /// Dispatch a batched matmul (batch × M×K × K×N).
-    /// `dims` = `[batch, m, k, n, b_broadcast_flag]` (b_broadcast_flag: 0 or 1).
     /// Default: returns Skipped (falls back to per-batch CPU dispatch).
-    #[allow(clippy::too_many_arguments)]
     fn dispatch_batched_matmul(
         &self,
         _inputs: &[&[u8]],
-        _batch: usize,
-        _m: usize,
-        _k: usize,
-        _n: usize,
-        _b_broadcast: bool,
+        _dims: BatchedMatmulDims,
         _out_buf: &mut Vec<u8>,
     ) -> ExecResult<KernelOutput> {
         Ok(KernelOutput::Skipped)
@@ -239,15 +275,10 @@ impl ComputeBackend for CachedMetalBackend {
     fn dispatch_batched_matmul(
         &self,
         inputs: &[&[u8]],
-        batch: usize,
-        m: usize,
-        k: usize,
-        n: usize,
-        b_broadcast: bool,
+        dims: BatchedMatmulDims,
         out_buf: &mut Vec<u8>,
     ) -> ExecResult<KernelOutput> {
-        self.0
-            .dispatch_batched_matmul(inputs, batch, m, k, n, b_broadcast, out_buf)
+        self.0.dispatch_batched_matmul(inputs, dims, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"
@@ -281,19 +312,13 @@ impl ComputeBackend for CachedWebGpuBackend {
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
     }
-    #[allow(clippy::too_many_arguments)]
     fn dispatch_batched_matmul(
         &self,
         inputs: &[&[u8]],
-        batch: usize,
-        m: usize,
-        k: usize,
-        n: usize,
-        b_broadcast: bool,
+        dims: BatchedMatmulDims,
         out_buf: &mut Vec<u8>,
     ) -> ExecResult<KernelOutput> {
-        self.0
-            .dispatch_batched_matmul(inputs, batch, m, k, n, b_broadcast, out_buf)
+        self.0.dispatch_batched_matmul(inputs, dims, out_buf)
     }
     fn name(&self) -> &'static str {
         "webgpu"

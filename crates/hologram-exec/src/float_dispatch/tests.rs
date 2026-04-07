@@ -402,18 +402,69 @@ fn test_rms_norm_into_matches_allocating() {
 
 // ── Plan 038: Sparse V attention tests ──────────────────────────────
 
-/// Helper: run attention with given params and return f32 output.
-#[allow(clippy::too_many_arguments)]
-fn run_attention(
-    q: &[f32],
-    k: &[f32],
-    v: &[f32],
+/// Parameters for [`run_attention`]. Build with
+/// [`RunAttentionSpec::new`] (required: Q/K/V + head counts) and chain
+/// [`Self::with_causal`] / [`Self::with_sparse_v`] for the two boolean
+/// knobs. Defaults: `causal = true`, `sparse_v = false`.
+#[derive(Debug, Clone, Copy)]
+struct RunAttentionSpec<'a> {
+    q: &'a [f32],
+    k: &'a [f32],
+    v: &'a [f32],
     head_dim: usize,
     num_q_heads: usize,
     num_kv_heads: usize,
     causal: bool,
     sparse_v: bool,
-) -> Vec<f32> {
+}
+
+impl<'a> RunAttentionSpec<'a> {
+    #[inline]
+    fn new(
+        q: &'a [f32],
+        k: &'a [f32],
+        v: &'a [f32],
+        head_dim: usize,
+        num_q_heads: usize,
+        num_kv_heads: usize,
+    ) -> Self {
+        Self {
+            q,
+            k,
+            v,
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            causal: true,
+            sparse_v: false,
+        }
+    }
+
+    #[inline]
+    fn with_causal(mut self, causal: bool) -> Self {
+        self.causal = causal;
+        self
+    }
+
+    #[inline]
+    fn with_sparse_v(mut self, sparse_v: bool) -> Self {
+        self.sparse_v = sparse_v;
+        self
+    }
+}
+
+/// Helper: run attention with given params and return f32 output.
+fn run_attention(spec: RunAttentionSpec<'_>) -> Vec<f32> {
+    let RunAttentionSpec {
+        q,
+        k,
+        v,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        causal,
+        sparse_v,
+    } = spec;
     let scale = 1.0 / (head_dim as f32).sqrt();
     let op = FloatOp::Attention {
         head_dim: head_dim as u32,
@@ -452,8 +503,12 @@ fn attention_sparse_v_zero_quality_loss() {
             .map(|i| (i as f32 * 0.11).sin())
             .collect();
 
-        let out_sparse = run_attention(&q, &k, &v, head_dim, num_heads, num_heads, true, true);
-        let out_dense = run_attention(&q, &k, &v, head_dim, num_heads, num_heads, true, false);
+        let out_sparse = run_attention(
+            RunAttentionSpec::new(&q, &k, &v, head_dim, num_heads, num_heads).with_sparse_v(true),
+        );
+        let out_dense = run_attention(RunAttentionSpec::new(
+            &q, &k, &v, head_dim, num_heads, num_heads,
+        ));
 
         assert_eq!(out_sparse.len(), out_dense.len());
         for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
@@ -477,8 +532,13 @@ fn attention_sparse_v_uniform_weights_no_skip() {
     let k: Vec<f32> = vec![1.0; seq * head_dim];
     let v: Vec<f32> = (0..seq * head_dim).map(|i| i as f32).collect();
 
-    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, false, true);
-    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, false, false);
+    let out_sparse = run_attention(
+        RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1)
+            .with_causal(false)
+            .with_sparse_v(true),
+    );
+    let out_dense =
+        run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1).with_causal(false));
 
     for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
         assert!(
@@ -505,8 +565,13 @@ fn attention_sparse_v_single_dominant_position() {
     // V: distinct values per row
     let v: Vec<f32> = (0..seq_k * head_dim).map(|i| (i + 1) as f32).collect();
 
-    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, false, true);
-    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, false, false);
+    let out_sparse = run_attention(
+        RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1)
+            .with_causal(false)
+            .with_sparse_v(true),
+    );
+    let out_dense =
+        run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1).with_causal(false));
 
     // Both should be nearly identical — the dominant position has weight ~1.0
     for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
@@ -534,16 +599,13 @@ fn attention_sparse_v_gqa_compatibility() {
         .map(|i| (i as f32 * 0.13).sin())
         .collect();
 
-    let out_sparse = run_attention(&q, &k, &v, head_dim, num_q_heads, num_kv_heads, false, true);
+    let out_sparse = run_attention(
+        RunAttentionSpec::new(&q, &k, &v, head_dim, num_q_heads, num_kv_heads)
+            .with_causal(false)
+            .with_sparse_v(true),
+    );
     let out_dense = run_attention(
-        &q,
-        &k,
-        &v,
-        head_dim,
-        num_q_heads,
-        num_kv_heads,
-        false,
-        false,
+        RunAttentionSpec::new(&q, &k, &v, head_dim, num_q_heads, num_kv_heads).with_causal(false),
     );
 
     assert_eq!(out_sparse.len(), out_dense.len());
@@ -568,8 +630,9 @@ fn attention_sparse_v_causal_mask_no_regression() {
         .map(|i| (i as f32 * 0.1).sin())
         .collect();
 
-    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, true, true);
-    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, true, false);
+    let out_sparse =
+        run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1).with_sparse_v(true));
+    let out_dense = run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1));
 
     for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
         assert!(
@@ -592,8 +655,9 @@ fn attention_sparse_v_threshold_boundary() {
     let k = vec![1.0, 0.0, 0.0, 1.0];
     let v = vec![10.0, 20.0, 30.0, 40.0];
 
-    let out_sparse = run_attention(&q, &k, &v, head_dim, 1, 1, true, true);
-    let out_dense = run_attention(&q, &k, &v, head_dim, 1, 1, true, false);
+    let out_sparse =
+        run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1).with_sparse_v(true));
+    let out_dense = run_attention(RunAttentionSpec::new(&q, &k, &v, head_dim, 1, 1));
 
     for (i, (s, d)) in out_sparse.iter().zip(out_dense.iter()).enumerate() {
         assert!(
@@ -793,15 +857,9 @@ fn conv2d_depthwise_matches_generic() {
 
     let result = dispatch_conv2d_direct(
         &[&data_b, &weight_b, &bias_b],
-        kh,
-        kw,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        channels, // group == channels (depthwise)
+        super::conv::Conv2dAttrs::new(kh, kw)
+            .with_padding(1, 1)
+            .with_group(channels), // group == channels (depthwise)
         h,
         w,
     )
@@ -836,15 +894,10 @@ fn conv2d_depthwise_stride2() {
 
     let result = dispatch_conv2d_direct(
         &[&data_b, &weight_b, &bias_b],
-        3,
-        3,
-        2,
-        2,
-        1,
-        1,
-        1,
-        1,
-        channels,
+        super::conv::Conv2dAttrs::new(3, 3)
+            .with_stride(2, 2)
+            .with_padding(1, 1)
+            .with_group(channels),
         h,
         w,
     )
@@ -876,15 +929,9 @@ fn conv2d_depthwise_with_bias() {
 
     let result = dispatch_conv2d_direct(
         &[&data_b, &weight_b, &bias_b],
-        3,
-        3,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        channels,
+        super::conv::Conv2dAttrs::new(3, 3)
+            .with_padding(1, 1)
+            .with_group(channels),
         h,
         w,
     )
@@ -909,43 +956,56 @@ fn conv2d_depthwise_with_bias() {
 
 // ── Plan 039: Winograd F(2,3) tests ─────────────────────────────────
 
-/// Helper: run conv2d via dispatch and return f32 output.
-#[allow(clippy::too_many_arguments)]
-fn run_conv2d(
-    data: &[f32],
-    weight: &[f32],
-    bias: &[f32],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
+/// Parameters for the [`run_conv2d`] test helper. Build with
+/// [`RunConv2dSpec::new`] (required: `data`, `weight`, `bias`, kernel attrs,
+/// input shape).
+#[derive(Debug, Clone, Copy)]
+struct RunConv2dSpec<'a> {
+    data: &'a [f32],
+    weight: &'a [f32],
+    bias: &'a [f32],
+    attrs: super::conv::Conv2dAttrs,
     h_in: usize,
     w_in: usize,
-) -> Vec<f32> {
+}
+
+impl<'a> RunConv2dSpec<'a> {
+    #[inline]
+    fn new(
+        data: &'a [f32],
+        weight: &'a [f32],
+        bias: &'a [f32],
+        attrs: super::conv::Conv2dAttrs,
+        h_in: usize,
+        w_in: usize,
+    ) -> Self {
+        Self {
+            data,
+            weight,
+            bias,
+            attrs,
+            h_in,
+            w_in,
+        }
+    }
+}
+
+/// Helper: run conv2d via dispatch and return f32 output.
+fn run_conv2d(spec: RunConv2dSpec<'_>) -> Vec<f32> {
     use super::conv::dispatch_conv2d_direct;
+    let RunConv2dSpec {
+        data,
+        weight,
+        bias,
+        attrs,
+        h_in,
+        w_in,
+    } = spec;
     let data_b = f32_bytes(data);
     let weight_b = f32_bytes(weight);
     let bias_b = f32_bytes(bias);
-    let result = dispatch_conv2d_direct(
-        &[&data_b, &weight_b, &bias_b],
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
-        dh,
-        dw,
-        group,
-        h_in,
-        w_in,
-    )
-    .expect("conv2d dispatch failed");
+    let result = dispatch_conv2d_direct(&[&data_b, &weight_b, &bias_b], attrs, h_in, w_in)
+        .expect("conv2d dispatch failed");
     bytemuck::cast_slice::<u8, f32>(&result).to_vec()
 }
 
@@ -965,7 +1025,14 @@ fn conv2d_winograd_matches_reference() {
     let bias: Vec<f32> = (0..oc).map(|i| i as f32 * 0.01).collect();
 
     // Winograd path (pad=1, stride=1, 3×3, ic>=16).
-    let winograd_out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+    let winograd_out = run_conv2d(RunConv2dSpec::new(
+        &data,
+        &weight,
+        &bias,
+        super::conv::Conv2dAttrs::new(3, 3).with_padding(1, 1),
+        h,
+        w,
+    ));
 
     // Reference: use im2col path by setting dilation=2 (which disables Winograd gate),
     // but we need stride=1 pad=1 dilation=1. Instead, compute a naive reference.
@@ -1024,7 +1091,14 @@ fn conv2d_winograd_odd_spatial() {
         .collect();
     let bias: Vec<f32> = vec![0.0; oc];
 
-    let out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+    let out = run_conv2d(RunConv2dSpec::new(
+        &data,
+        &weight,
+        &bias,
+        super::conv::Conv2dAttrs::new(3, 3).with_padding(1, 1),
+        h,
+        w,
+    ));
 
     // Output spatial should be 17×17 (pad=1, stride=1).
     assert_eq!(out.len(), oc * h * w);
@@ -1043,7 +1117,14 @@ fn conv2d_winograd_realistic_sd_shapes() {
             .collect();
         let bias: Vec<f32> = vec![0.0; oc];
 
-        let out = run_conv2d(&data, &weight, &bias, 3, 3, 1, 1, 1, 1, 1, 1, 1, h, w);
+        let out = run_conv2d(RunConv2dSpec::new(
+            &data,
+            &weight,
+            &bias,
+            super::conv::Conv2dAttrs::new(3, 3).with_padding(1, 1),
+            h,
+            w,
+        ));
         assert_eq!(out.len(), oc * h * w, "shape ({ic},{oc},{h},{w})");
         for (i, &v) in out.iter().enumerate() {
             assert!(
@@ -1068,7 +1149,16 @@ fn conv2d_winograd_not_used_for_stride2() {
     let bias: Vec<f32> = vec![0.0; oc];
 
     // stride=2, pad=1 → output 8×8.
-    let out = run_conv2d(&data, &weight, &bias, 3, 3, 2, 2, 1, 1, 1, 1, 1, h, w);
+    let out = run_conv2d(RunConv2dSpec::new(
+        &data,
+        &weight,
+        &bias,
+        super::conv::Conv2dAttrs::new(3, 3)
+            .with_stride(2, 2)
+            .with_padding(1, 1),
+        h,
+        w,
+    ));
     assert_eq!(out.len(), oc * 8 * 8);
     for &v in &out {
         assert!(v.is_finite());

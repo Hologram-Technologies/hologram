@@ -1,6 +1,189 @@
 use super::helpers::*;
 use crate::error::ExecResult;
 
+// ── Conv2D attribute & call builders ────────────────────────────────────────
+//
+// Shared parameter structs that let the dispatch + kernel entry points stay
+// readable and sidestep the `clippy::too_many_arguments` lint (which the
+// project rule forbids us from `#[allow]`-ing). Build with `new(..)` and
+// chain `with_*` setters for any non-default knobs.
+
+/// Kernel attributes common to every 2-D convolution entry point.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Conv2dAttrs {
+    pub kh: usize,
+    pub kw: usize,
+    pub sh: usize,
+    pub sw: usize,
+    pub ph: usize,
+    pub pw: usize,
+    pub dh: usize,
+    pub dw: usize,
+    pub group: usize,
+}
+
+impl Conv2dAttrs {
+    /// New attrs with stride 1, no padding, dilation 1, and no grouping.
+    #[inline]
+    pub fn new(kh: usize, kw: usize) -> Self {
+        Self {
+            kh,
+            kw,
+            sh: 1,
+            sw: 1,
+            ph: 0,
+            pw: 0,
+            dh: 1,
+            dw: 1,
+            group: 1,
+        }
+    }
+
+    #[inline]
+    pub fn with_stride(mut self, sh: usize, sw: usize) -> Self {
+        self.sh = sh;
+        self.sw = sw;
+        self
+    }
+
+    #[inline]
+    pub fn with_padding(mut self, ph: usize, pw: usize) -> Self {
+        self.ph = ph;
+        self.pw = pw;
+        self
+    }
+
+    #[inline]
+    pub fn with_dilation(mut self, dh: usize, dw: usize) -> Self {
+        self.dh = dh;
+        self.dw = dw;
+        self
+    }
+
+    #[inline]
+    pub fn with_group(mut self, group: usize) -> Self {
+        self.group = group;
+        self
+    }
+}
+
+/// Input feature-map shape `(n, channels, h_in, w_in)` — the four dimensions
+/// common to both depthwise and grouped 2-D convolutions.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Conv2dInputShape {
+    pub n: usize,
+    pub channels: usize,
+    pub h_in: usize,
+    pub w_in: usize,
+}
+
+impl Conv2dInputShape {
+    #[inline]
+    pub fn new(n: usize, channels: usize, h_in: usize, w_in: usize) -> Self {
+        Self {
+            n,
+            channels,
+            h_in,
+            w_in,
+        }
+    }
+}
+
+/// Full call parameters for [`conv2d_depthwise`].
+#[derive(Debug, Clone, Copy)]
+struct Conv2dDepthwiseCall<'a> {
+    data: &'a [f32],
+    weight: &'a [f32],
+    bias: Option<&'a [f32]>,
+    input_shape: Conv2dInputShape,
+    h_out: usize,
+    w_out: usize,
+    attrs: Conv2dAttrs,
+}
+
+impl<'a> Conv2dDepthwiseCall<'a> {
+    #[inline]
+    fn new(
+        data: &'a [f32],
+        weight: &'a [f32],
+        input_shape: Conv2dInputShape,
+        attrs: Conv2dAttrs,
+    ) -> Self {
+        Self {
+            data,
+            weight,
+            bias: None,
+            input_shape,
+            h_out: 0,
+            w_out: 0,
+            attrs,
+        }
+    }
+
+    #[inline]
+    fn with_output_hw(mut self, h_out: usize, w_out: usize) -> Self {
+        self.h_out = h_out;
+        self.w_out = w_out;
+        self
+    }
+
+    #[inline]
+    fn with_bias(mut self, bias: Option<&'a [f32]>) -> Self {
+        self.bias = bias;
+        self
+    }
+}
+
+/// Full call parameters for [`conv2d_core`] (grouped 2-D convolution).
+#[derive(Debug, Clone, Copy)]
+struct Conv2dCoreCall<'a> {
+    data: &'a [f32],
+    weight: &'a [f32],
+    bias: Option<&'a [f32]>,
+    /// Batch + input shape. The `channels` field is re-interpreted as
+    /// `ic_per_group` (per-group input channels) by this kernel.
+    input_shape: Conv2dInputShape,
+    oc: usize,
+    h_out: usize,
+    w_out: usize,
+    attrs: Conv2dAttrs,
+}
+
+impl<'a> Conv2dCoreCall<'a> {
+    #[inline]
+    fn new(
+        data: &'a [f32],
+        weight: &'a [f32],
+        input_shape: Conv2dInputShape,
+        attrs: Conv2dAttrs,
+    ) -> Self {
+        Self {
+            data,
+            weight,
+            bias: None,
+            input_shape,
+            oc: 0,
+            h_out: 0,
+            w_out: 0,
+            attrs,
+        }
+    }
+
+    #[inline]
+    fn with_output(mut self, oc: usize, h_out: usize, w_out: usize) -> Self {
+        self.oc = oc;
+        self.h_out = h_out;
+        self.w_out = w_out;
+        self
+    }
+
+    #[inline]
+    fn with_bias(mut self, bias: Option<&'a [f32]>) -> Self {
+        self.bias = bias;
+        self
+    }
+}
+
 // ── Winograd weight transform cache ─────────────────────────────────────────
 //
 // 1-entry thread-local cache for the Winograd U matrix (transformed weights).
@@ -25,26 +208,34 @@ std::thread_local! {
 /// Avoids im2col entirely — direct nested loop over the kernel window for each
 /// output position. Splits the spatial loop into interior (no bounds checks,
 /// auto-vectorizable) and border (bounds-checked) regions for ~3-4× speedup.
-#[allow(clippy::too_many_arguments)]
-fn conv2d_depthwise(
-    data: &[f32],
-    weight: &[f32],
-    bias: Option<&[f32]>,
-    n: usize,
-    channels: usize,
-    h_in: usize,
-    w_in: usize,
-    h_out: usize,
-    w_out: usize,
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-) -> Vec<f32> {
+#[inline(always)]
+fn conv2d_depthwise(call: Conv2dDepthwiseCall<'_>) -> Vec<f32> {
+    let Conv2dDepthwiseCall {
+        data,
+        weight,
+        bias,
+        input_shape:
+            Conv2dInputShape {
+                n,
+                channels,
+                h_in,
+                w_in,
+            },
+        h_out,
+        w_out,
+        attrs:
+            Conv2dAttrs {
+                kh,
+                kw,
+                sh,
+                sw,
+                ph,
+                pw,
+                dh,
+                dw,
+                group: _,
+            },
+    } = call;
     let spatial_out = h_out * w_out;
     let mut out = vec![0.0f32; n * channels * spatial_out];
 
@@ -476,28 +667,37 @@ fn conv2d_winograd_f23(
 ///
 /// The GEMM phase uses BLAS sgemm when available (Accelerate on macOS),
 /// falling back to the parallel tiled matmul kernel otherwise.
-#[allow(clippy::too_many_arguments)]
-fn conv2d_core(
-    data: &[f32],
-    weight: &[f32],
-    bias: Option<&[f32]>,
-    n: usize,
-    ic_per_group: usize,
-    h_in: usize,
-    w_in: usize,
-    oc: usize,
-    h_out: usize,
-    w_out: usize,
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
-) -> Vec<f32> {
+#[inline(always)]
+fn conv2d_core(call: Conv2dCoreCall<'_>) -> Vec<f32> {
+    let Conv2dCoreCall {
+        data,
+        weight,
+        bias,
+        input_shape:
+            Conv2dInputShape {
+                n,
+                channels: _ic_channels_slot,
+                h_in,
+                w_in,
+            },
+        oc,
+        h_out,
+        w_out,
+        attrs:
+            Conv2dAttrs {
+                kh,
+                kw,
+                sh,
+                sw,
+                ph,
+                pw,
+                dh,
+                dw,
+                group,
+            },
+    } = call;
+    // `ic_per_group` is stored in the Conv2dInputShape.channels slot for this kernel.
+    let ic_per_group = _ic_channels_slot;
     let oc_per_group = oc / group.max(1);
     let kernel_size = ic_per_group * kh * kw;
     let spatial_out = h_out * w_out;
@@ -507,7 +707,17 @@ fn conv2d_core(
     // Direct loop avoids im2col overhead for single-channel inner products.
     if ic_per_group == 1 && oc_per_group == 1 {
         return conv2d_depthwise(
-            data, weight, bias, n, ic, h_in, w_in, h_out, w_out, kh, kw, sh, sw, ph, pw, dh, dw,
+            Conv2dDepthwiseCall::new(
+                data,
+                weight,
+                Conv2dInputShape::new(n, ic, h_in, w_in),
+                Conv2dAttrs::new(kh, kw)
+                    .with_stride(sh, sw)
+                    .with_padding(ph, pw)
+                    .with_dilation(dh, dw),
+            )
+            .with_bias(bias)
+            .with_output_hw(h_out, w_out),
         );
     }
 
@@ -790,21 +1000,23 @@ fn conv2d_core(
 /// Conv2d with explicit spatial dimensions from the op fields.
 ///
 /// All dispatch paths route through this function — no shape guessing needed.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_conv2d_direct(
     inputs: &[&[u8]],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
+    attrs: Conv2dAttrs,
     h_in: usize,
     w_in: usize,
 ) -> ExecResult<Vec<u8>> {
+    let Conv2dAttrs {
+        kh,
+        kw,
+        sh,
+        sw,
+        ph,
+        pw,
+        dh,
+        dw,
+        group,
+    } = attrs;
     let data = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
     if data.is_empty() || weight.is_empty() || h_in == 0 || w_in == 0 {
@@ -851,25 +1063,14 @@ pub(crate) fn dispatch_conv2d_direct(
     let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
 
     let out = conv2d_core(
-        &data,
-        &weight,
-        bias.as_deref(),
-        n,
-        ic_per_group,
-        h_in,
-        w_in,
-        oc,
-        h_out,
-        w_out,
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
-        dh,
-        dw,
-        group,
+        Conv2dCoreCall::new(
+            &data,
+            &weight,
+            Conv2dInputShape::new(n, ic_per_group, h_in, w_in),
+            attrs,
+        )
+        .with_bias(bias.as_deref())
+        .with_output(oc, h_out, w_out),
     );
     Ok(f32_vec_to_bytes(out))
 }
@@ -877,19 +1078,10 @@ pub(crate) fn dispatch_conv2d_direct(
 /// Conv2d with explicit input shapes from shape vectors (used by KvStore path).
 ///
 /// Delegates to `dispatch_conv2d_direct` after extracting H/W from shapes.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_conv2d_with_shapes(
     inputs: &[&[u8]],
     input_shapes: &[Vec<usize>],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
+    attrs: Conv2dAttrs,
 ) -> ExecResult<Vec<u8>> {
     let ds = input_shapes.first().cloned().unwrap_or_default();
     if ds.len() != 4 {
@@ -900,7 +1092,7 @@ pub(crate) fn dispatch_conv2d_with_shapes(
     }
     let h_in = ds[2];
     let w_in = ds[3];
-    dispatch_conv2d_direct(inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in)
+    dispatch_conv2d_direct(inputs, attrs, h_in, w_in)
 }
 
 /// Conv2d with pre-quantized 4-bit LUT-GEMM weights (compile-time quantized).
@@ -912,20 +1104,11 @@ pub(crate) fn dispatch_conv2d_with_shapes(
 /// 4. Scatter to output
 ///
 /// Zero quantization/transpose overhead at runtime.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_conv2d_lut4(
     inputs: &[&[u8]],
     cid: hologram_graph::constant::ConstantId,
     tape_ctx: &crate::tape::TapeContext<'_>,
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
+    attrs: Conv2dAttrs,
     h_in: usize,
     w_in: usize,
 ) -> ExecResult<Vec<u8>> {
@@ -935,11 +1118,22 @@ pub(crate) fn dispatch_conv2d_lut4(
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     {
         let _ = (cid, tape_ctx);
-        dispatch_conv2d_direct(inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in)
+        dispatch_conv2d_direct(inputs, attrs, h_in, w_in)
     }
 
     #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
     {
+        let Conv2dAttrs {
+            kh,
+            kw,
+            sh,
+            sw,
+            ph,
+            pw,
+            dh,
+            dw,
+            group,
+        } = attrs;
         let data = cast_f32(inputs[0])?;
         let weight = cast_f32(inputs[1])?;
         if data.is_empty() || weight.is_empty() || h_in == 0 || w_in == 0 {
@@ -990,9 +1184,7 @@ pub(crate) fn dispatch_conv2d_lut4(
                 "Conv2dLut4 dimension mismatch — falling back to f32 path"
             );
             drop(cache);
-            return dispatch_conv2d_direct(
-                inputs, kh, kw, sh, sw, ph, pw, dh, dw, group, h_in, w_in,
-            );
+            return dispatch_conv2d_direct(inputs, attrs, h_in, w_in);
         }
 
         let mut out = vec![0.0f32; n * oc * spatial_out];
@@ -1103,24 +1295,50 @@ pub(crate) fn dispatch_conv2d_lut4(
 
 // ── ConvTranspose ────────────────────────────────────────────────────────────
 
+/// Output padding for [`dispatch_conv_transpose`]. Default is `(0, 0)`.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ConvTransposeOutputPad {
+    pub h: usize,
+    pub w: usize,
+}
+
+impl ConvTransposeOutputPad {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    pub fn with_hw(mut self, h: usize, w: usize) -> Self {
+        self.h = h;
+        self.w = w;
+        self
+    }
+}
+
 /// Transposed 2-D convolution with explicit spatial dimensions.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_conv_transpose(
     inputs: &[&[u8]],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-    dh: usize,
-    dw: usize,
-    group: usize,
-    output_pad_h: usize,
-    output_pad_w: usize,
+    attrs: Conv2dAttrs,
+    output_pad: ConvTransposeOutputPad,
     h_in: usize,
     w_in: usize,
 ) -> ExecResult<Vec<u8>> {
+    let Conv2dAttrs {
+        kh,
+        kw,
+        sh,
+        sw,
+        ph,
+        pw,
+        dh,
+        dw,
+        group,
+    } = attrs;
+    let ConvTransposeOutputPad {
+        h: output_pad_h,
+        w: output_pad_w,
+    } = output_pad;
     let data = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
     let bias_bytes = inputs.get(2).copied().unwrap_or(&[][..]);

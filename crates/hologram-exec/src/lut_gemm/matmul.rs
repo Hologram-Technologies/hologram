@@ -8,6 +8,59 @@ use super::psumbook_q1::HierarchicalPsumbook16;
 use super::quantize::{get_q4_index, QuantizedWeights, QuantizedWeights4, QuantizedWeights8};
 use super::quantize_q1::QuantizedWeights16;
 
+/// Call parameters for the internal Q4 LUT-GEMM kernels
+/// ([`lut_gemm_4bit_neon_int8`], [`lut_gemm_4bit_scalar_int8`]).
+///
+/// Build with [`Q4LutGemmCall::new`] (required: every field) — there are no
+/// defaulted knobs for these kernels, but the struct still wraps all seven
+/// arguments so the functions themselves stay under the clippy limit.
+struct Q4LutGemmCall<'a> {
+    activations: &'a [f32],
+    weights: &'a QuantizedWeights4,
+    output: &'a mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    centroids: &'a [f32; super::psumbook::Q4_LEVELS],
+}
+
+impl<'a> Q4LutGemmCall<'a> {
+    #[inline]
+    fn new(
+        activations: &'a [f32],
+        weights: &'a QuantizedWeights4,
+        output: &'a mut [f32],
+        dims: Q4LutGemmDims,
+        centroids: &'a [f32; super::psumbook::Q4_LEVELS],
+    ) -> Self {
+        Self {
+            activations,
+            weights,
+            output,
+            m: dims.m,
+            k: dims.k,
+            n: dims.n,
+            centroids,
+        }
+    }
+}
+
+/// MxKxN dimensions for a Q4 LUT-GEMM kernel. Tiny builder that exists only
+/// so [`Q4LutGemmCall::new`] itself stays under the argument limit.
+#[derive(Debug, Clone, Copy)]
+struct Q4LutGemmDims {
+    m: usize,
+    k: usize,
+    n: usize,
+}
+
+impl Q4LutGemmDims {
+    #[inline]
+    fn new(m: usize, k: usize, n: usize) -> Self {
+        Self { m, k, n }
+    }
+}
+
 /// Compute one output element for Q4: build psumbook, dot with centroids.
 #[allow(dead_code)]
 fn compute_element_q4(a_row: &[f32], weights: &QuantizedWeights4, col: u32) -> f32 {
@@ -50,12 +103,24 @@ pub fn lut_gemm_4bit(activations: &[f32], weights: &QuantizedWeights4, output: &
 
     #[cfg(target_arch = "aarch64")]
     {
-        lut_gemm_4bit_neon_int8(activations, weights, output, m, k, n, centroids);
+        lut_gemm_4bit_neon_int8(Q4LutGemmCall::new(
+            activations,
+            weights,
+            output,
+            Q4LutGemmDims::new(m, k, n),
+            centroids,
+        ));
     }
 
     #[cfg(not(target_arch = "aarch64"))]
     {
-        lut_gemm_4bit_scalar_int8(activations, weights, output, m, k, n, centroids);
+        lut_gemm_4bit_scalar_int8(Q4LutGemmCall::new(
+            activations,
+            weights,
+            output,
+            Q4LutGemmDims::new(m, k, n),
+            centroids,
+        ));
     }
 }
 
@@ -129,16 +194,17 @@ fn quantize_activation_row(a_row: &[f32], a_i8: &mut [i8]) -> f32 {
 ///
 /// Op count: 18 NEON ops per 32 columns per K-row (vs 36 in the old f32 kernel).
 #[cfg(target_arch = "aarch64")]
-#[allow(clippy::too_many_arguments)]
-fn lut_gemm_4bit_neon_int8(
-    activations: &[f32],
-    weights: &QuantizedWeights4,
-    output: &mut [f32],
-    m: usize,
-    k: usize,
-    n: usize,
-    centroids: &[f32; super::psumbook::Q4_LEVELS],
-) {
+#[inline(always)]
+fn lut_gemm_4bit_neon_int8(call: Q4LutGemmCall<'_>) {
+    let Q4LutGemmCall {
+        activations,
+        weights,
+        output,
+        m,
+        k,
+        n,
+        centroids,
+    } = call;
     use std::arch::aarch64::*;
 
     let n_bytes = n / 2;
@@ -286,16 +352,18 @@ fn lut_gemm_4bit_neon_int8(
 ///
 /// Same algorithm as the NEON kernel but without SIMD: quantize activations
 /// to int8, multiply int8×int8→int32, convert to f32 once per output element.
-#[allow(dead_code, clippy::too_many_arguments)]
-fn lut_gemm_4bit_scalar_int8(
-    activations: &[f32],
-    weights: &QuantizedWeights4,
-    output: &mut [f32],
-    m: usize,
-    k: usize,
-    n: usize,
-    centroids: &[f32; super::psumbook::Q4_LEVELS],
-) {
+#[allow(dead_code)]
+#[inline(always)]
+fn lut_gemm_4bit_scalar_int8(call: Q4LutGemmCall<'_>) {
+    let Q4LutGemmCall {
+        activations,
+        weights,
+        output,
+        m,
+        k,
+        n,
+        centroids,
+    } = call;
     let n_bytes = n / 2;
 
     let centroid_max = centroids.iter().fold(0.0f32, |m, &v| m.max(v.abs()));

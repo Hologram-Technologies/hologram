@@ -316,17 +316,75 @@ fn sparse_v_threshold() -> f32 {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn dispatch_attention(
-    inputs: &[&[u8]],
-    head_dim: usize,
-    num_q_heads: usize,
-    num_kv_heads: usize,
-    scale: f32,
-    causal: bool,
-    heads_first: bool,
-    sparse_v: bool,
-) -> ExecResult<Vec<u8>> {
+/// Parameters for [`dispatch_attention`]. Required knobs are the three head
+/// counts + head_dim; the optional `scale` defaults to `1.0 / sqrt(head_dim)`
+/// and `causal` defaults to `true`. Use [`Self::with_heads_first`] /
+/// [`Self::with_sparse_v`] / [`Self::with_scale`] / [`Self::with_causal`] to
+/// override.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AttentionParams {
+    pub head_dim: usize,
+    pub num_q_heads: usize,
+    pub num_kv_heads: usize,
+    pub scale: f32,
+    pub causal: bool,
+    pub heads_first: bool,
+    pub sparse_v: bool,
+}
+
+impl AttentionParams {
+    #[inline]
+    pub fn new(head_dim: usize, num_q_heads: usize, num_kv_heads: usize) -> Self {
+        Self {
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            scale: if head_dim > 0 {
+                1.0 / (head_dim as f32).sqrt()
+            } else {
+                1.0
+            },
+            causal: true,
+            heads_first: false,
+            sparse_v: false,
+        }
+    }
+
+    #[inline]
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    #[inline]
+    pub fn with_causal(mut self, causal: bool) -> Self {
+        self.causal = causal;
+        self
+    }
+
+    #[inline]
+    pub fn with_heads_first(mut self, heads_first: bool) -> Self {
+        self.heads_first = heads_first;
+        self
+    }
+
+    #[inline]
+    pub fn with_sparse_v(mut self, sparse_v: bool) -> Self {
+        self.sparse_v = sparse_v;
+        self
+    }
+}
+
+pub(crate) fn dispatch_attention(inputs: &[&[u8]], params: AttentionParams) -> ExecResult<Vec<u8>> {
+    let AttentionParams {
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        scale,
+        causal,
+        heads_first,
+        sparse_v,
+    } = params;
     let q_raw = cast_f32(inputs[0])?;
     let k_raw = cast_f32(inputs[1])?;
     let v_raw = cast_f32(inputs[2])?;

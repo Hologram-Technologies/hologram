@@ -100,7 +100,10 @@ pub(crate) fn dispatch_resize_with_shape(
                 let w_in = shape[3];
                 let h_out = (h_in as f32 * scales[2]).round() as usize;
                 let w_out = (w_in as f32 * scales[3]).round() as usize;
-                return dispatch_resize_nchw_known(&data, n, c, h_in, w_in, h_out, w_out, mode);
+                return dispatch_resize_nchw_known(
+                    &data,
+                    ResizeNchwParams::new(n, c, h_in, w_in, h_out, w_out).with_mode(mode),
+                );
             }
         }
         // No shape metadata — fall back to flat 1D resize.
@@ -111,10 +114,11 @@ pub(crate) fn dispatch_resize_with_shape(
     dispatch_resize(inputs, mode)
 }
 
-/// NCHW resize with known spatial dimensions — no guessing.
-#[allow(clippy::too_many_arguments)]
-fn dispatch_resize_nchw_known(
-    data: &[f32],
+/// Shape + mode for [`dispatch_resize_nchw_known`]. Build with
+/// [`ResizeNchwParams::new`] (required shape) and chain
+/// [`Self::with_mode`] (default `0`, nearest-neighbor).
+#[derive(Debug, Clone, Copy)]
+struct ResizeNchwParams {
     n: usize,
     c: usize,
     h_in: usize,
@@ -122,7 +126,40 @@ fn dispatch_resize_nchw_known(
     h_out: usize,
     w_out: usize,
     mode: u8,
-) -> ExecResult<Vec<u8>> {
+}
+
+impl ResizeNchwParams {
+    #[inline]
+    fn new(n: usize, c: usize, h_in: usize, w_in: usize, h_out: usize, w_out: usize) -> Self {
+        Self {
+            n,
+            c,
+            h_in,
+            w_in,
+            h_out,
+            w_out,
+            mode: 0,
+        }
+    }
+
+    #[inline]
+    fn with_mode(mut self, mode: u8) -> Self {
+        self.mode = mode;
+        self
+    }
+}
+
+/// NCHW resize with known spatial dimensions — no guessing.
+fn dispatch_resize_nchw_known(data: &[f32], params: ResizeNchwParams) -> ExecResult<Vec<u8>> {
+    let ResizeNchwParams {
+        n,
+        c,
+        h_in,
+        w_in,
+        h_out,
+        w_out,
+        mode,
+    } = params;
     let nc = n * c;
     let out_total = nc * h_out * w_out;
     let mut out = vec![0.0f32; out_total];

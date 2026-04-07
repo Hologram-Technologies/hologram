@@ -1,32 +1,115 @@
 use super::helpers::*;
 use crate::error::{ExecError, ExecResult};
 
-/// Generic 2D pooling with flattened outer loop.
+/// 2-D pooling kernel attributes (kernel size, stride, padding).
 ///
-/// Replaces 6-level nested loops (batch × channels × oh × ow × kh × kw)
-/// with a flat outer loop over output elements + a flat inner kernel loop.
-/// The `fold` closure receives `(accumulator, data_value)` and returns the
-/// new accumulator; `finalize` converts the accumulator to the output value.
-#[allow(clippy::too_many_arguments)]
-#[inline]
-fn pool_2d<A: Copy>(
-    data: &[f32],
+/// Builder defaults: stride `(1, 1)`, padding `(0, 0)`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Pool2dAttrs {
+    pub kh: usize,
+    pub kw: usize,
+    pub sh: usize,
+    pub sw: usize,
+    pub ph: usize,
+    pub pw: usize,
+}
+
+impl Pool2dAttrs {
+    #[inline]
+    pub fn new(kh: usize, kw: usize) -> Self {
+        Self {
+            kh,
+            kw,
+            sh: 1,
+            sw: 1,
+            ph: 0,
+            pw: 0,
+        }
+    }
+
+    #[inline]
+    pub fn with_stride(mut self, sh: usize, sw: usize) -> Self {
+        self.sh = sh;
+        self.sw = sw;
+        self
+    }
+
+    #[inline]
+    pub fn with_padding(mut self, ph: usize, pw: usize) -> Self {
+        self.ph = ph;
+        self.pw = pw;
+        self
+    }
+}
+
+/// Full 2-D pooling shape — input NCHW + output HW + kernel attrs.
+///
+/// Used only by the internal [`pool_2d`] helper; dispatch entry points take
+/// just a [`Pool2dAttrs`] and derive the spatial shape from buffer lengths.
+#[derive(Debug, Clone, Copy)]
+struct Pool2dCallShape {
     n: usize,
     channels: usize,
     h_in: usize,
     w_in: usize,
     h_out: usize,
     w_out: usize,
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
+    attrs: Pool2dAttrs,
+}
+
+impl Pool2dCallShape {
+    #[inline]
+    fn new(n: usize, channels: usize, h_in: usize, w_in: usize, attrs: Pool2dAttrs) -> Self {
+        Self {
+            n,
+            channels,
+            h_in,
+            w_in,
+            h_out: 0,
+            w_out: 0,
+            attrs,
+        }
+    }
+
+    #[inline]
+    fn with_output_hw(mut self, h_out: usize, w_out: usize) -> Self {
+        self.h_out = h_out;
+        self.w_out = w_out;
+        self
+    }
+}
+
+/// Generic 2D pooling with flattened outer loop.
+///
+/// Replaces 6-level nested loops (batch × channels × oh × ow × kh × kw)
+/// with a flat outer loop over output elements + a flat inner kernel loop.
+/// The `fold` closure receives `(accumulator, data_value)` and returns the
+/// new accumulator; `finalize` converts the accumulator to the output value.
+#[inline]
+fn pool_2d<A: Copy>(
+    data: &[f32],
+    shape: Pool2dCallShape,
     init: A,
     fold: impl Fn(A, f32) -> A,
     finalize: impl Fn(A) -> f32,
 ) -> Vec<f32> {
+    let Pool2dCallShape {
+        n,
+        channels,
+        h_in,
+        w_in,
+        h_out,
+        w_out,
+        attrs:
+            Pool2dAttrs {
+                kh,
+                kw,
+                sh,
+                sw,
+                ph,
+                pw,
+            },
+    } = shape;
     let out_len = n * channels * h_out * w_out;
     let mut out = vec![0.0f32; out_len];
     let c_h_w = channels * h_out * w_out;
@@ -60,38 +143,18 @@ fn pool_2d<A: Copy>(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn dispatch_max_pool_2d(
-    inputs: &[&[u8]],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_max_pool_2d(inputs: &[&[u8]], attrs: Pool2dAttrs) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let total = data.len();
     let (channels, h_in, w_in) = infer_nchw(total, 1);
     let n = 1;
 
-    let h_out = (h_in + 2 * ph - kh) / sh + 1;
-    let w_out = (w_in + 2 * pw - kw) / sw + 1;
+    let h_out = (h_in + 2 * attrs.ph - attrs.kh) / attrs.sh + 1;
+    let w_out = (w_in + 2 * attrs.pw - attrs.kw) / attrs.sw + 1;
 
     let out = pool_2d(
         &data,
-        n,
-        channels,
-        h_in,
-        w_in,
-        h_out,
-        w_out,
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
+        Pool2dCallShape::new(n, channels, h_in, w_in, attrs).with_output_hw(h_out, w_out),
         f32::NEG_INFINITY,
         |acc, val| acc.max(val),
         |acc| acc,
@@ -99,39 +162,19 @@ pub(crate) fn dispatch_max_pool_2d(
     Ok(f32_vec_to_bytes(out))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn dispatch_avg_pool_2d(
-    inputs: &[&[u8]],
-    kh: usize,
-    kw: usize,
-    sh: usize,
-    sw: usize,
-    ph: usize,
-    pw: usize,
-) -> ExecResult<Vec<u8>> {
+pub(crate) fn dispatch_avg_pool_2d(inputs: &[&[u8]], attrs: Pool2dAttrs) -> ExecResult<Vec<u8>> {
     let data = cast_f32(inputs[0])?;
     let total = data.len();
     let (channels, h_in, w_in) = infer_nchw(total, 1);
     let n = 1;
 
-    let h_out = (h_in + 2 * ph - kh) / sh + 1;
-    let w_out = (w_in + 2 * pw - kw) / sw + 1;
+    let h_out = (h_in + 2 * attrs.ph - attrs.kh) / attrs.sh + 1;
+    let w_out = (w_in + 2 * attrs.pw - attrs.kw) / attrs.sw + 1;
 
     // Accumulator: (sum, count)
     let out = pool_2d(
         &data,
-        n,
-        channels,
-        h_in,
-        w_in,
-        h_out,
-        w_out,
-        kh,
-        kw,
-        sh,
-        sw,
-        ph,
-        pw,
+        Pool2dCallShape::new(n, channels, h_in, w_in, attrs).with_output_hw(h_out, w_out),
         (0.0f32, 0usize),
         |(sum, count), val| (sum + val, count + 1),
         |(sum, count)| {

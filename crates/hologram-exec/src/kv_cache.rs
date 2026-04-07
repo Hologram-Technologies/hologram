@@ -522,6 +522,44 @@ pub struct KvCacheState {
     transpose_scratch: Vec<f32>,
 }
 
+/// Parameters for [`KvCacheState::write_to_buffer`].
+///
+/// Groups the seven positional arguments the private helper used to take
+/// into a single builder so the method stays under the argument limit.
+/// Required fields: `start_pos`, `seq_len`, `n_kv_heads`, `head_dim`.
+/// Default: no WHT rotation (both `wht_signs` fields `None`); set both via
+/// [`Self::with_wht`] together.
+#[derive(Debug, Clone, Copy)]
+struct KvWriteToBufferParams<'a> {
+    start_pos: usize,
+    seq_len: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    wht_signs: Option<&'a [f32]>,
+    wht_signs_norm: Option<&'a [f32]>,
+}
+
+impl<'a> KvWriteToBufferParams<'a> {
+    #[inline]
+    fn new(start_pos: usize, seq_len: usize, n_kv_heads: usize, head_dim: usize) -> Self {
+        Self {
+            start_pos,
+            seq_len,
+            n_kv_heads,
+            head_dim,
+            wht_signs: None,
+            wht_signs_norm: None,
+        }
+    }
+
+    #[inline]
+    fn with_wht(mut self, signs: Option<&'a [f32]>, signs_norm: Option<&'a [f32]>) -> Self {
+        self.wht_signs = signs;
+        self.wht_signs_norm = signs_norm;
+        self
+    }
+}
+
 impl KvCacheState {
     /// Create a new KV cache for the given model architecture.
     ///
@@ -657,18 +695,20 @@ impl KvCacheState {
     /// Write data into a layer buffer at the given position range.
     /// `scratch` is a reusable buffer for WHT rotation (avoids per-head allocation).
     /// When WHT is active, `wht_signs` and `wht_signs_norm` must both be Some.
-    #[allow(clippy::too_many_arguments)]
     fn write_to_buffer(
         buf: &mut LayerBuffer,
         data: &[f32],
-        start_pos: usize,
-        seq_len: usize,
-        n_kv_heads: usize,
-        head_dim: usize,
-        wht_signs: Option<&[f32]>,
-        wht_signs_norm: Option<&[f32]>,
+        params: KvWriteToBufferParams<'_>,
         scratch: &mut Vec<f32>,
     ) {
+        let KvWriteToBufferParams {
+            start_pos,
+            seq_len,
+            n_kv_heads,
+            head_dim,
+            wht_signs,
+            wht_signs_norm,
+        } = params;
         let stride = n_kv_heads * head_dim;
         match buf {
             LayerBuffer::F32(ref mut v) => {
@@ -893,12 +933,7 @@ impl KvCacheState {
             Self::write_to_buffer(
                 &mut self.k_buffers[layer_idx],
                 k_data,
-                self.write_pos,
-                seq_len,
-                n_heads,
-                hd,
-                None,
-                None,
+                KvWriteToBufferParams::new(self.write_pos, seq_len, n_heads, hd),
                 &mut scratch,
             );
         }
@@ -918,12 +953,8 @@ impl KvCacheState {
             Self::write_to_buffer(
                 &mut self.v_buffers[layer_idx],
                 v_data,
-                self.write_pos,
-                seq_len,
-                n_heads,
-                hd,
-                v_signs,
-                v_signs_norm,
+                KvWriteToBufferParams::new(self.write_pos, seq_len, n_heads, hd)
+                    .with_wht(v_signs, v_signs_norm),
                 &mut scratch,
             );
 

@@ -92,15 +92,11 @@ pub fn dispatch_float_with_shapes(
         return conv::dispatch_conv2d_with_shapes(
             inputs,
             input_shapes,
-            *kernel_h as usize,
-            *kernel_w as usize,
-            *stride_h as usize,
-            *stride_w as usize,
-            *pad_h as usize,
-            *pad_w as usize,
-            *dilation_h as usize,
-            *dilation_w as usize,
-            *group as usize,
+            conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                .with_stride(*stride_h as usize, *stride_w as usize)
+                .with_padding(*pad_h as usize, *pad_w as usize)
+                .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                .with_group(*group as usize),
         );
     }
     match op.category() {
@@ -293,13 +289,15 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
         } => {
             let result = attention::dispatch_attention(
                 inputs,
-                *head_dim as usize,
-                *num_q_heads as usize,
-                *num_kv_heads as usize,
-                bits_to_f32(*scale),
-                *causal,
-                *heads_first,
-                *sparse_v,
+                attention::AttentionParams::new(
+                    *head_dim as usize,
+                    *num_q_heads as usize,
+                    *num_kv_heads as usize,
+                )
+                .with_scale(bits_to_f32(*scale))
+                .with_causal(*causal)
+                .with_heads_first(*heads_first)
+                .with_sparse_v(*sparse_v),
             )?;
             out_buf.extend_from_slice(&result);
             Ok(true)
@@ -319,15 +317,11 @@ fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -
         } => {
             let result = conv::dispatch_conv2d_direct(
                 inputs,
-                *kernel_h as usize,
-                *kernel_w as usize,
-                *stride_h as usize,
-                *stride_w as usize,
-                *pad_h as usize,
-                *pad_w as usize,
-                *dilation_h as usize,
-                *dilation_w as usize,
-                *group as usize,
+                conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                    .with_stride(*stride_h as usize, *stride_w as usize)
+                    .with_padding(*pad_h as usize, *pad_w as usize)
+                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                    .with_group(*group as usize),
                 *input_h as usize,
                 *input_w as usize,
             )?;
@@ -414,50 +408,68 @@ fn dispatch_expand(inputs: &[&[u8]], ndim: u8, target_shape: &[u32; 8]) -> ExecR
     }
 
     let mut out = vec![0.0f32; total_out];
-    expand_recursive(src, &mut out, &in_shape, target, nd, 0, 0, 0);
+    ExpandRecursion::new(src, &in_shape, target).run(&mut out);
     Ok(bytemuck::cast_slice(&out).to_vec())
 }
 
-/// Recursive N-dimensional broadcast copy for Expand.
-#[allow(clippy::too_many_arguments)]
-fn expand_recursive(
-    src: &[f32],
-    dst: &mut [f32],
-    in_shape: &[usize],
-    out_shape: &[u32],
+/// Invariants for the N-dimensional [`Expand`](hologram_core::op::FloatOp::Expand)
+/// broadcast copy.
+///
+/// The previous free-function `expand_recursive` took 8 positional arguments —
+/// 5 invariant (src / dst / shapes / ndim) and 3 per-call (dim / src_offset /
+/// dst_offset). Grouping the invariants into this struct lets [`Self::run`] /
+/// [`Self::recurse`] stay under the argument limit without burying the
+/// recursive state in global variables.
+struct ExpandRecursion<'a> {
+    src: &'a [f32],
+    in_shape: &'a [usize],
+    out_shape: &'a [u32],
     ndim: usize,
-    dim: usize,
-    src_offset: usize,
-    dst_offset: usize,
-) {
-    if dim == ndim {
-        dst[dst_offset] = src[src_offset];
-        return;
-    }
+}
 
-    let in_dim = in_shape[dim];
-    let out_dim = out_shape[dim] as usize;
-
-    // Compute strides for remaining dimensions.
-    let src_stride: usize = in_shape[dim + 1..].iter().product::<usize>().max(1);
-    let dst_stride: usize = out_shape[dim + 1..]
-        .iter()
-        .map(|&d| d as usize)
-        .product::<usize>()
-        .max(1);
-
-    for i in 0..out_dim {
-        let si = if in_dim == 1 { 0 } else { i };
-        expand_recursive(
+impl<'a> ExpandRecursion<'a> {
+    #[inline]
+    fn new(src: &'a [f32], in_shape: &'a [usize], out_shape: &'a [u32]) -> Self {
+        Self {
             src,
-            dst,
             in_shape,
             out_shape,
-            ndim,
-            dim + 1,
-            src_offset + si * src_stride,
-            dst_offset + i * dst_stride,
-        );
+            ndim: in_shape.len(),
+        }
+    }
+
+    /// Run the full recursive broadcast copy into `dst`.
+    #[inline]
+    fn run(&self, dst: &mut [f32]) {
+        self.recurse(dst, 0, 0, 0);
+    }
+
+    fn recurse(&self, dst: &mut [f32], dim: usize, src_offset: usize, dst_offset: usize) {
+        if dim == self.ndim {
+            dst[dst_offset] = self.src[src_offset];
+            return;
+        }
+
+        let in_dim = self.in_shape[dim];
+        let out_dim = self.out_shape[dim] as usize;
+
+        // Compute strides for remaining dimensions.
+        let src_stride: usize = self.in_shape[dim + 1..].iter().product::<usize>().max(1);
+        let dst_stride: usize = self.out_shape[dim + 1..]
+            .iter()
+            .map(|&d| d as usize)
+            .product::<usize>()
+            .max(1);
+
+        for i in 0..out_dim {
+            let si = if in_dim == 1 { 0 } else { i };
+            self.recurse(
+                dst,
+                dim + 1,
+                src_offset + si * src_stride,
+                dst_offset + i * dst_stride,
+            );
+        }
     }
 }
 
@@ -562,13 +574,15 @@ fn dispatch_custom(
             ..
         } => attention::dispatch_attention(
             inputs,
-            *head_dim as usize,
-            *num_q_heads as usize,
-            *num_kv_heads as usize,
-            bits_to_f32(*scale),
-            *causal,
-            *heads_first,
-            *sparse_v,
+            attention::AttentionParams::new(
+                *head_dim as usize,
+                *num_q_heads as usize,
+                *num_kv_heads as usize,
+            )
+            .with_scale(bits_to_f32(*scale))
+            .with_causal(*causal)
+            .with_heads_first(*heads_first)
+            .with_sparse_v(*sparse_v),
         ),
         FloatOp::Dequantize => cast::dispatch_dequantize(inputs),
         // ── Vision / spatial ops ──────────────────────────────────────────
@@ -586,15 +600,11 @@ fn dispatch_custom(
             input_w,
         } => conv::dispatch_conv2d_direct(
             inputs,
-            *kernel_h as usize,
-            *kernel_w as usize,
-            *stride_h as usize,
-            *stride_w as usize,
-            *pad_h as usize,
-            *pad_w as usize,
-            *dilation_h as usize,
-            *dilation_w as usize,
-            *group as usize,
+            conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                .with_stride(*stride_h as usize, *stride_w as usize)
+                .with_padding(*pad_h as usize, *pad_w as usize)
+                .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                .with_group(*group as usize),
             *input_h as usize,
             *input_w as usize,
         ),
@@ -614,17 +624,13 @@ fn dispatch_custom(
             input_w,
         } => conv::dispatch_conv_transpose(
             inputs,
-            *kernel_h as usize,
-            *kernel_w as usize,
-            *stride_h as usize,
-            *stride_w as usize,
-            *pad_h as usize,
-            *pad_w as usize,
-            *dilation_h as usize,
-            *dilation_w as usize,
-            *group as usize,
-            *output_pad_h as usize,
-            *output_pad_w as usize,
+            conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                .with_stride(*stride_h as usize, *stride_w as usize)
+                .with_padding(*pad_h as usize, *pad_w as usize)
+                .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                .with_group(*group as usize),
+            conv::ConvTransposeOutputPad::new()
+                .with_hw(*output_pad_h as usize, *output_pad_w as usize),
             *input_h as usize,
             *input_w as usize,
         ),
@@ -637,12 +643,9 @@ fn dispatch_custom(
             pad_w,
         } => pool::dispatch_max_pool_2d(
             inputs,
-            *kernel_h as usize,
-            *kernel_w as usize,
-            *stride_h as usize,
-            *stride_w as usize,
-            *pad_h as usize,
-            *pad_w as usize,
+            pool::Pool2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                .with_stride(*stride_h as usize, *stride_w as usize)
+                .with_padding(*pad_h as usize, *pad_w as usize),
         ),
         FloatOp::AvgPool2d {
             kernel_h,
@@ -653,12 +656,9 @@ fn dispatch_custom(
             pad_w,
         } => pool::dispatch_avg_pool_2d(
             inputs,
-            *kernel_h as usize,
-            *kernel_w as usize,
-            *stride_h as usize,
-            *stride_w as usize,
-            *pad_h as usize,
-            *pad_w as usize,
+            pool::Pool2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
+                .with_stride(*stride_h as usize, *stride_w as usize)
+                .with_padding(*pad_h as usize, *pad_w as usize),
         ),
         FloatOp::GlobalAvgPool {
             channels,

@@ -757,36 +757,79 @@ unsafe impl Sync for SendPtr {}
 const KC: usize = 256;
 
 /// Micro-kernel: accumulate A[i..i+MR, k_start..k_end] × B[k_start..k_end, j..j+NR]
+/// Tile coordinates + K/N strides for an inner matmul micro-kernel.
+///
+/// Used by both the strided and dequant micro-kernels so the 9-argument
+/// positional explosion collapses into two logical things: the A/B/acc
+/// buffers (passed separately because they have distinct lifetimes and
+/// mutability) and this layout struct.
+///
+/// Build with [`MicroKernelStridedLayout::new`] (required: `i`, `j`,
+/// `k_start`, `k_end`, `k_stride`, `n`). All fields are required — there
+/// are no sensible defaults for these geometry parameters — so this
+/// struct has no `with_*` setters; the builder pattern is provided by
+/// the named-field `new` constructor and the struct-level `Debug`/`Copy`
+/// derives.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MicroKernelStridedLayout {
+    /// Starting row of the output tile.
+    pub i: usize,
+    /// Starting column of the output tile.
+    pub j: usize,
+    /// Inclusive start of the K reduction range.
+    pub k_start: usize,
+    /// Exclusive end of the K reduction range.
+    pub k_end: usize,
+    /// Row-stride of A (usually equal to K for contiguous A).
+    pub k_stride: usize,
+    /// Row-stride of B (usually equal to N).
+    pub n: usize,
+}
+
+impl MicroKernelStridedLayout {
+    #[inline(always)]
+    pub fn new(
+        i: usize,
+        j: usize,
+        k_start: usize,
+        k_end: usize,
+        k_stride: usize,
+        n: usize,
+    ) -> Self {
+        Self {
+            i,
+            j,
+            k_start,
+            k_end,
+            k_stride,
+            n,
+        }
+    }
+}
+
+/// Compute MR×NR output tile of C += A @ B, reading from strided A and B
 /// into `acc`. The accumulator is NOT zeroed — caller manages initialization.
 ///
 /// Dispatches to SIMD on supported platforms for the primary 4×8 tile.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn micro_kernel<const MR: usize, const NR: usize>(
     a: &[f32],
     b: &[f32],
     acc: &mut [[f32; NR]; MR],
-    i: usize,
-    j: usize,
-    k_start: usize,
-    k_end: usize,
-    k_stride: usize,
-    n: usize,
+    layout: MicroKernelStridedLayout,
 ) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
     #[cfg(target_arch = "aarch64")]
     if MR == 4 && NR == 8 {
         unsafe {
-            micro_kernel_strided_neon(
-                a,
-                b,
-                acc.as_mut_ptr().cast(),
-                i,
-                j,
-                k_start,
-                k_end,
-                k_stride,
-                n,
-            );
+            micro_kernel_strided_neon(a, b, acc.as_mut_ptr().cast(), layout);
         }
         return;
     }
@@ -794,17 +837,7 @@ fn micro_kernel<const MR: usize, const NR: usize>(
     #[cfg(target_arch = "x86_64")]
     if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
         unsafe {
-            micro_kernel_strided_avx2(
-                a,
-                b,
-                acc.as_mut_ptr().cast(),
-                i,
-                j,
-                k_start,
-                k_end,
-                k_stride,
-                n,
-            );
+            micro_kernel_strided_avx2(a, b, acc.as_mut_ptr().cast(), layout);
         }
         return;
     }
@@ -812,17 +845,7 @@ fn micro_kernel<const MR: usize, const NR: usize>(
     #[cfg(target_arch = "wasm32")]
     if MR == 4 && NR == 8 {
         unsafe {
-            micro_kernel_strided_wasm32(
-                a,
-                b,
-                acc.as_mut_ptr().cast(),
-                i,
-                j,
-                k_start,
-                k_end,
-                k_stride,
-                n,
-            );
+            micro_kernel_strided_wasm32(a, b, acc.as_mut_ptr().cast(), layout);
         }
         return;
     }
@@ -841,18 +864,20 @@ fn micro_kernel<const MR: usize, const NR: usize>(
 /// NEON strided micro-kernel: B at stride N (not packed).
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_strided_neon(
     a: &[f32],
     b: &[f32],
     acc_ptr: *mut f32,
-    i: usize,
-    j: usize,
-    k_start: usize,
-    k_end: usize,
-    k_stride: usize,
-    n: usize,
+    layout: MicroKernelStridedLayout,
 ) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
     use std::arch::aarch64::*;
 
     let mut acc0_lo = vld1q_f32(acc_ptr);
@@ -898,18 +923,20 @@ unsafe fn micro_kernel_strided_neon(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_strided_avx2(
     a: &[f32],
     b: &[f32],
     acc_ptr: *mut f32,
-    i: usize,
-    j: usize,
-    k_start: usize,
-    k_end: usize,
-    k_stride: usize,
-    n: usize,
+    layout: MicroKernelStridedLayout,
 ) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
@@ -942,18 +969,20 @@ unsafe fn micro_kernel_strided_avx2(
 /// Processes the 4×8 tile as two 4×4 halves using 128-bit SIMD.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_strided_wasm32(
     a: &[f32],
     b: &[f32],
     acc_ptr: *mut f32,
-    i: usize,
-    j: usize,
-    k_start: usize,
-    k_end: usize,
-    k_stride: usize,
-    n: usize,
+    layout: MicroKernelStridedLayout,
 ) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
     use std::arch::wasm32::*;
 
     let mut acc0_lo = v128_load(acc_ptr as *const v128);
@@ -1075,7 +1104,6 @@ fn micro_kernel_packed<const MR: usize, const NR: usize>(
 /// as two 4-wide halves. Uses `f32x4_mul` + `f32x4_add` (no FMA on wasm128).
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_packed_wasm32(
     a: &[f32],
     packed_b: &[f32],
@@ -1162,7 +1190,6 @@ fn micro_kernel_packed_scalar<const MR: usize, const NR: usize>(
 /// SAFETY: caller must ensure aarch64 target and valid acc pointer.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_packed_neon(
     a: &[f32],
     packed_b: &[f32],
@@ -1225,7 +1252,6 @@ unsafe fn micro_kernel_packed_neon(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
-#[allow(clippy::too_many_arguments)]
 unsafe fn micro_kernel_packed_avx2(
     a: &[f32],
     packed_b: &[f32],
@@ -1346,7 +1372,12 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
                     k,
                 );
             } else {
-                micro_kernel::<MR, NR>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
+                micro_kernel::<MR, NR>(
+                    a,
+                    b,
+                    &mut acc,
+                    MicroKernelStridedLayout::new(i, j, kc_start, kc_end, k, n),
+                );
             }
             // Store accumulator back to output.
             for (ii, acc_row) in acc.iter().enumerate() {
@@ -1387,13 +1418,23 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
         // Remainder columns (sequential — not worth packing for < NR columns).
         if n_rem > 0 {
             for it in 0..m_tiles {
-                m_tile_n_remainder(a, b, out_ptr, it * MR, k, n, n_tiles, n_rem);
+                m_tile_n_remainder(
+                    a,
+                    b,
+                    out_ptr,
+                    MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+                );
             }
         }
         // Remainder rows.
         if m_rem > 0 {
             let i = m_tiles * MR;
-            m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
+            m_remainder_tiled(
+                a,
+                b,
+                out,
+                MatmulRemainderLayout::new(i, k, n, n_tiles, n_rem).with_m_rem(m_rem),
+            );
         }
         return;
     }
@@ -1416,28 +1457,81 @@ pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k:
     // Remainder columns.
     if n_rem > 0 {
         for it in 0..m_tiles {
-            m_tile_n_remainder(a, b, out_ptr, it * MR, k, n, n_tiles, n_rem);
+            m_tile_n_remainder(
+                a,
+                b,
+                out_ptr,
+                MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+            );
         }
     }
     // Remainder rows.
     if m_rem > 0 {
         let i = m_tiles * MR;
-        m_remainder_tiled(a, b, out, i, m_rem, k, n, n_tiles, n_rem);
+        m_remainder_tiled(
+            a,
+            b,
+            out,
+            MatmulRemainderLayout::new(i, k, n, n_tiles, n_rem).with_m_rem(m_rem),
+        );
+    }
+}
+
+/// Layout for the M/N-remainder matmul helpers in this module.
+///
+/// Groups the row index, K dim, N dim, and the n-tile split so functions
+/// like [`m_tile_n_remainder`], [`m_remainder_tiled`],
+/// [`dequant_q4_0_m_strip`], and [`dequant_q6_k_m_strip`] stay under the
+/// argument limit. All four functions share the same underlying shape.
+///
+/// Build with [`MatmulRemainderLayout::new`] (all fields required — there
+/// are no meaningful defaults for geometry params).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MatmulRemainderLayout {
+    /// Starting M row for the helper to process.
+    pub i: usize,
+    /// Remaining rows (used only by [`m_remainder_tiled`], ignored elsewhere).
+    pub m_rem: usize,
+    /// K dimension.
+    pub k: usize,
+    /// N dimension.
+    pub n: usize,
+    /// Number of complete N-tiles processed by the main kernel.
+    pub n_tiles: usize,
+    /// Leftover N columns after the last complete tile.
+    pub n_rem: usize,
+}
+
+impl MatmulRemainderLayout {
+    #[inline(always)]
+    pub fn new(i: usize, k: usize, n: usize, n_tiles: usize, n_rem: usize) -> Self {
+        Self {
+            i,
+            m_rem: 0,
+            k,
+            n,
+            n_tiles,
+            n_rem,
+        }
+    }
+
+    #[inline(always)]
+    pub fn with_m_rem(mut self, m_rem: usize) -> Self {
+        self.m_rem = m_rem;
+        self
     }
 }
 
 /// Process remainder N columns (< NR) for a single M-tile. Not packed.
-#[allow(clippy::too_many_arguments)]
-fn m_tile_n_remainder(
-    a: &[f32],
-    b: &[f32],
-    out_ptr: SendPtr,
-    i: usize,
-    k: usize,
-    n: usize,
-    n_tiles: usize,
-    n_rem: usize,
-) {
+fn m_tile_n_remainder(a: &[f32], b: &[f32], out_ptr: SendPtr, layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem: _,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
     const MR: usize = 4;
     let out_ptr = out_ptr.0;
     let j = n_tiles * 8;
@@ -1446,7 +1540,12 @@ fn m_tile_n_remainder(
         let mut acc = [[0.0f32; 4]; MR];
         for kc_start in (0..k).step_by(KC) {
             let kc_end = (kc_start + KC).min(k);
-            micro_kernel::<MR, 4>(a, b, &mut acc, i, j, kc_start, kc_end, k, n);
+            micro_kernel::<MR, 4>(
+                a,
+                b,
+                &mut acc,
+                MicroKernelStridedLayout::new(i, j, kc_start, kc_end, k, n),
+            );
         }
         for (ii, acc_row) in acc.iter().enumerate() {
             for (jj, &v) in acc_row.iter().enumerate() {
@@ -1479,18 +1578,15 @@ fn m_tile_n_remainder(
 
 /// Process `m_rem` remainder rows starting at row `i`, using MR=2 and MR=1
 /// micro-kernel tiles with KC blocking and B-panel packing.
-#[allow(clippy::too_many_arguments)]
-fn m_remainder_tiled(
-    a: &[f32],
-    b: &[f32],
-    out: &mut [f32],
-    i: usize,
-    m_rem: usize,
-    k: usize,
-    n: usize,
-    n_tiles: usize,
-    n_rem: usize,
-) {
+fn m_remainder_tiled(a: &[f32], b: &[f32], out: &mut [f32], layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
     const NR: usize = 8;
     let mut packed_b = [0.0f32; KC * NR];
     let mut row = i;
@@ -1899,17 +1995,15 @@ fn dequant_q4_0_row_segment(
 
 /// Process one MR-row strip: dequant-pack B panels and run micro-kernel.
 #[inline]
-#[allow(clippy::too_many_arguments)]
-fn dequant_q4_0_m_strip(
-    a: &[f32],
-    b_q4: &[u8],
-    out_ptr: *mut f32,
-    i: usize,
-    k: usize,
-    n: usize,
-    n_tiles: usize,
-    n_rem: usize,
-) {
+fn dequant_q4_0_m_strip(a: &[f32], b_q4: &[u8], out_ptr: *mut f32, layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem: _,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
     const MR: usize = 4;
     const NR: usize = 8;
     let mut packed_b = [0.0f32; KC * NR];
@@ -2035,7 +2129,12 @@ pub(crate) fn matmul_dequant_q4_0(
             .with_min_len(duty)
             .for_each(|it| {
                 let ptr = out_ptr;
-                dequant_q4_0_m_strip(a, b_q4, ptr.0, it * MR, k, n, n_tiles, n_rem);
+                dequant_q4_0_m_strip(
+                    a,
+                    b_q4,
+                    ptr.0,
+                    MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+                );
             });
         if m_rem > 0 {
             dequant_q4_0_remainder_rows(a, b_q4, out, m_tiles * MR, m_rem, k, n);
@@ -2045,7 +2144,12 @@ pub(crate) fn matmul_dequant_q4_0(
 
     let out_ptr = out.as_mut_ptr();
     for it in 0..m_tiles {
-        dequant_q4_0_m_strip(a, b_q4, out_ptr, it * MR, k, n, n_tiles, n_rem);
+        dequant_q4_0_m_strip(
+            a,
+            b_q4,
+            out_ptr,
+            MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+        );
     }
     if m_rem > 0 {
         dequant_q4_0_remainder_rows(a, b_q4, out, m_tiles * MR, m_rem, k, n);
@@ -2149,17 +2253,15 @@ fn dequant_q6_k_row_segment(
 
 /// Process one MR-row strip: dequant-pack Q6_K B panels and run micro-kernel.
 #[inline]
-#[allow(clippy::too_many_arguments)]
-fn dequant_q6_k_m_strip(
-    a: &[f32],
-    b_q6k: &[u8],
-    out_ptr: *mut f32,
-    i: usize,
-    k: usize,
-    n: usize,
-    n_tiles: usize,
-    n_rem: usize,
-) {
+fn dequant_q6_k_m_strip(a: &[f32], b_q6k: &[u8], out_ptr: *mut f32, layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem: _,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
     const MR: usize = 4;
     const NR: usize = 8;
     let mut packed_b = [0.0f32; KC * NR];
@@ -2284,7 +2386,12 @@ pub(crate) fn matmul_dequant_q6_k(
             .with_min_len(duty)
             .for_each(|it| {
                 let ptr = out_ptr;
-                dequant_q6_k_m_strip(a, b_q6k, ptr.0, it * MR, k, n, n_tiles, n_rem);
+                dequant_q6_k_m_strip(
+                    a,
+                    b_q6k,
+                    ptr.0,
+                    MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+                );
             });
         if m_rem > 0 {
             dequant_q6_k_remainder_rows(a, b_q6k, out, m_tiles * MR, m_rem, k, n);
@@ -2294,7 +2401,12 @@ pub(crate) fn matmul_dequant_q6_k(
 
     let out_ptr = out.as_mut_ptr();
     for it in 0..m_tiles {
-        dequant_q6_k_m_strip(a, b_q6k, out_ptr, it * MR, k, n, n_tiles, n_rem);
+        dequant_q6_k_m_strip(
+            a,
+            b_q6k,
+            out_ptr,
+            MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+        );
     }
     if m_rem > 0 {
         dequant_q6_k_remainder_rows(a, b_q6k, out, m_tiles * MR, m_rem, k, n);
