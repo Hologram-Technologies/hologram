@@ -71,6 +71,11 @@ pub struct CompilationOutput {
 }
 
 /// Input source for the compiler.
+///
+/// The `Unit` variant carries a full `HoloCompileUnit` (~2 KB) — boxing
+/// would add indirection for a builder-only payload, so we allow the size
+/// difference here.
+#[allow(clippy::large_enum_variant)]
 enum CompilerInput {
     /// Raw graph — will be wrapped in a synthetic CompileUnit.
     Graph(Graph),

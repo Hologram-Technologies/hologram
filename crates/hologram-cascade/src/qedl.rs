@@ -215,7 +215,7 @@ mod tests {
         let input = g.add_node(GraphOp::Input);
         let relu = g.add_node(GraphOp::Lut(LutOp::Relu));
         let cid = hologram_graph::constant::ConstantId::new(1);
-        let matmul = g.add_node(GraphOp::MatMulLut { bits: 8, cid });
+        let matmul = g.add_node(GraphOp::MatMulLut8(cid));
         let output = g.add_node(GraphOp::Output);
         g.add_edge(input, relu);
         g.add_edge(relu, matmul);

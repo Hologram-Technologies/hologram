@@ -24,6 +24,12 @@ pub struct DispatchRegistry {
     len: u8,
 }
 
+impl Default for DispatchRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DispatchRegistry {
     /// Create an empty registry.
     #[inline]

@@ -59,7 +59,7 @@ pub fn eliminate_common_subexpressions(
 
         if let Some(&canon_id) = canonical.get(&sig) {
             if canon_id != id {
-                graph.rewire_successors_indexed(id, canon_id, &succ_index);
+                graph.rewire_successors_indexed(id, canon_id, succ_index);
                 graph.remove_node(id);
                 eliminated += 1;
             }

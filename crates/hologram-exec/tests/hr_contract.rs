@@ -97,8 +97,11 @@ fn hr3_header_blake3_flag() {
         section_table_offset: 0,
         section_table_size: 0,
         total_size: 0,
+        certificate_offset: 0,
+        certificate_size: 0,
         graph_checksum: [0u8; 32],
         weights_checksum: [0u8; 32],
+        unit_address: [0u8; 32],
         section_count: 0,
         flags: 0,
     };

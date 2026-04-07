@@ -73,7 +73,7 @@ pub fn build_parallel_levels_with_index(
             let id = ids[pos];
             level_ids.push(id);
             visited += 1;
-            for &succ_id in Graph::successors_from_index(id, &succ_index) {
+            for &succ_id in Graph::successors_from_index(id, succ_index) {
                 if let Some(&succ_pos) = id_to_pos.get(&succ_id) {
                     in_degree[succ_pos] -= 1;
                     if in_degree[succ_pos] == 0 {

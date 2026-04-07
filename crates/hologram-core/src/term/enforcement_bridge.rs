@@ -134,7 +134,7 @@ pub fn lower_enforcement_node<const CAP: usize>(
                 // Last body is the default accumulator
                 let last_body_idx = arms.start + arms.len - 1;
                 let mut acc = lower_enforcement_node(last_body_idx, src, dst, node_map)?;
-                let num_arms = (arms.len / 2) as u32;
+                let num_arms = arms.len / 2;
                 // Process arms right-to-left: each arm selects body when
                 // scrutinee == pattern via XOR-to-zero + mask
                 for i in (0..num_arms).rev() {

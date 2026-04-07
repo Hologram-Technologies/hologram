@@ -19,3 +19,6 @@ default = ["std"]
 std = ["serialize", "rkyv/std", "rkyv/bytecheck"]
 serialize = ["dep:rkyv", "rkyv/alloc", "rkyv/bytecheck"]
 simd = [] # SIMD dispatch is compile-time detected; flag reserved for future gating
+# Flag reserved for future no_alloc term arenas; referenced by term/arena.rs
+# cfg-gated blocks. Not yet wired into actual allocation-free paths.
+no_alloc = []

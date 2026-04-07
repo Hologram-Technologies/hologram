@@ -200,13 +200,11 @@ impl CertificateStore {
         let mut buf = Vec::new();
         let count = self.len as u32;
         buf.extend_from_slice(&count.to_le_bytes());
-        for slot in &self.slots {
-            if let Some((key, cert)) = slot {
-                buf.extend_from_slice(&key.address);
-                buf.push(key.level.index() as u8);
-                buf.extend_from_slice(&cert.budget_consumed.to_le_bytes());
-                buf.push(if cert.converged { 1 } else { 0 });
-            }
+        for (key, cert) in self.slots.iter().flatten() {
+            buf.extend_from_slice(&key.address);
+            buf.push(key.level.index() as u8);
+            buf.extend_from_slice(&cert.budget_consumed.to_le_bytes());
+            buf.push(if cert.converged { 1 } else { 0 });
         }
         std::fs::write(path, &buf)
     }

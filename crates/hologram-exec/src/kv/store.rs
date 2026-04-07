@@ -631,7 +631,7 @@ mod tests {
         let activations = [1.0f32, 2.0, 3.0, 4.0]; // 1×4
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
-        let op = GraphOp::MatMulLut { bits: 4, cid };
+        let op = GraphOp::MatMulLut4(cid);
         let result =
             KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None, &[]).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
@@ -658,7 +658,7 @@ mod tests {
         let activations = [1.0f32, 1.0, 1.0, 1.0];
         let act_bytes: &[u8] = bytemuck::cast_slice(&activations);
 
-        let op = GraphOp::MatMulLut { bits: 8, cid };
+        let op = GraphOp::MatMulLut8(cid);
         let result =
             KvStore::dispatch_with_constants(&op, &[act_bytes], &constants, None, &[]).unwrap();
         let output: &[f32] = bytemuck::cast_slice(&result);
@@ -672,10 +672,7 @@ mod tests {
     #[test]
     fn dispatch_matmul_lut_missing_constant() {
         use hologram_graph::constant::ConstantId;
-        let op = GraphOp::MatMulLut {
-            bits: 4,
-            cid: ConstantId::new(99),
-        };
+        let op = GraphOp::MatMulLut4(ConstantId::new(99));
         let act = [1.0f32; 4];
         let act_bytes: &[u8] = bytemuck::cast_slice(&act);
         let result =

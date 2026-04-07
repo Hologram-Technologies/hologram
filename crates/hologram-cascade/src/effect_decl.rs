@@ -31,6 +31,12 @@ pub struct EffectStore {
     len: u8,
 }
 
+impl Default for EffectStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EffectStore {
     /// Create an empty effect store.
     #[inline]

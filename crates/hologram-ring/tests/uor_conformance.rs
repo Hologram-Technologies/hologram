@@ -36,9 +36,11 @@ fn datum_value_q3() {
 #[test]
 fn datum_spectrum_q0() {
     let d = Datum::<Q0>::new(0b1010_0101u8);
-    let s = UorDatum::spectrum(&d);
-    assert_eq!(s.len(), 8);
-    assert_eq!(s, "10100101");
+    // uor-foundation 0.1.4: `spectrum` on the trait returns the underlying
+    // numeric value (P::NonNegativeInteger = u64). The binary-string form
+    // is still available via the inherent `Datum::spectrum` method.
+    assert_eq!(UorDatum::spectrum(&d), 0b1010_0101u64);
+    assert_eq!(d.spectrum(), "10100101");
 }
 
 #[test]
@@ -229,28 +231,32 @@ fn primop_operation_traits() {
     assert!(!BinaryOp::commutative(&PrimOp::Sub));
 }
 
-// ── Algebra formulas ─────────────────────────────────────────────────────
+// ── Algebra marker traits ────────────────────────────────────────────────
+//
+// uor-foundation 0.1.4 collapsed `AlgebraCommutator` and `AlgebraAssociator`
+// into empty marker traits (the formula-string methods were removed). These
+// tests now just assert that `PrismRing<Q>` still implements the markers.
 
 #[test]
-fn algebra_commutator_formulas() {
-    assert_eq!(
-        AlgebraCommutator::commutator_formula(&PrismRing::<Q0>::new()),
-        "[a,b] = 0"
-    );
-    assert_eq!(
-        AlgebraCommutator::commutator_formula(&PrismRing::<Q3>::new()),
-        "[a,b] = a*b - b*a != 0"
-    );
+fn algebra_commutator_markers_implemented() {
+    fn assert_impl<P, T>()
+    where
+        P: uor_foundation::Primitives,
+        T: AlgebraCommutator<P>,
+    {
+    }
+    assert_impl::<hologram_ring::PrismPrimitives, PrismRing<Q0>>();
+    assert_impl::<hologram_ring::PrismPrimitives, PrismRing<Q3>>();
 }
 
 #[test]
-fn algebra_associator_formulas() {
-    assert_eq!(
-        AlgebraAssociator::associator_formula(&PrismRing::<Q0>::new()),
-        "[a,b,c] = 0"
-    );
-    assert_eq!(
-        AlgebraAssociator::associator_formula(&PrismRing::<Q7>::new()),
-        "[a,b,c] = (a*b)*c - a*(b*c) != 0"
-    );
+fn algebra_associator_markers_implemented() {
+    fn assert_impl<P, T>()
+    where
+        P: uor_foundation::Primitives,
+        T: AlgebraAssociator<P>,
+    {
+    }
+    assert_impl::<hologram_ring::PrismPrimitives, PrismRing<Q0>>();
+    assert_impl::<hologram_ring::PrismPrimitives, PrismRing<Q7>>();
 }
