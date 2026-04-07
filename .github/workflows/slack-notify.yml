@@ -2,7 +2,8 @@ name: Slack Notification
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
+    tags: ['*']
 
 jobs:
   changelog-to-slack:
@@ -21,6 +22,8 @@ jobs:
           GITHUB_SERVER: ${{ github.server_url }}
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
@@ -28,12 +31,34 @@ jobs:
             exit 0
           fi
 
+          # Header title: differentiate branch pushes from tag releases.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            HEADER_TITLE="🏷️  hologram release ${GITHUB_REF_NAME}"
+          else
+            HEADER_TITLE="📦 hologram push to ${GITHUB_REF_NAME}"
+          fi
+
           # Determine range: last push commit -> current push head
           BEFORE_SHA=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")
           HEAD_SHA=${GITHUB_SHA:-$(git rev-parse HEAD)}
 
+          # For tag pushes the "before" ref is the zero-sha, so we fall back
+          # to the commit the tag points at minus one (or the initial commit
+          # if there isn't one). For branch pushes the zero-sha fallback keeps
+          # the original "first-push" behaviour.
           if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BEFORE_SHA=$(git rev-list --max-parents=0 HEAD)
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              # Prefer diffing against the previous tag so a release shows
+              # the commits that landed since the last tagged version.
+              PREV_TAG=$(git describe --tags --abbrev=0 "${HEAD_SHA}^" 2>/dev/null || true)
+              if [ -n "$PREV_TAG" ]; then
+                BEFORE_SHA=$(git rev-parse "$PREV_TAG")
+              else
+                BEFORE_SHA=$(git rev-list --max-parents=0 HEAD)
+              fi
+            else
+              BEFORE_SHA=$(git rev-list --max-parents=0 HEAD)
+            fi
           fi
 
           DIFF_RANGE="${BEFORE_SHA}..${HEAD_SHA}"
@@ -89,6 +114,7 @@ jobs:
 
           # Build JSON payload using jq for proper escaping
           jq -n \
+            --arg header_title "$HEADER_TITLE" \
             --arg summary "$SUMMARY" \
             --arg summary_inline "$SUMMARY_INLINE" \
             --arg touches "$TOUCHES" \
@@ -102,7 +128,7 @@ jobs:
                     type: "header",
                     text: {
                       type: "plain_text",
-                      text: "📦 hologram Push to main",
+                      text: $header_title,
                       emoji: true
                     }
                   },
