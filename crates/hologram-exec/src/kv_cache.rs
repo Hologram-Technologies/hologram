@@ -517,6 +517,9 @@ pub struct KvCacheState {
     /// and appended, turning decode reads from O(seq_len) to O(1).
     /// `v_dequant_cache[layer]` has length `write_pos * stride` after advance.
     v_dequant_cache: Vec<Vec<f32>>,
+    /// Reusable scratch buffer for heads↔seq transposition.
+    /// Avoids per-step allocation in dispatch_kv_write/read.
+    transpose_scratch: Vec<f32>,
 }
 
 impl KvCacheState {
@@ -570,6 +573,7 @@ impl KvCacheState {
             wht_signs_norm,
             scratch: Vec::new(),
             v_dequant_cache,
+            transpose_scratch: Vec::new(),
         }
     }
 
@@ -963,6 +967,16 @@ impl KvCacheState {
     /// execution so the cache only records real token positions.
     pub fn set_advance_override(&mut self, n: usize) {
         self.advance_override = Some(n);
+    }
+
+    /// Get a mutable slice of the transposition scratch buffer,
+    /// resized to fit at least `n` elements. Reuses the allocation
+    /// across calls to avoid per-step heap allocation.
+    pub fn scratch_mut(&mut self, n: usize) -> &mut [f32] {
+        if self.transpose_scratch.len() < n {
+            self.transpose_scratch.resize(n, 0.0);
+        }
+        &mut self.transpose_scratch[..n]
     }
 
     /// Effective number of visible tokens (respects sliding window).

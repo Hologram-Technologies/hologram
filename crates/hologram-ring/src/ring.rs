@@ -177,28 +177,16 @@ mod uor_impls {
                 }
             }
 
+            // uor-foundation 0.1.4 made AlgebraCommutator/AlgebraAssociator marker
+            // traits — no methods to implement.
             impl uor_foundation::kernel::division::AlgebraCommutator<PrismPrimitives>
                 for PrismRing<$Q>
             {
-                fn commutator_formula(&self) -> &str {
-                    if $commutative {
-                        "[a,b] = 0"
-                    } else {
-                        "[a,b] = a*b - b*a != 0"
-                    }
-                }
             }
 
             impl uor_foundation::kernel::division::AlgebraAssociator<PrismPrimitives>
                 for PrismRing<$Q>
             {
-                fn associator_formula(&self) -> &str {
-                    if $associative {
-                        "[a,b,c] = 0"
-                    } else {
-                        "[a,b,c] = (a*b)*c - a*(b*c) != 0"
-                    }
-                }
             }
         };
     }

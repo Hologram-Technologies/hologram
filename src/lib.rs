@@ -56,8 +56,8 @@ pub use hologram_exec::{
     build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
     execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
     execute_tape_with_kv_shapes_cached, execute_tape_with_shapes, execute_tape_with_weight_cache,
-    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, KvCacheState, KvStore,
-    WeightCache,
+    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, InferenceSession,
+    KvCacheState, KvStore, WeightCache,
 };
 
 // Archive
@@ -72,7 +72,10 @@ pub use hologram_archive::{
 
 // Compiler (gated)
 #[cfg(feature = "compiler")]
-pub use hologram_compiler::{compile, CompilationOutput, CompilerBuilder};
+pub use hologram_compiler::{
+    compile, compile_from_source, unit_from_graph, unit_from_graph_with, CascadeInfo,
+    CertificateStore, CompilationOutput, CompilationStats, CompilerBuilder,
+};
 
 // Async (gated)
 #[cfg(feature = "async")]

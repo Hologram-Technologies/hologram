@@ -36,12 +36,13 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::FusedView16(_) => "FusedView16 (128KB Q1 table)".into(),
         GraphOp::Constant(id) => format_constant(id, constants),
         GraphOp::CallSubgraph(s) => format!("CallSubgraph({})", s.raw()),
-        GraphOp::MatMulLut4(id) => format!("MatMulLut4(id={})", id.raw()),
-        GraphOp::MatMulLut8(id) => format!("MatMulLut8(id={})", id.raw()),
-        GraphOp::BatchMatMulLut4(id) => format!("BatchMatMulLut4(id={})", id.raw()),
-        GraphOp::BatchMatMulLut8(id) => format!("BatchMatMulLut8(id={})", id.raw()),
-        GraphOp::MatMulLut16(id) => format!("MatMulLut16(id={})", id.raw()),
-        GraphOp::BatchMatMulLut16(id) => format!("BatchMatMulLut16(id={})", id.raw()),
+        GraphOp::MatMulLut2(cid) => format!("MatMulLut2(id={})", cid.raw()),
+        GraphOp::MatMulLut4(cid) => format!("MatMulLut4(id={})", cid.raw()),
+        GraphOp::MatMulLut8(cid) => format!("MatMulLut8(id={})", cid.raw()),
+        GraphOp::MatMulLut16(cid) => format!("MatMulLut16(id={})", cid.raw()),
+        GraphOp::BatchMatMulLut4(cid) => format!("BatchMatMulLut4(id={})", cid.raw()),
+        GraphOp::BatchMatMulLut8(cid) => format!("BatchMatMulLut8(id={})", cid.raw()),
+        GraphOp::BatchMatMulLut16(cid) => format!("BatchMatMulLut16(id={})", cid.raw()),
         GraphOp::RingPrimUnary(p, level) => format!("RingPrimUnary({}, {:?})", p.name(), level),
         GraphOp::RingPrimBinary(p, level) => format!("RingPrimBinary({}, {:?})", p.name(), level),
         GraphOp::RingActivation(act, level) => format!("RingActivation({:?}, {:?})", act, level),
@@ -68,13 +69,12 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         } => {
             format!("MatMul[{m},{k},{n}]+Bias+{}", activation.name())
         }
-        GraphOp::MatMulLut4Activation(id, act) => {
-            format!("MatMulLut4(id={})+{}", id.raw(), act.name())
+        GraphOp::MatMulLut4Activation(cid, activation) => {
+            format!("MatMulLut4(id={})+{}", cid.raw(), activation.name())
         }
-        GraphOp::MatMulLut8Activation(id, act) => {
-            format!("MatMulLut8(id={})+{}", id.raw(), act.name())
+        GraphOp::MatMulLut8Activation(cid, activation) => {
+            format!("MatMulLut8(id={})+{}", cid.raw(), activation.name())
         }
-        GraphOp::MatMulLut2(id) => format!("MatMulLut2(id={})", id.raw()),
         GraphOp::MatMulLut2Activation(id, act) => {
             format!("MatMulLut2(id={})+{}", id.raw(), act.name())
         }

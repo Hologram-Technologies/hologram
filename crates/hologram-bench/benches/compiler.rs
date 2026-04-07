@@ -1,9 +1,9 @@
 //! Compiler pipeline benchmarks at varying graph sizes.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use hologram_cascade::liveness::compute_liveness;
+use hologram_cascade::workspace::plan_workspace;
 use hologram_compiler::compile;
-use hologram_compiler::liveness::compute_liveness;
-use hologram_compiler::workspace::plan_workspace;
 use hologram_core::op::LutOp;
 use hologram_graph::builder::GraphBuilder;
 use hologram_graph::graph::GraphOp;

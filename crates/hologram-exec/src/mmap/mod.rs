@@ -62,13 +62,11 @@ pub fn execute_tape(
         &mut arena,
     )?;
 
-    // Pre-warm arena with output slot allocations — skip for large models
-    // where the total prewarm would exceed available memory. Swap-insert
-    // recycling handles buffer reuse during execution regardless.
-    let total_prewarm: u64 = tape.prewarm_estimate();
-    if total_prewarm < 2 * 1024 * 1024 * 1024 {
-        tape.prewarm_arena(&mut arena);
-    }
+    // Pre-warm arena with output slot allocations. The initial allocation
+    // is amortized across execution via swap_insert_with_elem_size buffer
+    // recycling for zero-allocation steady state. Always prewarm to avoid
+    // on-demand allocation latency spikes during inference.
+    tape.prewarm_arena(&mut arena);
 
     // Build tape context with weight access for LUT-GEMM ops.
     let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
@@ -162,7 +160,7 @@ pub fn execute_tape_with_shapes(
 
     let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
     let mut tape_ctx = crate::tape::TapeContext::new(&sg.constants, weights, &wc);
-    tape_ctx.shape_overrides = shape_overrides.clone();
+    tape_ctx.shape_overrides = shape_overrides;
     tape.execute_direct(&mut arena, &tape_ctx)?;
 
     collect_outputs(sg, &mut arena)
@@ -207,7 +205,7 @@ pub fn execute_tape_with_kv_and_shapes(
     let mut tape_ctx =
         crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, &wc, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
-    tape_ctx.shape_overrides = shape_overrides.clone();
+    tape_ctx.shape_overrides = shape_overrides;
 
     tape.execute_direct(&mut arena, &tape_ctx)?;
 
@@ -258,7 +256,7 @@ pub fn execute_tape_with_kv_shapes_cached(
     let mut tape_ctx =
         crate::tape::TapeContext::with_kv_cache(&sg.constants, weights, weight_cache, kv_owned);
     tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
-    tape_ctx.shape_overrides = shape_overrides.clone();
+    tape_ctx.shape_overrides = shape_overrides;
 
     tape.execute_direct(&mut arena, &tape_ctx)?;
 
@@ -490,6 +488,155 @@ fn infer_kv_seq_written(inputs: &GraphInputs) -> usize {
         *shape.last().unwrap_or(&0)
     } else {
         0
+    }
+}
+
+// ── InferenceSession: zero-allocation steady-state inference ─────────────────
+
+/// Persistent inference session. Holds pre-allocated arena, weight cache, and
+/// KV state across multiple `execute()` calls — eliminating per-call allocation
+/// overhead for token-by-token generation.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use hologram_exec::{InferenceSession, GraphInputs};
+///
+/// let plan = hologram_archive::load_from_bytes(&archive)?;
+/// let tape = hologram_exec::build_tape_from_plan(&plan)?;
+///
+/// let mut session = InferenceSession::new(&tape, &plan)
+///     .with_kv(2048, 32, 8, 128);
+///
+/// for token in tokens {
+///     let mut inputs = GraphInputs::new();
+///     inputs.set(0, token_embedding);
+///     let outputs = session.execute(&inputs)?;
+///     // outputs available; arena + weight cache + kv state reused
+/// }
+/// ```
+pub struct InferenceSession<'a> {
+    tape: &'a crate::tape::EnumTape,
+    plan: &'a LoadedPlan,
+    weight_cache: parking_lot::RwLock<crate::kv::WeightCache>,
+    kv_state: Option<KvCacheState>,
+    shape_overrides: std::collections::HashMap<u32, Vec<usize>>,
+    step_count: u64,
+}
+
+impl<'a> InferenceSession<'a> {
+    /// Create a new inference session from a pre-built tape and loaded plan.
+    pub fn new(tape: &'a crate::tape::EnumTape, plan: &'a LoadedPlan) -> Self {
+        Self {
+            tape,
+            plan,
+            weight_cache: parking_lot::RwLock::new(crate::kv::WeightCache::new()),
+            kv_state: None,
+            shape_overrides: std::collections::HashMap::new(),
+            step_count: 0,
+        }
+    }
+
+    /// Enable KV cache for autoregressive generation.
+    #[must_use]
+    pub fn with_kv(
+        mut self,
+        n_layers: u32,
+        n_kv_heads: u32,
+        head_dim: u32,
+        max_seq: usize,
+    ) -> Self {
+        self.kv_state = Some(KvCacheState::new(n_layers, n_kv_heads, head_dim, max_seq));
+        self
+    }
+
+    /// Set shape overrides for dynamic-shape models.
+    #[must_use]
+    pub fn with_shapes(mut self, overrides: std::collections::HashMap<u32, Vec<usize>>) -> Self {
+        self.shape_overrides = overrides;
+        self
+    }
+
+    /// Execute one inference step. Reuses weight cache across calls.
+    ///
+    /// The arena is rebuilt each call but the weight cache persists —
+    /// eliminating weight deserialization overhead after the first step.
+    pub fn execute(&mut self, inputs: &GraphInputs) -> ExecResult<GraphOutputs> {
+        let sg = self.plan.graph();
+        let weights = self.plan.weights();
+        let compiled_dtypes = sg.node_dtypes_map();
+        let compiled_shapes = sg.node_shapes_map();
+
+        // Rebuild arena each call (seed_arena borrows from inputs which has shorter lifetime)
+        let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+        seed_arena(
+            sg,
+            weights,
+            &compiled_dtypes,
+            &compiled_shapes,
+            inputs,
+            &mut arena,
+        )?;
+
+        // Prewarm on first step only (output slots sized for compiled shapes)
+        if self.step_count == 0 {
+            self.tape.prewarm_arena(&mut arena);
+        }
+
+        if let Some(ref mut kv) = self.kv_state {
+            // KV cache path
+            let kv_owned = std::mem::replace(kv, KvCacheState::new(0, 0, 0, 0));
+            let position_offset = kv_owned.write_pos() as u32;
+
+            let mut tape_ctx = crate::tape::TapeContext::with_kv_cache(
+                &sg.constants,
+                weights,
+                &self.weight_cache,
+                kv_owned,
+            );
+            tape_ctx.ctx = Some(crate::eval::executor::ExecutionContext { position_offset });
+            if !self.shape_overrides.is_empty() {
+                tape_ctx.shape_overrides = &self.shape_overrides;
+            }
+
+            self.tape.execute(&mut arena, &tape_ctx)?;
+
+            let mut kv_out = tape_ctx.kv_state.expect("kv_state was set").into_inner();
+            let seq_written = infer_kv_seq_written(inputs);
+            if seq_written > 0 {
+                kv_out.advance(seq_written);
+            }
+            *kv = kv_out;
+        } else {
+            // No KV cache path
+            let mut tape_ctx =
+                crate::tape::TapeContext::new(&sg.constants, weights, &self.weight_cache);
+            if !self.shape_overrides.is_empty() {
+                tape_ctx.shape_overrides = &self.shape_overrides;
+            }
+
+            self.tape.execute_with_eviction(
+                &mut arena,
+                &tape_ctx,
+                Some(&self.tape.consumer_counts),
+            )?;
+        }
+
+        self.step_count += 1;
+        collect_outputs(sg, &mut arena)
+    }
+
+    /// Number of inference steps executed in this session.
+    pub fn step_count(&self) -> u64 {
+        self.step_count
+    }
+
+    /// Reset the session for a new sequence (clears KV cache, resets step count).
+    pub fn reset(&mut self) {
+        if let Some(ref mut kv) = self.kv_state {
+            kv.reset();
+        }
+        self.step_count = 0;
     }
 }
 

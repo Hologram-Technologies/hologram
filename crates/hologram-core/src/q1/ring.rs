@@ -189,19 +189,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for WordRing {
-    #[inline]
-    fn commutator_formula(&self) -> &str {
-        "[a,b] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for WordRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for WordRing {
-    #[inline]
-    fn associator_formula(&self) -> &str {
-        "[a,b,c] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for WordRing {}
 
 impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for WordRing {
     type NormedDivisionAlgebra = crate::ring::HoloDivisionAlgebra;

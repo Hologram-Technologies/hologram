@@ -100,12 +100,13 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
             json!({"Constant": {"id": id.raw(), "byte_size": size}})
         }
         GraphOp::CallSubgraph(s) => json!({"CallSubgraph": s.raw()}),
-        GraphOp::MatMulLut4(id) => json!({"MatMulLut4": id.raw()}),
-        GraphOp::MatMulLut8(id) => json!({"MatMulLut8": id.raw()}),
-        GraphOp::BatchMatMulLut4(id) => json!({"BatchMatMulLut4": id.raw()}),
-        GraphOp::BatchMatMulLut8(id) => json!({"BatchMatMulLut8": id.raw()}),
-        GraphOp::MatMulLut16(id) => json!({"MatMulLut16": id.raw()}),
-        GraphOp::BatchMatMulLut16(id) => json!({"BatchMatMulLut16": id.raw()}),
+        GraphOp::MatMulLut2(cid) => json!({"MatMulLut2": cid.raw()}),
+        GraphOp::MatMulLut4(cid) => json!({"MatMulLut4": cid.raw()}),
+        GraphOp::MatMulLut8(cid) => json!({"MatMulLut8": cid.raw()}),
+        GraphOp::MatMulLut16(cid) => json!({"MatMulLut16": cid.raw()}),
+        GraphOp::BatchMatMulLut4(cid) => json!({"BatchMatMulLut4": cid.raw()}),
+        GraphOp::BatchMatMulLut8(cid) => json!({"BatchMatMulLut8": cid.raw()}),
+        GraphOp::BatchMatMulLut16(cid) => json!({"BatchMatMulLut16": cid.raw()}),
         GraphOp::RingPrimUnary(p, level) => {
             json!({"RingPrimUnary": {"op": p.name(), "level": format!("{:?}", level)}})
         }
@@ -142,13 +143,12 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         } => {
             json!({"FusedMatMulBiasActivation": {"m": m, "k": k, "n": n, "activation": activation.name()}})
         }
-        GraphOp::MatMulLut4Activation(id, act) => json!({"MatMulLut4Activation": {
-            "id": id.raw(), "activation": act.name()
+        GraphOp::MatMulLut4Activation(cid, activation) => json!({"MatMulLut4Activation": {
+            "id": cid.raw(), "activation": activation.name()
         }}),
-        GraphOp::MatMulLut8Activation(id, act) => json!({"MatMulLut8Activation": {
-            "id": id.raw(), "activation": act.name()
+        GraphOp::MatMulLut8Activation(cid, activation) => json!({"MatMulLut8Activation": {
+            "id": cid.raw(), "activation": activation.name()
         }}),
-        GraphOp::MatMulLut2(id) => json!({"MatMulLut2": id.raw()}),
         GraphOp::MatMulLut2Activation(id, act) => json!({"MatMulLut2Activation": {
             "id": id.raw(), "activation": act.name()
         }}),

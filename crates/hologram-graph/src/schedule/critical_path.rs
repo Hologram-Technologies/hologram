@@ -1,7 +1,5 @@
 //! Critical path analysis for execution scheduling.
 
-use std::collections::HashMap;
-
 use crate::error::GraphResult;
 use crate::graph::node::NodeId;
 use crate::graph::Graph;
@@ -10,21 +8,41 @@ use crate::schedule::toposort;
 /// Compute the critical path length (longest dependency chain). O(V + E).
 pub fn critical_path_length(graph: &Graph) -> GraphResult<usize> {
     let order = toposort::toposort(graph)?;
+    critical_path_from_order(graph, &order)
+}
+
+/// Compute critical path from a pre-computed topological order.
+/// Uses flat Vec indexed by node slot for O(1) lookup (no HashMap).
+pub fn critical_path_from_order(graph: &Graph, order: &[NodeId]) -> GraphResult<usize> {
     if order.is_empty() {
         return Ok(0);
     }
-    let mut longest: HashMap<NodeId, usize> = HashMap::new();
-    for &id in &order {
+    let max_idx = order
+        .iter()
+        .map(|id| id.index() as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut longest = vec![0usize; max_idx];
+    for &id in order {
         let pred_max = graph
             .predecessors(id)
             .iter()
-            .filter_map(|p| longest.get(p))
+            .filter_map(|p| {
+                let idx = p.index() as usize;
+                if idx < max_idx {
+                    Some(longest[idx])
+                } else {
+                    None
+                }
+            })
             .max()
-            .copied()
             .unwrap_or(0);
-        longest.insert(id, pred_max + 1);
+        let idx = id.index() as usize;
+        if idx < max_idx {
+            longest[idx] = pred_max + 1;
+        }
     }
-    Ok(longest.values().max().copied().unwrap_or(0))
+    Ok(longest.iter().max().copied().unwrap_or(0))
 }
 
 /// Parallelism ratio: total_nodes / critical_path_length.

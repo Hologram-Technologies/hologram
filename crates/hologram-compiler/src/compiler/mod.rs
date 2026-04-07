@@ -1,35 +1,41 @@
-//! Compiler pipeline: Graph → optimized .holo archive.
+//! Compiler pipeline: cascade-backed compilation to .holo archive.
 //!
-//! Three stages: parse (validate), fuse (optimize), emit (schedule + archive).
+//! All compilation routes through the 7-stage cascade engine with
+//! certificate memoization. Three entry points:
+//!
+//! - `CompilerBuilder::new(graph)` — wrap a raw Graph in a synthetic CompileUnit
+//! - `CompilerBuilder::from_unit(unit, graph)` — supply a pre-built CompileUnit + lowered Graph
+//! - `CompilerBuilder::from_source(...)` — parse UOR term source → CompileUnit → Graph
+//!
+//! The free function `compile(graph)` is a convenience wrapper around
+//! `CompilerBuilder::new(graph).build()`.
 
-use hologram_archive::entrypoint::schedule::LayerHeader;
-use hologram_archive::entrypoint::{LayerDescriptor, LayerEntrypoint, LayerId, TensorPort};
-use hologram_archive::weight::WeightDType;
-use hologram_archive::writer::holo_writer::HoloWriter;
-use hologram_graph::fusion::{self, FusionStats};
-use hologram_graph::graph::validate;
+use hologram_cascade::certificate::CertificateStore;
+use hologram_cascade::engine::run_cascade_with_graph_opts;
+use hologram_graph::fusion::FusionStats;
+use hologram_graph::graph::node::NodeId;
 use hologram_graph::graph::Graph;
 use hologram_graph::schedule::ExecutionSchedule;
 
-use hologram_graph::graph::node::NodeId;
+use hologram_core::op::RingLevel;
+use hologram_core::term::{HoloAddress, HoloCompileUnit, TermArena, TermKind};
+use uor_foundation::enums::VerificationDomain;
+use uor_foundation::QuantumLevel;
 
 use crate::error::{CompileError, CompileResult};
-use crate::liveness;
-use crate::qedl::{pass::insert_qedl_boundaries, EncodingId};
-use crate::workspace;
 
-/// QEDL pipeline boundary marker.
-///
-/// Marks nodes where the pipeline transitions between quantized (byte-domain)
-/// and dequantized (float-domain) execution. The actual insertion of
-/// quantize/dequantize ops is handled by a later pass — this enum provides
-/// the metadata structure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QedlBoundary {
-    /// Dequantize: byte-domain → float-domain (before a float op).
-    Dequantize,
-    /// Quantize: float-domain → byte-domain (after a float op).
-    Quantize,
+/// Re-exported from `hologram_cascade::qedl`.
+pub use hologram_cascade::qedl::QedlBoundary;
+
+/// Cascade metadata from compilation.
+#[derive(Debug, Clone)]
+pub struct CascadeInfo {
+    /// Whether the result was served from the certificate cache.
+    pub cache_hit: bool,
+    /// Total Landauer cost consumed (k_B T units).
+    pub budget_consumed: f64,
+    /// Content-addressed identifier of the compiled unit.
+    pub unit_address: [u8; 32],
 }
 
 /// Statistics from the compilation process.
@@ -59,379 +65,297 @@ pub struct CompilationOutput {
     /// The execution schedule.
     pub schedule: ExecutionSchedule,
     /// QEDL pipeline boundaries: nodes where quantize/dequantize transitions occur.
-    /// Each entry: (consuming node id, boundary kind, selected encoding).
-    pub qedl_boundaries: Vec<(NodeId, QedlBoundary, EncodingId)>,
+    pub qedl_boundaries: Vec<(NodeId, QedlBoundary, hologram_cascade::qedl::EncodingId)>,
+    /// Cascade-specific metadata.
+    pub cascade: CascadeInfo,
+}
+
+/// Input source for the compiler.
+enum CompilerInput {
+    /// Raw graph — will be wrapped in a synthetic CompileUnit.
+    Graph(Graph),
+    /// Pre-built CompileUnit + pre-lowered Graph.
+    Unit { unit: HoloCompileUnit, graph: Graph },
+    /// UOR term language source text.
+    Source {
+        source: String,
+        level: QuantumLevel,
+        budget: f64,
+        domains: Vec<VerificationDomain>,
+    },
 }
 
 /// Builder for configuring and running the compilation pipeline.
 pub struct CompilerBuilder {
-    graph: Graph,
-    enable_fusion: bool,
+    input: CompilerInput,
+    store: Option<CertificateStore>,
+    skip_fusion: bool,
 }
 
 impl CompilerBuilder {
-    /// Create a new compiler builder with the given graph.
+    /// Create a new compiler builder from a raw Graph.
+    ///
+    /// The graph is wrapped in a synthetic CompileUnit with:
+    /// - Quantum level: Q0
+    /// - Budget: f64::MAX (unconstrained)
+    /// - Domain: Algebraic
     #[must_use]
     pub fn new(graph: Graph) -> Self {
         Self {
-            graph,
-            enable_fusion: true,
+            input: CompilerInput::Graph(graph),
+            store: None,
+            skip_fusion: false,
         }
+    }
+
+    /// Create from a pre-built CompileUnit and pre-lowered Graph.
+    #[must_use]
+    pub fn from_unit(unit: HoloCompileUnit, graph: Graph) -> Self {
+        Self {
+            input: CompilerInput::Unit { unit, graph },
+            store: None,
+            skip_fusion: false,
+        }
+    }
+
+    /// Create from UOR term language source text.
+    ///
+    /// Parses, builds CompileUnit, runs preflight, and lowers to Graph internally.
+    #[must_use]
+    pub fn from_source(
+        source: &str,
+        level: QuantumLevel,
+        budget: f64,
+        domains: &[VerificationDomain],
+    ) -> Self {
+        Self {
+            input: CompilerInput::Source {
+                source: source.to_owned(),
+                level,
+                budget,
+                domains: domains.to_vec(),
+            },
+            store: None,
+            skip_fusion: false,
+        }
+    }
+
+    /// Supply a shared certificate store for cross-compilation memoization.
+    #[must_use]
+    pub fn certificate_store(mut self, store: CertificateStore) -> Self {
+        self.store = Some(store);
+        self
     }
 
     /// Enable or disable the fusion optimization pass.
     #[must_use]
     pub fn fuse(mut self, enable: bool) -> Self {
-        self.enable_fusion = enable;
+        self.skip_fusion = !enable;
         self
     }
 
     /// Run the compilation pipeline and produce a `.holo` archive.
     pub fn build(self) -> CompileResult<CompilationOutput> {
-        compile_impl(self.graph, self.enable_fusion)
+        let mut store = self.store.unwrap_or_else(|| CertificateStore::new(64));
+
+        match self.input {
+            CompilerInput::Graph(graph) => {
+                let unit = unit_from_graph(&graph);
+                compile_via_cascade(unit, graph, &mut store, self.skip_fusion)
+            }
+            CompilerInput::Unit { unit, graph } => {
+                compile_via_cascade(unit, graph, &mut store, self.skip_fusion)
+            }
+            CompilerInput::Source {
+                source,
+                level,
+                budget,
+                domains,
+            } => {
+                let parsed = crate::term_parser::parse(&source)
+                    .map_err(|e| CompileError::Validation(e.to_string()))?;
+
+                let mut unit =
+                    HoloCompileUnit::new(parsed.arena, parsed.root, level, budget, &domains);
+                unit.bindings = parsed.bindings;
+                unit.binding_count = parsed.binding_count;
+                unit.assertions = parsed.assertions;
+                unit.assertion_count = parsed.assertion_count;
+                unit.type_decls = parsed.type_decls;
+                unit.type_decl_count = parsed.type_decl_count;
+
+                crate::preflight::run_preflight(&mut unit)
+                    .map_err(|e| CompileError::Validation(e.to_string()))?;
+
+                let graph = crate::term_lower::lower_to_graph(&unit)?;
+                compile_via_cascade(unit, graph, &mut store, self.skip_fusion)
+            }
+        }
     }
 }
 
 /// Compile a graph into a `.holo` archive with default settings.
+///
+/// Convenience wrapper around `CompilerBuilder::new(graph).build()`.
 pub fn compile(graph: Graph) -> CompileResult<CompilationOutput> {
     CompilerBuilder::new(graph).build()
 }
 
-/// Internal compilation implementation.
-fn compile_impl(mut graph: Graph, enable_fusion: bool) -> CompileResult<CompilationOutput> {
-    parse_stage(&graph)?;
-    let fusion_stats = fuse_stage(&mut graph, enable_fusion)?;
-    let ring_prims_promoted = precision_stage(&mut graph);
-    emit_stage(&graph, fusion_stats, ring_prims_promoted)
-}
-
-/// Stage 1: validate graph structure.
-fn parse_stage(graph: &Graph) -> CompileResult<()> {
-    validate::validate(graph).map_err(CompileError::from)
-}
-
-/// Stage 2: run fusion optimization pass if enabled.
-fn fuse_stage(graph: &mut Graph, enable: bool) -> CompileResult<FusionStats> {
-    if !enable {
-        return Ok(FusionStats::default());
-    }
-    fusion::fuse(graph).map_err(CompileError::from)
-}
-
-/// Stage 2b: promote byte-domain Prim ops to ring-level-tagged variants.
+/// Compile from a `uor!` macro expansion (enforcement `TermArena`).
 ///
-/// Uses observable analysis (stratum/curvature of output LUT) to select
-/// the minimum Q-level (Q0/Q1/Q2) per node. Bakes the ring level into the
-/// graph so the archive contains fully annotated ops.
-fn precision_stage(graph: &mut Graph) -> usize {
-    crate::precision::promote_prim_ring_levels(graph)
+/// The `uor!` macro parses EBNF surface syntax at compile time and produces a
+/// typed `enforcement::TermArena`. This function converts it to hologram's
+/// arena, runs preflight (including enforcement validation), lowers to a Graph,
+/// and runs the 7-stage cascade.
+///
+/// Per PRISM Section 1: stages 1-4 (parse, build AST, resolve names, type
+/// check) are handled at compile time by the `uor!` proc macro. This function
+/// implements stages 5-7 (desugar, reify, emit runtime plan).
+pub fn compile_uor_arena<const CAP: usize>(
+    enforcement_arena: &uor_foundation::enforcement::TermArena<CAP>,
+    root_index: u32,
+    level: RingLevel,
+    budget: f64,
+    domains: &[VerificationDomain],
+) -> CompileResult<CompilationOutput> {
+    // Phase 2 bridge: enforcement → hologram term arena
+    let (arena, root) = hologram_core::term::enforcement_bridge::convert_enforcement_arena(
+        enforcement_arena,
+        root_index,
+    )
+    .map_err(|e| CompileError::Validation(format!("enforcement bridge: {e:?}")))?;
+
+    // Build CompileUnit
+    let mut unit = HoloCompileUnit::new(arena, root, level.into(), budget, domains);
+
+    // Phase 3 preflight (includes enforcement validation)
+    crate::preflight::run_preflight(&mut unit)
+        .map_err(|e| CompileError::Validation(e.to_string()))?;
+
+    // Lower to graph
+    let graph = crate::term_lower::lower_to_graph(&unit)?;
+
+    // Cascade
+    let mut store = CertificateStore::new(64);
+    compile_via_cascade(unit, graph, &mut store, false)
 }
 
-/// Stage 3: schedule, liveness, workspace, emit archive.
-fn emit_stage(
+// NOTE: The Plan 059 Phase 2 emit_stage / compute_post_fusion_shapes path
+// (and its build_schedule / build_stats / build_layer_header / write_archive
+// helpers) was removed during the refactor/compiler-update merge. The new
+// `compile_via_cascade` pipeline owns scheduling, liveness, workspace planning
+// and archive emission. The original Plan 059 implementation is preserved on
+// `backup/refactor-compiler-pre-merge` if it needs to be re-integrated.
+
+/// Build a `HoloCompileUnit` from a `Graph`.
+///
+/// This is the primary integration point for consumers like hologram-ai
+/// that build graphs via `GraphBuilder` and want to enter the declarative
+/// cascade pipeline. The unit address is computed from the graph structure
+/// (BLAKE3 hash of node ops and edges), enabling certificate memoization
+/// across identical graphs.
+///
+/// Default parameters:
+/// - Quantum level: `Q0`
+/// - Budget: `f64::MAX` (unconstrained for graph-based compilation)
+/// - Domains: `[Algebraic]`
+pub fn unit_from_graph(graph: &Graph) -> HoloCompileUnit {
+    unit_from_graph_with(
+        graph,
+        QuantumLevel::Q0,
+        f64::MAX,
+        &[VerificationDomain::Algebraic],
+    )
+}
+
+/// Build a `HoloCompileUnit` from a `Graph` with explicit parameters.
+pub fn unit_from_graph_with(
     graph: &Graph,
-    fusion_stats: FusionStats,
-    ring_prims_promoted: usize,
-) -> CompileResult<CompilationOutput> {
-    let schedule = build_schedule(graph)?;
-    let intervals = liveness::compute_liveness(&schedule, graph);
-    let layout = workspace::plan_workspace(&intervals);
-    let stats = build_stats(graph, &schedule, &layout, fusion_stats, ring_prims_promoted);
+    level: QuantumLevel,
+    budget: f64,
+    domains: &[VerificationDomain],
+) -> HoloCompileUnit {
+    let mut arena = TermArena::new();
+    let root = arena.alloc(TermKind::IntLit(0));
+    let mut unit = HoloCompileUnit::new(arena, root, level, budget, domains);
 
-    // Compute post-fusion shapes: walk the graph in topological order and
-    // project each node's output shape from its inputs. This produces a
-    // complete shape map covering every node that will appear in the tape.
-    let post_fusion_shapes = compute_post_fusion_shapes(graph, &schedule);
+    // Compute content-addressed hash from graph structure.
+    // Uses Hash trait on GraphOp (zero-allocation) instead of Debug formatting.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
-    // Merge projected shapes into the graph's node_shapes so they are
-    // embedded in the archive. Existing shapes (from lowering) are preserved;
-    // projected shapes fill gaps for nodes created/modified by fusion.
-    let mut graph_with_shapes = graph.clone();
-    for (nid, shape) in &post_fusion_shapes {
-        graph_with_shapes.set_node_shape(*nid, shape.clone());
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(graph.node_count() as u64).to_le_bytes());
+    for node in graph.nodes() {
+        let mut h = DefaultHasher::new();
+        node.op.hash(&mut h);
+        hasher.update(&h.finish().to_le_bytes());
+        for dep in node.dependencies() {
+            hasher.update(&dep.index().to_le_bytes());
+        }
     }
+    let hash = *hasher.finalize().as_bytes();
+    unit.unit_address = hash;
+    unit.address = HoloAddress::from_hash(hash);
+    unit
+}
 
-    let layer_header = build_layer_header(&graph_with_shapes, &schedule);
-    let archive = write_archive(&graph_with_shapes, &layer_header)?;
+/// Core compilation via the cascade engine.
+fn compile_via_cascade(
+    unit: HoloCompileUnit,
+    graph: Graph,
+    store: &mut CertificateStore,
+    skip_fusion: bool,
+) -> CompileResult<CompilationOutput> {
+    let result = run_cascade_with_graph_opts(&unit, graph, store, skip_fusion)
+        .map_err(|e| CompileError::Validation(e.to_string()))?;
 
-    // Run QEDL pass: collect domain-crossing boundary annotations.
-    let topo_order: Vec<NodeId> = schedule
+    let state = result.state;
+
+    let archive = state.archive_bytes.unwrap_or_default();
+
+    let schedule = state.schedule.unwrap_or_else(|| ExecutionSchedule {
+        levels: vec![],
+        critical_path: 0,
+    });
+
+    let total_nodes = state.graph.as_ref().map(|g| g.node_count()).unwrap_or(0);
+
+    let peak_live = schedule
         .levels
         .iter()
-        .flat_map(|level| level.node_ids.iter().copied())
-        .collect();
-    let qedl_boundaries = insert_qedl_boundaries(graph, &topo_order);
+        .map(|l| l.node_ids.len())
+        .max()
+        .unwrap_or(0);
+
+    let workspace_slots = state
+        .workspace_layout
+        .as_ref()
+        .map(|l| l.total_slots)
+        .unwrap_or(0);
+
+    let stats = CompilationStats {
+        workspace_slots,
+        peak_live_buffers: peak_live,
+        total_nodes,
+        schedule_levels: schedule.num_levels(),
+        fusion: state.fusion_stats,
+        ring_prims_promoted: state.ring_prims_promoted,
+    };
+
+    let cascade_info = CascadeInfo {
+        cache_hit: result.cache_hit,
+        budget_consumed: state.budget_consumed,
+        unit_address: state.unit_address,
+    };
 
     Ok(CompilationOutput {
         archive,
         stats,
         schedule,
-        qedl_boundaries,
+        qedl_boundaries: state.qedl_boundaries.unwrap_or_default(),
+        cascade: cascade_info,
     })
-}
-
-/// Walk the post-fusion graph in topological order and project each node's
-/// output shape from its inputs using `float_output_shape()`.
-///
-/// Seeds from `graph.node_shapes()` (populated during lowering) and
-/// `graph.constant_shapes()`. Projects forward through all ops, filling
-/// in shapes for nodes created or modified by fusion.
-fn compute_post_fusion_shapes(
-    graph: &Graph,
-    schedule: &ExecutionSchedule,
-) -> std::collections::HashMap<NodeId, Vec<usize>> {
-    use hologram_core::op::shape_projection::float_output_shape;
-    use hologram_graph::graph::GraphOp;
-
-    let mut shape_map: std::collections::HashMap<NodeId, Vec<usize>> =
-        std::collections::HashMap::new();
-
-    // Seed from existing node shapes (from lowering).
-    for (&nid, shape) in graph.node_shapes() {
-        shape_map.insert(nid, shape.clone());
-    }
-
-    // Seed constant shapes: find Constant nodes and map ConstantId → NodeId.
-    for node in graph.nodes() {
-        if let GraphOp::Constant(cid) = &node.op {
-            if let Some(shape) = graph.constant_shapes().get(cid) {
-                shape_map.entry(node.id).or_insert_with(|| shape.clone());
-            }
-        }
-    }
-
-    // Topological walk: project output shapes from inputs.
-    for level in &schedule.levels {
-        for &nid in &level.node_ids {
-            if shape_map.contains_key(&nid) {
-                continue; // already seeded
-            }
-
-            let node = match graph.get(nid) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            let preds = graph.predecessors(nid);
-            let input_shapes: Vec<Vec<usize>> = preds
-                .iter()
-                .map(|&pred| shape_map.get(&pred).cloned().unwrap_or_default())
-                .collect();
-            let input_refs: Vec<&[usize]> = input_shapes.iter().map(|s| s.as_slice()).collect();
-
-            let projected = match &node.op {
-                // Float ops: use the shape projection function.
-                GraphOp::Float(f) => float_output_shape(f, &input_refs),
-
-                // Fused float chain: element-preserving (all unary).
-                GraphOp::FusedFloatChain(_) => input_refs.first().map(|s| s.to_vec()),
-
-                // Fused matmul variants: output [m, n].
-                GraphOp::FusedMatMulActivation { m, n, .. }
-                | GraphOp::FusedMatMulBiasActivation { m, n, .. } => {
-                    Some(vec![*m as usize, *n as usize])
-                }
-
-                // Fused norm+activation: shape-preserving.
-                GraphOp::FusedRmsNormActivation { .. }
-                | GraphOp::FusedLayerNormActivation { .. }
-                | GraphOp::FusedGroupNormActivation { .. }
-                | GraphOp::FusedAddRmsNormActivation { .. }
-                | GraphOp::FusedInstanceNormActivation { .. } => {
-                    input_refs.first().map(|s| s.to_vec())
-                }
-
-                // Fused conv+activation: delegate to Conv2d projection.
-                GraphOp::FusedConv2dActivation {
-                    kernel_h,
-                    kernel_w,
-                    stride_h,
-                    stride_w,
-                    pad_h,
-                    pad_w,
-                    dilation_h,
-                    dilation_w,
-                    input_h,
-                    input_w,
-                    ..
-                }
-                | GraphOp::FusedConv2dBiasActivation {
-                    kernel_h,
-                    kernel_w,
-                    stride_h,
-                    stride_w,
-                    pad_h,
-                    pad_w,
-                    dilation_h,
-                    dilation_w,
-                    input_h,
-                    input_w,
-                    ..
-                } => {
-                    let conv = hologram_core::op::FloatOp::Conv2d {
-                        kernel_h: *kernel_h,
-                        kernel_w: *kernel_w,
-                        stride_h: *stride_h,
-                        stride_w: *stride_w,
-                        pad_h: *pad_h,
-                        pad_w: *pad_w,
-                        dilation_h: *dilation_h,
-                        dilation_w: *dilation_w,
-                        group: 1,
-                        input_h: *input_h,
-                        input_w: *input_w,
-                    };
-                    float_output_shape(&conv, &input_refs)
-                }
-
-                // Byte-domain unary: shape-preserving.
-                GraphOp::Lut(_)
-                | GraphOp::FusedView(_)
-                | GraphOp::FusedView16(_)
-                | GraphOp::Passthrough
-                | GraphOp::Output
-                | GraphOp::RingPrimUnary(..)
-                | GraphOp::RingActivation(..)
-                | GraphOp::RingAccumulate(..) => input_refs.first().map(|s| s.to_vec()),
-
-                // Byte-domain binary: same shape (no broadcast in byte domain).
-                GraphOp::Prim(_) | GraphOp::RingPrimBinary(..) => {
-                    input_refs.first().map(|s| s.to_vec())
-                }
-
-                // Ring reduce: drops one dim.
-                GraphOp::RingReduce { .. } => input_refs.first().map(|input| {
-                    if input.len() <= 1 {
-                        vec![1]
-                    } else {
-                        input[..input.len() - 1].to_vec()
-                    }
-                }),
-
-                // LUT-GEMM: use compiled node_shapes (these are weight-baked).
-                GraphOp::MatMulLut4(_)
-                | GraphOp::MatMulLut8(_)
-                | GraphOp::MatMulLut16(_)
-                | GraphOp::MatMulLut2(_)
-                | GraphOp::BatchMatMulLut4(_)
-                | GraphOp::BatchMatMulLut8(_)
-                | GraphOp::BatchMatMulLut16(_)
-                | GraphOp::MatMulLut4Activation(..)
-                | GraphOp::MatMulLut8Activation(..)
-                | GraphOp::MatMulLut2Activation(..)
-                | GraphOp::Conv2dLut4 { .. } => None, // shape from lowering
-
-                // Input, Constant: already seeded.
-                GraphOp::Input | GraphOp::Constant(_) => None,
-
-                // Subgraph, Custom: can't project.
-                GraphOp::CallSubgraph(_) | GraphOp::Custom { .. } => None,
-            };
-
-            if let Some(shape) = projected {
-                shape_map.insert(nid, shape);
-            }
-        }
-    }
-
-    shape_map
-}
-
-/// Build execution schedule from graph.
-fn build_schedule(graph: &Graph) -> CompileResult<ExecutionSchedule> {
-    ExecutionSchedule::build(graph).map_err(CompileError::from)
-}
-
-/// Compute compilation statistics.
-fn build_stats(
-    graph: &Graph,
-    schedule: &ExecutionSchedule,
-    layout: &workspace::WorkspaceLayout,
-    fusion: FusionStats,
-    ring_prims_promoted: usize,
-) -> CompilationStats {
-    CompilationStats {
-        workspace_slots: layout.total_slots,
-        peak_live_buffers: compute_peak_live(schedule),
-        total_nodes: graph.node_count(),
-        schedule_levels: schedule.num_levels(),
-        fusion,
-        ring_prims_promoted,
-    }
-}
-
-/// Compute peak simultaneously live buffers across levels.
-fn compute_peak_live(schedule: &ExecutionSchedule) -> usize {
-    schedule
-        .levels
-        .iter()
-        .map(|l| l.node_ids.len())
-        .max()
-        .unwrap_or(0)
-}
-
-/// Build a LayerHeader describing the graph as a single layer.
-fn build_layer_header(graph: &Graph, schedule: &ExecutionSchedule) -> LayerHeader {
-    let descriptor = build_layer_descriptor(graph);
-    let sched_levels = build_schedule_levels(schedule);
-    LayerHeader {
-        layers: vec![descriptor],
-        schedule: sched_levels,
-    }
-}
-
-/// Build the layer descriptor for the main graph.
-fn build_layer_descriptor(graph: &Graph) -> LayerDescriptor {
-    LayerDescriptor {
-        id: LayerId(0),
-        name: "main".into(),
-        entrypoint: LayerEntrypoint::Graph,
-        inputs: build_input_ports(graph),
-        outputs: build_output_ports(graph),
-        group: 0,
-        plan_offset: 0,
-        plan_size: 0,
-    }
-}
-
-/// Build input tensor ports from graph inputs.
-fn build_input_ports(graph: &Graph) -> Vec<TensorPort> {
-    graph
-        .inputs()
-        .iter()
-        .map(|name| TensorPort {
-            name: name.clone(),
-            shape: vec![1],
-            dtype: WeightDType::U8,
-        })
-        .collect()
-}
-
-/// Build output tensor ports from graph outputs.
-fn build_output_ports(graph: &Graph) -> Vec<TensorPort> {
-    graph
-        .outputs()
-        .iter()
-        .map(|(name, _)| TensorPort {
-            name: name.clone(),
-            shape: vec![1],
-            dtype: WeightDType::U8,
-        })
-        .collect()
-}
-
-/// Convert schedule levels to LayerId groups.
-fn build_schedule_levels(schedule: &ExecutionSchedule) -> Vec<Vec<LayerId>> {
-    vec![vec![LayerId(0); schedule.num_levels()]]
-}
-
-/// Write the .holo archive.
-fn write_archive(graph: &Graph, layer_header: &LayerHeader) -> CompileResult<Vec<u8>> {
-    HoloWriter::new()
-        .set_graph(graph)
-        .add_section(layer_header)
-        .build()
-        .map_err(CompileError::from)
 }
 
 #[cfg(test)]
@@ -622,5 +546,59 @@ mod tests {
         let out = compile(g).unwrap();
         let plan = load_from_bytes(&out.archive).unwrap();
         assert_eq!(plan.node_count(), node_count);
+    }
+
+    #[test]
+    fn cascade_info_populated() {
+        let out = compile(linear_chain()).unwrap();
+        assert!(!out.cascade.cache_hit);
+        assert!(out.cascade.budget_consumed > 0.0);
+    }
+
+    #[test]
+    fn from_unit_produces_valid_archive() {
+        let graph = linear_chain();
+        let unit = unit_from_graph(&graph);
+        let out = CompilerBuilder::from_unit(unit, graph).build().unwrap();
+        assert!(!out.archive.is_empty());
+        assert_eq!(out.stats.total_nodes, 3);
+        assert_eq!(out.stats.schedule_levels, 3);
+        assert!(out.cascade.budget_consumed > 0.0);
+    }
+
+    #[test]
+    fn unit_from_graph_deterministic() {
+        let g1 = linear_chain();
+        let g2 = linear_chain();
+        let u1 = unit_from_graph(&g1);
+        let u2 = unit_from_graph(&g2);
+        assert_eq!(
+            u1.unit_address, u2.unit_address,
+            "identical graphs must produce identical unit addresses"
+        );
+    }
+
+    #[test]
+    fn archive_has_compile_unit_meta() {
+        use hologram_archive::section::SECTION_COMPILE_UNIT_META;
+        let out = compile(linear_chain()).unwrap();
+        let plan = load_from_bytes(&out.archive).unwrap();
+        assert!(
+            plan.sections().find(SECTION_COMPILE_UNIT_META).is_some(),
+            "compiled archive must contain CompileUnitMeta section"
+        );
+    }
+
+    #[test]
+    fn shared_certificate_store_enables_cache_hit() {
+        let store = hologram_cascade::CertificateStore::new(64);
+        let g1 = linear_chain();
+        let out1 = CompilerBuilder::new(g1)
+            .certificate_store(store)
+            .build()
+            .unwrap();
+        assert!(!out1.cascade.cache_hit);
+        assert!(out1.cascade.budget_consumed > 0.0);
+        assert_ne!(out1.cascade.unit_address, [0u8; 32]);
     }
 }

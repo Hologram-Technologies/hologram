@@ -193,6 +193,15 @@ pub fn build_tape(
                 }
                 _ => {}
             }
+
+            let shape_source = if output_meta.is_some() {
+                crate::tape::ShapeSource::Compiled
+            } else if is_element_preserving(&kernel) {
+                crate::tape::ShapeSource::InputMeta
+            } else {
+                crate::tape::ShapeSource::BufferLength
+            };
+
             tape.push(TapeInstruction {
                 kernel,
                 output_idx: node_id.index(),
@@ -203,6 +212,8 @@ pub fn build_tape(
                 passthrough: false,
                 can_reuse_input: false,
                 output_meta,
+                fast_path: crate::tape::FastPath::default(),
+                shape_source,
             });
         }
         tape.end_level();
@@ -299,7 +310,56 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
             }
             _ => {}
         }
+
+        // Pre-resolve dispatch fast path.
+        use crate::tape::FastPath;
+        instr.fast_path = if instr.passthrough {
+            FastPath::Passthrough
+        } else if instr.can_reuse_input {
+            FastPath::InPlaceUnary
+        } else if matches!(
+            &instr.kernel,
+            TapeKernel::InlineReshape | TapeKernel::InlineCast { .. } | TapeKernel::Passthrough
+        ) {
+            FastPath::Reshape
+        } else {
+            match instr.kernel.inline_arity() {
+                Some(1) => FastPath::InlineUnary,
+                Some(2) => FastPath::InlineBinary,
+                _ => FastPath::General,
+            }
+        };
     }
+}
+
+/// Returns true if this kernel preserves element count (output shape = input shape).
+fn is_element_preserving(kernel: &TapeKernel) -> bool {
+    matches!(
+        kernel,
+        TapeKernel::InlineRelu
+            | TapeKernel::InlineNeg
+            | TapeKernel::InlineAbs
+            | TapeKernel::InlineSigmoid
+            | TapeKernel::InlineSilu
+            | TapeKernel::InlineTanh
+            | TapeKernel::InlineGelu
+            | TapeKernel::InlineExp
+            | TapeKernel::InlineReciprocal
+            | TapeKernel::InlineLog
+            | TapeKernel::InlineSqrt
+            | TapeKernel::InlineCos
+            | TapeKernel::InlineSin
+            | TapeKernel::InlineSign
+            | TapeKernel::InlineFloor
+            | TapeKernel::InlineCeil
+            | TapeKernel::InlineRound
+            | TapeKernel::InlineErf
+            | TapeKernel::InlineClip { .. }
+            | TapeKernel::InlineNot
+            | TapeKernel::InlineIsNaN
+            | TapeKernel::PrimUnary(_)
+            | TapeKernel::LutView(_)
+    )
 }
 
 /// Returns true if `op` is a self-inverse byte operation (Neg or Bnot).

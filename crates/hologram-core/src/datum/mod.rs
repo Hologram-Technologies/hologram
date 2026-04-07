@@ -155,6 +155,9 @@ pub struct ByteAddress {
 }
 
 impl ByteAddress {
+    /// The zero address (byte value 0).
+    pub const ZERO: Self = Self::from_byte(0);
+
     /// Create a Braille address from a byte value.
     #[must_use]
     pub const fn from_byte(value: u8) -> Self {
@@ -196,8 +199,8 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for ByteDatum {
         self.value.count_ones() as u64
     }
 
-    fn spectrum(&self) -> &str {
-        self.spectrum()
+    fn spectrum(&self) -> u64 {
+        self.value as u64
     }
 
     type Address = ByteAddress;
@@ -239,9 +242,91 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
     }
 }
 
+// ── RingDatum: unified datum for any quantum level ──────────────────────────
+
+use crate::op::QuantumLevelExt;
+
+/// A ring element at any quantum level (Q0–Q7+).
+///
+/// Stores the value as `u64`, which covers all native levels up to Q7 (64-bit).
+/// The `level` field determines the ring modulus: Z/(2^(8*(k+1)))Z.
+///
+/// This unified type replaces the per-level `ByteDatum`/`WordDatum`/`TripleDatum`/`QuadDatum`
+/// for code that needs to work with arbitrary precision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RingDatum {
+    /// The ring element value, masked to the level's byte width.
+    pub value: u64,
+    /// The quantum level of this datum.
+    pub level: uor_foundation::QuantumLevel,
+}
+
+impl RingDatum {
+    /// Create a datum at the given quantum level.
+    /// The value is masked to the ring modulus.
+    #[inline]
+    pub fn new(value: u64, level: uor_foundation::QuantumLevel) -> Self {
+        let bw = level.byte_width();
+        let bits = (bw as u32) * 8;
+        let mask = if bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        Self {
+            value: value & mask,
+            level,
+        }
+    }
+
+    /// Byte width of this datum's ring element.
+    #[inline]
+    pub fn byte_width(&self) -> u8 {
+        self.level.byte_width()
+    }
+
+    /// Stratum (Hamming weight / popcount).
+    #[inline]
+    pub fn stratum(&self) -> u64 {
+        self.value.count_ones() as u64
+    }
+
+    /// Spectrum (numeric value).
+    #[inline]
+    pub fn spectrum(&self) -> u64 {
+        self.value
+    }
+
+    /// Construct from a ByteDatum (Q0).
+    #[inline]
+    pub fn from_byte_datum(d: &ByteDatum) -> Self {
+        Self::new(d.val() as u64, uor_foundation::QuantumLevel::Q0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring_datum_masks_value() {
+        let d = RingDatum::new(300, uor_foundation::QuantumLevel::Q0);
+        assert_eq!(d.value, 44); // 300 & 0xFF = 44
+    }
+
+    #[test]
+    fn ring_datum_q7_no_mask() {
+        let d = RingDatum::new(u64::MAX, uor_foundation::QuantumLevel::new(7));
+        assert_eq!(d.value, u64::MAX);
+    }
+
+    #[test]
+    fn ring_datum_from_byte_datum() {
+        let bd = ByteDatum::new(42);
+        let rd = RingDatum::from_byte_datum(&bd);
+        assert_eq!(rd.value, 42);
+        assert_eq!(rd.level, uor_foundation::QuantumLevel::Q0);
+    }
 
     #[test]
     fn datum_new() {

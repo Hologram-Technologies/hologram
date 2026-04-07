@@ -9,7 +9,10 @@ description = "Compilation pipeline: Graph → optimized .holo archive"
 hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
 hologram-archive = { workspace = true }
+hologram-cascade = { workspace = true }
+blake3 = { workspace = true }
 rayon = { workspace = true, optional = true }
+uor-foundation = { workspace = true }
 
 [features]
 parallel = ["dep:rayon", "hologram-graph/parallel", "hologram-archive/parallel"]

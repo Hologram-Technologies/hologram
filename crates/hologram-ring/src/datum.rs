@@ -65,8 +65,12 @@ impl<Q: QuantumLevel> uor_foundation::kernel::schema::Datum<PrismPrimitives> for
         self.value.count_ones() as u64
     }
 
-    fn spectrum(&self) -> &str {
-        Datum::spectrum(self)
+    fn spectrum(&self) -> u64 {
+        // uor-foundation 0.1.4 changed `spectrum` to return P::NonNegativeInteger
+        // (u64 for PrismPrimitives). Return the underlying numeric value;
+        // the binary-string representation is still available via the inherent
+        // `Datum::spectrum` method.
+        self.value.to_u64()
     }
 
     type Address = Address<Q>;

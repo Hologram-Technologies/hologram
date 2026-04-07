@@ -182,19 +182,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for ByteRing {
-    #[inline]
-    fn commutator_formula(&self) -> &str {
-        "[a,b] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for ByteRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for ByteRing {
-    #[inline]
-    fn associator_formula(&self) -> &str {
-        "[a,b,c] = 0"
-    }
-}
+impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for ByteRing {}
 
 /// Unified division algebra enum bridging Q0–Q3 across the Cayley-Dickson chain.
 ///

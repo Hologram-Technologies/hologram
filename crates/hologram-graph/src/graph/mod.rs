@@ -91,6 +91,10 @@ pub enum GraphOp {
     MatMulLut2(ConstantId),
     /// Fused 2-bit LUT-GEMM + activation (epilogue fusion).
     MatMulLut2Activation(ConstantId, FloatOp),
+    /// Fused 4-bit LUT-GEMM + activation (epilogue fusion).
+    MatMulLut4Activation(ConstantId, FloatOp),
+    /// Fused 8-bit LUT-GEMM + activation (epilogue fusion).
+    MatMulLut8Activation(ConstantId, FloatOp),
     /// Consumer-defined op. Dispatched via `CustomOpRegistry` at execution time.
     ///
     /// The `arity` field must match the number of edges wired to this node.
@@ -112,10 +116,6 @@ pub enum GraphOp {
         n: u32,
         activation: FloatOp,
     },
-    /// Fused 4-bit LUT-GEMM + activation (epilogue fusion).
-    MatMulLut4Activation(ConstantId, FloatOp),
-    /// Fused 8-bit LUT-GEMM + activation (epilogue fusion).
-    MatMulLut8Activation(ConstantId, FloatOp),
     /// Fused RmsNorm + activation (epilogue fusion).
     FusedRmsNormActivation {
         size: u32,
@@ -363,7 +363,7 @@ impl GraphOp {
         match self {
             Self::RingPrimUnary(p, RingLevel::Q1) => {
                 Some(hologram_core::q1::view::ElementWiseView16::from_fn(|x| {
-                    p.apply_unary_q1(x)
+                    p.apply_unary_u64(x as u64, 2) as u16
                 }))
             }
             Self::FusedView16(v) => Some((**v).clone()),

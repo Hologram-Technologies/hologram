@@ -8,6 +8,13 @@ use crate::graph::Graph;
 
 /// Topological sort of graph nodes. Returns error on cycle.
 pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
+    let succ_index = graph.build_successor_index();
+    toposort_with_index(graph, &succ_index)
+}
+
+/// Topological sort using a pre-built successor index. Avoids redundant
+/// `build_successor_index()` calls when the caller already has one.
+pub fn toposort_with_index(graph: &Graph, succ_index: &[Vec<NodeId>]) -> GraphResult<Vec<NodeId>> {
     let ids = graph.node_ids();
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -16,8 +23,6 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
     let mut in_degree = vec![0u32; ids.len()];
     for node in graph.nodes() {
         if let Some(&pos) = id_set.get(&node.id) {
-            // Count each unique predecessor once, matching successors() which
-            // also returns each successor at most once.
             let mut seen = std::collections::HashSet::new();
             for dep in node.dependencies() {
                 if id_set.contains_key(&dep) && seen.insert(dep) {
@@ -32,11 +37,10 @@ pub fn toposort(graph: &Graph) -> GraphResult<Vec<NodeId>> {
             queue.push_back(pos);
         }
     }
-    let succ_index = graph.build_successor_index();
     let mut order = Vec::with_capacity(ids.len());
     while let Some(pos) = queue.pop_front() {
         order.push(ids[pos]);
-        for &succ_id in Graph::successors_from_index(ids[pos], &succ_index) {
+        for &succ_id in Graph::successors_from_index(ids[pos], succ_index) {
             if let Some(&succ_pos) = id_set.get(&succ_id) {
                 in_degree[succ_pos] -= 1;
                 if in_degree[succ_pos] == 0 {

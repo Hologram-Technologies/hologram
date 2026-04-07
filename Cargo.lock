@@ -706,9 +706,11 @@ dependencies = [
 name = "hologram-bench"
 version = "0.4.1"
 dependencies = [
+ "blake3",
  "criterion",
  "hologram-archive",
  "hologram-async",
+ "hologram-cascade",
  "hologram-compiler",
  "hologram-core",
  "hologram-exec",
@@ -716,6 +718,20 @@ dependencies = [
  "hologram-graph",
  "rkyv",
  "tokio",
+ "uor-foundation",
+]
+
+[[package]]
+name = "hologram-cascade"
+version = "0.3.0"
+dependencies = [
+ "blake3",
+ "hologram-archive",
+ "hologram-core",
+ "hologram-exec",
+ "hologram-graph",
+ "rayon",
+ "smallvec",
  "uor-foundation",
 ]
 
@@ -739,10 +755,13 @@ dependencies = [
 name = "hologram-compiler"
 version = "0.4.1"
 dependencies = [
+ "blake3",
  "hologram-archive",
+ "hologram-cascade",
  "hologram-core",
  "hologram-graph",
  "rayon",
+ "uor-foundation",
 ]
 
 [[package]]
@@ -1656,9 +1675,23 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uor-foundation"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fff0509ed9b1968543e51c952c0221c389d830d559376f03833f9b94fe9fc8ad"
+checksum = "45056f0c528dbc37ef3cb572a0972d5b4de95965536049e2025943af08391a11"
+dependencies = [
+ "uor-foundation-macros",
+]
+
+[[package]]
+name = "uor-foundation-macros"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c0ac34910ea3c392a10ade6e6fb14ecb5f5ff4df565045e48a0d065ba08ac3e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "utf8parse"

@@ -26,6 +26,7 @@ pub mod q2;
 pub mod q3;
 pub mod quantum;
 pub mod ring;
+pub mod term;
 pub mod view;
 
 /// Hologram primitive type family for uor-foundation traits.

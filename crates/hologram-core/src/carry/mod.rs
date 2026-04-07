@@ -13,74 +13,35 @@
 //! it cannot be reduced by subsequent operations in the same ring.
 //! The `CurvatureFlux` struct tracks cumulative carry at each level.
 //!
-//! These lifting operations are the formal basis for cross-level composition:
-//! a Q0 result can be an exact input to a Q1 operation via `lift_q0_to_q1`.
+//! The unified `lift`/`lower` functions handle cross-level composition for
+//! any pair of quantum levels.
 
-use crate::op::RingLevel;
+use crate::op::{QuantumLevelExt, RingLevel};
+use uor_foundation::QuantumLevel;
 
-// ── Exact lifting functions ───────────────────────────────────────────────────
+// ── Unified lifting functions ─────────────────────────────────────────────────
 
-/// Lift a Q0 value (u8) to Q1 (u16) via zero-extension.
-///
-/// DC_5: zero-extension is exact. The Q1 value represents the same ring
-/// element as the Q0 value. `lift_carry_flux(x) = 0` for all x.
+/// Lift a value from a lower to higher quantum level via zero-extension (DC_5).
 #[inline(always)]
-#[must_use]
-pub const fn lift_q0_to_q1(val: u8) -> u16 {
-    val as u16
+pub const fn lift(val: u64, _from: QuantumLevel, _to: QuantumLevel) -> u64 {
+    val
 }
 
-/// Lower a Q1 value (u16) to Q0 (u8) if it fits (high byte = 0).
-///
-/// Returns `Ok(lo_byte)` if the Q1 value is representable in Q0.
-/// Returns `Err(val)` if the high byte is non-zero (precision would be lost).
+/// Lower a value from a higher to lower quantum level.
+/// Returns Err(val) if precision would be lost.
 #[inline]
-pub const fn lower_q1_to_q0(val: u16) -> Result<u8, u16> {
-    if val & 0xFF00 == 0 {
-        Ok(val as u8)
+pub fn lower(val: u64, _from: QuantumLevel, to: QuantumLevel) -> Result<u64, u64> {
+    let bits = (to.byte_width() as u32) * 8;
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    if val & !mask == 0 {
+        Ok(val)
     } else {
         Err(val)
     }
-}
-
-/// Lift a Q1 value (u16) to Q2 (u32, low 24 bits) via zero-extension.
-///
-/// DC_5: zero-extension is exact. The Q2 value represents the same ring
-/// element as the Q1 value in Z/2^24Z.
-#[inline(always)]
-#[must_use]
-pub const fn lift_q1_to_q2(val: u16) -> u32 {
-    val as u32
-}
-
-/// Lower a Q2 value (u32, low 24 bits) to Q1 (u16) if it fits (bits 16-23 = 0).
-///
-/// Returns `Ok(lo_word)` if the Q2 value is representable in Q1.
-/// Returns `Err(val)` if bits 16-23 are non-zero (precision would be lost).
-#[inline]
-pub const fn lower_q2_to_q1(val: u32) -> Result<u16, u32> {
-    if val & 0x00FF_0000 == 0 {
-        Ok(val as u16)
-    } else {
-        Err(val)
-    }
-}
-
-/// Lift a Q0 value directly to Q2 via two zero-extension steps.
-#[inline(always)]
-#[must_use]
-pub const fn lift_q0_to_q2(val: u8) -> u32 {
-    val as u32
-}
-
-/// Carry flux introduced by lifting: always 0 for zero-extension (DC_5).
-///
-/// Zero-extension never generates carry — it only adds zero bits above.
-/// This is the formal proof that all lifting operations are exact.
-#[inline(always)]
-#[must_use]
-pub const fn lift_carry_flux(_val: u8) -> u8 {
-    0
 }
 
 // ── CurvatureFlux ─────────────────────────────────────────────────────────────
@@ -88,28 +49,23 @@ pub const fn lift_carry_flux(_val: u8) -> u8 {
 /// Cumulative carry flux across a sequence of ring operations.
 ///
 /// CF_3/CF_4: carry flux is non-decreasing along any computation path.
-/// Tracks how much carry has accumulated at each ring level.
+/// Tracks total accumulated carry and the maximum byte width at which
+/// carry has been observed.
 /// The `required_level()` method returns the minimum Q-level needed to
 /// avoid overflow given the accumulated carry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CurvatureFlux {
-    /// Bits of carry generated at Q0 level.
-    pub q0_carry: u32,
-    /// Bits of carry generated at Q1 level.
-    pub q1_carry: u32,
-    /// Bits of carry generated at Q2 level.
-    pub q2_carry: u32,
-    /// Bits of carry generated at Q3 level.
-    pub q3_carry: u32,
+    /// Total accumulated carry bits across all levels.
+    pub carry: u64,
+    /// Maximum byte width at which carry has been observed.
+    pub max_carry_width: u8,
 }
 
 impl CurvatureFlux {
     /// Zero flux — no carry accumulated yet.
     pub const ZERO: Self = Self {
-        q0_carry: 0,
-        q1_carry: 0,
-        q2_carry: 0,
-        q3_carry: 0,
+        carry: 0,
+        max_carry_width: 0,
     };
 
     /// Accumulate carry from applying an op with the given curvature at the given level.
@@ -118,29 +74,42 @@ impl CurvatureFlux {
     /// (carry flux is non-decreasing).
     #[inline]
     pub fn accumulate(&mut self, curvature: u8, level: RingLevel) {
-        match level {
-            RingLevel::Q0 => self.q0_carry += curvature as u32,
-            RingLevel::Q1 => self.q1_carry += curvature as u32,
-            RingLevel::Q2 => self.q2_carry += curvature as u32,
-            RingLevel::Q3 => self.q3_carry += curvature as u32,
+        self.carry += curvature as u64;
+        if curvature > 0 {
+            let w = level.byte_width();
+            if w > self.max_carry_width {
+                self.max_carry_width = w;
+            }
+        }
+    }
+
+    /// Accumulate carry at a dynamic quantum level.
+    #[inline]
+    pub fn accumulate_at(&mut self, curvature: u8, level: uor_foundation::QuantumLevel) {
+        self.carry += curvature as u64;
+        if curvature > 0 {
+            let w = level.byte_width();
+            if w > self.max_carry_width {
+                self.max_carry_width = w;
+            }
         }
     }
 
     /// Minimum Q-level required to avoid carry overflow given accumulated flux.
     ///
     /// Decision thresholds:
-    /// - q3_carry > 0 → Q3 (octonion-level carry, 32-bit range needed)
-    /// - q2_carry > 0 → Q2 (deep carry chain, Q1 range insufficient)
-    /// - q1_carry > 0 OR q0_carry > 8 → Q1 (Q0 range saturated)
+    /// - max_carry_width >= 4 → Q3 (octonion-level carry, 32-bit range needed)
+    /// - max_carry_width >= 3 → Q2 (deep carry chain, Q1 range insufficient)
+    /// - max_carry_width >= 2 OR carry > 8 → Q1 (Q0 range saturated)
     /// - otherwise → Q0 (carry-simple, 8-bit range sufficient)
     #[inline]
     #[must_use]
     pub fn required_level(self) -> RingLevel {
-        if self.q3_carry > 0 {
+        if self.max_carry_width >= 4 {
             RingLevel::Q3
-        } else if self.q2_carry > 0 {
+        } else if self.max_carry_width >= 3 {
             RingLevel::Q2
-        } else if self.q1_carry > 0 || self.q0_carry > 8 {
+        } else if self.max_carry_width >= 2 || self.carry > 8 {
             RingLevel::Q1
         } else {
             RingLevel::Q0
@@ -159,42 +128,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lift_q0_to_q1_exhaustive() {
+    fn lift_lower_round_trip_q0_q1() {
         // All 256 Q0 values round-trip through Q1 losslessly.
         for x in 0u8..=255 {
-            let lifted = lift_q0_to_q1(x);
-            let lowered = lower_q1_to_q0(lifted).expect("round-trip must succeed");
-            assert_eq!(lowered, x, "round-trip failed at {x}");
+            let lifted = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
+            let lowered =
+                lower(lifted, QuantumLevel::Q1, QuantumLevel::Q0).expect("round-trip must succeed");
+            assert_eq!(lowered as u8, x, "round-trip failed at {x}");
         }
     }
 
     #[test]
-    fn lower_q1_to_q0_fails_for_high_byte() {
-        assert!(lower_q1_to_q0(0x0100).is_err()); // bit 8 set
-        assert!(lower_q1_to_q0(0xFF00).is_err());
-        assert!(lower_q1_to_q0(0x0100).unwrap_err() == 0x0100);
+    fn lower_fails_for_high_byte() {
+        assert!(lower(0x0100, QuantumLevel::Q1, QuantumLevel::Q0).is_err());
+        assert!(lower(0xFF00, QuantumLevel::Q1, QuantumLevel::Q0).is_err());
+        assert_eq!(
+            lower(0x0100, QuantumLevel::Q1, QuantumLevel::Q0).unwrap_err(),
+            0x0100
+        );
     }
 
     #[test]
-    fn lift_q1_to_q2_spot_checks() {
+    fn lift_lower_round_trip_q1_q2() {
         for x in [0u16, 1, 127, 255, 256, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF] {
-            let lifted = lift_q1_to_q2(x);
-            let lowered = lower_q2_to_q1(lifted).expect("round-trip must succeed");
-            assert_eq!(lowered, x, "Q1→Q2 round-trip failed at {x}");
+            let lifted = lift(x as u64, QuantumLevel::Q1, QuantumLevel::Q2);
+            let lowered =
+                lower(lifted, QuantumLevel::Q2, QuantumLevel::Q1).expect("round-trip must succeed");
+            assert_eq!(lowered as u16, x, "Q1→Q2 round-trip failed at {x}");
         }
     }
 
     #[test]
     fn lower_q2_to_q1_fails_for_high_bits() {
-        assert!(lower_q2_to_q1(0x00_010000).is_err()); // bit 16 set
-        assert!(lower_q2_to_q1(0x00FF_0000).is_err());
+        assert!(lower(0x00_010000, QuantumLevel::Q2, QuantumLevel::Q1).is_err());
+        assert!(lower(0x00FF_0000, QuantumLevel::Q2, QuantumLevel::Q1).is_err());
     }
 
     #[test]
-    fn lift_carry_flux_is_zero_for_all_bytes() {
-        // DC_5: zero-extension generates zero carry.
+    fn lift_carry_is_zero() {
+        // DC_5: zero-extension generates zero carry (lift is identity on u64).
         for x in 0u8..=255 {
-            assert_eq!(lift_carry_flux(x), 0, "carry flux non-zero at {x}");
+            let lifted = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
+            assert_eq!(lifted, x as u64, "lift not zero-extending at {x}");
         }
     }
 
@@ -234,8 +209,8 @@ mod tests {
     #[test]
     fn lift_q0_to_q2_is_exact() {
         for x in [0u8, 1, 127, 255] {
-            let q2 = lift_q0_to_q2(x);
-            assert_eq!(q2, x as u32, "lift_q0_to_q2 not zero-extending at {x}");
+            let q2 = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q2);
+            assert_eq!(q2, x as u64, "lift Q0→Q2 not zero-extending at {x}");
         }
     }
 }
