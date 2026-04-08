@@ -3668,6 +3668,33 @@ impl EnumTape {
             }
         }
 
+        // Mutable copy of consumer counts: decremented as each instruction
+        // consumes its inputs. When the count for a node reaches zero, its
+        // buffer is freed (deallocated, not just cleared) so peak working-set
+        // memory tracks actual liveness instead of the sum of all activations.
+        //
+        // Protected nodes (graph outputs, constants, passthrough sources)
+        // carry u32::MAX in `consumer_counts` from `finalize_consumer_counts`
+        // and are never decremented or freed — they survive until the final
+        // arena.insert below.
+        //
+        // Gated behind `checkpoint_enabled` because the per-instruction live
+        // count decrement + heap free adds ~10% overhead. LLMs (TinyLlama at
+        // 1.1B params, ~4 GiB working set) fit comfortably without eviction
+        // and pay the perf for nothing. Vision/diffusion models like SD VAE,
+        // where peak activation memory is 20+ GiB at 512×512, need it: with
+        // eviction the SD VAE decoder fits in ~3 GiB instead of 20+ GiB.
+        let evict = self.checkpoint_enabled;
+        let mut live_counts: Vec<u32> = if evict {
+            let mut lc = self.consumer_counts.clone();
+            if lc.len() < bufs.len() {
+                lc.resize(bufs.len(), 0);
+            }
+            lc
+        } else {
+            Vec::new()
+        };
+
         // Per-kernel-type profiling (enabled via HOLOGRAM_PROFILE=1 env var).
         let profile = std::env::var("HOLOGRAM_PROFILE").is_ok_and(|v| v == "1");
         let mut profile_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
@@ -3787,6 +3814,31 @@ impl EnumTape {
                 &*tape_ctx.backend.resolve(),
                 out_buf,
             )?;
+
+            // Drop input refs before mutating bufs again — `input_refs`
+            // borrows from `bufs` via raw pointer.
+            drop(input_refs);
+
+            // Evict input buffers whose last consumer was this instruction
+            // (only when explicitly enabled — see live_counts setup above).
+            if evict {
+                for &input_idx in &instr.input_indices {
+                    let i = input_idx as usize;
+                    if i >= live_counts.len() {
+                        continue;
+                    }
+                    if live_counts[i] == u32::MAX {
+                        continue;
+                    }
+                    live_counts[i] = live_counts[i].saturating_sub(1);
+                    if live_counts[i] == 0 && i < bufs.len() && !bufs[i].is_empty() {
+                        // Replace with empty Vec to actually deallocate the
+                        // backing storage (clear() would only set len=0 and
+                        // keep capacity, defeating the purpose).
+                        bufs[i] = Vec::new();
+                    }
+                }
+            }
 
             if profile {
                 let elapsed = t0.elapsed();
