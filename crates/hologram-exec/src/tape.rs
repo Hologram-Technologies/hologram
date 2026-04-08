@@ -3650,7 +3650,14 @@ impl EnumTape {
         tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
         // Pre-allocate output buffers for all instructions based on byte hints.
-        // This eliminates all per-instruction Vec resize/allocation.
+        // This eliminates all per-instruction Vec resize/allocation, but
+        // reserves the SUM of all `output_byte_hint`s up front — fine for LLMs
+        // (working set ~few GiB) but catastrophic for vision/diffusion models
+        // where the sum is 20+ GiB. When `checkpoint_enabled` is true the
+        // caller is signalling memory pressure, so skip pre-allocation
+        // entirely and let `dispatch_kernel` grow each `out_buf` on demand.
+        // The eviction loop below then frees buffers as soon as their last
+        // consumer finishes, keeping peak memory near the working set.
         let max_idx = self
             .instructions
             .iter()
@@ -3658,12 +3665,14 @@ impl EnumTape {
             .max()
             .unwrap_or(0);
         let mut bufs: Vec<Vec<u8>> = vec![Vec::new(); max_idx];
-        for instr in &self.instructions {
-            let idx = instr.output_idx as usize;
-            if idx < bufs.len() && instr.output_byte_hint > 0 {
-                let needed = instr.output_byte_hint as usize;
-                if bufs[idx].capacity() < needed {
-                    bufs[idx] = Vec::with_capacity(needed);
+        if !self.checkpoint_enabled {
+            for instr in &self.instructions {
+                let idx = instr.output_idx as usize;
+                if idx < bufs.len() && instr.output_byte_hint > 0 {
+                    let needed = instr.output_byte_hint as usize;
+                    if bufs[idx].capacity() < needed {
+                        bufs[idx] = Vec::with_capacity(needed);
+                    }
                 }
             }
         }
