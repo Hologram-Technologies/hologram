@@ -190,6 +190,29 @@ impl LoadedPlan {
         crate::weight::index::WeightIndex::from_bytes(&archive_bytes[start..end]).ok()
     }
 
+    /// Extract the host metadata section from raw archive bytes, if present.
+    ///
+    /// Returns `None` if the archive does not contain a `HostMetaSection` or
+    /// if the section bytes fail to deserialize. Used by `inspect` to print
+    /// chat templates, sampling defaults, model card, etc. Host metadata is
+    /// always optional; absence is not an error.
+    #[must_use]
+    pub fn host_meta_from_bytes(
+        &self,
+        archive_bytes: &[u8],
+    ) -> Option<crate::section::host_meta::HostMetaSection> {
+        let entry = self
+            .section_table
+            .find(crate::section::host_meta::SECTION_HOST_META)?;
+        let start = entry.offset as usize;
+        let end = start + entry.size as usize;
+        if end > archive_bytes.len() {
+            return None;
+        }
+        crate::section::host_meta::HostMetaSection::deserialize_from(&archive_bytes[start..end])
+            .ok()
+    }
+
     /// Number of nodes in the graph.
     #[must_use]
     pub fn node_count(&self) -> usize {

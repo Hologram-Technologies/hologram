@@ -1,6 +1,7 @@
 //! `hologram inspect` — print metadata from a `.holo` archive.
 
 mod graph;
+mod host_meta;
 mod json;
 mod layout;
 mod schedule;
@@ -108,7 +109,15 @@ fn print_level(
     schedule: &hologram_graph::ExecutionSchedule,
 ) {
     match level {
-        DetailLevel::Summary => summary::print(args, data, plan, schedule),
+        DetailLevel::Summary => {
+            summary::print(args, data, plan, schedule);
+            // Host metadata is part of the summary view — it's the first
+            // thing a user wants to see, especially the chat template.
+            // Prints nothing when the section is absent.
+            if host_meta::print(data, plan) {
+                // no trailing newline; dispatch() handles spacing
+            }
+        }
         DetailLevel::Graph => graph::print(plan),
         DetailLevel::Schedule => schedule::print(plan, schedule),
         DetailLevel::Sections => sections::print(plan),
