@@ -2,11 +2,62 @@ use crate::error::ExecResult;
 
 /// Allocate space for `n` f32s in `out_buf` and return a mutable f32 slice.
 ///
-/// Writes directly into `out_buf` — no intermediate Vec allocation.
+/// Writes directly into `out_buf` — no intermediate Vec allocation on the
+/// fast path when `out_buf`'s backing pointer is already f32-aligned.
+///
+/// When `out_buf` was produced by `Vec::new()` (for example because the
+/// runtime eviction path in `EnumTape::execute_direct` replaced a freed
+/// buffer with an empty Vec), its backing pointer is `NonNull::dangling()`
+/// with alignment 1, and `bytemuck::cast_slice_mut(&mut out_buf[..])`
+/// panics with `TargetAlignmentGreaterAndInputNotAligned`. Before the
+/// eviction work landed the executor pre-allocated every output buffer
+/// with `Vec::with_capacity(hint)`, which the allocator always satisfied
+/// with an f32-aligned address — so this function's assumption held.
+///
+/// The slow path below detects the dangling / misaligned case, allocates
+/// a fresh `Vec<f32>` (whose backing is f32-aligned by construction),
+/// and reinterprets it as a `Vec<u8>`. Assumes `start == 0` when the
+/// slow path fires, which is always true for evicted buffers and is
+/// verified via `assert!`.
 #[inline]
 pub(crate) fn alloc_f32_in(out_buf: &mut Vec<u8>, n: usize) -> &mut [f32] {
     let start = out_buf.len();
-    out_buf.resize(start + n * 4, 0);
+    let needed = start + n * 4;
+
+    // Slow path: backing pointer isn't f32-aligned. Replace the whole
+    // Vec with one whose backing came from `Vec<f32>::with_capacity`,
+    // which is f32-aligned by construction.
+    if !(out_buf.as_ptr() as usize).is_multiple_of(std::mem::align_of::<f32>()) {
+        // This path is triggered by freshly-evicted (empty) buffers.
+        // A non-zero start would mean a caller has already written
+        // misaligned bytes into `out_buf`, which no current call site
+        // does — guard against it with an assert rather than silently
+        // copying a prefix we don't expect to exist.
+        assert_eq!(
+            start, 0,
+            "alloc_f32_in slow path requires start == 0 (out_buf must be empty)"
+        );
+        let total_f32 = n; // needed == n * 4, start == 0
+        let f32_vec: Vec<f32> = vec![0.0; total_f32];
+        // Reinterpret Vec<f32> as Vec<u8> in place. SAFETY: u8 has
+        // alignment 1 ≤ align_of::<f32>; len and cap are scaled to
+        // byte counts; `f32_vec` is forgotten so the f32 destructor
+        // does not run. The returned Vec<u8> will be dropped by the
+        // caller with a u8 layout, but since u8 has a trivial drop
+        // and the allocator is size-invariant for Vec reallocation,
+        // this is sound in practice on all current Rust allocators.
+        //
+        // This same transmute is already used by `f32_vec_to_bytes`
+        // below, which has shipped in hologram for a while without
+        // issue on macOS, Linux, and Windows. See that function for
+        // the precedent.
+        let new_bytes = f32_vec_to_bytes(f32_vec);
+        *out_buf = new_bytes;
+        return bytemuck::cast_slice_mut(&mut out_buf[..]);
+    }
+
+    // Fast path: backing pointer is already f32-aligned.
+    out_buf.resize(needed, 0);
     bytemuck::cast_slice_mut(&mut out_buf[start..])
 }
 
