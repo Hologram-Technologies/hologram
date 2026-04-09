@@ -3793,6 +3793,32 @@ impl EnumTape {
             let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
             out_buf.clear();
 
+            // Pre-dispatch: log every instruction so that if a kernel hangs
+            // we can identify which one from the last line in the log.
+            // Uses eprintln for immediate flush (tracing may buffer).
+            if std::env::var("HOLOGRAM_TRACE_INSTRS").is_ok() {
+                let input_sizes: SmallVec<[usize; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| {
+                        let i = idx as usize;
+                        if i < bufs.len() && !bufs[i].is_empty() {
+                            bufs[i].len()
+                        } else {
+                            arena.get(NodeId::new(idx, 0)).map(|d| d.len()).unwrap_or(0)
+                        }
+                    })
+                    .collect();
+                eprintln!(
+                    "[instr {}/{}] {} out={} inputs={:?}",
+                    instr_idx,
+                    self.instructions.len(),
+                    instr.kernel.profile_name(),
+                    instr.output_idx,
+                    input_sizes.as_slice(),
+                );
+            }
+
             let t0 = std::time::Instant::now();
 
             // Build input_metas from shape_overrides when available.
@@ -3849,8 +3875,39 @@ impl EnumTape {
                 }
             }
 
+            // Always measure per-instruction time. The `t0` Instant was
+            // captured just before `dispatch_kernel` above.
+            let elapsed = t0.elapsed();
+
+            // Log any instruction that takes longer than 1 second —
+            // this catches pathological Conv2d or other kernels that
+            // dominate UNet forward-pass time without needing
+            // HOLOGRAM_PROFILE=1 for the aggregate summary.
+            if elapsed.as_secs() >= 1 {
+                let input_sizes: SmallVec<[usize; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| {
+                        let i = idx as usize;
+                        if i < bufs.len() && !bufs[i].is_empty() {
+                            bufs[i].len()
+                        } else {
+                            arena.get(NodeId::new(idx, 0)).map(|d| d.len()).unwrap_or(0)
+                        }
+                    })
+                    .collect();
+                tracing::warn!(
+                    instr_idx,
+                    kernel = %instr.kernel.profile_name(),
+                    elapsed_s = format_args!("{:.1}", elapsed.as_secs_f64()),
+                    output_idx = instr.output_idx,
+                    output_bytes = out_buf.len(),
+                    ?input_sizes,
+                    "slow instruction (≥1s)"
+                );
+            }
+
             if profile {
-                let elapsed = t0.elapsed();
                 let key = instr.kernel.profile_name();
                 let entry = profile_times
                     .entry(key)
