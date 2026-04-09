@@ -67,6 +67,10 @@ pub struct TapeContext<'a> {
     /// in streaming workloads. Uses `Cell` for interior mutability (zero-cost
     /// since CurvatureFlux is Copy).
     pub flux: Cell<hologram_core::carry::CurvatureFlux>,
+    /// Optional cancellation token for cooperative cancellation.
+    /// When set, the executor checks `is_cancelled()` at level boundaries
+    /// and returns `ExecError::Cancelled` if signalled.
+    pub cancel: Option<crate::runner::CancellationToken>,
 }
 
 impl<'a> TapeContext<'a> {
@@ -87,6 +91,7 @@ impl<'a> TapeContext<'a> {
             backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
+            cancel: None,
         }
     }
 
@@ -107,6 +112,7 @@ impl<'a> TapeContext<'a> {
             backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
+            cancel: None,
         }
     }
 
@@ -3723,6 +3729,15 @@ impl EnumTape {
 
         // Execute: one match per instruction.
         for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            // Cooperative cancellation check at level boundaries.
+            if has_levels && instr_idx >= next_level_boundary {
+                if let Some(ref cancel) = tape_ctx.cancel {
+                    if cancel.is_cancelled() {
+                        return Err(crate::error::ExecError::Cancelled);
+                    }
+                }
+            }
+
             // Check if we've crossed a level boundary → prefetch next level's weights.
             if has_prefetch && instr_idx >= next_level_boundary {
                 current_level += 1;

@@ -20,13 +20,7 @@ use crate::error::{ExecError, ExecResult};
 
 use super::ComputeBackend;
 
-/// Minimum buffer size (bytes) to dispatch to Metal.
-/// GPU kernel launch overhead (~10-50µs per command buffer commit+wait)
-/// means Metal only wins for large buffers. On Apple Silicon M-series,
-/// the crossover point for elementwise ops is ~1M floats (4MB).
-/// For matmul, Metal wins much earlier (~64KB) due to higher arithmetic
-/// intensity. This threshold applies to elementwise ops only.
-const METAL_MIN_BYTES: usize = 4 * 1024 * 1024; // 1M floats
+use super::hardware::{HardwareCaps, OpThresholds};
 
 /// Embedded Metal Shading Language source for elementwise kernels.
 const SHADER_SOURCE: &str = r#"
@@ -374,6 +368,8 @@ pub struct MetalBackend {
     /// Uses `Mutex` for interior mutability — the backend is shared via Arc
     /// and must implement `Sync` for `ComputeBackend: Send + Sync`.
     pending: Mutex<Option<metal::CommandBuffer>>,
+    /// Hardware-detected per-op dispatch thresholds (computed once at init).
+    thresholds: OpThresholds,
 }
 
 impl MetalBackend {
@@ -418,11 +414,14 @@ impl MetalBackend {
             pipelines.insert(name, pipeline);
         }
 
+        let thresholds = OpThresholds::from(HardwareCaps::detect());
+
         Some(MetalBackend {
             device,
             queue,
             pipelines,
             pending: Mutex::new(None),
+            thresholds,
         })
     }
 
@@ -701,7 +700,7 @@ impl ComputeBackend for MetalBackend {
         // Softmax: route with row_size parameter — zero-copy Metal buffer.
         if let FloatOp::Softmax { size } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-            if input_bytes >= METAL_MIN_BYTES && *size > 0 {
+            if input_bytes >= self.thresholds.softmax_min_bytes && *size > 0 {
                 let buf = self.dispatch_softmax(inputs[0], *size as usize)?;
                 return Ok(super::KernelOutput::MetalBuffer(buf));
             }
@@ -711,7 +710,7 @@ impl ComputeBackend for MetalBackend {
         // RmsNorm: route with row_size + epsilon — zero-copy Metal buffer.
         if let FloatOp::RmsNorm { size, epsilon } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-            if input_bytes >= METAL_MIN_BYTES && inputs.len() >= 2 && *size > 0 {
+            if input_bytes >= self.thresholds.norm_min_bytes && inputs.len() >= 2 && *size > 0 {
                 let buf = self.dispatch_rms_norm(
                     inputs[0],
                     inputs[1],
@@ -725,7 +724,7 @@ impl ComputeBackend for MetalBackend {
 
         // Skip Metal for small buffers — CPU SIMD is faster.
         let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-        if input_bytes < METAL_MIN_BYTES {
+        if input_bytes < self.thresholds.elementwise_min_bytes {
             return Ok(super::KernelOutput::Skipped);
         }
 
@@ -761,9 +760,9 @@ impl ComputeBackend for MetalBackend {
         _out_buf: &mut Vec<u8>,
     ) -> ExecResult<super::KernelOutput> {
         // Metal matmul only worthwhile for large matrices.
-        // Crossover vs Accelerate BLAS is ~128×128 on M-series.
+        // Crossover vs Accelerate BLAS varies by GPU generation.
         let out_elements = m * n;
-        if out_elements < 128 * 128 {
+        if out_elements < self.thresholds.matmul_min_elements {
             return Ok(super::KernelOutput::Skipped);
         }
 
@@ -931,5 +930,9 @@ impl ComputeBackend for MetalBackend {
 
     fn name(&self) -> &'static str {
         "metal"
+    }
+
+    fn op_thresholds(&self) -> &super::hardware::OpThresholds {
+        &self.thresholds
     }
 }

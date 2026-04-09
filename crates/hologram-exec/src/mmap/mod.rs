@@ -522,6 +522,7 @@ pub struct InferenceSession<'a> {
     kv_state: Option<KvCacheState>,
     shape_overrides: std::collections::HashMap<u32, Vec<usize>>,
     step_count: u64,
+    cancel: Option<crate::runner::CancellationToken>,
 }
 
 impl<'a> InferenceSession<'a> {
@@ -534,6 +535,7 @@ impl<'a> InferenceSession<'a> {
             kv_state: None,
             shape_overrides: std::collections::HashMap::new(),
             step_count: 0,
+            cancel: None,
         }
     }
 
@@ -554,6 +556,16 @@ impl<'a> InferenceSession<'a> {
     #[must_use]
     pub fn with_shapes(mut self, overrides: std::collections::HashMap<u32, Vec<usize>>) -> Self {
         self.shape_overrides = overrides;
+        self
+    }
+
+    /// Set a cancellation token for cooperative cancellation.
+    ///
+    /// When set, the tape executor checks `is_cancelled()` at level
+    /// boundaries and returns `ExecError::Cancelled` if signalled.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: crate::runner::CancellationToken) -> Self {
+        self.cancel = Some(cancel);
         self
     }
 
@@ -598,6 +610,7 @@ impl<'a> InferenceSession<'a> {
             if !self.shape_overrides.is_empty() {
                 tape_ctx.shape_overrides = &self.shape_overrides;
             }
+            tape_ctx.cancel = self.cancel.clone();
 
             self.tape.execute(&mut arena, &tape_ctx)?;
 
@@ -614,6 +627,7 @@ impl<'a> InferenceSession<'a> {
             if !self.shape_overrides.is_empty() {
                 tape_ctx.shape_overrides = &self.shape_overrides;
             }
+            tape_ctx.cancel = self.cancel.clone();
 
             self.tape.execute_with_eviction(
                 &mut arena,

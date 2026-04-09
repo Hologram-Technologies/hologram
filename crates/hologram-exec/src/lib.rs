@@ -14,6 +14,7 @@ pub mod kv_cache;
 pub mod lut_gemm;
 pub mod mmap;
 pub mod parallel;
+pub mod runner;
 pub mod shape_resolve;
 pub mod tape;
 pub mod tape_builder;
@@ -32,6 +33,7 @@ pub use mmap::{
     execute_tape_with_kv_shapes_cached, execute_tape_with_shapes, execute_tape_with_weight_cache,
     InferenceSession,
 };
+pub use runner::CancellationToken;
 
 /// Register a custom op handler in a `CustomOpRegistry`.
 ///

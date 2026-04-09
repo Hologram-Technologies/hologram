@@ -8,6 +8,7 @@
 //! [`BackendSelector`].
 
 pub mod cpu;
+pub mod hardware;
 
 #[cfg(has_metal)]
 pub mod metal;
@@ -149,6 +150,14 @@ pub trait ComputeBackend: Send + Sync {
     /// all MetalBuffers returned by previous dispatch calls contain
     /// valid GPU-written data. No-op for CPU backends.
     fn flush(&self) {}
+
+    /// Per-op-category minimum byte thresholds for GPU dispatch.
+    ///
+    /// Override in GPU backends to return hardware-detected thresholds.
+    /// Default returns conservative thresholds (legacy 4MB behavior).
+    fn op_thresholds(&self) -> &hardware::OpThresholds {
+        &hardware::OpThresholds::DEFAULT
+    }
 
     /// Flush deferred GPU work and return readback data in dispatch order.
     ///
