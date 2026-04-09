@@ -3867,9 +3867,27 @@ impl EnumTape {
                     }
                     live_counts[i] = live_counts[i].saturating_sub(1);
                     if live_counts[i] == 0 && i < bufs.len() && !bufs[i].is_empty() {
-                        // Replace with empty Vec to actually deallocate the
-                        // backing storage (clear() would only set len=0 and
-                        // keep capacity, defeating the purpose).
+                        // Drop the buffer AND tell the OS to reclaim its pages.
+                        // Vec::drop alone frees the allocation via the system
+                        // allocator, but malloc keeps pages in its free-list
+                        // (RSS stays at the high-water mark). madvise(MADV_FREE)
+                        // marks pages as reclaimable so the kernel can reclaim
+                        // them under memory pressure — essential for running SD
+                        // VAE on resource-constrained devices.
+                        //
+                        // TODO(Plan 061 follow-up): Replace the Vec<Vec<u8>> pool
+                        // with a proper mmap-backed arena that:
+                        // (a) Allocates one large contiguous region up front
+                        // (b) Sub-allocates regions for each instruction's output
+                        // (c) Calls madvise(MADV_FREE) on freed regions directly
+                        // (d) Reuses freed regions for new allocations (bump + free-list)
+                        // This avoids per-buffer malloc/free overhead and gives
+                        // precise control over page lifecycle. The existing
+                        // BufferArena (buffer/arena.rs) has MMAP_THRESHOLD logic
+                        // but execute_direct bypasses it. The fix is to either
+                        // unify execute_direct with BufferArena, or build a
+                        // dedicated TapeArena that works with the Vec<Vec<u8>> pool.
+                        advise_free(&bufs[i]);
                         bufs[i] = Vec::new();
                     }
                 }
@@ -4016,6 +4034,46 @@ fn release_weight_range(weights: &[u8], start: u64, end: u64) {
             libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
         }
     }
+}
+
+/// Advise the OS that a Vec<u8>'s backing pages are reclaimable.
+///
+/// After a buffer is dropped (Vec::drop frees via malloc), the system
+/// allocator retains pages in its free-list — RSS stays at the high-water
+/// mark. This function calls `madvise(MADV_FREE)` on the buffer's pages
+/// *before* dropping, marking them as reclaimable. The kernel will
+/// reclaim them under memory pressure without requiring a munmap.
+///
+/// On macOS, `MADV_FREE` is preferred over `MADV_DONTNEED` because
+/// MADV_FREE is lazy (zero syscall overhead if pages aren't reclaimed)
+/// while MADV_DONTNEED immediately discards and zero-fills on re-access.
+///
+/// No-op on non-unix platforms or empty buffers.
+#[inline]
+fn advise_free(buf: &[u8]) {
+    #[cfg(unix)]
+    if !buf.is_empty() {
+        // Align to page boundary (4096 on all supported targets).
+        let ptr = buf.as_ptr() as usize;
+        let page_size = 4096;
+        let aligned_start = (ptr + page_size - 1) & !(page_size - 1);
+        let end = ptr + buf.len();
+        if aligned_start < end {
+            let len = end - aligned_start;
+            // SAFETY: aligned_start..end is within buf's allocation.
+            // MADV_FREE marks pages as reclaimable but doesn't modify contents
+            // until reclaimed — the caller is about to drop the Vec anyway.
+            unsafe {
+                // Use MADV_FREE on macOS (lazy), MADV_DONTNEED on Linux (eager).
+                #[cfg(target_os = "macos")]
+                libc::madvise(aligned_start as *mut libc::c_void, len, libc::MADV_FREE);
+                #[cfg(not(target_os = "macos"))]
+                libc::madvise(aligned_start as *mut libc::c_void, len, libc::MADV_DONTNEED);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = buf;
 }
 
 #[cfg(test)]
