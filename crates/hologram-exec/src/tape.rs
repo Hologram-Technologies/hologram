@@ -3673,35 +3673,19 @@ impl EnumTape {
             .max()
             .unwrap_or(0);
 
-        // Mmap threshold: buffers above this size use MmapBuffer instead of
-        // Vec<u8> when eviction is enabled. MmapBuffer::drop calls munmap,
-        // which immediately returns pages to the OS. Below this threshold,
-        // Vec<u8> is faster (no syscall overhead per allocation).
-        const MMAP_EVICT_THRESHOLD: usize = 256 * 1024; // 256 KiB
-
         // Create output buffers.
         let mut bufs: Vec<OutputBuffer> = if self.checkpoint_enabled {
-            // Eviction path (diffusion models): allocate large buffers via
-            // MmapBuffer so that dropping them calls munmap and immediately
-            // returns pages to the OS. Small buffers use Vec<u8> as usual.
-            // No pre-sized arena — variable-length execution can produce
-            // outputs of any size, and arena overflow defeats the purpose.
-            (0..max_idx)
-                .map(|node| {
-                    // Find this node's output_byte_hint from its instruction.
-                    let hint = self
-                        .instructions
-                        .iter()
-                        .find(|i| i.output_idx as usize == node)
-                        .map(|i| i.output_byte_hint as usize)
-                        .unwrap_or(0);
-                    if hint >= MMAP_EVICT_THRESHOLD {
-                        OutputBuffer::mmap(hint)
-                    } else {
-                        OutputBuffer::new()
-                    }
-                })
-                .collect()
+            // Eviction path (diffusion models): start with empty buffers.
+            // Kernels allocate on demand via OutputBuffer::resize. When the
+            // resize exceeds MMAP_EVICT_THRESHOLD, the buffer self-promotes
+            // to Mmap (see OutputBuffer::resize logic). On eviction, Mmap
+            // buffers call munmap — immediate page return.
+            //
+            // Pre-allocating Mmap buffers for all instructions up front
+            // defeated eviction: the total hint-based allocation was ~11 GiB
+            // before a single instruction ran, and the live set never dropped
+            // because all buffers were allocated simultaneously.
+            (0..max_idx).map(|_| OutputBuffer::new()).collect()
         } else {
             // Heap path (LLMs): pre-allocate with output_byte_hint.
             // No eviction, no mmap overhead.
@@ -3925,6 +3909,18 @@ impl EnumTape {
                         bufs[i] = OutputBuffer::new();
                     }
                 }
+            }
+
+            // Track live buffer memory when HOLOGRAM_TRACE_INSTRS is set.
+            if std::env::var("HOLOGRAM_TRACE_INSTRS").is_ok() && (instr_idx + 1) % 50 == 0 {
+                let live_bytes: usize = bufs.iter().map(|b| b.len()).sum();
+                eprintln!(
+                    "[mem {}/{}] live={:.1}MiB bufs={}",
+                    instr_idx + 1,
+                    self.instructions.len(),
+                    live_bytes as f64 / (1024.0 * 1024.0),
+                    bufs.iter().filter(|b| !b.is_empty()).count(),
+                );
             }
 
             // Always measure per-instruction time. The `t0` Instant was

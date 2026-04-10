@@ -33,6 +33,12 @@ use std::ops::{Deref, DerefMut};
 ///
 /// Kernels use the same API for all variants — the enum dispatch is a
 /// single predicted branch, zero overhead in practice.
+/// Buffers at or above this size use MmapBuffer instead of Vec<u8> when
+/// promoted during resize/extend. MmapBuffer::drop calls munmap, which
+/// immediately returns pages to the OS. Below this threshold, Vec<u8> is
+/// faster (no syscall overhead per allocation).
+pub const MMAP_EVICT_THRESHOLD: usize = 256 * 1024; // 256 KiB
+
 pub enum OutputBuffer {
     /// Heap-allocated buffer. Owns its memory via `Vec<u8>`.
     /// Used when `checkpoint_enabled = false` (LLM path) and for
@@ -57,8 +63,14 @@ pub enum OutputBuffer {
 
     /// Individually mmap'd buffer. On drop, `munmap` returns pages to
     /// the OS immediately — RSS tracks live buffers, not allocator caches.
-    /// Used for large activation buffers (>1 MiB) in the eviction path.
-    Mmap(super::mmap_buf::MmapBuffer),
+    /// Used for large activation buffers (≥MMAP_EVICT_THRESHOLD) in the
+    /// eviction path. Tracks a logical length separately from the mmap's
+    /// full capacity (same as Arena's len/capacity split).
+    Mmap {
+        buf: super::mmap_buf::MmapBuffer,
+        /// Logical length: how many bytes have been written.
+        len: usize,
+    },
 }
 
 // SAFETY: Arena pointers are valid for the lifetime of execute_direct.
@@ -102,11 +114,15 @@ impl OutputBuffer {
         }
     }
 
-    /// Create an Mmap-backed buffer of the given size.
+    /// Create an Mmap-backed buffer with the given capacity.
     /// On drop, `munmap` returns pages to the OS immediately.
+    /// Starts with logical length 0 (capacity is the mmap size).
     #[inline]
-    pub fn mmap(size: usize) -> Self {
-        Self::Mmap(super::mmap_buf::MmapBuffer::new(size))
+    pub fn mmap(capacity: usize) -> Self {
+        Self::Mmap {
+            buf: super::mmap_buf::MmapBuffer::new(capacity),
+            len: 0,
+        }
     }
 
     /// Current length in bytes.
@@ -115,7 +131,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.len(),
             Self::Arena { len, .. } => *len,
-            Self::Mmap(m) => m.len(),
+            Self::Mmap { len, .. } => *len,
         }
     }
 
@@ -131,7 +147,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.capacity(),
             Self::Arena { capacity, .. } => *capacity,
-            Self::Mmap(m) => m.len(), // mmap capacity == length (fixed size)
+            Self::Mmap { buf, .. } => buf.len(),
         }
     }
 
@@ -141,7 +157,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.as_ptr(),
             Self::Arena { ptr, .. } => *ptr as *const u8,
-            Self::Mmap(m) => m.as_slice().as_ptr(),
+            Self::Mmap { buf, .. } => buf.as_slice().as_ptr(),
         }
     }
 
@@ -151,7 +167,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.as_mut_ptr(),
             Self::Arena { ptr, .. } => *ptr,
-            Self::Mmap(m) => m.as_mut_slice().as_mut_ptr(),
+            Self::Mmap { buf, .. } => buf.as_mut_slice().as_mut_ptr(),
         }
     }
 
@@ -161,7 +177,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.as_slice(),
             Self::Arena { ptr, len, .. } => unsafe { std::slice::from_raw_parts(*ptr, *len) },
-            Self::Mmap(m) => m.as_slice(),
+            Self::Mmap { buf, len } => &buf.as_slice()[..*len],
         }
     }
 
@@ -171,7 +187,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.as_mut_slice(),
             Self::Arena { ptr, len, .. } => unsafe { std::slice::from_raw_parts_mut(*ptr, *len) },
-            Self::Mmap(m) => m.as_mut_slice(),
+            Self::Mmap { buf, len } => &mut buf.as_mut_slice()[..*len],
         }
     }
 
@@ -181,11 +197,7 @@ impl OutputBuffer {
         match self {
             Self::Heap(v) => v.clear(),
             Self::Arena { len, .. } => *len = 0,
-            Self::Mmap(_) => {
-                // Mmap has fixed size (len == capacity). "Clear" means
-                // the caller will overwrite. We can't shrink the mmap.
-                // No-op is correct — the next write will overwrite.
-            }
+            Self::Mmap { len, .. } => *len = 0,
         }
     }
 
@@ -196,7 +208,32 @@ impl OutputBuffer {
     #[inline]
     pub fn resize(&mut self, new_len: usize, value: u8) {
         match self {
-            Self::Heap(v) => v.resize(new_len, value),
+            Self::Heap(v) => {
+                // Promote empty Heap to Mmap for large allocations.
+                // This ensures that when eviction drops the buffer,
+                // munmap returns pages to the OS immediately.
+                if v.is_empty() && new_len >= MMAP_EVICT_THRESHOLD {
+                    let m = super::mmap_buf::MmapBuffer::new(new_len);
+                    // MmapBuffer is zero-initialized; fill with value if non-zero.
+                    if value != 0 {
+                        let mut m = m;
+                        for b in m.as_mut_slice() {
+                            *b = value;
+                        }
+                        *self = Self::Mmap {
+                            buf: m,
+                            len: new_len,
+                        };
+                    } else {
+                        *self = Self::Mmap {
+                            buf: m,
+                            len: new_len,
+                        };
+                    }
+                } else {
+                    v.resize(new_len, value);
+                }
+            }
             Self::Arena {
                 ptr, len, capacity, ..
             } => {
@@ -223,23 +260,37 @@ impl OutputBuffer {
                             *b = value;
                         }
                     }
-                    *self = Self::Mmap(m);
+                    *self = Self::Mmap {
+                        buf: m,
+                        len: new_len,
+                    };
                 }
             }
-            Self::Mmap(m) => {
-                if new_len <= m.len() {
-                    // Shrink: no-op (mmap is fixed size, we just use less).
-                    return;
-                }
-                // Grow: allocate a new larger mmap and copy.
-                let mut new_m = super::mmap_buf::MmapBuffer::new(new_len);
-                new_m.as_mut_slice()[..m.len()].copy_from_slice(m.as_slice());
-                if value != 0 {
-                    for b in &mut new_m.as_mut_slice()[m.len()..] {
-                        *b = value;
+            Self::Mmap { buf, len } => {
+                if new_len <= buf.len() {
+                    // Fits within existing mmap capacity.
+                    if new_len > *len && value != 0 {
+                        for b in &mut buf.as_mut_slice()[*len..new_len] {
+                            *b = value;
+                        }
                     }
+                    *len = new_len;
+                } else {
+                    // Grow: allocate a new larger mmap and copy.
+                    let mut new_buf = super::mmap_buf::MmapBuffer::new(new_len);
+                    if *len > 0 {
+                        new_buf.as_mut_slice()[..*len].copy_from_slice(&buf.as_slice()[..*len]);
+                    }
+                    if value != 0 {
+                        for b in &mut new_buf.as_mut_slice()[*len..] {
+                            *b = value;
+                        }
+                    }
+                    *self = Self::Mmap {
+                        buf: new_buf,
+                        len: new_len,
+                    };
                 }
-                *self = Self::Mmap(new_m);
             }
         }
     }
@@ -266,17 +317,30 @@ impl OutputBuffer {
                             .copy_from_slice(unsafe { std::slice::from_raw_parts(*ptr, *len) });
                     }
                     m.as_mut_slice()[*len..new_len].copy_from_slice(data);
-                    *self = Self::Mmap(m);
+                    *self = Self::Mmap {
+                        buf: m,
+                        len: new_len,
+                    };
                 }
             }
-            Self::Mmap(m) => {
-                // Mmap is fixed-size; extend needs a bigger buffer.
-                let old_len = m.len();
-                let new_len = old_len + data.len();
-                let mut new_m = super::mmap_buf::MmapBuffer::new(new_len);
-                new_m.as_mut_slice()[..old_len].copy_from_slice(m.as_slice());
-                new_m.as_mut_slice()[old_len..new_len].copy_from_slice(data);
-                *self = Self::Mmap(new_m);
+            Self::Mmap { buf, len } => {
+                let new_len = *len + data.len();
+                if new_len <= buf.len() {
+                    // Fits within existing mmap capacity.
+                    buf.as_mut_slice()[*len..new_len].copy_from_slice(data);
+                    *len = new_len;
+                } else {
+                    // Grow: allocate a new larger mmap and copy.
+                    let mut new_buf = super::mmap_buf::MmapBuffer::new(new_len);
+                    if *len > 0 {
+                        new_buf.as_mut_slice()[..*len].copy_from_slice(&buf.as_slice()[..*len]);
+                    }
+                    new_buf.as_mut_slice()[*len..new_len].copy_from_slice(data);
+                    *self = Self::Mmap {
+                        buf: new_buf,
+                        len: new_len,
+                    };
+                }
             }
         }
     }
@@ -298,7 +362,7 @@ impl OutputBuffer {
                 }
                 v
             }
-            Self::Mmap(m) => m.as_slice().to_vec(),
+            Self::Mmap { buf, len } => buf.as_slice()[..len].to_vec(),
         }
     }
 }

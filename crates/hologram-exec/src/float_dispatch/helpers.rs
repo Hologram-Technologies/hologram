@@ -5,14 +5,30 @@ use crate::error::ExecResult;
 ///
 /// Writes directly into `out_buf` — no intermediate allocation.
 ///
-/// For `OutputBuffer::Heap`: resizes the Vec and casts via bytemuck.
-/// For `OutputBuffer::Arena`: arena pointers are always 16-byte aligned
-/// (enforced by slot offset computation), so the cast always succeeds.
+/// For `OutputBuffer::Mmap`: mmap returns page-aligned pointers (always f32-safe).
+/// For `OutputBuffer::Arena`: arena pointers are 16-byte aligned (always f32-safe).
+/// For `OutputBuffer::Heap`: empty Vecs from eviction have dangling alignment-1
+/// pointers. The MMAP_EVICT_THRESHOLD promotion in `resize` catches large
+/// allocations (creates Mmap instead of growing the Vec). For small allocations
+/// below the threshold, the Vec stays Heap but the allocator returns a pointer
+/// with natural alignment (>= 4 for any non-trivial allocation). If the pointer
+/// is still misaligned after resize (shouldn't happen on real allocators), we
+/// fall back to a fresh f32-aligned Vec.
 #[inline]
 pub(crate) fn alloc_f32_in(out_buf: &mut OutputBuffer, n: usize) -> &mut [f32] {
     let start = out_buf.len();
     let needed = start + n * 4;
     out_buf.resize(needed, 0);
+    let slice = out_buf.as_mut_slice();
+    let ptr = slice[start..].as_ptr() as usize;
+    if !ptr.is_multiple_of(std::mem::align_of::<f32>()) {
+        // Misaligned Heap buffer (dangling pointer from empty Vec).
+        // Replace with an f32-aligned allocation.
+        let f32_vec: Vec<f32> = vec![0.0; n];
+        let bytes = f32_vec_to_bytes(f32_vec);
+        *out_buf = OutputBuffer::from(bytes);
+        return bytemuck::cast_slice_mut(out_buf.as_mut_slice());
+    }
     bytemuck::cast_slice_mut(&mut out_buf.as_mut_slice()[start..])
 }
 
