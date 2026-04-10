@@ -4,10 +4,10 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use hologram_archive::writer::holo_writer::HoloWriter;
 use hologram_async::execute_stream;
 use hologram_core::op::LutOp;
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
 fn build_chain_archive(depth: usize) -> Vec<u8> {
     let mut b = GraphBuilder::new().input("x");

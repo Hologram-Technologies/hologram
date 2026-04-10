@@ -17,19 +17,32 @@ pub use shape_spec::{ShapeDim, ShapeSpec};
 // Ring-native activation ops from hologram-ring (parametric ring foundation).
 pub use hologram_ring::activation::ActivationOp;
 
-// Canonical QuantumLevel comes from uor-foundation v0.1.4.
-pub use uor_foundation::QuantumLevel;
+/// Re-export of v0.2.0's `WittLevel` struct (from `hologram_foundation`).
+///
+/// In v0.1.4 this was an enum named `QuantumLevel` with variants `Q0..Q3`
+/// and an `index()` method returning a small integer. In v0.2.0 it is a
+/// struct with `witt_length()` returning the *bit width* (8, 16, 24, 32).
+/// Constants `WittLevel::W8`, `W16`, `W24`, `W32` are provided as
+/// associated constants on the struct, plus `WittLevel::new(n)` for
+/// arbitrary widths.
+pub use hologram_foundation::WittLevel;
 
-/// Ring quantum level for ring-arithmetic execution.
+/// Wire-format representation of the four spec-named [`WittLevel`]s
+/// (W8 / W16 / W24 / W32) for use inside rkyv-serialized archive data.
 ///
-/// Selects which ring Z/2^nZ to operate in:
-/// - Q0: Z/256Z (8-bit)
-/// - Q1: Z/65536Z (16-bit)
-/// - Q2: Z/2^24Z (24-bit)
-/// - Q3: Z/2^32Z (32-bit)
+/// `WittLevel` itself is a struct over `u32` and does not derive rkyv;
+/// embedding it directly in archive node payloads would require pulling
+/// rkyv into `uor-foundation`. `RingLevel` is the small enum that lives
+/// in `GraphOp::RingPrim*` variants and `TermKind::QuantumLit` so those
+/// archive sections stay rkyv-serializable. Convert via
+/// [`Self::to_witt_level`] / [`Self::from_witt_level`] at the boundary.
 ///
-/// This enum is retained for rkyv serialization compatibility in `GraphOp`.
-/// New code should use `QuantumLevel` directly via `QuantumLevelExt`.
+/// **Variant→bit-width mapping:** Q0=8, Q1=16, Q2=24, Q3=32.
+///
+/// Per the v0.2.0 conformance-first contract there is no implicit
+/// `From<WittLevel> for RingLevel` — that conversion is fallible (it
+/// rejects widths outside the four spec-named levels) and must be made
+/// at every call site so the rejection branch is visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialize",
@@ -44,27 +57,29 @@ pub enum RingLevel {
 }
 
 impl RingLevel {
-    /// Convert from `uor_foundation::QuantumLevel` to `RingLevel`.
-    /// Returns `None` for quantum levels beyond Q3.
+    /// Convert from a v0.2.0 [`WittLevel`] to a `RingLevel`.
+    /// Returns `None` for Witt levels with bit widths outside the four
+    /// spec-named levels (8/16/24/32). Callers must handle the `None`
+    /// branch explicitly — there is no silent fallback.
     #[inline]
-    pub const fn from_quantum(q: uor_foundation::QuantumLevel) -> Option<Self> {
-        match q.index() {
-            0 => Some(Self::Q0),
-            1 => Some(Self::Q1),
-            2 => Some(Self::Q2),
-            3 => Some(Self::Q3),
+    pub const fn from_witt_level(w: WittLevel) -> Option<Self> {
+        match w.witt_length() {
+            8 => Some(Self::Q0),
+            16 => Some(Self::Q1),
+            24 => Some(Self::Q2),
+            32 => Some(Self::Q3),
             _ => None,
         }
     }
 
-    /// Convert to `uor_foundation::QuantumLevel`.
+    /// Convert to a v0.2.0 [`WittLevel`] (constants are 8/16/24/32 bits).
     #[inline]
-    pub const fn to_quantum(self) -> uor_foundation::QuantumLevel {
+    pub const fn to_witt_level(self) -> WittLevel {
         match self {
-            Self::Q0 => uor_foundation::QuantumLevel::Q0,
-            Self::Q1 => uor_foundation::QuantumLevel::Q1,
-            Self::Q2 => uor_foundation::QuantumLevel::Q2,
-            Self::Q3 => uor_foundation::QuantumLevel::Q3,
+            Self::Q0 => WittLevel::W8,
+            Self::Q1 => WittLevel::W16,
+            Self::Q2 => WittLevel::W24,
+            Self::Q3 => WittLevel::W32,
         }
     }
 
@@ -73,33 +88,36 @@ impl RingLevel {
     pub const fn byte_width(self) -> u8 {
         (self as u8) + 1
     }
-}
 
-impl From<uor_foundation::QuantumLevel> for RingLevel {
+    /// Bit width for this ring level. Equivalent to the corresponding
+    /// `WittLevel::witt_length()`.
     #[inline]
-    fn from(q: uor_foundation::QuantumLevel) -> Self {
-        Self::from_quantum(q).unwrap_or(Self::Q3)
+    pub const fn bit_width(self) -> u8 {
+        self.byte_width() * 8
     }
 }
 
-impl From<RingLevel> for uor_foundation::QuantumLevel {
+impl From<RingLevel> for WittLevel {
     #[inline]
     fn from(r: RingLevel) -> Self {
-        r.to_quantum()
+        r.to_witt_level()
     }
 }
 
-/// Extension trait for `QuantumLevel` providing byte-width dispatch.
-pub trait QuantumLevelExt {
-    /// Byte width for this quantum level: `index + 1`.
-    /// Q0 = 1, Q1 = 2, Q2 = 3, Q3 = 4, Q7 = 8.
+/// Extension trait for [`WittLevel`] providing byte-width dispatch.
+///
+/// Replaces the v0.1.4 `WittLevelExt` trait. Methods are renamed to
+/// match v0.2.0 vocabulary; semantics are unchanged.
+pub trait WittLevelExt {
+    /// Byte width for this Witt level: `witt_length / 8`.
+    /// W8 = 1, W16 = 2, W24 = 3, W32 = 4, W64 = 8.
     fn byte_width(self) -> u8;
 }
 
-impl QuantumLevelExt for uor_foundation::QuantumLevel {
+impl WittLevelExt for WittLevel {
     #[inline(always)]
     fn byte_width(self) -> u8 {
-        (self.index() + 1) as u8
+        (self.witt_length() / 8) as u8
     }
 }
 
@@ -156,5 +174,27 @@ mod tests {
     fn op_name() {
         assert_eq!(Op::Prim(PrimOp::Neg).name(), "neg");
         assert_eq!(Op::Lut(LutOp::Relu).name(), "relu");
+    }
+
+    #[test]
+    fn ring_level_witt_roundtrip() {
+        for r in [RingLevel::Q0, RingLevel::Q1, RingLevel::Q2, RingLevel::Q3] {
+            let w: WittLevel = r.into();
+            assert_eq!(RingLevel::from_witt_level(w), Some(r));
+        }
+    }
+
+    #[test]
+    fn witt_level_byte_width() {
+        assert_eq!(WittLevel::W8.byte_width(), 1);
+        assert_eq!(WittLevel::W16.byte_width(), 2);
+        assert_eq!(WittLevel::W24.byte_width(), 3);
+        assert_eq!(WittLevel::W32.byte_width(), 4);
+    }
+
+    #[test]
+    fn ring_level_byte_width() {
+        assert_eq!(RingLevel::Q0.byte_width(), 1);
+        assert_eq!(RingLevel::Q3.byte_width(), 4);
     }
 }

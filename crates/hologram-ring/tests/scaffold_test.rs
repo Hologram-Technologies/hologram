@@ -39,58 +39,70 @@ fn ring_word_u128_exists() {
     assert_eq!(<u128 as RingWord>::MAX, u128::MAX);
 }
 
-// ── QuantumLevel trait exists with correct constants ──────────────────────
+// ── WittLevelMarker trait exists with correct constants ──────────────────────
 
 #[test]
 fn quantum_level_q0() {
-    assert_eq!(Q0::BITS, 8);
-    assert_eq!(Q0::INDEX, 0);
-    assert_eq!(<Q0 as QuantumLevel>::BITS, 8 * (Q0::INDEX + 1));
-    // Q0 is a ZST
-    assert_eq!(core::mem::size_of::<Q0>(), 0);
+    assert_eq!(W8::BITS, 8);
+    assert_eq!(W8::INDEX, 0);
+    assert_eq!(<W8 as WittLevelMarker>::BITS, 8 * (W8::INDEX + 1));
+    // W8 is a ZST
+    assert_eq!(core::mem::size_of::<W8>(), 0);
 }
 
 #[test]
 fn quantum_level_q1() {
-    assert_eq!(Q1::BITS, 16);
-    assert_eq!(Q1::INDEX, 1);
-    assert_eq!(<Q1 as QuantumLevel>::BITS, 8 * (Q1::INDEX + 1));
-    assert_eq!(core::mem::size_of::<Q1>(), 0);
+    assert_eq!(W16::BITS, 16);
+    assert_eq!(W16::INDEX, 1);
+    assert_eq!(<W16 as WittLevelMarker>::BITS, 8 * (W16::INDEX + 1));
+    assert_eq!(core::mem::size_of::<W16>(), 0);
 }
 
 #[test]
 fn quantum_level_q3() {
-    assert_eq!(Q3::BITS, 32);
-    assert_eq!(Q3::INDEX, 3);
-    assert_eq!(<Q3 as QuantumLevel>::BITS, 8 * (Q3::INDEX + 1));
-    assert_eq!(core::mem::size_of::<Q3>(), 0);
+    assert_eq!(W32::BITS, 32);
+    assert_eq!(W32::INDEX, 3);
+    assert_eq!(<W32 as WittLevelMarker>::BITS, 8 * (W32::INDEX + 1));
+    assert_eq!(core::mem::size_of::<W32>(), 0);
 }
 
 #[test]
 fn quantum_level_q7() {
-    assert_eq!(Q7::BITS, 64);
-    assert_eq!(Q7::INDEX, 7);
-    assert_eq!(<Q7 as QuantumLevel>::BITS, 8 * (Q7::INDEX + 1));
-    assert_eq!(core::mem::size_of::<Q7>(), 0);
+    assert_eq!(W64::BITS, 64);
+    assert_eq!(W64::INDEX, 7);
+    assert_eq!(<W64 as WittLevelMarker>::BITS, 8 * (W64::INDEX + 1));
+    assert_eq!(core::mem::size_of::<W64>(), 0);
 }
 
 #[test]
 fn quantum_level_q15() {
-    assert_eq!(Q15::BITS, 128);
-    assert_eq!(Q15::INDEX, 15);
-    assert_eq!(<Q15 as QuantumLevel>::BITS, 8 * (Q15::INDEX + 1));
-    assert_eq!(core::mem::size_of::<Q15>(), 0);
+    assert_eq!(W128::BITS, 128);
+    assert_eq!(W128::INDEX, 15);
+    assert_eq!(<W128 as WittLevelMarker>::BITS, 8 * (W128::INDEX + 1));
+    assert_eq!(core::mem::size_of::<W128>(), 0);
 }
 
 // ── Word type matches level ──────────────────────────────────────────────
 
 #[test]
 fn word_type_matches_level() {
-    assert_eq!(<<Q0 as QuantumLevel>::Word as RingWord>::BITS, Q0::BITS);
-    assert_eq!(<<Q1 as QuantumLevel>::Word as RingWord>::BITS, Q1::BITS);
-    assert_eq!(<<Q3 as QuantumLevel>::Word as RingWord>::BITS, Q3::BITS);
-    assert_eq!(<<Q7 as QuantumLevel>::Word as RingWord>::BITS, Q7::BITS);
-    assert_eq!(<<Q15 as QuantumLevel>::Word as RingWord>::BITS, Q15::BITS);
+    assert_eq!(<<W8 as WittLevelMarker>::Word as RingWord>::BITS, W8::BITS);
+    assert_eq!(
+        <<W16 as WittLevelMarker>::Word as RingWord>::BITS,
+        W16::BITS
+    );
+    assert_eq!(
+        <<W32 as WittLevelMarker>::Word as RingWord>::BITS,
+        W32::BITS
+    );
+    assert_eq!(
+        <<W64 as WittLevelMarker>::Word as RingWord>::BITS,
+        W64::BITS
+    );
+    assert_eq!(
+        <<W128 as WittLevelMarker>::Word as RingWord>::BITS,
+        W128::BITS
+    );
 }
 
 // ── PrimOp exists with all 10 variants ───────────────────────────────────
@@ -128,13 +140,13 @@ fn primop_variants_exist() {
 
 #[test]
 fn primop_apply_generic() {
-    // Q0 (u8)
+    // W8 (u8)
     assert_eq!(PrimOp::Neg.apply_unary(1u8), 255);
     assert_eq!(PrimOp::Add.apply_binary(100u8, 200u8), 44); // wrapping
-                                                            // Q3 (u32)
+                                                            // W32 (u32)
     assert_eq!(PrimOp::Neg.apply_unary(1u32), u32::MAX);
     assert_eq!(PrimOp::Mul.apply_binary(3u32, 5u32), 15);
-    // Q7 (u64)
+    // W64 (u64)
     assert_eq!(PrimOp::Succ.apply_unary(u64::MAX), 0);
 }
 
@@ -145,7 +157,7 @@ fn critical_identity_q0_exhaustive() {
     for x in 0u8..=255 {
         let neg_bnot = PrimOp::Neg.apply_unary(PrimOp::Bnot.apply_unary(x));
         let succ = PrimOp::Succ.apply_unary(x);
-        assert_eq!(neg_bnot, succ, "Critical identity failed at Q0 x={x}");
+        assert_eq!(neg_bnot, succ, "Critical identity failed at W8 x={x}");
     }
 }
 
@@ -155,7 +167,7 @@ fn critical_identity_q7_sampled() {
     for &x in vals {
         let neg_bnot = PrimOp::Neg.apply_unary(PrimOp::Bnot.apply_unary(x));
         let succ = PrimOp::Succ.apply_unary(x);
-        assert_eq!(neg_bnot, succ, "Critical identity failed at Q7 x={x:#x}");
+        assert_eq!(neg_bnot, succ, "Critical identity failed at W64 x={x:#x}");
     }
 }
 
@@ -163,8 +175,8 @@ fn critical_identity_q7_sampled() {
 
 #[test]
 fn involution_exists() {
-    let neg: Involution<Q0> = Involution::Neg;
-    let bnot: Involution<Q0> = Involution::Bnot;
+    let neg: Involution<W8> = Involution::Neg;
+    let bnot: Involution<W8> = Involution::Bnot;
     // Self-inverse
     for x in 0u8..=255 {
         assert_eq!(neg.apply(neg.apply(x)), x);
@@ -203,13 +215,13 @@ fn activation_op_exists() {
     let _ = ActivationOp::Tanh;
 }
 
-// ── PrismPrimitives implements uor_foundation::Primitives ───────────────
+// ── PrismPrimitives implements hologram_foundation::Primitives ───────────────
 
 #[test]
 fn prism_primitives_exists() {
     use hologram_ring::PrismPrimitives;
     // This test just verifies the type exists and implements the trait.
     // The trait bound is checked at compile time.
-    fn assert_primitives<T: uor_foundation::Primitives>() {}
+    fn assert_primitives<T: hologram_foundation::Primitives>() {}
     assert_primitives::<PrismPrimitives>();
 }

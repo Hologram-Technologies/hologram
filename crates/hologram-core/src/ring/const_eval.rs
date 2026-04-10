@@ -3,14 +3,14 @@
 //! Re-exports `const fn` evaluators and provides hologram-native wrappers
 //! dispatched by `RingLevel`. All functions are `#[inline]` and zero-allocation.
 
-pub use uor_foundation::enforcement::{
+pub use hologram_foundation::enforcement::{
     const_ring_eval_q0, const_ring_eval_q1, const_ring_eval_q3, const_ring_eval_q7,
     const_ring_eval_unary_q0, const_ring_eval_unary_q1, const_ring_eval_unary_q3,
     const_ring_eval_unary_q7,
 };
 
 use crate::op::RingLevel;
-use uor_foundation::PrimitiveOp;
+use hologram_foundation::enums::PrimitiveOp;
 
 /// Evaluate a binary ring operation dispatched by level.
 /// O(1), zero allocation.

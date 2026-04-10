@@ -5,7 +5,7 @@ use crate::lut::arith;
 use crate::q1::ring::WordRing;
 use crate::q2::ring::TripleRing;
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use hologram_foundation::enums::{GeometricCharacter, WittLevel};
 
 /// The ring Z/256Z at quantum level 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,12 +40,12 @@ impl ByteRing {
     }
 }
 
-static GENERATOR: ByteDatum = ByteDatum::PI1;
+static GENERATOR: std::sync::LazyLock<ByteDatum> = std::sync::LazyLock::new(|| ByteDatum::new(1));
 static NEG_INV: ByteInvolution = ByteInvolution::Neg;
 static BNOT_INV: ByteInvolution = ByteInvolution::Bnot;
 
-impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for ByteRing {
-    fn ring_quantum(&self) -> u64 {
+impl hologram_foundation::schema::Ring<HoloPrimitives> for ByteRing {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -69,8 +69,8 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for ByteRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q0
+    fn at_witt_level(&self) -> WittLevel {
+        WittLevel::W8
     }
 }
 
@@ -95,7 +95,7 @@ impl ByteInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::Operation<HoloPrimitives> for ByteInvolution {
+impl hologram_foundation::op::Operation<HoloPrimitives> for ByteInvolution {
     fn arity(&self) -> u64 {
         1
     }
@@ -125,12 +125,12 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for ByteInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for ByteInvolution {}
-impl uor_foundation::kernel::op::Involution<HoloPrimitives> for ByteInvolution {}
+impl hologram_foundation::op::UnaryOp<HoloPrimitives> for ByteInvolution {}
+impl hologram_foundation::op::Involution<HoloPrimitives> for ByteInvolution {}
 
 static GROUP_GENERATORS: [ByteInvolution; 2] = [ByteInvolution::Neg, ByteInvolution::Bnot];
 
-impl uor_foundation::kernel::op::Group<HoloPrimitives> for ByteRing {
+impl hologram_foundation::op::Group<HoloPrimitives> for ByteRing {
     type Operation = ByteInvolution;
 
     #[inline]
@@ -144,16 +144,16 @@ impl uor_foundation::kernel::op::Group<HoloPrimitives> for ByteRing {
     }
 }
 
-impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for ByteRing {}
+impl hologram_foundation::op::DihedralGroup<HoloPrimitives> for ByteRing {}
 
 /// Marker for the Z/256Z multiplication table (the ring is trivially specified).
 pub struct ByteMultTable;
 
-impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for ByteMultTable {}
+impl hologram_foundation::division::MultiplicationTable<HoloPrimitives> for ByteMultTable {}
 
 static BYTE_MULT_TABLE: ByteMultTable = ByteMultTable;
 
-impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for ByteRing {
+impl hologram_foundation::division::NormedDivisionAlgebra<HoloPrimitives> for ByteRing {
     #[inline]
     fn algebra_dimension(&self) -> u64 {
         1
@@ -182,9 +182,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for ByteRing {}
+impl hologram_foundation::division::AlgebraCommutator<HoloPrimitives> for ByteRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for ByteRing {}
+impl hologram_foundation::division::AlgebraAssociator<HoloPrimitives> for ByteRing {}
 
 /// Unified division algebra enum bridging Q0–Q3 across the Cayley-Dickson chain.
 ///
@@ -202,9 +202,7 @@ pub enum HoloDivisionAlgebra {
     Q3(crate::q3::OctonionRing),
 }
 
-impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives>
-    for HoloDivisionAlgebra
-{
+impl hologram_foundation::division::NormedDivisionAlgebra<HoloPrimitives> for HoloDivisionAlgebra {
     type MultiplicationTable = ByteMultTable;
 
     #[inline]
@@ -249,7 +247,7 @@ pub(crate) static Q2_ALGEBRA: HoloDivisionAlgebra = HoloDivisionAlgebra::Q2(Trip
 pub(crate) static Q3_ALGEBRA: HoloDivisionAlgebra =
     HoloDivisionAlgebra::Q3(crate::q3::OctonionRing);
 
-impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for ByteRing {
+impl hologram_foundation::division::CayleyDicksonConstruction<HoloPrimitives> for ByteRing {
     type NormedDivisionAlgebra = HoloDivisionAlgebra;
 
     #[inline]
@@ -314,11 +312,11 @@ mod tests {
 
     #[test]
     fn ring_trait() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = ByteRing;
-        assert_eq!(r.ring_quantum(), 8);
+        assert_eq!(r.ring_witt_length(), 8);
         assert_eq!(r.modulus(), 256);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q0);
+        assert_eq!(r.at_witt_level(), WittLevel::W8);
         assert_eq!(r.generator().val(), 1);
     }
 
@@ -333,7 +331,7 @@ mod tests {
 
     #[test]
     fn group_order_and_generators() {
-        use uor_foundation::kernel::op::Group;
+        use hologram_foundation::op::Group;
         let ring = ByteRing;
         assert_eq!(ring.order(), 256);
         assert_eq!(ring.generated_by().len(), 2);
@@ -341,7 +339,7 @@ mod tests {
 
     #[test]
     fn cayley_dickson_r_to_c_grounding() {
-        use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+        use hologram_foundation::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
         let ring = ByteRing;
         let src = ring.cayley_dickson_source();
         let tgt = ring.cayley_dickson_target();
@@ -353,7 +351,7 @@ mod tests {
 
     #[test]
     fn holo_division_algebra_q2() {
-        use uor_foundation::kernel::division::NormedDivisionAlgebra;
+        use hologram_foundation::division::NormedDivisionAlgebra;
         let q2 = HoloDivisionAlgebra::Q2(TripleRing);
         assert_eq!(q2.algebra_dimension(), 4);
         assert_eq!(q2.basis_elements(), "{1, i, j, k}");

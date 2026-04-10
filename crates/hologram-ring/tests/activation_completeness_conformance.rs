@@ -4,7 +4,7 @@
 //! No fallbacks. The ring arithmetic IS the computation.
 
 use hologram_ring::activation::ActivationOp;
-use hologram_ring::{Q0, Q3};
+use hologram_ring::{W32, W8};
 
 const ALL_ACTIVATIONS: &[ActivationOp] = &[
     ActivationOp::Relu,
@@ -30,26 +30,26 @@ const ALL_ACTIVATIONS: &[ActivationOp] = &[
     ActivationOp::Sqrt,
 ];
 
-// ── Non-identity at Q0 ──────────────────────────────────────────────────
+// ── Non-identity at W8 ──────────────────────────────────────────────────
 
 #[test]
 fn all_activations_non_identity_q0() {
     for &act in ALL_ACTIVATIONS {
         let mut found_non_identity = false;
         for x in 1u8..255 {
-            if act.apply::<Q0>(x) != x {
+            if act.apply::<W8>(x) != x {
                 found_non_identity = true;
                 break;
             }
         }
         assert!(
             found_non_identity,
-            "{act:?} is identity at Q0 — must be ring-native, not a fallback"
+            "{act:?} is identity at W8 — must be ring-native, not a fallback"
         );
     }
 }
 
-// ── Non-identity at Q3 ──────────────────────────────────────────────────
+// ── Non-identity at W32 ──────────────────────────────────────────────────
 
 #[test]
 fn all_activations_non_identity_q3() {
@@ -59,14 +59,14 @@ fn all_activations_non_identity_q3() {
     for &act in ALL_ACTIVATIONS {
         let mut found_non_identity = false;
         for &x in &test_vals {
-            if act.apply::<Q3>(x) != x {
+            if act.apply::<W32>(x) != x {
                 found_non_identity = true;
                 break;
             }
         }
         assert!(
             found_non_identity,
-            "{act:?} is identity at Q3 — must be ring-native, not a fallback"
+            "{act:?} is identity at W32 — must be ring-native, not a fallback"
         );
     }
 }
@@ -88,8 +88,8 @@ fn all_activations_decompose_nonempty() {
 #[test]
 fn silu_equals_x_times_sigmoid_q3() {
     for x in [1u32, 42, 100, 0x7FFF, 0x7FFF_FFFF] {
-        let silu_result = ActivationOp::Silu.apply::<Q3>(x);
-        let sig = ActivationOp::Sigmoid.apply::<Q3>(x);
+        let silu_result = ActivationOp::Silu.apply::<W32>(x);
+        let sig = ActivationOp::Sigmoid.apply::<W32>(x);
         let expected = x.wrapping_mul(sig);
         assert_eq!(
             silu_result, expected,
@@ -103,12 +103,12 @@ fn silu_equals_x_times_sigmoid_q3() {
 #[test]
 fn gelu_monotonic_positive_q0() {
     // For x > 128 (positive half in unsigned encoding), Gelu should be non-decreasing
-    let mut prev = ActivationOp::Gelu.apply::<Q0>(128u8);
+    let mut prev = ActivationOp::Gelu.apply::<W8>(128u8);
     for x in 129u8..=255 {
-        let cur = ActivationOp::Gelu.apply::<Q0>(x);
+        let cur = ActivationOp::Gelu.apply::<W8>(x);
         assert!(
             cur >= prev,
-            "Gelu not monotonic at Q0 x={x}: {prev} -> {cur}"
+            "Gelu not monotonic at W8 x={x}: {prev} -> {cur}"
         );
         prev = cur;
     }
@@ -121,7 +121,7 @@ fn sqrt_small_values_q3() {
     // For small perfect squares, sqrt should produce the exact root
     for root in 0u32..=255 {
         let x = root.wrapping_mul(root);
-        let result = ActivationOp::Sqrt.apply::<Q3>(x);
+        let result = ActivationOp::Sqrt.apply::<W32>(x);
         // Allow ±1 tolerance since ring sqrt may round
         let diff = result.abs_diff(root);
         assert!(
@@ -138,7 +138,7 @@ fn exp_positive_q0() {
     // Exp output should be > 0 for inputs above the low saturation region.
     // Low saturation boundary is at MAX/4 = 63. Start above that.
     for x in 80u8..=192 {
-        let result = ActivationOp::Exp.apply::<Q0>(x);
+        let result = ActivationOp::Exp.apply::<W8>(x);
         assert!(result > 0, "Exp({x}) should be positive, got 0");
     }
 }
@@ -148,12 +148,12 @@ fn exp_positive_q0() {
 #[test]
 fn log_monotonic_q0() {
     // Log should be monotonically increasing for positive inputs
-    let mut prev = ActivationOp::Log.apply::<Q0>(1u8);
+    let mut prev = ActivationOp::Log.apply::<W8>(1u8);
     for x in 2u8..=255 {
-        let cur = ActivationOp::Log.apply::<Q0>(x);
+        let cur = ActivationOp::Log.apply::<W8>(x);
         assert!(
             cur >= prev,
-            "Log not monotonic at Q0 x={x}: {prev} -> {cur}"
+            "Log not monotonic at W8 x={x}: {prev} -> {cur}"
         );
         prev = cur;
     }
@@ -164,7 +164,7 @@ fn log_monotonic_q0() {
 #[test]
 fn sin_bounded_q0() {
     for x in 0u8..=255 {
-        let _ = ActivationOp::Sin.apply::<Q0>(x);
+        let _ = ActivationOp::Sin.apply::<W8>(x);
         // Just verifying it doesn't panic — boundedness is implicit in u8
     }
 }
@@ -174,6 +174,6 @@ fn sin_bounded_q0() {
 #[test]
 fn cos_bounded_q0() {
     for x in 0u8..=255 {
-        let _ = ActivationOp::Cos.apply::<Q0>(x);
+        let _ = ActivationOp::Cos.apply::<W8>(x);
     }
 }

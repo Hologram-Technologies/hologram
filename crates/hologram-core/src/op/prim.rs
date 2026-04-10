@@ -4,7 +4,7 @@ use crate::lut::arith;
 
 /// The 10 primitive operations on Z/256Z.
 ///
-/// Mirrors `uor_foundation::enums::PrimitiveOp` but adds
+/// Mirrors `hologram_foundation::enums::PrimitiveOp` but adds
 /// LUT-backed apply methods for O(1) execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
@@ -161,41 +161,41 @@ impl PrimOp {
     /// Convert to uor-foundation PrimitiveOp.
     #[inline]
     #[must_use]
-    pub const fn to_foundation(&self) -> uor_foundation::enums::PrimitiveOp {
+    pub const fn to_foundation(&self) -> hologram_foundation::enums::PrimitiveOp {
         match self {
-            Self::Neg => uor_foundation::enums::PrimitiveOp::Neg,
-            Self::Bnot => uor_foundation::enums::PrimitiveOp::Bnot,
-            Self::Succ => uor_foundation::enums::PrimitiveOp::Succ,
-            Self::Pred => uor_foundation::enums::PrimitiveOp::Pred,
-            Self::Add => uor_foundation::enums::PrimitiveOp::Add,
-            Self::Sub => uor_foundation::enums::PrimitiveOp::Sub,
-            Self::Mul => uor_foundation::enums::PrimitiveOp::Mul,
-            Self::Xor => uor_foundation::enums::PrimitiveOp::Xor,
-            Self::And => uor_foundation::enums::PrimitiveOp::And,
-            Self::Or => uor_foundation::enums::PrimitiveOp::Or,
+            Self::Neg => hologram_foundation::enums::PrimitiveOp::Neg,
+            Self::Bnot => hologram_foundation::enums::PrimitiveOp::Bnot,
+            Self::Succ => hologram_foundation::enums::PrimitiveOp::Succ,
+            Self::Pred => hologram_foundation::enums::PrimitiveOp::Pred,
+            Self::Add => hologram_foundation::enums::PrimitiveOp::Add,
+            Self::Sub => hologram_foundation::enums::PrimitiveOp::Sub,
+            Self::Mul => hologram_foundation::enums::PrimitiveOp::Mul,
+            Self::Xor => hologram_foundation::enums::PrimitiveOp::Xor,
+            Self::And => hologram_foundation::enums::PrimitiveOp::And,
+            Self::Or => hologram_foundation::enums::PrimitiveOp::Or,
         }
     }
 
     /// Convert from uor-foundation PrimitiveOp.
     #[inline]
     #[must_use]
-    pub const fn from_foundation(op: uor_foundation::enums::PrimitiveOp) -> Self {
+    pub const fn from_foundation(op: hologram_foundation::enums::PrimitiveOp) -> Self {
         match op {
-            uor_foundation::enums::PrimitiveOp::Neg => Self::Neg,
-            uor_foundation::enums::PrimitiveOp::Bnot => Self::Bnot,
-            uor_foundation::enums::PrimitiveOp::Succ => Self::Succ,
-            uor_foundation::enums::PrimitiveOp::Pred => Self::Pred,
-            uor_foundation::enums::PrimitiveOp::Add => Self::Add,
-            uor_foundation::enums::PrimitiveOp::Sub => Self::Sub,
-            uor_foundation::enums::PrimitiveOp::Mul => Self::Mul,
-            uor_foundation::enums::PrimitiveOp::Xor => Self::Xor,
-            uor_foundation::enums::PrimitiveOp::And => Self::And,
-            uor_foundation::enums::PrimitiveOp::Or => Self::Or,
+            hologram_foundation::enums::PrimitiveOp::Neg => Self::Neg,
+            hologram_foundation::enums::PrimitiveOp::Bnot => Self::Bnot,
+            hologram_foundation::enums::PrimitiveOp::Succ => Self::Succ,
+            hologram_foundation::enums::PrimitiveOp::Pred => Self::Pred,
+            hologram_foundation::enums::PrimitiveOp::Add => Self::Add,
+            hologram_foundation::enums::PrimitiveOp::Sub => Self::Sub,
+            hologram_foundation::enums::PrimitiveOp::Mul => Self::Mul,
+            hologram_foundation::enums::PrimitiveOp::Xor => Self::Xor,
+            hologram_foundation::enums::PrimitiveOp::And => Self::And,
+            hologram_foundation::enums::PrimitiveOp::Or => Self::Or,
         }
     }
 }
 
-use uor_foundation::enums::GeometricCharacter;
+use hologram_foundation::enums::GeometricCharacter;
 
 static PRIM_NEG: PrimOp = PrimOp::Neg;
 static PRIM_BNOT: PrimOp = PrimOp::Bnot;
@@ -208,7 +208,7 @@ static PRIM_XOR: PrimOp = PrimOp::Xor;
 static PRIM_AND: PrimOp = PrimOp::And;
 static PRIM_OR: PrimOp = PrimOp::Or;
 
-impl uor_foundation::kernel::op::Operation<crate::HoloPrimitives> for PrimOp {
+impl hologram_foundation::op::Operation<crate::HoloPrimitives> for PrimOp {
     #[inline]
     fn arity(&self) -> u64 {
         (*self).arity() as u64
@@ -243,7 +243,7 @@ impl uor_foundation::kernel::op::Operation<crate::HoloPrimitives> for PrimOp {
     }
 }
 
-impl uor_foundation::kernel::op::BinaryOp<crate::HoloPrimitives> for PrimOp {
+impl hologram_foundation::op::BinaryOp<crate::HoloPrimitives> for PrimOp {
     #[inline]
     fn commutative(&self) -> bool {
         matches!(
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn binary_op_commutativity_flags() {
-        use uor_foundation::kernel::op::BinaryOp;
+        use hologram_foundation::op::BinaryOp;
         assert!(PrimOp::Add.commutative());
         assert!(PrimOp::Mul.commutative());
         assert!(PrimOp::Xor.commutative());

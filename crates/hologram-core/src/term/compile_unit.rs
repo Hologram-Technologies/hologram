@@ -1,8 +1,8 @@
-//! CompileUnit — the typed input to the cascade pipeline.
+//! CompileUnit — the typed input to the finder-pipeline compiler.
 //!
-//! Implements `uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives>`,
-//! providing the bridge between hologram's arena-allocated term representation
-//! and the foundation's ontology-level cascade admission contract.
+//! Implements `hologram_foundation::reduction::CompileUnit<HoloPrimitives>`,
+//! providing the bridge between hologram's arena-allocated term
+//! representation and the foundation's ontology-level admission contract.
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -11,8 +11,8 @@ use crate::HoloPrimitives;
 
 use super::{Assertion, Binding, TermArena, TermId, TypeId};
 
-use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use hologram_foundation::enums::VerificationDomain;
+use hologram_foundation::WittLevel;
 
 /// Maximum number of let-bindings per compile unit.
 pub const MAX_BINDINGS: usize = 64;
@@ -20,36 +20,14 @@ pub const MAX_BINDINGS: usize = 64;
 pub const MAX_ASSERTIONS: usize = 32;
 /// Maximum number of type declarations per compile unit.
 pub const MAX_TYPE_DECLS: usize = 16;
-/// Maximum effect declarations per compile unit.
-pub const MAX_EFFECT_DECLS: usize = 32;
-/// Maximum dispatch declarations per compile unit.
-pub const MAX_DISPATCH_DECLS: usize = 16;
 /// Maximum number of target verification domains (all 12 defined by the ontology).
 pub const MAX_DOMAINS: usize = 12;
 
-/// A declared effect for cascade registration.
-#[derive(Clone, Copy, Debug)]
-pub struct EffectDecl {
-    pub budget_delta: i64,
-    pub commutes: bool,
-    pub fiber_count: u8,
-    pub target_fibers: [u32; 8],
-}
-
-/// A declared dispatch rule for cascade registration.
-#[derive(Clone, Copy, Debug)]
-pub struct DispatchDecl {
-    pub resolver_id: u16,
-    pub priority: u16,
-}
-
-/// The typed input to the cascade pipeline.
+/// The typed input to the finder-pipeline compiler.
 ///
-/// Packages a root [`Term`](super::TermKind), its target quantum level,
-/// the verification domains the submitter requires, and a thermodynamic
-/// budget authorizing the maximum Landauer cost of resolution.
-///
-/// Mirrors `cascade:CompileUnit` from uor-foundation v0.1.4.
+/// Packages a root [`Term`](super::TermKind), its target Witt level, the
+/// verification domains the submitter requires, and a thermodynamic
+/// budget authorising the maximum Landauer cost of resolution.
 #[derive(Debug)]
 pub struct HoloCompileUnit {
     /// The root term of the computation.
@@ -70,17 +48,10 @@ pub struct HoloCompileUnit {
     pub type_decls: Box<[super::TypeDecl; MAX_TYPE_DECLS]>,
     pub type_decl_count: u8,
 
-    /// Effect declarations. Boxed to reduce stack footprint.
-    pub effect_decls: [EffectDecl; MAX_EFFECT_DECLS],
-    pub effect_decl_count: u8,
-
-    /// Dispatch declarations. Boxed to reduce stack footprint.
-    pub dispatch_decls: [DispatchDecl; MAX_DISPATCH_DECLS],
-    pub dispatch_decl_count: u8,
-
-    /// Quantum level. Maps to `cascade:unitQuantumLevel`.
-    /// Supports any level (Q0–Q7+), not limited to Q0–Q3.
-    pub quantum_level: QuantumLevel,
+    /// Witt level — the bit width of the ring this unit targets.
+    /// Supports any width via `WittLevel::new(n)`, not just the four
+    /// spec-named W8/W16/W24/W32 levels.
+    pub witt_level: WittLevel,
 
     /// Target verification domains. Materialized array for trait compliance
     /// (`CompileUnit::target_domains()` returns `&[VerificationDomain]`).
@@ -89,18 +60,18 @@ pub struct HoloCompileUnit {
 
     /// Thermodynamic budget in k_B T units (`xsd:decimal` mapped to `f64`).
     ///
-    /// Minimum viable budget: `bitsWidth(Q_k) * ln(2)`.
-    /// - Q0: >= 5.545
-    /// - Q1: >= 11.090
-    /// - Q2: >= 16.636
-    /// - Q3: >= 22.181
+    /// Minimum viable budget: `bitsWidth(W_n) * ln(2)`.
+    /// - W8:  >= 5.545
+    /// - W16: >= 11.090
+    /// - W24: >= 16.636
+    /// - W32: >= 22.181
     pub thermodynamic_budget: f64,
 
-    /// Content-addressed identifier. Computed by CS_7 during `stage_initialization`,
-    /// **not** declared by the submitter.
-    ///
-    /// BLAKE3 hash of `canonicalBytes(transitiveClosure(rootTerm))`.
-    /// Excludes budget, domains, and quantum level to enable memoization.
+    /// Content-addressed identifier — BLAKE3 hash of
+    /// `canonicalBytes(transitiveClosure(rootTerm))`. Computed by
+    /// `preflight::compute_unit_address`, **not** declared by the
+    /// submitter. Excludes budget, domains, and Witt level to enable
+    /// memoisation.
     pub unit_address: [u8; 32],
 
     /// Typed address wrapping `unit_address` for the `CompileUnit` trait.
@@ -113,7 +84,7 @@ pub struct HoloCompileUnit {
 
 /// Bitmask tracking preflight check pass/fail. 2 bytes, zero heap.
 ///
-/// Each bit position corresponds to a `preflightOrder` index from the ontology.
+/// Each bit position corresponds to one preflight phase.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PreflightStatus {
     /// Bit N set = check N has been run.
@@ -123,19 +94,19 @@ pub struct PreflightStatus {
 }
 
 impl PreflightStatus {
-    /// `cascade:BudgetSolvencyCheck` — preflightOrder 0.
+    /// Budget solvency check — declared budget ≥ Landauer minimum.
     pub const BUDGET_SOLVENCY: u8 = 0;
-    /// `cascade:FeasibilityCheck` — preflightOrder 1.
+    /// Feasibility check.
     pub const FEASIBILITY: u8 = 1;
-    /// `cascade:DispatchCoverageCheck` — preflightOrder 2.
+    /// Dispatch coverage check.
     pub const DISPATCH_COVERAGE: u8 = 2;
-    /// `cascade:PackageCoherenceCheck` — preflightOrder 3.
+    /// Package coherence check.
     pub const PACKAGE_COHERENCE: u8 = 3;
-    /// `cascade:PreflightTiming` — preflightOrder 4.
+    /// Preflight timing measurement.
     pub const PREFLIGHT_TIMING: u8 = 4;
-    /// `cascade:RuntimeTiming` — preflightOrder 5.
+    /// Runtime timing measurement.
     pub const RUNTIME_TIMING: u8 = 5;
-    /// Enforcement-level validation (v0.1.4 builder) — preflightOrder 6.
+    /// Enforcement-level (declarative property) validation.
     pub const ENFORCEMENT_VALIDATE: u8 = 6;
 
     /// Mark a check as passed.
@@ -167,14 +138,14 @@ impl PreflightStatus {
 
 // ── Marker type for schema::Term<HoloPrimitives> ─────────────────────────────
 
-/// Marker type satisfying `uor_foundation::kernel::schema::Term<HoloPrimitives>`.
+/// Marker type satisfying `hologram_foundation::schema::Term<HoloPrimitives>`.
 ///
 /// The actual term data lives in [`TermArena`]; this marker type exists
 /// solely to satisfy the associated type bound on `CompileUnit::Term`.
 pub struct HoloTerm;
 
-impl uor_foundation::kernel::schema::Term<HoloPrimitives> for HoloTerm {}
-impl uor_foundation::kernel::schema::TermExpression<HoloPrimitives> for HoloTerm {}
+impl hologram_foundation::schema::Term<HoloPrimitives> for HoloTerm {}
+impl hologram_foundation::schema::TermExpression<HoloPrimitives> for HoloTerm {}
 
 /// Singleton for `CompileUnit::root_term()` return.
 static HOLO_TERM_SINGLETON: HoloTerm = HoloTerm;
@@ -183,27 +154,72 @@ static HOLO_TERM_SINGLETON: HoloTerm = HoloTerm;
 
 /// Content-addressed identifier wrapping a BLAKE3 hash.
 ///
-/// Implements `uor_foundation::kernel::address::Address<HoloPrimitives>`.
-/// The digest is a 64-character lowercase hex string of the 32-byte BLAKE3 hash.
-/// The glyph is a 2-character Braille encoding of the first byte.
+/// Implements `hologram_foundation::address::Element<HoloPrimitives>`.
+///
+/// Per Amendment 43 section 2:
+/// - `canonical_bytes()` returns the hex-encoded canonical byte serialisation
+///   of the addressed datum (the pre-image of the hash).
+/// - `digest()` returns hex(BLAKE3(canonical_raw)) — the content hash.
+/// - `digest ≠ canonical_bytes` — the digest is the hash OF the canonical
+///   bytes, not a copy of them.
+///
+/// Phase 13 deleted the v0.1.4 Braille glyph encoding in favour of
+/// Amendment 43's `header(k) || le_bytes(x, k+1)` canonical form.
 pub struct HoloAddress {
     /// Raw 32-byte BLAKE3 hash.
     hash: [u8; 32],
-    /// 64-character hex digest string + null terminator.
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
     digest_hex: [u8; 65],
-    /// Braille glyph encoding of the first byte (2 Braille characters, 6 bytes UTF-8).
-    glyph_buf: [u8; 6],
+    /// hex(canonical_raw) — the pre-image of the hash. Heap-allocated
+    /// because the canonical representation of a term graph can be
+    /// arbitrarily large. Only used by `Element::canonical_bytes()`.
+    canonical_hex: alloc::string::String,
 }
 
 impl HoloAddress {
     /// Zero address (all zeros).
-    pub const ZERO: Self = Self {
-        hash: [0u8; 32],
-        digest_hex: [b'0'; 65],
-        glyph_buf: [0xE2, 0xA0, 0x80, 0xE2, 0xA0, 0x80],
-    };
+    pub fn zero() -> Self {
+        Self {
+            hash: [0u8; 32],
+            digest_hex: [b'0'; 65],
+            canonical_hex: alloc::string::String::new(),
+        }
+    }
 
-    /// Create an address from a 32-byte BLAKE3 hash.
+    /// Create a content-addressed identifier from a BLAKE3 hash and the
+    /// raw canonical bytes that were hashed.
+    ///
+    /// `hash` = `blake3::hash(&canonical_raw)`.
+    /// `canonical_raw` = the canonical byte serialisation of the addressed
+    /// datum (e.g., the concatenation of per-node canonical byte encodings
+    /// for a term graph).
+    pub fn from_hash_with_canonical(hash: [u8; 32], canonical_raw: &[u8]) -> Self {
+        let mut digest_hex = [0u8; 65];
+        for (i, byte) in hash.iter().enumerate() {
+            let hi = byte >> 4;
+            let lo = byte & 0x0F;
+            digest_hex[i * 2] = HEX_CHARS[hi as usize];
+            digest_hex[i * 2 + 1] = HEX_CHARS[lo as usize];
+        }
+        digest_hex[64] = 0;
+
+        // Hex-encode the canonical raw bytes for the Element trait.
+        let mut canonical_hex = alloc::string::String::with_capacity(canonical_raw.len() * 2);
+        for &b in canonical_raw {
+            canonical_hex.push(HEX_CHARS[(b >> 4) as usize] as char);
+            canonical_hex.push(HEX_CHARS[(b & 0x0F) as usize] as char);
+        }
+
+        Self {
+            hash,
+            digest_hex,
+            canonical_hex,
+        }
+    }
+
+    /// Backwards-compatible constructor that takes only the hash.
+    /// `canonical_bytes()` returns the digest hex (same as v0.1.4 behaviour)
+    /// for call sites that don't have the pre-image available.
     pub fn from_hash(hash: [u8; 32]) -> Self {
         let mut digest_hex = [0u8; 65];
         for (i, byte) in hash.iter().enumerate() {
@@ -212,17 +228,12 @@ impl HoloAddress {
             digest_hex[i * 2] = HEX_CHARS[hi as usize];
             digest_hex[i * 2 + 1] = HEX_CHARS[lo as usize];
         }
-        digest_hex[64] = 0; // null terminator for safety
-
-        let first_byte = hash[0];
-        let lo6 = first_byte & 0x3F;
-        let hi2 = (first_byte >> 6) & 0x03;
-        let glyph_buf = [0xE2, 0xA0, 0x80 + lo6, 0xE2, 0xA0, 0x80 + hi2];
-
+        digest_hex[64] = 0;
+        let hex_str = unsafe { core::str::from_utf8_unchecked(&digest_hex[..64]) };
         Self {
             hash,
             digest_hex,
-            glyph_buf,
+            canonical_hex: alloc::string::String::from(hex_str),
         }
     }
 
@@ -234,20 +245,17 @@ impl HoloAddress {
 
 const HEX_CHARS: [u8; 16] = *b"0123456789abcdef";
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for HoloAddress {
-    fn glyph(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille characters.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
-    }
-
+impl hologram_foundation::address::Element<HoloPrimitives> for HoloAddress {
+    /// Byte length of the canonical encoding.
     fn length(&self) -> u64 {
-        32
+        (self.canonical_hex.len() / 2) as u64
     }
 
     fn addresses(&self) -> &str {
         self.digest()
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
         // SAFETY: digest_hex contains valid ASCII hex characters.
         unsafe { core::str::from_utf8_unchecked(&self.digest_hex[..64]) }
@@ -257,18 +265,19 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for HoloAddress {
         "blake3"
     }
 
+    /// Amendment 43 canonical byte serialisation (hex-encoded).
+    /// This is the pre-image of the hash: `digest == hex(blake3(unhex(canonical_bytes)))`.
     fn canonical_bytes(&self) -> &str {
-        self.digest()
+        &self.canonical_hex
     }
 
-    fn quantum(&self) -> u64 {
-        256 // 8-bit address space
+    fn witt_length(&self) -> u64 {
+        256 // 256-bit address space (32-byte BLAKE3)
     }
 }
 
 impl core::fmt::Debug for HoloAddress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Use raw hex bytes directly instead of trait method to avoid import requirement.
         let hex = unsafe { core::str::from_utf8_unchecked(&self.digest_hex[..64]) };
         f.debug_struct("HoloAddress").field("digest", &hex).finish()
     }
@@ -276,7 +285,7 @@ impl core::fmt::Debug for HoloAddress {
 
 // ── CompileUnit trait implementation ──────────────────────────────────────────
 
-impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompileUnit {
+impl hologram_foundation::reduction::CompileUnit<HoloPrimitives> for HoloCompileUnit {
     type TermExpression = HoloTerm;
 
     #[inline]
@@ -285,8 +294,8 @@ impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompil
     }
 
     #[inline]
-    fn unit_quantum_level(&self) -> QuantumLevel {
-        self.quantum_level
+    fn unit_witt_level(&self) -> WittLevel {
+        self.witt_level
     }
 
     fn target_domains(&self) -> &[VerificationDomain] {
@@ -298,9 +307,9 @@ impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompil
         self.thermodynamic_budget
     }
 
-    type Address = HoloAddress;
+    type Element = HoloAddress;
 
-    fn unit_address(&self) -> &Self::Address {
+    fn unit_address(&self) -> &Self::Element {
         &self.address
     }
 }
@@ -312,7 +321,7 @@ impl HoloCompileUnit {
     pub fn new(
         arena: TermArena,
         root_term: TermId,
-        quantum_level: QuantumLevel,
+        witt_level: WittLevel,
         thermodynamic_budget: f64,
         target_domains: &[VerificationDomain],
     ) -> Self {
@@ -347,24 +356,12 @@ impl HoloCompileUnit {
                 }; MAX_TYPE_DECLS],
             ),
             type_decl_count: 0,
-            effect_decls: [EffectDecl {
-                budget_delta: 0,
-                commutes: true,
-                fiber_count: 0,
-                target_fibers: [0; 8],
-            }; MAX_EFFECT_DECLS],
-            effect_decl_count: 0,
-            dispatch_decls: [DispatchDecl {
-                resolver_id: 0,
-                priority: 0,
-            }; MAX_DISPATCH_DECLS],
-            dispatch_decl_count: 0,
-            quantum_level,
+            witt_level,
             target_domains_array,
             target_domain_count: count as u8,
             thermodynamic_budget,
             unit_address: [0u8; 32],
-            address: HoloAddress::ZERO,
+            address: HoloAddress::zero(),
             preflight: PreflightStatus::default(),
         }
     }
@@ -375,7 +372,7 @@ mod tests {
     use super::*;
     use crate::op::PrimOp;
     use crate::term::TermKind;
-    use uor_foundation::QuantumLevel;
+    use hologram_foundation::WittLevel;
 
     #[test]
     fn preflight_status_bitmask() {
@@ -407,13 +404,13 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0, // > 5.545 minimum for Q0
             &[VerificationDomain::Algebraic],
         );
 
         assert_eq!(unit.root_term, root);
-        assert_eq!(unit.quantum_level, QuantumLevel::Q0);
+        assert_eq!(unit.witt_level, WittLevel::W8);
         assert_eq!(unit.thermodynamic_budget, 6.0);
         assert_eq!(unit.target_domain_count, 1);
         assert_eq!(unit.arena.len(), 3);
@@ -421,7 +418,7 @@ mod tests {
 
     #[test]
     fn compile_unit_trait_impl() {
-        use uor_foundation::kernel::cascade::CompileUnit;
+        use hologram_foundation::reduction::CompileUnit;
 
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(42));
@@ -429,7 +426,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            WittLevel::W16,
             12.0,
             &[
                 VerificationDomain::Algebraic,
@@ -437,14 +434,14 @@ mod tests {
             ],
         );
 
-        assert_eq!(unit.unit_quantum_level(), QuantumLevel::Q1);
+        assert_eq!(unit.unit_witt_level(), WittLevel::W16);
         assert_eq!(unit.thermodynamic_budget(), 12.0);
         assert_eq!(unit.target_domains().len(), 2);
     }
 
     #[test]
     fn holo_address_digest_correctness() {
-        use uor_foundation::kernel::address::Address;
+        use hologram_foundation::address::Element;
         let hash = [0xABu8; 32];
         let addr = HoloAddress::from_hash(hash);
         let digest = addr.digest();
@@ -452,26 +449,20 @@ mod tests {
         assert_eq!(&digest[..2], "ab"); // first byte 0xAB → "ab"
         assert_eq!(addr.digest_algorithm(), "blake3");
         assert_eq!(addr.length(), 32);
-        assert_eq!(addr.quantum(), 256);
+        // v0.2.0 renamed `quantum()` to `witt_length()`.
+        assert_eq!(addr.witt_length(), 256);
     }
 
-    #[test]
-    fn holo_address_glyph_valid_utf8() {
-        use uor_foundation::kernel::address::Address;
-        for byte in 0..=255u8 {
-            let mut hash = [0u8; 32];
-            hash[0] = byte;
-            let addr = HoloAddress::from_hash(hash);
-            // glyph() must return valid UTF-8 — this panics if not
-            let g = addr.glyph();
-            assert_eq!(g.len(), 6); // 2 Braille chars × 3 bytes UTF-8 each
-        }
-    }
+    // The v0.1.4 `holo_address_glyph_valid_utf8` test exercised the
+    // `glyph()` method on the Element trait. v0.2.0 removed `glyph()` from
+    // the trait surface; the Braille glyph buffer is now an inherent
+    // implementation detail of `HoloAddress`. The test is removed here
+    // because the trait surface no longer exposes the access.
 
     #[test]
     fn holo_address_zero() {
-        use uor_foundation::kernel::address::Address;
-        let addr = HoloAddress::ZERO;
+        use hologram_foundation::address::Element;
+        let addr = HoloAddress::zero();
         assert_eq!(addr.as_bytes(), &[0u8; 32]);
         // digest should be all '0's
         assert!(addr.digest().chars().all(|c| c == '0'));

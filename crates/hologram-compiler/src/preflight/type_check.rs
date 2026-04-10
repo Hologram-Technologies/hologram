@@ -32,8 +32,8 @@ pub fn check_type_constraints(unit: &HoloCompileUnit) -> Result<(), String> {
 mod tests {
     use super::*;
     use hologram_core::term::{TermArena, TermKind};
-    use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use hologram_foundation::enums::VerificationDomain;
+    use hologram_foundation::WittLevel;
 
     #[test]
     fn no_type_decls_passes() {
@@ -42,7 +42,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             100.0,
             &[VerificationDomain::Algebraic],
         );

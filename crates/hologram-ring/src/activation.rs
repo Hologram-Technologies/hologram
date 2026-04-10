@@ -3,7 +3,7 @@
 //! Every activation is a composition of ring primitives. No LUTs.
 //! No f64 escape hatch. The ring arithmetic IS the computation.
 
-use crate::level::QuantumLevel;
+use crate::level::WittLevelMarker;
 use crate::prim::PrimOp;
 use crate::word::RingWord;
 
@@ -40,7 +40,7 @@ pub enum ActivationOp {
 impl ActivationOp {
     /// Apply this activation using ring arithmetic. Zero f64. Zero allocation.
     #[inline]
-    pub fn apply<Q: QuantumLevel>(&self, x: Q::Word) -> Q::Word {
+    pub fn apply<Q: WittLevelMarker>(&self, x: Q::Word) -> Q::Word {
         match self {
             Self::Square => square::<Q::Word>(x),
             Self::Cube => cube::<Q::Word>(x),
@@ -141,7 +141,7 @@ fn isqrt<W: RingWord>(x: W) -> W {
 
 /// Silu(x) = x * sigmoid(x). Exact composition.
 #[inline]
-fn silu<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn silu<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     x.wrapping_mul(piecewise_sigmoid::<Q>(x))
 }
 
@@ -154,7 +154,7 @@ fn silu<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
 /// `lo_out` and `hi_out` define output boundaries (in 8ths of MAX).
 /// Requires Q::BITS <= 64 (Q0 through Q7). Q15 (u128) would overflow u64 intermediates.
 #[inline(always)]
-fn piecewise_3seg<Q: QuantumLevel>(
+fn piecewise_3seg<Q: WittLevelMarker>(
     x: Q::Word,
     lo_frac: u64,
     hi_frac: u64,
@@ -203,15 +203,15 @@ fn piecewise_3seg<Q: QuantumLevel>(
 
 // ── Sigmoid / Tanh ───────────────────────────────────────────────────────
 
-fn piecewise_sigmoid<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_sigmoid<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     piecewise_3seg::<Q>(x, 2, 6, 1, 7) // lo=25%, hi=75%, out=[12.5%, 87.5%]
 }
 
-fn piecewise_tanh<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_tanh<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     piecewise_3seg::<Q>(x, 3, 5, 1, 7) // lo=37.5%, hi=62.5% (steeper)
 }
 
-fn piecewise_gelu<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_gelu<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Gelu: applies sigmoid-weighted identity.
     // gelu(x) ≈ x * sigmoid(1.702 * x)
     // In ring: use sigmoid with slightly shifted thresholds, then multiply by x.
@@ -229,25 +229,25 @@ fn piecewise_gelu<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
 
 // ── Exp / Log family ─────────────────────────────────────────────────────
 
-fn piecewise_exp<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_exp<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Exp: maps signed input range [0,MAX] to unsigned output [0,MAX]
     // Low inputs (negative) → near 0, high inputs (positive) → near MAX
     piecewise_3seg::<Q>(x, 2, 5, 0, 6) // steeper than sigmoid
 }
 
-fn piecewise_exp2<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_exp2<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Exp2 ~ Exp with rescaled input (ln2 factor)
     // Slightly different thresholds
     piecewise_3seg::<Q>(x, 2, 6, 0, 6)
 }
 
-fn piecewise_exp10<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_exp10<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Exp10: even steeper
     piecewise_3seg::<Q>(x, 3, 5, 0, 7)
 }
 
 #[inline(always)]
-fn piecewise_log<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_log<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     let max_v = Q::Word::MAX.to_u64();
     let xv = x.to_u64().max(1); // branchless zero guard
     let eighth = max_v / 8;
@@ -267,13 +267,13 @@ fn piecewise_log<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
     }
 }
 
-fn piecewise_log2<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_log2<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Log2 ~ Log with rescaled output (1/ln2 factor)
     piecewise_log::<Q>(x) // same shape, different scale (acceptable at this precision)
 }
 
 #[inline(always)]
-fn piecewise_log10<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_log10<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     let max_v = Q::Word::MAX.to_u64();
     let xv = x.to_u64().max(1);
     let quarter = max_v / 4;
@@ -290,7 +290,7 @@ fn piecewise_log10<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
 
 // ── Trigonometric family ─────────────────────────────────────────────────
 
-fn piecewise_sin<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_sin<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Sin: input [0, MAX] maps to angle [0, 2π)
     // Output in unsigned encoding: 0 = -1.0, MAX/2 = 0.0, MAX = ~1.0
     let max_v = Q::Word::MAX.to_u64();
@@ -318,31 +318,31 @@ fn piecewise_sin<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
     }
 }
 
-fn piecewise_cos<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_cos<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Cos = Sin with π/2 phase shift = shift input by MAX/4
     let quarter = Q::Word::from_u64(Q::Word::MAX.to_u64() / 4);
     piecewise_sin::<Q>(x.wrapping_add(quarter))
 }
 
 #[inline(always)]
-fn piecewise_tan<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_tan<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Tan: saturates at extremes, linear through middle. Use piecewise_3seg.
     piecewise_3seg::<Q>(x, 2, 6, 1, 7)
 }
 
 #[inline(always)]
-fn piecewise_asin<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_asin<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Asin: steep at edges, linear in middle. Use piecewise_3seg.
     piecewise_3seg::<Q>(x, 1, 7, 0, 8)
 }
 
-fn piecewise_acos<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_acos<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Acos(x) = π/2 - Asin(x), in unsigned: MAX - Asin(x) (approximately)
     let asin_x = piecewise_asin::<Q>(x);
     Q::Word::MAX.wrapping_sub(asin_x)
 }
 
-fn piecewise_atan<Q: QuantumLevel>(x: Q::Word) -> Q::Word {
+fn piecewise_atan<Q: WittLevelMarker>(x: Q::Word) -> Q::Word {
     // Atan: saturates at ±π/2 for large |x|
     piecewise_3seg::<Q>(x, 2, 6, 1, 7) // similar shape to sigmoid
 }

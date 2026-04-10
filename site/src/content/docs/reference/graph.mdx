@@ -24,7 +24,7 @@ Expression graph, subgraph decomposition, fusion passes, and parallel scheduling
 Fluent builder for constructing `HoloGraph` programmatically.
 
 ```rust
-use hologram_graph::builder::GraphBuilder;
+use hologram_ir::builder::GraphBuilder;
 
 let graph = GraphBuilder::new()
     .input("x", Shape::scalar())

@@ -2,20 +2,20 @@
 
 use crate::datum::Datum;
 use crate::involution::Involution;
-use crate::level::{QuantumLevel, Q0, Q1, Q15, Q3, Q7};
+use crate::level::{WittLevelMarker, W128, W16, W32, W64, W8};
 use crate::PrismPrimitives;
 
-/// Zero-sized marker type for the ring R_n at quantum level Q.
+/// Zero-sized marker type for the ring R_n at Witt level W.
 #[derive(Debug, Clone, Copy)]
-pub struct PrismRing<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+pub struct PrismRing<W: WittLevelMarker>(core::marker::PhantomData<W>);
 
-impl<Q: QuantumLevel> PrismRing<Q> {
+impl<W: WittLevelMarker> PrismRing<W> {
     pub const fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Q: QuantumLevel> Default for PrismRing<Q> {
+impl<W: WittLevelMarker> Default for PrismRing<W> {
     fn default() -> Self {
         Self::new()
     }
@@ -33,115 +33,116 @@ mod uor_impls {
     use super::*;
     use crate::word::RingWord;
 
-    pub struct PrismMultTable<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+    pub struct PrismMultTable<W: WittLevelMarker>(core::marker::PhantomData<W>);
 
-    impl<Q: QuantumLevel> uor_foundation::kernel::division::MultiplicationTable<PrismPrimitives>
-        for PrismMultTable<Q>
+    impl<W: WittLevelMarker> hologram_foundation::division::MultiplicationTable<PrismPrimitives>
+        for PrismMultTable<W>
     {
     }
 
     // ── PrismDivisionAlgebra ─────────────────────────────────────────────────
 
-    /// Unified division algebra enum bridging quantum levels across the CD chain.
+    /// Unified division algebra enum bridging Witt levels across the CD chain.
     #[derive(Debug, Clone, Copy)]
     pub enum PrismDivisionAlgebra {
-        Q0(PrismRing<Q0>),
-        Q1(PrismRing<Q1>),
-        Q3(PrismRing<Q3>),
-        Q7(PrismRing<Q7>),
+        W8(PrismRing<W8>),
+        W16(PrismRing<W16>),
+        W32(PrismRing<W32>),
+        W64(PrismRing<W64>),
     }
 
-    impl uor_foundation::kernel::division::NormedDivisionAlgebra<PrismPrimitives>
+    impl hologram_foundation::division::NormedDivisionAlgebra<PrismPrimitives>
         for PrismDivisionAlgebra
     {
         fn algebra_dimension(&self) -> u64 {
             match self {
-                Self::Q0(_) => 1,
-                Self::Q1(_) => 2,
-                Self::Q3(_) => 4,
-                Self::Q7(_) => 8,
+                Self::W8(_) => 1,
+                Self::W16(_) => 2,
+                Self::W32(_) => 4,
+                Self::W64(_) => 8,
             }
         }
         fn is_commutative(&self) -> bool {
-            !matches!(self, Self::Q3(_) | Self::Q7(_))
+            !matches!(self, Self::W32(_) | Self::W64(_))
         }
         fn is_associative(&self) -> bool {
-            !matches!(self, Self::Q7(_))
+            !matches!(self, Self::W64(_))
         }
         fn basis_elements(&self) -> &str {
             match self {
-                Self::Q0(_) => "{1}",
-                Self::Q1(_) => "{1, i}",
-                Self::Q3(_) => "{1, i, j, k}",
-                Self::Q7(_) => "{1, e1, e2, e3, e4, e5, e6, e7}",
+                Self::W8(_) => "{1}",
+                Self::W16(_) => "{1, i}",
+                Self::W32(_) => "{1, i, j, k}",
+                Self::W64(_) => "{1, e1, e2, e3, e4, e5, e6, e7}",
             }
         }
-        type MultiplicationTable = PrismMultTable<Q0>; // marker ZST
+        type MultiplicationTable = PrismMultTable<W8>; // marker ZST
         fn algebra_multiplication_table(&self) -> &Self::MultiplicationTable {
-            &MULT_TABLE_Q0
+            &MULT_TABLE_W8
         }
     }
 
     // ── Per-level statics ────────────────────────────────────────────────────
 
-    static MULT_TABLE_Q0: PrismMultTable<Q0> = PrismMultTable(core::marker::PhantomData);
-    static MULT_TABLE_Q1: PrismMultTable<Q1> = PrismMultTable(core::marker::PhantomData);
-    static MULT_TABLE_Q3: PrismMultTable<Q3> = PrismMultTable(core::marker::PhantomData);
-    static MULT_TABLE_Q7: PrismMultTable<Q7> = PrismMultTable(core::marker::PhantomData);
-    static MULT_TABLE_Q15: PrismMultTable<Q15> = PrismMultTable(core::marker::PhantomData);
+    static MULT_TABLE_W8: PrismMultTable<W8> = PrismMultTable(core::marker::PhantomData);
+    static MULT_TABLE_W16: PrismMultTable<W16> = PrismMultTable(core::marker::PhantomData);
+    static MULT_TABLE_W32: PrismMultTable<W32> = PrismMultTable(core::marker::PhantomData);
+    static MULT_TABLE_W64: PrismMultTable<W64> = PrismMultTable(core::marker::PhantomData);
+    static MULT_TABLE_W128: PrismMultTable<W128> = PrismMultTable(core::marker::PhantomData);
 
-    static DA_Q0: PrismDivisionAlgebra =
-        PrismDivisionAlgebra::Q0(PrismRing(core::marker::PhantomData));
-    static DA_Q1: PrismDivisionAlgebra =
-        PrismDivisionAlgebra::Q1(PrismRing(core::marker::PhantomData));
-    static DA_Q3: PrismDivisionAlgebra =
-        PrismDivisionAlgebra::Q3(PrismRing(core::marker::PhantomData));
-    static DA_Q7: PrismDivisionAlgebra =
-        PrismDivisionAlgebra::Q7(PrismRing(core::marker::PhantomData));
+    static DA_W8: PrismDivisionAlgebra =
+        PrismDivisionAlgebra::W8(PrismRing(core::marker::PhantomData));
+    static DA_W16: PrismDivisionAlgebra =
+        PrismDivisionAlgebra::W16(PrismRing(core::marker::PhantomData));
+    static DA_W32: PrismDivisionAlgebra =
+        PrismDivisionAlgebra::W32(PrismRing(core::marker::PhantomData));
+    static DA_W64: PrismDivisionAlgebra =
+        PrismDivisionAlgebra::W64(PrismRing(core::marker::PhantomData));
 
     // ── Macro for per-level Ring + Group + NDA + CD impls ────────────────────
 
     macro_rules! impl_ring_for_level {
-        ($Q:ty, $word_ty:ty, $gen_val:expr, $bits:expr, $index:expr,
-     $uor_level:expr, $modulus:expr, $dim:expr,
+        ($W:ty, $word_ty:ty, $gen_val:expr, $bits:expr, $index:expr,
+     $witt_level:expr, $modulus:expr, $dim:expr,
      $commutative:expr, $associative:expr, $basis:expr,
      $mult_table:expr,
      $neg_static:ident, $bnot_static:ident, $gen_static:ident, $generators_static:ident) => {
-            static $neg_static: Involution<$Q> = Involution::Neg;
-            static $bnot_static: Involution<$Q> = Involution::Bnot;
-            static $generators_static: [Involution<$Q>; 2] = [Involution::Neg, Involution::Bnot];
-            // Generator datum needs runtime construction; use a function instead
-            // We use a thread-local or lazy approach — but for simplicity, just
-            // return a reference that lives long enough via Box::leak in a once_cell.
+            static $neg_static: Involution<$W> = Involution::Neg;
+            static $bnot_static: Involution<$W> = Involution::Bnot;
+            static $generators_static: [Involution<$W>; 2] = [Involution::Neg, Involution::Bnot];
+            // Generator datum needs runtime construction; use a function instead.
+            // We use a OnceLock for lazy initialization.
 
-            impl uor_foundation::kernel::schema::Ring<PrismPrimitives> for PrismRing<$Q> {
-                fn ring_quantum(&self) -> u64 {
+            impl hologram_foundation::schema::Ring<PrismPrimitives> for PrismRing<$W> {
+                /// v0.2.0 renamed `ring_quantum()` to `ring_witt_length()`.
+                fn ring_witt_length(&self) -> u64 {
                     $bits
                 }
                 fn modulus(&self) -> u64 {
                     $modulus
                 }
-                type Datum = Datum<$Q>;
+                type Datum = Datum<$W>;
                 fn generator(&self) -> &Self::Datum {
-                    // Leak a static Datum. Called at most once per level.
                     use std::sync::OnceLock;
-                    static $gen_static: OnceLock<Datum<$Q>> = OnceLock::new();
-                    $gen_static.get_or_init(|| Datum::<$Q>::new(<$word_ty>::ONE))
+                    static $gen_static: OnceLock<Datum<$W>> = OnceLock::new();
+                    $gen_static.get_or_init(|| Datum::<$W>::new(<$word_ty>::ONE))
                 }
-                type Involution = Involution<$Q>;
+                type Involution = Involution<$W>;
                 fn negation(&self) -> &Self::Involution {
                     &$neg_static
                 }
                 fn complement(&self) -> &Self::Involution {
                     &$bnot_static
                 }
-                fn at_quantum_level(&self) -> uor_foundation::enums::QuantumLevel {
-                    $uor_level
+                /// v0.2.0 renamed `at_quantum_level()` to `at_witt_level()`
+                /// and the return type to `WittLevel`.
+                fn at_witt_level(&self) -> hologram_foundation::WittLevel {
+                    $witt_level
                 }
             }
 
-            impl uor_foundation::kernel::op::Group<PrismPrimitives> for PrismRing<$Q> {
-                type Operation = Involution<$Q>;
+            impl hologram_foundation::op::Group<PrismPrimitives> for PrismRing<$W> {
+                type Operation = Involution<$W>;
                 fn generated_by(&self) -> &[Self::Operation] {
                     &$generators_static
                 }
@@ -154,10 +155,10 @@ mod uor_impls {
                 }
             }
 
-            impl uor_foundation::kernel::op::DihedralGroup<PrismPrimitives> for PrismRing<$Q> {}
+            impl hologram_foundation::op::DihedralGroup<PrismPrimitives> for PrismRing<$W> {}
 
-            impl uor_foundation::kernel::division::NormedDivisionAlgebra<PrismPrimitives>
-                for PrismRing<$Q>
+            impl hologram_foundation::division::NormedDivisionAlgebra<PrismPrimitives>
+                for PrismRing<$W>
             {
                 fn algebra_dimension(&self) -> u64 {
                     $dim
@@ -171,132 +172,130 @@ mod uor_impls {
                 fn basis_elements(&self) -> &str {
                     $basis
                 }
-                type MultiplicationTable = PrismMultTable<$Q>;
+                type MultiplicationTable = PrismMultTable<$W>;
                 fn algebra_multiplication_table(&self) -> &Self::MultiplicationTable {
                     &$mult_table
                 }
             }
 
-            // uor-foundation 0.1.4 made AlgebraCommutator/AlgebraAssociator marker
+            // v0.2.0 keeps AlgebraCommutator/AlgebraAssociator as marker
             // traits — no methods to implement.
-            impl uor_foundation::kernel::division::AlgebraCommutator<PrismPrimitives>
-                for PrismRing<$Q>
+            impl hologram_foundation::division::AlgebraCommutator<PrismPrimitives>
+                for PrismRing<$W>
             {
             }
 
-            impl uor_foundation::kernel::division::AlgebraAssociator<PrismPrimitives>
-                for PrismRing<$Q>
+            impl hologram_foundation::division::AlgebraAssociator<PrismPrimitives>
+                for PrismRing<$W>
             {
             }
         };
     }
 
     impl_ring_for_level!(
-        Q0,
+        W8,
         u8,
         1u8,
         8,
         0,
-        uor_foundation::enums::QuantumLevel::Q0,
+        hologram_foundation::WittLevel::W8,
         256,
         1,
         true,
         true,
         "{1}",
-        MULT_TABLE_Q0,
-        NEG_Q0,
-        BNOT_Q0,
-        GEN_Q0,
-        GENS_Q0
+        MULT_TABLE_W8,
+        NEG_W8,
+        BNOT_W8,
+        GEN_W8,
+        GENS_W8
     );
 
     impl_ring_for_level!(
-        Q1,
+        W16,
         u16,
         1u16,
         16,
         1,
-        uor_foundation::enums::QuantumLevel::Q1,
+        hologram_foundation::WittLevel::W16,
         65536,
         2,
         true,
         true,
         "{1, i}",
-        MULT_TABLE_Q1,
-        NEG_Q1,
-        BNOT_Q1,
-        GEN_Q1,
-        GENS_Q1
+        MULT_TABLE_W16,
+        NEG_W16,
+        BNOT_W16,
+        GEN_W16,
+        GENS_W16
     );
 
     impl_ring_for_level!(
-        Q3,
+        W32,
         u32,
         1u32,
         32,
         3,
-        uor_foundation::enums::QuantumLevel::Q2,
+        hologram_foundation::WittLevel::W32,
         4_294_967_296,
         4,
         false,
         true,
         "{1, i, j, k}",
-        MULT_TABLE_Q3,
-        NEG_Q3,
-        BNOT_Q3,
-        GEN_Q3,
-        GENS_Q3
+        MULT_TABLE_W32,
+        NEG_W32,
+        BNOT_W32,
+        GEN_W32,
+        GENS_W32
     );
 
     impl_ring_for_level!(
-        Q7,
+        W64,
         u64,
         1u64,
         64,
         7,
-        uor_foundation::enums::QuantumLevel::Q3,
+        hologram_foundation::WittLevel::new(64),
         0,
         8,
         false,
         false,
         "{1, e1, e2, e3, e4, e5, e6, e7}",
-        MULT_TABLE_Q7,
-        NEG_Q7,
-        BNOT_Q7,
-        GEN_Q7,
-        GENS_Q7
+        MULT_TABLE_W64,
+        NEG_W64,
+        BNOT_W64,
+        GEN_W64,
+        GENS_W64
     );
 
     impl_ring_for_level!(
-        Q15,
+        W128,
         u128,
         1u128,
         128,
         15,
-        uor_foundation::enums::QuantumLevel::new(15),
+        hologram_foundation::WittLevel::new(128),
         0,
         1,
         true,
         true,
         "{1}",
-        MULT_TABLE_Q15,
-        NEG_Q15,
-        BNOT_Q15,
-        GEN_Q15,
-        GENS_Q15
+        MULT_TABLE_W128,
+        NEG_W128,
+        BNOT_W128,
+        GEN_W128,
+        GENS_W128
     );
 
     // ── CayleyDicksonConstruction (per level pair) ───────────────────────────
 
-    impl uor_foundation::kernel::division::CayleyDicksonConstruction<PrismPrimitives>
-        for PrismRing<Q0>
-    {
+    impl hologram_foundation::division::CayleyDicksonConstruction<PrismPrimitives> for PrismRing<W8> {
         type NormedDivisionAlgebra = PrismDivisionAlgebra;
         fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q0
+            &DA_W8
         }
         fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q1
+            &DA_W16
         }
         fn adjoined_element(&self) -> &str {
             "i"
@@ -306,15 +305,13 @@ mod uor_impls {
         }
     }
 
-    impl uor_foundation::kernel::division::CayleyDicksonConstruction<PrismPrimitives>
-        for PrismRing<Q1>
-    {
+    impl hologram_foundation::division::CayleyDicksonConstruction<PrismPrimitives> for PrismRing<W16> {
         type NormedDivisionAlgebra = PrismDivisionAlgebra;
         fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q1
+            &DA_W16
         }
         fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q3
+            &DA_W32
         }
         fn adjoined_element(&self) -> &str {
             "j"
@@ -324,15 +321,13 @@ mod uor_impls {
         }
     }
 
-    impl uor_foundation::kernel::division::CayleyDicksonConstruction<PrismPrimitives>
-        for PrismRing<Q3>
-    {
+    impl hologram_foundation::division::CayleyDicksonConstruction<PrismPrimitives> for PrismRing<W32> {
         type NormedDivisionAlgebra = PrismDivisionAlgebra;
         fn cayley_dickson_source(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q3
+            &DA_W32
         }
         fn cayley_dickson_target(&self) -> &Self::NormedDivisionAlgebra {
-            &DA_Q7
+            &DA_W64
         }
         fn adjoined_element(&self) -> &str {
             "l"

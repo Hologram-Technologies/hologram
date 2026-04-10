@@ -5,13 +5,13 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use hologram_archive::HoloWriter;
 use hologram_core::op::FloatOp;
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
-fn make_matmul_silu_graph(m: u32, k: u32, n: u32, fuse: bool) -> hologram_graph::Graph {
-    use hologram_graph::constant::ConstantData;
+fn make_matmul_silu_graph(m: u32, k: u32, n: u32, fuse: bool) -> hologram_ir::Graph {
+    use hologram_ir::constant::ConstantData;
 
     let weight_bytes = vec![0x3fu8; (k as usize) * (n as usize) * 4];
     let mut g = GraphBuilder::new()
@@ -28,7 +28,7 @@ fn make_matmul_silu_graph(m: u32, k: u32, n: u32, fuse: bool) -> hologram_graph:
         .build();
 
     if fuse {
-        let _ = hologram_graph::fusion::fuse(&mut g);
+        let _ = hologram_ir::analysis::analyze(&mut g);
     }
     g
 }

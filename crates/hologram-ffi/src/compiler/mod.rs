@@ -2,8 +2,8 @@
 
 use crate::error::set_last_error;
 use crate::handle::{borrow_handle, free_handle, into_handle};
-use hologram_compiler::{CompilationOutput, CompilerBuilder};
-use hologram_graph::Graph;
+use hologram_compiler::{compile, CompilationOutput};
+use hologram_ir::Graph;
 
 /// Compile a graph into a `.holo` archive. Consumes the graph handle.
 /// Returns a compilation output handle or null on error.
@@ -14,24 +14,7 @@ pub extern "C" fn hologram_compile(graph: *mut Graph) -> *mut CompilationOutput 
         return std::ptr::null_mut();
     }
     let g = unsafe { Box::from_raw(graph) };
-    match CompilerBuilder::new(*g).build() {
-        Ok(output) => into_handle(output),
-        Err(e) => {
-            set_last_error(format!("{e}"));
-            std::ptr::null_mut()
-        }
-    }
-}
-
-/// Compile a graph with fusion disabled. Consumes the graph handle.
-#[no_mangle]
-pub extern "C" fn hologram_compile_no_fuse(graph: *mut Graph) -> *mut CompilationOutput {
-    if graph.is_null() {
-        set_last_error("null graph handle");
-        return std::ptr::null_mut();
-    }
-    let g = unsafe { Box::from_raw(graph) };
-    match CompilerBuilder::new(*g).fuse(false).build() {
+    match compile(*g) {
         Ok(output) => into_handle(output),
         Err(e) => {
             set_last_error(format!("{e}"));
@@ -123,15 +106,6 @@ mod tests {
         assert!(!hologram_compilation_archive_ptr(out).is_null());
         assert_eq!(hologram_compilation_stats_nodes(out), 3);
         assert!(hologram_compilation_stats_levels(out) > 0);
-        hologram_compilation_free(out);
-    }
-
-    #[test]
-    fn compile_no_fuse() {
-        let g = build_test_graph();
-        let out = hologram_compile_no_fuse(g);
-        assert!(!out.is_null());
-        assert!(hologram_compilation_archive_len(out) > 0);
         hologram_compilation_free(out);
     }
 

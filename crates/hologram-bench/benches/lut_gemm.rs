@@ -1,8 +1,8 @@
 //! Criterion benchmarks for LUT-GEMM kernels.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_exec::lut_gemm::matmul::{lut_gemm_4bit, lut_gemm_8bit, naive_matmul};
-use hologram_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
+use hologram_fused_component::lut_gemm::matmul::{lut_gemm_4bit, lut_gemm_8bit, naive_matmul};
+use hologram_fused_component::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
 
 fn bench_naive_matmul(c: &mut Criterion) {
     let (m, k, n) = (4, 64, 64);

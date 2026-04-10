@@ -12,7 +12,14 @@ fn hex(hash: &[u8; 32]) -> String {
 }
 
 /// Error type for archive operations.
-#[derive(Debug)]
+///
+/// `Clone` is implemented because `ArchiveError` is conventionally stored
+/// in diagnostic chains, retried error events, and structured logs. The
+/// `Io` variant flattens the underlying `std::io::Error` into its
+/// `ErrorKind` discriminant plus a `String` message rather than holding
+/// the non-`Clone` `io::Error` itself; the trade-off is loss of the
+/// boxed source chain in `Error::source()` for the `Io` variant.
+#[derive(Debug, Clone)]
 pub enum ArchiveError {
     /// Invalid magic bytes (expected HOLO_MAGIC).
     InvalidMagic,
@@ -29,8 +36,12 @@ pub enum ArchiveError {
     OutOfBounds { offset: u64, size: u64 },
     /// rkyv validation failed.
     ValidationFailed(String),
-    /// I/O error (mmap, file read).
-    Io(io::Error),
+    /// I/O error (mmap, file read). Captured as kind + display message
+    /// rather than the underlying `io::Error` so the type stays `Clone`.
+    Io {
+        kind: io::ErrorKind,
+        message: String,
+    },
     /// Graph serialization error.
     GraphError(String),
 }
@@ -59,7 +70,7 @@ impl fmt::Display for ArchiveError {
             Self::ValidationFailed(msg) => {
                 write!(f, "validation failed: {msg}")
             }
-            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::Io { kind, message } => write!(f, "I/O error ({kind:?}): {message}"),
             Self::GraphError(msg) => {
                 write!(f, "graph error: {msg}")
             }
@@ -67,18 +78,14 @@ impl fmt::Display for ArchiveError {
     }
 }
 
-impl std::error::Error for ArchiveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for ArchiveError {}
 
 impl From<io::Error> for ArchiveError {
     fn from(e: io::Error) -> Self {
-        Self::Io(e)
+        Self::Io {
+            kind: e.kind(),
+            message: e.to_string(),
+        }
     }
 }
 
@@ -88,7 +95,6 @@ pub type ArchiveResult<T> = Result<T, ArchiveError>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::error::Error;
 
     #[test]
     fn display_invalid_magic() {
@@ -129,13 +135,21 @@ mod tests {
     fn from_io_error() {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "gone");
         let e: ArchiveError = io_err.into();
-        assert!(matches!(e, ArchiveError::Io(_)));
-        assert!(e.source().is_some());
+        match e {
+            ArchiveError::Io { kind, message } => {
+                assert_eq!(kind, io::ErrorKind::NotFound);
+                assert!(message.contains("gone"));
+            }
+            other => panic!("expected ArchiveError::Io, got {other:?}"),
+        }
     }
 
     #[test]
-    fn error_source_none_for_non_io() {
+    fn archive_error_is_clone() {
+        // Compile-time check: Clone is available on every variant.
+        fn _assert_clone<T: Clone>() {}
+        _assert_clone::<ArchiveError>();
         let e = ArchiveError::InvalidMagic;
-        assert!(e.source().is_none());
+        let _cloned = e.clone();
     }
 }

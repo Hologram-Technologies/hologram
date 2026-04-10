@@ -1,7 +1,7 @@
 //! Async wrapper for archive execution.
 
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::{ExecResult, GraphInputs, GraphOutputs};
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::{ExecResult, GraphInputs, GraphOutputs};
 use tokio::task::JoinHandle;
 
 /// Async wrapper for tape-based archive execution.
@@ -26,8 +26,8 @@ mod tests {
     use super::*;
     use hologram_archive::writer::holo_writer::HoloWriter;
     use hologram_core::op::LutOp;
-    use hologram_graph::builder::GraphBuilder;
-    use hologram_graph::graph::GraphOp;
+    use hologram_ir::builder::GraphBuilder;
+    use hologram_ir::graph::GraphOp;
 
     fn relu_archive() -> Vec<u8> {
         let g = GraphBuilder::new()

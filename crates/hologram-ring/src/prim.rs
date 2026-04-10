@@ -5,7 +5,7 @@
 
 use crate::word::RingWord;
 use crate::PrismPrimitives;
-use uor_foundation::enums::GeometricCharacter;
+use hologram_foundation::enums::GeometricCharacter;
 
 /// The 10 primitive operations on Z/(2^n)Z.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,7 +125,7 @@ static PRIMOP_STATICS: [PrimOp; 10] = [
     PrimOp::Or,
 ];
 
-impl uor_foundation::kernel::op::Operation<PrismPrimitives> for PrimOp {
+impl hologram_foundation::op::Operation<PrismPrimitives> for PrimOp {
     fn arity(&self) -> u64 {
         PrimOp::arity(self) as u64
     }
@@ -149,7 +149,7 @@ impl uor_foundation::kernel::op::Operation<PrismPrimitives> for PrimOp {
     }
 }
 
-impl uor_foundation::kernel::op::BinaryOp<PrismPrimitives> for PrimOp {
+impl hologram_foundation::op::BinaryOp<PrismPrimitives> for PrimOp {
     fn commutative(&self) -> bool {
         self.is_commutative()
     }

@@ -1,9 +1,9 @@
 //! `--detail graph` output.
 
 use hologram_archive::LoadedPlan;
-use hologram_graph::constant::ConstantStore;
-use hologram_graph::graph::node::{InputSlot, InputSource, Node};
-use hologram_graph::graph::GraphOp;
+use hologram_ir::constant::ConstantStore;
+use hologram_ir::graph::node::{InputSlot, InputSource, Node};
+use hologram_ir::graph::GraphOp;
 
 /// Print every node with its operation and input edges.
 pub fn print(plan: &LoadedPlan) {
@@ -99,9 +99,6 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::FusedConv2dBiasActivation { activation, .. } => {
             format!("Conv2d+Bias+{}", activation.name())
         }
-        GraphOp::Custom { id, arity } => {
-            format!("Custom(id={}, arity={})", id.raw(), arity)
-        }
         GraphOp::Passthrough => "Passthrough".into(),
         GraphOp::Conv2dLut4 {
             cid,
@@ -122,7 +119,7 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
 }
 
 /// Format a constant reference with its byte size.
-fn format_constant(id: &hologram_graph::constant::ConstantId, constants: &ConstantStore) -> String {
+fn format_constant(id: &hologram_ir::constant::ConstantId, constants: &ConstantStore) -> String {
     let size = constants.get(*id).map_or(0, |c| c.byte_size());
     format!("Constant(id={}) ({} bytes)", id.raw(), size)
 }

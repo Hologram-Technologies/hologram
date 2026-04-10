@@ -4,7 +4,7 @@ use crate::q1::observables;
 use crate::HoloPrimitives;
 
 /// An element of Z/65536Z at quantum level 1 (16-bit).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialize",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -19,7 +19,7 @@ impl WordDatum {
     /// Create a datum from a raw word value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u16) -> Self {
+    pub fn new(value: u16) -> Self {
         let spectrum = Self::make_spectrum(value);
         let address = WordAddress::from_word(value);
         Self {
@@ -63,46 +63,40 @@ impl WordDatum {
         unsafe { core::str::from_utf8_unchecked(&self.spectrum_buf) }
     }
 
-    /// The Braille address for this datum.
+    /// The content-addressed identifier for this datum.
     #[inline]
     #[must_use]
-    pub const fn address(&self) -> &WordAddress {
+    pub fn address(&self) -> &WordAddress {
         &self.address
     }
 
     /// Negation: `(-x) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn neg(self) -> Self {
+    pub fn neg(&self) -> Self {
         Self::new(self.value.wrapping_neg())
     }
 
     /// Bitwise complement.
     #[inline]
     #[must_use]
-    pub const fn bnot(self) -> Self {
+    pub fn bnot(&self) -> Self {
         Self::new(!self.value)
     }
 
     /// Successor: `(x + 1) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn succ(self) -> Self {
+    pub fn succ(&self) -> Self {
         Self::new(self.value.wrapping_add(1))
     }
 
     /// Predecessor: `(x - 1) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn pred(self) -> Self {
+    pub fn pred(&self) -> Self {
         Self::new(self.value.wrapping_sub(1))
     }
-
-    /// The zero datum (additive identity).
-    pub const ZERO: Self = Self::new(0);
-
-    /// The generator pi_1 (value = 1).
-    pub const PI1: Self = Self::new(1);
 }
 
 impl core::fmt::Debug for WordDatum {
@@ -120,7 +114,7 @@ impl core::fmt::Display for WordDatum {
 impl Default for WordDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::new(0)
     }
 }
 
@@ -140,49 +134,60 @@ impl From<WordDatum> for u16 {
 
 // --- WordAddress ---
 
-/// Braille address for a word datum at Q1.
+/// Content-addressed identifier for a word datum at W16.
 ///
-/// Each Braille character encodes 6 bits. For 16-bit values,
-/// we use 3 characters (covering lo-6, mid-6, and hi-4 bits).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Per uor-foundation v0.2.0 Amendment 43 section 2:
+/// - `canonical_bytes` = hex(`header(1) || le_bytes(value, 2)`) = 6 hex chars
+/// - `digest` = hex(BLAKE3(`canonical_raw`)) = 64 hex chars
+/// - `digest_algorithm` = `"blake3"`
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialize",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct WordAddress {
     value: u16,
-    glyph_buf: [u8; 9],
+    /// hex(header(1) || le_bytes(value, 2)) — 6 hex chars for 3 raw bytes.
+    canonical_hex: [u8; 6],
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
+    digest_hex: [u8; 64],
 }
 
 impl WordAddress {
-    /// Create a Braille address from a word value.
+    /// The zero address (word value 0).
+    pub fn zero() -> Self {
+        Self::from_word(0)
+    }
+
+    /// Create a content-addressed identifier from a word value.
+    ///
+    /// Computes Amendment 43 canonical bytes and BLAKE3 digest at construction.
     #[must_use]
-    pub const fn from_word(value: u16) -> Self {
-        let lo6 = (value & 0x3F) as u8;
-        let mid6 = ((value >> 6) & 0x3F) as u8;
-        let hi4 = ((value >> 12) & 0x0F) as u8;
-        // Braille U+2800..U+283F → UTF-8: E2 A0 {80+offset}
+    pub fn from_word(value: u16) -> Self {
+        use crate::datum::hex_encode;
+
+        // Amendment 43: canonical = header(k) || le_bytes(x, k+1)
+        // For W16 (k=1): header = 0x01, le_bytes(value, 2) = value.to_le_bytes()
+        let le = value.to_le_bytes();
+        let canonical_raw = [0x01u8, le[0], le[1]];
+
+        let mut canonical_hex = [0u8; 6];
+        hex_encode(&canonical_raw, &mut canonical_hex);
+
+        let hash = blake3::hash(&canonical_raw);
+        let mut digest_hex = [0u8; 64];
+        hex_encode(hash.as_bytes(), &mut digest_hex);
+
         Self {
             value,
-            glyph_buf: [
-                0xE2,
-                0xA0,
-                0x80 + lo6,
-                0xE2,
-                0xA0,
-                0x80 + mid6,
-                0xE2,
-                0xA0,
-                0x80 + hi4,
-            ],
+            canonical_hex,
+            digest_hex,
         }
     }
 
-    /// The Braille string representation.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille characters.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
+    /// The raw word value this address represents.
+    pub fn value(&self) -> u16 {
+        self.value
     }
 }
 
@@ -194,12 +199,12 @@ impl core::fmt::Debug for WordAddress {
 
 // --- uor-foundation trait implementations ---
 
-impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for WordDatum {
+impl hologram_foundation::schema::Datum<HoloPrimitives> for WordDatum {
     fn value(&self) -> u64 {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         16
     }
 
@@ -211,31 +216,31 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for WordDatum {
         self.value as u64
     }
 
-    type Address = WordAddress;
+    type Element = WordAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for WordAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl hologram_foundation::address::Element<HoloPrimitives> for WordAddress {
+    /// Byte length of the canonical encoding (3 raw bytes for W16).
     fn length(&self) -> u64 {
         3
     }
 
     fn addresses(&self) -> &str {
-        ""
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
-        self.as_str()
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         16
     }
 
@@ -244,9 +249,11 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for WordAddress {
         "blake3"
     }
 
+    /// Amendment 43 canonical encoding: hex(header(1) || le_bytes(value, 2)).
     #[inline]
     fn canonical_bytes(&self) -> &str {
-        self.as_str()
+        // SAFETY: canonical_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.canonical_hex) }
     }
 }
 
@@ -322,11 +329,26 @@ mod tests {
     }
 
     #[test]
-    fn word_address_glyph_count() {
-        let addr = WordAddress::from_word(0);
-        assert_eq!(addr.as_str().chars().count(), 3);
-        let addr = WordAddress::from_word(0xFFFF);
-        assert_eq!(addr.as_str().chars().count(), 3);
+    fn word_address_digest_is_blake3() {
+        use crate::datum::hex_encode;
+        use hologram_foundation::address::Element;
+        let addr = WordAddress::from_word(1000);
+        // digest() returns 64 hex chars (256-bit BLAKE3)
+        assert_eq!(addr.digest().len(), 64);
+        // canonical_bytes() returns 6 hex chars (3 raw bytes: header(1) || le_bytes(1000))
+        assert_eq!(addr.canonical_bytes().len(), 6);
+        // canonical_bytes is "01e803" (header=0x01, 1000=0x03E8 le=[0xE8, 0x03])
+        assert_eq!(addr.canonical_bytes(), "01e803");
+        // digest_algorithm is "blake3"
+        assert_eq!(addr.digest_algorithm(), "blake3");
+        // Verify: digest = hex(blake3(canonical_raw))
+        let le = 1000u16.to_le_bytes();
+        let canonical_raw = [0x01u8, le[0], le[1]];
+        let expected_hash = blake3::hash(&canonical_raw);
+        let mut expected_hex = [0u8; 64];
+        hex_encode(expected_hash.as_bytes(), &mut expected_hex);
+        let expected = core::str::from_utf8(&expected_hex).unwrap();
+        assert_eq!(addr.digest(), expected);
     }
 
     #[test]
@@ -342,7 +364,7 @@ mod tests {
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(WordDatum::default(), WordDatum::ZERO);
+        assert_eq!(WordDatum::default(), WordDatum::new(0));
     }
 
     #[test]
@@ -355,10 +377,10 @@ mod tests {
 
     #[test]
     fn datum_trait_impl() {
-        use uor_foundation::kernel::schema::Datum;
+        use hologram_foundation::schema::Datum;
         let d = WordDatum::new(1000);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 1000);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 16);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 16);
         assert_eq!(
             Datum::<HoloPrimitives>::stratum(&d),
             1000u16.count_ones() as u64
@@ -367,10 +389,10 @@ mod tests {
 
     #[test]
     fn address_trait_impl() {
-        use uor_foundation::kernel::address::Address;
+        use hologram_foundation::address::Element;
         let a = WordAddress::from_word(1000);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 3);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 16);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 3);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&a), 16);
     }
 
     #[test]
@@ -382,9 +404,9 @@ mod tests {
         assert_eq!(archived.value, 42000);
 
         let addr = WordAddress::from_word(42000);
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&addr).unwrap();
-        let archived =
-            rkyv::access::<rkyv::Archived<WordAddress>, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(archived.value, 42000);
+        let bytes_a = rkyv::to_bytes::<rkyv::rancor::Error>(&addr).unwrap();
+        let archived_a =
+            rkyv::access::<rkyv::Archived<WordAddress>, rkyv::rancor::Error>(&bytes_a).unwrap();
+        assert_eq!(archived_a.value, 42000);
     }
 }

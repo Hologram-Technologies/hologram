@@ -76,7 +76,7 @@ pub fn compute_unit_address(arena: &TermArena, root: TermId) -> [u8; 32] {
             TermKind::Var(vid) => {
                 hasher.update(&vid.0.to_le_bytes());
             }
-            _ => {} // IntLit, BrailleLit, QuantumLit, Constant, GraphInput, FusedViewRef
+            _ => {} // IntLit, QuantumLit, Constant, GraphInput, FusedViewRef
         }
     }
 
@@ -94,10 +94,6 @@ fn canonical_bytes(kind: &TermKind) -> [u8; 16] {
         TermKind::IntLit(v) => {
             buf[0] = 0; // discriminant
             buf[1..9].copy_from_slice(&v.to_le_bytes());
-        }
-        TermKind::BrailleLit(v) => {
-            buf[0] = 1;
-            buf[1] = *v;
         }
         TermKind::QuantumLit { level, value } => {
             buf[0] = 2;

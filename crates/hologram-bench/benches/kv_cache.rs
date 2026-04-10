@@ -1,7 +1,7 @@
 //! KV cache benchmarks: write/read throughput and memory for f32 vs quantized.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hologram_exec::kv_cache::{KvBits, KvCacheConfig, KvCacheState};
+use hologram_fused_component::kv_cache::{KvBits, KvCacheConfig, KvCacheState};
 
 const N_LAYERS: u32 = 32;
 const N_KV_HEADS: u32 = 8;

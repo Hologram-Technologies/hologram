@@ -95,7 +95,7 @@ fn q3_ring_axioms() {
 fn cayley_dickson_chain_q0_q1_q2() {
     use hologram_core::q1::ring::WordRing;
     use hologram_core::ring::ByteRing;
-    use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+    use hologram_foundation::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
 
     let byte_ring = ByteRing;
     let word_ring = WordRing;
@@ -122,7 +122,7 @@ fn cayley_dickson_chain_q0_q1_q2() {
 #[test]
 fn cayley_dickson_chain_q2_q3() {
     use hologram_core::q2::ring::TripleRing;
-    use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+    use hologram_foundation::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
     let triple_ring = TripleRing;
     assert_eq!(triple_ring.cayley_dickson_source().algebra_dimension(), 4);
     assert_eq!(triple_ring.cayley_dickson_target().algebra_dimension(), 8);
@@ -133,12 +133,12 @@ fn ring_quantum_levels_match() {
     use hologram_core::q1::ring::WordRing;
     use hologram_core::q2::ring::TripleRing;
     use hologram_core::ring::ByteRing;
-    use uor_foundation::enums::QuantumLevel;
-    use uor_foundation::kernel::schema::Ring;
+    use hologram_foundation::schema::Ring;
+    use hologram_foundation::WittLevel;
 
-    assert_eq!(ByteRing.at_quantum_level(), QuantumLevel::Q0);
-    assert_eq!(WordRing.at_quantum_level(), QuantumLevel::Q1);
-    assert_eq!(TripleRing.at_quantum_level(), QuantumLevel::Q2);
+    assert_eq!(ByteRing.at_witt_level(), WittLevel::W8);
+    assert_eq!(WordRing.at_witt_level(), WittLevel::W16);
+    assert_eq!(TripleRing.at_witt_level(), WittLevel::W24);
 }
 
 // ── 3. Critical Identity ────────────────────────────────────────────────────

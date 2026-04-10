@@ -79,7 +79,7 @@ fn associator_norm_bounded() {
 #[test]
 fn octonion_ring_properties() {
     use hologram_core::q3::OctonionRing;
-    use uor_foundation::kernel::division::NormedDivisionAlgebra;
+    use hologram_foundation::division::NormedDivisionAlgebra;
 
     let r = OctonionRing;
     assert_eq!(r.algebra_dimension(), 8);
@@ -91,11 +91,11 @@ fn octonion_ring_properties() {
 #[test]
 fn octonion_ring_quantum_level() {
     use hologram_core::q3::OctonionRing;
-    use uor_foundation::enums::QuantumLevel;
-    use uor_foundation::kernel::schema::Ring;
+    use hologram_foundation::schema::Ring;
+    use hologram_foundation::WittLevel;
 
-    assert_eq!(OctonionRing.at_quantum_level(), QuantumLevel::Q3);
-    assert_eq!(OctonionRing.ring_quantum(), 32);
+    assert_eq!(OctonionRing.at_witt_level(), WittLevel::W32);
+    assert_eq!(OctonionRing.ring_witt_length(), 32);
     assert_eq!(OctonionRing.modulus(), 4_294_967_296);
 }
 
@@ -106,7 +106,7 @@ fn cayley_dickson_chain_complete() {
     use hologram_core::q1::ring::WordRing;
     use hologram_core::q2::ring::TripleRing;
     use hologram_core::ring::ByteRing;
-    use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+    use hologram_foundation::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
 
     // Q0(1) → Q1(2) → Q2(4) → Q3(8)
     assert_eq!(ByteRing.cayley_dickson_source().algebra_dimension(), 1);

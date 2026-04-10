@@ -46,7 +46,7 @@ lookup.
 | PD_2 (dispatch type safety) | CB_5 (fiber sufficiency) | dtype-gated dispatch |
 | PL_2 (lease disjointness) | SR_9 (ContextLease fiber disjointness) | `ParallelLevel` isolation |
 | PX_5 (infeasibility detection) | CB_5 + SR_5 (ContradictionBoundary) | `CompileError` taxonomy |
-| PM_5 (transaction atomicity) | PA_4 (base preservation = free rollback) | `KvExecutor::execute()` error contract |
+| PM_5 (transaction atomicity) | PA_4 (base preservation = free rollback) | `PrismModule::execute()` error contract |
 | PK_3 (parallelism bound) | MC_8 (work ≤ ⌈n/k⌉ for k leases) | Level fusion quality criterion |
 
 ---
@@ -58,8 +58,8 @@ deployment guarantees:
 
 | Space | Prism Definition | Hologram Crates |
 |-------|-----------------|-----------------|
-| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-core`, `hologram-graph`, `hologram-archive` |
-| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-async` |
+| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-core`, `hologram-ir`, `hologram-archive`, `hologram-shapes` |
+| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-fused-component`, `hologram-compiler`, `hologram-async` |
 | **user** | Application-configurable; exposed at system boundaries | `hologram-ffi`, `hologram-cli`, `hologram-bench` |
 
 **Rule**: kernel crates must not depend on bridge or user crates. Bridge crates must not depend on
@@ -70,15 +70,17 @@ user crates. This enforces the one-way information flow required by the Prism sp
 ## Crate Dependency Graph
 
 ```
+hologram-foundation (kernel — re-export shim for uor-foundation v0.2.0)
 hologram-core (kernel)
-    └── hologram-graph (kernel)
+    └── hologram-ir (kernel)
             └── hologram-archive (kernel)
-                    └── hologram-exec (bridge)
-                    │       └── hologram-compiler (bridge)
-                    │               └── hologram-async (bridge)
-                    │                       └── hologram-ffi (user)
-                    │                       └── hologram-cli (user)
-                    └── hologram-bench (user)
+hologram-shapes (kernel — Shape declarations + PrismModule trait)
+    └── hologram-fused-component (bridge — first PrismModule impl)
+            └── hologram-compiler (bridge — Compiler + SourceInput)
+                    └── hologram-async (bridge)
+                            └── hologram-ffi (user)
+                            └── hologram-cli (user)
+                            └── hologram-bench (user)
 ```
 
 ---
@@ -95,7 +97,7 @@ Each `Node` in the graph connects to its inputs via `InputSlot`, which names a s
 an `output_port`. The graph exposes `predecessors()` and `successors()` for traversal, plus
 `build_successor_index()` for O(1) reverse-edge lookups used by the fusion and scheduling passes.
 
-**Key types**: `Node`, `InputSlot`, `InputSource` (`hologram-graph/src/graph/node.rs`)
+**Key types**: `Node`, `InputSlot`, `InputSource` (`hologram-ir/src/graph/node.rs`)
 
 ### Stage 2: Schedule — Paths Become Parallel Levels
 
@@ -107,7 +109,7 @@ strictly earlier levels.
 Critical-path analysis (DP over the topological order) computes the longest dependency chain, giving
 the parallelism ratio `total_nodes / critical_path_length`.
 
-**Key types**: `ExecutionSchedule`, `ParallelLevel` (`hologram-graph/src/schedule/`)
+**Key types**: `ExecutionSchedule`, `ParallelLevel` (`hologram-ir/src/schedule/`)
 
 ### Stage 3: Tape Compilation — Paths Become Arena Indices
 
@@ -134,8 +136,8 @@ Each `TapeInstruction` pre-resolves all data routing:
 
 All graph edges are resolved to integer indices at this stage. No graph traversal occurs at runtime.
 
-**Key types**: `EnumTape`, `TapeInstruction`, `TapeKernel` (`hologram-exec/src/tape.rs`),
-`build_tape()` (`hologram-exec/src/tape_builder.rs`)
+**Key types**: `EnumTape`, `TapeInstruction`, `TapeKernel` (`hologram-fused-component/src/tape.rs`),
+`build_tape()` (`hologram-fused-component/src/tape_builder.rs`)
 
 ### Stage 4: Execution — Index-Based Data Routing
 
@@ -157,7 +159,7 @@ so the kernel writes into a recycled `Vec<u8>` and the arena reclaims the old on
 The executor also **prefetches ahead**: while instruction N executes, instruction N+1's input data
 and weight pages are prefetched into cache.
 
-**Key types**: `BufferArena`, `ArenaBuffer` (`hologram-exec/src/buffer/arena.rs`)
+**Key types**: `BufferArena`, `ArenaBuffer` (`hologram-fused-component/src/buffer/arena.rs`)
 
 ### Fusion — Path Shortening
 
@@ -166,7 +168,7 @@ that shorten the graph, eliminate intermediate buffers, and reduce dispatch over
 order guarantees that predecessors are processed before their successors, so both forward-looking
 (epilogue) and backward-walking (view) fusions compose correctly in one pass.
 
-**Key entry point**: `fusion::fuse()` (`hologram-graph/src/fusion/mod.rs`)
+**Key entry point**: `analysis::analyze()` (`hologram-ir/src/analysis/mod.rs`)
 
 #### 1. Constant Folding
 
@@ -176,7 +178,7 @@ a single `Const` node. Handles unary/binary `LutOp`, `PrimOp`, `FusedView`, and
 
 **Effect**: eliminates computation entirely and shrinks the graph.
 
-**Key file**: `hologram-graph/src/fusion/constant.rs`
+**Key file**: `hologram-ir/src/analysis/constant_folding.rs`
 
 #### 2. View Fusion (Q0 — byte domain)
 
@@ -190,17 +192,18 @@ Backward-walks each node to find chains of byte-domain unary ops and composes th
 
 **Effect**: replaces N-node chains with a single node; eliminates all intermediate buffers.
 
-**Key file**: `hologram-graph/src/fusion/view_fusion.rs`
+**Key file**: `hologram-ir/src/analysis/view_detection.rs`
 
-#### 3. Q1 View Fusion (16-bit domain)
+#### 3. W16 View Detection (16-bit domain)
 
-Mirrors Q0 view fusion for operations at the Q1 ring level (`RingPrimUnary`/`RingPrimBinary` with
-`RingLevel::Q1`). Produces a 128 KB `ElementWiseView16` table (heap-allocated via `Box` to avoid
-stack overflow). The same involution fast path applies at Q1.
+Mirrors W8 view detection for operations at the W16 ring level
+(`RingPrimUnary`/`RingPrimBinary` with `RingLevel::Q1`). Produces a 128 KB
+`ElementWiseView16` table (heap-allocated via `Box` to avoid stack overflow).
+The same involution fast path applies at W16.
 
-- **Ring-level safety**: never fuses across ring-level boundaries (Q0 → Q1 remains intact).
+- **Ring-level safety**: never fuses across ring-level boundaries (W8 → W16 remains intact).
 
-**Key file**: `hologram-graph/src/fusion/q1_view_fusion.rs`
+**Key file**: `hologram-ir/src/analysis/q1_view_detection.rs`
 
 #### 4. Epilogue Fusion (MatMul / Conv2d / Norm + Activation)
 
@@ -227,7 +230,7 @@ predecessor is removed.
 (512×512, 320 channels), one Conv2d + Activation fusion saves ~335 MB of memory bandwidth;
 across 23 ResNet blocks that totals ~7.7 GB saved per inference step.
 
-**Key file**: `hologram-graph/src/fusion/float_fusion.rs`
+**Key file**: `hologram-ir/src/analysis/float_fusion.rs`
 
 #### 5. Common Subexpression Elimination (CSE)
 
@@ -238,7 +241,7 @@ successors of a duplicate node are rewired to the canonical node.
   preserve semantics of non-commutative ops (`Sub`, `Div`).
 - **Purity check**: only deduplicates pure ops; skips `Input`, `Output`, `CallSubgraph`.
 
-**Key file**: `hologram-graph/src/fusion/cse.rs`
+**Key file**: `hologram-ir/src/analysis/cse.rs`
 
 #### Fusion → Tape mapping
 
@@ -247,8 +250,8 @@ maps to a specific kernel variant — `LutView`, `LutView16`, `InlineMatMulActiv
 `InlineConv2dBiasActivation`, `FusedRmsNormActivation`, etc. — so the executor sees fully
 resolved instructions with **zero pattern-detection overhead** at runtime.
 
-**Key types**: `TapeKernel` (`hologram-exec/src/tape.rs`), tape builder
-(`hologram-exec/src/tape_builder.rs`)
+**Key types**: `TapeKernel` (`hologram-fused-component/src/tape.rs`), tape builder
+(`hologram-fused-component/src/tape_builder.rs`)
 
 ### Prism Grounding
 
@@ -263,65 +266,103 @@ The tape pipeline realises several Prism identities:
 
 ---
 
-## Cascade Compilation Pipeline
+## Compilation Pipeline (v0.2.0 Structure-Finder)
 
-All compilation routes through the 7-stage cascade engine (`hologram-cascade`), implementing
-the UOR cascade pipeline from uor-foundation v0.1.3. The cascade is the sole compilation path;
-there is no separate imperative pipeline.
+Per Prism section 4 of the SCS framework, hologram's compiler is a *structure-finder*, not a
+constructor. The pipeline is a flat sequence of finder passes that produce a `.holo` archive — no
+state machine, no certificate store, no per-stage budget tracking. This shape is the result of the
+v0.2.0 conformance-first refactor that deleted the v0.1.4 7-stage cascade engine.
 
 ### Entry Points
 
 | Entry Point | Use Case |
 |-------------|----------|
-| `compile(graph)` | Raw Graph — wraps in CompileUnit via `unit_from_graph()` → cascade |
-| `CompilerBuilder::from_unit(unit, graph)` | Pre-built CompileUnit + pre-lowered Graph → cascade |
-| `CompilerBuilder::from_source(source, ...)` | UOR term language → parse → preflight → lower → cascade |
-| `compile_from_source(source, ...)` | Convenience wrapper for `from_source` |
+| `Compiler::compile(SourceInput::Graph(g))` | Raw Graph — wrapped via `unit_from_graph()` |
+| `Compiler::compile(SourceInput::Term { unit, graph })` | Pre-built CompileUnit + pre-lowered Graph |
+| `Compiler::compile(SourceInput::TermSource { source, level, ... })` | UOR term language → parse → preflight → lower → emit |
+| `compile(graph)` | Convenience wrapper for the Graph variant |
+| `compile_from_source(source, ...)` | Convenience wrapper for the TermSource variant |
 
-### 7 Cascade Stages
+### Finder Passes
 
-| Stage | Name | Ontology | Role |
-|-------|------|----------|------|
-| 0 | Init (Ω⁰) | `stage_initialization` | Certificate cache check; on hit, skip to Extract |
-| 1 | Declare (Ω¹) | `stage_declare` | Ring-level precision promotion via `promote_prim_ring_levels()` |
-| 2 | Factorize (Ω²) | `stage_factorize` | Fusion passes: constant folding, view fusion, CSE |
-| 3 | Resolve (Ω³) | `stage_resolve` | Build execution schedule via Kahn's algorithm |
-| 4 | Attest (Ω⁴) | `stage_attest` | Liveness analysis, workspace planning, QEDL boundaries, assertion verification |
-| 5 | Extract (Ω⁵) | `stage_extract` | Build execution tape from graph + schedule |
-| 6 | Converge (π) | `stage_convergence` | Emit `.holo` archive with LayerHeader + CompileUnitMeta sections |
+The pipeline runs the analyses in `hologram-ir::analysis` directly, plus archive emission:
 
-### Certificate Memoization
+| # | Pass | Purpose |
+|---|------|---------|
+| 1 | `precision::promote_prim_ring_levels` | Observable-guided ring-level inference (W8/W16/W24) |
+| 2 | `analysis::analyze` | Pattern detection: constant folding, view detection, float fusion, CSE |
+| 3 | `verify_assertions` | Compile-time assertion check on the unit's term arena |
+| 4 | `ExecutionSchedule::build` | Topological-level scheduling (Kahn's algorithm) |
+| 5 | `liveness::compute_liveness` + `workspace::plan_workspace` | Buffer lifetime intervals + slot reuse |
+| 6 | `qedl::insert_qedl_boundaries` | Domain-crossing detection + grounding validation |
+| 7 | `tape_builder::build_tape` | Build the execution tape |
+| 8 | Archive emission | `LayerHeader` + `CompileUnitMeta` + `ConformanceShapeSection` via `HoloWriter` |
 
-Keyed by `(unit_address: [u8; 32], quantum_level: RingLevel)`. On cache hit at Stage 0,
-stages 1-4 are skipped entirely. `unit_from_graph()` computes deterministic BLAKE3 hashes
-from graph structure (node ops + edges), enabling memoization across identical graphs.
-The `CertificateStore` supports dynamic resizing (doubles at 75% load) and disk persistence.
+### Conformance Shape Declaration
+
+Every archive emitted by `hologram-compiler` carries a `ConformanceShapeSection`
+(`SECTION_CONFORMANCE_SHAPE`, kind 6) declaring which `Shape` the compiled tape conforms to. The
+loading `PrismModule` validates this declaration against its expected shape before any execution
+proceeds. This is the v0.2.0 conformance-first contract: an archive is not just a blob of compiled
+bytes, it is a value in `Val(F)` for a specific declared `F`.
 
 ### Archive Sections
 
 Compiled archives include:
 - `SECTION_LAYER_HEADER` (kind 2): Layer descriptors and execution schedule
-- `SECTION_COMPILE_UNIT_META` (kind 5): Unit address, quantum level, budget, term/binding/assertion counts
+- `SECTION_COMPILE_UNIT_META` (kind 5): Unit address, witt length, budget, term/binding/assertion counts
+- `SECTION_CONFORMANCE_SHAPE` (kind 6): Shape ID + IRI + primitive count + Witt length range
 
-**Key types**: `CascadeState`, `CascadeStage`, `CascadeResult` (`hologram-cascade/src/stage.rs`),
-`run_cascade_with_graph()` (`hologram-cascade/src/engine.rs`),
-`CompilerBuilder` (`hologram-compiler/src/compiler/mod.rs`)
+**Key types**: `Compiler`, `SourceInput`, `PrismModuleRegistry`
+(`hologram-compiler/src/compiler/mod.rs`),
+`compile_via_finder_pipeline()` (`hologram-compiler/src/compiler/mod.rs`),
+`ConformanceShapeSection` (`hologram-archive/src/section/conformance_shape.rs`)
 
 ---
 
-## Quantum Level Strategy
+## Witt Level Strategy
 
-Hologram implements UOR's quantum level hierarchy for ring-arithmetic acceleration:
+Hologram implements uor-foundation v0.2.0's Witt level hierarchy for ring-arithmetic acceleration.
+Witt levels are named by bit width (`W8`, `W16`, `W24`, `W32`, …) rather than the v0.1.4 quantum
+indices (`Q0`, `Q1`, `Q2`, `Q3`).
 
 | Level | Bits | Ring | Strategy |
 |-------|------|------|----------|
-| Q0 | 8 | Z/256Z | Full LUT (256 B per table) |
-| Q1 | 16 | Z/65536Z | Full LUT (128 KB per table) |
-| Q2 | 24 | Z/16777216Z | Hierarchical segmentation (~50 MB) |
-| Q3 | 32 | Z/4294967296Z | Algorithmic only (17 GB full LUT infeasible) |
-| Q4+ | 40+ | Z/2^nZ | Algorithmic with optional LRU cache |
+| W8 | 8 | Z/256Z | Full LUT (256 B per table) |
+| W16 | 16 | Z/65536Z | Full LUT (128 KB per table) |
+| W24 | 24 | Z/16777216Z | Hierarchical segmentation (~50 MB) |
+| W32 | 32 | Z/4294967296Z | Algorithmic only (17 GB full LUT infeasible) |
+| W40+ | 40+ | Z/2^nZ | Algorithmic with optional LRU cache |
 
-Q0 and Q1 are fully realised in `hologram-core`. Q2+ are algorithmic fallbacks.
+W8 and W16 are fully realised in `hologram-core`. W24+ are algorithmic fallbacks.
+
+### Term-language source syntax
+
+The UOR term-language DSL — the surface that `compile_from_source(...)` and
+`Compiler::compile(SourceInput::TermSource { ... })` parse — accepts **both** spellings for ring-level
+annotations:
+
+| Preferred (v0.2.0) | Legacy (v0.1.4) | Maps to |
+|--------------------|-----------------|---------|
+| `W8`  | `Q0` | `RingLevel::Q0` (8-bit ring) |
+| `W16` | `Q1` | `RingLevel::Q1` (16-bit ring) |
+| `W24` | `Q2` | `RingLevel::Q2` (24-bit ring) |
+| `W32` | `Q3` | `RingLevel::Q3` (32-bit ring) |
+
+Both forms produce **byte-identical archives**. New scripts should prefer the `W*` spelling because it
+matches the rest of the type system (`WittLevel::W8`, etc.); the `Q*` spelling is retained as a
+compatibility shim for existing source files. There is no plan to deprecate `Q*` — both spellings
+parse to the same `Token::*` variants and route through the same `parse_witt_level()` arm in
+`hologram-compiler/src/term_parser/parser.rs`.
+
+Examples:
+
+```text
+let x : W8 = 42 ; neg(x)         # preferred
+let x : Q0 = 42 ; neg(x)         # legacy, byte-identical
+1000@W16                          # preferred Witt-level literal
+1000@Q1                           # legacy, byte-identical
+```
 
 ---
 

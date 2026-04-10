@@ -112,11 +112,6 @@ void hologram_graph_free(HoloGraph *graph);
 HoloCompilationOutput *hologram_compile(HoloGraph *graph);
 
 /**
- * Compile a graph with fusion disabled. Consumes the graph handle.
- */
-HoloCompilationOutput *hologram_compile_no_fuse(HoloGraph *graph);
-
-/**
  * Get pointer to the compiled archive bytes.
  */
 const uint8_t *hologram_compilation_archive_ptr(const HoloCompilationOutput *output);

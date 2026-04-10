@@ -7,7 +7,7 @@ description = ".holo archive format with execution entrypoints, rkyv zero-copy, 
 
 [dependencies]
 hologram-core = { workspace = true }
-hologram-graph = { workspace = true }
+hologram-ir = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 blake3 = { workspace = true }

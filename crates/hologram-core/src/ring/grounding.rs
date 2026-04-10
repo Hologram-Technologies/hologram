@@ -7,7 +7,7 @@
 //! All groundings are O(1), zero-allocation, `#[inline]`.
 
 use crate::op::RingLevel;
-use uor_foundation::enforcement::{GroundedCoord, Grounding};
+use hologram_foundation::enforcement::{GroundedCoord, Grounding};
 
 /// Q0 grounding: external byte → Z/256Z via GroundedCoord::q0.
 pub struct ByteGrounding;

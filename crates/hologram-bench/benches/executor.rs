@@ -3,16 +3,19 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hologram_archive::HoloWriter;
 use hologram_core::op::{FloatOp, LutOp, PrimOp};
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::{build_schedule, GraphInputs};
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::fusion;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::{build_schedule, GraphInputs};
+use hologram_ir::analysis;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
 fn make_tape_and_plan(
-    g: &mut hologram_graph::Graph,
-) -> (hologram_archive::LoadedPlan, hologram_exec::tape::EnumTape) {
-    let _ = fusion::fuse(g);
+    g: &mut hologram_ir::Graph,
+) -> (
+    hologram_archive::LoadedPlan,
+    hologram_fused_component::tape::EnumTape,
+) {
+    let _ = analysis::analyze(g);
     let archive = HoloWriter::new().set_graph(g).build().unwrap();
     let plan = hologram_archive::load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -128,7 +131,7 @@ fn bench_schedule_build(c: &mut Criterion) {
         .node_with_inputs(GraphOp::Output, &[3])
         .output("y", 4)
         .build();
-    let _ = fusion::fuse(&mut g);
+    let _ = analysis::analyze(&mut g);
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = hologram_archive::load_from_bytes(&archive).unwrap();
 
@@ -186,7 +189,7 @@ fn bench_enum_tape_linear(c: &mut Criterion) {
         .node_with_inputs(GraphOp::Output, &[3])
         .output("y", 4)
         .build();
-    let _ = fusion::fuse(&mut g);
+    let _ = analysis::analyze(&mut g);
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = hologram_archive::load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -210,7 +213,7 @@ fn bench_tape_relu_64kb(c: &mut Criterion) {
         .node_with_inputs(GraphOp::Output, &[1])
         .output("y", 2)
         .build();
-    let _ = fusion::fuse(&mut g);
+    let _ = analysis::analyze(&mut g);
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = hologram_archive::load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -227,7 +230,7 @@ fn bench_tape_relu_64kb(c: &mut Criterion) {
 }
 
 fn bench_transformer_layer(c: &mut Criterion) {
-    use hologram_graph::constant::ConstantData;
+    use hologram_ir::constant::ConstantData;
 
     let hidden = 2048usize;
     let ffn = 5632usize;

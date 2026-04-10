@@ -1,84 +1,100 @@
-//! Address: Braille-encoded address for a ring element.
+//! Address: content-addressed identifier for a ring element.
 //!
-//! Each Braille character U+2800..U+283F encodes 6 bits.
-//! UTF-8 encoding: [0xE2, 0xA0|hi, 0x80|lo] per glyph.
+//! Per uor-foundation v0.2.0 Amendment 43:
+//! - `canonical_bytes` = hex(`header(k) || le_bytes(value, k+1)`)
+//! - `digest` = hex(BLAKE3(`canonical_raw`)) = 64 hex chars
+//! - `digest_algorithm` = `"blake3"`
+//!
+//! In v0.2.0 the foundation renamed the `kernel::address::Address` trait to
+//! `kernel::address::Element`. The hologram type `Address<W>` keeps its
+//! local name, but its trait impl points at v0.2.0's `Element`.
 
-use crate::level::QuantumLevel;
+use crate::level::WittLevelMarker;
 use crate::word::RingWord;
 use crate::PrismPrimitives;
 
-/// Braille-encoded address for a ring element at quantum level Q.
-pub struct Address<Q: QuantumLevel> {
-    glyph_buf: [u8; 72], // max 24 Braille chars × 3 bytes = 72
-    glyph_len: u8,
-    bits: u32,
-    _phantom: core::marker::PhantomData<Q>,
+/// Static hex table for fast nibble→char conversion.
+const HEX: [u8; 16] = *b"0123456789abcdef";
+
+/// Encode raw bytes as lowercase hex into a fixed-size buffer.
+fn hex_encode(raw: &[u8], out: &mut [u8]) -> usize {
+    for (i, &b) in raw.iter().enumerate() {
+        out[i * 2] = HEX[(b >> 4) as usize];
+        out[i * 2 + 1] = HEX[(b & 0x0F) as usize];
+    }
+    raw.len() * 2
 }
 
-impl<Q: QuantumLevel> Address<Q> {
-    /// Create an address from a ring word value.
-    pub fn from_word(value: Q::Word) -> Self {
-        let bits = Q::BITS;
-        let num_glyphs = bits.div_ceil(6) as usize;
-        let mut glyph_buf = [0u8; 72];
-        let mut glyph_len = 0u8;
+/// Content-addressed identifier for a ring element at Witt level W.
+///
+/// Stores the Amendment 43 canonical encoding as hex and its BLAKE3 digest.
+/// Max canonical_raw = 17 bytes (1 header + 16 for W128) → 34 hex chars.
+pub struct Address<W: WittLevelMarker> {
+    /// hex(header(k) || le_bytes(value, k+1)) — up to 34 hex chars.
+    canonical_hex: [u8; 34],
+    /// Number of valid hex chars in canonical_hex.
+    canonical_len: u8,
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
+    digest_hex: [u8; 64],
+    bits: u32,
+    _phantom: core::marker::PhantomData<W>,
+}
 
+impl<W: WittLevelMarker> Address<W> {
+    /// Create a content-addressed identifier from a ring word value.
+    ///
+    /// Computes Amendment 43 canonical bytes and BLAKE3 digest at construction.
+    pub fn from_word(value: W::Word) -> Self {
+        let bits = W::BITS;
+        let byte_width = (bits / 8) as usize;
+        let header = (byte_width - 1) as u8;
+
+        // Build canonical_raw = header || le_bytes(value, byte_width)
+        // Max 17 bytes (1 header + 16 for W128)
+        let mut canonical_raw = [0u8; 17];
+        canonical_raw[0] = header;
         let val = value.to_u64();
-        for g in 0..num_glyphs {
-            let shift = if bits <= 64 {
-                let total_bits = num_glyphs * 6;
-                total_bits.saturating_sub((g + 1) * 6)
-            } else {
-                0
-            };
-            let six_bits = ((val >> shift) & 0x3F) as u8;
-            // Braille U+2800 + six_bits → UTF-8: E2 A0 (80+six_bits)
-            let code = 0x2800 + six_bits as u32;
-            let b1 = 0xE0 | ((code >> 12) & 0x0F) as u8;
-            let b2 = 0x80 | ((code >> 6) & 0x3F) as u8;
-            let b3 = 0x80 | (code & 0x3F) as u8;
-            let offset = g * 3;
-            if offset + 3 <= 72 {
-                glyph_buf[offset] = b1;
-                glyph_buf[offset + 1] = b2;
-                glyph_buf[offset + 2] = b3;
-                glyph_len = (offset + 3) as u8;
-            }
-        }
+        let le = val.to_le_bytes();
+        let copy_len = byte_width.min(8);
+        canonical_raw[1..1 + copy_len].copy_from_slice(&le[..copy_len]);
+        let raw_len = 1 + byte_width;
+
+        let mut canonical_hex = [0u8; 34];
+        let canonical_len = hex_encode(&canonical_raw[..raw_len], &mut canonical_hex);
+
+        let hash = blake3::hash(&canonical_raw[..raw_len]);
+        let mut digest_hex = [0u8; 64];
+        hex_encode(hash.as_bytes(), &mut digest_hex);
 
         Self {
-            glyph_buf,
-            glyph_len,
+            canonical_hex,
+            canonical_len: canonical_len as u8,
+            digest_hex,
             bits,
             _phantom: core::marker::PhantomData,
         }
     }
-
-    /// The Braille glyph string.
-    pub fn as_str(&self) -> &str {
-        // SAFETY: we only write valid UTF-8 Braille sequences
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf[..self.glyph_len as usize]) }
-    }
 }
 
-impl<Q: QuantumLevel> uor_foundation::kernel::address::Address<PrismPrimitives> for Address<Q> {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl<W: WittLevelMarker> hologram_foundation::address::Element<PrismPrimitives> for Address<W> {
+    /// Byte length of the canonical encoding (1 + byte_width raw bytes).
     fn length(&self) -> u64 {
-        self.bits.div_ceil(6) as u64
+        (1 + self.bits / 8) as u64
     }
 
     fn addresses(&self) -> &str {
-        ""
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
-        self.as_str()
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
-    fn quantum(&self) -> u64 {
+    /// v0.2.0 renamed `quantum()` to `witt_length()`.
+    fn witt_length(&self) -> u64 {
         self.bits as u64
     }
 
@@ -86,7 +102,11 @@ impl<Q: QuantumLevel> uor_foundation::kernel::address::Address<PrismPrimitives> 
         "blake3"
     }
 
+    /// Amendment 43 canonical encoding as hex.
     fn canonical_bytes(&self) -> &str {
-        self.as_str()
+        // SAFETY: canonical_hex is valid ASCII hex.
+        unsafe {
+            core::str::from_utf8_unchecked(&self.canonical_hex[..self.canonical_len as usize])
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! Encodings exist only at graph input/output boundaries.
 //! Once in the ring, all computation is ring-native.
 
-use crate::level::QuantumLevel;
+use crate::level::WittLevelMarker;
 use crate::word::RingWord;
 
 /// Trait for encoding continuous values into ring elements and back.
@@ -18,15 +18,15 @@ pub trait Encoding<W: RingWord> {
 
 /// Unsigned encoding: maps [0.0, 1.0] → [0, MAX].
 #[derive(Debug, Clone, Copy, Default)]
-pub struct UnsignedEncoding<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+pub struct UnsignedEncoding<Q: WittLevelMarker>(core::marker::PhantomData<Q>);
 
-impl<Q: QuantumLevel> UnsignedEncoding<Q> {
+impl<Q: WittLevelMarker> UnsignedEncoding<Q> {
     pub const fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Q: QuantumLevel> Encoding<Q::Word> for UnsignedEncoding<Q> {
+impl<Q: WittLevelMarker> Encoding<Q::Word> for UnsignedEncoding<Q> {
     #[inline]
     fn embed(&self, value: f64) -> Q::Word {
         let clamped = value.clamp(0.0, 1.0);
@@ -48,15 +48,15 @@ impl<Q: QuantumLevel> Encoding<Q::Word> for UnsignedEncoding<Q> {
 
 /// Signed encoding: maps [-1.0, 1.0] → [0, MAX], zero at midpoint.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SignedEncoding<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+pub struct SignedEncoding<Q: WittLevelMarker>(core::marker::PhantomData<Q>);
 
-impl<Q: QuantumLevel> SignedEncoding<Q> {
+impl<Q: WittLevelMarker> SignedEncoding<Q> {
     pub const fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Q: QuantumLevel> Encoding<Q::Word> for SignedEncoding<Q> {
+impl<Q: WittLevelMarker> Encoding<Q::Word> for SignedEncoding<Q> {
     #[inline]
     fn embed(&self, value: f64) -> Q::Word {
         let clamped = value.clamp(-1.0, 1.0);
@@ -78,15 +78,15 @@ impl<Q: QuantumLevel> Encoding<Q::Word> for SignedEncoding<Q> {
 
 /// Angle encoding: maps [0.0, 2π) → [0, MAX].
 #[derive(Debug, Clone, Copy, Default)]
-pub struct AngleEncoding<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+pub struct AngleEncoding<Q: WittLevelMarker>(core::marker::PhantomData<Q>);
 
-impl<Q: QuantumLevel> AngleEncoding<Q> {
+impl<Q: WittLevelMarker> AngleEncoding<Q> {
     pub const fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Q: QuantumLevel> Encoding<Q::Word> for AngleEncoding<Q> {
+impl<Q: WittLevelMarker> Encoding<Q::Word> for AngleEncoding<Q> {
     #[inline]
     fn embed(&self, value: f64) -> Q::Word {
         let two_pi = 2.0 * core::f64::consts::PI;
@@ -111,15 +111,15 @@ impl<Q: QuantumLevel> Encoding<Q::Word> for AngleEncoding<Q> {
 
 /// Raw encoding: identity mapping (truncates to word width).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RawEncoding<Q: QuantumLevel>(core::marker::PhantomData<Q>);
+pub struct RawEncoding<Q: WittLevelMarker>(core::marker::PhantomData<Q>);
 
-impl<Q: QuantumLevel> RawEncoding<Q> {
+impl<Q: WittLevelMarker> RawEncoding<Q> {
     pub const fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Q: QuantumLevel> Encoding<Q::Word> for RawEncoding<Q> {
+impl<Q: WittLevelMarker> Encoding<Q::Word> for RawEncoding<Q> {
     #[inline]
     fn embed(&self, value: f64) -> Q::Word {
         let clamped = value.clamp(0.0, Q::Word::MAX.to_u64() as f64);

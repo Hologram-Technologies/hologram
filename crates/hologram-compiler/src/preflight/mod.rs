@@ -1,9 +1,11 @@
 //! Preflight pipeline for CompileUnit admission.
 //!
-//! Implements the cascade admission sequence from uor-foundation v0.1.4:
-//! 1. Shape validation (`conformance:CompileUnitShape`)
-//! 2. Budget solvency check (`cascade:BudgetSolvencyCheck`, preflightOrder 0, CS_6)
-//! 3. Unit address computation (`op:CS_7`)
+//! Implements the v0.2.0 conformance-shape admission sequence:
+//! 1. Shape validation (the v0.2.0 `CompileUnitShape` PropertyConstraints).
+//! 2. Enforcement-level validation (declarative property constraints).
+//! 3. Budget solvency: declared budget ≥ Landauer minimum.
+//! 4. Type constraint validation.
+//! 5. Unit address computation (BLAKE3 of the rooted term graph).
 
 pub mod budget_solvency;
 pub mod enforcement_validate;
@@ -23,10 +25,12 @@ use hologram_core::term::{HoloCompileUnit, PreflightStatus};
 pub enum PreflightError {
     /// Shape validation failed.
     Shape(ShapeError),
-    /// CS_6: thermodynamic budget is below the Landauer minimum.
+    /// Thermodynamic budget is below the Landauer minimum
+    /// `bitsWidth(W_n) × ln(2)`.
     BudgetInsufficient { declared: f64, minimum: f64 },
-    /// Enforcement-level validation failed (v0.1.4 builder).
-    EnforcementViolation(uor_foundation::enforcement::ShapeViolation),
+    /// Enforcement-level validation failed against a declarative property
+    /// constraint.
+    EnforcementViolation(hologram_foundation::enforcement::ShapeViolation),
 }
 
 impl core::fmt::Display for PreflightError {
@@ -57,10 +61,12 @@ impl From<ShapeError> for PreflightError {
 
 /// Run the full preflight pipeline on a CompileUnit.
 ///
-/// Sequence (per uor-foundation v0.1.4 cascade admission):
+/// Sequence (v0.2.0 conformance-shape admission):
 /// 1. Shape validation (`CompileUnitShape` — 4 PropertyConstraints)
-/// 2. Budget solvency check (CS_6, preflightOrder 0)
-/// 3. Unit address computation (CS_7)
+/// 2. Enforcement-level validation (declarative property constraints)
+/// 3. Budget solvency check (declared budget ≥ Landauer minimum)
+/// 4. Type constraint validation
+/// 5. Unit address computation (BLAKE3 of the rooted term graph)
 ///
 /// On success, the unit's `preflight` status and `unit_address` fields are updated.
 /// On failure, returns the first error encountered (fail-fast).
@@ -68,7 +74,7 @@ pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
     // Step 0: Shape validation (structural precondition).
     validate_shape(unit)?;
 
-    // Step 0b: Enforcement-level validation (v0.1.4 declarative preflight).
+    // Step 0b: Enforcement-level validation (declarative property checks).
     match enforcement_validate::enforcement_validate(unit) {
         Ok(()) => unit
             .preflight
@@ -80,18 +86,18 @@ pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
         }
     }
 
-    // Step 1: Budget solvency (preflightOrder 0, identity CS_6).
+    // Step 1: Budget solvency (declared budget ≥ Landauer minimum).
     if check_budget_solvency(unit) {
         unit.preflight.mark_passed(PreflightStatus::BUDGET_SOLVENCY);
     } else {
         unit.preflight.mark_failed(PreflightStatus::BUDGET_SOLVENCY);
         return Err(PreflightError::BudgetInsufficient {
             declared: unit.thermodynamic_budget,
-            minimum: minimum_budget(unit.quantum_level),
+            minimum: minimum_budget(unit.witt_level),
         });
     }
 
-    // Step 2: Type constraint validation (preflightOrder 2).
+    // Step 2: Type constraint validation.
     match check_type_constraints(unit) {
         Ok(()) => unit
             .preflight
@@ -103,7 +109,7 @@ pub fn run_preflight(unit: &mut HoloCompileUnit) -> Result<(), PreflightError> {
         }
     }
 
-    // Step 3: Unit address computation (identity CS_7).
+    // Step 3: Unit address computation (BLAKE3 of the rooted term graph).
     unit.unit_address = compute_unit_address(&unit.arena, unit.root_term);
     unit.address = hologram_core::term::HoloAddress::from_hash(unit.unit_address);
 
@@ -115,8 +121,8 @@ mod tests {
     use super::*;
     use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
-    use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use hologram_foundation::enums::VerificationDomain;
+    use hologram_foundation::WittLevel;
 
     #[test]
     fn preflight_passes_valid_unit() {
@@ -131,7 +137,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -148,7 +154,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             5.0, // below Q0 minimum of 5.545
             &[VerificationDomain::Algebraic],
         );
@@ -166,7 +172,7 @@ mod tests {
     fn preflight_rejects_missing_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        let mut unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
+        let mut unit = HoloCompileUnit::new(arena, root, WittLevel::W8, 6.0, &[]);
 
         let result = run_preflight(&mut unit);
         assert!(result.is_err());
@@ -183,7 +189,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -203,7 +209,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -214,7 +220,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             10.0, // different budget — should not affect address
             &[
                 VerificationDomain::Algebraic,
@@ -236,7 +242,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -247,7 +253,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );

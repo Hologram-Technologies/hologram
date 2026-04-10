@@ -1,10 +1,10 @@
-//! Q7 (u64) activation conformance tests.
+//! W64 (u64) activation conformance tests.
 //!
 //! Verifies all 21 activations work correctly at the maximum practical
 //! quantum level (64-bit ring Z/2^64Z).
 
 use hologram_ring::activation::ActivationOp;
-use hologram_ring::{PrimOp, Q7};
+use hologram_ring::{PrimOp, W64};
 
 const ALL_ACTIVATIONS: &[ActivationOp] = &[
     ActivationOp::Relu,
@@ -48,7 +48,7 @@ fn all_21_activations_no_panic_q7() {
     ];
     for &act in ALL_ACTIVATIONS {
         for &x in &test_vals {
-            let _ = act.apply::<Q7>(x); // must not panic
+            let _ = act.apply::<W64>(x); // must not panic
         }
     }
 }
@@ -56,28 +56,28 @@ fn all_21_activations_no_panic_q7() {
 #[test]
 fn simple_activations_q7_known_answers() {
     // Square(5) = 25
-    assert_eq!(ActivationOp::Square.apply::<Q7>(5u64), 25);
+    assert_eq!(ActivationOp::Square.apply::<W64>(5u64), 25);
     // Cube(3) = 27
-    assert_eq!(ActivationOp::Cube.apply::<Q7>(3u64), 27);
+    assert_eq!(ActivationOp::Cube.apply::<W64>(3u64), 27);
     // Relu(42) = 42 (positive, below half)
-    assert_eq!(ActivationOp::Relu.apply::<Q7>(42u64), 42);
+    assert_eq!(ActivationOp::Relu.apply::<W64>(42u64), 42);
     // Relu(negative) = 0
-    assert_eq!(ActivationOp::Relu.apply::<Q7>(u64::MAX), 0);
+    assert_eq!(ActivationOp::Relu.apply::<W64>(u64::MAX), 0);
     // Abs(42) = 42
-    assert_eq!(ActivationOp::Abs.apply::<Q7>(42u64), 42);
+    assert_eq!(ActivationOp::Abs.apply::<W64>(42u64), 42);
 }
 
 #[test]
 fn sqrt_q7_known_answers() {
     // isqrt(0) = 0, isqrt(1) = 1
-    assert_eq!(ActivationOp::Sqrt.apply::<Q7>(0u64), 0);
-    assert_eq!(ActivationOp::Sqrt.apply::<Q7>(1u64), 1);
+    assert_eq!(ActivationOp::Sqrt.apply::<W64>(0u64), 0);
+    assert_eq!(ActivationOp::Sqrt.apply::<W64>(1u64), 1);
     // isqrt(4) = 2, isqrt(9) = 3, isqrt(100) = 10
-    assert_eq!(ActivationOp::Sqrt.apply::<Q7>(4u64), 2);
-    assert_eq!(ActivationOp::Sqrt.apply::<Q7>(9u64), 3);
-    assert_eq!(ActivationOp::Sqrt.apply::<Q7>(100u64), 10);
+    assert_eq!(ActivationOp::Sqrt.apply::<W64>(4u64), 2);
+    assert_eq!(ActivationOp::Sqrt.apply::<W64>(9u64), 3);
+    assert_eq!(ActivationOp::Sqrt.apply::<W64>(100u64), 10);
     // isqrt(u32::MAX) ~ 65535
-    let result = ActivationOp::Sqrt.apply::<Q7>(u32::MAX as u64);
+    let result = ActivationOp::Sqrt.apply::<W64>(u32::MAX as u64);
     assert!(
         (result as i64 - 65535).abs() <= 1,
         "isqrt(u32::MAX) = {result}, expected ~65535"
@@ -86,13 +86,13 @@ fn sqrt_q7_known_answers() {
 
 #[test]
 fn sigmoid_monotonic_q7() {
-    let mut prev = ActivationOp::Sigmoid.apply::<Q7>(0u64);
+    let mut prev = ActivationOp::Sigmoid.apply::<W64>(0u64);
     for i in 1..=100u64 {
         let x = u64::MAX / 100 * i;
-        let cur = ActivationOp::Sigmoid.apply::<Q7>(x);
+        let cur = ActivationOp::Sigmoid.apply::<W64>(x);
         assert!(
             cur >= prev,
-            "sigmoid Q7 not monotonic at step {i}: {prev} -> {cur}"
+            "sigmoid W64 not monotonic at step {i}: {prev} -> {cur}"
         );
         prev = cur;
     }
@@ -104,7 +104,7 @@ fn critical_identity_q7() {
     for &x in vals {
         let neg_bnot = PrimOp::Neg.apply_unary(PrimOp::Bnot.apply_unary(x));
         let succ = PrimOp::Succ.apply_unary(x);
-        assert_eq!(neg_bnot, succ, "critical identity at Q7 x={x:#x}");
+        assert_eq!(neg_bnot, succ, "critical identity at W64 x={x:#x}");
     }
 }
 
@@ -115,11 +115,11 @@ fn non_identity_q7() {
     for &act in ALL_ACTIVATIONS {
         let mut found = false;
         for &x in &test_vals {
-            if act.apply::<Q7>(x) != x {
+            if act.apply::<W64>(x) != x {
                 found = true;
                 break;
             }
         }
-        assert!(found, "{act:?} is identity at Q7 — must be ring-native");
+        assert!(found, "{act:?} is identity at W64 — must be ring-native");
     }
 }

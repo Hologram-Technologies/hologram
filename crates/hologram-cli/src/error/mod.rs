@@ -10,7 +10,7 @@ pub enum CliError {
     /// Compilation error.
     Compile(hologram_compiler::CompileError),
     /// Execution error.
-    Exec(hologram_exec::ExecError),
+    Exec(hologram_fused_component::ExecError),
     /// Archive error.
     Archive(hologram_archive::ArchiveError),
     /// Invalid CLI input format.
@@ -58,8 +58,8 @@ impl From<hologram_compiler::CompileError> for CliError {
     }
 }
 
-impl From<hologram_exec::ExecError> for CliError {
-    fn from(e: hologram_exec::ExecError) -> Self {
+impl From<hologram_fused_component::ExecError> for CliError {
+    fn from(e: hologram_fused_component::ExecError) -> Self {
         Self::Exec(e)
     }
 }

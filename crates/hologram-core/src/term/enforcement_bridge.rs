@@ -1,9 +1,10 @@
-//! Bridge between `uor_foundation::enforcement::Term` (PRISM surface AST)
+//! Bridge between `hologram_foundation::enforcement::Term` (Prism surface AST)
 //! and hologram's `TermKind` (lowered IR).
 //!
-//! Per PRISM Section 1, `enforcement::Term` is the source language AST produced
-//! by the `uor!` macro at compile time. Hologram's `TermKind` is the lowered IR
-//! consumed by the cascade pipeline. This module provides:
+//! Per Prism Section 1, `enforcement::Term` is the source language AST
+//! produced by the `uor!` macro at compile time. Hologram's `TermKind` is
+//! the lowered IR consumed by the finder-pipeline compiler. This module
+//! provides:
 //!
 //! - **Forward bridge**: `enforcement::Term` -> `TermKind` via [`lower_enforcement_node`]
 //! - **Reverse bridge**: `TermKind` -> `enforcement::Term` via [`to_enforcement_term`]
@@ -16,8 +17,9 @@ extern crate alloc;
 use crate::op::{PrimOp, RingLevel};
 use crate::term::{Assertion, Binding, TermArena, TermId, TermKind, TypeId, VarId};
 
-use uor_foundation::enforcement::{Term as EnfTerm, TermArena as EnfArena, TermList};
-use uor_foundation::{PrimitiveOp, QuantumLevel};
+use hologram_foundation::enforcement::{Term as EnfTerm, TermArena as EnfArena, TermList};
+use hologram_foundation::enums::PrimitiveOp;
+use hologram_foundation::WittLevel;
 
 /// Error during enforcement term lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +64,8 @@ pub fn lower_enforcement_node<const CAP: usize>(
     let term = src.get(index).ok_or(LowerError::MissingNode(index))?;
     let kind = match term {
         EnfTerm::Literal { value, level } => {
-            let rl = RingLevel::from_quantum(*level)
-                .ok_or(LowerError::UnsupportedLevel(level.index()))?;
+            let rl = RingLevel::from_witt_level(*level)
+                .ok_or(LowerError::UnsupportedLevel(level.witt_length()))?;
             TermKind::QuantumLit {
                 level: rl,
                 value: *value as u32,
@@ -97,8 +99,8 @@ pub fn lower_enforcement_node<const CAP: usize>(
             operand_index,
             target,
         } => {
-            let rl = RingLevel::from_quantum(*target)
-                .ok_or(LowerError::UnsupportedLevel(target.index()))?;
+            let rl = RingLevel::from_witt_level(*target)
+                .ok_or(LowerError::UnsupportedLevel(target.witt_length()))?;
             let arg = resolve_mapped(*operand_index, node_map)?;
             TermKind::RingUnaryApp {
                 op: PrimOp::Succ,
@@ -111,8 +113,8 @@ pub fn lower_enforcement_node<const CAP: usize>(
             operand_index,
             target,
         } => {
-            let rl = RingLevel::from_quantum(*target)
-                .ok_or(LowerError::UnsupportedLevel(target.index()))?;
+            let rl = RingLevel::from_witt_level(*target)
+                .ok_or(LowerError::UnsupportedLevel(target.witt_length()))?;
             let arg = resolve_mapped(*operand_index, node_map)?;
             TermKind::RingUnaryApp {
                 op: PrimOp::Pred,
@@ -274,15 +276,11 @@ pub fn convert_enforcement_arena<const CAP: usize>(
 ///
 /// O(1) per node. Zero allocation.
 #[inline]
-pub fn to_enforcement_term(kind: &TermKind, level: QuantumLevel) -> Option<EnfTerm> {
+pub fn to_enforcement_term(kind: &TermKind, level: WittLevel) -> Option<EnfTerm> {
     match *kind {
         TermKind::IntLit(v) => Some(EnfTerm::Literal {
             value: v as u64,
             level,
-        }),
-        TermKind::BrailleLit(v) => Some(EnfTerm::Literal {
-            value: v as u64,
-            level: QuantumLevel::Q0,
         }),
         TermKind::QuantumLit {
             level: rl,
@@ -343,10 +341,7 @@ pub fn to_enforcement_term(kind: &TermKind, level: QuantumLevel) -> Option<EnfTe
 /// `Term::Literal { value: 0, level }` as inert placeholders.
 ///
 /// O(n) where n = arena.len(). Allocates one `Vec<Term>`.
-pub fn arena_to_enforcement_terms(
-    arena: &TermArena,
-    level: QuantumLevel,
-) -> alloc::vec::Vec<EnfTerm> {
+pub fn arena_to_enforcement_terms(arena: &TermArena, level: WittLevel) -> alloc::vec::Vec<EnfTerm> {
     let mut terms = alloc::vec::Vec::with_capacity(arena.len() as usize);
     for i in 0..arena.len() {
         let node = arena.get(TermId(i));
@@ -364,7 +359,7 @@ pub fn arena_to_enforcement_terms(
 /// Requires `node_map` from a prior arena conversion.
 #[inline]
 pub fn convert_binding(
-    enf: &uor_foundation::enforcement::Binding,
+    enf: &hologram_foundation::enforcement::Binding,
     node_map: &[Option<TermId>],
 ) -> Result<Binding, LowerError> {
     if enf.name_index > u16::MAX as u32 {
@@ -386,7 +381,7 @@ pub fn convert_binding(
 /// Convert an `enforcement::Assertion` to a hologram `Assertion`.
 #[inline]
 pub fn convert_assertion(
-    enf: &uor_foundation::enforcement::Assertion,
+    enf: &hologram_foundation::enforcement::Assertion,
     node_map: &[Option<TermId>],
 ) -> Result<Assertion, LowerError> {
     let lhs = resolve_mapped(enf.lhs_index, node_map)?;
@@ -429,7 +424,7 @@ mod tests {
         let i = src
             .push(EnfTerm::Literal {
                 value: 42,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
 
@@ -451,14 +446,14 @@ mod tests {
         let i3 = src
             .push(EnfTerm::Literal {
                 value: 3,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         // i5: slot consumed implicitly via `len: 2` in the Application below.
         let _i5 = src
             .push(EnfTerm::Literal {
                 value: 5,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let root = src
@@ -496,13 +491,13 @@ mod tests {
         let lit = src
             .push(EnfTerm::Literal {
                 value: 1,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let lift = src
             .push(EnfTerm::Lift {
                 operand_index: lit,
-                target: QuantumLevel::Q3,
+                target: WittLevel::W32,
             })
             .unwrap();
 
@@ -524,7 +519,7 @@ mod tests {
         let lit = src
             .push(EnfTerm::Literal {
                 value: 10,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let neg = src
@@ -551,7 +546,7 @@ mod tests {
         let i = src
             .push(EnfTerm::Literal {
                 value: 1,
-                level: QuantumLevel::new(10), // Beyond Q3
+                level: WittLevel::new(10), // Beyond Q3
             })
             .unwrap();
 
@@ -579,13 +574,13 @@ mod tests {
             level: RingLevel::Q1,
             value: 100,
         };
-        let enf = to_enforcement_term(&kind, QuantumLevel::Q1).unwrap();
+        let enf = to_enforcement_term(&kind, WittLevel::W16).unwrap();
         assert!(matches!(
             enf,
             EnfTerm::Literal {
                 value: 100,
                 level
-            } if level == QuantumLevel::Q1
+            } if level == WittLevel::W16
         ));
     }
 
@@ -596,7 +591,7 @@ mod tests {
             arg0: TermId(0),
             arg1: TermId(1),
         };
-        assert!(to_enforcement_term(&kind, QuantumLevel::Q0).is_none());
+        assert!(to_enforcement_term(&kind, WittLevel::W8).is_none());
     }
 
     #[test]
@@ -606,14 +601,14 @@ mod tests {
         let i1 = src
             .push(EnfTerm::Literal {
                 value: 1,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         // i2: slot consumed implicitly via `len: 2` in the Application below.
         let _i2 = src
             .push(EnfTerm::Literal {
                 value: 2,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let add = src
@@ -644,7 +639,7 @@ mod tests {
         ));
 
         // Reverse: hologram → enforcement terms
-        let terms = arena_to_enforcement_terms(&arena, QuantumLevel::Q0);
+        let terms = arena_to_enforcement_terms(&arena, WittLevel::W8);
         assert_eq!(terms.len(), 4);
     }
 
@@ -657,14 +652,14 @@ mod tests {
             let i1 = src
                 .push(EnfTerm::Literal {
                     value: 1,
-                    level: QuantumLevel::Q0,
+                    level: WittLevel::W8,
                 })
                 .unwrap();
             // i2: slot consumed implicitly via `len: 2` in the Application below.
             let _i2 = src
                 .push(EnfTerm::Literal {
                     value: 2,
-                    level: QuantumLevel::Q0,
+                    level: WittLevel::W8,
                 })
                 .unwrap();
             let root = src
@@ -690,32 +685,32 @@ mod tests {
         let scrutinee = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let pat0 = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         // body0 / pat1 / body1: arms consumed implicitly via `len: 4` on the Match below.
         let _body0 = src
             .push(EnfTerm::Literal {
                 value: 10,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let _pat1 = src
             .push(EnfTerm::Literal {
                 value: 1,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let _body1 = src
             .push(EnfTerm::Literal {
                 value: 20,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let root = src
@@ -749,13 +744,13 @@ mod tests {
         let measure = src
             .push(EnfTerm::Literal {
                 value: 3,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let base = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let step = src
@@ -795,7 +790,7 @@ mod tests {
         let base = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let step = src
@@ -826,7 +821,7 @@ mod tests {
         let seed = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let step = src
@@ -866,7 +861,7 @@ mod tests {
         let lit1 = src
             .push(EnfTerm::Literal {
                 value: 1,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let body = src
@@ -881,7 +876,7 @@ mod tests {
         let handler = src
             .push(EnfTerm::Literal {
                 value: 0,
-                level: QuantumLevel::Q0,
+                level: WittLevel::W8,
             })
             .unwrap();
         let root = src

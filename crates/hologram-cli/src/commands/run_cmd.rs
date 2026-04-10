@@ -8,8 +8,10 @@ use hologram_archive::section::model_meta::{ModelMetaSection, SECTION_MODEL_META
 use hologram_archive::section::tokenizer::{MiniBpeEncoder, TokenizerSection, SECTION_TOKENIZER};
 use hologram_archive::weight::WeightDType;
 use hologram_archive::{HoloLoader, LoadedPlan};
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape, execute_tape_with_weight_cache};
-use hologram_exec::{GraphInputs, GraphOutputs};
+use hologram_fused_component::mmap::{
+    build_tape_from_plan, execute_tape, execute_tape_with_weight_cache,
+};
+use hologram_fused_component::{GraphInputs, GraphOutputs};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -397,7 +399,7 @@ fn run_generation(
 
     // Persistent weight cache — deserialized quantized weights are reused
     // across decode steps, eliminating per-step rkyv overhead for LUT-GEMM.
-    let weight_cache = parking_lot::RwLock::new(hologram_exec::WeightCache::new());
+    let weight_cache = parking_lot::RwLock::new(hologram_fused_component::WeightCache::new());
 
     // Get compiled input sequence length from TensorPort shape.
     // Static-shape ONNX models (no KV-cache) require inputs padded to the

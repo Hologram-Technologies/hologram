@@ -2,9 +2,11 @@
 //!
 //! Tests stratum, curvature, rank, domain at every quantum level.
 
-use hologram_ring::{curvature, domain, rank, stratum, QuantumLevel, RingWord, Q0, Q1, Q3, Q7};
+use hologram_ring::{
+    curvature, domain, rank, stratum, RingWord, WittLevelMarker, W16, W32, W64, W8,
+};
 
-fn assert_observables_at_level<Q: QuantumLevel>()
+fn assert_observables_at_level<Q: WittLevelMarker>()
 where
     Q::Word: core::fmt::Debug,
 {
@@ -47,22 +49,22 @@ where
 
 #[test]
 fn observables_q0() {
-    assert_observables_at_level::<Q0>();
+    assert_observables_at_level::<W8>();
 }
 
 #[test]
 fn observables_q1() {
-    assert_observables_at_level::<Q1>();
+    assert_observables_at_level::<W16>();
 }
 
 #[test]
 fn observables_q3() {
-    assert_observables_at_level::<Q3>();
+    assert_observables_at_level::<W32>();
 }
 
 #[test]
 fn observables_q7() {
-    assert_observables_at_level::<Q7>();
+    assert_observables_at_level::<W64>();
 }
 
 #[test]

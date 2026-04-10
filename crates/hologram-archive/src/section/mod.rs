@@ -1,6 +1,7 @@
 //! Extensible section system for archive metadata.
 
 pub mod compile_unit_meta;
+pub mod conformance_shape;
 pub mod model_meta;
 pub mod table;
 pub mod tokenizer;
@@ -15,6 +16,13 @@ pub const SECTION_PIPELINE: u32 = 3;
 pub const SECTION_WEIGHT_DEDUP: u32 = 4;
 /// Well-known section kind: CompileUnit metadata.
 pub const SECTION_COMPILE_UNIT_META: u32 = 5;
+/// Well-known section kind: conformance shape declaration (v0.2.0).
+///
+/// Identifies which `Shape` the archive's compiled tape conforms to.
+/// Loaders use this to refuse mismatched archives at load time, before
+/// any execution proceeds. Per the v0.2.0 conformance-first contract,
+/// every archive emitted by `hologram-compiler` carries this section.
+pub const SECTION_CONFORMANCE_SHAPE: u32 = 6;
 /// Base kind for custom sections.
 pub const SECTION_CUSTOM_BASE: u32 = 0x1000;
 
@@ -38,6 +46,7 @@ mod tests {
             SECTION_PIPELINE,
             SECTION_WEIGHT_DEDUP,
             SECTION_COMPILE_UNIT_META,
+            SECTION_CONFORMANCE_SHAPE,
             SECTION_CUSTOM_BASE,
         ];
         for (i, a) in kinds.iter().enumerate() {
@@ -52,5 +61,6 @@ mod tests {
     #[test]
     fn custom_base_above_built_in() {
         const { assert!(SECTION_CUSTOM_BASE > SECTION_PIPELINE) };
+        const { assert!(SECTION_CUSTOM_BASE > SECTION_CONFORMANCE_SHAPE) };
     }
 }

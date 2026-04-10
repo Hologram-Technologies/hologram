@@ -1,30 +1,31 @@
-//! Enforcement-level validation using uor-foundation v0.1.4 builders.
+//! Enforcement-level validation using the v0.2.0 declarative builders.
 //!
 //! Uses `enforcement::CompileUnitBuilder.validate()` as a declarative
-//! preflight step, complementing the existing shape validation.
+//! preflight step, complementing the structural shape validation.
 //!
 //! The builder checks:
-//! - Tier 1: rootTerm present, quantumLevelCeiling present,
+//! - Tier 1: rootTerm present, wittLevelCeiling present,
 //!   thermodynamicBudget present, targetDomains non-empty.
 //! - Tier 2: budget solvency, level coherence.
 
 use hologram_core::term::enforcement_bridge::arena_to_enforcement_terms;
 use hologram_core::term::HoloCompileUnit;
-use uor_foundation::enforcement::{CompileUnitBuilder, ShapeViolation};
+use hologram_foundation::enforcement::{CompileUnitBuilder, ShapeViolation};
 
 /// Run enforcement-level validation on a `HoloCompileUnit`.
 ///
 /// Converts the hologram term arena to enforcement terms, then uses the
-/// v0.1.4 `CompileUnitBuilder` to validate structural and value constraints.
+/// v0.2.0 `CompileUnitBuilder` to validate structural and value
+/// constraints.
 ///
 /// Returns `Ok(())` on success, or the structured `ShapeViolation` on failure.
 pub fn enforcement_validate(unit: &HoloCompileUnit) -> Result<(), ShapeViolation> {
-    let level = unit.quantum_level;
+    let level = unit.witt_level;
     let terms = arena_to_enforcement_terms(&unit.arena, level);
 
     CompileUnitBuilder::new()
         .root_term(&terms)
-        .quantum_level_ceiling(level)
+        .witt_level_ceiling(level)
         .thermodynamic_budget(unit.thermodynamic_budget as u64)
         .target_domains(&unit.target_domains_array[..unit.target_domain_count as usize])
         .validate()
@@ -36,8 +37,8 @@ mod tests {
     use super::*;
     use hologram_core::op::PrimOp;
     use hologram_core::term::{TermArena, TermKind};
-    use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::{QuantumLevel, ViolationKind};
+    use hologram_foundation::enums::{VerificationDomain, ViolationKind};
+    use hologram_foundation::WittLevel;
 
     #[test]
     fn enforcement_validate_passes_valid_unit() {
@@ -46,7 +47,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -66,7 +67,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            WittLevel::W16,
             12.0,
             &[
                 VerificationDomain::Algebraic,
@@ -80,7 +81,7 @@ mod tests {
     fn enforcement_validate_rejects_empty_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(42));
-        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
+        let unit = HoloCompileUnit::new(arena, root, WittLevel::W8, 6.0, &[]);
         let err = enforcement_validate(&unit);
         assert!(err.is_err());
         let violation = err.unwrap_err();

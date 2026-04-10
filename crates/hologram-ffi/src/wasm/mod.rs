@@ -41,7 +41,7 @@ impl WasmGraphBuilder {
         op_param: i32,
         graph_input_idx: u32,
     ) -> i32 {
-        use hologram_graph::graph::edge;
+        use hologram_ir::graph::edge;
         let op = match crate::graph::make_graph_op(op_kind, op_param) {
             Ok(op) => op,
             Err(code) => return code,
@@ -77,10 +77,9 @@ impl WasmGraphBuilder {
 
     /// Build and compile the graph. Returns the archive as bytes.
     pub fn compile(&mut self) -> Result<Vec<u8>, JsValue> {
-        let graph = std::mem::replace(&mut self.builder.graph, hologram_graph::Graph::new());
-        let output = hologram_compiler::CompilerBuilder::new(graph)
-            .build()
-            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        let graph = std::mem::replace(&mut self.builder.graph, hologram_ir::Graph::new());
+        let output =
+            hologram_compiler::compile(graph).map_err(|e| JsValue::from_str(&format!("{e}")))?;
         Ok(output.archive)
     }
 }
@@ -93,13 +92,13 @@ impl WasmGraphBuilder {
 /// Returns the output bytes.
 #[wasm_bindgen]
 pub fn wasm_execute(archive: &[u8], input_data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut inputs = hologram_exec::GraphInputs::new();
+    let mut inputs = hologram_fused_component::GraphInputs::new();
     inputs.set(0, input_data.to_vec());
     let plan = hologram_archive::load_from_bytes(archive)
         .map_err(|e| JsValue::from_str(&format!("{e}")))?;
-    let tape = hologram_exec::mmap::build_tape_from_plan(&plan)
+    let tape = hologram_fused_component::mmap::build_tape_from_plan(&plan)
         .map_err(|e| JsValue::from_str(&format!("{e}")))?;
-    let outputs = hologram_exec::mmap::execute_tape(&tape, &plan, &inputs)
+    let outputs = hologram_fused_component::mmap::execute_tape(&tape, &plan, &inputs)
         .map_err(|e| JsValue::from_str(&format!("{e}")))?;
     match outputs.get(0) {
         Some((_, data)) => Ok(data.to_vec()),

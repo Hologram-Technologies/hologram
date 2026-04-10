@@ -238,17 +238,8 @@ impl<'src> Parser<'src> {
             | Token::Exp10
             | Token::Square
             | Token::Cube => self.parse_lut_application(),
-            // Integer literal (possibly quantum-tagged)
+            // Integer literal (possibly Witt-level-tagged)
             Token::Int(_) => self.parse_literal(),
-            // Negative integer
-            Token::Braille(_) => {
-                let tok = self.lexer.next_token()?;
-                if let Token::Braille(v) = tok {
-                    Ok(self.arena.alloc(TermKind::BrailleLit(v)))
-                } else {
-                    unreachable!()
-                }
-            }
             // Variable
             Token::Ident(_) => {
                 let name = self.expect_ident()?;
@@ -271,10 +262,10 @@ impl<'src> Parser<'src> {
             _ => unreachable!(),
         };
 
-        // Check for quantum tag: `42@Q0`
+        // Check for Witt-level tag: `42@W8` (or legacy `42@Q0`).
         if self.lexer.peek()? == Token::At {
             self.lexer.next_token()?; // consume @
-            let level = self.parse_quantum_level()?;
+            let level = self.parse_witt_level()?;
             return Ok(self.arena.alloc(TermKind::QuantumLit {
                 level,
                 value: value as u32,
@@ -379,16 +370,19 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn parse_quantum_level(&mut self) -> Result<RingLevel, ParseError> {
+    /// Parse a Witt-level annotation. Accepts both the preferred
+    /// `W8`/`W16`/`W24`/`W32` spelling and the legacy v0.1.4
+    /// `Q0`/`Q1`/`Q2`/`Q3` spelling. Both map to the same `RingLevel`.
+    fn parse_witt_level(&mut self) -> Result<RingLevel, ParseError> {
         let tok = self.lexer.next_token()?;
         match tok {
-            Token::Q0 => Ok(RingLevel::Q0),
-            Token::Q1 => Ok(RingLevel::Q1),
-            Token::Q2 => Ok(RingLevel::Q2),
-            Token::Q3 => Ok(RingLevel::Q3),
+            Token::Q0 | Token::W8 => Ok(RingLevel::Q0),
+            Token::Q1 | Token::W16 => Ok(RingLevel::Q1),
+            Token::Q2 | Token::W24 => Ok(RingLevel::Q2),
+            Token::Q3 | Token::W32 => Ok(RingLevel::Q3),
             _ => Err(ParseError {
                 offset: self.lexer.offset(),
-                expected: "quantum level (Q0, Q1, Q2, Q3)",
+                expected: "Witt level (W8/W16/W24/W32 or legacy Q0/Q1/Q2/Q3)",
                 found: format!("{:?}", tok),
             }),
         }
@@ -397,14 +391,22 @@ impl<'src> Parser<'src> {
     fn parse_type_annotation(&mut self) -> Result<TypeId, ParseError> {
         let tok = self.lexer.peek()?;
         match tok {
-            Token::Q0 | Token::Q1 | Token::Q2 | Token::Q3 => {
+            Token::Q0
+            | Token::Q1
+            | Token::Q2
+            | Token::Q3
+            | Token::W8
+            | Token::W16
+            | Token::W24
+            | Token::W32 => {
                 self.lexer.next_token()?;
-                // TypeId encoding: 0=Q0, 1=Q1, 2=Q2, 3=Q3
+                // TypeId encoding: 0=W8, 1=W16, 2=W24, 3=W32. Both Q*
+                // and W* spellings map to the same encoding.
                 let id = match tok {
-                    Token::Q0 => 0,
-                    Token::Q1 => 1,
-                    Token::Q2 => 2,
-                    Token::Q3 => 3,
+                    Token::Q0 | Token::W8 => 0,
+                    Token::Q1 | Token::W16 => 1,
+                    Token::Q2 | Token::W24 => 2,
+                    Token::Q3 | Token::W32 => 3,
                     _ => unreachable!(),
                 };
                 Ok(TypeId(id))
@@ -416,7 +418,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(ParseError {
                 offset: self.lexer.offset(),
-                expected: "type annotation (Q0, Q1, Q2, Q3, or type name)",
+                expected: "type annotation (W8/W16/W24/W32, legacy Q0/Q1/Q2/Q3, or type name)",
                 found: format!("{:?}", tok),
             }),
         }

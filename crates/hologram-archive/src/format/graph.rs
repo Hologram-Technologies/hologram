@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 
 use hologram_core::op::FloatDType;
-use hologram_graph::constant::{ConstantId, ConstantStore};
-use hologram_graph::graph::node::{InputSource, Node, NodeId};
-use hologram_graph::graph::GraphOp;
-use hologram_graph::Graph;
+use hologram_ir::constant::{ConstantId, ConstantStore};
+use hologram_ir::graph::node::{InputSource, Node, NodeId};
+use hologram_ir::graph::GraphOp;
+use hologram_ir::Graph;
 
 /// Compact, rkyv-serializable snapshot of a Graph.
 ///
@@ -235,9 +235,9 @@ fn restore_io(graph: &mut Graph, sg: &SerializedGraph, id_map: &HashMap<NodeId, 
 mod tests {
     use super::*;
     use hologram_core::op::LutOp;
-    use hologram_graph::builder::GraphBuilder;
-    use hologram_graph::constant::ConstantData;
-    use hologram_graph::graph::GraphOp;
+    use hologram_ir::builder::GraphBuilder;
+    use hologram_ir::constant::ConstantData;
+    use hologram_ir::graph::GraphOp;
 
     #[test]
     fn from_empty_graph() {

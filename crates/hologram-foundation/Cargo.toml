@@ -1,0 +1,9 @@
+[package]
+name = "hologram-foundation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sole boundary between hologram and uor-foundation v0.2.0. Re-exports the v0.2.0 conformance shape mechanism, kernel traits, and enforcement layer in modules organized for hologram's consumption."
+
+[dependencies]
+uor-foundation = "0.2.0"

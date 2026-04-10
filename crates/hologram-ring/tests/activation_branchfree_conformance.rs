@@ -5,7 +5,7 @@
 //! results. If they don't, the branchfree arithmetic is wrong.
 
 use hologram_ring::activation::ActivationOp;
-use hologram_ring::{Q0, Q3};
+use hologram_ring::{W32, W8};
 
 #[allow(dead_code)]
 const ALL_ACTIVATIONS: &[ActivationOp] = &[
@@ -32,7 +32,7 @@ const ALL_ACTIVATIONS: &[ActivationOp] = &[
     ActivationOp::Sqrt,
 ];
 
-/// Capture and verify all activation outputs at boundary values for Q0.
+/// Capture and verify all activation outputs at boundary values for W8.
 /// Simple activations (relu, abs, square, cube) must not panic.
 /// Piecewise activations are tested for panic-freedom in Phase 3.
 #[test]
@@ -49,17 +49,17 @@ fn boundary_values_q0_simple_stable() {
 
     for &act in &simple {
         for &x in &boundary_inputs {
-            let result = act.apply::<Q0>(x);
-            let result2 = act.apply::<Q0>(x);
+            let result = act.apply::<W8>(x);
+            let result2 = act.apply::<W8>(x);
             assert_eq!(
                 result, result2,
-                "{act:?} at Q0 x={x}: non-deterministic ({result} vs {result2})"
+                "{act:?} at W8 x={x}: non-deterministic ({result} vs {result2})"
             );
         }
     }
 }
 
-/// Capture and verify simple activation outputs at boundary values for Q3.
+/// Capture and verify simple activation outputs at boundary values for W32.
 #[test]
 fn boundary_values_q3_simple_stable() {
     let m = u32::MAX as u64;
@@ -103,43 +103,46 @@ fn boundary_values_q3_simple_stable() {
     ];
     for &act in &simple {
         for &x in &boundary_inputs {
-            let result = act.apply::<Q3>(x);
-            let result2 = act.apply::<Q3>(x);
-            assert_eq!(result, result2, "{act:?} at Q3 x={x:#x}: non-deterministic");
+            let result = act.apply::<W32>(x);
+            let result2 = act.apply::<W32>(x);
+            assert_eq!(
+                result, result2,
+                "{act:?} at W32 x={x:#x}: non-deterministic"
+            );
         }
     }
 }
 
-/// Verify piecewise sigmoid is monotonically increasing at Q3.
+/// Verify piecewise sigmoid is monotonically increasing at W32.
 #[test]
 fn sigmoid_monotonic_q3() {
-    let mut prev = ActivationOp::Sigmoid.apply::<Q3>(0u32);
+    let mut prev = ActivationOp::Sigmoid.apply::<W32>(0u32);
     for i in 1..=1000u32 {
         let x = (u32::MAX as u64 * i as u64 / 1000) as u32;
-        let cur = ActivationOp::Sigmoid.apply::<Q3>(x);
+        let cur = ActivationOp::Sigmoid.apply::<W32>(x);
         assert!(
             cur >= prev,
-            "sigmoid Q3 not monotonic at step {i}: {prev} -> {cur}"
+            "sigmoid W32 not monotonic at step {i}: {prev} -> {cur}"
         );
         prev = cur;
     }
 }
 
-/// Verify piecewise sigmoid is monotonically increasing at Q0 (exhaustive).
+/// Verify piecewise sigmoid is monotonically increasing at W8 (exhaustive).
 #[test]
 fn sigmoid_monotonic_q0_exhaustive() {
-    let mut prev = ActivationOp::Sigmoid.apply::<Q0>(0u8);
+    let mut prev = ActivationOp::Sigmoid.apply::<W8>(0u8);
     for x in 1u8..=255 {
-        let cur = ActivationOp::Sigmoid.apply::<Q0>(x);
+        let cur = ActivationOp::Sigmoid.apply::<W8>(x);
         assert!(
             cur >= prev,
-            "sigmoid Q0 not monotonic at x={x}: {prev} -> {cur}"
+            "sigmoid W8 not monotonic at x={x}: {prev} -> {cur}"
         );
         prev = cur;
     }
 }
 
-/// Verify simple activations complete without panic for a full sweep of Q3 values.
+/// Verify simple activations complete without panic for a full sweep of W32 values.
 /// Piecewise activations with overflow bugs will be fixed in the branchfree rewrite.
 #[test]
 fn simple_activations_sweep_q3() {
@@ -156,7 +159,7 @@ fn simple_activations_sweep_q3() {
     for &act in &simple {
         for i in 0..=256u32 {
             let x = (u32::MAX as u64 * i as u64 / 256) as u32;
-            let _ = act.apply::<Q3>(x); // must not panic
+            let _ = act.apply::<W32>(x); // must not panic
         }
     }
 }

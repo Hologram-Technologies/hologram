@@ -1,12 +1,15 @@
-//! blake3 + quantum_index conformance tests.
+//! BLAKE3 checksum + header flag conformance tests.
 //!
-//! Verifies blake3 checksum support and quantum_index in header flags.
+//! Verifies BLAKE3 checksum support and the header flag bits. The Witt
+//! level is carried by the
+//! [`ConformanceShapeSection`](hologram_archive::section::conformance_shape::ConformanceShapeSection)
+//! rather than the header itself.
 
 use hologram_archive::checksum;
 use hologram_archive::format::header::*;
 use hologram_archive::format::*;
 
-// ── blake3 checksums ─────────────────────────────────────────────────────
+// ── BLAKE3 checksums ─────────────────────────────────────────────────────
 
 #[test]
 fn blake3_deterministic() {
@@ -44,11 +47,10 @@ fn blake3_verify() {
     assert!(!checksum::verify_blake3(data, expected ^ 1)); // corrupt
 }
 
-// ── quantum_index in header ──────────────────────────────────────────────
+// ── BLAKE3 flag in header ────────────────────────────────────────────────
 
-#[test]
-fn quantum_index_default_zero() {
-    let h = HoloHeader {
+fn empty_header() -> HoloHeader {
+    HoloHeader {
         magic: HOLO_MAGIC,
         version: FORMAT_VERSION,
         graph_offset: 0,
@@ -58,96 +60,29 @@ fn quantum_index_default_zero() {
         section_table_offset: 0,
         section_table_size: 0,
         total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
         graph_checksum: [0u8; 32],
         weights_checksum: [0u8; 32],
         unit_address: [0u8; 32],
         section_count: 0,
         flags: 0,
-    };
-    assert_eq!(h.quantum_index(), 0);
+    }
 }
 
 #[test]
-fn quantum_index_set_q3() {
-    let mut h = HoloHeader {
-        magic: HOLO_MAGIC,
-        version: FORMAT_VERSION,
-        graph_offset: 0,
-        graph_size: 0,
-        weights_offset: 0,
-        weights_size: 0,
-        section_table_offset: 0,
-        section_table_size: 0,
-        total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
-        graph_checksum: [0u8; 32],
-        weights_checksum: [0u8; 32],
-        unit_address: [0u8; 32],
-        section_count: 0,
-        flags: 0,
-    };
-    h.set_quantum_index(3);
-    assert_eq!(h.quantum_index(), 3);
-    // Other flags should not be affected
-    assert!(!h.is_graph_compressed());
+fn blake3_flag_default_off() {
+    let h = empty_header();
     assert!(!h.uses_blake3());
 }
 
 #[test]
-fn quantum_index_set_q7() {
-    let mut h = HoloHeader {
-        magic: HOLO_MAGIC,
-        version: FORMAT_VERSION,
-        graph_offset: 0,
-        graph_size: 0,
-        weights_offset: 0,
-        weights_size: 0,
-        section_table_offset: 0,
-        section_table_size: 0,
-        total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
-        graph_checksum: [0u8; 32],
-        weights_checksum: [0u8; 32],
-        unit_address: [0u8; 32],
-        section_count: 0,
-        flags: 0,
-    };
-    h.set_quantum_index(7);
-    assert_eq!(h.quantum_index(), 7);
-}
-
-#[test]
-fn quantum_index_coexists_with_blake3_flag() {
-    let mut h = HoloHeader {
-        magic: HOLO_MAGIC,
-        version: FORMAT_VERSION,
-        graph_offset: 0,
-        graph_size: 0,
-        weights_offset: 0,
-        weights_size: 0,
-        section_table_offset: 0,
-        section_table_size: 0,
-        total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
-        graph_checksum: [0u8; 32],
-        weights_checksum: [0u8; 32],
-        unit_address: [0u8; 32],
-        section_count: 0,
-        flags: 0,
-    };
-    h.set_quantum_index(3);
+fn blake3_flag_set() {
+    let mut h = empty_header();
     h.set_blake3();
-    assert_eq!(h.quantum_index(), 3);
     assert!(h.uses_blake3());
 }
 
 #[test]
-fn quantum_index_survives_bytemuck_roundtrip() {
+fn blake3_flag_survives_bytemuck_roundtrip() {
     let mut h = HoloHeader {
         magic: HOLO_MAGIC,
         version: FORMAT_VERSION,
@@ -158,68 +93,15 @@ fn quantum_index_survives_bytemuck_roundtrip() {
         section_table_offset: 0,
         section_table_size: 0,
         total_size: 12288,
-        certificate_offset: 0,
-        certificate_size: 0,
         graph_checksum: [0u8; 32],
         weights_checksum: [0u8; 32],
         unit_address: [0u8; 32],
         section_count: 0,
         flags: 0,
     };
-    h.set_quantum_index(7);
     h.set_blake3();
 
     let bytes = h.as_bytes();
     let h2 = HoloHeader::from_bytes(bytes).unwrap();
-    assert_eq!(h2.quantum_index(), 7);
     assert!(h2.uses_blake3());
-}
-
-// ── blake3 flag ──────────────────────────────────────────────────────────
-
-#[test]
-fn blake3_flag_default_off() {
-    let h = HoloHeader {
-        magic: HOLO_MAGIC,
-        version: FORMAT_VERSION,
-        graph_offset: 0,
-        graph_size: 0,
-        weights_offset: 0,
-        weights_size: 0,
-        section_table_offset: 0,
-        section_table_size: 0,
-        total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
-        graph_checksum: [0u8; 32],
-        weights_checksum: [0u8; 32],
-        unit_address: [0u8; 32],
-        section_count: 0,
-        flags: 0,
-    };
-    assert!(!h.uses_blake3());
-}
-
-#[test]
-fn blake3_flag_set() {
-    let mut h = HoloHeader {
-        magic: HOLO_MAGIC,
-        version: FORMAT_VERSION,
-        graph_offset: 0,
-        graph_size: 0,
-        weights_offset: 0,
-        weights_size: 0,
-        section_table_offset: 0,
-        section_table_size: 0,
-        total_size: 0,
-        certificate_offset: 0,
-        certificate_size: 0,
-        graph_checksum: [0u8; 32],
-        weights_checksum: [0u8; 32],
-        unit_address: [0u8; 32],
-        section_count: 0,
-        flags: 0,
-    };
-    h.set_blake3();
-    assert!(h.uses_blake3());
 }

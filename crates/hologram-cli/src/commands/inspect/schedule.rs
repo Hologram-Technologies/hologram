@@ -1,7 +1,7 @@
 //! `--detail schedule` output.
 
 use hologram_archive::LoadedPlan;
-use hologram_graph::ExecutionSchedule;
+use hologram_ir::ExecutionSchedule;
 
 /// Print the full execution schedule.
 pub fn print(plan: &LoadedPlan, schedule: &ExecutionSchedule) {
@@ -20,7 +20,7 @@ pub fn print(plan: &LoadedPlan, schedule: &ExecutionSchedule) {
 }
 
 /// Print a single level's node list.
-fn print_level(idx: usize, level: &hologram_graph::schedule::levels::ParallelLevel) {
+fn print_level(idx: usize, level: &hologram_ir::schedule::levels::ParallelLevel) {
     let ids: Vec<String> = level
         .node_ids
         .iter()

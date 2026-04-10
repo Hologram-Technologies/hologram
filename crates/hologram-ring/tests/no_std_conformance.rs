@@ -36,17 +36,17 @@ fn ring_arithmetic_no_alloc() {
 #[test]
 fn activation_apply_no_alloc() {
     use hologram_ring::activation::ActivationOp;
-    use hologram_ring::{Q0, Q3};
+    use hologram_ring::{W32, W8};
 
     // Simple activations
-    assert_eq!(ActivationOp::Square.apply::<Q3>(5u32), 25);
-    assert_eq!(ActivationOp::Cube.apply::<Q3>(3u32), 27);
+    assert_eq!(ActivationOp::Square.apply::<W32>(5u32), 25);
+    assert_eq!(ActivationOp::Cube.apply::<W32>(3u32), 27);
 
     // Relu
-    assert_eq!(ActivationOp::Relu.apply::<Q0>(42u8), 42); // positive
-    assert_eq!(ActivationOp::Relu.apply::<Q0>(200u8), 0); // negative
+    assert_eq!(ActivationOp::Relu.apply::<W8>(42u8), 42); // positive
+    assert_eq!(ActivationOp::Relu.apply::<W8>(200u8), 0); // negative
 
-    // All 21 activations must not panic at Q0
+    // All 21 activations must not panic at W8
     let all = [
         ActivationOp::Relu,
         ActivationOp::Abs,
@@ -71,8 +71,8 @@ fn activation_apply_no_alloc() {
         ActivationOp::Sqrt,
     ];
     for act in &all {
-        let _ = act.apply::<Q0>(128u8); // must not panic
-        let _ = act.apply::<Q3>(1000u32); // must not panic
+        let _ = act.apply::<W8>(128u8); // must not panic
+        let _ = act.apply::<W32>(1000u32); // must not panic
     }
 }
 

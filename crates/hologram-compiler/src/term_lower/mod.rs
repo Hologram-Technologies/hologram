@@ -6,15 +6,15 @@
 
 use hologram_core::op::RingLevel;
 use hologram_core::term::{Binding, HoloCompileUnit, TermArena, TermId, TermKind, VarId};
-use hologram_graph::graph::edge;
-use hologram_graph::{ConstantData, Graph, GraphOp};
+use hologram_ir::graph::edge;
+use hologram_ir::{ConstantData, Graph, GraphOp};
 
 use crate::error::{CompileError, CompileResult};
 
 /// Lower a validated CompileUnit into a Graph.
 ///
 /// Each term node maps to a graph node:
-/// - `IntLit(v)` / `BrailleLit(v)` / `QuantumLit` → `Constant` node
+/// - `IntLit(v)` / `QuantumLit` → `Constant` node
 /// - `UnaryApp { op, arg }` → `Prim(op)` with one edge
 /// - `BinaryApp { op, lhs, rhs }` → `Prim(op)` with two edges
 /// - `Var(id)` → reference to the node produced by the corresponding binding
@@ -56,8 +56,8 @@ fn lower_term(
     bindings: &[Binding],
     id: TermId,
     graph: &mut Graph,
-    node_map: &mut [Option<hologram_graph::graph::node::NodeId>],
-) -> CompileResult<hologram_graph::graph::node::NodeId> {
+    node_map: &mut [Option<hologram_ir::graph::node::NodeId>],
+) -> CompileResult<hologram_ir::graph::node::NodeId> {
     let idx = id.0 as usize;
 
     // Memoized: already lowered.
@@ -70,10 +70,6 @@ fn lower_term(
         TermKind::IntLit(v) => {
             let bytes = encode_literal(v, RingLevel::Q0);
             let cid = graph.add_constant(ConstantData::Bytes(bytes));
-            graph.add_node(GraphOp::Constant(cid))
-        }
-        TermKind::BrailleLit(v) => {
-            let cid = graph.add_constant(ConstantData::Bytes(vec![v]));
             graph.add_node(GraphOp::Constant(cid))
         }
         TermKind::QuantumLit { level, value } => {
@@ -176,7 +172,7 @@ fn lower_term(
             nid
         }
         TermKind::Constant(cref) => {
-            let cid = hologram_graph::ConstantId::new(cref.0);
+            let cid = hologram_ir::ConstantId::new(cref.0);
             graph.add_node(GraphOp::Constant(cid))
         }
         TermKind::GraphInput(_) => graph.add_node(GraphOp::Input),
@@ -215,8 +211,8 @@ fn resolve_var(
     bindings: &[Binding],
     vid: VarId,
     graph: &mut Graph,
-    node_map: &mut [Option<hologram_graph::graph::node::NodeId>],
-) -> CompileResult<hologram_graph::graph::node::NodeId> {
+    node_map: &mut [Option<hologram_ir::graph::node::NodeId>],
+) -> CompileResult<hologram_ir::graph::node::NodeId> {
     for binding in bindings {
         if binding.var == vid {
             return lower_term(arena, bindings, binding.rhs, graph, node_map);
@@ -246,8 +242,8 @@ mod tests {
     use super::*;
     use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
-    use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use hologram_foundation::enums::VerificationDomain;
+    use hologram_foundation::WittLevel;
 
     #[test]
     fn lower_integer_literal() {
@@ -256,7 +252,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -277,7 +273,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -300,7 +296,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -334,7 +330,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -356,7 +352,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            WittLevel::W16,
             12.0,
             &[VerificationDomain::Algebraic],
         );
@@ -380,7 +376,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                QuantumLevel::Q0,
+                WittLevel::W8,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -416,7 +412,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                QuantumLevel::Q0,
+                WittLevel::W8,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -446,7 +442,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -464,7 +460,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -505,7 +501,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -527,7 +523,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -551,7 +547,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            WittLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );

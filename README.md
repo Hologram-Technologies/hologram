@@ -55,13 +55,15 @@ Quantized weight matrices are stored as 4-bit or 8-bit indices into a codebook. 
 
 | Crate | Role | `no_std` | Key types |
 |---|---|:---:|---|
-| `hologram-core` | LUT tables, `ElementWiseView`, ring algebra, encoding | ✓ | `ElementWiseView`, `ByteRing`, `LutOp`, `PrimOp`, `AngleEncoding` |
-| `hologram-graph` | Expression graph, subgraphs, fusion passes, scheduling | — | `Graph`, `GraphBuilder`, `GraphOp`, `ExecutionSchedule` |
-| `hologram-archive` | `.holo` binary format, rkyv zero-copy, mmap | — | `HoloWriter`, `HoloLoader`, `HoloHeader`, `WeightDType` |
-| `hologram-exec` | KV-lookup executor, buffer arena, LUT-GEMM kernels | — | `KvExecutor`, `KvStore`, `BufferArena`, `QuantizedWeights4/8` |
-| `hologram-compiler` | Graph → optimised `.holo` (liveness, workspace planning) | — | `CompilerBuilder`, `CompilationStats`, `WorkspaceLayout` |
+| `hologram-foundation` | Re-export shim for `uor-foundation` v0.2.0 | — | `WittLevel`, `reduction::*`, `enforcement::*` |
+| `hologram-core` | LUT tables, `ElementWiseView`, ring algebra, encoding | ✓ | `ElementWiseView`, `ByteRing`, `LutOp`, `PrimOp`, `WittLevel` |
+| `hologram-ir` | Cross-compiler IR: expression graph, structural-finder analyses, scheduling | — | `Graph`, `GraphBuilder`, `GraphOp`, `ExecutionSchedule`, `analysis::analyze` |
+| `hologram-archive` | `.holo` binary format, rkyv zero-copy, mmap | — | `HoloWriter`, `HoloLoader`, `HoloHeader`, `ConformanceShapeSection` |
+| `hologram-shapes` | Conformance `Shape` declarations + `PrismModule` trait | ✓ | `Shape`, `F_PRISM_FUSED_COMPONENT`, `F_PRISM_STRICT`, `PrismModule` |
+| `hologram-fused-component` | Fused-component substrate carrying `F_prism_fused_component` | — | `FusedComponentModule`, `LoadedModel`, `BufferArena`, `EnumTape` |
+| `hologram-compiler` | Structure-finder compiler: source/graph/term → `.holo` archive | — | `Compiler`, `SourceInput`, `compile`, `compile_from_source` |
 | `hologram-async` | Tokio async/await wrappers for compile + execute | — | `AsyncCompiler`, `AsyncExecutor` |
-| `hologram-ffi` | C ABI (`cbindgen`) and WASM (`wasm-bindgen`) bindings | — | `HoloGraphBuilder`, `wasm_execute` |
+| `hologram-ffi` | C ABI (`cbindgen`) and WASM (`wasm-bindgen`) bindings | — | `hologram_compile`, `wasm_execute` |
 | `hologram-cli` | `hologram compile / execute / bench` subcommands | — | — |
 | `hologram-bench` | Criterion benchmarks (12 suites) | — | — |
 
@@ -78,42 +80,66 @@ Add to `Cargo.toml`:
 hologram = { git = "https://github.com/UOR-Foundation/hologram" }
 ```
 
-Run the scientific calculator example, which demonstrates the full pi-F-lambda pipeline, view fusion, graph I/O, and round-trip serialisation:
+Run any of the bundled examples — every example file is built by `cargo build --examples`, so the README's embedded code stays in lockstep with the public API. Drift in either direction is a CI failure.
 
 ```bash
-cargo run --example calculator
+cargo run --example quickstart_minimal     # one LUT op, no graph
+cargo run --example quickstart_pipeline    # full graph → compile → execute
+cargo run --example calculator             # pi-F-lambda + view fusion + graph I/O
 ```
 
-Minimal usage — apply a sigmoid LUT to a byte buffer:
+### Minimal usage — apply a sigmoid LUT to a byte buffer
+
+The full source is at [`examples/quickstart_minimal.rs`](examples/quickstart_minimal.rs):
 
 ```rust
-use hologram::core::{op::LutOp, view::ElementWiseView};
+use hologram_core::op::LutOp;
+use hologram_core::view::ElementWiseView;
 
-let view = ElementWiseView::from_op(LutOp::Sigmoid);
+let op = LutOp::Sigmoid;
+let view = ElementWiseView::new(|x| op.apply(x));
+
+let input: Vec<u8> = (0u8..16).collect();
 let output: Vec<u8> = input.iter().map(|&b| view.apply(b)).collect();
 ```
 
-Build and execute a fused graph:
+### Build and execute a graph through the Prism module trait
+
+The full source is at [`examples/quickstart_pipeline.rs`](examples/quickstart_pipeline.rs):
 
 ```rust
-use hologram::{
-    graph::builder::GraphBuilder,
-    graph::fusion,
-    archive::HoloWriter,
-    exec::{execute_bytes, GraphInputs},
-};
+use hologram_compiler::{Compiler, SourceInput};
+use hologram_core::op::LutOp;
+use hologram_fused_component::{FusedComponentModule, GraphInputs};
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
+use hologram_shapes::prism_module::PrismModule;
 
-let mut b = GraphBuilder::default();
-let x = b.input("x");
-let y = b.lut(x, hologram::core::op::LutOp::Relu);
-let graph = b.output("y", y).build();
+// 1. Build a graph: input → sigmoid → relu → output.
+let graph = GraphBuilder::new()
+    .input("x")
+    .node_from_graph_input(GraphOp::Input, 0)
+    .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+    .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[1])
+    .node_with_inputs(GraphOp::Output, &[2])
+    .output("y", 3)
+    .build();
 
-let fused = fusion::fuse(graph);
-let archive = HoloWriter::default().graph(&fused).build().unwrap();
+// 2. Compile via the v0.2.0 structure-finder Compiler.
+let output = Compiler::default()
+    .compile(SourceInput::Graph(graph))
+    .unwrap();
 
-let mut inputs = GraphInputs::default();
-inputs.insert("x", input_bytes);
-let outputs = execute_bytes(&archive, inputs).unwrap();
+// 3. Load the archive through the Prism module trait. `load()` validates
+//    the archive's ConformanceShapeSection against the module's shape.
+let module = FusedComponentModule::new();
+let loaded = module.load(&output.archive).unwrap();
+
+// 4. Execute with a single-byte input.
+let mut inputs = GraphInputs::new();
+inputs.set(0, vec![100u8]);
+let outputs = module.execute(&loaded, &inputs).unwrap();
+let y = outputs.by_name("y").unwrap();
 ```
 
 ---

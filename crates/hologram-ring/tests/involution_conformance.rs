@@ -3,9 +3,9 @@
 //! Tests that Neg and Bnot are self-inverse at every quantum level,
 //! the critical identity holds, and geometric character is correct.
 
-use hologram_ring::{Involution, QuantumLevel, RingWord, Q0, Q1, Q3, Q7};
+use hologram_ring::{Involution, RingWord, WittLevelMarker, W16, W32, W64, W8};
 
-fn assert_involution_at_level<Q: QuantumLevel>()
+fn assert_involution_at_level<Q: WittLevelMarker>()
 where
     Q::Word: core::fmt::Debug,
 {
@@ -46,28 +46,28 @@ where
 
 #[test]
 fn involution_q0() {
-    assert_involution_at_level::<Q0>();
+    assert_involution_at_level::<W8>();
 }
 
 #[test]
 fn involution_q1() {
-    assert_involution_at_level::<Q1>();
+    assert_involution_at_level::<W16>();
 }
 
 #[test]
 fn involution_q3() {
-    assert_involution_at_level::<Q3>();
+    assert_involution_at_level::<W32>();
 }
 
 #[test]
 fn involution_q7() {
-    assert_involution_at_level::<Q7>();
+    assert_involution_at_level::<W64>();
 }
 
 #[test]
 fn involution_q0_exhaustive() {
-    let neg: Involution<Q0> = Involution::Neg;
-    let bnot: Involution<Q0> = Involution::Bnot;
+    let neg: Involution<W8> = Involution::Neg;
+    let bnot: Involution<W8> = Involution::Bnot;
     for x in 0u8..=255 {
         assert_eq!(neg.apply(neg.apply(x)), x);
         assert_eq!(bnot.apply(bnot.apply(x)), x);
@@ -77,9 +77,9 @@ fn involution_q0_exhaustive() {
 
 #[test]
 fn involution_equality() {
-    let neg1: Involution<Q0> = Involution::Neg;
-    let neg2: Involution<Q0> = Involution::Neg;
-    let bnot: Involution<Q0> = Involution::Bnot;
+    let neg1: Involution<W8> = Involution::Neg;
+    let neg2: Involution<W8> = Involution::Neg;
+    let bnot: Involution<W8> = Involution::Bnot;
     assert_eq!(neg1, neg2);
     assert_ne!(neg1, bnot);
 }

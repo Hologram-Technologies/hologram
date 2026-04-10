@@ -57,8 +57,8 @@ impl fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-impl From<hologram_graph::error::GraphError> for CompileError {
-    fn from(e: hologram_graph::error::GraphError) -> Self {
+impl From<hologram_ir::error::GraphError> for CompileError {
+    fn from(e: hologram_ir::error::GraphError) -> Self {
         Self::Validation(e.to_string())
     }
 }
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn from_graph_error() {
-        let ge = hologram_graph::error::GraphError::CycleDetected;
+        let ge = hologram_ir::error::GraphError::CycleDetected;
         let ce: CompileError = ge.into();
         assert!(matches!(ce, CompileError::Validation(_)));
         assert!(format!("{ce}").contains("cycle"));

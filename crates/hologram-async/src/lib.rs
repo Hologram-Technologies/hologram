@@ -1,8 +1,8 @@
 //! Async compilation and execution wrappers for hologram.
 //!
-//! Wraps the synchronous `CompilerBuilder` and tape executor behind
-//! `tokio::task::spawn_blocking` so callers can drive the pipeline
-//! from async contexts without blocking the executor thread.
+//! Wraps the synchronous compiler and tape executor behind
+//! `tokio::task::spawn_blocking` so callers can drive the pipeline from
+//! async contexts without blocking the executor thread.
 
 pub mod compiler;
 pub mod executor;

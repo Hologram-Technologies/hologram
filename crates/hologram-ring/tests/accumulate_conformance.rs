@@ -2,9 +2,9 @@
 //!
 //! Tests the fundamental fused multiply-add at every quantum level.
 
-use hologram_ring::{accumulate, QuantumLevel, RingWord, Q0, Q1, Q3, Q7};
+use hologram_ring::{accumulate, RingWord, WittLevelMarker, W16, W32, W64, W8};
 
-fn assert_accumulate_at_level<Q: QuantumLevel>()
+fn assert_accumulate_at_level<Q: WittLevelMarker>()
 where
     Q::Word: core::fmt::Debug,
 {
@@ -37,22 +37,22 @@ where
 
 #[test]
 fn accumulate_q0() {
-    assert_accumulate_at_level::<Q0>();
+    assert_accumulate_at_level::<W8>();
 }
 
 #[test]
 fn accumulate_q1() {
-    assert_accumulate_at_level::<Q1>();
+    assert_accumulate_at_level::<W16>();
 }
 
 #[test]
 fn accumulate_q3() {
-    assert_accumulate_at_level::<Q3>();
+    assert_accumulate_at_level::<W32>();
 }
 
 #[test]
 fn accumulate_q7() {
-    assert_accumulate_at_level::<Q7>();
+    assert_accumulate_at_level::<W64>();
 }
 
 #[test]

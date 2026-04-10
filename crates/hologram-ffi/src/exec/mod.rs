@@ -2,8 +2,8 @@
 
 use crate::error::{ffi_catch, set_last_error, FfiStatus};
 use crate::handle::{borrow_handle, borrow_handle_mut, free_handle, into_handle};
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::{GraphInputs, GraphOutputs};
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::{GraphInputs, GraphOutputs};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -50,7 +50,7 @@ pub extern "C" fn hologram_inputs_free(inputs: *mut GraphInputs) {
 /// `archive_ptr`/`archive_len` point to the `.holo` bytes.
 /// Returns an outputs handle or null on error.
 #[no_mangle]
-pub extern "C" fn hologram_execute_bytes(
+pub extern "C" fn hologram_fused_componentute_bytes(
     archive_ptr: *const u8,
     archive_len: usize,
     inputs: *const GraphInputs,
@@ -232,7 +232,7 @@ mod tests {
         let data = [42u8];
         hologram_inputs_set(inp, 0, data.as_ptr(), data.len());
 
-        let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
+        let outputs = hologram_fused_componentute_bytes(archive_ptr, archive_len, inp);
         assert!(!outputs.is_null());
         assert_eq!(hologram_outputs_len(outputs), 1);
 
@@ -257,7 +257,7 @@ mod tests {
         let data = [100u8];
         hologram_inputs_set(inp, 0, data.as_ptr(), data.len());
 
-        let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
+        let outputs = hologram_fused_componentute_bytes(archive_ptr, archive_len, inp);
         let name = CString::new("y").unwrap();
         let mut ptr: *const u8 = std::ptr::null();
         let mut len: usize = 0;
@@ -273,14 +273,14 @@ mod tests {
     #[test]
     fn null_archive_returns_null() {
         let inp = hologram_inputs_new();
-        let out = hologram_execute_bytes(std::ptr::null(), 0, inp);
+        let out = hologram_fused_componentute_bytes(std::ptr::null(), 0, inp);
         assert!(out.is_null());
         hologram_inputs_free(inp);
     }
 
     #[test]
     fn null_inputs_returns_null() {
-        let out = hologram_execute_bytes([0u8; 4].as_ptr(), 4, std::ptr::null());
+        let out = hologram_fused_componentute_bytes([0u8; 4].as_ptr(), 4, std::ptr::null());
         assert!(out.is_null());
     }
 
@@ -291,7 +291,7 @@ mod tests {
         let archive_len = hologram_compilation_archive_len(out);
         let inp = hologram_inputs_new();
         hologram_inputs_set(inp, 0, [0u8].as_ptr(), 1);
-        let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
+        let outputs = hologram_fused_componentute_bytes(archive_ptr, archive_len, inp);
         let mut ptr: *const u8 = std::ptr::null();
         let mut len: usize = 0;
         let rc = hologram_outputs_get(outputs, 99, &mut ptr, &mut len);
@@ -308,7 +308,7 @@ mod tests {
         let archive_len = hologram_compilation_archive_len(out);
         let inp = hologram_inputs_new();
         hologram_inputs_set(inp, 0, [0u8].as_ptr(), 1);
-        let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
+        let outputs = hologram_fused_componentute_bytes(archive_ptr, archive_len, inp);
         let name = CString::new("missing").unwrap();
         let mut ptr: *const u8 = std::ptr::null();
         let mut len: usize = 0;

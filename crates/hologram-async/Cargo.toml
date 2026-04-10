@@ -8,8 +8,8 @@ description = "Async compilation and execution wrappers for hologram"
 [dependencies]
 hologram-archive = { workspace = true }
 hologram-compiler = { workspace = true }
-hologram-exec = { workspace = true }
-hologram-graph = { workspace = true }
+hologram-fused-component = { workspace = true }
+hologram-ir = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]

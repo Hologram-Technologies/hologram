@@ -8,7 +8,7 @@ use crate::HoloPrimitives;
 ///
 /// Stores value (low 24 bits), spectrum (24-char binary string), and
 /// a Braille address (4 Braille glyphs, 6 bits each).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TripleDatum {
     value: u32,
     spectrum_buf: [u8; 24],
@@ -16,15 +16,10 @@ pub struct TripleDatum {
 }
 
 impl TripleDatum {
-    /// Additive identity.
-    pub const ZERO: Self = Self::new(0);
-    /// Multiplicative identity / ring generator.
-    pub const PI1: Self = Self::new(1);
-
     /// Create a datum from a raw 24-bit value. High byte is masked to 0.
     #[inline]
     #[must_use]
-    pub const fn new(value: u32) -> Self {
+    pub fn new(value: u32) -> Self {
         let v = value & 0x00FF_FFFF;
         Self {
             value: v,
@@ -48,7 +43,7 @@ impl TripleDatum {
     /// Raw 24-bit value (high byte always 0).
     #[inline(always)]
     #[must_use]
-    pub const fn value(self) -> u32 {
+    pub const fn value(&self) -> u32 {
         self.value
     }
 
@@ -60,59 +55,59 @@ impl TripleDatum {
         unsafe { core::str::from_utf8_unchecked(&self.spectrum_buf) }
     }
 
-    /// The Braille address for this datum.
+    /// The content-addressed identifier for this datum.
     #[inline]
     #[must_use]
-    pub const fn address(&self) -> &TripleAddress {
+    pub fn address(&self) -> &TripleAddress {
         &self.address
     }
 
     /// Ring reflection (additive inverse): ring_neg(x) = (2^24 - x) mod 2^24.
     #[inline(always)]
     #[must_use]
-    pub fn ring_neg(self) -> Self {
+    pub fn ring_neg(&self) -> Self {
         Self::new(neg_q2(self.value))
     }
 
     /// Hypercube reflection: bnot(x) = (2^24 - 1) ^ x.
     #[inline(always)]
     #[must_use]
-    pub fn bnot(self) -> Self {
+    pub fn bnot(&self) -> Self {
         Self::new(bnot_q2(self.value))
     }
 
     /// Successor: succ(x) = (x + 1) mod 2^24.
     #[inline(always)]
     #[must_use]
-    pub fn succ(self) -> Self {
+    pub fn succ(&self) -> Self {
         Self::new(succ_q2(self.value))
     }
 
     /// Predecessor: pred(x) = (x - 1) mod 2^24.
     #[inline(always)]
     #[must_use]
-    pub fn pred(self) -> Self {
+    pub fn pred(&self) -> Self {
         Self::new(pred_q2(self.value))
     }
 
     /// Hamming weight (popcount) of the 24-bit value.
     #[inline]
     #[must_use]
-    pub fn stratum(self) -> u8 {
+    pub fn stratum(&self) -> u8 {
         q2_stratum(self.value)
     }
 
     /// Curvature: hamming(x, x+1) masked to 24 bits.
     #[inline]
     #[must_use]
-    pub fn curvature(self) -> u8 {
+    pub fn curvature(&self) -> u8 {
         q2_curvature(self.value)
     }
 
     /// Add two Q2 datums.
     #[inline]
     #[must_use]
-    pub fn ring_add(self, rhs: Self) -> Self {
+    pub fn ring_add(&self, rhs: &Self) -> Self {
         Self::new(add_q2(self.value, rhs.value))
     }
 }
@@ -132,7 +127,7 @@ impl core::fmt::Display for TripleDatum {
 impl Default for TripleDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::new(0)
     }
 }
 
@@ -152,49 +147,57 @@ impl From<TripleDatum> for u32 {
 
 // --- TripleAddress ---
 
-/// Braille address for a 24-bit datum: 4 Braille characters (6 bits each).
+/// Content-addressed identifier for a 24-bit datum at W24.
 ///
-/// Braille U+2800..U+283F → UTF-8: E2 A0 (80 + 6-bit group).
-/// 24 bits split into four 6-bit groups: bits [5:0], [11:6], [17:12], [23:18].
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Per uor-foundation v0.2.0 Amendment 43 section 2:
+/// - `canonical_bytes` = hex(`header(2) || le_bytes(value, 3)`) = 8 hex chars
+/// - `digest` = hex(BLAKE3(`canonical_raw`)) = 64 hex chars
+/// - `digest_algorithm` = `"blake3"`
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TripleAddress {
     value: u32,
-    glyph_buf: [u8; 12], // 4 × 3-byte UTF-8 Braille chars
+    /// hex(header(2) || le_bytes(value, 3)) — 8 hex chars for 4 raw bytes.
+    canonical_hex: [u8; 8],
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
+    digest_hex: [u8; 64],
 }
 
 impl TripleAddress {
-    /// Create a Braille address from a 24-bit value.
+    /// The zero address (triple value 0).
+    pub fn zero() -> Self {
+        Self::from_triple(0)
+    }
+
+    /// Create a content-addressed identifier from a 24-bit value.
+    ///
+    /// Computes Amendment 43 canonical bytes and BLAKE3 digest at construction.
     #[must_use]
-    pub const fn from_triple(value: u32) -> Self {
+    pub fn from_triple(value: u32) -> Self {
+        use crate::datum::hex_encode;
+
         let v = value & 0x00FF_FFFF;
-        let g0 = (v & 0x3F) as u8;
-        let g1 = ((v >> 6) & 0x3F) as u8;
-        let g2 = ((v >> 12) & 0x3F) as u8;
-        let g3 = ((v >> 18) & 0x3F) as u8;
+        // Amendment 43: canonical = header(k) || le_bytes(x, k+1)
+        // For W24 (k=2): header = 0x02, le_bytes(value, 3) = first 3 bytes of u32 LE
+        let le = v.to_le_bytes();
+        let canonical_raw = [0x02u8, le[0], le[1], le[2]];
+
+        let mut canonical_hex = [0u8; 8];
+        hex_encode(&canonical_raw, &mut canonical_hex);
+
+        let hash = blake3::hash(&canonical_raw);
+        let mut digest_hex = [0u8; 64];
+        hex_encode(hash.as_bytes(), &mut digest_hex);
+
         Self {
             value: v,
-            glyph_buf: [
-                0xE2,
-                0xA0,
-                0x80 + g0,
-                0xE2,
-                0xA0,
-                0x80 + g1,
-                0xE2,
-                0xA0,
-                0x80 + g2,
-                0xE2,
-                0xA0,
-                0x80 + g3,
-            ],
+            canonical_hex,
+            digest_hex,
         }
     }
 
-    /// The Braille string representation (4 glyphs).
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille chars only.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
+    /// The raw 24-bit value this address represents.
+    pub fn value(&self) -> u32 {
+        self.value
     }
 }
 
@@ -206,12 +209,12 @@ impl core::fmt::Debug for TripleAddress {
 
 // --- uor-foundation trait implementations ---
 
-impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for TripleDatum {
+impl hologram_foundation::schema::Datum<HoloPrimitives> for TripleDatum {
     fn value(&self) -> u64 {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         24
     }
 
@@ -223,31 +226,31 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for TripleDatum {
         self.value as u64
     }
 
-    type Address = TripleAddress;
+    type Element = TripleAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for TripleAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl hologram_foundation::address::Element<HoloPrimitives> for TripleAddress {
+    /// Byte length of the canonical encoding (4 raw bytes for W24).
     fn length(&self) -> u64 {
-        4 // 4 Braille glyphs
+        4
     }
 
     fn addresses(&self) -> &str {
-        ""
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
-        self.as_str()
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         24
     }
 
@@ -256,9 +259,11 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for TripleAddress 
         "blake3"
     }
 
+    /// Amendment 43 canonical encoding: hex(header(2) || le_bytes(value, 3)).
     #[inline]
     fn canonical_bytes(&self) -> &str {
-        self.as_str()
+        // SAFETY: canonical_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.canonical_hex) }
     }
 }
 
@@ -268,8 +273,8 @@ mod tests {
 
     #[test]
     fn zero_and_pi1() {
-        assert_eq!(TripleDatum::ZERO.value(), 0);
-        assert_eq!(TripleDatum::PI1.value(), 1);
+        assert_eq!(TripleDatum::new(0).value(), 0);
+        assert_eq!(TripleDatum::new(1).value(), 1);
     }
 
     #[test]
@@ -323,10 +328,10 @@ mod tests {
 
     #[test]
     fn datum_trait_impl() {
-        use uor_foundation::kernel::schema::Datum;
+        use hologram_foundation::schema::Datum;
         let d = TripleDatum::new(0xABCDEF);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 0xABCDEF);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 24);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 24);
         assert_eq!(
             Datum::<HoloPrimitives>::stratum(&d),
             (0xABCDEFu32).count_ones() as u64
@@ -334,12 +339,28 @@ mod tests {
     }
 
     #[test]
-    fn address_length() {
-        use uor_foundation::kernel::address::Address;
-        let a = TripleAddress::from_triple(0);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 4);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 24);
-        assert_eq!(a.as_str().chars().count(), 4); // 4 Braille glyphs
+    fn triple_address_digest_is_blake3() {
+        use crate::datum::hex_encode;
+        use hologram_foundation::address::Element;
+        let addr = TripleAddress::from_triple(0xABCDEF);
+        // digest() returns 64 hex chars (256-bit BLAKE3)
+        assert_eq!(addr.digest().len(), 64);
+        // canonical_bytes() returns 8 hex chars (4 raw bytes: header(2) || le_bytes)
+        assert_eq!(addr.canonical_bytes().len(), 8);
+        // digest_algorithm is "blake3"
+        assert_eq!(addr.digest_algorithm(), "blake3");
+        // Verify: digest = hex(blake3(canonical_raw))
+        let v = 0xABCDEFu32;
+        let le = v.to_le_bytes();
+        let canonical_raw = [0x02u8, le[0], le[1], le[2]];
+        let expected_hash = blake3::hash(&canonical_raw);
+        let mut expected_hex = [0u8; 64];
+        hex_encode(expected_hash.as_bytes(), &mut expected_hex);
+        let expected = core::str::from_utf8(&expected_hex).unwrap();
+        assert_eq!(addr.digest(), expected);
+        // length() returns raw byte count
+        assert_eq!(Element::<HoloPrimitives>::length(&addr), 4);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&addr), 24);
     }
 
     #[test]
@@ -356,7 +377,7 @@ mod tests {
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(TripleDatum::default(), TripleDatum::ZERO);
+        assert_eq!(TripleDatum::default(), TripleDatum::new(0));
     }
 
     #[test]

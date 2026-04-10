@@ -3,7 +3,7 @@
 //! Tests the 10 primitive operations at every quantum level.
 //! Critical identity: neg(bnot(x)) == succ(x) — the UOR fundamental relation.
 
-use hologram_ring::{PrimOp, QuantumLevel, RingWord, Q0, Q1, Q15, Q3, Q7};
+use hologram_ring::{PrimOp, RingWord, WittLevelMarker, W128, W16, W32, W64, W8};
 
 // ── Generic test harness ─────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ fn sample_values<W: RingWord>() -> Vec<W> {
     vals
 }
 
-fn assert_primop_at_level<Q: QuantumLevel>()
+fn assert_primop_at_level<Q: WittLevelMarker>()
 where
     Q::Word: core::fmt::Debug,
 {
@@ -147,37 +147,37 @@ where
 
 #[test]
 fn primop_q0() {
-    assert_primop_at_level::<Q0>();
+    assert_primop_at_level::<W8>();
 }
 
 #[test]
 fn primop_q1() {
-    assert_primop_at_level::<Q1>();
+    assert_primop_at_level::<W16>();
 }
 
 #[test]
 fn primop_q3() {
-    assert_primop_at_level::<Q3>();
+    assert_primop_at_level::<W32>();
 }
 
 #[test]
 fn primop_q7() {
-    assert_primop_at_level::<Q7>();
+    assert_primop_at_level::<W64>();
 }
 
 #[test]
 fn primop_q15() {
-    assert_primop_at_level::<Q15>();
+    assert_primop_at_level::<W128>();
 }
 
-// ── Critical identity exhaustive at Q0 ──────────────────────────────────
+// ── Critical identity exhaustive at W8 ──────────────────────────────────
 
 #[test]
 fn critical_identity_q0_exhaustive() {
     for x in 0u8..=255 {
         let neg_bnot = PrimOp::Neg.apply_unary(PrimOp::Bnot.apply_unary(x));
         let succ = PrimOp::Succ.apply_unary(x);
-        assert_eq!(neg_bnot, succ, "critical identity at Q0 x={x}");
+        assert_eq!(neg_bnot, succ, "critical identity at W8 x={x}");
     }
 }
 
@@ -275,7 +275,7 @@ fn associativity_correct() {
 
 #[test]
 fn cross_level_bitwise_consistency() {
-    // For bitwise ops (Xor, And, Or, Bnot), zero-extending a Q0 value to Q1
+    // For bitwise ops (Xor, And, Or, Bnot), zero-extending a W8 value to W16
     // and applying the op should give the same lower 8 bits.
     for x in 0u8..=255 {
         let x16 = x as u16;

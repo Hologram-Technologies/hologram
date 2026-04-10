@@ -1,15 +1,15 @@
 //! Compiler pipeline benchmarks at varying graph sizes.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_cascade::liveness::compute_liveness;
-use hologram_cascade::workspace::plan_workspace;
 use hologram_compiler::compile;
 use hologram_core::op::LutOp;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::graph::GraphOp;
-use hologram_graph::schedule::ExecutionSchedule;
+use hologram_ir::analysis::liveness::compute_liveness;
+use hologram_ir::analysis::workspace::plan_workspace;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
+use hologram_ir::schedule::ExecutionSchedule;
 
-fn build_chain(size: usize) -> hologram_graph::Graph {
+fn build_chain(size: usize) -> hologram_ir::Graph {
     let ops = [LutOp::Relu, LutOp::Sigmoid, LutOp::Tanh];
     let mut b = GraphBuilder::new().node(GraphOp::Input);
     for i in 0..size {

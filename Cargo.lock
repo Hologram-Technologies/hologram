@@ -667,9 +667,10 @@ dependencies = [
  "hologram-cli",
  "hologram-compiler",
  "hologram-core",
- "hologram-exec",
  "hologram-ffi",
- "hologram-graph",
+ "hologram-fused-component",
+ "hologram-ir",
+ "hologram-shapes",
  "rkyv",
  "serde",
  "tokio",
@@ -684,7 +685,7 @@ dependencies = [
  "bytemuck",
  "hologram-compression",
  "hologram-core",
- "hologram-graph",
+ "hologram-ir",
  "memmap2",
  "rayon",
  "rkyv",
@@ -697,8 +698,8 @@ dependencies = [
  "hologram-archive",
  "hologram-compiler",
  "hologram-core",
- "hologram-exec",
- "hologram-graph",
+ "hologram-fused-component",
+ "hologram-ir",
  "tokio",
 ]
 
@@ -710,29 +711,14 @@ dependencies = [
  "criterion",
  "hologram-archive",
  "hologram-async",
- "hologram-cascade",
  "hologram-compiler",
  "hologram-core",
- "hologram-exec",
  "hologram-ffi",
- "hologram-graph",
+ "hologram-foundation",
+ "hologram-fused-component",
+ "hologram-ir",
  "rkyv",
  "tokio",
- "uor-foundation",
-]
-
-[[package]]
-name = "hologram-cascade"
-version = "0.4.1"
-dependencies = [
- "blake3",
- "hologram-archive",
- "hologram-core",
- "hologram-exec",
- "hologram-graph",
- "rayon",
- "smallvec",
- "uor-foundation",
 ]
 
 [[package]]
@@ -743,8 +729,8 @@ dependencies = [
  "hologram-archive",
  "hologram-compiler",
  "hologram-core",
- "hologram-exec",
- "hologram-graph",
+ "hologram-fused-component",
+ "hologram-ir",
  "parking_lot",
  "rkyv",
  "serde_json",
@@ -757,11 +743,12 @@ version = "0.4.1"
 dependencies = [
  "blake3",
  "hologram-archive",
- "hologram-cascade",
  "hologram-core",
- "hologram-graph",
+ "hologram-foundation",
+ "hologram-fused-component",
+ "hologram-ir",
+ "hologram-shapes",
  "rayon",
- "uor-foundation",
 ]
 
 [[package]]
@@ -775,22 +762,46 @@ dependencies = [
 name = "hologram-core"
 version = "0.4.1"
 dependencies = [
+ "blake3",
  "bytemuck",
+ "hologram-foundation",
  "hologram-ring",
  "libm",
  "rkyv",
+]
+
+[[package]]
+name = "hologram-ffi"
+version = "0.4.1"
+dependencies = [
+ "hologram-archive",
+ "hologram-compiler",
+ "hologram-compression",
+ "hologram-core",
+ "hologram-fused-component",
+ "hologram-ir",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "hologram-foundation"
+version = "0.4.1"
+dependencies = [
  "uor-foundation",
 ]
 
 [[package]]
-name = "hologram-exec"
+name = "hologram-fused-component"
 version = "0.4.1"
 dependencies = [
  "bytemuck",
  "hologram-archive",
  "hologram-core",
- "hologram-graph",
+ "hologram-foundation",
+ "hologram-ir",
  "hologram-ring",
+ "hologram-shapes",
  "libc",
  "metal 0.33.0",
  "parking_lot",
@@ -803,21 +814,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-ffi"
-version = "0.4.1"
-dependencies = [
- "hologram-archive",
- "hologram-compiler",
- "hologram-compression",
- "hologram-core",
- "hologram-exec",
- "hologram-graph",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "hologram-graph"
+name = "hologram-ir"
 version = "0.4.1"
 dependencies = [
  "hologram-core",
@@ -831,8 +828,16 @@ dependencies = [
 name = "hologram-ring"
 version = "0.4.1"
 dependencies = [
+ "blake3",
+ "hologram-foundation",
  "rkyv",
- "uor-foundation",
+]
+
+[[package]]
+name = "hologram-shapes"
+version = "0.4.1"
+dependencies = [
+ "hologram-foundation",
 ]
 
 [[package]]
@@ -1675,18 +1680,18 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uor-foundation"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45056f0c528dbc37ef3cb572a0972d5b4de95965536049e2025943af08391a11"
+checksum = "e22accb385412af46b76e49d008d422fa33506c906980050a35fc8ea31e628cd"
 dependencies = [
  "uor-foundation-macros",
 ]
 
 [[package]]
 name = "uor-foundation-macros"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c0ac34910ea3c392a10ade6e6fb14ecb5f5ff4df565045e48a0d065ba08ac3e"
+checksum = "7bcf51706d3ec32aeb8cfc620b613a3fa9a18f02879c7cb8d4e94176e5b901b6"
 dependencies = [
  "proc-macro2",
  "quote",

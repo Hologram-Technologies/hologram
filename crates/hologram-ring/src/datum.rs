@@ -1,24 +1,24 @@
-//! Datum: an element of the ring R_n at quantum level Q.
+//! Datum: an element of the ring R_n at Witt level W.
 
 use crate::address::Address;
-use crate::level::QuantumLevel;
+use crate::level::WittLevelMarker;
 use crate::word::RingWord;
 use crate::PrismPrimitives;
 
-/// An element of the ring R_n at quantum level Q.
+/// An element of the ring R_n at Witt level W.
 /// const-constructible, zero allocation.
-pub struct Datum<Q: QuantumLevel> {
-    value: Q::Word,
+pub struct Datum<W: WittLevelMarker> {
+    value: W::Word,
     spectrum_buf: [u8; 128], // binary string, max 128 bits
     spectrum_len: u8,
-    address: Address<Q>,
+    address: Address<W>,
 }
 
-impl<Q: QuantumLevel> Datum<Q> {
+impl<W: WittLevelMarker> Datum<W> {
     /// Create a datum from a raw ring value.
-    pub fn new(value: Q::Word) -> Self {
+    pub fn new(value: W::Word) -> Self {
         let mut spectrum_buf = [b'0'; 128];
-        let bits = Q::BITS.min(128) as usize;
+        let bits = W::BITS.min(128) as usize;
         let val_u64 = value.to_u64();
         for (i, byte) in spectrum_buf[..bits.min(64)].iter_mut().enumerate() {
             if val_u64 & (1u64 << (bits.min(64) - 1 - i)) != 0 {
@@ -35,7 +35,7 @@ impl<Q: QuantumLevel> Datum<Q> {
 
     /// The raw ring value.
     #[inline]
-    pub fn val(&self) -> Q::Word {
+    pub fn val(&self) -> W::Word {
         self.value
     }
 
@@ -52,13 +52,15 @@ impl<Q: QuantumLevel> Datum<Q> {
     }
 }
 
-impl<Q: QuantumLevel> uor_foundation::kernel::schema::Datum<PrismPrimitives> for Datum<Q> {
+impl<W: WittLevelMarker> hologram_foundation::schema::Datum<PrismPrimitives> for Datum<W> {
     fn value(&self) -> u64 {
         self.value.to_u64()
     }
 
-    fn quantum(&self) -> u64 {
-        Q::BITS as u64
+    /// v0.2.0 renamed `quantum()` to `witt_length()`. Returns the bit width
+    /// of this datum's ring (8/16/32/64/128).
+    fn witt_length(&self) -> u64 {
+        W::BITS as u64
     }
 
     fn stratum(&self) -> u64 {
@@ -66,16 +68,20 @@ impl<Q: QuantumLevel> uor_foundation::kernel::schema::Datum<PrismPrimitives> for
     }
 
     fn spectrum(&self) -> u64 {
-        // uor-foundation 0.1.4 changed `spectrum` to return P::NonNegativeInteger
-        // (u64 for PrismPrimitives). Return the underlying numeric value;
-        // the binary-string representation is still available via the inherent
+        // v0.2.0 `spectrum` returns P::NonNegativeInteger (u64 for
+        // PrismPrimitives). Return the underlying numeric value; the
+        // binary-string representation is still available via the inherent
         // `Datum::spectrum` method.
         self.value.to_u64()
     }
 
-    type Address = Address<Q>;
+    /// v0.2.0 renamed the associated type `Address` to `Element` and
+    /// changed its bound from `kernel::address::Address<P>` to
+    /// `kernel::address::Element<P>`.
+    type Element = Address<W>;
 
-    fn glyph(&self) -> &Self::Address {
+    /// v0.2.0 renamed the accessor `glyph()` to `element()`.
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }

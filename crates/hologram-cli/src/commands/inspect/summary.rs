@@ -3,7 +3,7 @@
 use super::InspectArgs;
 use crate::fmt::format_bytes;
 use hologram_archive::LoadedPlan;
-use hologram_graph::ExecutionSchedule;
+use hologram_ir::ExecutionSchedule;
 
 /// Print the summary detail level.
 pub fn print(args: &InspectArgs, data: &[u8], plan: &LoadedPlan, schedule: &ExecutionSchedule) {

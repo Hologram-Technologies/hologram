@@ -7,7 +7,7 @@ use crate::HoloPrimitives;
 ///
 /// Stores value (full 32 bits), spectrum (32-char binary string), and
 /// a Braille address (6 Braille glyphs, encoding 32 bits with 4 bits padding).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct QuadDatum {
     value: u32,
     spectrum_buf: [u8; 32],
@@ -15,15 +15,10 @@ pub struct QuadDatum {
 }
 
 impl QuadDatum {
-    /// Additive identity.
-    pub const ZERO: Self = Self::new(0);
-    /// Multiplicative identity / ring generator.
-    pub const PI1: Self = Self::new(1);
-
     /// Create a datum from a raw 32-bit value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u32) -> Self {
+    pub fn new(value: u32) -> Self {
         Self {
             value,
             spectrum_buf: Self::make_spectrum(value),
@@ -46,7 +41,7 @@ impl QuadDatum {
     /// Raw 32-bit value.
     #[inline(always)]
     #[must_use]
-    pub const fn value(self) -> u32 {
+    pub const fn value(&self) -> u32 {
         self.value
     }
 
@@ -58,59 +53,59 @@ impl QuadDatum {
         unsafe { core::str::from_utf8_unchecked(&self.spectrum_buf) }
     }
 
-    /// The Braille address for this datum.
+    /// The content-addressed identifier for this datum.
     #[inline]
     #[must_use]
-    pub const fn address(&self) -> &QuadAddress {
+    pub fn address(&self) -> &QuadAddress {
         &self.address
     }
 
     /// Ring reflection (additive inverse).
     #[inline(always)]
     #[must_use]
-    pub fn ring_neg(self) -> Self {
+    pub fn ring_neg(&self) -> Self {
         Self::new(self.value.wrapping_neg())
     }
 
     /// Hypercube reflection: bnot(x) = !x.
     #[inline(always)]
     #[must_use]
-    pub fn bnot(self) -> Self {
+    pub fn bnot(&self) -> Self {
         Self::new(!self.value)
     }
 
     /// Successor: (x + 1) mod 2^32.
     #[inline(always)]
     #[must_use]
-    pub fn succ(self) -> Self {
+    pub fn succ(&self) -> Self {
         Self::new(self.value.wrapping_add(1))
     }
 
     /// Predecessor: (x - 1) mod 2^32.
     #[inline(always)]
     #[must_use]
-    pub fn pred(self) -> Self {
+    pub fn pred(&self) -> Self {
         Self::new(self.value.wrapping_sub(1))
     }
 
     /// Hamming weight (popcount) of the 32-bit value.
     #[inline]
     #[must_use]
-    pub fn stratum(self) -> u8 {
+    pub fn stratum(&self) -> u8 {
         q3_stratum(self.value)
     }
 
     /// Curvature: hamming(x, x+1).
     #[inline]
     #[must_use]
-    pub fn curvature(self) -> u8 {
+    pub fn curvature(&self) -> u8 {
         q3_curvature(self.value)
     }
 
     /// Add two Q3 datums.
     #[inline]
     #[must_use]
-    pub fn ring_add(self, rhs: Self) -> Self {
+    pub fn ring_add(&self, rhs: &Self) -> Self {
         Self::new(self.value.wrapping_add(rhs.value))
     }
 }
@@ -130,7 +125,7 @@ impl core::fmt::Display for QuadDatum {
 impl Default for QuadDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::new(0)
     }
 }
 
@@ -150,56 +145,56 @@ impl From<QuadDatum> for u32 {
 
 // --- QuadAddress ---
 
-/// Braille address for a 32-bit datum: 6 Braille characters.
+/// Content-addressed identifier for a 32-bit datum at W32.
 ///
-/// 32 bits ÷ 6 bits/glyph = 5.33 → 6 glyphs (last has 2 data bits + 4 padding).
-/// Braille U+2800..U+283F → UTF-8: E2 A0 (80 + 6-bit group).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Per uor-foundation v0.2.0 Amendment 43 section 2:
+/// - `canonical_bytes` = hex(`header(3) || le_bytes(value, 4)`) = 10 hex chars
+/// - `digest` = hex(BLAKE3(`canonical_raw`)) = 64 hex chars
+/// - `digest_algorithm` = `"blake3"`
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct QuadAddress {
     value: u32,
-    glyph_buf: [u8; 18], // 6 × 3-byte UTF-8 Braille chars
+    /// hex(header(3) || le_bytes(value, 4)) — 10 hex chars for 5 raw bytes.
+    canonical_hex: [u8; 10],
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
+    digest_hex: [u8; 64],
 }
 
 impl QuadAddress {
-    /// Create a Braille address from a 32-bit value.
+    /// The zero address (quad value 0).
+    pub fn zero() -> Self {
+        Self::from_quad(0)
+    }
+
+    /// Create a content-addressed identifier from a 32-bit value.
+    ///
+    /// Computes Amendment 43 canonical bytes and BLAKE3 digest at construction.
     #[must_use]
-    pub const fn from_quad(value: u32) -> Self {
-        let g0 = (value & 0x3F) as u8;
-        let g1 = ((value >> 6) & 0x3F) as u8;
-        let g2 = ((value >> 12) & 0x3F) as u8;
-        let g3 = ((value >> 18) & 0x3F) as u8;
-        let g4 = ((value >> 24) & 0x3F) as u8;
-        let g5 = ((value >> 30) & 0x03) as u8; // only 2 bits
+    pub fn from_quad(value: u32) -> Self {
+        use crate::datum::hex_encode;
+
+        // Amendment 43: canonical = header(k) || le_bytes(x, k+1)
+        // For W32 (k=3): header = 0x03, le_bytes(value, 4) = value.to_le_bytes()
+        let le = value.to_le_bytes();
+        let canonical_raw = [0x03u8, le[0], le[1], le[2], le[3]];
+
+        let mut canonical_hex = [0u8; 10];
+        hex_encode(&canonical_raw, &mut canonical_hex);
+
+        let hash = blake3::hash(&canonical_raw);
+        let mut digest_hex = [0u8; 64];
+        hex_encode(hash.as_bytes(), &mut digest_hex);
+
         Self {
             value,
-            glyph_buf: [
-                0xE2,
-                0xA0,
-                0x80 + g0,
-                0xE2,
-                0xA0,
-                0x80 + g1,
-                0xE2,
-                0xA0,
-                0x80 + g2,
-                0xE2,
-                0xA0,
-                0x80 + g3,
-                0xE2,
-                0xA0,
-                0x80 + g4,
-                0xE2,
-                0xA0,
-                0x80 + g5,
-            ],
+            canonical_hex,
+            digest_hex,
         }
     }
 
-    /// The Braille string representation (6 glyphs).
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille chars only.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
+    /// The raw 32-bit value this address represents.
+    pub fn value(&self) -> u32 {
+        self.value
     }
 }
 
@@ -211,12 +206,12 @@ impl core::fmt::Debug for QuadAddress {
 
 // --- uor-foundation trait implementations ---
 
-impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for QuadDatum {
+impl hologram_foundation::schema::Datum<HoloPrimitives> for QuadDatum {
     fn value(&self) -> u64 {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         32
     }
 
@@ -228,31 +223,31 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for QuadDatum {
         self.value as u64
     }
 
-    type Address = QuadAddress;
+    type Element = QuadAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for QuadAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl hologram_foundation::address::Element<HoloPrimitives> for QuadAddress {
+    /// Byte length of the canonical encoding (5 raw bytes for W32).
     fn length(&self) -> u64 {
-        6 // 6 Braille glyphs
+        5
     }
 
     fn addresses(&self) -> &str {
-        ""
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
-        self.as_str()
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         32
     }
 
@@ -261,9 +256,11 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for QuadAddress {
         "blake3"
     }
 
+    /// Amendment 43 canonical encoding: hex(header(3) || le_bytes(value, 4)).
     #[inline]
     fn canonical_bytes(&self) -> &str {
-        self.as_str()
+        // SAFETY: canonical_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.canonical_hex) }
     }
 }
 
@@ -273,8 +270,8 @@ mod tests {
 
     #[test]
     fn zero_and_pi1() {
-        assert_eq!(QuadDatum::ZERO.value(), 0);
-        assert_eq!(QuadDatum::PI1.value(), 1);
+        assert_eq!(QuadDatum::new(0).value(), 0);
+        assert_eq!(QuadDatum::new(1).value(), 1);
     }
 
     #[test]
@@ -307,11 +304,27 @@ mod tests {
     }
 
     #[test]
-    fn address_length() {
-        use uor_foundation::kernel::address::Address;
-        let a = QuadAddress::from_quad(0);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 6);
-        assert_eq!(a.as_str().chars().count(), 6);
+    fn quad_address_digest_is_blake3() {
+        use crate::datum::hex_encode;
+        use hologram_foundation::address::Element;
+        let addr = QuadAddress::from_quad(0xDEAD_BEEF);
+        // digest() returns 64 hex chars (256-bit BLAKE3)
+        assert_eq!(addr.digest().len(), 64);
+        // canonical_bytes() returns 10 hex chars (5 raw bytes: header(3) || le_bytes)
+        assert_eq!(addr.canonical_bytes().len(), 10);
+        // digest_algorithm is "blake3"
+        assert_eq!(addr.digest_algorithm(), "blake3");
+        // Verify: digest = hex(blake3(canonical_raw))
+        let le = 0xDEAD_BEEFu32.to_le_bytes();
+        let canonical_raw = [0x03u8, le[0], le[1], le[2], le[3]];
+        let expected_hash = blake3::hash(&canonical_raw);
+        let mut expected_hex = [0u8; 64];
+        hex_encode(expected_hash.as_bytes(), &mut expected_hex);
+        let expected = core::str::from_utf8(&expected_hex).unwrap();
+        assert_eq!(addr.digest(), expected);
+        // length() returns raw byte count
+        assert_eq!(Element::<HoloPrimitives>::length(&addr), 5);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&addr), 32);
     }
 
     #[test]
@@ -324,10 +337,10 @@ mod tests {
 
     #[test]
     fn datum_trait_impl() {
-        use uor_foundation::kernel::schema::Datum;
+        use hologram_foundation::schema::Datum;
         let d = QuadDatum::new(0xDEAD_BEEF);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 0xDEAD_BEEF);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 32);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 32);
     }
 
     #[test]

@@ -10,14 +10,14 @@
 use hologram_core::encoding::{AngleEncoding, Encoding, SignedEncoding, UnsignedEncoding};
 use hologram_core::op::{LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::fusion;
-use hologram_graph::graph::GraphOp;
+use hologram_ir::analysis;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
 use hologram_archive::HoloWriter;
 
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
 
 fn main() {
     println!("=== Hologram Scientific Calculator ===\n");
@@ -192,7 +192,7 @@ fn demo_full_pipeline() {
     println!("  Nodes before fusion: {}", g.node_count());
 
     // Fuse
-    let stats = fusion::fuse(&mut g).unwrap();
+    let stats = analysis::analyze(&mut g).unwrap();
     println!(
         "  Fusion: {} views fused, {} constants folded, {} CSE eliminated",
         stats.views_fused, stats.constants_folded, stats.cse_eliminated
@@ -278,7 +278,7 @@ fn demo_full_pipeline() {
         .node_with_inputs(GraphOp::Output, &[2]) // 3
         .output("sum", 3)
         .build();
-    let _ = fusion::fuse(&mut g2).unwrap();
+    let _ = analysis::analyze(&mut g2).unwrap();
     let archive2 = HoloWriter::new().set_graph(&g2).build().unwrap();
 
     let mut inputs2 = GraphInputs::new();

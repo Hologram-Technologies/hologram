@@ -1,0 +1,20 @@
+[package]
+name = "hologram-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hologram cross-compiler IR: expression graph, structural-finder analyses, parallel scheduling"
+
+[lib]
+name = "hologram_ir"
+path = "src/lib.rs"
+
+[dependencies]
+hologram-core = { workspace = true, features = ["std"] }
+rkyv = { workspace = true }
+smallvec = { workspace = true }
+tinyvec = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+parallel = ["dep:rayon"]

@@ -1,0 +1,9 @@
+[package]
+name = "hologram-shapes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Conformance shape declarations and parameterized conformance test infrastructure for hologram. Declares F_prism_strict and F_prism_fused_component as instances of hologram-foundation's bridge::conformance_::Shape mechanism. Defines the PrismModule trait that any substrate carrying a hologram-declared shape implements."
+
+[dependencies]
+hologram-foundation = { path = "../hologram-foundation" }

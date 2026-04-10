@@ -3,10 +3,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hologram_archive::{load_from_bytes, HoloWriter};
 use hologram_core::op::{LutOp, PrimOp};
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::graph::GraphOp;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
-fn build_graph(size: usize) -> hologram_graph::Graph {
+fn build_graph(size: usize) -> hologram_ir::Graph {
     // Build a linear chain of `size` unary ops
     let mut builder = GraphBuilder::new()
         .input("x")

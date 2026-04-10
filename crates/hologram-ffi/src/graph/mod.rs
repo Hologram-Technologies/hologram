@@ -2,9 +2,9 @@
 
 use crate::error::{set_last_error, FfiStatus};
 use crate::handle::{borrow_handle, borrow_handle_mut, free_handle, into_handle};
-use hologram_graph::graph::edge;
-use hologram_graph::graph::node::NodeId;
-use hologram_graph::{Graph, GraphOp};
+use hologram_ir::graph::edge;
+use hologram_ir::graph::node::NodeId;
+use hologram_ir::{Graph, GraphOp};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 

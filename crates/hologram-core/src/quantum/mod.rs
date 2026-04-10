@@ -53,8 +53,8 @@
 //! # Q4+ (40-bit and beyond): Algorithmic Only (Design Only)
 //!
 //! uor-foundation defines Q0–Q3 as named constants on the open-world
-//! `QuantumLevel` struct. Arbitrary levels can be constructed via
-//! `QuantumLevel::new(k)` with bit width `8*(k+1)`. Future levels follow
+//! `WittLevel` struct. Arbitrary levels can be constructed via
+//! `WittLevel::new(k)` with bit width `8*(k+1)`. Future levels follow
 //! the +8 bits/level pattern:
 //!
 //! - **Q4 (40-bit)**: 2^40 = 1.1 trillion states. Tables completely infeasible.
@@ -62,19 +62,19 @@
 //!   frequently accessed values. Composition via function chaining rather than
 //!   table fusion.
 
-use uor_foundation::enums::QuantumLevel;
+use hologram_foundation::WittLevel;
 
 /// Bit width for a given quantum level: `8 * (k + 1)`.
 #[inline]
 #[must_use]
-pub const fn quantum_bit_width(level: QuantumLevel) -> u64 {
+pub const fn quantum_bit_width(level: WittLevel) -> u64 {
     level.bits_width() as u64
 }
 
 /// Modulus (ring size) for a given quantum level: 2^bits.
 #[inline]
 #[must_use]
-pub const fn quantum_modulus(level: QuantumLevel) -> u64 {
+pub const fn quantum_modulus(level: WittLevel) -> u64 {
     match level.cycle_size() {
         Some(s) => s as u64,
         None => 0,
@@ -84,18 +84,19 @@ pub const fn quantum_modulus(level: QuantumLevel) -> u64 {
 /// Number of entries in a full table at this quantum level.
 #[inline]
 #[must_use]
-pub const fn quantum_table_entries(level: QuantumLevel) -> u64 {
+pub const fn quantum_table_entries(level: WittLevel) -> u64 {
     quantum_modulus(level)
 }
 
 /// Whether a full activation table is feasible at this quantum level.
 ///
-/// Q0 and Q1 tables fit in L2/L3 cache. Q2 is borderline (~50MB).
-/// Q3 and above are infeasible (17GB+).
+/// W8 and W16 tables fit in L2/L3 cache. W24 is borderline (~50MB).
+/// W32 and above are infeasible (17GB+).
 #[inline]
 #[must_use]
-pub const fn quantum_is_table_feasible(level: QuantumLevel) -> bool {
-    level.index() <= 1
+pub const fn quantum_is_table_feasible(level: WittLevel) -> bool {
+    // v0.2.0: use bit width directly. W8/W16 are feasible (≤16 bits).
+    level.witt_length() <= 16
 }
 
 /// Memory per activation table in bytes at this quantum level.
@@ -103,7 +104,7 @@ pub const fn quantum_is_table_feasible(level: QuantumLevel) -> bool {
 /// `entries * bytes_per_entry` where bytes_per_entry = ceil(bits / 8).
 #[inline]
 #[must_use]
-pub const fn quantum_table_size_bytes(level: QuantumLevel) -> u64 {
+pub const fn quantum_table_size_bytes(level: WittLevel) -> u64 {
     let entries = quantum_table_entries(level);
     let bytes_per = quantum_bit_width(level).div_ceil(8);
     entries * bytes_per
@@ -198,38 +199,38 @@ mod tests {
 
     #[test]
     fn bit_widths() {
-        assert_eq!(quantum_bit_width(QuantumLevel::Q0), 8);
-        assert_eq!(quantum_bit_width(QuantumLevel::Q1), 16);
-        assert_eq!(quantum_bit_width(QuantumLevel::Q2), 24);
-        assert_eq!(quantum_bit_width(QuantumLevel::Q3), 32);
+        assert_eq!(quantum_bit_width(WittLevel::W8), 8);
+        assert_eq!(quantum_bit_width(WittLevel::W16), 16);
+        assert_eq!(quantum_bit_width(WittLevel::W24), 24);
+        assert_eq!(quantum_bit_width(WittLevel::W32), 32);
     }
 
     #[test]
     fn moduli() {
-        assert_eq!(quantum_modulus(QuantumLevel::Q0), 256);
-        assert_eq!(quantum_modulus(QuantumLevel::Q1), 65536);
-        assert_eq!(quantum_modulus(QuantumLevel::Q2), 16_777_216);
-        assert_eq!(quantum_modulus(QuantumLevel::Q3), 4_294_967_296);
+        assert_eq!(quantum_modulus(WittLevel::W8), 256);
+        assert_eq!(quantum_modulus(WittLevel::W16), 65536);
+        assert_eq!(quantum_modulus(WittLevel::W24), 16_777_216);
+        assert_eq!(quantum_modulus(WittLevel::W32), 4_294_967_296);
     }
 
     #[test]
     fn table_feasibility() {
-        assert!(quantum_is_table_feasible(QuantumLevel::Q0));
-        assert!(quantum_is_table_feasible(QuantumLevel::Q1));
-        assert!(!quantum_is_table_feasible(QuantumLevel::Q2));
-        assert!(!quantum_is_table_feasible(QuantumLevel::Q3));
+        assert!(quantum_is_table_feasible(WittLevel::W8));
+        assert!(quantum_is_table_feasible(WittLevel::W16));
+        assert!(!quantum_is_table_feasible(WittLevel::W24));
+        assert!(!quantum_is_table_feasible(WittLevel::W32));
     }
 
     #[test]
     fn table_sizes() {
         // Q0: 256 entries * 1 byte = 256
-        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q0), 256);
+        assert_eq!(quantum_table_size_bytes(WittLevel::W8), 256);
         // Q1: 65536 entries * 2 bytes = 131072
-        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q1), 131_072);
+        assert_eq!(quantum_table_size_bytes(WittLevel::W16), 131_072);
         // Q2: 16.7M entries * 3 bytes ≈ 50.3MB
-        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q2), 50_331_648);
+        assert_eq!(quantum_table_size_bytes(WittLevel::W24), 50_331_648);
         // Q3: 4.3B entries * 4 bytes = 17.2GB
-        assert_eq!(quantum_table_size_bytes(QuantumLevel::Q3), 17_179_869_184);
+        assert_eq!(quantum_table_size_bytes(WittLevel::W32), 17_179_869_184);
     }
 
     #[test]
@@ -303,10 +304,10 @@ mod tests {
     #[test]
     fn table_entries_matches_modulus() {
         for level in [
-            QuantumLevel::Q0,
-            QuantumLevel::Q1,
-            QuantumLevel::Q2,
-            QuantumLevel::Q3,
+            WittLevel::W8,
+            WittLevel::W16,
+            WittLevel::W24,
+            WittLevel::W32,
         ] {
             assert_eq!(quantum_table_entries(level), quantum_modulus(level));
         }

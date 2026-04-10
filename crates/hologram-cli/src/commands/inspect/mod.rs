@@ -11,7 +11,7 @@ mod weights;
 use crate::error::CliError;
 use clap::Args;
 use hologram_archive::load_from_bytes;
-use hologram_exec::build_schedule;
+use hologram_fused_component::build_schedule;
 use std::path::PathBuf;
 
 /// Inspection depth.
@@ -82,7 +82,7 @@ fn dispatch(
     args: &InspectArgs,
     data: &[u8],
     plan: &hologram_archive::LoadedPlan,
-    schedule: &hologram_graph::ExecutionSchedule,
+    schedule: &hologram_ir::ExecutionSchedule,
 ) {
     let levels = resolve_levels(&args.detail);
     if levels.contains(&DetailLevel::Json) {
@@ -105,7 +105,7 @@ fn print_level(
     args: &InspectArgs,
     data: &[u8],
     plan: &hologram_archive::LoadedPlan,
-    schedule: &hologram_graph::ExecutionSchedule,
+    schedule: &hologram_ir::ExecutionSchedule,
 ) {
     match level {
         DetailLevel::Summary => summary::print(args, data, plan, schedule),
@@ -122,8 +122,8 @@ fn print_level(
 mod tests {
     use hologram_archive::writer::holo_writer::HoloWriter;
     use hologram_core::op::LutOp;
-    use hologram_graph::builder::GraphBuilder;
-    use hologram_graph::graph::GraphOp;
+    use hologram_ir::builder::GraphBuilder;
+    use hologram_ir::graph::GraphOp;
 
     /// Build a small chain archive for testing.
     fn chain_archive() -> Vec<u8> {
@@ -151,7 +151,7 @@ mod tests {
     fn schedule_levels_nonzero() {
         let data = chain_archive();
         let plan = hologram_archive::load_from_bytes(&data).unwrap();
-        let schedule = hologram_exec::build_schedule(plan.graph()).unwrap();
+        let schedule = hologram_fused_component::build_schedule(plan.graph()).unwrap();
         assert!(!schedule.levels.is_empty());
     }
 
@@ -217,7 +217,7 @@ mod tests {
     fn json_output_parses() {
         let data = chain_archive();
         let plan = hologram_archive::load_from_bytes(&data).unwrap();
-        let schedule = hologram_exec::build_schedule(plan.graph()).unwrap();
+        let schedule = hologram_fused_component::build_schedule(plan.graph()).unwrap();
         let args = super::InspectArgs {
             file: "test.holo".into(),
             detail: vec![super::DetailLevel::Json],

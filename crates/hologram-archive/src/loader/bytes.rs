@@ -352,8 +352,8 @@ fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {
 mod tests {
     use super::*;
     use crate::writer::holo_writer::HoloWriter;
-    use hologram_graph::graph::GraphOp;
-    use hologram_graph::Graph;
+    use hologram_ir::graph::GraphOp;
+    use hologram_ir::Graph;
 
     #[test]
     fn round_trip_empty() {
@@ -415,7 +415,7 @@ mod tests {
     fn full_round_trip() {
         use crate::entrypoint::schedule::LayerHeader;
         use hologram_core::op::LutOp;
-        use hologram_graph::builder::GraphBuilder;
+        use hologram_ir::builder::GraphBuilder;
 
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn layer_header_extracted() {
         use crate::entrypoint::LayerEntrypoint;
-        use hologram_graph::builder::GraphBuilder;
+        use hologram_ir::builder::GraphBuilder;
 
         let g = GraphBuilder::new()
             .input("x")

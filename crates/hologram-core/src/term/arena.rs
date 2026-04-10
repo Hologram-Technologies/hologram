@@ -247,7 +247,7 @@ mod tests {
     fn alloc_and_get() {
         let mut arena = TermArena::new();
         let id0 = arena.alloc(TermKind::IntLit(42));
-        let id1 = arena.alloc(TermKind::BrailleLit(0xFF));
+        let id1 = arena.alloc(TermKind::IntLit(255));
         let id2 = arena.alloc(TermKind::UnaryApp {
             op: PrimOp::Neg,
             arg: id0,
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(arena.len(), 3);
 
         assert_eq!(arena.get(id0).kind, TermKind::IntLit(42));
-        assert_eq!(arena.get(id1).kind, TermKind::BrailleLit(0xFF));
+        assert_eq!(arena.get(id1).kind, TermKind::IntLit(255));
         match arena.get(id2).kind {
             TermKind::UnaryApp { op, arg } => {
                 assert_eq!(op, PrimOp::Neg);

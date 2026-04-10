@@ -190,6 +190,45 @@ impl LoadedPlan {
         crate::weight::index::WeightIndex::from_bytes(&archive_bytes[start..end]).ok()
     }
 
+    /// Extract the conformance shape section from raw archive bytes.
+    ///
+    /// Per the v0.2.0 conformance-first contract, every archive emitted by
+    /// `hologram-compiler` carries a [`ConformanceShapeSection`] that
+    /// declares which `Shape` the compiled tape conforms to. The loading
+    /// `PrismModule` validates this declaration against its own declared
+    /// shape before any execution proceeds; mismatched archives are
+    /// rejected at load time.
+    ///
+    /// Returns `None` if the section is absent or unparseable. A `None`
+    /// return is the loader's signal that the archive predates the v0.2.0
+    /// conformance-first contract — under the no-backwards-compat
+    /// principle, such archives are rejected by the Prism module's
+    /// `load()` path.
+    ///
+    /// **Perf:** one rkyv deserialise per call. Called once per archive
+    /// load, never on the inference hot path.
+    ///
+    /// [`ConformanceShapeSection`]: crate::section::conformance_shape::ConformanceShapeSection
+    #[must_use]
+    pub fn conformance_shape_from_bytes(
+        &self,
+        archive_bytes: &[u8],
+    ) -> Option<crate::section::conformance_shape::ConformanceShapeSection> {
+        let entry = self
+            .section_table
+            .find(crate::section::SECTION_CONFORMANCE_SHAPE)?;
+        let start = entry.offset as usize;
+        let end = start + entry.size as usize;
+        if end > archive_bytes.len() {
+            return None;
+        }
+        rkyv::from_bytes::<
+            crate::section::conformance_shape::ConformanceShapeSection,
+            rkyv::rancor::Error,
+        >(&archive_bytes[start..end])
+        .ok()
+    }
+
     /// Number of nodes in the graph.
     #[must_use]
     pub fn node_count(&self) -> usize {

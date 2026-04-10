@@ -1,27 +1,27 @@
 //! Involution: the two generators of the dihedral group D_{2^n}.
 
-use crate::level::QuantumLevel;
+use crate::level::WittLevelMarker;
 use crate::word::RingWord;
 use crate::PrismPrimitives;
-use uor_foundation::enums::GeometricCharacter;
+use hologram_foundation::enums::GeometricCharacter;
 
 /// The two involutions of the ring R_n.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Involution<Q: QuantumLevel> {
+pub enum Involution<W: WittLevelMarker> {
     /// Ring reflection: neg(x) = (-x) mod 2^n.
     Neg,
     /// Hypercube reflection: bnot(x) = bitwise NOT.
     Bnot,
     /// PhantomData carrier (never constructed).
     #[doc(hidden)]
-    _Phantom(core::marker::PhantomData<Q>),
+    _Phantom(core::marker::PhantomData<W>),
 }
 
-impl<Q: QuantumLevel> Involution<Q> {
+impl<W: WittLevelMarker> Involution<W> {
     /// Apply this involution. Compiles to a single ALU instruction.
     #[inline]
     #[must_use]
-    pub fn apply(self, x: Q::Word) -> Q::Word {
+    pub fn apply(self, x: W::Word) -> W::Word {
         match self {
             Self::Neg => x.wrapping_neg(),
             Self::Bnot => !x,
@@ -33,11 +33,11 @@ impl<Q: QuantumLevel> Involution<Q> {
 // ── UOR Operation trait (per concrete level via macro) ───────────────────
 
 macro_rules! impl_involution_uor {
-    ($Q:ty, $neg_static:ident, $bnot_static:ident) => {
-        static $neg_static: Involution<$Q> = Involution::Neg;
-        static $bnot_static: Involution<$Q> = Involution::Bnot;
+    ($W:ty, $neg_static:ident, $bnot_static:ident) => {
+        static $neg_static: Involution<$W> = Involution::Neg;
+        static $bnot_static: Involution<$W> = Involution::Bnot;
 
-        impl uor_foundation::kernel::op::Operation<PrismPrimitives> for Involution<$Q> {
+        impl hologram_foundation::op::Operation<PrismPrimitives> for Involution<$W> {
             fn arity(&self) -> u64 {
                 1
             }
@@ -48,7 +48,7 @@ macro_rules! impl_involution_uor {
                     Self::_Phantom(_) => unreachable!(),
                 }
             }
-            type OperationTarget = Involution<$Q>;
+            type OperationTarget = Involution<$W>;
             fn inverse(&self) -> &Self::OperationTarget {
                 match self {
                     Self::Neg => &$neg_static,
@@ -65,15 +65,15 @@ macro_rules! impl_involution_uor {
             }
         }
 
-        impl uor_foundation::kernel::op::UnaryOp<PrismPrimitives> for Involution<$Q> {}
-        impl uor_foundation::kernel::op::Involution<PrismPrimitives> for Involution<$Q> {}
+        impl hologram_foundation::op::UnaryOp<PrismPrimitives> for Involution<$W> {}
+        impl hologram_foundation::op::Involution<PrismPrimitives> for Involution<$W> {}
     };
 }
 
-use crate::level::{Q0, Q1, Q15, Q3, Q7};
+use crate::level::{W128, W16, W32, W64, W8};
 
-impl_involution_uor!(Q0, INV_NEG_Q0, INV_BNOT_Q0);
-impl_involution_uor!(Q1, INV_NEG_Q1, INV_BNOT_Q1);
-impl_involution_uor!(Q3, INV_NEG_Q3, INV_BNOT_Q3);
-impl_involution_uor!(Q7, INV_NEG_Q7, INV_BNOT_Q7);
-impl_involution_uor!(Q15, INV_NEG_Q15, INV_BNOT_Q15);
+impl_involution_uor!(W8, INV_NEG_W8, INV_BNOT_W8);
+impl_involution_uor!(W16, INV_NEG_W16, INV_BNOT_W16);
+impl_involution_uor!(W32, INV_NEG_W32, INV_BNOT_W32);
+impl_involution_uor!(W64, INV_NEG_W64, INV_BNOT_W64);
+impl_involution_uor!(W128, INV_NEG_W128, INV_BNOT_W128);

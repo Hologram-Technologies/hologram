@@ -71,7 +71,7 @@ fn bench_activation_batch(c: &mut Criterion) {
 }
 
 fn bench_group_order_byte(c: &mut Criterion) {
-    use uor_foundation::kernel::op::Group;
+    use hologram_foundation::op::Group;
     let ring = ByteRing;
     c.bench_function("group::order(ByteRing)", |b| {
         b.iter(|| black_box(&ring).order())
@@ -79,7 +79,7 @@ fn bench_group_order_byte(c: &mut Criterion) {
 }
 
 fn bench_group_generators_byte(c: &mut Criterion) {
-    use uor_foundation::kernel::op::Group;
+    use hologram_foundation::op::Group;
     let ring = ByteRing;
     c.bench_function("group::generated_by(ByteRing)", |b| {
         b.iter(|| black_box(&ring).generated_by().len())
@@ -87,14 +87,14 @@ fn bench_group_generators_byte(c: &mut Criterion) {
 }
 
 fn bench_binary_op_commutative(c: &mut Criterion) {
-    use uor_foundation::kernel::op::BinaryOp;
+    use hologram_foundation::op::BinaryOp;
     c.bench_function("prim::commutative(Add)", |b| {
         b.iter(|| black_box(PrimOp::Add).commutative())
     });
 }
 
 fn bench_normed_division_dimension(c: &mut Criterion) {
-    use uor_foundation::kernel::division::NormedDivisionAlgebra;
+    use hologram_foundation::division::NormedDivisionAlgebra;
     let ring = ByteRing;
     c.bench_function("nda::algebra_dimension(ByteRing)", |b| {
         b.iter(|| black_box(&ring).algebra_dimension())
@@ -116,9 +116,9 @@ fn bench_triple_ring(c: &mut Criterion) {
     group.bench_function("mul_q2", |b| {
         b.iter(|| arith_q2::mul_q2(black_box(0x00AB_CDEF), black_box(0x00123456)))
     });
-    group.bench_function("ring_quantum", |b| {
-        use uor_foundation::kernel::schema::Ring;
-        b.iter(|| black_box(TripleRing).ring_quantum())
+    group.bench_function("ring_witt_length", |b| {
+        use hologram_foundation::schema::Ring;
+        b.iter(|| black_box(TripleRing).ring_witt_length())
     });
     group.bench_function("neg_q2", |b| {
         b.iter(|| arith_q2::neg_q2(black_box(0x00AB_CDEF)))
@@ -127,9 +127,9 @@ fn bench_triple_ring(c: &mut Criterion) {
 }
 
 fn bench_precision_pass(c: &mut Criterion) {
-    use hologram_cascade::promote_prim_ring_levels;
-    use hologram_graph::builder::GraphBuilder;
-    use hologram_graph::graph::GraphOp;
+    use hologram_ir::analysis::precision::promote_prim_ring_levels;
+    use hologram_ir::builder::GraphBuilder;
+    use hologram_ir::graph::GraphOp;
 
     // Build a 101-node graph: Input + 50 × (Sigmoid → Prim(Neg)).
     let mut g = GraphBuilder::new().node(GraphOp::Input);

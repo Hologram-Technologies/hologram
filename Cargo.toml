@@ -11,25 +11,23 @@ authors = ["UOR Foundation"]
 [workspace.dependencies]
 # Internal crates
 hologram-core = { path = "crates/hologram-core", default-features = false }
-hologram-graph = { path = "crates/hologram-graph" }
+hologram-ir = { path = "crates/hologram-ir" }
 hologram-archive = { path = "crates/hologram-archive" }
-hologram-exec = { path = "crates/hologram-exec" }
+hologram-shapes = { path = "crates/hologram-shapes" }
+hologram-fused-component = { path = "crates/hologram-fused-component" }
 hologram-compiler = { path = "crates/hologram-compiler" }
 hologram-async = { path = "crates/hologram-async" }
 hologram-cli = { path = "crates/hologram-cli" }
 hologram-ffi = { path = "crates/hologram-ffi" }
-# Cascade
-hologram-cascade = { path = "crates/hologram-cascade" }
 # Compression
 hologram-compression = { path = "crates/hologram-compression" }
 
 # Ring foundation (parametric ring algebra)
 hologram-ring = { path = "crates/hologram-ring", default-features = false }
 
-
-
-# UOR Foundation
-uor-foundation = "0.1.4"
+# UOR Foundation v0.2.0 lives behind the hologram-foundation re-export shim;
+# the workspace no longer pins v0.1.4 directly. Crates that need v0.2.0 types
+# depend on `hologram-foundation` (a path dep, not a workspace dep).
 
 # Serialization (rkyv only)
 rkyv = { version = "0.8", features = ["tinyvec-1"] }
@@ -89,9 +87,10 @@ required-features = ["ffi"]
 [dependencies]
 # Always included: core execution stack
 hologram-core = { workspace = true }
-hologram-graph = { workspace = true }
+hologram-ir = { workspace = true }
 hologram-archive = { workspace = true }
-hologram-exec = { workspace = true }
+hologram-shapes = { workspace = true }
+hologram-fused-component = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -114,11 +113,11 @@ hologram-cli = { workspace = true, optional = true }
 default = ["std", "simd", "parallel", "compiler", "accelerate"]
 full = ["default", "async", "ffi", "cli"]
 
-std = ["hologram-core/std", "hologram-exec/std"]
+std = ["hologram-core/std", "hologram-fused-component/std"]
 simd = ["hologram-core/simd"]
-parallel = ["hologram-exec/parallel", "hologram-graph/parallel", "hologram-archive/parallel", "hologram-compiler?/parallel"]
-accelerate = ["hologram-exec/accelerate"]
-profile = ["hologram-exec/profile"]
+parallel = ["hologram-fused-component/parallel", "hologram-ir/parallel", "hologram-archive/parallel", "hologram-compiler?/parallel"]
+accelerate = ["hologram-fused-component/accelerate"]
+profile = ["hologram-fused-component/profile"]
 
 compiler = ["dep:hologram-compiler"]
 async = ["dep:hologram-async", "dep:tokio"]

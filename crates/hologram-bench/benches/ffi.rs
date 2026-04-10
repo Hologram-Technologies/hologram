@@ -78,7 +78,11 @@ fn bench_ffi_full_pipeline(c: &mut Criterion) {
             let inp = hologram_ffi::exec::hologram_inputs_new();
             hologram_ffi::exec::hologram_inputs_set(inp, 0, [42u8].as_ptr(), 1);
 
-            let outputs = hologram_ffi::exec::hologram_execute_bytes(archive_ptr, archive_len, inp);
+            let outputs = hologram_ffi::exec::hologram_fused_componentute_bytes(
+                archive_ptr,
+                archive_len,
+                inp,
+            );
             black_box(hologram_ffi::exec::hologram_outputs_len(outputs));
             hologram_ffi::exec::hologram_outputs_free(outputs);
             hologram_ffi::exec::hologram_inputs_free(inp);

@@ -16,21 +16,21 @@
 //! The unified `lift`/`lower` functions handle cross-level composition for
 //! any pair of quantum levels.
 
-use crate::op::{QuantumLevelExt, RingLevel};
-use uor_foundation::QuantumLevel;
+use crate::op::{RingLevel, WittLevelExt};
+use hologram_foundation::WittLevel;
 
 // ── Unified lifting functions ─────────────────────────────────────────────────
 
 /// Lift a value from a lower to higher quantum level via zero-extension (DC_5).
 #[inline(always)]
-pub const fn lift(val: u64, _from: QuantumLevel, _to: QuantumLevel) -> u64 {
+pub const fn lift(val: u64, _from: WittLevel, _to: WittLevel) -> u64 {
     val
 }
 
 /// Lower a value from a higher to lower quantum level.
 /// Returns Err(val) if precision would be lost.
 #[inline]
-pub fn lower(val: u64, _from: QuantumLevel, to: QuantumLevel) -> Result<u64, u64> {
+pub fn lower(val: u64, _from: WittLevel, to: WittLevel) -> Result<u64, u64> {
     let bits = (to.byte_width() as u32) * 8;
     let mask = if bits >= 64 {
         u64::MAX
@@ -85,7 +85,7 @@ impl CurvatureFlux {
 
     /// Accumulate carry at a dynamic quantum level.
     #[inline]
-    pub fn accumulate_at(&mut self, curvature: u8, level: uor_foundation::QuantumLevel) {
+    pub fn accumulate_at(&mut self, curvature: u8, level: hologram_foundation::WittLevel) {
         self.carry += curvature as u64;
         if curvature > 0 {
             let w = level.byte_width();
@@ -131,19 +131,19 @@ mod tests {
     fn lift_lower_round_trip_q0_q1() {
         // All 256 Q0 values round-trip through Q1 losslessly.
         for x in 0u8..=255 {
-            let lifted = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
+            let lifted = lift(x as u64, WittLevel::W8, WittLevel::W16);
             let lowered =
-                lower(lifted, QuantumLevel::Q1, QuantumLevel::Q0).expect("round-trip must succeed");
+                lower(lifted, WittLevel::W16, WittLevel::W8).expect("round-trip must succeed");
             assert_eq!(lowered as u8, x, "round-trip failed at {x}");
         }
     }
 
     #[test]
     fn lower_fails_for_high_byte() {
-        assert!(lower(0x0100, QuantumLevel::Q1, QuantumLevel::Q0).is_err());
-        assert!(lower(0xFF00, QuantumLevel::Q1, QuantumLevel::Q0).is_err());
+        assert!(lower(0x0100, WittLevel::W16, WittLevel::W8).is_err());
+        assert!(lower(0xFF00, WittLevel::W16, WittLevel::W8).is_err());
         assert_eq!(
-            lower(0x0100, QuantumLevel::Q1, QuantumLevel::Q0).unwrap_err(),
+            lower(0x0100, WittLevel::W16, WittLevel::W8).unwrap_err(),
             0x0100
         );
     }
@@ -151,24 +151,24 @@ mod tests {
     #[test]
     fn lift_lower_round_trip_q1_q2() {
         for x in [0u16, 1, 127, 255, 256, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF] {
-            let lifted = lift(x as u64, QuantumLevel::Q1, QuantumLevel::Q2);
+            let lifted = lift(x as u64, WittLevel::W16, WittLevel::W24);
             let lowered =
-                lower(lifted, QuantumLevel::Q2, QuantumLevel::Q1).expect("round-trip must succeed");
+                lower(lifted, WittLevel::W24, WittLevel::W16).expect("round-trip must succeed");
             assert_eq!(lowered as u16, x, "Q1→Q2 round-trip failed at {x}");
         }
     }
 
     #[test]
     fn lower_q2_to_q1_fails_for_high_bits() {
-        assert!(lower(0x00_010000, QuantumLevel::Q2, QuantumLevel::Q1).is_err());
-        assert!(lower(0x00FF_0000, QuantumLevel::Q2, QuantumLevel::Q1).is_err());
+        assert!(lower(0x00_010000, WittLevel::W24, WittLevel::W16).is_err());
+        assert!(lower(0x00FF_0000, WittLevel::W24, WittLevel::W16).is_err());
     }
 
     #[test]
     fn lift_carry_is_zero() {
         // DC_5: zero-extension generates zero carry (lift is identity on u64).
         for x in 0u8..=255 {
-            let lifted = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
+            let lifted = lift(x as u64, WittLevel::W8, WittLevel::W16);
             assert_eq!(lifted, x as u64, "lift not zero-extending at {x}");
         }
     }
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn lift_q0_to_q2_is_exact() {
         for x in [0u8, 1, 127, 255] {
-            let q2 = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q2);
+            let q2 = lift(x as u64, WittLevel::W8, WittLevel::W24);
             assert_eq!(q2, x as u64, "lift Q0→Q2 not zero-extending at {x}");
         }
     }

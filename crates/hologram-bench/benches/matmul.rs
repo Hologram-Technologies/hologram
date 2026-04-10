@@ -4,7 +4,7 @@
 //! BLAS (Accelerate), and GPU (Metal) paths.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hologram_exec::float_dispatch::dispatch_matmul;
+use hologram_fused_component::float_dispatch::dispatch_matmul;
 
 fn bench_matmul_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("matmul_sweep");

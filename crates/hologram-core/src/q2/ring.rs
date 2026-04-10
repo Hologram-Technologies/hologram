@@ -2,7 +2,7 @@
 
 use crate::q2::{arith, datum::TripleDatum};
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use hologram_foundation::enums::{GeometricCharacter, WittLevel};
 
 /// The ring Z/2^24Z at quantum level 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,12 +37,13 @@ impl TripleRing {
     }
 }
 
-static GENERATOR: TripleDatum = TripleDatum::PI1;
+static GENERATOR: std::sync::LazyLock<TripleDatum> =
+    std::sync::LazyLock::new(|| TripleDatum::new(1));
 static NEG_INV: TripleInvolution = TripleInvolution::Neg;
 static BNOT_INV: TripleInvolution = TripleInvolution::Bnot;
 
-impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for TripleRing {
-    fn ring_quantum(&self) -> u64 {
+impl hologram_foundation::schema::Ring<HoloPrimitives> for TripleRing {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -66,8 +67,8 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for TripleRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q2
+    fn at_witt_level(&self) -> WittLevel {
+        WittLevel::W24
     }
 }
 
@@ -92,7 +93,7 @@ impl TripleInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::Operation<HoloPrimitives> for TripleInvolution {
+impl hologram_foundation::op::Operation<HoloPrimitives> for TripleInvolution {
     fn arity(&self) -> u64 {
         1
     }
@@ -121,12 +122,12 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for TripleInvolution 
     }
 }
 
-impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for TripleInvolution {}
-impl uor_foundation::kernel::op::Involution<HoloPrimitives> for TripleInvolution {}
+impl hologram_foundation::op::UnaryOp<HoloPrimitives> for TripleInvolution {}
+impl hologram_foundation::op::Involution<HoloPrimitives> for TripleInvolution {}
 
 static GROUP_GENERATORS: [TripleInvolution; 2] = [TripleInvolution::Neg, TripleInvolution::Bnot];
 
-impl uor_foundation::kernel::op::Group<HoloPrimitives> for TripleRing {
+impl hologram_foundation::op::Group<HoloPrimitives> for TripleRing {
     type Operation = TripleInvolution;
 
     #[inline]
@@ -140,16 +141,16 @@ impl uor_foundation::kernel::op::Group<HoloPrimitives> for TripleRing {
     }
 }
 
-impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for TripleRing {}
+impl hologram_foundation::op::DihedralGroup<HoloPrimitives> for TripleRing {}
 
 /// Marker for the Z/2^24Z multiplication table.
 pub struct TripleMultTable;
 
-impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for TripleMultTable {}
+impl hologram_foundation::division::MultiplicationTable<HoloPrimitives> for TripleMultTable {}
 
 static TRIPLE_MULT_TABLE: TripleMultTable = TripleMultTable;
 
-impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for TripleRing {
+impl hologram_foundation::division::NormedDivisionAlgebra<HoloPrimitives> for TripleRing {
     #[inline]
     fn algebra_dimension(&self) -> u64 {
         4
@@ -178,11 +179,11 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for TripleRing {}
+impl hologram_foundation::division::AlgebraCommutator<HoloPrimitives> for TripleRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for TripleRing {}
+impl hologram_foundation::division::AlgebraAssociator<HoloPrimitives> for TripleRing {}
 
-impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for TripleRing {
+impl hologram_foundation::division::CayleyDicksonConstruction<HoloPrimitives> for TripleRing {
     type NormedDivisionAlgebra = crate::ring::HoloDivisionAlgebra;
 
     #[inline]
@@ -212,16 +213,16 @@ mod tests {
 
     #[test]
     fn ring_quantum_and_modulus() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = TripleRing;
-        assert_eq!(r.ring_quantum(), 24);
+        assert_eq!(r.ring_witt_length(), 24);
         assert_eq!(r.modulus(), 0x01_000000);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q2);
+        assert_eq!(r.at_witt_level(), WittLevel::W24);
     }
 
     #[test]
     fn ring_generator() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = TripleRing;
         assert_eq!(r.generator().value(), 1);
     }
@@ -285,7 +286,7 @@ mod tests {
 
     #[test]
     fn group_order_and_generators() {
-        use uor_foundation::kernel::op::Group;
+        use hologram_foundation::op::Group;
         let ring = TripleRing;
         assert_eq!(ring.order(), 0x01_000000);
         assert_eq!(ring.generated_by().len(), 2);
@@ -293,7 +294,7 @@ mod tests {
 
     #[test]
     fn normed_division_algebra_dimension() {
-        use uor_foundation::kernel::division::NormedDivisionAlgebra;
+        use hologram_foundation::division::NormedDivisionAlgebra;
         let r = TripleRing;
         assert_eq!(r.algebra_dimension(), 4);
         assert_eq!(r.basis_elements(), "{1, i, j, k}");
@@ -303,7 +304,7 @@ mod tests {
 
     #[test]
     fn operation_trait() {
-        use uor_foundation::kernel::op::Operation;
+        use hologram_foundation::op::Operation;
         let neg = TripleInvolution::Neg;
         assert_eq!(neg.arity(), 1);
         assert_eq!(

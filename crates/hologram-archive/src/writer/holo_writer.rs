@@ -61,7 +61,7 @@ impl HoloWriter {
 
     /// Set the graph from a live `Graph` (serialized via rkyv).
     #[must_use]
-    pub fn set_graph(mut self, graph: &hologram_graph::Graph) -> Self {
+    pub fn set_graph(mut self, graph: &hologram_ir::Graph) -> Self {
         let sg = SerializedGraph::from_graph(graph);
         self.graph_input_names = sg.input_names.clone();
         self.graph_output_names = sg.output_names.clone();
@@ -353,8 +353,6 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         section_table_offset: layout.section_table_offset,
         section_table_size: layout.section_table_size,
         total_size: layout.total_size,
-        certificate_offset: 0,
-        certificate_size: 0,
         graph_checksum: checksum::checksum(graph_data),
         weights_checksum: checksum::checksum(weight_data),
         unit_address: [0u8; 32],
@@ -401,8 +399,8 @@ fn assemble_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_graph::graph::GraphOp;
-    use hologram_graph::Graph;
+    use hologram_ir::graph::GraphOp;
+    use hologram_ir::Graph;
 
     #[test]
     fn build_empty() {
@@ -485,7 +483,7 @@ mod tests {
     #[test]
     fn auto_generates_layer_header() {
         use crate::loader::bytes::load_from_bytes;
-        use hologram_graph::builder::GraphBuilder;
+        use hologram_ir::builder::GraphBuilder;
 
         let g = GraphBuilder::new()
             .input("x")

@@ -3,8 +3,8 @@
 use crate::lut::q0;
 use crate::HoloPrimitives;
 
-/// An element of Z/256Z at quantum level 0 (8-bit).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// An element of Z/256Z at Witt level W8 (8-bit).
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialize",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -19,7 +19,7 @@ impl ByteDatum {
     /// Create a datum from a raw byte value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u8) -> Self {
+    pub fn new(value: u8) -> Self {
         let spectrum = Self::make_spectrum(value);
         let address = ByteAddress::from_byte(value);
         Self {
@@ -63,46 +63,40 @@ impl ByteDatum {
         unsafe { core::str::from_utf8_unchecked(&self.spectrum_buf) }
     }
 
-    /// The Braille address for this datum.
+    /// The content-addressed identifier for this datum.
     #[inline]
     #[must_use]
-    pub const fn address(&self) -> &ByteAddress {
+    pub fn address(&self) -> &ByteAddress {
         &self.address
     }
 
     /// Negation: `(-x) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn neg(self) -> Self {
+    pub fn neg(&self) -> Self {
         Self::new(self.value.wrapping_neg())
     }
 
     /// Bitwise complement.
     #[inline]
     #[must_use]
-    pub const fn bnot(self) -> Self {
+    pub fn bnot(&self) -> Self {
         Self::new(!self.value)
     }
 
     /// Successor: `(x + 1) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn succ(self) -> Self {
+    pub fn succ(&self) -> Self {
         Self::new(self.value.wrapping_add(1))
     }
 
     /// Predecessor: `(x - 1) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn pred(self) -> Self {
+    pub fn pred(&self) -> Self {
         Self::new(self.value.wrapping_sub(1))
     }
-
-    /// The zero datum (additive identity).
-    pub const ZERO: Self = Self::new(0);
-
-    /// The generator pi_1 (value = 1).
-    pub const PI1: Self = Self::new(1);
 }
 
 impl core::fmt::Debug for ByteDatum {
@@ -120,7 +114,7 @@ impl core::fmt::Display for ByteDatum {
 impl Default for ByteDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::new(0)
     }
 }
 
@@ -140,41 +134,75 @@ impl From<ByteDatum> for u8 {
 
 // --- ByteAddress ---
 
-/// Braille address for a byte datum at Q0.
+/// Content-addressed identifier for a byte datum at W8.
 ///
-/// Each Braille character encodes 6 bits. For 8-bit values,
-/// we use 2 characters (covering lo-6 and hi-2 bits).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Per uor-foundation v0.2.0 Amendment 43 section 2:
+/// - `canonical_bytes` = hex(`header(0) || le_bytes(value, 1)`) = 4 hex chars
+/// - `digest` = hex(BLAKE3(`canonical_raw`)) = 64 hex chars
+/// - `digest_algorithm` = `"blake3"`
+///
+/// The hex buffers are pre-computed at construction for O(1) access via
+/// the `Element` trait. The struct is larger than v0.1.4's glyph-based
+/// `ByteAddress` (72 bytes vs 8 bytes) but lives only in the compiler
+/// layer, never in the execution tape or serialised graph.
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialize",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct ByteAddress {
     value: u8,
-    glyph_buf: [u8; 6],
+    /// hex(header(0) || le_bytes(value, 1)) — 4 hex chars for 2 raw bytes.
+    canonical_hex: [u8; 4],
+    /// hex(BLAKE3(canonical_raw)) — 64 lowercase hex chars.
+    digest_hex: [u8; 64],
+}
+
+/// Static hex table for fast nibble→char conversion.
+pub(crate) const HEX: [u8; 16] = *b"0123456789abcdef";
+
+/// Encode raw bytes as lowercase hex into a fixed-size buffer.
+/// Returns the number of hex chars written (always `raw.len() * 2`).
+pub(crate) fn hex_encode(raw: &[u8], out: &mut [u8]) -> usize {
+    for (i, &b) in raw.iter().enumerate() {
+        out[i * 2] = HEX[(b >> 4) as usize];
+        out[i * 2 + 1] = HEX[(b & 0x0F) as usize];
+    }
+    raw.len() * 2
 }
 
 impl ByteAddress {
     /// The zero address (byte value 0).
-    pub const ZERO: Self = Self::from_byte(0);
+    pub fn zero() -> Self {
+        Self::from_byte(0)
+    }
 
-    /// Create a Braille address from a byte value.
+    /// Create a content-addressed identifier from a byte value.
+    ///
+    /// Computes Amendment 43 canonical bytes and BLAKE3 digest at construction.
     #[must_use]
-    pub const fn from_byte(value: u8) -> Self {
-        let lo6 = value & 0x3F;
-        let hi2 = (value >> 6) & 0x03;
-        // Braille U+2800..U+283F → UTF-8: E2 A0 {80+offset}
+    pub fn from_byte(value: u8) -> Self {
+        // Amendment 43: canonical = header(k) || le_bytes(x, k+1)
+        // For W8 (k=0): header = 0x00, le_bytes(value, 1) = [value]
+        let canonical_raw = [0x00u8, value];
+
+        let mut canonical_hex = [0u8; 4];
+        hex_encode(&canonical_raw, &mut canonical_hex);
+
+        let hash = blake3::hash(&canonical_raw);
+        let mut digest_hex = [0u8; 64];
+        hex_encode(hash.as_bytes(), &mut digest_hex);
+
         Self {
             value,
-            glyph_buf: [0xE2, 0xA0, 0x80 + lo6, 0xE2, 0xA0, 0x80 + hi2],
+            canonical_hex,
+            digest_hex,
         }
     }
 
-    /// The Braille string representation.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille characters.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
+    /// The raw byte value this address represents.
+    pub fn value(&self) -> u8 {
+        self.value
     }
 }
 
@@ -186,12 +214,12 @@ impl core::fmt::Debug for ByteAddress {
 
 // --- uor-foundation trait implementations ---
 
-impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for ByteDatum {
+impl hologram_foundation::schema::Datum<HoloPrimitives> for ByteDatum {
     fn value(&self) -> u64 {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         8
     }
 
@@ -203,31 +231,31 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for ByteDatum {
         self.value as u64
     }
 
-    type Address = ByteAddress;
+    type Element = ByteAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl hologram_foundation::address::Element<HoloPrimitives> for ByteAddress {
+    /// Byte length of the canonical encoding (2 raw bytes for W8).
     fn length(&self) -> u64 {
         2
     }
 
     fn addresses(&self) -> &str {
-        ""
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
+    /// BLAKE3 content hash of the canonical bytes, as 64 lowercase hex chars.
     fn digest(&self) -> &str {
-        self.as_str()
+        // SAFETY: digest_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.digest_hex) }
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         8
     }
 
@@ -236,15 +264,17 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
         "blake3"
     }
 
+    /// Amendment 43 canonical encoding: hex(header(0) || le_bytes(value, 1)).
     #[inline]
     fn canonical_bytes(&self) -> &str {
-        self.as_str()
+        // SAFETY: canonical_hex is valid ASCII hex.
+        unsafe { core::str::from_utf8_unchecked(&self.canonical_hex) }
     }
 }
 
 // ── RingDatum: unified datum for any quantum level ──────────────────────────
 
-use crate::op::QuantumLevelExt;
+use crate::op::WittLevelExt;
 
 /// A ring element at any quantum level (Q0–Q7+).
 ///
@@ -258,14 +288,14 @@ pub struct RingDatum {
     /// The ring element value, masked to the level's byte width.
     pub value: u64,
     /// The quantum level of this datum.
-    pub level: uor_foundation::QuantumLevel,
+    pub level: hologram_foundation::WittLevel,
 }
 
 impl RingDatum {
     /// Create a datum at the given quantum level.
     /// The value is masked to the ring modulus.
     #[inline]
-    pub fn new(value: u64, level: uor_foundation::QuantumLevel) -> Self {
+    pub fn new(value: u64, level: hologram_foundation::WittLevel) -> Self {
         let bw = level.byte_width();
         let bits = (bw as u32) * 8;
         let mask = if bits >= 64 {
@@ -300,7 +330,7 @@ impl RingDatum {
     /// Construct from a ByteDatum (Q0).
     #[inline]
     pub fn from_byte_datum(d: &ByteDatum) -> Self {
-        Self::new(d.val() as u64, uor_foundation::QuantumLevel::Q0)
+        Self::new(d.val() as u64, hologram_foundation::WittLevel::W8)
     }
 }
 
@@ -310,13 +340,16 @@ mod tests {
 
     #[test]
     fn ring_datum_masks_value() {
-        let d = RingDatum::new(300, uor_foundation::QuantumLevel::Q0);
+        let d = RingDatum::new(300, hologram_foundation::WittLevel::W8);
         assert_eq!(d.value, 44); // 300 & 0xFF = 44
     }
 
     #[test]
-    fn ring_datum_q7_no_mask() {
-        let d = RingDatum::new(u64::MAX, uor_foundation::QuantumLevel::new(7));
+    fn ring_datum_w64_no_mask() {
+        // v0.2.0: `WittLevel::new(64)` constructs the 64-bit witt level
+        // (formerly called Q7). At 64 bits, the mask saturates to u64::MAX
+        // and no truncation happens.
+        let d = RingDatum::new(u64::MAX, hologram_foundation::WittLevel::new(64));
         assert_eq!(d.value, u64::MAX);
     }
 
@@ -325,7 +358,7 @@ mod tests {
         let bd = ByteDatum::new(42);
         let rd = RingDatum::from_byte_datum(&bd);
         assert_eq!(rd.value, 42);
-        assert_eq!(rd.level, uor_foundation::QuantumLevel::Q0);
+        assert_eq!(rd.level, hologram_foundation::WittLevel::W8);
     }
 
     #[test]
@@ -390,16 +423,29 @@ mod tests {
     }
 
     #[test]
-    fn byte_address_glyph_count() {
-        let addr = ByteAddress::from_byte(0);
-        assert_eq!(addr.as_str().chars().count(), 2);
-        let addr = ByteAddress::from_byte(255);
-        assert_eq!(addr.as_str().chars().count(), 2);
+    fn byte_address_digest_is_blake3() {
+        use hologram_foundation::address::Element;
+        let addr = ByteAddress::from_byte(42);
+        // digest() returns 64 hex chars (256-bit BLAKE3)
+        assert_eq!(addr.digest().len(), 64);
+        // canonical_bytes() returns 4 hex chars (2 raw bytes: header(0) || [42])
+        assert_eq!(addr.canonical_bytes().len(), 4);
+        // canonical_bytes is "002a" (header=0x00, value=0x2a=42)
+        assert_eq!(addr.canonical_bytes(), "002a");
+        // digest_algorithm is "blake3"
+        assert_eq!(addr.digest_algorithm(), "blake3");
+        // Verify: digest = hex(blake3(unhex(canonical_bytes)))
+        let canonical_raw = [0x00u8, 42u8];
+        let expected_hash = blake3::hash(&canonical_raw);
+        let mut expected_hex = [0u8; 64];
+        hex_encode(expected_hash.as_bytes(), &mut expected_hex);
+        let expected = core::str::from_utf8(&expected_hex).unwrap();
+        assert_eq!(addr.digest(), expected);
     }
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(ByteDatum::default(), ByteDatum::ZERO);
+        assert_eq!(ByteDatum::default(), ByteDatum::new(0));
     }
 
     #[test]
@@ -412,18 +458,18 @@ mod tests {
 
     #[test]
     fn datum_trait_impl() {
-        use uor_foundation::kernel::schema::Datum;
+        use hologram_foundation::schema::Datum;
         let d = ByteDatum::new(42);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 42);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 8);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 8);
         assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 3);
     }
 
     #[test]
     fn address_trait_impl() {
-        use uor_foundation::kernel::address::Address;
+        use hologram_foundation::address::Element;
         let a = ByteAddress::from_byte(42);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 2);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 8);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 2);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&a), 8);
     }
 }

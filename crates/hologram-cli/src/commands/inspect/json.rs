@@ -5,10 +5,10 @@ use hologram_archive::section::{
 };
 use hologram_archive::weight::TensorMetadata;
 use hologram_archive::LoadedPlan;
-use hologram_graph::constant::ConstantStore;
-use hologram_graph::graph::node::{InputSlot, InputSource, Node};
-use hologram_graph::graph::GraphOp;
-use hologram_graph::ExecutionSchedule;
+use hologram_ir::constant::ConstantStore;
+use hologram_ir::graph::node::{InputSlot, InputSource, Node};
+use hologram_ir::graph::GraphOp;
+use hologram_ir::ExecutionSchedule;
 use serde_json::{json, Value};
 
 use super::InspectArgs;
@@ -192,9 +192,6 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         }
         GraphOp::FusedConv2dBiasActivation { activation, .. } => {
             json!({"FusedConv2dBiasActivation": {"activation": activation.name()}})
-        }
-        GraphOp::Custom { id, arity } => {
-            json!({"Custom": {"id": id.raw(), "arity": arity}})
         }
         GraphOp::Passthrough => json!("Passthrough"),
         GraphOp::Conv2dLut4 {

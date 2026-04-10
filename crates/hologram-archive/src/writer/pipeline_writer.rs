@@ -198,8 +198,8 @@ impl PipelineWriter {
 mod tests {
     use super::*;
     use crate::writer::holo_writer::HoloWriter;
-    use hologram_graph::graph::GraphOp;
-    use hologram_graph::Graph;
+    use hologram_ir::graph::GraphOp;
+    use hologram_ir::Graph;
 
     fn make_simple_archive() -> Vec<u8> {
         let mut g = Graph::new();

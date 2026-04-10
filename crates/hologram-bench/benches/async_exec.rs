@@ -3,14 +3,14 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use hologram_archive::writer::holo_writer::HoloWriter;
 use hologram_async::{AsyncCompiler, AsyncExecutor};
-use hologram_compiler::CompilerBuilder;
+use hologram_compiler::compile;
 use hologram_core::op::LutOp;
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
-fn build_chain_graph(depth: usize) -> hologram_graph::Graph {
+fn build_chain_graph(depth: usize) -> hologram_ir::Graph {
     let mut b = GraphBuilder::new().input("x");
     b = b.node_from_graph_input(GraphOp::Input, 0);
     for i in 0..depth {
@@ -28,7 +28,7 @@ fn build_chain_graph(depth: usize) -> hologram_graph::Graph {
 fn sync_compile(c: &mut Criterion) {
     let g = build_chain_graph(10);
     c.bench_function("sync_compile_10nodes", |b| {
-        b.iter(|| CompilerBuilder::new(g.clone()).fuse(true).build().unwrap());
+        b.iter(|| compile(g.clone()).unwrap());
     });
 }
 

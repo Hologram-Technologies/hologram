@@ -1,7 +1,7 @@
 //! CompileUnit metadata section for .holo archives.
 //!
 //! Embeds provenance information from the CompileUnit that produced this archive:
-//! unit address, quantum level, budget, domain count, and term count.
+//! unit address, Witt length, budget, domain count, and term count.
 
 use super::{EmbeddableSection, SECTION_COMPILE_UNIT_META};
 
@@ -10,8 +10,11 @@ use super::{EmbeddableSection, SECTION_COMPILE_UNIT_META};
 pub struct CompileUnitMeta {
     /// Content-addressed identifier (BLAKE3 hash).
     pub unit_address: [u8; 32],
-    /// Quantum level (0=Q0, 1=Q1, 2=Q2, 3=Q3).
-    pub quantum_level: u8,
+    /// Witt length in bits — the bit width of the unit's declared
+    /// `WittLevel` (8, 16, 24, 32, or any custom width). Replaces the
+    /// v0.1.4 `quantum_level: u8` index field per the Phase 10
+    /// no-backwards-compat cleanup.
+    pub witt_length: u32,
     /// Thermodynamic budget in k_B T units.
     pub budget: f64,
     /// Number of target verification domains.
@@ -44,7 +47,7 @@ mod tests {
     fn embeddable_section_kind() {
         let meta = CompileUnitMeta {
             unit_address: [0u8; 32],
-            quantum_level: 0,
+            witt_length: 8,
             budget: 100.0,
             domain_count: 1,
             term_count: 10,
@@ -58,7 +61,7 @@ mod tests {
     fn rkyv_round_trip() {
         let meta = CompileUnitMeta {
             unit_address: [42u8; 32],
-            quantum_level: 1,
+            witt_length: 16,
             budget: 50.5,
             domain_count: 3,
             term_count: 100,
@@ -68,7 +71,7 @@ mod tests {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&meta).unwrap();
         let archived =
             rkyv::access::<rkyv::Archived<CompileUnitMeta>, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(archived.quantum_level, 1);
+        assert_eq!(archived.witt_length, 16);
         assert_eq!(archived.term_count, 100);
         assert_eq!(archived.binding_count, 5);
     }

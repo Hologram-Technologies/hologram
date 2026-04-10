@@ -6,7 +6,7 @@
 use crate::q3::datum::QuadDatum;
 use crate::quantum;
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use hologram_foundation::enums::{GeometricCharacter, WittLevel};
 
 /// The ring Z/2^32Z at quantum level 3.
 ///
@@ -45,12 +45,12 @@ impl OctonionRing {
     }
 }
 
-static GENERATOR: QuadDatum = QuadDatum::PI1;
+static GENERATOR: std::sync::LazyLock<QuadDatum> = std::sync::LazyLock::new(|| QuadDatum::new(1));
 static NEG_INV: OctonionInvolution = OctonionInvolution::Neg;
 static BNOT_INV: OctonionInvolution = OctonionInvolution::Bnot;
 
-impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for OctonionRing {
-    fn ring_quantum(&self) -> u64 {
+impl hologram_foundation::schema::Ring<HoloPrimitives> for OctonionRing {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -74,8 +74,8 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for OctonionRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q3
+    fn at_witt_level(&self) -> WittLevel {
+        WittLevel::W32
     }
 }
 
@@ -100,7 +100,7 @@ impl OctonionInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::Operation<HoloPrimitives> for OctonionInvolution {
+impl hologram_foundation::op::Operation<HoloPrimitives> for OctonionInvolution {
     fn arity(&self) -> u64 {
         1
     }
@@ -129,13 +129,13 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for OctonionInvolutio
     }
 }
 
-impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for OctonionInvolution {}
-impl uor_foundation::kernel::op::Involution<HoloPrimitives> for OctonionInvolution {}
+impl hologram_foundation::op::UnaryOp<HoloPrimitives> for OctonionInvolution {}
+impl hologram_foundation::op::Involution<HoloPrimitives> for OctonionInvolution {}
 
 static GROUP_GENERATORS: [OctonionInvolution; 2] =
     [OctonionInvolution::Neg, OctonionInvolution::Bnot];
 
-impl uor_foundation::kernel::op::Group<HoloPrimitives> for OctonionRing {
+impl hologram_foundation::op::Group<HoloPrimitives> for OctonionRing {
     type Operation = OctonionInvolution;
 
     #[inline]
@@ -149,16 +149,16 @@ impl uor_foundation::kernel::op::Group<HoloPrimitives> for OctonionRing {
     }
 }
 
-impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for OctonionRing {}
+impl hologram_foundation::op::DihedralGroup<HoloPrimitives> for OctonionRing {}
 
 /// Marker for the Z/2^32Z multiplication table.
 pub struct OctonionMultTable;
 
-impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for OctonionMultTable {}
+impl hologram_foundation::division::MultiplicationTable<HoloPrimitives> for OctonionMultTable {}
 
 static OCTONION_MULT_TABLE: OctonionMultTable = OctonionMultTable;
 
-impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for OctonionRing {
+impl hologram_foundation::division::NormedDivisionAlgebra<HoloPrimitives> for OctonionRing {
     #[inline]
     fn algebra_dimension(&self) -> u64 {
         8
@@ -187,9 +187,9 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for OctonionRing {}
+impl hologram_foundation::division::AlgebraCommutator<HoloPrimitives> for OctonionRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for OctonionRing {}
+impl hologram_foundation::division::AlgebraAssociator<HoloPrimitives> for OctonionRing {}
 
 #[cfg(test)]
 mod tests {
@@ -197,16 +197,16 @@ mod tests {
 
     #[test]
     fn ring_quantum_and_modulus() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = OctonionRing;
-        assert_eq!(r.ring_quantum(), 32);
+        assert_eq!(r.ring_witt_length(), 32);
         assert_eq!(r.modulus(), 4_294_967_296);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q3);
+        assert_eq!(r.at_witt_level(), WittLevel::W32);
     }
 
     #[test]
     fn ring_generator() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = OctonionRing;
         assert_eq!(r.generator().value(), 1);
     }
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn normed_division_algebra() {
-        use uor_foundation::kernel::division::NormedDivisionAlgebra;
+        use hologram_foundation::division::NormedDivisionAlgebra;
         let r = OctonionRing;
         assert_eq!(r.algebra_dimension(), 8);
         assert!(!r.is_commutative());
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn group_order_and_generators() {
-        use uor_foundation::kernel::op::Group;
+        use hologram_foundation::op::Group;
         let r = OctonionRing;
         assert_eq!(r.order(), 4_294_967_296);
         assert_eq!(r.generated_by().len(), 2);
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn operation_trait() {
-        use uor_foundation::kernel::op::Operation;
+        use hologram_foundation::op::Operation;
         let neg = OctonionInvolution::Neg;
         assert_eq!(neg.arity(), 1);
         assert_eq!(

@@ -10,8 +10,6 @@ use super::error::ParseError;
 pub enum Token<'src> {
     /// Integer literal.
     Int(i64),
-    /// Braille literal (U+2800..U+28FF decoded to byte value).
-    Braille(u8),
     /// Identifier (variable name, type name).
     Ident(&'src str),
 
@@ -63,11 +61,25 @@ pub enum Token<'src> {
     Fiber,
     Affine,
 
-    // ── Quantum levels ──
+    // ── Witt levels ──
+    //
+    // Each Witt level has two source-language spellings:
+    //   `W8`/`W16`/`W24`/`W32` — preferred, matches `WittLevel::W*`
+    //   `Q0`/`Q1`/`Q2`/`Q3`   — legacy v0.1.4 quantum-index spelling, retained
+    //                           for source compatibility with existing scripts
+    //
+    // Both spellings produce the same downstream `RingLevel` value; the
+    // distinction is purely lexical so error messages can echo what the
+    // user wrote. Q* and W* tokens are interchangeable everywhere a
+    // ring-level annotation is accepted.
     Q0,
     Q1,
     Q2,
     Q3,
+    W8,
+    W16,
+    W24,
+    W32,
 
     // ── Punctuation ──
     LParen,
@@ -175,21 +187,6 @@ impl<'src> Lexer<'src> {
             return Ok(Token::Equiv);
         }
 
-        // UTF-8 multi-byte: Braille (U+2800..U+28FF, bytes E2 A0 80..E2 A3 BF)
-        if b == 0xE2 && self.pos + 2 < self.src.len() {
-            let b1 = bytes[self.pos + 1];
-            let b2 = bytes[self.pos + 2];
-            if (0xA0..=0xA3).contains(&b1) {
-                let codepoint = ((b1 as u32 & 0x3F) << 6) | (b2 as u32 & 0x3F);
-                let base = 0x2800u32;
-                if codepoint >= base && codepoint <= 0x28FF {
-                    let value = (codepoint - base) as u8;
-                    self.pos += 3;
-                    return Ok(Token::Braille(value));
-                }
-            }
-        }
-
         // Integer literal
         if b.is_ascii_digit() {
             return self.lex_integer(start);
@@ -283,6 +280,10 @@ impl<'src> Lexer<'src> {
             "Q1" => Token::Q1,
             "Q2" => Token::Q2,
             "Q3" => Token::Q3,
+            "W8" => Token::W8,
+            "W16" => Token::W16,
+            "W24" => Token::W24,
+            "W32" => Token::W32,
             _ => Token::Ident(word),
         };
         Ok(tok)
@@ -410,6 +411,37 @@ mod tests {
     fn lex_quantum_literal() {
         let tokens = lex_all("42@Q1");
         assert_eq!(tokens, vec![Token::Int(42), Token::At, Token::Q1]);
+    }
+
+    #[test]
+    fn lex_witt_literal() {
+        // The preferred W8/W16/W24/W32 spelling lexes to the W tokens.
+        let tokens = lex_all("42@W16");
+        assert_eq!(tokens, vec![Token::Int(42), Token::At, Token::W16]);
+    }
+
+    #[test]
+    fn lex_all_witt_levels() {
+        let tokens = lex_all("W8 W16 W24 W32");
+        assert_eq!(tokens, vec![Token::W8, Token::W16, Token::W24, Token::W32]);
+    }
+
+    #[test]
+    fn lex_let_with_witt_annotation() {
+        // Both Q0 and W8 are accepted in let-bindings.
+        let tokens = lex_all("let x : W8 = 42 ;");
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Let,
+                Token::Ident("x"),
+                Token::Colon,
+                Token::W8,
+                Token::Eq,
+                Token::Int(42),
+                Token::Semi,
+            ]
+        );
     }
 
     #[test]

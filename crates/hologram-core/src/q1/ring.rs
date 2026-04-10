@@ -3,7 +3,7 @@
 use crate::q1::arith;
 use crate::q1::datum::WordDatum;
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use hologram_foundation::enums::{GeometricCharacter, WittLevel};
 
 /// The ring Z/65536Z at quantum level 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,12 +38,12 @@ impl WordRing {
     }
 }
 
-static GENERATOR: WordDatum = WordDatum::PI1;
+static GENERATOR: std::sync::LazyLock<WordDatum> = std::sync::LazyLock::new(|| WordDatum::new(1));
 static NEG_INV: WordInvolution = WordInvolution::Neg;
 static BNOT_INV: WordInvolution = WordInvolution::Bnot;
 
-impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for WordRing {
-    fn ring_quantum(&self) -> u64 {
+impl hologram_foundation::schema::Ring<HoloPrimitives> for WordRing {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -67,17 +67,20 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for WordRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q1
+    fn at_witt_level(&self) -> WittLevel {
+        WittLevel::W16
     }
 }
 
-impl uor_foundation::kernel::schema::Q1Ring<HoloPrimitives> for WordRing {
-    fn q1bit_width(&self) -> u64 {
+// v0.2.0 renamed `Q1Ring` to `W16Ring` to align with Witt-level naming.
+// The methods were also renamed: `q1bit_width()` → `w16bit_width()`,
+// `q1capacity()` → `w16capacity()`.
+impl hologram_foundation::schema::W16Ring<HoloPrimitives> for WordRing {
+    fn w16bit_width(&self) -> u64 {
         16
     }
 
-    fn q1capacity(&self) -> u64 {
+    fn w16capacity(&self) -> u64 {
         65536
     }
 }
@@ -103,7 +106,7 @@ impl WordInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::Operation<HoloPrimitives> for WordInvolution {
+impl hologram_foundation::op::Operation<HoloPrimitives> for WordInvolution {
     fn arity(&self) -> u64 {
         1
     }
@@ -132,12 +135,12 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for WordInvolution {
     }
 }
 
-impl uor_foundation::kernel::op::UnaryOp<HoloPrimitives> for WordInvolution {}
-impl uor_foundation::kernel::op::Involution<HoloPrimitives> for WordInvolution {}
+impl hologram_foundation::op::UnaryOp<HoloPrimitives> for WordInvolution {}
+impl hologram_foundation::op::Involution<HoloPrimitives> for WordInvolution {}
 
 static GROUP_GENERATORS: [WordInvolution; 2] = [WordInvolution::Neg, WordInvolution::Bnot];
 
-impl uor_foundation::kernel::op::Group<HoloPrimitives> for WordRing {
+impl hologram_foundation::op::Group<HoloPrimitives> for WordRing {
     type Operation = WordInvolution;
 
     #[inline]
@@ -151,16 +154,16 @@ impl uor_foundation::kernel::op::Group<HoloPrimitives> for WordRing {
     }
 }
 
-impl uor_foundation::kernel::op::DihedralGroup<HoloPrimitives> for WordRing {}
+impl hologram_foundation::op::DihedralGroup<HoloPrimitives> for WordRing {}
 
 /// Marker for the Z/65536Z multiplication table.
 pub struct WordMultTable;
 
-impl uor_foundation::kernel::division::MultiplicationTable<HoloPrimitives> for WordMultTable {}
+impl hologram_foundation::division::MultiplicationTable<HoloPrimitives> for WordMultTable {}
 
 static WORD_MULT_TABLE: WordMultTable = WordMultTable;
 
-impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for WordRing {
+impl hologram_foundation::division::NormedDivisionAlgebra<HoloPrimitives> for WordRing {
     #[inline]
     fn algebra_dimension(&self) -> u64 {
         2
@@ -189,11 +192,11 @@ impl uor_foundation::kernel::division::NormedDivisionAlgebra<HoloPrimitives> for
     }
 }
 
-impl uor_foundation::kernel::division::AlgebraCommutator<HoloPrimitives> for WordRing {}
+impl hologram_foundation::division::AlgebraCommutator<HoloPrimitives> for WordRing {}
 
-impl uor_foundation::kernel::division::AlgebraAssociator<HoloPrimitives> for WordRing {}
+impl hologram_foundation::division::AlgebraAssociator<HoloPrimitives> for WordRing {}
 
-impl uor_foundation::kernel::division::CayleyDicksonConstruction<HoloPrimitives> for WordRing {
+impl hologram_foundation::division::CayleyDicksonConstruction<HoloPrimitives> for WordRing {
     type NormedDivisionAlgebra = crate::ring::HoloDivisionAlgebra;
 
     #[inline]
@@ -265,20 +268,20 @@ mod tests {
 
     #[test]
     fn ring_trait() {
-        use uor_foundation::kernel::schema::Ring;
+        use hologram_foundation::schema::Ring;
         let r = WordRing;
-        assert_eq!(r.ring_quantum(), 16);
+        assert_eq!(r.ring_witt_length(), 16);
         assert_eq!(r.modulus(), 65536);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q1);
+        assert_eq!(r.at_witt_level(), WittLevel::W16);
         assert_eq!(r.generator().val(), 1);
     }
 
     #[test]
     fn q1ring_trait() {
-        use uor_foundation::kernel::schema::Q1Ring;
+        use hologram_foundation::schema::W16Ring;
         let r = WordRing;
-        assert_eq!(r.q1bit_width(), 16);
-        assert_eq!(r.q1capacity(), 65536);
+        assert_eq!(r.w16bit_width(), 16);
+        assert_eq!(r.w16capacity(), 65536);
     }
 
     #[test]
@@ -298,7 +301,7 @@ mod tests {
 
     #[test]
     fn cayley_dickson_chain_q1_to_q2() {
-        use uor_foundation::kernel::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
+        use hologram_foundation::division::{CayleyDicksonConstruction, NormedDivisionAlgebra};
         let r1 = WordRing;
         assert_eq!(r1.cayley_dickson_source().algebra_dimension(), 2); // C = Q1
         assert_eq!(r1.cayley_dickson_target().algebra_dimension(), 4); // H = Q2
@@ -326,7 +329,7 @@ mod tests {
 
     #[test]
     fn operation_trait() {
-        use uor_foundation::kernel::op::Operation;
+        use hologram_foundation::op::Operation;
         let neg = WordInvolution::Neg;
         assert_eq!(neg.arity(), 1);
         assert_eq!(

@@ -34,9 +34,9 @@ pub use loader::HoloLoader;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_graph::builder::GraphBuilder;
-    use hologram_graph::graph::GraphOp;
-    use hologram_graph::Graph;
+    use hologram_ir::builder::GraphBuilder;
+    use hologram_ir::graph::GraphOp;
+    use hologram_ir::Graph;
 
     #[test]
     fn empty_archive_round_trip() {

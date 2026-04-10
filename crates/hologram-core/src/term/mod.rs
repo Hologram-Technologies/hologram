@@ -12,10 +12,7 @@ pub mod compile_unit;
 pub mod enforcement_bridge;
 
 pub use arena::TermArena;
-pub use compile_unit::{
-    DispatchDecl, EffectDecl, HoloAddress, HoloCompileUnit, PreflightStatus, MAX_DISPATCH_DECLS,
-    MAX_EFFECT_DECLS,
-};
+pub use compile_unit::{HoloAddress, HoloCompileUnit, PreflightStatus};
 
 use crate::op::{LutOp, PrimOp, RingLevel};
 
@@ -61,15 +58,10 @@ impl TypeId {
 /// and padding the enum fits in 16 bytes (4 per 64-byte cache line).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TermKind {
-    /// Integer literal — covers all quantum levels via `i64`.
-    /// Grammar: `integer-literal ::= digit { digit }`.
+    /// Integer literal — covers all Witt levels via `i64`.
     IntLit(i64),
 
-    /// Braille address literal — single byte value in `[0, 255]`.
-    /// Grammar: `braille-literal ::= braille-glyph { braille-glyph }`.
-    BrailleLit(u8),
-
-    /// Quantum-tagged literal — value at an explicit quantum level.
+    /// Witt-level-tagged literal — value at an explicit Witt level.
     /// Grammar: `quantum-literal ::= integer-literal "@" quantum-level`.
     QuantumLit { level: RingLevel, value: u32 },
 
@@ -221,7 +213,6 @@ mod tests {
     #[test]
     fn term_kind_variants() {
         let lit = TermKind::IntLit(42);
-        let braille = TermKind::BrailleLit(0xFF);
         let qlit = TermKind::QuantumLit {
             level: RingLevel::Q0,
             value: 42,
@@ -238,8 +229,8 @@ mod tests {
         let var = TermKind::Var(VarId(0));
 
         // Ensure all variants are distinct.
-        assert_ne!(lit, braille);
-        assert_ne!(qlit, unary);
+        assert_ne!(lit, qlit);
+        assert_ne!(unary, binary);
         assert_ne!(binary, var);
     }
 }

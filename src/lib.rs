@@ -22,8 +22,9 @@ pub mod config;
 
 pub use hologram_archive;
 pub use hologram_core;
-pub use hologram_exec;
-pub use hologram_graph;
+pub use hologram_fused_component;
+pub use hologram_ir;
+pub use hologram_shapes;
 
 #[cfg(feature = "compiler")]
 pub use hologram_compiler;
@@ -38,25 +39,24 @@ pub use hologram_ffi;
 pub use hologram_cli;
 
 // ── Flat convenience re-exports ───────────────────────────────────────────────
-// Consumers can use `hologram::Graph` instead of `hologram::hologram_graph::Graph`.
+// Consumers can use `hologram::Graph` instead of `hologram::hologram_ir::Graph`.
 
 // Core primitives
 pub use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp, LutOp, Op, PrimOp};
 pub use hologram_core::view::ElementWiseView;
 
 // Graph IR
-pub use hologram_graph::{
-    ConstantData, ConstantId, ConstantStore, CustomOpId, ExecutionSchedule, FusionStats, Graph,
-    GraphBuilder, GraphOp, NodeId, SubgraphDef, SubgraphId,
+pub use hologram_ir::{
+    ConstantData, ConstantId, ConstantStore, ExecutionSchedule, Graph, GraphBuilder, GraphOp,
+    NodeId, StructuralFindings, SubgraphDef, SubgraphId,
 };
 
 // Execution
-pub use hologram_exec::kv_cache;
-pub use hologram_exec::{
-    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
-    execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
-    execute_tape_with_kv_shapes_cached, execute_tape_with_shapes, execute_tape_with_weight_cache,
-    BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, InferenceSession,
+pub use hologram_fused_component::kv_cache;
+pub use hologram_fused_component::{
+    build_tape_from_plan, execute_tape, execute_tape_with_kv, execute_tape_with_kv_and_shapes,
+    execute_tape_with_kv_cached, execute_tape_with_kv_shapes_cached, execute_tape_with_shapes,
+    execute_tape_with_weight_cache, BufferArena, GraphInputs, GraphOutputs, InferenceSession,
     KvCacheState, KvStore, WeightCache,
 };
 
@@ -73,8 +73,8 @@ pub use hologram_archive::{
 // Compiler (gated)
 #[cfg(feature = "compiler")]
 pub use hologram_compiler::{
-    compile, compile_from_source, unit_from_graph, unit_from_graph_with, CascadeInfo,
-    CertificateStore, CompilationOutput, CompilationStats, CompilerBuilder,
+    compile, compile_from_source, unit_from_graph, unit_from_graph_with, CompilationOutput,
+    CompilationStats, Compiler, PrismModuleRegistry, SourceInput,
 };
 
 // Async (gated)

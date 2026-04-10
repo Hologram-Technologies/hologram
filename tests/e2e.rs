@@ -2,21 +2,21 @@
 //! build graph → fuse → write .holo → load → build_schedule → execute → verify
 
 use hologram_archive::{load_from_bytes, HoloWriter};
-use hologram_compiler::{compile, CompilerBuilder};
+use hologram_compiler::compile;
 use hologram_core::op::{LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
-use hologram_exec::lut_gemm::matmul::naive_matmul;
-use hologram_exec::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
 use hologram_ffi::compiler::*;
 use hologram_ffi::encoding::*;
 use hologram_ffi::exec::*;
 use hologram_ffi::graph::*;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::constant::ConstantData;
-use hologram_graph::fusion;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::lut_gemm::matmul::naive_matmul;
+use hologram_fused_component::lut_gemm::quantize::{quantize_4bit, quantize_8bit};
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
+use hologram_ir::analysis;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::constant::ConstantData;
+use hologram_ir::graph::GraphOp;
 
 /// E2E: build graph → fuse → write .holo → load_from_bytes → build_schedule → execute → verify
 #[test]
@@ -32,7 +32,7 @@ fn e2e_linear_chain_fused() {
         .output("y", 3)
         .build();
 
-    let stats = fusion::fuse(&mut g).unwrap();
+    let stats = analysis::analyze(&mut g).unwrap();
     assert!(stats.views_fused >= 1, "should fuse sigmoid→relu chain");
 
     // Serialize to .holo archive
@@ -82,7 +82,7 @@ fn e2e_diamond_parallel_fanout() {
         .output("y", 4)
         .build();
 
-    let _ = fusion::fuse(&mut g).unwrap();
+    let _ = analysis::analyze(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -120,7 +120,7 @@ fn e2e_constants_through_pipeline() {
         .output("y", 2)
         .build();
 
-    let stats = fusion::fuse(&mut g).unwrap();
+    let stats = analysis::analyze(&mut g).unwrap();
     // Constant folding should evaluate Relu on constant input
     assert!(stats.constants_folded >= 1, "should fold relu(const)");
 
@@ -149,7 +149,7 @@ fn e2e_chained_constant_folding() {
         .output("y", 4)
         .build();
 
-    let stats = fusion::fuse(&mut g).unwrap();
+    let stats = analysis::analyze(&mut g).unwrap();
     assert!(stats.constants_folded >= 2, "should fold add then relu");
 
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
@@ -178,7 +178,7 @@ fn e2e_multi_input_binary() {
         .output("sum", 3)
         .build();
 
-    let _ = fusion::fuse(&mut g).unwrap();
+    let _ = analysis::analyze(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -209,7 +209,7 @@ fn e2e_long_chain_multi_fusion() {
         .output("y", 5)
         .build();
 
-    let stats = fusion::fuse(&mut g).unwrap();
+    let stats = analysis::analyze(&mut g).unwrap();
     assert!(
         stats.views_fused >= 3,
         "should fuse at least 3 in a 4-element chain, got {}",
@@ -260,7 +260,7 @@ fn e2e_wide_parallel_fanout() {
         .output("y", 8)
         .build();
 
-    let _ = fusion::fuse(&mut g).unwrap();
+    let _ = analysis::analyze(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
     let plan = load_from_bytes(&archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -296,7 +296,7 @@ fn e2e_file_roundtrip() {
         .output("y", 2)
         .build();
 
-    let _ = fusion::fuse(&mut g).unwrap();
+    let _ = analysis::analyze(&mut g).unwrap();
     let archive = HoloWriter::new().set_graph(&g).build().unwrap();
 
     // Write to temp file
@@ -580,7 +580,7 @@ fn e2e_compiler_linear_chain() {
         .build();
 
     let out = compile(g).unwrap();
-    assert!(out.stats.fusion.views_fused >= 1);
+    assert!(out.stats.findings.views_fused >= 1);
 
     let plan = load_from_bytes(&out.archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -636,7 +636,7 @@ fn e2e_compiler_with_constants() {
         .build();
 
     let out = compile(g).unwrap();
-    assert!(out.stats.fusion.constants_folded >= 1);
+    assert!(out.stats.findings.constants_folded >= 1);
 
     let plan = load_from_bytes(&out.archive).unwrap();
     let tape = build_tape_from_plan(&plan).unwrap();
@@ -647,9 +647,13 @@ fn e2e_compiler_with_constants() {
     assert_eq!(output, &[LutOp::Relu.apply(42)]);
 }
 
-/// E2E: compile fusion disabled vs enabled produces different stats
+/// E2E: compile finds fusion opportunities deterministically. The v0.1.4
+/// `.fuse(true|false)` knob is removed in the v0.2.0 conformance-first
+/// refactor — fusion always runs because it is a structural finding, not a
+/// user-controlled optimisation. This test verifies that calling compile()
+/// twice on the same input deterministically produces the same findings.
 #[test]
-fn e2e_compiler_fusion_disabled_vs_enabled() {
+fn e2e_compiler_finds_fusion_opportunities() {
     let make_graph = || {
         GraphBuilder::new()
             .node(GraphOp::Input)
@@ -659,16 +663,14 @@ fn e2e_compiler_fusion_disabled_vs_enabled() {
             .build()
     };
 
-    let fused = CompilerBuilder::new(make_graph())
-        .fuse(true)
-        .build()
-        .unwrap();
-    let unfused = CompilerBuilder::new(make_graph())
-        .fuse(false)
-        .build()
-        .unwrap();
+    let out1 = compile(make_graph()).unwrap();
+    let out2 = compile(make_graph()).unwrap();
 
-    assert!(fused.stats.fusion.views_fused > unfused.stats.fusion.views_fused);
+    assert!(out1.stats.findings.views_fused >= 1);
+    assert_eq!(
+        out1.stats.findings.views_fused, out2.stats.findings.views_fused,
+        "fusion findings must be deterministic across compilations"
+    );
 }
 
 /// E2E: compile large graph (100 nodes) — archive is valid and loadable
@@ -779,7 +781,7 @@ fn e2e_ffi_full_pipeline() {
     // Execute
     let inp = hologram_inputs_new();
     hologram_inputs_set(inp, 0, [42u8].as_ptr(), 1);
-    let outputs = hologram_execute_bytes(archive_ptr, archive_len, inp);
+    let outputs = hologram_fused_componentute_bytes(archive_ptr, archive_len, inp);
     assert!(!outputs.is_null());
     assert_eq!(hologram_outputs_len(outputs), 1);
 
@@ -828,7 +830,7 @@ fn e2e_ffi_diamond_with_fusion() {
 
     let inp = hologram_inputs_new();
     hologram_inputs_set(inp, 0, [100u8].as_ptr(), 1);
-    let outputs = hologram_execute_bytes(
+    let outputs = hologram_fused_componentute_bytes(
         hologram_compilation_archive_ptr(out),
         hologram_compilation_archive_len(out),
         inp,
@@ -883,54 +885,12 @@ fn e2e_ffi_error_handling() {
 
     // Execute with null archive should fail
     let inp = hologram_inputs_new();
-    let outputs = hologram_execute_bytes(std::ptr::null(), 0, inp);
+    let outputs = hologram_fused_componentute_bytes(std::ptr::null(), 0, inp);
     assert!(outputs.is_null());
     hologram_inputs_free(inp);
 }
 
-/// E2E: FFI compile with fusion disabled vs enabled.
-#[test]
-fn e2e_ffi_fusion_toggle() {
-    use std::ffi::CString;
-
-    // Build: Input → Sigmoid → Relu → Output (fusable chain)
-    let build = || {
-        let b = hologram_graph_builder_new();
-        let name = CString::new("x").unwrap();
-        hologram_graph_builder_input(b, name.as_ptr());
-        hologram_graph_builder_node_from_input(b, 0, 0, 0);
-        let i0 = [0usize];
-        hologram_graph_builder_node_with_inputs(b, 3, 0, i0.as_ptr(), 1);
-        let i1 = [1usize];
-        hologram_graph_builder_node_with_inputs(b, 3, 4, i1.as_ptr(), 1);
-        let i2 = [2usize];
-        hologram_graph_builder_node_with_inputs(b, 1, 0, i2.as_ptr(), 1);
-        let name_y = CString::new("y").unwrap();
-        hologram_graph_builder_output(b, name_y.as_ptr(), 3);
-        hologram_graph_builder_build(b)
-    };
-
-    let out_fused = hologram_compile(build());
-    let out_no_fuse = hologram_compile_no_fuse(build());
-    assert!(!out_fused.is_null());
-    assert!(!out_no_fuse.is_null());
-
-    // Both should produce valid archives that execute
-    let test = |out: *mut hologram_compiler::CompilationOutput| {
-        let inp = hologram_inputs_new();
-        hologram_inputs_set(inp, 0, [42u8].as_ptr(), 1);
-        let outputs = hologram_execute_bytes(
-            hologram_compilation_archive_ptr(out),
-            hologram_compilation_archive_len(out),
-            inp,
-        );
-        assert_eq!(hologram_outputs_len(outputs), 1);
-        hologram_outputs_free(outputs);
-        hologram_inputs_free(inp);
-    };
-    test(out_fused);
-    test(out_no_fuse);
-
-    hologram_compilation_free(out_fused);
-    hologram_compilation_free(out_no_fuse);
-}
+// Note: the v0.1.4 `e2e_ffi_fusion_toggle` test and the
+// `hologram_compile_no_fuse` FFI entry point are gone — fusion is a
+// structural finding, not a user-controlled optimisation, so it always
+// runs at compile time.

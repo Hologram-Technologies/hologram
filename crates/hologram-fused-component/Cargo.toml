@@ -1,0 +1,53 @@
+[package]
+name = "hologram-fused-component"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Fused-component substrate carrying F_prism_fused_component for hologram"
+
+[lib]
+name = "hologram_fused_component"
+path = "src/lib.rs"
+
+[dependencies]
+hologram-core = { workspace = true }
+hologram-ir = { workspace = true }
+hologram-ring = { workspace = true, features = ["std"] }
+hologram-archive = { workspace = true }
+hologram-foundation = { path = "../hologram-foundation" }
+hologram-shapes = { path = "../hologram-shapes" }
+rkyv = { workspace = true }
+bytemuck = { workspace = true }
+smallvec = { workspace = true }
+tracing = "0.1"
+parking_lot = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dependencies.rayon]
+workspace = true
+optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33"
+
+[dependencies.wgpu]
+workspace = true
+optional = true
+
+[dependencies.pollster]
+workspace = true
+optional = true
+
+[features]
+default = ["std"]
+std = ["hologram-archive/std"]
+parallel = ["rayon"]
+accelerate = []
+profile = []
+# EXPERIMENTAL: enables the WebGPU compute backend (~1100 LOC at
+# src/backend/webgpu.rs). It is wired into default_backend() but has
+# no conformance test coverage in this workspace yet.
+webgpu = ["wgpu", "pollster"]
+

@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use super::{FORMAT_VERSION, HOLO_MAGIC};
 
 /// Fixed size of the serialized header in bytes.
-pub const HEADER_SIZE: usize = 184;
+pub const HEADER_SIZE: usize = 168;
 
 /// On-disk header for a .holo archive.
 ///
@@ -36,12 +36,6 @@ pub struct HoloHeader {
     pub section_table_size: u64,
     /// Total archive size in bytes.
     pub total_size: u64,
-    /// Byte offset of the embedded cascade certificate section.
-    /// Zero if no certificate is embedded.
-    pub certificate_offset: u64,
-    /// Byte size of the embedded cascade certificate section.
-    /// Zero if no certificate is embedded.
-    pub certificate_size: u64,
     /// BLAKE3 hash of the graph section bytes.
     pub graph_checksum: [u8; 32],
     /// BLAKE3 hash of the weights section bytes.
@@ -73,23 +67,7 @@ pub const FLAG_BLAKE3_CHECKSUMS: u32 = 1 << 2;
 /// enabling zero-copy GPU buffer creation (e.g., Metal `newBuffer(bytesNoCopy:)`).
 pub const FLAG_TENSOR_PAGE_ALIGNED: u32 = 1 << 3;
 
-/// Mask for quantum_index stored in flags bits 16-23.
-const QUANTUM_INDEX_SHIFT: u32 = 16;
-const QUANTUM_INDEX_MASK: u32 = 0xFF << QUANTUM_INDEX_SHIFT;
-
 impl HoloHeader {
-    /// Get the quantum level index (0=Q0, 1=Q1, 3=Q3, 7=Q7).
-    /// Stored in bits 16-23 of the flags field.
-    #[must_use]
-    pub fn quantum_index(&self) -> u32 {
-        (self.flags & QUANTUM_INDEX_MASK) >> QUANTUM_INDEX_SHIFT
-    }
-
-    /// Set the quantum level index in the flags field.
-    pub fn set_quantum_index(&mut self, index: u32) {
-        self.flags = (self.flags & !QUANTUM_INDEX_MASK) | ((index & 0xFF) << QUANTUM_INDEX_SHIFT);
-    }
-
     /// Whether checksums use blake3 instead of CRC32.
     #[must_use]
     pub fn uses_blake3(&self) -> bool {
@@ -164,8 +142,6 @@ mod tests {
             graph_checksum: [0xDE; 32],
             weights_checksum: [0xCA; 32],
             unit_address: [0u8; 32],
-            certificate_offset: 0,
-            certificate_size: 0,
             section_count: 0,
             section_table_offset: 0,
             section_table_size: 0,

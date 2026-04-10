@@ -6,11 +6,11 @@ use hologram_archive::HoloWriter;
 use hologram_core::encoding::{AngleEncoding, Encoding, SignedEncoding, UnsignedEncoding};
 use hologram_core::op::{LutOp, PrimOp};
 use hologram_core::view::ElementWiseView;
-use hologram_exec::mmap::{build_tape_from_plan, execute_tape};
-use hologram_exec::GraphInputs;
-use hologram_graph::builder::GraphBuilder;
-use hologram_graph::fusion;
-use hologram_graph::graph::GraphOp;
+use hologram_fused_component::mmap::{build_tape_from_plan, execute_tape};
+use hologram_fused_component::GraphInputs;
+use hologram_ir::analysis;
+use hologram_ir::builder::GraphBuilder;
+use hologram_ir::graph::GraphOp;
 
 // ---------------------------------------------------------------------------
 // Group 1: Encoding round-trip (Pi-F-Lambda)
@@ -224,7 +224,7 @@ fn build_fused_sin_cos_archive() -> Vec<u8> {
         .node_with_inputs(GraphOp::Output, &[2])
         .output("y", 3)
         .build();
-    let _ = fusion::fuse(&mut g).unwrap();
+    let _ = analysis::analyze(&mut g).unwrap();
     HoloWriter::new().set_graph(&g).build().unwrap()
 }
 
@@ -313,7 +313,7 @@ fn bench_full_pipeline(c: &mut Criterion) {
                 .node_with_inputs(GraphOp::Output, &[2])
                 .output("sum", 3)
                 .build();
-            let _ = fusion::fuse(&mut g).unwrap();
+            let _ = analysis::analyze(&mut g).unwrap();
             let archive = HoloWriter::new().set_graph(&g).build().unwrap();
             let mut inputs = GraphInputs::new();
             inputs.set(0, vec![10u8, 100, 200, 250]);
