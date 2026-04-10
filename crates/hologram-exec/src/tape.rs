@@ -3211,6 +3211,13 @@ pub struct EnumTape {
     /// are force-evicted after first consumer and recomputed when needed.
     /// Default: false (checkpoints identified but not triggered).
     pub checkpoint_enabled: bool,
+    /// When true alongside `checkpoint_enabled`, evicted buffers stay as
+    /// Heap Vecs instead of promoting to Mmap. This avoids the mmap/munmap
+    /// syscall overhead per buffer (~10-50µs each) which dominates Conv2d-heavy
+    /// models like VAE. The freed Vec memory stays in the allocator's free-list
+    /// (RSS doesn't drop) but IS reused by subsequent allocations.
+    /// Default: false (large buffers use Mmap for immediate page return).
+    pub heap_only_eviction: bool,
     /// Workspace slot assignments: `slot_assignments[node_idx] = slot_id`.
     /// Nodes with the same slot_id share a physical buffer (non-overlapping lifetimes).
     /// `u32::MAX` means no aliasing (node uses its own buffer).
@@ -3231,6 +3238,7 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            heap_only_eviction: false,
             slot_assignments: Vec::new(),
             n_slots: 0,
         }
@@ -3248,6 +3256,7 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            heap_only_eviction: false,
             slot_assignments: Vec::new(),
             n_slots: 0,
         }
@@ -3673,18 +3682,20 @@ impl EnumTape {
             .max()
             .unwrap_or(0);
 
+        // When heap_only_eviction is set, disable Mmap promotion by setting
+        // the thread-local threshold to usize::MAX. Restored after execution.
+        if self.heap_only_eviction {
+            crate::buffer::output_buffer::set_mmap_threshold(usize::MAX);
+        }
+
         // Create output buffers.
         let mut bufs: Vec<OutputBuffer> = if self.checkpoint_enabled {
             // Eviction path (diffusion models): start with empty buffers.
             // Kernels allocate on demand via OutputBuffer::resize. When the
-            // resize exceeds MMAP_EVICT_THRESHOLD, the buffer self-promotes
-            // to Mmap (see OutputBuffer::resize logic). On eviction, Mmap
-            // buffers call munmap — immediate page return.
-            //
-            // Pre-allocating Mmap buffers for all instructions up front
-            // defeated eviction: the total hint-based allocation was ~11 GiB
-            // before a single instruction ran, and the live set never dropped
-            // because all buffers were allocated simultaneously.
+            // resize exceeds the mmap threshold, the buffer self-promotes
+            // to Mmap. On eviction, Mmap buffers call munmap — immediate
+            // page return. With heap_only_eviction, no promotion happens
+            // and freed Vec memory is reused by the allocator.
             (0..max_idx).map(|_| OutputBuffer::new()).collect()
         } else {
             // Heap path (LLMs): pre-allocate with output_byte_hint.
@@ -3987,6 +3998,13 @@ impl EnumTape {
                 let data = std::mem::take(&mut bufs[idx]);
                 arena.insert(NodeId::new(instr.output_idx, 0), data.into_vec());
             }
+        }
+
+        // Restore mmap threshold if we overrode it.
+        if self.heap_only_eviction {
+            crate::buffer::output_buffer::set_mmap_threshold(
+                crate::buffer::output_buffer::DEFAULT_MMAP_EVICT_THRESHOLD,
+            );
         }
 
         Ok(())

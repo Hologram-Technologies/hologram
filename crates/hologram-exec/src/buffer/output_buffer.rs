@@ -37,7 +37,29 @@ use std::ops::{Deref, DerefMut};
 /// promoted during resize/extend. MmapBuffer::drop calls munmap, which
 /// immediately returns pages to the OS. Below this threshold, Vec<u8> is
 /// faster (no syscall overhead per allocation).
-pub const MMAP_EVICT_THRESHOLD: usize = 256 * 1024; // 256 KiB
+/// Default threshold for promoting Heap buffers to Mmap on resize.
+/// Buffers at or above this size use MmapBuffer instead of Vec<u8>.
+/// Set to usize::MAX via `set_mmap_threshold` to disable Mmap promotion
+/// (e.g., for VAE where mmap/munmap syscall overhead dominates).
+pub const DEFAULT_MMAP_EVICT_THRESHOLD: usize = 256 * 1024; // 256 KiB
+
+// Thread-local mmap promotion threshold. Allows per-tape override
+// without adding a field to OutputBuffer (which is performance-critical).
+std::thread_local! {
+    static MMAP_THRESHOLD: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_MMAP_EVICT_THRESHOLD) };
+}
+
+/// Set the mmap promotion threshold for the current thread.
+/// Buffers resized above this threshold promote from Heap to Mmap.
+/// Set to `usize::MAX` to disable Mmap promotion entirely.
+pub fn set_mmap_threshold(threshold: usize) {
+    MMAP_THRESHOLD.with(|t| t.set(threshold));
+}
+
+/// Get the current mmap promotion threshold.
+fn mmap_threshold() -> usize {
+    MMAP_THRESHOLD.with(|t| t.get())
+}
 
 pub enum OutputBuffer {
     /// Heap-allocated buffer. Owns its memory via `Vec<u8>`.
@@ -212,7 +234,7 @@ impl OutputBuffer {
                 // Promote empty Heap to Mmap for large allocations.
                 // This ensures that when eviction drops the buffer,
                 // munmap returns pages to the OS immediately.
-                if v.is_empty() && new_len >= MMAP_EVICT_THRESHOLD {
+                if v.is_empty() && new_len >= mmap_threshold() {
                     let m = super::mmap_buf::MmapBuffer::new(new_len);
                     // MmapBuffer is zero-initialized; fill with value if non-zero.
                     if value != 0 {
