@@ -21,6 +21,7 @@ mod tests;
 
 use hologram_core::op::{bits_to_f32, FloatOp, OpCategory};
 
+use crate::buffer::OutputBuffer;
 use crate::error::ExecResult;
 use crate::eval::executor::ExecutionContext;
 
@@ -123,7 +124,7 @@ pub fn dispatch_float_into(
     op: &FloatOp,
     inputs: &[&[u8]],
     ctx: Option<&ExecutionContext>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     #[cfg(feature = "profile")]
     let _span = tracing::info_span!("float_op", cat = ?op.category()).entered();
@@ -242,7 +243,11 @@ pub(crate) fn infer_slice_axis_size(n_elems: usize, end: usize) -> usize {
 /// Returns `Ok(true)` if handled, `Ok(false)` to fall back to allocating dispatch.
 ///
 /// Handles size=0 sentinels by inferring from input buffer length at runtime.
-fn dispatch_custom_into(op: &FloatOp, inputs: &[&[u8]], out_buf: &mut Vec<u8>) -> ExecResult<bool> {
+fn dispatch_custom_into(
+    op: &FloatOp,
+    inputs: &[&[u8]],
+    out_buf: &mut OutputBuffer,
+) -> ExecResult<bool> {
     match op {
         // MatMul: output = M×N floats. Write directly into out_buf.
         FloatOp::MatMul { m, k, n } => {
@@ -361,7 +366,7 @@ pub fn dispatch_fused_chain(chain: &[FloatOp], inputs: &[&[u8]]) -> ExecResult<V
 pub fn dispatch_fused_chain_into(
     chain: &[FloatOp],
     inputs: &[&[u8]],
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = helpers::cast_f32(inputs[0])?;
     let base = out_buf.len();

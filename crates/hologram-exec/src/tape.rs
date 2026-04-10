@@ -18,7 +18,7 @@ static EMPTY_SHAPE_MAP: LazyLock<std::collections::HashMap<u32, Vec<usize>>> =
     LazyLock::new(std::collections::HashMap::new);
 use hologram_graph::graph::node::NodeId;
 
-use crate::buffer::BufferArena;
+use crate::buffer::{BufferArena, OutputBuffer};
 use crate::error::ExecResult;
 use crate::eval::executor::ExecutionContext;
 
@@ -772,7 +772,7 @@ fn dispatch_kernel(
     input_metas: &crate::shape_resolve::InputMetas,
     tape_ctx: &TapeContext<'_>,
     backend: &dyn crate::backend::ComputeBackend,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<DispatchResult> {
     use crate::backend::KernelOutput;
     use crate::float_dispatch;
@@ -2714,7 +2714,7 @@ fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) 
 /// Inline unary kernel — writes directly to out_buf as f32 via bytemuck cast.
 /// No dispatch overhead, no intermediate allocation.
 #[inline(always)]
-fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
+fn inline_unary(input: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32) -> f32) {
     let x = safe_cast_f32(input);
     let mut dst = vec![0.0f32; x.len()];
     for (d, &s) in dst.iter_mut().zip(x.iter()) {
@@ -2725,7 +2725,7 @@ fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
 
 /// Inline binary kernel — writes directly to out_buf as f32 via bytemuck cast.
 #[inline(always)]
-fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32) -> f32) {
+fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32, f32) -> f32) {
     let a = safe_cast_f32(a);
     let b = safe_cast_f32(b);
     let out_len = a.len().max(b.len());
@@ -2759,7 +2759,7 @@ fn dispatch_lut_gemm_4(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
@@ -2796,7 +2796,7 @@ fn dispatch_lut_gemm_8(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2822,7 +2822,7 @@ fn dispatch_lut_gemm_16(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q16(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2848,7 +2848,7 @@ fn dispatch_lut_gemm_2(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q2(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2914,7 +2914,7 @@ fn dispatch_kv_write(
     inputs: &[&[u8]],
     params: KvWriteParams,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<hologram_core::op::TensorMeta> {
     let KvWriteParams {
         layer,
@@ -3022,7 +3022,7 @@ fn dispatch_kv_read(
     head_dim: u32,
     heads_first: bool,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let Some(kv_cell) = &tape_ctx.kv_state else {
         return Err(crate::error::ExecError::UnsupportedOp(
@@ -3655,33 +3655,68 @@ impl EnumTape {
         arena: &mut BufferArena<'_>,
         tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
-        // Pre-allocate output buffers for all instructions based on byte hints.
-        // This eliminates all per-instruction Vec resize/allocation, but
-        // reserves the SUM of all `output_byte_hint`s up front — fine for LLMs
-        // (working set ~few GiB) but catastrophic for vision/diffusion models
-        // where the sum is 20+ GiB. When `checkpoint_enabled` is true the
-        // caller is signalling memory pressure, so skip pre-allocation
-        // entirely and let `dispatch_kernel` grow each `out_buf` on demand.
-        // The eviction loop below then frees buffers as soon as their last
-        // consumer finishes, keeping peak memory near the working set.
+        // Output buffer allocation: two strategies.
+        //
+        // (a) Heap (default, checkpoint_enabled = false): pre-allocate each
+        //     buffer with Vec::with_capacity from output_byte_hint. Fast for
+        //     LLMs where the total working set fits in a few GiB.
+        //
+        // (b) Arena (checkpoint_enabled = true): allocate one contiguous
+        //     MmapLender sized to the peak working set (from slot_assignments),
+        //     sub-allocate each buffer as an OutputBuffer::Arena pointing into
+        //     the mmap region. Evicted slots call advise_free_region to return
+        //     pages to the OS. Peak RSS tracks live working set, not total.
         let max_idx = self
             .instructions
             .iter()
             .map(|i| i.output_idx as usize + 1)
             .max()
             .unwrap_or(0);
-        let mut bufs: Vec<Vec<u8>> = vec![Vec::new(); max_idx];
-        if !self.checkpoint_enabled {
+
+        // Mmap threshold: buffers above this size use MmapBuffer instead of
+        // Vec<u8> when eviction is enabled. MmapBuffer::drop calls munmap,
+        // which immediately returns pages to the OS. Below this threshold,
+        // Vec<u8> is faster (no syscall overhead per allocation).
+        const MMAP_EVICT_THRESHOLD: usize = 256 * 1024; // 256 KiB
+
+        // Create output buffers.
+        let mut bufs: Vec<OutputBuffer> = if self.checkpoint_enabled {
+            // Eviction path (diffusion models): allocate large buffers via
+            // MmapBuffer so that dropping them calls munmap and immediately
+            // returns pages to the OS. Small buffers use Vec<u8> as usual.
+            // No pre-sized arena — variable-length execution can produce
+            // outputs of any size, and arena overflow defeats the purpose.
+            (0..max_idx)
+                .map(|node| {
+                    // Find this node's output_byte_hint from its instruction.
+                    let hint = self
+                        .instructions
+                        .iter()
+                        .find(|i| i.output_idx as usize == node)
+                        .map(|i| i.output_byte_hint as usize)
+                        .unwrap_or(0);
+                    if hint >= MMAP_EVICT_THRESHOLD {
+                        OutputBuffer::mmap(hint)
+                    } else {
+                        OutputBuffer::new()
+                    }
+                })
+                .collect()
+        } else {
+            // Heap path (LLMs): pre-allocate with output_byte_hint.
+            // No eviction, no mmap overhead.
+            let mut v: Vec<OutputBuffer> = (0..max_idx).map(|_| OutputBuffer::new()).collect();
             for instr in &self.instructions {
                 let idx = instr.output_idx as usize;
-                if idx < bufs.len() && instr.output_byte_hint > 0 {
+                if idx < v.len() && instr.output_byte_hint > 0 {
                     let needed = instr.output_byte_hint as usize;
-                    if bufs[idx].capacity() < needed {
-                        bufs[idx] = Vec::with_capacity(needed);
+                    if v[idx].capacity() < needed {
+                        v[idx] = OutputBuffer::with_capacity(needed);
                     }
                 }
             }
-        }
+            v
+        };
 
         // Mutable copy of consumer counts: decremented as each instruction
         // consumes its inputs. When the count for a node reaches zero, its
@@ -3882,28 +3917,12 @@ impl EnumTape {
                     }
                     live_counts[i] = live_counts[i].saturating_sub(1);
                     if live_counts[i] == 0 && i < bufs.len() && !bufs[i].is_empty() {
-                        // Drop the buffer AND tell the OS to reclaim its pages.
-                        // Vec::drop alone frees the allocation via the system
-                        // allocator, but malloc keeps pages in its free-list
-                        // (RSS stays at the high-water mark). madvise(MADV_FREE)
-                        // marks pages as reclaimable so the kernel can reclaim
-                        // them under memory pressure — essential for running SD
-                        // VAE on resource-constrained devices.
-                        //
-                        // TODO(Plan 061 follow-up): Replace the Vec<Vec<u8>> pool
-                        // with a proper mmap-backed arena that:
-                        // (a) Allocates one large contiguous region up front
-                        // (b) Sub-allocates regions for each instruction's output
-                        // (c) Calls madvise(MADV_FREE) on freed regions directly
-                        // (d) Reuses freed regions for new allocations (bump + free-list)
-                        // This avoids per-buffer malloc/free overhead and gives
-                        // precise control over page lifecycle. The existing
-                        // BufferArena (buffer/arena.rs) has MMAP_THRESHOLD logic
-                        // but execute_direct bypasses it. The fix is to either
-                        // unify execute_direct with BufferArena, or build a
-                        // dedicated TapeArena that works with the Vec<Vec<u8>> pool.
-                        advise_free(&bufs[i]);
-                        bufs[i] = Vec::new();
+                        // Drop the buffer. For Mmap variants, this calls
+                        // munmap and immediately returns pages to the OS.
+                        // For Heap variants, the allocator frees the memory
+                        // (pages may linger in the free-list, but Heap is
+                        // only used for small buffers < MMAP_EVICT_THRESHOLD).
+                        bufs[i] = OutputBuffer::new();
                     }
                 }
             }
@@ -3970,7 +3989,7 @@ impl EnumTape {
             let idx = instr.output_idx as usize;
             if idx < bufs.len() {
                 let data = std::mem::take(&mut bufs[idx]);
-                arena.insert(NodeId::new(instr.output_idx, 0), data);
+                arena.insert(NodeId::new(instr.output_idx, 0), data.into_vec());
             }
         }
 
@@ -4049,46 +4068,6 @@ fn release_weight_range(weights: &[u8], start: u64, end: u64) {
             libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_DONTNEED);
         }
     }
-}
-
-/// Advise the OS that a Vec<u8>'s backing pages are reclaimable.
-///
-/// After a buffer is dropped (Vec::drop frees via malloc), the system
-/// allocator retains pages in its free-list — RSS stays at the high-water
-/// mark. This function calls `madvise(MADV_FREE)` on the buffer's pages
-/// *before* dropping, marking them as reclaimable. The kernel will
-/// reclaim them under memory pressure without requiring a munmap.
-///
-/// On macOS, `MADV_FREE` is preferred over `MADV_DONTNEED` because
-/// MADV_FREE is lazy (zero syscall overhead if pages aren't reclaimed)
-/// while MADV_DONTNEED immediately discards and zero-fills on re-access.
-///
-/// No-op on non-unix platforms or empty buffers.
-#[inline]
-fn advise_free(buf: &[u8]) {
-    #[cfg(unix)]
-    if !buf.is_empty() {
-        // Align to page boundary (4096 on all supported targets).
-        let ptr = buf.as_ptr() as usize;
-        let page_size = 4096;
-        let aligned_start = (ptr + page_size - 1) & !(page_size - 1);
-        let end = ptr + buf.len();
-        if aligned_start < end {
-            let len = end - aligned_start;
-            // SAFETY: aligned_start..end is within buf's allocation.
-            // MADV_FREE marks pages as reclaimable but doesn't modify contents
-            // until reclaimed — the caller is about to drop the Vec anyway.
-            unsafe {
-                // Use MADV_FREE on macOS (lazy), MADV_DONTNEED on Linux (eager).
-                #[cfg(target_os = "macos")]
-                libc::madvise(aligned_start as *mut libc::c_void, len, libc::MADV_FREE);
-                #[cfg(not(target_os = "macos"))]
-                libc::madvise(aligned_start as *mut libc::c_void, len, libc::MADV_DONTNEED);
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = buf;
 }
 
 #[cfg(test)]

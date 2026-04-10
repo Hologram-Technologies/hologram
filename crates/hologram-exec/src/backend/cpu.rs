@@ -6,6 +6,7 @@
 
 use hologram_core::op::FloatOp;
 
+use crate::buffer::OutputBuffer;
 use crate::error::ExecResult;
 
 use super::{ComputeBackend, KernelOutput};
@@ -21,7 +22,7 @@ impl ComputeBackend for CpuBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         crate::float_dispatch::dispatch_float_into(op, inputs, None, out_buf)?;
         Ok(KernelOutput::Bytes)
@@ -33,7 +34,7 @@ impl ComputeBackend for CpuBackend {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         crate::float_dispatch::matmul::dispatch_matmul_into(inputs, m, k, n, out_buf)?;
         Ok(KernelOutput::Bytes)

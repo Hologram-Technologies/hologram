@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use hologram_core::op::{FloatOp, OpCategory};
 use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions};
 
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 
 use super::ComputeBackend;
@@ -690,7 +691,7 @@ impl ComputeBackend for MetalBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // MatMul: route to dispatch_matmul (separate size threshold).
         if let FloatOp::MatMul { m, k, n } = op {
@@ -757,7 +758,7 @@ impl ComputeBackend for MetalBackend {
         m: usize,
         k: usize,
         n: usize,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // Metal matmul only worthwhile for large matrices.
         // Crossover vs Accelerate BLAS varies by GPU generation.
@@ -834,7 +835,7 @@ impl ComputeBackend for MetalBackend {
         &self,
         inputs: &[&[u8]],
         dims: super::BatchedMatmulDims,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         let super::BatchedMatmulDims {
             batch,

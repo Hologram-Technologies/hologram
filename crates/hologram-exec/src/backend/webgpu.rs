@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use hologram_core::op::{FloatOp, OpCategory};
 use wgpu::util::DeviceExt;
 
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 
 use super::hardware::{HardwareCaps, OpThresholds};
@@ -1141,7 +1142,7 @@ impl ComputeBackend for WebGpuBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // Route MatMul to dispatch_matmul.
         if let FloatOp::MatMul { m, k, n } = op {
@@ -1207,7 +1208,7 @@ impl ComputeBackend for WebGpuBackend {
         m: usize,
         k: usize,
         n: usize,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // Same threshold as Metal: 128×128 output minimum.
         if m * n < self.thresholds.matmul_min_elements {
@@ -1224,7 +1225,7 @@ impl ComputeBackend for WebGpuBackend {
         &self,
         inputs: &[&[u8]],
         dims: super::BatchedMatmulDims,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         let super::BatchedMatmulDims {
             batch,

@@ -1,4 +1,5 @@
 use super::helpers::*;
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 use hologram_core::op::FloatOp;
 
@@ -327,7 +328,7 @@ pub fn dispatch_matmul_into(
     m: usize,
     k: usize,
     n: usize,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     // ── Fast path: when m, k, n are all known and consistent with input sizes,
     // skip infer_matmul_k and batch detection entirely.
@@ -2427,7 +2428,7 @@ pub fn dispatch_matmul_activation_into(
     k: usize,
     n: usize,
     activation: &FloatOp,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     // Run the standard matmul (fully vectorized, cache-friendly).
     dispatch_matmul_into(inputs, m, k, n, out_buf)?;
@@ -2454,7 +2455,7 @@ pub fn dispatch_matmul_bias_activation_into(
     n: usize,
     bias: &[f32],
     activation: &FloatOp,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     // Standard matmul (fully vectorized, cache-friendly).
     dispatch_matmul_into(inputs, m, k, n, out_buf)?;

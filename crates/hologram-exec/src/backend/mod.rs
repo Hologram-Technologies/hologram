@@ -18,6 +18,7 @@ pub mod webgpu;
 
 use hologram_core::op::FloatOp;
 
+use crate::buffer::OutputBuffer;
 use crate::error::ExecResult;
 
 /// Result of a backend kernel dispatch.
@@ -51,10 +52,10 @@ impl KernelOutput {
     /// Extract output bytes — from out_buf for Bytes, from Metal buffer for MetalBuffer.
     /// For testing: copies Metal buffer contents to Vec.
     #[cfg(test)]
-    pub fn extract_bytes(self, out_buf: Vec<u8>) -> Vec<u8> {
+    pub fn extract_bytes(self, out_buf: crate::buffer::OutputBuffer) -> Vec<u8> {
         match self {
             KernelOutput::Skipped => Vec::new(),
-            KernelOutput::Bytes => out_buf,
+            KernelOutput::Bytes => out_buf.into_vec(),
             #[cfg(has_metal)]
             KernelOutput::MetalBuffer(buf) => {
                 let ptr = buf.contents() as *const u8;
@@ -117,7 +118,7 @@ pub trait ComputeBackend: Send + Sync {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput>;
 
     /// Dispatch a matmul (M×K × K×N). Writes to `out_buf` or returns a Metal buffer.
@@ -127,7 +128,7 @@ pub trait ComputeBackend: Send + Sync {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput>;
 
     /// Dispatch a batched matmul (batch × M×K × K×N).
@@ -136,7 +137,7 @@ pub trait ComputeBackend: Send + Sync {
         &self,
         _inputs: &[&[u8]],
         _dims: BatchedMatmulDims,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         Ok(KernelOutput::Skipped)
     }
@@ -267,7 +268,7 @@ impl ComputeBackend for CachedMetalBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_float(op, inputs, out_buf)
     }
@@ -277,7 +278,7 @@ impl ComputeBackend for CachedMetalBackend {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
     }
@@ -285,7 +286,7 @@ impl ComputeBackend for CachedMetalBackend {
         &self,
         inputs: &[&[u8]],
         dims: BatchedMatmulDims,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_batched_matmul(inputs, dims, out_buf)
     }
@@ -307,7 +308,7 @@ impl ComputeBackend for CachedWebGpuBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_float(op, inputs, out_buf)
     }
@@ -317,7 +318,7 @@ impl ComputeBackend for CachedWebGpuBackend {
         m: usize,
         k: usize,
         n: usize,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul(inputs, m, k, n, out_buf)
     }
@@ -325,7 +326,7 @@ impl ComputeBackend for CachedWebGpuBackend {
         &self,
         inputs: &[&[u8]],
         dims: BatchedMatmulDims,
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_batched_matmul(inputs, dims, out_buf)
     }
@@ -408,7 +409,7 @@ mod tests {
         let b_bytes: Vec<u8> = bytemuck::cast_slice(&b_data).to_vec();
 
         let inputs: Vec<&[u8]> = vec![&a, &b_bytes];
-        let mut out_buf = Vec::new();
+        let mut out_buf = OutputBuffer::new();
         let result = b
             .dispatch_matmul(&inputs, m, k, n, &mut out_buf)
             .expect("Metal matmul dispatch failed");
@@ -450,7 +451,7 @@ mod tests {
             .collect();
         let inputs: Vec<&[u8]> = vec![&input];
 
-        let mut out_buf = Vec::new();
+        let mut out_buf = OutputBuffer::new();
         let result = b
             .dispatch_float(
                 &FloatOp::Softmax {
@@ -492,7 +493,7 @@ mod tests {
             .collect();
         let inputs: Vec<&[u8]> = vec![&input];
 
-        let mut out_buf = Vec::new();
+        let mut out_buf = OutputBuffer::new();
         let result = b
             .dispatch_float(&FloatOp::Relu, &inputs, &mut out_buf)
             .expect("Metal dispatch failed");
@@ -501,7 +502,7 @@ mod tests {
 
         // Extract output bytes — may be in out_buf (Bytes) or Metal buffer.
         let output_bytes: Vec<u8> = match result {
-            KernelOutput::Bytes => out_buf,
+            KernelOutput::Bytes => out_buf.into_vec(),
             #[cfg(has_metal)]
             KernelOutput::MetalBuffer(buf) => {
                 let ptr = buf.contents() as *const u8;
