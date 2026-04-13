@@ -26,7 +26,7 @@ pub use loader::bytes::{
 };
 pub use loader::plan::LoadedPlan;
 pub use weight::dedup::{WeightDedupIndex, WeightRef, WeightStore};
-pub use writer::holo_writer::HoloWriter;
+pub use writer::holo_writer::{HoloWriter, WeightSource};
 
 #[cfg(feature = "std")]
 pub use loader::HoloLoader;
