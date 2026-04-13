@@ -1,6 +1,7 @@
 //! Extensible section system for archive metadata.
 
 pub mod compile_unit_meta;
+pub mod host_meta;
 pub mod model_meta;
 pub mod table;
 pub mod tokenizer;

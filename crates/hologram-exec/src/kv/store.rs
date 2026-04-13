@@ -5,6 +5,7 @@ use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantData, ConstantStore};
 use hologram_graph::graph::GraphOp;
 
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 use crate::kv::registry::CustomOpRegistry;
 use crate::lut_gemm::matmul::{lut_gemm_16bit, lut_gemm_4bit, lut_gemm_8bit};
@@ -54,7 +55,7 @@ impl KvStore {
     ///
     /// Zero-alloc: writes into `out_buf[out_buf.len()..]`, no intermediate Vec.
     #[inline]
-    pub fn apply_unary_into(view: &ElementWiseView, input: &[u8], out_buf: &mut Vec<u8>) {
+    pub fn apply_unary_into(view: &ElementWiseView, input: &[u8], out_buf: &mut OutputBuffer) {
         let base = out_buf.len();
         out_buf.resize(base + input.len(), 0);
         view.apply_to(input, &mut out_buf[base..]);
@@ -84,7 +85,7 @@ impl KvStore {
         op: PrimOp,
         lhs: &[u8],
         rhs: &[u8],
-        out_buf: &mut Vec<u8>,
+        out_buf: &mut OutputBuffer,
     ) -> ExecResult<()> {
         if lhs.len() != rhs.len() {
             return Err(ExecError::LengthMismatch {
@@ -198,7 +199,7 @@ impl KvStore {
                 n,
                 activation,
             } => {
-                let mut out_buf = Vec::new();
+                let mut out_buf = OutputBuffer::new();
                 crate::float_dispatch::matmul::dispatch_matmul_activation_into(
                     inputs,
                     *m as usize,
@@ -207,7 +208,7 @@ impl KvStore {
                     activation,
                     &mut out_buf,
                 )?;
-                Ok(out_buf)
+                Ok(out_buf.into_vec())
             }
             GraphOp::FusedMatMulBiasActivation {
                 m,
@@ -217,7 +218,7 @@ impl KvStore {
             } => {
                 let bias: &[f32] = bytemuck::try_cast_slice(inputs[2])
                     .map_err(|_| ExecError::UnsupportedOp("bias not f32-aligned".into()))?;
-                let mut out_buf = Vec::new();
+                let mut out_buf = OutputBuffer::new();
                 crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
                     &inputs[..2],
                     *m as usize,
@@ -227,7 +228,7 @@ impl KvStore {
                     activation,
                     &mut out_buf,
                 )?;
-                Ok(out_buf)
+                Ok(out_buf.into_vec())
             }
             GraphOp::FusedRmsNormActivation {
                 size,

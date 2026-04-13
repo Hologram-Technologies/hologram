@@ -154,6 +154,14 @@ pub(crate) fn dispatch_where(inputs: &[&[u8]]) -> ExecResult<Vec<u8>> {
     let x = cast_f32(inputs[1])?;
     let y = cast_f32(inputs[2])?;
 
+    // If any operand is empty there is nothing to broadcast against —
+    // emit an empty result rather than dividing by zero in the indexing
+    // expressions below. Empty operands legitimately occur when an upstream
+    // shape dimension collapses to zero (e.g. a Slice that produced no rows).
+    if cond.is_empty() || x.is_empty() || y.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let n = cond.len().max(x.len()).max(y.len());
 
     let out: Vec<f32> = (0..n)

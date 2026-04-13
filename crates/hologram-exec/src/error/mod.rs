@@ -28,6 +28,8 @@ pub enum ExecError {
     ShapeMismatch { expected: String, actual: String },
     /// Invalid quantized weight data.
     InvalidQuantization(String),
+    /// Execution was cancelled via a CancellationToken.
+    Cancelled,
 }
 
 impl fmt::Display for ExecError {
@@ -64,6 +66,7 @@ impl fmt::Display for ExecError {
             Self::InvalidQuantization(msg) => {
                 write!(f, "invalid quantization: {msg}")
             }
+            Self::Cancelled => write!(f, "execution cancelled"),
         }
     }
 }

@@ -16,14 +16,13 @@ use std::sync::Mutex;
 use hologram_core::op::{FloatOp, OpCategory};
 use wgpu::util::DeviceExt;
 
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 
+use super::hardware::{HardwareCaps, OpThresholds};
 use super::ComputeBackend;
 
-/// Minimum buffer size (bytes) to dispatch to WebGPU.
-/// GPU kernel launch + staging buffer readback overhead means
-/// WebGPU only wins for large buffers (~1M floats = 4MB).
-const WEBGPU_MIN_BYTES: usize = 4 * 1024 * 1024;
+// Thresholds are now per-instance via OpThresholds (see `thresholds` field).
 
 // ── WGSL Shader Sources ─────────────────────────────────────────────────────
 // Separate modules per kernel category (different bind group layouts).
@@ -379,6 +378,8 @@ pub struct WebGpuBackend {
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     /// Pending work for batch encoding. `None` when idle.
     pending: Mutex<Option<PendingWork>>,
+    /// Hardware-detected per-op dispatch thresholds.
+    thresholds: OpThresholds,
 }
 
 impl WebGpuBackend {
@@ -457,11 +458,14 @@ impl WebGpuBackend {
             }
         }
 
+        let thresholds = OpThresholds::from(HardwareCaps::detect());
+
         Some(WebGpuBackend {
             device,
             queue,
             pipelines,
             pending: Mutex::new(None),
+            thresholds,
         })
     }
 
@@ -1138,7 +1142,7 @@ impl ComputeBackend for WebGpuBackend {
         &self,
         op: &FloatOp,
         inputs: &[&[u8]],
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // Route MatMul to dispatch_matmul.
         if let FloatOp::MatMul { m, k, n } = op {
@@ -1148,7 +1152,7 @@ impl ComputeBackend for WebGpuBackend {
         // Route Softmax with threshold check.
         if let FloatOp::Softmax { size } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-            if input_bytes >= WEBGPU_MIN_BYTES && *size > 0 {
+            if input_bytes >= self.thresholds.softmax_min_bytes && *size > 0 {
                 self.dispatch_softmax_deferred(inputs[0], *size as usize)?;
                 return Ok(super::KernelOutput::WgpuDeferred);
             }
@@ -1158,7 +1162,7 @@ impl ComputeBackend for WebGpuBackend {
         // Route RmsNorm with threshold check.
         if let FloatOp::RmsNorm { size, epsilon } = op {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-            if input_bytes >= WEBGPU_MIN_BYTES && inputs.len() >= 2 && *size > 0 {
+            if input_bytes >= self.thresholds.norm_min_bytes && inputs.len() >= 2 && *size > 0 {
                 self.dispatch_rms_norm_deferred(
                     inputs[0],
                     inputs[1],
@@ -1172,7 +1176,7 @@ impl ComputeBackend for WebGpuBackend {
 
         // Size threshold for elementwise ops.
         let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
-        if input_bytes < WEBGPU_MIN_BYTES {
+        if input_bytes < self.thresholds.elementwise_min_bytes {
             return Ok(super::KernelOutput::Skipped);
         }
 
@@ -1204,10 +1208,10 @@ impl ComputeBackend for WebGpuBackend {
         m: usize,
         k: usize,
         n: usize,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         // Same threshold as Metal: 128×128 output minimum.
-        if m * n < 128 * 128 {
+        if m * n < self.thresholds.matmul_min_elements {
             return Ok(super::KernelOutput::Skipped);
         }
         if inputs.len() < 2 {
@@ -1221,7 +1225,7 @@ impl ComputeBackend for WebGpuBackend {
         &self,
         inputs: &[&[u8]],
         dims: super::BatchedMatmulDims,
-        _out_buf: &mut Vec<u8>,
+        _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
         let super::BatchedMatmulDims {
             batch,
@@ -1240,6 +1244,10 @@ impl ComputeBackend for WebGpuBackend {
 
     fn name(&self) -> &'static str {
         "webgpu"
+    }
+
+    fn op_thresholds(&self) -> &super::hardware::OpThresholds {
+        &self.thresholds
     }
 
     fn flush_deferred(&self) -> ExecResult<Vec<Vec<u8>>> {

@@ -18,7 +18,7 @@ static EMPTY_SHAPE_MAP: LazyLock<std::collections::HashMap<u32, Vec<usize>>> =
     LazyLock::new(std::collections::HashMap::new);
 use hologram_graph::graph::node::NodeId;
 
-use crate::buffer::BufferArena;
+use crate::buffer::{BufferArena, OutputBuffer};
 use crate::error::ExecResult;
 use crate::eval::executor::ExecutionContext;
 
@@ -67,6 +67,10 @@ pub struct TapeContext<'a> {
     /// in streaming workloads. Uses `Cell` for interior mutability (zero-cost
     /// since CurvatureFlux is Copy).
     pub flux: Cell<hologram_core::carry::CurvatureFlux>,
+    /// Optional cancellation token for cooperative cancellation.
+    /// When set, the executor checks `is_cancelled()` at level boundaries
+    /// and returns `ExecError::Cancelled` if signalled.
+    pub cancel: Option<crate::runner::CancellationToken>,
 }
 
 impl<'a> TapeContext<'a> {
@@ -87,6 +91,7 @@ impl<'a> TapeContext<'a> {
             backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
+            cancel: None,
         }
     }
 
@@ -107,6 +112,7 @@ impl<'a> TapeContext<'a> {
             backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
+            cancel: None,
         }
     }
 
@@ -766,7 +772,7 @@ fn dispatch_kernel(
     input_metas: &crate::shape_resolve::InputMetas,
     tape_ctx: &TapeContext<'_>,
     backend: &dyn crate::backend::ComputeBackend,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<DispatchResult> {
     use crate::backend::KernelOutput;
     use crate::float_dispatch;
@@ -2708,7 +2714,7 @@ fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) 
 /// Inline unary kernel — writes directly to out_buf as f32 via bytemuck cast.
 /// No dispatch overhead, no intermediate allocation.
 #[inline(always)]
-fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
+fn inline_unary(input: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32) -> f32) {
     let x = safe_cast_f32(input);
     let mut dst = vec![0.0f32; x.len()];
     for (d, &s) in dst.iter_mut().zip(x.iter()) {
@@ -2719,7 +2725,7 @@ fn inline_unary(input: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32) -> f32) {
 
 /// Inline binary kernel — writes directly to out_buf as f32 via bytemuck cast.
 #[inline(always)]
-fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut Vec<u8>, f: impl Fn(f32, f32) -> f32) {
+fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32, f32) -> f32) {
     let a = safe_cast_f32(a);
     let b = safe_cast_f32(b);
     let out_len = a.len().max(b.len());
@@ -2753,7 +2759,7 @@ fn dispatch_lut_gemm_4(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q4: activation not f32-aligned".into())
@@ -2790,7 +2796,7 @@ fn dispatch_lut_gemm_8(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2816,7 +2822,7 @@ fn dispatch_lut_gemm_16(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q16(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2842,7 +2848,7 @@ fn dispatch_lut_gemm_2(
     inputs: &[&[u8]],
     cid: ConstantId,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let mut cache = tape_ctx.weight_cache.write();
     let qw = cache.get_q2(cid, tape_ctx.constants, tape_ctx.weights)?;
@@ -2908,7 +2914,7 @@ fn dispatch_kv_write(
     inputs: &[&[u8]],
     params: KvWriteParams,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<hologram_core::op::TensorMeta> {
     let KvWriteParams {
         layer,
@@ -3016,7 +3022,7 @@ fn dispatch_kv_read(
     head_dim: u32,
     heads_first: bool,
     tape_ctx: &TapeContext<'_>,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let Some(kv_cell) = &tape_ctx.kv_state else {
         return Err(crate::error::ExecError::UnsupportedOp(
@@ -3205,6 +3211,13 @@ pub struct EnumTape {
     /// are force-evicted after first consumer and recomputed when needed.
     /// Default: false (checkpoints identified but not triggered).
     pub checkpoint_enabled: bool,
+    /// When true alongside `checkpoint_enabled`, evicted buffers stay as
+    /// Heap Vecs instead of promoting to Mmap. This avoids the mmap/munmap
+    /// syscall overhead per buffer (~10-50µs each) which dominates Conv2d-heavy
+    /// models like VAE. The freed Vec memory stays in the allocator's free-list
+    /// (RSS doesn't drop) but IS reused by subsequent allocations.
+    /// Default: false (large buffers use Mmap for immediate page return).
+    pub heap_only_eviction: bool,
     /// Workspace slot assignments: `slot_assignments[node_idx] = slot_id`.
     /// Nodes with the same slot_id share a physical buffer (non-overlapping lifetimes).
     /// `u32::MAX` means no aliasing (node uses its own buffer).
@@ -3225,6 +3238,7 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            heap_only_eviction: false,
             slot_assignments: Vec::new(),
             n_slots: 0,
         }
@@ -3242,6 +3256,7 @@ impl EnumTape {
             level_weight_ranges: Vec::new(),
             checkpoint_map: std::collections::HashMap::new(),
             checkpoint_enabled: false,
+            heap_only_eviction: false,
             slot_assignments: Vec::new(),
             n_slots: 0,
         }
@@ -3649,24 +3664,81 @@ impl EnumTape {
         arena: &mut BufferArena<'_>,
         tape_ctx: &TapeContext<'_>,
     ) -> ExecResult<()> {
-        // Pre-allocate output buffers for all instructions based on byte hints.
-        // This eliminates all per-instruction Vec resize/allocation.
+        // Output buffer allocation: two strategies.
+        //
+        // (a) Heap (default, checkpoint_enabled = false): pre-allocate each
+        //     buffer with Vec::with_capacity from output_byte_hint. Fast for
+        //     LLMs where the total working set fits in a few GiB.
+        //
+        // (b) Arena (checkpoint_enabled = true): allocate one contiguous
+        //     MmapLender sized to the peak working set (from slot_assignments),
+        //     sub-allocate each buffer as an OutputBuffer::Arena pointing into
+        //     the mmap region. Evicted slots call advise_free_region to return
+        //     pages to the OS. Peak RSS tracks live working set, not total.
         let max_idx = self
             .instructions
             .iter()
             .map(|i| i.output_idx as usize + 1)
             .max()
             .unwrap_or(0);
-        let mut bufs: Vec<Vec<u8>> = vec![Vec::new(); max_idx];
-        for instr in &self.instructions {
-            let idx = instr.output_idx as usize;
-            if idx < bufs.len() && instr.output_byte_hint > 0 {
-                let needed = instr.output_byte_hint as usize;
-                if bufs[idx].capacity() < needed {
-                    bufs[idx] = Vec::with_capacity(needed);
+
+        // When heap_only_eviction is set, disable Mmap promotion by setting
+        // the thread-local threshold to usize::MAX. Restored after execution.
+        if self.heap_only_eviction {
+            crate::buffer::output_buffer::set_mmap_threshold(usize::MAX);
+        }
+
+        // Create output buffers.
+        let mut bufs: Vec<OutputBuffer> = if self.checkpoint_enabled {
+            // Eviction path (diffusion models): start with empty buffers.
+            // Kernels allocate on demand via OutputBuffer::resize. When the
+            // resize exceeds the mmap threshold, the buffer self-promotes
+            // to Mmap. On eviction, Mmap buffers call munmap — immediate
+            // page return. With heap_only_eviction, no promotion happens
+            // and freed Vec memory is reused by the allocator.
+            (0..max_idx).map(|_| OutputBuffer::new()).collect()
+        } else {
+            // Heap path (LLMs): pre-allocate with output_byte_hint.
+            // No eviction, no mmap overhead.
+            let mut v: Vec<OutputBuffer> = (0..max_idx).map(|_| OutputBuffer::new()).collect();
+            for instr in &self.instructions {
+                let idx = instr.output_idx as usize;
+                if idx < v.len() && instr.output_byte_hint > 0 {
+                    let needed = instr.output_byte_hint as usize;
+                    if v[idx].capacity() < needed {
+                        v[idx] = OutputBuffer::with_capacity(needed);
+                    }
                 }
             }
-        }
+            v
+        };
+
+        // Mutable copy of consumer counts: decremented as each instruction
+        // consumes its inputs. When the count for a node reaches zero, its
+        // buffer is freed (deallocated, not just cleared) so peak working-set
+        // memory tracks actual liveness instead of the sum of all activations.
+        //
+        // Protected nodes (graph outputs, constants, passthrough sources)
+        // carry u32::MAX in `consumer_counts` from `finalize_consumer_counts`
+        // and are never decremented or freed — they survive until the final
+        // arena.insert below.
+        //
+        // Gated behind `checkpoint_enabled` because the per-instruction live
+        // count decrement + heap free adds ~10% overhead. LLMs (TinyLlama at
+        // 1.1B params, ~4 GiB working set) fit comfortably without eviction
+        // and pay the perf for nothing. Vision/diffusion models like SD VAE,
+        // where peak activation memory is 20+ GiB at 512×512, need it: with
+        // eviction the SD VAE decoder fits in ~3 GiB instead of 20+ GiB.
+        let evict = self.checkpoint_enabled;
+        let mut live_counts: Vec<u32> = if evict {
+            let mut lc = self.consumer_counts.clone();
+            if lc.len() < bufs.len() {
+                lc.resize(bufs.len(), 0);
+            }
+            lc
+        } else {
+            Vec::new()
+        };
 
         // Per-kernel-type profiling (enabled via HOLOGRAM_PROFILE=1 env var).
         let profile = std::env::var("HOLOGRAM_PROFILE").is_ok_and(|v| v == "1");
@@ -3687,6 +3759,15 @@ impl EnumTape {
 
         // Execute: one match per instruction.
         for (instr_idx, instr) in self.instructions.iter().enumerate() {
+            // Cooperative cancellation check at level boundaries.
+            if has_levels && instr_idx >= next_level_boundary {
+                if let Some(ref cancel) = tape_ctx.cancel {
+                    if cancel.is_cancelled() {
+                        return Err(crate::error::ExecError::Cancelled);
+                    }
+                }
+            }
+
             // Check if we've crossed a level boundary → prefetch next level's weights.
             if has_prefetch && instr_idx >= next_level_boundary {
                 current_level += 1;
@@ -3757,6 +3838,32 @@ impl EnumTape {
             let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
             out_buf.clear();
 
+            // Pre-dispatch: log every instruction so that if a kernel hangs
+            // we can identify which one from the last line in the log.
+            // Uses eprintln for immediate flush (tracing may buffer).
+            if std::env::var("HOLOGRAM_TRACE_INSTRS").is_ok() {
+                let input_sizes: SmallVec<[usize; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| {
+                        let i = idx as usize;
+                        if i < bufs.len() && !bufs[i].is_empty() {
+                            bufs[i].len()
+                        } else {
+                            arena.get(NodeId::new(idx, 0)).map(|d| d.len()).unwrap_or(0)
+                        }
+                    })
+                    .collect();
+                eprintln!(
+                    "[instr {}/{}] {} out={} inputs={:?}",
+                    instr_idx,
+                    self.instructions.len(),
+                    instr.kernel.profile_name(),
+                    instr.output_idx,
+                    input_sizes.as_slice(),
+                );
+            }
+
             let t0 = std::time::Instant::now();
 
             // Build input_metas from shape_overrides when available.
@@ -3788,8 +3895,78 @@ impl EnumTape {
                 out_buf,
             )?;
 
+            // Drop input refs before mutating bufs again — `input_refs`
+            // borrows from `bufs` via raw pointer.
+            drop(input_refs);
+
+            // Evict input buffers whose last consumer was this instruction
+            // (only when explicitly enabled — see live_counts setup above).
+            if evict {
+                for &input_idx in &instr.input_indices {
+                    let i = input_idx as usize;
+                    if i >= live_counts.len() {
+                        continue;
+                    }
+                    if live_counts[i] == u32::MAX {
+                        continue;
+                    }
+                    live_counts[i] = live_counts[i].saturating_sub(1);
+                    if live_counts[i] == 0 && i < bufs.len() && !bufs[i].is_empty() {
+                        // Drop the buffer. For Mmap variants, this calls
+                        // munmap and immediately returns pages to the OS.
+                        // For Heap variants, the allocator frees the memory
+                        // (pages may linger in the free-list, but Heap is
+                        // only used for small buffers < MMAP_EVICT_THRESHOLD).
+                        bufs[i] = OutputBuffer::new();
+                    }
+                }
+            }
+
+            // Track live buffer memory when HOLOGRAM_TRACE_INSTRS is set.
+            if std::env::var("HOLOGRAM_TRACE_INSTRS").is_ok() && (instr_idx + 1) % 50 == 0 {
+                let live_bytes: usize = bufs.iter().map(|b| b.len()).sum();
+                eprintln!(
+                    "[mem {}/{}] live={:.1}MiB bufs={}",
+                    instr_idx + 1,
+                    self.instructions.len(),
+                    live_bytes as f64 / (1024.0 * 1024.0),
+                    bufs.iter().filter(|b| !b.is_empty()).count(),
+                );
+            }
+
+            // Always measure per-instruction time. The `t0` Instant was
+            // captured just before `dispatch_kernel` above.
+            let elapsed = t0.elapsed();
+
+            // Log any instruction that takes longer than 1 second —
+            // this catches pathological Conv2d or other kernels that
+            // dominate UNet forward-pass time without needing
+            // HOLOGRAM_PROFILE=1 for the aggregate summary.
+            if elapsed.as_secs() >= 1 {
+                let input_sizes: SmallVec<[usize; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| {
+                        let i = idx as usize;
+                        if i < bufs.len() && !bufs[i].is_empty() {
+                            bufs[i].len()
+                        } else {
+                            arena.get(NodeId::new(idx, 0)).map(|d| d.len()).unwrap_or(0)
+                        }
+                    })
+                    .collect();
+                tracing::warn!(
+                    instr_idx,
+                    kernel = %instr.kernel.profile_name(),
+                    elapsed_s = format_args!("{:.1}", elapsed.as_secs_f64()),
+                    output_idx = instr.output_idx,
+                    output_bytes = out_buf.len(),
+                    ?input_sizes,
+                    "slow instruction (≥1s)"
+                );
+            }
+
             if profile {
-                let elapsed = t0.elapsed();
                 let key = instr.kernel.profile_name();
                 let entry = profile_times
                     .entry(key)
@@ -3819,8 +3996,15 @@ impl EnumTape {
             let idx = instr.output_idx as usize;
             if idx < bufs.len() {
                 let data = std::mem::take(&mut bufs[idx]);
-                arena.insert(NodeId::new(instr.output_idx, 0), data);
+                arena.insert(NodeId::new(instr.output_idx, 0), data.into_vec());
             }
+        }
+
+        // Restore mmap threshold if we overrode it.
+        if self.heap_only_eviction {
+            crate::buffer::output_buffer::set_mmap_threshold(
+                crate::buffer::output_buffer::DEFAULT_MMAP_EVICT_THRESHOLD,
+            );
         }
 
         Ok(())

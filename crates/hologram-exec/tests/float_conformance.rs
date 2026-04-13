@@ -1287,10 +1287,10 @@ fn test_conv2d_non_square_via_dispatch_into() {
         input_h: 4,
         input_w: 3,
     };
-    let mut out_buf = Vec::new();
+    let mut out_buf = hologram_exec::buffer::OutputBuffer::new();
     dispatch_float_into(&op, &[&input, &kernel], None, &mut out_buf)
         .expect("dispatch_float_into with non-square conv2d should not panic");
-    let out = result_f32(&out_buf);
+    let out = result_f32(out_buf.as_slice());
     assert_eq!(
         out.len(),
         12,

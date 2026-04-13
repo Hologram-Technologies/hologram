@@ -1,6 +1,7 @@
 //! `--detail sections` output.
 
 use crate::fmt::format_bytes;
+use hologram_archive::section::host_meta::SECTION_HOST_META;
 use hologram_archive::section::{
     SECTION_COMPILE_UNIT_META, SECTION_CUSTOM_BASE, SECTION_LAYER_HEADER, SECTION_PIPELINE,
     SECTION_WEIGHT_DEDUP, SECTION_WEIGHT_INDEX,
@@ -40,6 +41,7 @@ fn section_kind_name(kind: u32) -> &'static str {
         SECTION_PIPELINE => "pipeline",
         SECTION_WEIGHT_DEDUP => "weight_dedup",
         SECTION_COMPILE_UNIT_META => "compile_unit_meta",
+        SECTION_HOST_META => "host_meta",
         k if k >= SECTION_CUSTOM_BASE => "custom",
         _ => "unknown",
     }

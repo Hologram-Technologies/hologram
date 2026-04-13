@@ -1,4 +1,5 @@
 use super::helpers::*;
+use crate::buffer::OutputBuffer;
 use crate::error::{ExecError, ExecResult};
 
 /// Inverse square root — precise, portable, and matches ORT reference output.
@@ -108,7 +109,7 @@ pub(crate) fn dispatch_add_rms_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
     let residual = cast_f32(inputs[1])?;
@@ -143,7 +144,7 @@ pub(crate) fn dispatch_add_rms_norm_into(
 pub(crate) fn dispatch_softmax_into(
     inputs: &[&[u8]],
     size: usize,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
     if x.len() % size != 0 {
@@ -164,7 +165,7 @@ pub(crate) fn dispatch_rms_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
@@ -209,7 +210,7 @@ pub(crate) fn dispatch_layer_norm(
 pub(crate) fn dispatch_log_softmax_into(
     inputs: &[&[u8]],
     size: usize,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
     let actual_size = if size == 0 { x.len() } else { size };
@@ -236,7 +237,7 @@ pub(crate) fn dispatch_layer_norm_into(
     inputs: &[&[u8]],
     size: usize,
     epsilon: f32,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let x = cast_f32(inputs[0])?;
     let weight = cast_f32(inputs[1])?;
@@ -361,7 +362,7 @@ pub(crate) fn dispatch_group_norm_into(
     inputs: &[&[u8]],
     num_groups: usize,
     epsilon: f32,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let data = cast_f32(inputs[0])?;
     let scale = cast_f32(inputs[1])?;
@@ -418,7 +419,7 @@ pub(crate) fn dispatch_group_norm_activation_into(
     num_groups: usize,
     epsilon: f32,
     activation: &hologram_core::op::FloatOp,
-    out_buf: &mut Vec<u8>,
+    out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
     let data = cast_f32(inputs[0])?;
     let scale = cast_f32(inputs[1])?;

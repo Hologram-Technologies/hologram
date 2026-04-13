@@ -721,6 +721,64 @@ fn conv2d_core(call: Conv2dCoreCall<'_>) -> Vec<f32> {
         );
     }
 
+    // 1×1 pointwise fast path: when kernel is 1×1 with no padding/dilation,
+    // the convolution reduces to a matrix multiply: for each batch/group,
+    //   output[oc_per_group, spatial] = weight[oc_per_group, ic_per_group] × input[ic_per_group, spatial]
+    // Route directly to BLAS sgemm for orders-of-magnitude speedup over
+    // the general im2col path. This is the dominant case in SD UNet
+    // mid-blocks (1280→1280 pointwise with [1, 1280, 64, 64] activations).
+    if kh == 1 && kw == 1 && ph == 0 && pw == 0 && dh == 1 && dw == 1 && sh == 1 && sw == 1 {
+        let mut out = vec![0.0f32; n * oc * spatial_out];
+        for batch in 0..n {
+            for g in 0..group {
+                let w_start = g * oc_per_group * ic_per_group;
+                let d_start = batch * ic * spatial_out + g * ic_per_group * spatial_out;
+                let o_start = batch * oc * spatial_out + g * oc_per_group * spatial_out;
+
+                let w_slice = &weight[w_start..w_start + oc_per_group * ic_per_group];
+                let d_slice = &data[d_start..d_start + ic_per_group * spatial_out];
+                let o_slice = &mut out[o_start..o_start + oc_per_group * spatial_out];
+
+                // weight is [oc_per_group, ic_per_group], data is [ic_per_group, spatial]
+                // output is [oc_per_group, spatial]
+                #[cfg(all(feature = "accelerate", target_os = "macos"))]
+                {
+                    super::matmul::blas::sgemm(
+                        oc_per_group,
+                        spatial_out,
+                        ic_per_group,
+                        w_slice,
+                        d_slice,
+                        o_slice,
+                    );
+                }
+                #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+                {
+                    super::matmul::matmul_k_outer(
+                        w_slice,
+                        d_slice,
+                        o_slice,
+                        oc_per_group,
+                        ic_per_group,
+                        spatial_out,
+                    );
+                }
+            }
+
+            // Add bias. Bias may have fewer elements than `oc` when grouped
+            // conv shares a smaller bias vector — clamp to bias length.
+            if let Some(b) = bias {
+                for (c, &bv) in b.iter().enumerate().take(oc) {
+                    let base = batch * oc * spatial_out + c * spatial_out;
+                    for s in &mut out[base..base + spatial_out] {
+                        *s += bv;
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
     // Winograd F(2,3) fast path: 3×3 kernel, stride=1, dilation=1, sufficient channels.
     // Reduces multiplications by 2.25× — the dominant 3×3 conv case in UNet/VAE.
     if kh == 3

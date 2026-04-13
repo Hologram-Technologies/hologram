@@ -369,9 +369,9 @@ fn test_attention_heads_first_matches_transposed() {
 fn test_softmax_into_sums_to_one() {
     use super::norm::dispatch_softmax_into;
     let x = f32_bytes(&[1.0, 2.0, 3.0, 4.0]);
-    let mut out_buf = Vec::new();
+    let mut out_buf = crate::buffer::OutputBuffer::new();
     dispatch_softmax_into(&[&x], 4, &mut out_buf).unwrap();
-    let floats: &[f32] = bytemuck::cast_slice(&out_buf);
+    let floats: &[f32] = bytemuck::cast_slice(out_buf.as_slice());
     assert_eq!(floats.len(), 4);
     let sum: f32 = floats.iter().sum();
     assert!(
@@ -391,11 +391,12 @@ fn test_rms_norm_into_matches_allocating() {
     let result = dispatch_rms_norm(&[&x, &w], 3, eps).unwrap();
 
     // _into path.
-    let mut out_buf = Vec::new();
+    let mut out_buf = crate::buffer::OutputBuffer::new();
     dispatch_rms_norm_into(&[&x, &w], 3, eps, &mut out_buf).unwrap();
 
     assert_eq!(
-        result, out_buf,
+        result.as_slice(),
+        out_buf.as_slice(),
         "rms_norm_into must match allocating dispatch_rms_norm"
     );
 }
@@ -740,9 +741,9 @@ fn group_norm_into_matches_allocating() {
     let alloc_f32: &[f32] = bytemuck::cast_slice(&result_alloc);
 
     // Into path.
-    let mut out_buf = Vec::new();
+    let mut out_buf = crate::buffer::OutputBuffer::new();
     dispatch_group_norm_into(&inputs, num_groups, epsilon, &mut out_buf).expect("into failed");
-    let into_f32: &[f32] = bytemuck::cast_slice(&out_buf);
+    let into_f32: &[f32] = bytemuck::cast_slice(out_buf.as_slice());
 
     assert_eq!(alloc_f32.len(), into_f32.len());
     for (i, (&a, &b)) in alloc_f32.iter().zip(into_f32.iter()).enumerate() {
@@ -779,10 +780,10 @@ fn group_norm_silu_fused_matches_separate() {
     let expected: Vec<f32> = gn_f32.iter().map(|&v| silu.apply_unary(v)).collect();
 
     // Fused: GroupNorm+SiLU in one pass.
-    let mut out_buf = Vec::new();
+    let mut out_buf = crate::buffer::OutputBuffer::new();
     dispatch_group_norm_activation_into(&inputs, num_groups, epsilon, &silu, &mut out_buf)
         .expect("fused failed");
-    let fused: &[f32] = bytemuck::cast_slice(&out_buf);
+    let fused: &[f32] = bytemuck::cast_slice(out_buf.as_slice());
 
     assert_eq!(expected.len(), fused.len());
     for (i, (&e, &f)) in expected.iter().zip(fused.iter()).enumerate() {
@@ -813,11 +814,11 @@ fn group_norm_activation_into_sd_shapes() {
         let bias_b = f32_bytes(&bias);
         let inputs: Vec<&[u8]> = vec![&data_b, &scale_b, &bias_b];
 
-        let mut out_buf = Vec::new();
+        let mut out_buf = crate::buffer::OutputBuffer::new();
         dispatch_group_norm_activation_into(&inputs, num_groups, epsilon, &silu, &mut out_buf)
             .unwrap_or_else(|e| panic!("failed for C={channels} spatial={spatial}: {e}"));
 
-        let out: &[f32] = bytemuck::cast_slice(&out_buf);
+        let out: &[f32] = bytemuck::cast_slice(out_buf.as_slice());
         assert_eq!(out.len(), channels * spatial);
         // Verify all values are finite (no NaN/inf from norm computation).
         for (i, &v) in out.iter().enumerate() {
