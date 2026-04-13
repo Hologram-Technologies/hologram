@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod buffer;
+pub mod constrained;
 pub mod error;
 pub mod eval;
 pub mod float_dispatch;

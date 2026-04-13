@@ -30,6 +30,8 @@ pub enum ExecError {
     InvalidQuantization(String),
     /// Execution was cancelled via a CancellationToken.
     Cancelled,
+    /// Constrained profile violation (unsupported kernel, memory limit, etc.).
+    ConstrainedViolation(String),
 }
 
 impl fmt::Display for ExecError {
@@ -67,6 +69,9 @@ impl fmt::Display for ExecError {
                 write!(f, "invalid quantization: {msg}")
             }
             Self::Cancelled => write!(f, "execution cancelled"),
+            Self::ConstrainedViolation(msg) => {
+                write!(f, "constrained profile violation: {msg}")
+            }
         }
     }
 }

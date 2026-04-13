@@ -277,7 +277,7 @@ pub fn execute_tape_with_kv_shapes_cached(
 /// Sets N-D TensorMeta for constants (from compiled shapes) and graph inputs
 /// (from GraphInputs::shape), ensuring downstream ops have correct metadata
 /// for shape-aware dimension resolution.
-fn seed_arena<'a>(
+pub(crate) fn seed_arena<'a>(
     sg: &'a hologram_archive::format::graph::SerializedGraph,
     weights: &'a [u8],
     compiled_dtypes: &std::collections::HashMap<
@@ -370,7 +370,7 @@ fn seed_arena<'a>(
 /// scanning for `GraphOp::Output` nodes when no outputs are registered — this
 /// handles graphs built via `GraphBuilder` without explicit `add_output()` calls,
 /// which is common for ONNX-imported vision models.
-fn collect_outputs(
+pub(crate) fn collect_outputs(
     sg: &hologram_archive::format::graph::SerializedGraph,
     arena: &mut crate::buffer::BufferArena<'_>,
 ) -> ExecResult<GraphOutputs> {

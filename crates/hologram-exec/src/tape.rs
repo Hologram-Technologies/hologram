@@ -4024,6 +4024,165 @@ impl EnumTape {
     ) -> ExecResult<()> {
         self.execute_direct(arena, tape_ctx)
     }
+
+    /// Constrained execution with per-instruction weight window management.
+    ///
+    /// Like [`execute_direct`](Self::execute_direct) but interleaves weight
+    /// window ensure/evict calls around each instruction that references a
+    /// weight constant. Also tracks peak activation memory and returns it
+    /// alongside the execution result.
+    ///
+    /// Strips profiling and tracing overhead for a leaner hot loop.
+    pub(crate) fn execute_with_weight_window(
+        &self,
+        arena: &mut BufferArena<'_>,
+        tape_ctx: &TapeContext<'_>,
+        weight_window: &mut crate::constrained::weight_window::WeightWindow,
+    ) -> ExecResult<usize> {
+        use hologram_graph::graph::node::NodeId;
+
+        let max_idx = self
+            .instructions
+            .iter()
+            .map(|i| i.output_idx as usize + 1)
+            .max()
+            .unwrap_or(0);
+
+        // Pre-allocate output buffers with hints (no eviction in constrained mode).
+        let mut bufs: Vec<OutputBuffer> = {
+            let mut v: Vec<OutputBuffer> = (0..max_idx).map(|_| OutputBuffer::new()).collect();
+            for instr in &self.instructions {
+                let idx = instr.output_idx as usize;
+                if idx < v.len() && instr.output_byte_hint > 0 {
+                    let needed = instr.output_byte_hint as usize;
+                    if v[idx].capacity() < needed {
+                        v[idx] = OutputBuffer::with_capacity(needed);
+                    }
+                }
+            }
+            v
+        };
+
+        let backend = tape_ctx.backend.resolve();
+        let mut peak_activation_bytes: usize = 0;
+
+        for instr in self.instructions.iter() {
+            // Weight window: ensure required constants are resident.
+            if let Some(cid) = kernel_constant_id(&instr.kernel) {
+                weight_window.ensure(&[cid], tape_ctx.constants)?;
+            }
+
+            // Passthrough: zero-copy move.
+            if instr.passthrough {
+                if let Some(&src_idx) = instr.input_indices.first() {
+                    let src = src_idx as usize;
+                    let dst = instr.output_idx as usize;
+                    if src < bufs.len() && !bufs[src].is_empty() {
+                        let src_buf = std::mem::take(&mut bufs[src]);
+                        bufs[dst] = src_buf;
+                    } else if let Ok(data) = arena.get(NodeId::new(src_idx, 0)) {
+                        bufs[dst].clear();
+                        bufs[dst].extend_from_slice(data);
+                    }
+                }
+                // Weight window: evict after use.
+                if let Some(cid) = kernel_constant_id(&instr.kernel) {
+                    weight_window.evict(&[cid]);
+                }
+                continue;
+            }
+
+            // Zero-copy input gathering + mutable output access.
+            let out_idx = instr.output_idx as usize;
+            let bufs_ptr = bufs.as_mut_ptr();
+            let bufs_len = bufs.len();
+
+            let input_refs: SmallVec<[&[u8]; 4]> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| {
+                    let i = idx as usize;
+                    if i < bufs_len {
+                        let buf = unsafe { &*bufs_ptr.add(i) };
+                        if !buf.is_empty() {
+                            return buf.as_slice();
+                        }
+                    }
+                    arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
+                })
+                .collect();
+
+            let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
+            out_buf.clear();
+
+            let input_metas: crate::shape_resolve::InputMetas =
+                if tape_ctx.shape_overrides.is_empty() {
+                    SmallVec::new()
+                } else {
+                    instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| {
+                            tape_ctx.shape_overrides.get(&idx).map(|shape| {
+                                hologram_core::op::TensorMeta::new(
+                                    hologram_core::op::FloatDType::F32,
+                                    shape,
+                                )
+                            })
+                        })
+                        .collect()
+                };
+
+            dispatch_kernel(
+                &instr.kernel,
+                &input_refs,
+                &input_metas,
+                tape_ctx,
+                &*backend,
+                out_buf,
+            )?;
+
+            drop(input_refs);
+
+            // Weight window: evict weight after dispatch.
+            if let Some(cid) = kernel_constant_id(&instr.kernel) {
+                weight_window.evict(&[cid]);
+            }
+
+            // Track peak activation memory.
+            let live_bytes: usize = bufs.iter().map(|b| b.len()).sum();
+            if live_bytes > peak_activation_bytes {
+                peak_activation_bytes = live_bytes;
+            }
+        }
+
+        // Write output buffers back to arena.
+        for instr in &self.instructions {
+            let idx = instr.output_idx as usize;
+            if idx < bufs.len() {
+                let data = std::mem::take(&mut bufs[idx]);
+                arena.insert(NodeId::new(instr.output_idx, 0), data.into_vec());
+            }
+        }
+
+        Ok(peak_activation_bytes)
+    }
+}
+
+/// Extract the `ConstantId` from a kernel that references a weight constant.
+#[inline]
+fn kernel_constant_id(kernel: &TapeKernel) -> Option<hologram_graph::constant::ConstantId> {
+    match kernel {
+        TapeKernel::MatMulLut2(c)
+        | TapeKernel::MatMulLut4(c)
+        | TapeKernel::MatMulLut8(c)
+        | TapeKernel::MatMulLut16(c)
+        | TapeKernel::MatMulLut2Activation(c, _)
+        | TapeKernel::MatMulLut4Activation(c, _)
+        | TapeKernel::MatMulLut8Activation(c, _)
+        | TapeKernel::InlineConv2dLut4 { cid: c, .. } => Some(*c),
+        _ => None,
+    }
 }
 
 impl Default for EnumTape {
