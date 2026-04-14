@@ -278,6 +278,11 @@ impl HoloWriter {
             if self.tensor_page_aligned {
                 h.flags |= crate::format::header::FLAG_TENSOR_PAGE_ALIGNED;
             }
+            // Zero out the weights checksum for streaming archives — we can't
+            // compute it without loading all weights into memory.
+            if matches!(weight_source, WeightSource::File { .. }) {
+                h.weights_checksum = [0u8; 32];
+            }
             h
         };
 

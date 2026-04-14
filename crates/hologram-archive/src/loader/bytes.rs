@@ -333,8 +333,9 @@ fn verify_checksums(data: &[u8], header: &HoloHeader) -> ArchiveResult<()> {
             });
         }
     }
-    // Verify weights checksum
-    if header.weights_size > 0 {
+    // Verify weights checksum (skip if all-zeros — streaming archives
+    // can't compute the checksum without loading all weights into memory).
+    if header.weights_size > 0 && header.weights_checksum != [0u8; 32] {
         let start = header.weights_offset as usize;
         let end = start + header.weights_size as usize;
         let actual = checksum::checksum(&data[start..end]);
