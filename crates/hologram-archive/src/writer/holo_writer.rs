@@ -343,6 +343,7 @@ struct ArchiveLayout {
     section_table_offset: u64,
     section_table_size: u64,
     weights_offset: u64,
+    weights_size: u64,
     total_size: u64,
 }
 
@@ -391,6 +392,7 @@ fn compute_layout(
             section_table_offset,
             section_table_size,
             weights_offset,
+            weights_size,
             total_size,
         },
         table_bytes,
@@ -417,7 +419,7 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         graph_offset: layout.graph_offset,
         graph_size: graph_data.len() as u64,
         weights_offset: layout.weights_offset,
-        weights_size: weight_data.len() as u64,
+        weights_size: layout.weights_size,
         section_table_offset: layout.section_table_offset,
         section_table_size: layout.section_table_size,
         total_size: layout.total_size,
@@ -471,17 +473,16 @@ fn assemble_archive_to_file(
 ) -> ArchiveResult<()> {
     use std::io::{Seek, SeekFrom, Write};
 
-    let file = std::fs::File::create(output_path).map_err(crate::error::ArchiveError::Io)?;
+    let mut w = std::fs::File::create(output_path).map_err(crate::error::ArchiveError::Io)?;
     // Pre-allocate the file to the final size for efficient sequential writes.
-    file.set_len(layout.total_size)
+    w.set_len(layout.total_size)
         .map_err(crate::error::ArchiveError::Io)?;
-    let mut w = std::io::BufWriter::with_capacity(256 * 1024, file);
 
     // Header (fixed-layout via bytemuck).
     w.write_all(header.as_bytes())
         .map_err(crate::error::ArchiveError::Io)?;
 
-    // Graph.
+    // Graph — write sequentially after header (graph_offset is always right after header).
     w.seek(SeekFrom::Start(layout.graph_offset))
         .map_err(crate::error::ArchiveError::Io)?;
     w.write_all(graph_data)
@@ -491,8 +492,7 @@ fn assemble_archive_to_file(
     for ((_, data), &offset) in sections.iter().zip(layout.section_offsets.iter()) {
         w.seek(SeekFrom::Start(offset))
             .map_err(crate::error::ArchiveError::Io)?;
-        w.write_all(data)
-            .map_err(crate::error::ArchiveError::Io)?;
+        w.write_all(data).map_err(crate::error::ArchiveError::Io)?;
     }
 
     // Section table.
@@ -501,19 +501,17 @@ fn assemble_archive_to_file(
     w.write_all(table_bytes)
         .map_err(crate::error::ArchiveError::Io)?;
 
-    // Weights — streamed from source.
+    // Weights — streamed from source with manual buffering.
     w.seek(SeekFrom::Start(layout.weights_offset))
         .map_err(crate::error::ArchiveError::Io)?;
     match weight_source {
         WeightSource::Bytes(data) => {
-            w.write_all(data)
-                .map_err(crate::error::ArchiveError::Io)?;
+            w.write_all(data).map_err(crate::error::ArchiveError::Io)?;
         }
         WeightSource::File { path, len } => {
-            let mut src =
-                std::fs::File::open(path).map_err(crate::error::ArchiveError::Io)?;
+            let mut src = std::fs::File::open(path).map_err(crate::error::ArchiveError::Io)?;
             let mut remaining = *len as usize;
-            let mut buf = vec![0u8; 256 * 1024]; // 256 KB streaming buffer
+            let mut buf = vec![0u8; 1024 * 1024]; // 1 MB streaming buffer
             while remaining > 0 {
                 let to_read = remaining.min(buf.len());
                 std::io::Read::read_exact(&mut src, &mut buf[..to_read])
@@ -525,7 +523,7 @@ fn assemble_archive_to_file(
         }
     }
 
-    w.flush().map_err(crate::error::ArchiveError::Io)?;
+    w.sync_all().map_err(crate::error::ArchiveError::Io)?;
     Ok(())
 }
 
