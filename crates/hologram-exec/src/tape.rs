@@ -633,35 +633,7 @@ impl TapeKernel {
     }
 
     /// Short name for profiling output.
-    /// Whether this kernel can participate in GPU buffer chaining.
-    ///
-    /// GPU-chainable ops accept `GpuInput` and produce `GpuBuffer` when
-    /// dispatched via `dispatch_*_chained`. Non-chainable ops (ring ops,
-    /// LUT-GEMM, KV cache, etc.) always need CPU byte inputs.
-    fn gpu_chainable(&self) -> bool {
-        matches!(
-            self,
-            TapeKernel::InlineMatMul { .. }
-                | TapeKernel::InlineConv2d { .. }
-                | TapeKernel::InlineAdd
-                | TapeKernel::InlineMul
-                | TapeKernel::InlineDiv
-                | TapeKernel::InlineErf
-                | TapeKernel::InlineSoftmax { .. }
-                | TapeKernel::InlineRmsNorm { .. }
-                | TapeKernel::InlineRelu
-                | TapeKernel::InlineSigmoid
-                | TapeKernel::InlineSilu
-                | TapeKernel::InlineTanh
-                | TapeKernel::InlineNeg
-                | TapeKernel::InlineAbs
-                | TapeKernel::InlineGelu
-                | TapeKernel::InlineExp
-                | TapeKernel::InlineReciprocal
-        )
-    }
-
-    /// Return the `FloatOp` for GPU-chainable elementwise ops, if applicable.
+    /// Return the `FloatOp` for GPU-dispatchable elementwise ops, if applicable.
     /// Used to route through `dispatch_float_chained`.
     fn as_float_op(&self) -> Option<FloatOp> {
         match self {
@@ -817,6 +789,125 @@ enum DispatchResult {
 /// Dispatch a `TapeKernel`, returning how the output should be stored.
 ///
 /// For `Float` and `MatMul` ops, tries the selected backend first.
+/// GPU-first kernel dispatch. Tries the backend for all supported ops.
+/// Returns `GpuBuffer` when the backend handles the op, `Skipped` for CPU fallback.
+fn dispatch_kernel_gpu(
+    kernel: &TapeKernel,
+    inputs: &[crate::backend::GpuInput<'_>],
+    input_metas: &crate::shape_resolve::InputMetas,
+    backend: &dyn crate::backend::ComputeBackend,
+    out_buf: &mut OutputBuffer,
+) -> ExecResult<crate::backend::KernelOutput> {
+    // MatMul.
+    if let TapeKernel::InlineMatMul { k, n, .. } = kernel {
+        let baked_k = *k as usize;
+        let baked_n = *n as usize;
+        if baked_k > 0 && baked_n > 0 && !inputs.is_empty() {
+            let actual_m = inputs[0].byte_len() / (baked_k * 4);
+            if actual_m > 0 {
+                return backend
+                    .dispatch_matmul_chained(inputs, actual_m, baked_k, baked_n, out_buf);
+            }
+        }
+        return Ok(crate::backend::KernelOutput::Skipped);
+    }
+
+    // Conv2d: extract params and dispatch.
+    if let TapeKernel::InlineConv2d {
+        kernel_h,
+        kernel_w,
+        stride_h,
+        stride_w,
+        pad_h,
+        pad_w,
+        dilation_h,
+        dilation_w,
+        group,
+        input_h,
+        input_w,
+    } = kernel
+    {
+        if inputs.len() >= 2 {
+            let kh = *kernel_h as usize;
+            let kw = *kernel_w as usize;
+            let g = (*group).max(1) as usize;
+            let w_floats = inputs[1].byte_len() / 4;
+            let d_floats = inputs[0].byte_len() / 4;
+
+            if g == 1 && kh > 0 && kw > 0 && w_floats > 0 && d_floats > 0 {
+                let ic_times_oc = w_floats / (kh * kw);
+
+                let (h, w, ic, oc) =
+                    if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
+                        if in_meta.ndim >= 4 {
+                            let ic = in_meta.dims[1] as usize;
+                            (
+                                in_meta.dims[2] as usize,
+                                in_meta.dims[3] as usize,
+                                ic,
+                                if ic > 0 { ic_times_oc / ic } else { 0 },
+                            )
+                        } else {
+                            (0, 0, 0, 0)
+                        }
+                    } else {
+                        let bh = *input_h as usize;
+                        let bw = *input_w as usize;
+                        if bh > 0 && bw > 0 && d_floats.is_multiple_of(bh * bw) {
+                            let n_ic = d_floats / (bh * bw);
+                            if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
+                                (bh, bw, n_ic, ic_times_oc / n_ic)
+                            } else {
+                                (0, 0, 0, 0)
+                            }
+                        } else {
+                            // Infer square spatial.
+                            let mut found = (0, 0, 0, 0);
+                            for &sh in &[64usize, 32, 16, 8, 128] {
+                                let sp = sh * sh;
+                                if d_floats.is_multiple_of(sp) {
+                                    let n_ic = d_floats / sp;
+                                    if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
+                                        found = (sh, sh, n_ic, ic_times_oc / n_ic);
+                                        break;
+                                    }
+                                }
+                            }
+                            found
+                        }
+                    };
+
+                if h > 0 && w > 0 && ic > 0 && oc > 0 {
+                    let params = crate::backend::Conv2dParams {
+                        ic,
+                        h,
+                        w,
+                        oc,
+                        kh,
+                        kw,
+                        pad_h: *pad_h as usize,
+                        pad_w: *pad_w as usize,
+                        stride_h: (*stride_h).max(1) as usize,
+                        stride_w: (*stride_w).max(1) as usize,
+                        dil_h: (*dilation_h).max(1) as usize,
+                        dil_w: (*dilation_w).max(1) as usize,
+                    };
+                    return backend.dispatch_conv2d_chained(inputs, &params, out_buf);
+                }
+            }
+        }
+        return Ok(crate::backend::KernelOutput::Skipped);
+    }
+
+    // Elementwise and other float ops.
+    if let Some(float_op) = kernel.as_float_op() {
+        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
+    }
+
+    // Unsupported — fall back to CPU.
+    Ok(crate::backend::KernelOutput::Skipped)
+}
+
 /// Falls back to CPU dispatch if the backend returns `Skipped`.
 #[inline]
 fn dispatch_kernel(
@@ -4118,14 +4209,16 @@ impl EnumTape {
                         .collect()
                 };
 
-            // GPU-chainable ops: try GPU dispatch even when all inputs are
-            // on CPU — the backend copies CPU→GPU as needed. When inputs
-            // ARE on GPU, they chain directly (zero-copy). The backend
-            // returns Skipped if the op is too small for GPU.
-            if instr.kernel.gpu_chainable() {
-                // Build GpuInput slices using raw pointers for bufs access
-                // (same zero-copy pattern as input_refs below). This avoids
-                // borrow conflicts with the mutable out_buf and gpu_bufs.
+            // ── GPU-first dispatch: try ALL ops on the backend ──────────
+            // Only enter the GPU path if the backend is GPU-capable AND
+            // either we have GPU inputs or the op has a GPU kernel.
+            let try_gpu = has_gpu_inputs
+                || instr.kernel.as_float_op().is_some()
+                || matches!(
+                    instr.kernel,
+                    TapeKernel::InlineMatMul { .. } | TapeKernel::InlineConv2d { .. }
+                );
+            if try_gpu {
                 let bufs_ptr = bufs.as_mut_ptr();
                 let bufs_len = bufs.len();
                 let backend_ref = tape_ctx.backend.resolve();
@@ -4159,132 +4252,13 @@ impl EnumTape {
                 let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
                 out_buf.clear();
 
-                let chained_result = if let TapeKernel::InlineMatMul { k, n, .. } = &instr.kernel {
-                    let baked_k = *k as usize;
-                    let baked_n = *n as usize;
-                    let actual_m = if baked_k > 0 {
-                        gpu_inputs[0].byte_len() / (baked_k * 4)
-                    } else {
-                        0
-                    };
-                    if actual_m > 0 {
-                        backend_ref.dispatch_matmul_chained(
-                            &gpu_inputs,
-                            actual_m,
-                            baked_k,
-                            baked_n,
-                            out_buf,
-                        )?
-                    } else {
-                        crate::backend::KernelOutput::Skipped
-                    }
-                } else if let TapeKernel::InlineConv2d {
-                    kernel_h,
-                    kernel_w,
-                    stride_h,
-                    stride_w,
-                    pad_h,
-                    pad_w,
-                    dilation_h,
-                    dilation_w,
-                    group,
-                    input_h,
-                    input_w,
-                } = &instr.kernel
-                {
-                    let w_floats = gpu_inputs[1].byte_len() / 4;
-                    let kh = *kernel_h as usize;
-                    let kw = *kernel_w as usize;
-                    let g = (*group).max(1) as usize;
-                    let d_floats = gpu_inputs[0].byte_len() / 4;
-
-                    // Resolve spatial dims: try shape_overrides, then baked values,
-                    // then infer from input buffer + weight shape.
-                    let (actual_h, actual_w, ic, oc) = if g == 1
-                        && kh > 0
-                        && kw > 0
-                        && d_floats > 0
-                        && w_floats > 0
-                    {
-                        let ic_times_oc = w_floats / (kh * kw);
-
-                        // Try baked values first.
-                        let bh = *input_h as usize;
-                        let bw = *input_w as usize;
-                        if bh > 0 && bw > 0 {
-                            let spatial = bh * bw;
-                            let n_ic = d_floats / spatial;
-                            if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
-                                (bh, bw, n_ic, ic_times_oc / n_ic)
-                            } else {
-                                (0, 0, 0, 0)
-                            }
-                        } else if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
-                            // Use shape metadata: [N, C, H, W].
-                            if in_meta.ndim >= 4 {
-                                let h = in_meta.dims[2] as usize;
-                                let w = in_meta.dims[3] as usize;
-                                let ic = in_meta.dims[1] as usize;
-                                let oc = if ic > 0 { ic_times_oc / ic } else { 0 };
-                                (h, w, ic, oc)
-                            } else {
-                                (0, 0, 0, 0)
-                            }
-                        } else {
-                            // Infer from buffer sizes: d_floats = N * ic * H * W.
-                            // w_floats = oc * ic * kh * kw → ic_times_oc = oc * ic.
-                            // Try sqrt(d_floats / ic_times_oc) for square spatial.
-                            // Common SD UNet spatial sizes: 64, 32, 16, 8.
-                            let mut found = (0usize, 0usize, 0usize, 0usize);
-                            for &spatial_h in &[64, 32, 16, 8, 128, 256] {
-                                for &spatial_w in &[64, 32, 16, 8, 128, 256] {
-                                    let spatial = spatial_h * spatial_w;
-                                    if d_floats.is_multiple_of(spatial) {
-                                        let n_ic = d_floats / spatial;
-                                        if n_ic > 0
-                                            && ic_times_oc.is_multiple_of(n_ic)
-                                            && w_floats == (ic_times_oc / n_ic) * n_ic * kh * kw
-                                        {
-                                            found =
-                                                (spatial_h, spatial_w, n_ic, ic_times_oc / n_ic);
-                                            break;
-                                        }
-                                    }
-                                }
-                                if found.0 > 0 {
-                                    break;
-                                }
-                            }
-                            found
-                        }
-                    } else {
-                        (0, 0, 0, 0)
-                    };
-
-                    if actual_h > 0 && actual_w > 0 && ic > 0 && oc > 0 {
-                        let params = crate::backend::Conv2dParams {
-                            ic,
-                            h: actual_h,
-                            w: actual_w,
-                            oc,
-                            kh,
-                            kw,
-                            pad_h: *pad_h as usize,
-                            pad_w: *pad_w as usize,
-                            stride_h: (*stride_h).max(1) as usize,
-                            stride_w: (*stride_w).max(1) as usize,
-                            dil_h: (*dilation_h).max(1) as usize,
-                            dil_w: (*dilation_w).max(1) as usize,
-                        };
-                        backend_ref.dispatch_conv2d_chained(&gpu_inputs, &params, out_buf)?
-                    } else {
-                        crate::backend::KernelOutput::Skipped
-                    }
-                } else if let Some(float_op) = instr.kernel.as_float_op() {
-                    backend_ref.dispatch_float_chained(&float_op, &gpu_inputs, out_buf)?
-                } else {
-                    crate::backend::KernelOutput::Skipped
-                };
+                let chained_result = dispatch_kernel_gpu(
+                    &instr.kernel,
+                    &gpu_inputs,
+                    &input_metas,
+                    &*backend_ref,
+                    out_buf,
+                )?;
 
                 // Drop borrows before modifying gpu_bufs.
                 drop(gpu_inputs);

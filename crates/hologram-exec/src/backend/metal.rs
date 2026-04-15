@@ -413,6 +413,182 @@ kernel void rms_norm(
     float inv_rms = rsqrt(ms + epsilon);
     output[gid] = input[gid] * inv_rms * weight[col];
 }
+
+// ── LayerNorm: output = (x - mean) / sqrt(var + eps) * weight + bias ───
+kernel void layer_norm(
+    device const float* input [[buffer(0)]],
+    device const float* weight [[buffer(1)]],
+    device const float* bias [[buffer(2)]],
+    device float* output [[buffer(3)]],
+    constant uint& total [[buffer(4)]],
+    constant uint& row_size [[buffer(5)]],
+    constant float& epsilon [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= total) return;
+    uint row_start = (gid / row_size) * row_size;
+    uint col = gid % row_size;
+
+    // Mean.
+    float sum = 0.0f;
+    for (uint i = 0; i < row_size && (row_start + i) < total; i++) {
+        sum += input[row_start + i];
+    }
+    float mean = sum / float(row_size);
+
+    // Variance.
+    float var = 0.0f;
+    for (uint i = 0; i < row_size && (row_start + i) < total; i++) {
+        float d = input[row_start + i] - mean;
+        var += d * d;
+    }
+    var /= float(row_size);
+
+    float inv_std = rsqrt(var + epsilon);
+    output[gid] = (input[gid] - mean) * inv_std * weight[col] + bias[col];
+}
+
+// ── InstanceNorm: per-channel normalization for [N, C, H, W] ───────────
+// Each thread handles one element. Stats computed per (n, c) channel.
+kernel void instance_norm(
+    device const float* input [[buffer(0)]],
+    device const float* scale [[buffer(1)]],
+    device const float* bias [[buffer(2)]],
+    device float* output [[buffer(3)]],
+    constant uint& total [[buffer(4)]],
+    constant uint& spatial [[buffer(5)]],
+    constant float& epsilon [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= total) return;
+    uint channel_start = (gid / spatial) * spatial;
+    uint c = (gid / spatial) % (total / spatial); // channel index (wraps)
+
+    // Mean over spatial dims.
+    float sum = 0.0f;
+    for (uint i = 0; i < spatial && (channel_start + i) < total; i++) {
+        sum += input[channel_start + i];
+    }
+    float mean = sum / float(spatial);
+
+    // Variance.
+    float var = 0.0f;
+    for (uint i = 0; i < spatial && (channel_start + i) < total; i++) {
+        float d = input[channel_start + i] - mean;
+        var += d * d;
+    }
+    var /= float(spatial);
+
+    float inv_std = rsqrt(var + epsilon);
+    // Scale and bias are per-channel. Use modular index for broadcast.
+    uint scale_len = total / spatial; // number of channels total
+    uint c_idx = c % scale_len;
+    output[gid] = (input[gid] - mean) * inv_std * scale[c_idx] + bias[c_idx];
+}
+
+// ── Transpose: permute a 4D tensor [d0, d1, d2, d3] ───────────────────
+// Generic 4D permutation. Each thread computes one output element.
+kernel void transpose_4d(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& total [[buffer(2)]],
+    constant uint4& in_shape [[buffer(3)]],   // [d0, d1, d2, d3]
+    constant uint4& perm [[buffer(4)]],       // [p0, p1, p2, p3]
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= total) return;
+
+    // Decompose output flat index into output coordinates.
+    uint out_shape[4];
+    out_shape[0] = in_shape[perm[0]];
+    out_shape[1] = in_shape[perm[1]];
+    out_shape[2] = in_shape[perm[2]];
+    out_shape[3] = in_shape[perm[3]];
+
+    uint out_strides[4];
+    out_strides[3] = 1;
+    out_strides[2] = out_shape[3];
+    out_strides[1] = out_shape[2] * out_shape[3];
+    out_strides[0] = out_shape[1] * out_shape[2] * out_shape[3];
+
+    uint out_coord[4];
+    uint rem = gid;
+    out_coord[0] = rem / out_strides[0]; rem %= out_strides[0];
+    out_coord[1] = rem / out_strides[1]; rem %= out_strides[1];
+    out_coord[2] = rem / out_strides[2]; rem %= out_strides[2];
+    out_coord[3] = rem;
+
+    // Map output coords back to input coords via inverse perm.
+    uint in_coord[4];
+    in_coord[perm[0]] = out_coord[0];
+    in_coord[perm[1]] = out_coord[1];
+    in_coord[perm[2]] = out_coord[2];
+    in_coord[perm[3]] = out_coord[3];
+
+    // Input flat index.
+    uint in_strides[4];
+    in_strides[3] = 1;
+    in_strides[2] = in_shape[3];
+    in_strides[1] = in_shape[2] * in_shape[3];
+    in_strides[0] = in_shape[1] * in_shape[2] * in_shape[3];
+
+    uint in_idx = in_coord[0] * in_strides[0] + in_coord[1] * in_strides[1]
+                + in_coord[2] * in_strides[2] + in_coord[3] * in_strides[3];
+
+    output[gid] = input[in_idx];
+}
+
+// ── Slice: copy a contiguous sub-range from input to output ────────────
+kernel void slice_copy(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    constant uint& src_offset [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) {
+        output[gid] = input[src_offset + gid];
+    }
+}
+
+// ── Concat: copy from one source into output at a given offset ─────────
+kernel void concat_copy(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    constant uint& dst_offset [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) {
+        output[dst_offset + gid] = input[gid];
+    }
+}
+
+// ── Resize (nearest neighbor): upsample spatial dims ───────────────────
+kernel void resize_nearest(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& out_total [[buffer(2)]],
+    constant uint& in_h [[buffer(3)]],
+    constant uint& in_w [[buffer(4)]],
+    constant uint& out_h [[buffer(5)]],
+    constant uint& out_w [[buffer(6)]],
+    constant uint& channels [[buffer(7)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= out_total) return;
+    // Output layout: [N, C, out_h, out_w]
+    uint ow = gid % out_w;
+    uint oh = (gid / out_w) % out_h;
+    uint c_and_n = gid / (out_h * out_w);
+
+    // Nearest neighbor source coords.
+    uint sh = oh * in_h / out_h;
+    uint sw = ow * in_w / out_w;
+
+    uint in_idx = c_and_n * (in_h * in_w) + sh * in_w + sw;
+    output[gid] = input[in_idx];
+}
 "#;
 
 /// Metal GPU backend for Apple Silicon / macOS.
@@ -472,6 +648,12 @@ impl MetalBackend {
             "im2col",
             "softmax",
             "rms_norm",
+            "layer_norm",
+            "instance_norm",
+            "transpose_4d",
+            "slice_copy",
+            "concat_copy",
+            "resize_nearest",
         ];
 
         let mut pipelines = HashMap::new();
