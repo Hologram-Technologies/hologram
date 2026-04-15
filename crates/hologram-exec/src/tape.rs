@@ -4098,6 +4098,26 @@ impl EnumTape {
                 i < gpu_bufs.len() && gpu_bufs[i].is_some()
             });
 
+            // Build input_metas early — needed by both GPU chaining and CPU dispatch
+            // for resolving variable-length dimensions from shape_overrides.
+            let input_metas: crate::shape_resolve::InputMetas =
+                if tape_ctx.shape_overrides.is_empty() {
+                    SmallVec::new()
+                } else {
+                    instr
+                        .input_indices
+                        .iter()
+                        .map(|&idx| {
+                            tape_ctx.shape_overrides.get(&idx).map(|shape| {
+                                hologram_core::op::TensorMeta::new(
+                                    hologram_core::op::FloatDType::F32,
+                                    shape,
+                                )
+                            })
+                        })
+                        .collect()
+                };
+
             // GPU-chainable ops: try GPU dispatch even when all inputs are
             // on CPU — the backend copies CPU→GPU as needed. When inputs
             // ARE on GPU, they chain directly (zero-copy). The backend
@@ -4172,52 +4192,91 @@ impl EnumTape {
                     input_w,
                 } = &instr.kernel
                 {
-                    // Use baked spatial dims. For variable-length models,
-                    // infer from input buffer size below.
-                    let actual_h = *input_h as usize;
-                    let actual_w = *input_w as usize;
-                    // Extract ic and oc from weight shape or input metadata.
                     let w_floats = gpu_inputs[1].byte_len() / 4;
                     let kh = *kernel_h as usize;
                     let kw = *kernel_w as usize;
                     let g = (*group).max(1) as usize;
-                    // weight shape: [oc, ic/g, kh, kw] → total = oc * (ic/g) * kh * kw
-                    // For group=1: oc * ic * kh * kw = w_floats
-                    if g == 1 && kh > 0 && kw > 0 {
+                    let d_floats = gpu_inputs[0].byte_len() / 4;
+
+                    // Resolve spatial dims: try shape_overrides, then baked values,
+                    // then infer from input buffer + weight shape.
+                    let (actual_h, actual_w, ic, oc) = if g == 1
+                        && kh > 0
+                        && kw > 0
+                        && d_floats > 0
+                        && w_floats > 0
+                    {
                         let ic_times_oc = w_floats / (kh * kw);
-                        // Extract ic from input: total_floats = N * ic * H * W
-                        let d_floats = gpu_inputs[0].byte_len() / 4;
-                        let spatial = actual_h * actual_w;
-                        if spatial > 0 && d_floats > 0 && d_floats.is_multiple_of(spatial) {
-                            let n_ic = d_floats / spatial; // N * ic (assume N=1)
+
+                        // Try baked values first.
+                        let bh = *input_h as usize;
+                        let bw = *input_w as usize;
+                        if bh > 0 && bw > 0 {
+                            let spatial = bh * bw;
+                            let n_ic = d_floats / spatial;
                             if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
-                                let ic = n_ic;
-                                let oc = ic_times_oc / ic;
-                                let params = crate::backend::Conv2dParams {
-                                    ic,
-                                    h: actual_h,
-                                    w: actual_w,
-                                    oc,
-                                    kh,
-                                    kw,
-                                    pad_h: *pad_h as usize,
-                                    pad_w: *pad_w as usize,
-                                    stride_h: (*stride_h).max(1) as usize,
-                                    stride_w: (*stride_w).max(1) as usize,
-                                    dil_h: (*dilation_h).max(1) as usize,
-                                    dil_w: (*dilation_w).max(1) as usize,
-                                };
-                                backend_ref.dispatch_conv2d_chained(
-                                    &gpu_inputs,
-                                    &params,
-                                    out_buf,
-                                )?
+                                (bh, bw, n_ic, ic_times_oc / n_ic)
                             } else {
-                                crate::backend::KernelOutput::Skipped
+                                (0, 0, 0, 0)
+                            }
+                        } else if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
+                            // Use shape metadata: [N, C, H, W].
+                            if in_meta.ndim >= 4 {
+                                let h = in_meta.dims[2] as usize;
+                                let w = in_meta.dims[3] as usize;
+                                let ic = in_meta.dims[1] as usize;
+                                let oc = if ic > 0 { ic_times_oc / ic } else { 0 };
+                                (h, w, ic, oc)
+                            } else {
+                                (0, 0, 0, 0)
                             }
                         } else {
-                            crate::backend::KernelOutput::Skipped
+                            // Infer from buffer sizes: d_floats = N * ic * H * W.
+                            // w_floats = oc * ic * kh * kw → ic_times_oc = oc * ic.
+                            // Try sqrt(d_floats / ic_times_oc) for square spatial.
+                            // Common SD UNet spatial sizes: 64, 32, 16, 8.
+                            let mut found = (0usize, 0usize, 0usize, 0usize);
+                            for &spatial_h in &[64, 32, 16, 8, 128, 256] {
+                                for &spatial_w in &[64, 32, 16, 8, 128, 256] {
+                                    let spatial = spatial_h * spatial_w;
+                                    if d_floats.is_multiple_of(spatial) {
+                                        let n_ic = d_floats / spatial;
+                                        if n_ic > 0
+                                            && ic_times_oc.is_multiple_of(n_ic)
+                                            && w_floats == (ic_times_oc / n_ic) * n_ic * kh * kw
+                                        {
+                                            found =
+                                                (spatial_h, spatial_w, n_ic, ic_times_oc / n_ic);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if found.0 > 0 {
+                                    break;
+                                }
+                            }
+                            found
                         }
+                    } else {
+                        (0, 0, 0, 0)
+                    };
+
+                    if actual_h > 0 && actual_w > 0 && ic > 0 && oc > 0 {
+                        let params = crate::backend::Conv2dParams {
+                            ic,
+                            h: actual_h,
+                            w: actual_w,
+                            oc,
+                            kh,
+                            kw,
+                            pad_h: *pad_h as usize,
+                            pad_w: *pad_w as usize,
+                            stride_h: (*stride_h).max(1) as usize,
+                            stride_w: (*stride_w).max(1) as usize,
+                            dil_h: (*dilation_h).max(1) as usize,
+                            dil_w: (*dilation_w).max(1) as usize,
+                        };
+                        backend_ref.dispatch_conv2d_chained(&gpu_inputs, &params, out_buf)?
                     } else {
                         crate::backend::KernelOutput::Skipped
                     }
@@ -4316,26 +4375,8 @@ impl EnumTape {
 
             let t0 = std::time::Instant::now();
 
-            // Build input_metas from shape_overrides when available.
-            // This provides correct N-D metadata to dispatch functions so they
-            // can resolve variable-length dimensions instead of using heuristics.
-            let input_metas: crate::shape_resolve::InputMetas =
-                if tape_ctx.shape_overrides.is_empty() {
-                    SmallVec::new()
-                } else {
-                    instr
-                        .input_indices
-                        .iter()
-                        .map(|&idx| {
-                            tape_ctx.shape_overrides.get(&idx).map(|shape| {
-                                hologram_core::op::TensorMeta::new(
-                                    hologram_core::op::FloatDType::F32,
-                                    shape,
-                                )
-                            })
-                        })
-                        .collect()
-                };
+            // input_metas already built above (before GPU chaining block).
+            // Reuse the same metas for the CPU dispatch path.
             let result = dispatch_kernel(
                 &instr.kernel,
                 &input_refs,
