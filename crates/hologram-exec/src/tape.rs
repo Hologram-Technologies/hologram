@@ -1756,17 +1756,137 @@ fn dispatch_kernel(
                 *input_w,
                 input_metas.first().and_then(|m| m.as_ref()),
             );
-            let result = float_dispatch::conv::dispatch_conv2d_direct(
-                inputs,
-                float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
-                    .with_stride(*stride_h as usize, *stride_w as usize)
-                    .with_padding(*pad_h as usize, *pad_w as usize)
-                    .with_dilation(*dilation_h as usize, *dilation_w as usize)
-                    .with_group(*group as usize),
-                actual_h,
-                actual_w,
-            )?;
-            out_buf.extend_from_slice(&result);
+
+            // ── 1×1 pointwise GPU fast path ──────────────────────────
+            // For 1×1 conv with group=1 and no padding/dilation/stride,
+            // the convolution is a pure matmul:
+            //   weight[oc, ic] × input[ic, N*H*W] → output[oc, N*H*W]
+            // Route through Metal when the output is large enough.
+            let kh = *kernel_h as usize;
+            let kw = *kernel_w as usize;
+            let used_gpu_conv = if kh == 1
+                && kw == 1
+                && *pad_h == 0
+                && *pad_w == 0
+                && *dilation_h <= 1
+                && *dilation_w <= 1
+                && *stride_h <= 1
+                && *stride_w <= 1
+                && *group <= 1
+                && inputs.len() >= 2
+            {
+                // weight is [oc, ic, 1, 1] = oc*ic f32s
+                let w_floats = inputs[1].len() / 4;
+                let d_floats = inputs[0].len() / 4;
+                // ic from weight shape: w_floats = oc * ic
+                // We need oc. From input meta or from data shape.
+                let spatial = actual_h * actual_w;
+                if spatial > 0 && d_floats > 0 {
+                    // ic = d_floats / (N * spatial), and N*spatial is the matmul N dim.
+                    // From weight: oc * ic = w_floats.
+                    // From data: N * ic * spatial = d_floats → ic = d_floats / (N * spatial).
+                    // We don't know N directly, but: ic divides both w_floats and d_floats/spatial.
+                    // Use weight shape from meta if available.
+                    let (oc, ic) = if let Some(w_meta) = input_metas.get(1).and_then(|m| m.as_ref())
+                    {
+                        if w_meta.ndim >= 2 {
+                            (w_meta.dims[0] as usize, w_meta.dims[1] as usize)
+                        } else {
+                            (0, 0)
+                        }
+                    } else {
+                        // Fallback: infer from data. N*ic*spatial = d_floats.
+                        // oc*ic = w_floats. Try ic candidates.
+                        let mut found = (0, 0);
+                        if w_floats > 0 && d_floats.is_multiple_of(spatial) {
+                            let n_ic = d_floats / spatial; // N * ic
+                                                           // oc * ic = w_floats, ic divides n_ic
+                            let ic_cand = w_floats.min(n_ic);
+                            if ic_cand > 0
+                                && w_floats.is_multiple_of(ic_cand)
+                                && n_ic.is_multiple_of(ic_cand)
+                            {
+                                found = (w_floats / ic_cand, ic_cand);
+                            }
+                        }
+                        found
+                    };
+
+                    if oc > 0 && ic > 0 && d_floats.is_multiple_of(ic * spatial) {
+                        let batch = d_floats / (ic * spatial);
+                        let matmul_n = batch * spatial;
+                        // M=oc, K=ic, N=batch*spatial
+                        // weight bytes = inputs[1][..oc*ic*4], data bytes = inputs[0]
+                        let w_bytes = oc * ic * 4;
+                        let matmul_inputs: &[&[u8]] = &[&inputs[1][..w_bytes], inputs[0]];
+                        match backend.dispatch_matmul(matmul_inputs, oc, ic, matmul_n, out_buf)? {
+                            KernelOutput::Bytes => true,
+                            #[cfg(has_metal)]
+                            KernelOutput::MetalBuffer(buf) => {
+                                backend.flush();
+                                let byte_len = oc * matmul_n * 4;
+                                out_buf.resize(byte_len, 0);
+                                let src = buf.contents() as *const u8;
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        src,
+                                        out_buf.as_mut_slice().as_mut_ptr(),
+                                        byte_len,
+                                    );
+                                }
+                                true
+                            }
+                            #[cfg(has_webgpu)]
+                            KernelOutput::WgpuDeferred => {
+                                return Ok(DispatchResult::WgpuDeferred);
+                            }
+                            KernelOutput::Skipped => false,
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if used_gpu_conv {
+                // Apply bias to GPU matmul output if present.
+                // Conv bias is inputs[2], broadcast as [oc, spatial] += bias[oc].
+                if inputs.len() >= 3 && !inputs[2].is_empty() {
+                    if let Ok(bias) = bytemuck::try_cast_slice::<u8, f32>(inputs[2]) {
+                        if let Ok(out_f32) =
+                            bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
+                        {
+                            let bias_len = bias.len();
+                            // output is [oc, spatial], each row gets bias[c]
+                            let spatial = out_f32.len() / bias_len.max(1);
+                            for (c, &bv) in bias.iter().enumerate() {
+                                let base = c * spatial;
+                                if base + spatial <= out_f32.len() {
+                                    for s in &mut out_f32[base..base + spatial] {
+                                        *s += bv;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let result = float_dispatch::conv::dispatch_conv2d_direct(
+                    inputs,
+                    float_dispatch::conv::Conv2dAttrs::new(kh, kw)
+                        .with_stride(*stride_h as usize, *stride_w as usize)
+                        .with_padding(*pad_h as usize, *pad_w as usize)
+                        .with_dilation(*dilation_h as usize, *dilation_w as usize)
+                        .with_group(*group as usize),
+                    actual_h,
+                    actual_w,
+                )?;
+                out_buf.extend_from_slice(&result);
+            }
             // Compute output meta: [N, C_out, H_out, W_out] from input + weight shapes.
             if let (Some(in_meta), Some(w_meta)) = (
                 input_metas.first().and_then(|m| m.as_ref()),
@@ -2243,24 +2363,62 @@ fn dispatch_kernel(
             let baked_k = *k as usize;
             let baked_n = *n as usize;
 
-            let used_fast_path = {
+            // ── GPU backend dispatch (Metal/WebGPU) ───────────────────
+            // Resolve actual_m early so we can pass correct dims to the
+            // backend. The backend checks element thresholds internally
+            // and returns Skipped for small matrices.
+            let actual_m_for_gpu = if baked_k > 0 && inputs[0].len().is_multiple_of(baked_k * 4) {
+                inputs[0].len() / (baked_k * 4)
+            } else {
+                0
+            };
+
+            let mut used_gpu = false;
+            if actual_m_for_gpu > 0 && baked_n > 0 {
+                match backend.dispatch_matmul(
+                    inputs,
+                    actual_m_for_gpu,
+                    baked_k,
+                    baked_n,
+                    out_buf,
+                )? {
+                    KernelOutput::Bytes => {
+                        used_gpu = true;
+                    }
+                    #[cfg(has_metal)]
+                    KernelOutput::MetalBuffer(buf) => {
+                        // Flush to ensure GPU work completes, then copy
+                        // result from shared-memory Metal buffer into out_buf.
+                        backend.flush();
+                        let byte_len = actual_m_for_gpu * baked_n * 4;
+                        out_buf.resize(byte_len, 0);
+                        let src = buf.contents() as *const u8;
+                        // SAFETY: Metal StorageModeShared buffers are CPU-
+                        // readable after flush; byte_len matches allocation.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                src,
+                                out_buf.as_mut_slice().as_mut_ptr(),
+                                byte_len,
+                            );
+                        }
+                        used_gpu = true;
+                    }
+                    #[cfg(has_webgpu)]
+                    KernelOutput::WgpuDeferred => {
+                        return Ok(DispatchResult::WgpuDeferred);
+                    }
+                    KernelOutput::Skipped => {}
+                }
+            }
+
+            // ── CPU fast path (Accelerate BLAS) ───────────────────────
+            // The BLAS block has side effects (writes to out_buf) despite
+            // returning bool — clippy's needless_bool doesn't see them.
+            #[allow(clippy::needless_bool)]
+            let used_cpu_blas = if !used_gpu {
                 #[cfg(all(feature = "accelerate", target_os = "macos"))]
                 {
-                    // Debug: log first 10 large matmuls to diagnose fast path misses.
-                    static DBG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                    if DBG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3 {
-                        let b_exp = baked_k * baked_n * 4;
-                        tracing::debug!(
-                            baked_k,
-                            baked_n,
-                            a_len = inputs[0].len(),
-                            b_len = inputs[1].len(),
-                            b_exp,
-                            a_ok = inputs[0].len().is_multiple_of(baked_k * 4),
-                            b_ok = inputs[1].len() >= b_exp,
-                            "InlineMatMul dims"
-                        );
-                    }
                     if baked_k > 0
                         && baked_n > 0
                         && inputs[0].len().is_multiple_of(baked_k * 4)
@@ -2278,16 +2436,6 @@ fn dispatch_kernel(
                             crate::float_dispatch::matmul::blas::sgemm(
                                 actual_m, baked_n, baked_k, a, b, out,
                             );
-                            static LOGGED: std::sync::atomic::AtomicBool =
-                                std::sync::atomic::AtomicBool::new(false);
-                            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                                tracing::debug!(
-                                    actual_m,
-                                    baked_k,
-                                    baked_n,
-                                    "FAST PATH HIT: direct BLAS sgemm"
-                                );
-                            }
                             true
                         } else {
                             false
@@ -2300,7 +2448,10 @@ fn dispatch_kernel(
                 {
                     false
                 }
+            } else {
+                false
             };
+            let used_fast_path = used_gpu || used_cpu_blas;
 
             let (actual_m, actual_k, actual_n) = if used_fast_path {
                 let actual_m = inputs[0].len() / (baked_k * 4);
@@ -2395,15 +2546,67 @@ fn dispatch_kernel(
                     b_floats,
                 )
             };
-            crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
-                &inputs[..2],
-                actual_m,
-                actual_k,
-                actual_n,
-                bias,
-                activation,
-                out_buf,
-            )?;
+
+            // ── GPU backend for matmul, then CPU epilogue ─────────
+            let mut used_gpu = false;
+            if actual_m > 0 && actual_k > 0 && actual_n > 0 {
+                match backend.dispatch_matmul(
+                    &inputs[..2],
+                    actual_m,
+                    actual_k,
+                    actual_n,
+                    out_buf,
+                )? {
+                    KernelOutput::Bytes => {
+                        used_gpu = true;
+                    }
+                    #[cfg(has_metal)]
+                    KernelOutput::MetalBuffer(buf) => {
+                        backend.flush();
+                        let byte_len = actual_m * actual_n * 4;
+                        out_buf.resize(byte_len, 0);
+                        let src = buf.contents() as *const u8;
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                src,
+                                out_buf.as_mut_slice().as_mut_ptr(),
+                                byte_len,
+                            );
+                        }
+                        used_gpu = true;
+                    }
+                    #[cfg(has_webgpu)]
+                    KernelOutput::WgpuDeferred => {
+                        return Ok(DispatchResult::WgpuDeferred);
+                    }
+                    KernelOutput::Skipped => {}
+                }
+            }
+
+            if used_gpu {
+                // Apply bias + activation epilogue on the GPU matmul output.
+                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
+                {
+                    let bias_len = bias.len();
+                    if bias_len > 0 {
+                        for row in floats.chunks_mut(bias_len) {
+                            for (j, v) in row.iter_mut().enumerate() {
+                                *v = activation.apply_unary(*v + bias[j]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
+                    &inputs[..2],
+                    actual_m,
+                    actual_k,
+                    actual_n,
+                    bias,
+                    activation,
+                    out_buf,
+                )?;
+            }
             let batch = if actual_m > 0 && actual_k > 0 {
                 a_floats / (actual_m * actual_k)
             } else {
@@ -2455,9 +2658,49 @@ fn dispatch_kernel(
                     b_floats,
                 )
             };
-            crate::float_dispatch::matmul::dispatch_matmul_activation_into(
-                inputs, actual_m, actual_k, actual_n, activation, out_buf,
-            )?;
+            // ── GPU backend for matmul, then CPU epilogue ─────────
+            let mut used_gpu = false;
+            if actual_m > 0 && actual_k > 0 && actual_n > 0 {
+                match backend.dispatch_matmul(inputs, actual_m, actual_k, actual_n, out_buf)? {
+                    KernelOutput::Bytes => {
+                        used_gpu = true;
+                    }
+                    #[cfg(has_metal)]
+                    KernelOutput::MetalBuffer(buf) => {
+                        backend.flush();
+                        let byte_len = actual_m * actual_n * 4;
+                        out_buf.resize(byte_len, 0);
+                        let src = buf.contents() as *const u8;
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                src,
+                                out_buf.as_mut_slice().as_mut_ptr(),
+                                byte_len,
+                            );
+                        }
+                        used_gpu = true;
+                    }
+                    #[cfg(has_webgpu)]
+                    KernelOutput::WgpuDeferred => {
+                        return Ok(DispatchResult::WgpuDeferred);
+                    }
+                    KernelOutput::Skipped => {}
+                }
+            }
+
+            if used_gpu {
+                // Apply activation epilogue on the GPU matmul output.
+                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
+                {
+                    for v in floats.iter_mut() {
+                        *v = activation.apply_unary(*v);
+                    }
+                }
+            } else {
+                crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+                    inputs, actual_m, actual_k, actual_n, activation, out_buf,
+                )?;
+            }
             let batch = if actual_m > 0 && actual_k > 0 {
                 a_floats / (actual_m * actual_k)
             } else {
