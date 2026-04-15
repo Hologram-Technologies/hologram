@@ -2387,22 +2387,7 @@ fn dispatch_kernel(
                     }
                     #[cfg(has_metal)]
                     KernelOutput::MetalBuffer(buf) => {
-                        // Flush to ensure GPU work completes, then copy
-                        // result from shared-memory Metal buffer into out_buf.
-                        backend.flush();
-                        let byte_len = actual_m_for_gpu * baked_n * 4;
-                        out_buf.resize(byte_len, 0);
-                        let src = buf.contents() as *const u8;
-                        // SAFETY: Metal StorageModeShared buffers are CPU-
-                        // readable after flush; byte_len matches allocation.
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                src,
-                                out_buf.as_mut_slice().as_mut_ptr(),
-                                byte_len,
-                            );
-                        }
-                        used_gpu = true;
+                        return Ok(DispatchResult::MetalBuffer(buf));
                     }
                     #[cfg(has_webgpu)]
                     KernelOutput::WgpuDeferred => {
@@ -3972,6 +3957,16 @@ impl EnumTape {
         // and pay the perf for nothing. Vision/diffusion models like SD VAE,
         // where peak activation memory is 20+ GiB at 512×512, need it: with
         // eviction the SD VAE decoder fits in ~3 GiB instead of 20+ GiB.
+        let do_profile = std::env::var("HOLOGRAM_PROFILE_DIRECT").is_ok();
+        let mut op_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
+            std::collections::HashMap::new();
+
+        // Metal GPU buffer storage: when dispatch returns MetalBuffer, the
+        // result stays on the GPU until a downstream CPU op needs it. This
+        // avoids per-op flush+readback overhead by batching GPU work.
+        #[cfg(has_metal)]
+        let mut metal_bufs: Vec<Option<metal::Buffer>> = vec![None; max_idx];
+
         let evict = self.checkpoint_enabled;
         let mut live_counts: Vec<u32> = if evict {
             let mut lc = self.consumer_counts.clone();
@@ -4060,6 +4055,44 @@ impl EnumTape {
             // Zero-copy input gathering + mutable output access.
             // SAFETY: output_idx != any input_idx in a valid DAG.
             let out_idx = instr.output_idx as usize;
+
+            // Lazy Metal readback: if any input lives in a GPU buffer,
+            // flush the GPU command queue and copy data into the CPU
+            // OutputBuffer. This happens once per buffer, not per-op —
+            // subsequent reads of the same buffer hit the CPU copy.
+            #[cfg(has_metal)]
+            {
+                let backend_ref = tape_ctx.backend.resolve();
+                let mut need_flush = false;
+                for &idx in &instr.input_indices {
+                    let i = idx as usize;
+                    if i < metal_bufs.len() && metal_bufs[i].is_some() {
+                        need_flush = true;
+                        break;
+                    }
+                }
+                if need_flush {
+                    backend_ref.flush();
+                    for &idx in &instr.input_indices {
+                        let i = idx as usize;
+                        if i < metal_bufs.len() {
+                            if let Some(mbuf) = metal_bufs[i].take() {
+                                let byte_len = mbuf.length() as usize;
+                                bufs[i].resize(byte_len, 0);
+                                let src = mbuf.contents() as *const u8;
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        src,
+                                        bufs[i].as_mut_slice().as_mut_ptr(),
+                                        byte_len,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             let bufs_ptr = bufs.as_mut_ptr();
             let bufs_len = bufs.len();
 
@@ -4129,7 +4162,7 @@ impl EnumTape {
                         })
                         .collect()
                 };
-            dispatch_kernel(
+            let result = dispatch_kernel(
                 &instr.kernel,
                 &input_refs,
                 &input_metas,
@@ -4141,6 +4174,17 @@ impl EnumTape {
             // Drop input refs before mutating bufs again — `input_refs`
             // borrows from `bufs` via raw pointer.
             drop(input_refs);
+
+            // Handle Metal GPU buffer results: store in the parallel metal_bufs
+            // array for deferred readback. The GPU command buffer is NOT flushed
+            // here — multiple ops accumulate on the GPU, and flush happens lazily
+            // when a downstream CPU op needs the data.
+            #[cfg(has_metal)]
+            if let DispatchResult::MetalBuffer(buf) = result {
+                if out_idx < metal_bufs.len() {
+                    metal_bufs[out_idx] = Some(buf);
+                }
+            }
 
             // Evict input buffers whose last consumer was this instruction
             // (only when explicitly enabled — see live_counts setup above).
@@ -4180,6 +4224,16 @@ impl EnumTape {
             // Always measure per-instruction time. The `t0` Instant was
             // captured just before `dispatch_kernel` above.
             let elapsed = t0.elapsed();
+
+            if do_profile {
+                let key = instr.kernel.profile_name();
+                let cat = key.split('(').next().unwrap_or(&key).to_string();
+                let entry = op_times
+                    .entry(cat)
+                    .or_insert((std::time::Duration::ZERO, 0));
+                entry.0 += elapsed;
+                entry.1 += 1;
+            }
 
             // Log any instruction that takes longer than 1 second —
             // this catches pathological Conv2d or other kernels that
@@ -4240,6 +4294,24 @@ impl EnumTape {
             if idx < bufs.len() {
                 let data = std::mem::take(&mut bufs[idx]);
                 arena.insert(NodeId::new(instr.output_idx, 0), data.into_vec());
+            }
+        }
+
+        // Profile summary.
+        if do_profile {
+            let mut entries: Vec<_> = op_times.into_iter().collect();
+            entries.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            let total: std::time::Duration = entries.iter().map(|(_, (d, _))| *d).sum();
+            eprintln!(
+                "\n[PROFILE] Op timing ({:.1}ms total):",
+                total.as_secs_f64() * 1000.0
+            );
+            for (name, (dur, count)) in &entries {
+                let pct = dur.as_secs_f64() / total.as_secs_f64() * 100.0;
+                eprintln!(
+                    "  {name:30} {count:5}x  {:.1}ms  ({pct:.1}%)",
+                    dur.as_secs_f64() * 1000.0
+                );
             }
         }
 
