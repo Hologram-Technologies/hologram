@@ -178,6 +178,25 @@ impl BatchedMatmulDims {
     }
 }
 
+/// Parameters for Conv2d GPU dispatch.
+///
+/// Bundled into a struct to avoid `clippy::too_many_arguments`.
+#[derive(Debug, Clone, Copy)]
+pub struct Conv2dParams {
+    pub ic: usize,
+    pub h: usize,
+    pub w: usize,
+    pub oc: usize,
+    pub kh: usize,
+    pub kw: usize,
+    pub pad_h: usize,
+    pub pad_w: usize,
+    pub stride_h: usize,
+    pub stride_w: usize,
+    pub dil_h: usize,
+    pub dil_w: usize,
+}
+
 /// Compute backend for tape kernel dispatch.
 ///
 /// Each backend implements dispatch for the op types it supports.
@@ -266,6 +285,19 @@ pub trait ComputeBackend: Send + Sync {
             .collect();
         let refs: smallvec::SmallVec<[&[u8]; 4]> = cpu_bufs.iter().map(|v| v.as_slice()).collect();
         self.dispatch_matmul(&refs, m, k, n, out_buf)
+    }
+
+    /// Dispatch a Conv2d with GPU-chained inputs.
+    ///
+    /// Default: returns Skipped (falls back to CPU conv dispatch).
+    /// Metal backend overrides with im2col + SGEMM on GPU.
+    fn dispatch_conv2d_chained(
+        &self,
+        _inputs: &[GpuInput<'_>],
+        _params: &Conv2dParams,
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        Ok(KernelOutput::Skipped)
     }
 
     /// Backend name for diagnostics and logging.
@@ -433,6 +465,14 @@ impl ComputeBackend for CachedMetalBackend {
         out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_matmul_chained(inputs, m, k, n, out_buf)
+    }
+    fn dispatch_conv2d_chained(
+        &self,
+        inputs: &[GpuInput<'_>],
+        params: &Conv2dParams,
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_conv2d_chained(inputs, params, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"

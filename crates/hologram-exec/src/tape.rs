@@ -642,9 +642,11 @@ impl TapeKernel {
         matches!(
             self,
             TapeKernel::InlineMatMul { .. }
+                | TapeKernel::InlineConv2d { .. }
                 | TapeKernel::InlineAdd
                 | TapeKernel::InlineMul
                 | TapeKernel::InlineDiv
+                | TapeKernel::InlineErf
                 | TapeKernel::InlineSoftmax { .. }
                 | TapeKernel::InlineRmsNorm { .. }
                 | TapeKernel::InlineRelu
@@ -653,6 +655,9 @@ impl TapeKernel {
                 | TapeKernel::InlineTanh
                 | TapeKernel::InlineNeg
                 | TapeKernel::InlineAbs
+                | TapeKernel::InlineGelu
+                | TapeKernel::InlineExp
+                | TapeKernel::InlineReciprocal
         )
     }
 
@@ -663,12 +668,16 @@ impl TapeKernel {
             TapeKernel::InlineAdd => Some(FloatOp::Add),
             TapeKernel::InlineMul => Some(FloatOp::Mul),
             TapeKernel::InlineDiv => Some(FloatOp::Div),
+            TapeKernel::InlineErf => Some(FloatOp::Erf),
             TapeKernel::InlineRelu => Some(FloatOp::Relu),
             TapeKernel::InlineSigmoid => Some(FloatOp::Sigmoid),
             TapeKernel::InlineSilu => Some(FloatOp::Silu),
             TapeKernel::InlineTanh => Some(FloatOp::Tanh),
             TapeKernel::InlineNeg => Some(FloatOp::Neg),
             TapeKernel::InlineAbs => Some(FloatOp::Abs),
+            TapeKernel::InlineGelu => Some(FloatOp::Gelu),
+            TapeKernel::InlineExp => Some(FloatOp::Exp),
+            TapeKernel::InlineReciprocal => Some(FloatOp::Reciprocal),
             TapeKernel::InlineSoftmax { size } => Some(FloatOp::Softmax { size: *size }),
             TapeKernel::InlineRmsNorm { size, epsilon } => Some(FloatOp::RmsNorm {
                 size: *size,
@@ -4089,10 +4098,11 @@ impl EnumTape {
                 i < gpu_bufs.len() && gpu_bufs[i].is_some()
             });
 
-            // GPU-chainable ops: if we have GPU inputs and the op supports
-            // GPU chaining, build GpuInput slices and dispatch via the
-            // chained path. The buffer stays on GPU — no readback.
-            if has_gpu_inputs && instr.kernel.gpu_chainable() {
+            // GPU-chainable ops: try GPU dispatch even when all inputs are
+            // on CPU — the backend copies CPU→GPU as needed. When inputs
+            // ARE on GPU, they chain directly (zero-copy). The backend
+            // returns Skipped if the op is too small for GPU.
+            if instr.kernel.gpu_chainable() {
                 // Build GpuInput slices using raw pointers for bufs access
                 // (same zero-copy pattern as input_refs below). This avoids
                 // borrow conflicts with the mutable out_buf and gpu_bufs.
@@ -4145,6 +4155,69 @@ impl EnumTape {
                             baked_n,
                             out_buf,
                         )?
+                    } else {
+                        crate::backend::KernelOutput::Skipped
+                    }
+                } else if let TapeKernel::InlineConv2d {
+                    kernel_h,
+                    kernel_w,
+                    stride_h,
+                    stride_w,
+                    pad_h,
+                    pad_w,
+                    dilation_h,
+                    dilation_w,
+                    group,
+                    input_h,
+                    input_w,
+                } = &instr.kernel
+                {
+                    // Use baked spatial dims. For variable-length models,
+                    // infer from input buffer size below.
+                    let actual_h = *input_h as usize;
+                    let actual_w = *input_w as usize;
+                    // Extract ic and oc from weight shape or input metadata.
+                    let w_floats = gpu_inputs[1].byte_len() / 4;
+                    let kh = *kernel_h as usize;
+                    let kw = *kernel_w as usize;
+                    let g = (*group).max(1) as usize;
+                    // weight shape: [oc, ic/g, kh, kw] → total = oc * (ic/g) * kh * kw
+                    // For group=1: oc * ic * kh * kw = w_floats
+                    if g == 1 && kh > 0 && kw > 0 {
+                        let ic_times_oc = w_floats / (kh * kw);
+                        // Extract ic from input: total_floats = N * ic * H * W
+                        let d_floats = gpu_inputs[0].byte_len() / 4;
+                        let spatial = actual_h * actual_w;
+                        if spatial > 0 && d_floats > 0 && d_floats.is_multiple_of(spatial) {
+                            let n_ic = d_floats / spatial; // N * ic (assume N=1)
+                            if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
+                                let ic = n_ic;
+                                let oc = ic_times_oc / ic;
+                                let params = crate::backend::Conv2dParams {
+                                    ic,
+                                    h: actual_h,
+                                    w: actual_w,
+                                    oc,
+                                    kh,
+                                    kw,
+                                    pad_h: *pad_h as usize,
+                                    pad_w: *pad_w as usize,
+                                    stride_h: (*stride_h).max(1) as usize,
+                                    stride_w: (*stride_w).max(1) as usize,
+                                    dil_h: (*dilation_h).max(1) as usize,
+                                    dil_w: (*dilation_w).max(1) as usize,
+                                };
+                                backend_ref.dispatch_conv2d_chained(
+                                    &gpu_inputs,
+                                    &params,
+                                    out_buf,
+                                )?
+                            } else {
+                                crate::backend::KernelOutput::Skipped
+                            }
+                        } else {
+                            crate::backend::KernelOutput::Skipped
+                        }
                     } else {
                         crate::backend::KernelOutput::Skipped
                     }
