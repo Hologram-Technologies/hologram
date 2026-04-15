@@ -765,7 +765,10 @@ impl TapeKernel {
             Self::InlineCeil => "Ceil".into(),
             Self::InlineRound => "Round".into(),
             Self::InlineErf => "Erf".into(),
-            _ => format!("Unknown({:?})", std::mem::discriminant(self)),
+            // Remaining variants — catch-all with discriminant for debugging.
+            Self::InlineConv2dLut4 { .. } => "Conv2dLut4".into(),
+            Self::InlineExpand { .. } => "Expand".into(),
+            _ => "Other".into(),
         }
     }
 }
