@@ -21,20 +21,90 @@ use hologram_core::op::FloatOp;
 use crate::buffer::OutputBuffer;
 use crate::error::ExecResult;
 
+/// Backend-agnostic GPU buffer handle.
+///
+/// Enables GPU-to-GPU op chaining without CPU readback. The executor
+/// stores these alongside `OutputBuffer` slots and passes them to
+/// `dispatch_*_chained` methods when the next op also runs on GPU.
+pub enum GpuBuffer {
+    #[cfg(has_metal)]
+    Metal(::metal::Buffer),
+    #[cfg(has_webgpu)]
+    Wgpu(wgpu::Buffer),
+}
+
+impl GpuBuffer {
+    /// Byte length of the GPU buffer.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            #[cfg(has_metal)]
+            GpuBuffer::Metal(buf) => buf.length() as usize,
+            #[cfg(has_webgpu)]
+            GpuBuffer::Wgpu(buf) => buf.size() as usize,
+        }
+    }
+
+    /// Read GPU data back to CPU. Caller must flush the backend first.
+    ///
+    /// For Metal (unified memory): zero-copy read from shared pointer.
+    /// For WebGPU: staging buffer readback (caller must handle).
+    pub fn readback_into(&self, dst: &mut [u8]) {
+        match self {
+            #[cfg(has_metal)]
+            GpuBuffer::Metal(buf) => {
+                let src = buf.contents() as *const u8;
+                let len = (buf.length() as usize).min(dst.len());
+                // SAFETY: Metal StorageModeShared buffers are CPU-readable
+                // after the command buffer completes (flush).
+                unsafe {
+                    std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), len);
+                }
+            }
+            #[cfg(has_webgpu)]
+            GpuBuffer::Wgpu(_) => {
+                // WebGPU readback is async — not supported here.
+                // Use flush_deferred() for WebGPU.
+            }
+        }
+    }
+}
+
+/// A single input to a GPU kernel — either CPU bytes or a resident GPU buffer.
+///
+/// This enables GPU-to-GPU chaining: when a MatMul produces a `GpuBuffer`
+/// and the next op is Add (which also has a GPU kernel), the Add receives
+/// `GpuInput::Gpu` and passes the buffer directly to the GPU — no readback.
+pub enum GpuInput<'a> {
+    /// CPU byte slice (the common path, and fallback).
+    Cpu(&'a [u8]),
+    /// Reference to a resident GPU buffer from a prior dispatch.
+    Gpu(&'a GpuBuffer),
+}
+
+impl<'a> GpuInput<'a> {
+    /// Byte length of the input data.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            GpuInput::Cpu(s) => s.len(),
+            GpuInput::Gpu(b) => b.byte_len(),
+        }
+    }
+}
+
 /// Result of a backend kernel dispatch.
 ///
 /// Tells the tape executor HOW to store the result:
 /// - `Skipped`: backend didn't handle this op → fall back to CPU
 /// - `Bytes`: result written to `out_buf` (CPU path, or GPU→copy path)
-/// - `MetalBuffer`: result stored in a GPU buffer → insert directly into arena
+/// - `GpuBuffer`: result stored in a GPU buffer for deferred readback
 pub enum KernelOutput {
     /// Backend did not handle this op. Fall back to CPU dispatch.
     Skipped,
     /// Result written to the provided `out_buf`. Store via swap_insert.
     Bytes,
-    /// Result stored in a Metal GPU buffer. Insert directly into arena (zero-copy).
-    #[cfg(has_metal)]
-    MetalBuffer(::metal::Buffer),
+    /// Result stored in a backend-agnostic GPU buffer.
+    /// The executor stores this for deferred readback or GPU-to-GPU chaining.
+    GpuBuffer(GpuBuffer),
     /// Result deferred — will be available after `flush_deferred()`.
     /// Used by WebGPU batching: encode now, submit+readback at level boundary.
     #[cfg(has_webgpu)]
@@ -49,18 +119,18 @@ impl KernelOutput {
         !matches!(self, KernelOutput::Skipped)
     }
 
-    /// Extract output bytes — from out_buf for Bytes, from Metal buffer for MetalBuffer.
-    /// For testing: copies Metal buffer contents to Vec.
+    /// Extract output bytes — from out_buf for Bytes, from GPU buffer for GpuBuffer.
+    /// For testing: copies GPU buffer contents to Vec.
     #[cfg(test)]
     pub fn extract_bytes(self, out_buf: crate::buffer::OutputBuffer) -> Vec<u8> {
         match self {
             KernelOutput::Skipped => Vec::new(),
             KernelOutput::Bytes => out_buf.into_vec(),
-            #[cfg(has_metal)]
-            KernelOutput::MetalBuffer(buf) => {
-                let ptr = buf.contents() as *const u8;
-                let len = buf.length() as usize;
-                unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
+            KernelOutput::GpuBuffer(buf) => {
+                let len = buf.byte_len();
+                let mut dst = vec![0u8; len];
+                buf.readback_into(&mut dst);
+                dst
             }
         }
     }
@@ -140,6 +210,62 @@ pub trait ComputeBackend: Send + Sync {
         _out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         Ok(KernelOutput::Skipped)
+    }
+
+    /// Dispatch a float op with GPU-chained inputs.
+    ///
+    /// Accepts `GpuInput` (either CPU bytes or a resident GPU buffer).
+    /// The default implementation reads back any GPU inputs to CPU bytes
+    /// and delegates to `dispatch_float`. GPU backends override this to
+    /// accept `GpuBuffer` inputs directly, avoiding CPU roundtrips.
+    fn dispatch_float_chained(
+        &self,
+        op: &FloatOp,
+        inputs: &[GpuInput<'_>],
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        // Default: readback GPU inputs, then delegate to &[u8] path.
+        let cpu_bufs: smallvec::SmallVec<[Vec<u8>; 4]> = inputs
+            .iter()
+            .map(|inp| match inp {
+                GpuInput::Cpu(s) => s.to_vec(),
+                GpuInput::Gpu(gb) => {
+                    self.flush();
+                    let mut dst = vec![0u8; gb.byte_len()];
+                    gb.readback_into(&mut dst);
+                    dst
+                }
+            })
+            .collect();
+        let refs: smallvec::SmallVec<[&[u8]; 4]> = cpu_bufs.iter().map(|v| v.as_slice()).collect();
+        self.dispatch_float(op, &refs, out_buf)
+    }
+
+    /// Dispatch a matmul with GPU-chained inputs.
+    ///
+    /// Same as `dispatch_float_chained` but for matmul ops.
+    fn dispatch_matmul_chained(
+        &self,
+        inputs: &[GpuInput<'_>],
+        m: usize,
+        k: usize,
+        n: usize,
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        let cpu_bufs: smallvec::SmallVec<[Vec<u8>; 4]> = inputs
+            .iter()
+            .map(|inp| match inp {
+                GpuInput::Cpu(s) => s.to_vec(),
+                GpuInput::Gpu(gb) => {
+                    self.flush();
+                    let mut dst = vec![0u8; gb.byte_len()];
+                    gb.readback_into(&mut dst);
+                    dst
+                }
+            })
+            .collect();
+        let refs: smallvec::SmallVec<[&[u8]; 4]> = cpu_bufs.iter().map(|v| v.as_slice()).collect();
+        self.dispatch_matmul(&refs, m, k, n, out_buf)
     }
 
     /// Backend name for diagnostics and logging.
@@ -289,6 +415,24 @@ impl ComputeBackend for CachedMetalBackend {
         out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_batched_matmul(inputs, dims, out_buf)
+    }
+    fn dispatch_float_chained(
+        &self,
+        op: &FloatOp,
+        inputs: &[GpuInput<'_>],
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_float_chained(op, inputs, out_buf)
+    }
+    fn dispatch_matmul_chained(
+        &self,
+        inputs: &[GpuInput<'_>],
+        m: usize,
+        k: usize,
+        n: usize,
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_matmul_chained(inputs, m, k, n, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"
@@ -503,10 +647,11 @@ mod tests {
         // Extract output bytes — may be in out_buf (Bytes) or Metal buffer.
         let output_bytes: Vec<u8> = match result {
             KernelOutput::Bytes => out_buf.into_vec(),
-            #[cfg(has_metal)]
-            KernelOutput::MetalBuffer(buf) => {
-                let ptr = buf.contents() as *const u8;
-                unsafe { std::slice::from_raw_parts(ptr, buf.length() as usize) }.to_vec()
+            KernelOutput::GpuBuffer(gbuf) => {
+                let len = gbuf.byte_len();
+                let mut dst = vec![0u8; len];
+                gbuf.readback_into(&mut dst);
+                dst
             }
             KernelOutput::Skipped => panic!("expected handled"),
         };

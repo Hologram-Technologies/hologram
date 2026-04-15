@@ -468,6 +468,30 @@ impl MetalBackend {
         }
     }
 
+    /// Resolve a `GpuInput` to a `metal::Buffer`.
+    /// For `Cpu` inputs: copies data to a new Metal buffer.
+    /// For `Gpu(Metal)` inputs: returns the buffer directly (zero-copy).
+    fn resolve_input(&self, input: &super::GpuInput<'_>) -> metal::Buffer {
+        match input {
+            super::GpuInput::Cpu(bytes) => self.device.new_buffer_with_data(
+                bytes.as_ptr() as *const _,
+                bytes.len() as u64,
+                MTLResourceOptions::StorageModeShared,
+            ),
+            super::GpuInput::Gpu(gbuf) => match gbuf {
+                #[cfg(has_metal)]
+                super::GpuBuffer::Metal(buf) => buf.clone(),
+                #[allow(unreachable_patterns)]
+                _ => {
+                    // Non-Metal GPU buffer on Metal backend — should not happen.
+                    // Fallback: create empty buffer.
+                    self.device
+                        .new_buffer(0, MTLResourceOptions::StorageModeShared)
+                }
+            },
+        }
+    }
+
     /// Dispatch a unary elementwise op on the GPU.
     /// Returns the output Metal buffer directly — zero-copy into arena.
     fn dispatch_unary(
@@ -510,6 +534,162 @@ impl MetalBackend {
         drop(pending);
 
         Ok(output_buf)
+    }
+
+    /// Dispatch a unary op from a GpuInput (zero-copy for GPU buffers).
+    fn dispatch_unary_chained(
+        &self,
+        pipeline: &ComputePipelineState,
+        input: &super::GpuInput<'_>,
+    ) -> ExecResult<metal::Buffer> {
+        let input_buf = self.resolve_input(input);
+        let n_floats = (input_buf.length() as usize) / 4;
+        let byte_len = n_floats * 4;
+
+        let output_buf = self
+            .device
+            .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        let count = n_floats as u32;
+        let count_buf = self.device.new_buffer_with_data(
+            &count as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending
+            .as_ref()
+            .expect("Metal command buffer should exist after get_or_create");
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&input_buf), 0);
+        encoder.set_buffer(1, Some(&output_buf), 0);
+        encoder.set_buffer(2, Some(&count_buf), 0);
+
+        let threadgroup_size =
+            metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+        let grid_size = metal::MTLSize::new(n_floats as u64, 1, 1);
+        encoder.dispatch_threads(grid_size, threadgroup_size);
+        encoder.end_encoding();
+        drop(pending);
+
+        Ok(output_buf)
+    }
+
+    /// Dispatch a binary op from GpuInputs (zero-copy for GPU buffers).
+    fn dispatch_binary_chained(
+        &self,
+        pipeline: &ComputePipelineState,
+        input_a: &super::GpuInput<'_>,
+        input_b: &super::GpuInput<'_>,
+    ) -> ExecResult<metal::Buffer> {
+        let buf_a = self.resolve_input(input_a);
+        let buf_b = self.resolve_input(input_b);
+        let n_a = (buf_a.length() as usize / 4) as u32;
+        let n_b = (buf_b.length() as usize / 4) as u32;
+        let n_out = n_a.max(n_b) as usize;
+        let byte_len = n_out * 4;
+
+        let output_buf = self
+            .device
+            .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        let count_a_buf = self.device.new_buffer_with_data(
+            &n_a as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let count_b_buf = self.device.new_buffer_with_data(
+            &n_b as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending
+            .as_ref()
+            .expect("Metal command buffer should exist after get_or_create");
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&buf_a), 0);
+        encoder.set_buffer(1, Some(&buf_b), 0);
+        encoder.set_buffer(2, Some(&output_buf), 0);
+        encoder.set_buffer(3, Some(&count_a_buf), 0);
+        encoder.set_buffer(4, Some(&count_b_buf), 0);
+
+        let threadgroup_size =
+            metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+        let grid_size = metal::MTLSize::new(n_out as u64, 1, 1);
+        encoder.dispatch_threads(grid_size, threadgroup_size);
+        encoder.end_encoding();
+        drop(pending);
+
+        Ok(output_buf)
+    }
+
+    /// Dispatch a matmul from GpuInputs (zero-copy for GPU buffers).
+    fn dispatch_matmul_chained_inner(
+        &self,
+        input_a: &super::GpuInput<'_>,
+        input_b: &super::GpuInput<'_>,
+        m: usize,
+        k: usize,
+        n: usize,
+    ) -> ExecResult<metal::Buffer> {
+        let pipeline = match self.pipelines.get("sgemm") {
+            Some(p) => p,
+            None => {
+                return Err(crate::error::ExecError::UnsupportedOp(
+                    "Metal sgemm pipeline not compiled".into(),
+                ))
+            }
+        };
+
+        let buf_a = self.resolve_input(input_a);
+        let buf_b = self.resolve_input(input_b);
+        let byte_len = m * n * 4;
+        let m_u32 = m as u32;
+        let k_u32 = k as u32;
+        let n_u32 = n as u32;
+
+        let buf_c = self
+            .device
+            .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        let buf_m = self.device.new_buffer_with_data(
+            &m_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_k = self.device.new_buffer_with_data(
+            &k_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let buf_n = self.device.new_buffer_with_data(
+            &n_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let pending = self.get_or_create_cmd_buf();
+        let cmd_buf = pending
+            .as_ref()
+            .expect("Metal command buffer should exist after get_or_create");
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(&buf_a), 0);
+        encoder.set_buffer(1, Some(&buf_b), 0);
+        encoder.set_buffer(2, Some(&buf_c), 0);
+        encoder.set_buffer(3, Some(&buf_m), 0);
+        encoder.set_buffer(4, Some(&buf_k), 0);
+        encoder.set_buffer(5, Some(&buf_n), 0);
+
+        let threadgroup_size = metal::MTLSize::new(16, 16, 1);
+        let grid_size = metal::MTLSize::new(n as u64, m as u64, 1);
+        encoder.dispatch_threads(grid_size, threadgroup_size);
+        encoder.end_encoding();
+        drop(pending);
+
+        Ok(buf_c)
     }
 
     /// Dispatch a binary elementwise op on the GPU.
@@ -703,7 +883,7 @@ impl ComputeBackend for MetalBackend {
             let input_bytes = inputs.first().map(|b| b.len()).unwrap_or(0);
             if input_bytes >= self.thresholds.softmax_min_bytes && *size > 0 {
                 let buf = self.dispatch_softmax(inputs[0], *size as usize)?;
-                return Ok(super::KernelOutput::MetalBuffer(buf));
+                return Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)));
             }
             return Ok(super::KernelOutput::Skipped);
         }
@@ -718,7 +898,7 @@ impl ComputeBackend for MetalBackend {
                     *size as usize,
                     f32::from_bits(*epsilon),
                 )?;
-                return Ok(super::KernelOutput::MetalBuffer(buf));
+                return Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)));
             }
             return Ok(super::KernelOutput::Skipped);
         }
@@ -742,11 +922,15 @@ impl ComputeBackend for MetalBackend {
         match op.category() {
             OpCategory::UnaryElementwise => {
                 let metal_buf = self.dispatch_unary(pipeline, inputs[0])?;
-                Ok(super::KernelOutput::MetalBuffer(metal_buf))
+                Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+                    metal_buf,
+                )))
             }
             OpCategory::BinaryElementwise if inputs.len() >= 2 => {
                 let metal_buf = self.dispatch_binary(pipeline, inputs[0], inputs[1])?;
-                Ok(super::KernelOutput::MetalBuffer(metal_buf))
+                Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+                    metal_buf,
+                )))
             }
             _ => Ok(super::KernelOutput::Skipped),
         }
@@ -828,7 +1012,9 @@ impl ComputeBackend for MetalBackend {
         encoder.end_encoding();
         drop(pending);
 
-        Ok(super::KernelOutput::MetalBuffer(buf_c))
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+            buf_c,
+        )))
     }
 
     fn dispatch_batched_matmul(
@@ -926,7 +1112,9 @@ impl ComputeBackend for MetalBackend {
         encoder.end_encoding();
         drop(pending);
 
-        Ok(super::KernelOutput::MetalBuffer(buf_c))
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+            buf_c,
+        )))
     }
 
     fn name(&self) -> &'static str {
@@ -935,5 +1123,83 @@ impl ComputeBackend for MetalBackend {
 
     fn op_thresholds(&self) -> &super::hardware::OpThresholds {
         &self.thresholds
+    }
+
+    fn dispatch_float_chained(
+        &self,
+        op: &FloatOp,
+        inputs: &[super::GpuInput<'_>],
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<super::KernelOutput> {
+        // Softmax/RmsNorm/MatMul have dedicated dispatch paths — skip chaining
+        // for now and let them fall back to the default (readback + dispatch_float).
+        if matches!(
+            op,
+            FloatOp::Softmax { .. } | FloatOp::RmsNorm { .. } | FloatOp::MatMul { .. }
+        ) {
+            // Use the default readback-then-dispatch path.
+            let cpu_bufs: smallvec::SmallVec<[Vec<u8>; 4]> = inputs
+                .iter()
+                .map(|inp| match inp {
+                    super::GpuInput::Cpu(s) => s.to_vec(),
+                    super::GpuInput::Gpu(gb) => {
+                        self.flush();
+                        let mut dst = vec![0u8; gb.byte_len()];
+                        gb.readback_into(&mut dst);
+                        dst
+                    }
+                })
+                .collect();
+            let refs: smallvec::SmallVec<[&[u8]; 4]> =
+                cpu_bufs.iter().map(|v| v.as_slice()).collect();
+            return self.dispatch_float(op, &refs, _out_buf);
+        }
+
+        // Skip Metal for small buffers.
+        let input_bytes = inputs.first().map(|i| i.byte_len()).unwrap_or(0);
+        if input_bytes < self.thresholds.elementwise_min_bytes {
+            return Ok(super::KernelOutput::Skipped);
+        }
+
+        let name = match Self::kernel_name(op) {
+            Some(n) => n,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+        let pipeline = match self.pipelines.get(name) {
+            Some(p) => p,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+
+        match op.category() {
+            OpCategory::UnaryElementwise => {
+                let buf = self.dispatch_unary_chained(pipeline, &inputs[0])?;
+                Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)))
+            }
+            OpCategory::BinaryElementwise if inputs.len() >= 2 => {
+                let buf = self.dispatch_binary_chained(pipeline, &inputs[0], &inputs[1])?;
+                Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)))
+            }
+            _ => Ok(super::KernelOutput::Skipped),
+        }
+    }
+
+    fn dispatch_matmul_chained(
+        &self,
+        inputs: &[super::GpuInput<'_>],
+        m: usize,
+        k: usize,
+        n: usize,
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<super::KernelOutput> {
+        let out_elements = m * n;
+        if out_elements < self.thresholds.matmul_min_elements {
+            return Ok(super::KernelOutput::Skipped);
+        }
+        if inputs.len() < 2 {
+            return Ok(super::KernelOutput::Skipped);
+        }
+
+        let buf = self.dispatch_matmul_chained_inner(&inputs[0], &inputs[1], m, k, n)?;
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)))
     }
 }

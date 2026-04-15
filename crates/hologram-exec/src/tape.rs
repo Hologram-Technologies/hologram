@@ -633,6 +633,51 @@ impl TapeKernel {
     }
 
     /// Short name for profiling output.
+    /// Whether this kernel can participate in GPU buffer chaining.
+    ///
+    /// GPU-chainable ops accept `GpuInput` and produce `GpuBuffer` when
+    /// dispatched via `dispatch_*_chained`. Non-chainable ops (ring ops,
+    /// LUT-GEMM, KV cache, etc.) always need CPU byte inputs.
+    fn gpu_chainable(&self) -> bool {
+        matches!(
+            self,
+            TapeKernel::InlineMatMul { .. }
+                | TapeKernel::InlineAdd
+                | TapeKernel::InlineMul
+                | TapeKernel::InlineDiv
+                | TapeKernel::InlineSoftmax { .. }
+                | TapeKernel::InlineRmsNorm { .. }
+                | TapeKernel::InlineRelu
+                | TapeKernel::InlineSigmoid
+                | TapeKernel::InlineSilu
+                | TapeKernel::InlineTanh
+                | TapeKernel::InlineNeg
+                | TapeKernel::InlineAbs
+        )
+    }
+
+    /// Return the `FloatOp` for GPU-chainable elementwise ops, if applicable.
+    /// Used to route through `dispatch_float_chained`.
+    fn as_float_op(&self) -> Option<FloatOp> {
+        match self {
+            TapeKernel::InlineAdd => Some(FloatOp::Add),
+            TapeKernel::InlineMul => Some(FloatOp::Mul),
+            TapeKernel::InlineDiv => Some(FloatOp::Div),
+            TapeKernel::InlineRelu => Some(FloatOp::Relu),
+            TapeKernel::InlineSigmoid => Some(FloatOp::Sigmoid),
+            TapeKernel::InlineSilu => Some(FloatOp::Silu),
+            TapeKernel::InlineTanh => Some(FloatOp::Tanh),
+            TapeKernel::InlineNeg => Some(FloatOp::Neg),
+            TapeKernel::InlineAbs => Some(FloatOp::Abs),
+            TapeKernel::InlineSoftmax { size } => Some(FloatOp::Softmax { size: *size }),
+            TapeKernel::InlineRmsNorm { size, epsilon } => Some(FloatOp::RmsNorm {
+                size: *size,
+                epsilon: *epsilon,
+            }),
+            _ => None,
+        }
+    }
+
     fn profile_name(&self) -> String {
         match self {
             Self::MatMulLut4(_) => "MatMulLut4".into(),
@@ -753,9 +798,8 @@ enum DispatchResult {
     /// overrides the compiled output_meta (e.g., KV cache decode produces
     /// different shapes than compiled).
     InOutBufWithMeta(hologram_core::op::TensorMeta),
-    /// Output stored in a Metal GPU buffer. Insert directly into arena.
-    #[cfg(has_metal)]
-    MetalBuffer(metal::Buffer),
+    /// Output stored in a GPU buffer for deferred readback or chaining.
+    GpuBuffer(crate::backend::GpuBuffer),
     /// Output deferred to `flush_deferred()`. Skip swap_insert for now.
     #[cfg(has_webgpu)]
     WgpuDeferred,
@@ -1821,19 +1865,12 @@ fn dispatch_kernel(
                         let matmul_inputs: &[&[u8]] = &[&inputs[1][..w_bytes], inputs[0]];
                         match backend.dispatch_matmul(matmul_inputs, oc, ic, matmul_n, out_buf)? {
                             KernelOutput::Bytes => true,
-                            #[cfg(has_metal)]
-                            KernelOutput::MetalBuffer(buf) => {
+
+                            KernelOutput::GpuBuffer(gbuf) => {
                                 backend.flush();
                                 let byte_len = oc * matmul_n * 4;
                                 out_buf.resize(byte_len, 0);
-                                let src = buf.contents() as *const u8;
-                                unsafe {
-                                    std::ptr::copy_nonoverlapping(
-                                        src,
-                                        out_buf.as_mut_slice().as_mut_ptr(),
-                                        byte_len,
-                                    );
-                                }
+                                gbuf.readback_into(out_buf.as_mut_slice());
                                 true
                             }
                             #[cfg(has_webgpu)]
@@ -2385,9 +2422,9 @@ fn dispatch_kernel(
                     KernelOutput::Bytes => {
                         used_gpu = true;
                     }
-                    #[cfg(has_metal)]
-                    KernelOutput::MetalBuffer(buf) => {
-                        return Ok(DispatchResult::MetalBuffer(buf));
+
+                    KernelOutput::GpuBuffer(gbuf) => {
+                        return Ok(DispatchResult::GpuBuffer(gbuf));
                     }
                     #[cfg(has_webgpu)]
                     KernelOutput::WgpuDeferred => {
@@ -2545,19 +2582,12 @@ fn dispatch_kernel(
                     KernelOutput::Bytes => {
                         used_gpu = true;
                     }
-                    #[cfg(has_metal)]
-                    KernelOutput::MetalBuffer(buf) => {
+
+                    KernelOutput::GpuBuffer(gbuf) => {
                         backend.flush();
                         let byte_len = actual_m * actual_n * 4;
                         out_buf.resize(byte_len, 0);
-                        let src = buf.contents() as *const u8;
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                src,
-                                out_buf.as_mut_slice().as_mut_ptr(),
-                                byte_len,
-                            );
-                        }
+                        gbuf.readback_into(out_buf.as_mut_slice());
                         used_gpu = true;
                     }
                     #[cfg(has_webgpu)]
@@ -2650,19 +2680,12 @@ fn dispatch_kernel(
                     KernelOutput::Bytes => {
                         used_gpu = true;
                     }
-                    #[cfg(has_metal)]
-                    KernelOutput::MetalBuffer(buf) => {
+
+                    KernelOutput::GpuBuffer(gbuf) => {
                         backend.flush();
                         let byte_len = actual_m * actual_n * 4;
                         out_buf.resize(byte_len, 0);
-                        let src = buf.contents() as *const u8;
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                src,
-                                out_buf.as_mut_slice().as_mut_ptr(),
-                                byte_len,
-                            );
-                        }
+                        gbuf.readback_into(out_buf.as_mut_slice());
                         used_gpu = true;
                     }
                     #[cfg(has_webgpu)]
@@ -2707,9 +2730,9 @@ fn dispatch_kernel(
         TapeKernel::InlineSoftmax { size } => {
             match backend.dispatch_float(&FloatOp::Softmax { size: *size }, inputs, out_buf)? {
                 KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-                #[cfg(has_metal)]
-                KernelOutput::MetalBuffer(buf) => {
-                    return Ok(DispatchResult::MetalBuffer(buf));
+
+                KernelOutput::GpuBuffer(gbuf) => {
+                    return Ok(DispatchResult::GpuBuffer(gbuf));
                 }
                 #[cfg(has_webgpu)]
                 KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
@@ -2733,9 +2756,9 @@ fn dispatch_kernel(
                 out_buf,
             )? {
                 KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-                #[cfg(has_metal)]
-                KernelOutput::MetalBuffer(buf) => {
-                    return Ok(DispatchResult::MetalBuffer(buf));
+
+                KernelOutput::GpuBuffer(gbuf) => {
+                    return Ok(DispatchResult::GpuBuffer(gbuf));
                 }
                 #[cfg(has_webgpu)]
                 KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
@@ -3961,11 +3984,11 @@ impl EnumTape {
         let mut op_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
             std::collections::HashMap::new();
 
-        // Metal GPU buffer storage: when dispatch returns MetalBuffer, the
-        // result stays on the GPU until a downstream CPU op needs it. This
-        // avoids per-op flush+readback overhead by batching GPU work.
-        #[cfg(has_metal)]
-        let mut metal_bufs: Vec<Option<metal::Buffer>> = vec![None; max_idx];
+        // GPU buffer storage: when dispatch returns GpuBuffer, the result
+        // stays on the GPU until a downstream CPU op needs it. This avoids
+        // per-op flush+readback overhead by batching GPU work.
+        let mut gpu_bufs: Vec<Option<crate::backend::GpuBuffer>> =
+            (0..max_idx).map(|_| None).collect();
 
         let evict = self.checkpoint_enabled;
         let mut live_counts: Vec<u32> = if evict {
@@ -4060,34 +4083,112 @@ impl EnumTape {
             // flush the GPU command queue and copy data into the CPU
             // OutputBuffer. This happens once per buffer, not per-op —
             // subsequent reads of the same buffer hit the CPU copy.
-            #[cfg(has_metal)]
-            {
+            // Check if any input is a GPU buffer.
+            let has_gpu_inputs = instr.input_indices.iter().any(|&idx| {
+                let i = idx as usize;
+                i < gpu_bufs.len() && gpu_bufs[i].is_some()
+            });
+
+            // GPU-chainable ops: if we have GPU inputs and the op supports
+            // GPU chaining, build GpuInput slices and dispatch via the
+            // chained path. The buffer stays on GPU — no readback.
+            if has_gpu_inputs && instr.kernel.gpu_chainable() {
+                // Build GpuInput slices using raw pointers for bufs access
+                // (same zero-copy pattern as input_refs below). This avoids
+                // borrow conflicts with the mutable out_buf and gpu_bufs.
+                let bufs_ptr = bufs.as_mut_ptr();
+                let bufs_len = bufs.len();
                 let backend_ref = tape_ctx.backend.resolve();
-                let mut need_flush = false;
-                for &idx in &instr.input_indices {
-                    let i = idx as usize;
-                    if i < metal_bufs.len() && metal_bufs[i].is_some() {
-                        need_flush = true;
-                        break;
+
+                let gpu_inputs: SmallVec<[crate::backend::GpuInput<'_>; 4]> = instr
+                    .input_indices
+                    .iter()
+                    .map(|&idx| {
+                        let i = idx as usize;
+                        if i < gpu_bufs.len() {
+                            if let Some(ref gb) = gpu_bufs[i] {
+                                return crate::backend::GpuInput::Gpu(gb);
+                            }
+                        }
+                        // SAFETY: output_idx != any input_idx in a valid DAG.
+                        let cpu_slice = if i < bufs_len {
+                            let buf = unsafe { &*bufs_ptr.add(i) };
+                            if !buf.is_empty() {
+                                buf.as_slice()
+                            } else {
+                                arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
+                            }
+                        } else {
+                            arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
+                        };
+                        crate::backend::GpuInput::Cpu(cpu_slice)
+                    })
+                    .collect();
+
+                // SAFETY: output_idx != any input_idx (DAG invariant).
+                let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
+                out_buf.clear();
+
+                let chained_result = if let TapeKernel::InlineMatMul { k, n, .. } = &instr.kernel {
+                    let baked_k = *k as usize;
+                    let baked_n = *n as usize;
+                    let actual_m = if baked_k > 0 {
+                        gpu_inputs[0].byte_len() / (baked_k * 4)
+                    } else {
+                        0
+                    };
+                    if actual_m > 0 {
+                        backend_ref.dispatch_matmul_chained(
+                            &gpu_inputs,
+                            actual_m,
+                            baked_k,
+                            baked_n,
+                            out_buf,
+                        )?
+                    } else {
+                        crate::backend::KernelOutput::Skipped
+                    }
+                } else if let Some(float_op) = instr.kernel.as_float_op() {
+                    backend_ref.dispatch_float_chained(&float_op, &gpu_inputs, out_buf)?
+                } else {
+                    crate::backend::KernelOutput::Skipped
+                };
+
+                // Drop borrows before modifying gpu_bufs.
+                drop(gpu_inputs);
+
+                match chained_result {
+                    crate::backend::KernelOutput::GpuBuffer(gbuf) => {
+                        if out_idx < gpu_bufs.len() {
+                            gpu_bufs[out_idx] = Some(gbuf);
+                        }
+                        continue;
+                    }
+                    crate::backend::KernelOutput::Bytes => {
+                        if out_idx < gpu_bufs.len() {
+                            gpu_bufs[out_idx] = None;
+                        }
+                        continue;
+                    }
+                    crate::backend::KernelOutput::Skipped => {}
+                    #[cfg(has_webgpu)]
+                    crate::backend::KernelOutput::WgpuDeferred => {
+                        continue;
                     }
                 }
-                if need_flush {
-                    backend_ref.flush();
-                    for &idx in &instr.input_indices {
-                        let i = idx as usize;
-                        if i < metal_bufs.len() {
-                            if let Some(mbuf) = metal_bufs[i].take() {
-                                let byte_len = mbuf.length() as usize;
-                                bufs[i].resize(byte_len, 0);
-                                let src = mbuf.contents() as *const u8;
-                                unsafe {
-                                    std::ptr::copy_nonoverlapping(
-                                        src,
-                                        bufs[i].as_mut_slice().as_mut_ptr(),
-                                        byte_len,
-                                    );
-                                }
-                            }
+            }
+
+            // CPU path: readback any GPU inputs before building &[u8] refs.
+            if has_gpu_inputs {
+                let backend_ref = tape_ctx.backend.resolve();
+                backend_ref.flush();
+                for &idx in &instr.input_indices {
+                    let i = idx as usize;
+                    if i < gpu_bufs.len() {
+                        if let Some(gbuf) = gpu_bufs[i].take() {
+                            let byte_len = gbuf.byte_len();
+                            bufs[i].resize(byte_len, 0);
+                            gbuf.readback_into(bufs[i].as_mut_slice());
                         }
                     }
                 }
@@ -4179,10 +4280,9 @@ impl EnumTape {
             // array for deferred readback. The GPU command buffer is NOT flushed
             // here — multiple ops accumulate on the GPU, and flush happens lazily
             // when a downstream CPU op needs the data.
-            #[cfg(has_metal)]
-            if let DispatchResult::MetalBuffer(buf) = result {
-                if out_idx < metal_bufs.len() {
-                    metal_bufs[out_idx] = Some(buf);
+            if let DispatchResult::GpuBuffer(gbuf) = result {
+                if out_idx < gpu_bufs.len() {
+                    gpu_bufs[out_idx] = Some(gbuf);
                 }
             }
 
