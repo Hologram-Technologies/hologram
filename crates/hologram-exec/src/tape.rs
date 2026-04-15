@@ -812,8 +812,51 @@ fn dispatch_kernel_gpu(
         return Ok(crate::backend::KernelOutput::Skipped);
     }
 
-    // Conv2d: extract params and dispatch.
-    if let TapeKernel::InlineConv2d {
+    // Conv2d (f32 and Q4 LUT4): extract params and dispatch via im2col + SGEMM.
+    // On macOS with Accelerate, Conv2dLut4 inputs are already f32.
+    let conv_params = match kernel {
+        TapeKernel::InlineConv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        }
+        | TapeKernel::InlineConv2dLut4 {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+            ..
+        } => Some((
+            *kernel_h,
+            *kernel_w,
+            *stride_h,
+            *stride_w,
+            *pad_h,
+            *pad_w,
+            *dilation_h,
+            *dilation_w,
+            *group,
+            *input_h,
+            *input_w,
+        )),
+        _ => None,
+    };
+    if let Some((
         kernel_h,
         kernel_w,
         stride_h,
@@ -825,12 +868,12 @@ fn dispatch_kernel_gpu(
         group,
         input_h,
         input_w,
-    } = kernel
+    )) = conv_params
     {
         if inputs.len() >= 2 {
-            let kh = *kernel_h as usize;
-            let kw = *kernel_w as usize;
-            let g = (*group).max(1) as usize;
+            let kh = kernel_h as usize;
+            let kw = kernel_w as usize;
+            let g = group.max(1) as usize;
             let w_floats = inputs[1].byte_len() / 4;
             let d_floats = inputs[0].byte_len() / 4;
 
@@ -851,8 +894,8 @@ fn dispatch_kernel_gpu(
                             (0, 0, 0, 0)
                         }
                     } else {
-                        let bh = *input_h as usize;
-                        let bw = *input_w as usize;
+                        let bh = input_h as usize;
+                        let bw = input_w as usize;
                         if bh > 0 && bw > 0 && d_floats.is_multiple_of(bh * bw) {
                             let n_ic = d_floats / (bh * bw);
                             if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
@@ -885,12 +928,12 @@ fn dispatch_kernel_gpu(
                         oc,
                         kh,
                         kw,
-                        pad_h: *pad_h as usize,
-                        pad_w: *pad_w as usize,
-                        stride_h: (*stride_h).max(1) as usize,
-                        stride_w: (*stride_w).max(1) as usize,
-                        dil_h: (*dilation_h).max(1) as usize,
-                        dil_w: (*dilation_w).max(1) as usize,
+                        pad_h: pad_h as usize,
+                        pad_w: pad_w as usize,
+                        stride_h: stride_h.max(1) as usize,
+                        stride_w: stride_w.max(1) as usize,
+                        dil_h: dilation_h.max(1) as usize,
+                        dil_w: dilation_w.max(1) as usize,
                     };
                     return backend.dispatch_conv2d_chained(inputs, &params, out_buf);
                 }
@@ -4216,7 +4259,9 @@ impl EnumTape {
                 || instr.kernel.as_float_op().is_some()
                 || matches!(
                     instr.kernel,
-                    TapeKernel::InlineMatMul { .. } | TapeKernel::InlineConv2d { .. }
+                    TapeKernel::InlineMatMul { .. }
+                        | TapeKernel::InlineConv2d { .. }
+                        | TapeKernel::InlineConv2dLut4 { .. }
                 );
             if try_gpu {
                 let bufs_ptr = bufs.as_mut_ptr();
