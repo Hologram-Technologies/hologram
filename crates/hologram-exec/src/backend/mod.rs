@@ -311,6 +311,30 @@ pub trait ComputeBackend: Send + Sync {
         Ok(KernelOutput::Skipped)
     }
 
+    /// Dispatch a slice (contiguous sub-range copy) on GPU.
+    ///
+    /// Default: returns Skipped. Metal backend uses slice_copy kernel.
+    fn dispatch_slice_chained(
+        &self,
+        _input: &GpuInput<'_>,
+        _src_offset_floats: usize,
+        _count_floats: usize,
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        Ok(KernelOutput::Skipped)
+    }
+
+    /// Dispatch a concat (combine two buffers) on GPU.
+    ///
+    /// Default: returns Skipped. Metal backend uses concat_copy kernel.
+    fn dispatch_concat_chained(
+        &self,
+        _inputs: &[GpuInput<'_>],
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        Ok(KernelOutput::Skipped)
+    }
+
     /// Dispatch a 4D transpose with GPU-chained inputs.
     ///
     /// Default: returns Skipped. Metal backend overrides with transpose_4d kernel.
@@ -507,6 +531,23 @@ impl ComputeBackend for CachedMetalBackend {
     ) -> ExecResult<KernelOutput> {
         self.0
             .dispatch_transpose_chained(input, shape, perm, out_buf)
+    }
+    fn dispatch_slice_chained(
+        &self,
+        input: &GpuInput<'_>,
+        src_offset_floats: usize,
+        count_floats: usize,
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0
+            .dispatch_slice_chained(input, src_offset_floats, count_floats, out_buf)
+    }
+    fn dispatch_concat_chained(
+        &self,
+        inputs: &[GpuInput<'_>],
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0.dispatch_concat_chained(inputs, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"

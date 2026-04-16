@@ -1784,6 +1784,112 @@ impl ComputeBackend for MetalBackend {
         Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)))
     }
 
+    fn dispatch_slice_chained(
+        &self,
+        input: &super::GpuInput<'_>,
+        src_offset_floats: usize,
+        count_floats: usize,
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<super::KernelOutput> {
+        let pipeline = match self.pipelines.get("slice_copy") {
+            Some(p) => p,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+        let input_buf = self.resolve_input(input);
+        let out_metal = self.device.new_buffer(
+            (count_floats * 4) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let count = count_floats as u32;
+        let offset = src_offset_floats as u32;
+        let make_u32 = |v: u32| -> metal::Buffer {
+            self.device.new_buffer_with_data(
+                &v as *const u32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            )
+        };
+        let pending = self.get_or_create_cmd_buf();
+        let cmd = pending.as_ref().expect("Metal cmd buf for slice");
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(pipeline);
+        enc.set_buffer(0, Some(&input_buf), 0);
+        enc.set_buffer(1, Some(&out_metal), 0);
+        enc.set_buffer(2, Some(&make_u32(count)), 0);
+        enc.set_buffer(3, Some(&make_u32(offset)), 0);
+        let tg = metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+        enc.dispatch_threads(metal::MTLSize::new(count_floats as u64, 1, 1), tg);
+        enc.end_encoding();
+        drop(pending);
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+            out_metal,
+        )))
+    }
+
+    fn dispatch_concat_chained(
+        &self,
+        inputs: &[super::GpuInput<'_>],
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<super::KernelOutput> {
+        let pipeline = match self.pipelines.get("concat_copy") {
+            Some(p) => p,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+        if inputs.len() < 2 {
+            return Ok(super::KernelOutput::Skipped);
+        }
+        let buf_a = self.resolve_input(&inputs[0]);
+        let buf_b = self.resolve_input(&inputs[1]);
+        let len_a = buf_a.length() as usize / 4;
+        let len_b = buf_b.length() as usize / 4;
+        let total = len_a + len_b;
+        let out_metal = self
+            .device
+            .new_buffer((total * 4) as u64, MTLResourceOptions::StorageModeShared);
+        let make_u32 = |v: u32| -> metal::Buffer {
+            self.device.new_buffer_with_data(
+                &v as *const u32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            )
+        };
+        // Copy A at offset 0.
+        {
+            let pending = self.get_or_create_cmd_buf();
+            let cmd = pending.as_ref().expect("Metal cmd buf for concat A");
+            let enc = cmd.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(pipeline);
+            enc.set_buffer(0, Some(&buf_a), 0);
+            enc.set_buffer(1, Some(&out_metal), 0);
+            enc.set_buffer(2, Some(&make_u32(len_a as u32)), 0);
+            enc.set_buffer(3, Some(&make_u32(0)), 0);
+            let tg =
+                metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+            enc.dispatch_threads(metal::MTLSize::new(len_a as u64, 1, 1), tg);
+            enc.end_encoding();
+            drop(pending);
+        }
+        // Copy B at offset len_a.
+        {
+            let pending = self.get_or_create_cmd_buf();
+            let cmd = pending.as_ref().expect("Metal cmd buf for concat B");
+            let enc = cmd.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(pipeline);
+            enc.set_buffer(0, Some(&buf_b), 0);
+            enc.set_buffer(1, Some(&out_metal), 0);
+            enc.set_buffer(2, Some(&make_u32(len_b as u32)), 0);
+            enc.set_buffer(3, Some(&make_u32(len_a as u32)), 0);
+            let tg =
+                metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+            enc.dispatch_threads(metal::MTLSize::new(len_b as u64, 1, 1), tg);
+            enc.end_encoding();
+            drop(pending);
+        }
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+            out_metal,
+        )))
+    }
+
     fn dispatch_transpose_chained(
         &self,
         input: &super::GpuInput<'_>,

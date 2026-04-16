@@ -995,6 +995,59 @@ fn dispatch_kernel_gpu(
         return backend.dispatch_float_chained(&float_op, inputs, out_buf);
     }
 
+    // Gemm: MatMul with alpha/beta scaling. Route as MatMul (alpha/beta
+    // applied as post-processing if needed, but most SD UNet Gemms have
+    // alpha=1, beta=0 which is a pure MatMul).
+    if let TapeKernel::InlineGemm { m, k, n, .. } = kernel {
+        let baked_m = *m as usize;
+        let baked_k = *k as usize;
+        let baked_n = *n as usize;
+        if baked_k > 0 && baked_n > 0 && !inputs.is_empty() {
+            let actual_m = if baked_m > 0 {
+                baked_m
+            } else {
+                inputs[0].byte_len() / (baked_k * 4)
+            };
+            if actual_m > 0 {
+                return backend
+                    .dispatch_matmul_chained(inputs, actual_m, baked_k, baked_n, out_buf);
+            }
+        }
+    }
+
+    // Slice: contiguous sub-range copy.
+    if let TapeKernel::InlineSlice {
+        start,
+        end,
+        axis_size,
+        ..
+    } = kernel
+    {
+        if !inputs.is_empty() {
+            let total_floats = inputs[0].byte_len() / 4;
+            let s = *start as usize;
+            let e = *end as usize;
+            let ax_size = *axis_size as usize;
+
+            // For contiguous slicing (axis is the outermost varying axis):
+            // offset = start * stride, count = (end - start) * stride
+            // where stride = total_floats / axis_size.
+            if ax_size > 0 && total_floats > 0 && total_floats.is_multiple_of(ax_size) {
+                let stride = total_floats / ax_size;
+                let src_offset = s * stride;
+                let count = (e - s) * stride;
+                if count > 0 && src_offset + count <= total_floats {
+                    return backend.dispatch_slice_chained(&inputs[0], src_offset, count, out_buf);
+                }
+            }
+        }
+    }
+
+    // Concat: combine two buffers into one output.
+    if matches!(kernel, TapeKernel::InlineConcat { .. }) && inputs.len() >= 2 {
+        return backend.dispatch_concat_chained(inputs, out_buf);
+    }
+
     // Elementwise and other float ops.
     if let Some(float_op) = kernel.as_float_op() {
         return backend.dispatch_float_chained(&float_op, inputs, out_buf);
@@ -4318,6 +4371,7 @@ impl EnumTape {
                         | TapeKernel::InlineInstanceNorm { .. }
                         | TapeKernel::InlineLayerNorm { .. }
                         | TapeKernel::InlineTranspose { .. }
+                        | TapeKernel::InlineGemm { .. }
                         | TapeKernel::InlineReshape
                         | TapeKernel::InlineSlice { .. }
                         | TapeKernel::InlineConcat { .. }
