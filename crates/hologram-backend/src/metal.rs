@@ -445,6 +445,162 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
             }
         }
 
+        // Transpose: 4D permutation.
+        if let FloatOp::Transpose { perm, ndim } = op {
+            if let Some(pipeline) = self.pipelines.get("transpose_4d") {
+                if !inputs.is_empty() {
+                    let n = (*ndim as usize).min(4);
+                    let input_buf = inputs[0];
+                    let n_floats = input_buf.length() as usize / 4;
+                    let out = self
+                        .device
+                        .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+
+                    // Shape from params (u32s[0..ndim]).
+                    let shape = [
+                        _params.u32s.first().copied().unwrap_or(1),
+                        _params.u32s.get(1).copied().unwrap_or(1),
+                        _params.u32s.get(2).copied().unwrap_or(1),
+                        _params.u32s.get(3).copied().unwrap_or(1),
+                    ];
+                    let perm_u32 = [
+                        perm[0] as u32,
+                        if n > 1 { perm[1] as u32 } else { 1 },
+                        if n > 2 { perm[2] as u32 } else { 2 },
+                        if n > 3 { perm[3] as u32 } else { 3 },
+                    ];
+
+                    let shape_buf = self.device.new_buffer_with_data(
+                        shape.as_ptr() as *const _,
+                        16,
+                        MTLResourceOptions::StorageModeShared,
+                    );
+                    let perm_buf = self.device.new_buffer_with_data(
+                        perm_u32.as_ptr() as *const _,
+                        16,
+                        MTLResourceOptions::StorageModeShared,
+                    );
+
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for transpose");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(input_buf), 0);
+                    enc.set_buffer(1, Some(&out), 0);
+                    enc.set_buffer(2, Some(&self.u32_buf(n_floats as u32)), 0);
+                    enc.set_buffer(3, Some(&shape_buf), 0);
+                    enc.set_buffer(4, Some(&perm_buf), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(n_floats as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // Slice: contiguous sub-range copy.
+        if let FloatOp::Slice {
+            start,
+            end,
+            axis_size,
+            ..
+        } = op
+        {
+            if let Some(pipeline) = self.pipelines.get("slice_copy") {
+                if !inputs.is_empty() {
+                    let s = *start as usize;
+                    let e = *end as usize;
+                    let ax = *axis_size as usize;
+                    let total_floats = inputs[0].length() as usize / 4;
+                    let stride = if ax > 0 { total_floats / ax } else { 1 };
+                    let src_offset = s * stride;
+                    let count = (e - s) * stride;
+
+                    let out = self
+                        .device
+                        .new_buffer((count * 4) as u64, MTLResourceOptions::StorageModeShared);
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for slice");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(inputs[0]), 0);
+                    enc.set_buffer(1, Some(&out), 0);
+                    enc.set_buffer(2, Some(&self.u32_buf(count as u32)), 0);
+                    enc.set_buffer(3, Some(&self.u32_buf(src_offset as u32)), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(count as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // Concat: combine two inputs.
+        if matches!(op, FloatOp::Concat { .. }) {
+            if let Some(pipeline) = self.pipelines.get("concat_copy") {
+                if inputs.len() >= 2 {
+                    let len_a = inputs[0].length() as usize / 4;
+                    let len_b = inputs[1].length() as usize / 4;
+                    let total = len_a + len_b;
+                    let out = self
+                        .device
+                        .new_buffer((total * 4) as u64, MTLResourceOptions::StorageModeShared);
+                    // Copy A at offset 0.
+                    {
+                        let pending = self.get_or_create_cmd_buf();
+                        let cmd = pending.as_ref().expect("Metal cmd buf for concat A");
+                        let enc = cmd.new_compute_command_encoder();
+                        enc.set_compute_pipeline_state(pipeline);
+                        enc.set_buffer(0, Some(inputs[0]), 0);
+                        enc.set_buffer(1, Some(&out), 0);
+                        enc.set_buffer(2, Some(&self.u32_buf(len_a as u32)), 0);
+                        enc.set_buffer(3, Some(&self.u32_buf(0)), 0);
+                        let tg = MTLSize::new(
+                            pipeline.max_total_threads_per_threadgroup().min(256),
+                            1,
+                            1,
+                        );
+                        enc.dispatch_threads(MTLSize::new(len_a as u64, 1, 1), tg);
+                        enc.end_encoding();
+                        drop(pending);
+                    }
+                    // Copy B at offset len_a.
+                    {
+                        let pending = self.get_or_create_cmd_buf();
+                        let cmd = pending.as_ref().expect("Metal cmd buf for concat B");
+                        let enc = cmd.new_compute_command_encoder();
+                        enc.set_compute_pipeline_state(pipeline);
+                        enc.set_buffer(0, Some(inputs[1]), 0);
+                        enc.set_buffer(1, Some(&out), 0);
+                        enc.set_buffer(2, Some(&self.u32_buf(len_b as u32)), 0);
+                        enc.set_buffer(3, Some(&self.u32_buf(len_a as u32)), 0);
+                        let tg = MTLSize::new(
+                            pipeline.max_total_threads_per_threadgroup().min(256),
+                            1,
+                            1,
+                        );
+                        enc.dispatch_threads(MTLSize::new(len_b as u64, 1, 1), tg);
+                        enc.end_encoding();
+                        drop(pending);
+                    }
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // Reshape: zero-copy alias.
+        if matches!(op, FloatOp::Reshape) && !inputs.is_empty() {
+            *output = inputs[0].clone();
+            return Ok(output.length() as usize);
+        }
+
         Err(BackendError::Unsupported(format!(
             "Metal dispatch for {op:?} not yet implemented"
         )))
