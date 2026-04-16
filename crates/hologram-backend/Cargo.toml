@@ -20,6 +20,8 @@ objc = "0.2"
 
 [features]
 default = []
+# Metal backend — auto-detected on macOS/iOS, explicit for cross-compile
+metal-backend = []
 # WebGPU backend (browser + wgpu)
 webgpu = ["dep:wgpu"]
 # CUDA backend (NVIDIA GPU) — low priority

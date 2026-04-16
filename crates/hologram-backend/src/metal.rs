@@ -328,8 +328,123 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
             }
         }
 
-        // Softmax, LayerNorm, InstanceNorm, Transpose, etc. will be added
-        // as we migrate from hologram-exec. For now, return Unsupported.
+        // Softmax: row-wise normalization.
+        if let FloatOp::Softmax { size } = op {
+            if let Some(pipeline) = self.pipelines.get("softmax") {
+                if !inputs.is_empty() && *size > 0 {
+                    let input_buf = inputs[0];
+                    let n_floats = (input_buf.length() as usize) / 4;
+                    let out = self
+                        .device
+                        .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for softmax");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(input_buf), 0);
+                    enc.set_buffer(1, Some(&out), 0);
+                    enc.set_buffer(2, Some(&self.u32_buf(n_floats as u32)), 0);
+                    enc.set_buffer(3, Some(&self.u32_buf(*size)), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(n_floats as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // RmsNorm: input + weight → normalized output.
+        if let FloatOp::RmsNorm { size, epsilon } = op {
+            if let Some(pipeline) = self.pipelines.get("rms_norm") {
+                if inputs.len() >= 2 && *size > 0 {
+                    let total = (inputs[0].length() as usize / 4) as u32;
+                    let out = self
+                        .device
+                        .new_buffer(inputs[0].length(), MTLResourceOptions::StorageModeShared);
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for rmsnorm");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(inputs[0]), 0);
+                    enc.set_buffer(1, Some(inputs[1]), 0);
+                    enc.set_buffer(2, Some(&out), 0);
+                    enc.set_buffer(3, Some(&self.u32_buf(total)), 0);
+                    enc.set_buffer(4, Some(&self.u32_buf(*size)), 0);
+                    enc.set_buffer(5, Some(&self.f32_buf(f32::from_bits(*epsilon))), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(total as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // LayerNorm: input + weight + bias → normalized output.
+        if let FloatOp::LayerNorm { size, epsilon } = op {
+            if let Some(pipeline) = self.pipelines.get("layer_norm") {
+                if inputs.len() >= 3 && *size > 0 {
+                    let total = (inputs[0].length() as usize / 4) as u32;
+                    let out = self
+                        .device
+                        .new_buffer(inputs[0].length(), MTLResourceOptions::StorageModeShared);
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for layernorm");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(inputs[0]), 0);
+                    enc.set_buffer(1, Some(inputs[1]), 0);
+                    enc.set_buffer(2, Some(inputs[2]), 0);
+                    enc.set_buffer(3, Some(&out), 0);
+                    enc.set_buffer(4, Some(&self.u32_buf(total)), 0);
+                    enc.set_buffer(5, Some(&self.u32_buf(*size)), 0);
+                    enc.set_buffer(6, Some(&self.f32_buf(f32::from_bits(*epsilon))), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(total as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
+        // InstanceNorm: input + scale + bias → normalized output.
+        if let FloatOp::InstanceNorm { size, epsilon } = op {
+            if let Some(pipeline) = self.pipelines.get("instance_norm") {
+                if inputs.len() >= 3 && *size > 0 {
+                    let total = (inputs[0].length() as usize / 4) as u32;
+                    let out = self
+                        .device
+                        .new_buffer(inputs[0].length(), MTLResourceOptions::StorageModeShared);
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for instancenorm");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(inputs[0]), 0);
+                    enc.set_buffer(1, Some(inputs[1]), 0);
+                    enc.set_buffer(2, Some(inputs[2]), 0);
+                    enc.set_buffer(3, Some(&out), 0);
+                    enc.set_buffer(4, Some(&self.u32_buf(total)), 0);
+                    enc.set_buffer(5, Some(&self.u32_buf(*size)), 0);
+                    enc.set_buffer(6, Some(&self.f32_buf(f32::from_bits(*epsilon))), 0);
+                    let tg =
+                        MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+                    enc.dispatch_threads(MTLSize::new(total as u64, 1, 1), tg);
+                    enc.end_encoding();
+                    drop(pending);
+                    *output = out;
+                    return Ok(output.length() as usize);
+                }
+            }
+        }
+
         Err(BackendError::Unsupported(format!(
             "Metal dispatch for {op:?} not yet implemented"
         )))
@@ -500,6 +615,81 @@ mod tests {
         let result_bytes = mem.download(&output);
         let result: &[f32] = bytemuck::cast_slice(&result_bytes);
         assert_eq!(result, &[0.0, 0.0, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn metal_matmul_dispatch() {
+        let mem = match MetalMemory::new() {
+            Some(m) => m,
+            None => return,
+        };
+        let backend = match MetalBackend::new() {
+            Some(b) => b,
+            None => return,
+        };
+        // 2x3 * 3x2 = 2x2
+        let a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let buf_a = mem.upload(bytemuck::cast_slice(&a));
+        let buf_b = mem.upload(bytemuck::cast_slice(&b));
+        let mut output = mem.alloc(0);
+
+        backend
+            .dispatch(
+                &FloatOp::MatMul { m: 2, k: 3, n: 2 },
+                &[&buf_a, &buf_b],
+                &mut output,
+                &KernelParams::default(),
+            )
+            .expect("matmul should succeed");
+        backend.flush();
+
+        let result_bytes = mem.download(&output);
+        let result: &[f32] = bytemuck::cast_slice(&result_bytes);
+        assert_eq!(result.len(), 4);
+        assert!(
+            (result[0] - 22.0).abs() < 0.5,
+            "C[0,0] should be ~22, got {}",
+            result[0]
+        );
+        assert!(
+            (result[3] - 64.0).abs() < 0.5,
+            "C[1,1] should be ~64, got {}",
+            result[3]
+        );
+    }
+
+    #[test]
+    fn metal_softmax_dispatch() {
+        let mem = match MetalMemory::new() {
+            Some(m) => m,
+            None => return,
+        };
+        let backend = match MetalBackend::new() {
+            Some(b) => b,
+            None => return,
+        };
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let input = mem.upload(bytemuck::cast_slice(&data));
+        let mut output = mem.alloc(0);
+
+        backend
+            .dispatch(
+                &FloatOp::Softmax { size: 3 },
+                &[&input],
+                &mut output,
+                &KernelParams::default(),
+            )
+            .expect("softmax should succeed");
+        backend.flush();
+
+        let result_bytes = mem.download(&output);
+        let result: &[f32] = bytemuck::cast_slice(&result_bytes);
+        let sum: f32 = result.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-4,
+            "softmax should sum to 1, got {sum}"
+        );
     }
 
     #[test]
