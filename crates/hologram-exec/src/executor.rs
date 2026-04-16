@@ -6,7 +6,7 @@
 //! This replaces the dual-path logic in `tape.rs::execute_direct` with
 //! a clean single-path loop.
 
-use hologram_backend::{ComputeBackend, ComputeMemory};
+use hologram_backend::{ComputeBackend, ComputeMemory, TensorBuffer};
 use smallvec::SmallVec;
 
 use crate::buffer::BufferArena;
@@ -37,20 +37,20 @@ where
         .max()
         .unwrap_or(0);
 
-    // Allocate device buffers for all instruction outputs.
-    let mut bufs: Vec<M::Buffer> = (0..num_slots).map(|_| memory.alloc(0)).collect();
+    // Allocate device buffers paired with shape metadata.
+    // Every buffer carries its shape so downstream ops can resolve dimensions.
+    let mut bufs: Vec<TensorBuffer<M::Buffer>> = (0..num_slots)
+        .map(|_| TensorBuffer::unshared(memory.alloc(0)))
+        .collect();
 
     // Upload constants and graph inputs from the arena to device memory.
-    // These are the initial values that feed into the first instructions.
     for instr in &tape.instructions {
         for &idx in &instr.input_indices {
             let i = idx as usize;
             if i < bufs.len() {
-                // Check if this input comes from the arena (constant or graph input)
-                // rather than from a previous instruction's output.
                 if let Ok(data) = arena.get(hologram_graph::NodeId::new(idx, 0)) {
                     if !data.is_empty() {
-                        bufs[i] = memory.upload(data);
+                        bufs[i] = TensorBuffer::unshared(memory.upload(data));
                     }
                 }
             }
@@ -61,16 +61,14 @@ where
     for instr in &tape.instructions {
         let out_idx = instr.output_idx as usize;
 
-        // SAFETY: output_idx != any input_idx in a valid DAG (enforced by
-        // the tape builder). Raw pointers avoid the borrow conflict between
-        // immutable input refs and mutable output.
+        // SAFETY: output_idx != any input_idx in a valid DAG.
         let bufs_ptr = bufs.as_mut_ptr();
         let input_refs: SmallVec<[&M::Buffer; 4]> = instr
             .input_indices
             .iter()
-            .map(|&idx| unsafe { &*bufs_ptr.add(idx as usize) })
+            .map(|&idx| unsafe { &(*bufs_ptr.add(idx as usize)).buffer })
             .collect();
-        let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
+        let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
 
         // Dispatch the kernel through the backend.
         let float_op = tape_kernel_to_float_op(&instr.kernel);
@@ -78,7 +76,7 @@ where
             let result = backend.dispatch(
                 &op,
                 &input_refs,
-                out_buf,
+                &mut out_tb.buffer,
                 &hologram_backend::KernelParams::default(),
             );
             if let Err(e) = result {
@@ -87,21 +85,21 @@ where
                     "backend dispatch failed, instruction skipped"
                 );
             }
+            // TODO: compute output shape from op + input shapes and store in out_tb.shape.
         }
 
         drop(input_refs);
     }
 
-    // Single flush at the end — commit all GPU work and wait.
+    // Single flush at the end.
     backend.flush();
 
     // Download all non-empty buffers to CPU.
-    // The caller identifies outputs by index.
     let outputs: Vec<Vec<u8>> = bufs
         .iter()
-        .map(|buf| {
-            if memory.byte_len(buf) > 0 {
-                memory.download(buf)
+        .map(|tb| {
+            if memory.byte_len(&tb.buffer) > 0 {
+                memory.download(&tb.buffer)
             } else {
                 Vec::new()
             }

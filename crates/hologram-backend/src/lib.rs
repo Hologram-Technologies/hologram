@@ -25,6 +25,43 @@ pub mod cuda;
 
 use hologram_core::op::FloatOp;
 
+/// A device buffer paired with its tensor shape.
+///
+/// Every buffer in the execution pipeline carries its shape so ops
+/// can resolve dimensions without heuristic inference from byte counts.
+/// Shape is empty for uninitialized or constant buffers.
+pub struct TensorBuffer<B> {
+    /// The device-native buffer.
+    pub buffer: B,
+    /// Tensor shape (e.g., [1, 320, 64, 64] for NCHW).
+    pub shape: smallvec::SmallVec<[usize; 4]>,
+}
+
+impl<B> TensorBuffer<B> {
+    /// Create a new TensorBuffer with a buffer and shape.
+    pub fn new(buffer: B, shape: smallvec::SmallVec<[usize; 4]>) -> Self {
+        Self { buffer, shape }
+    }
+
+    /// Create a TensorBuffer with no shape metadata.
+    pub fn unshared(buffer: B) -> Self {
+        Self {
+            buffer,
+            shape: smallvec::SmallVec::new(),
+        }
+    }
+
+    /// Number of dimensions.
+    pub fn ndim(&self) -> usize {
+        self.shape.len()
+    }
+
+    /// Total number of elements (product of shape dimensions).
+    pub fn num_elements(&self) -> usize {
+        self.shape.iter().product()
+    }
+}
+
 /// Error type for backend operations.
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
