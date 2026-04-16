@@ -945,6 +945,56 @@ fn dispatch_kernel_gpu(
         return Ok(crate::backend::KernelOutput::Skipped);
     }
 
+    // Transpose: pass shape + perm directly to backend.
+    if let TapeKernel::InlineTranspose {
+        perm,
+        input_shape,
+        ndim,
+    } = kernel
+    {
+        let n = *ndim as usize;
+        if (2..=4).contains(&n) && !inputs.is_empty() {
+            let shape_4d = [
+                input_shape[0],
+                if n > 1 { input_shape[1] } else { 1 },
+                if n > 2 { input_shape[2] } else { 1 },
+                if n > 3 { input_shape[3] } else { 1 },
+            ];
+            let perm_4d = [
+                perm[0] as u32,
+                if n > 1 { perm[1] as u32 } else { 1 },
+                if n > 2 { perm[2] as u32 } else { 2 },
+                if n > 3 { perm[3] as u32 } else { 3 },
+            ];
+            return backend.dispatch_transpose_chained(&inputs[0], shape_4d, perm_4d, out_buf);
+        }
+    }
+
+    // Reshape: GPU no-op — return the same buffer with zero-copy.
+    if matches!(kernel, TapeKernel::InlineReshape) {
+        if let Some(crate::backend::GpuInput::Gpu(gb)) = inputs.first() {
+            if let Some(cloned) = gb.try_clone() {
+                return Ok(crate::backend::KernelOutput::GpuBuffer(cloned));
+            }
+        }
+    }
+
+    // InstanceNorm + LayerNorm: route as FloatOps.
+    if let TapeKernel::InlineInstanceNorm { size, epsilon } = kernel {
+        let float_op = FloatOp::InstanceNorm {
+            size: *size,
+            epsilon: *epsilon,
+        };
+        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
+    }
+    if let TapeKernel::InlineLayerNorm { size, epsilon } = kernel {
+        let float_op = FloatOp::LayerNorm {
+            size: *size,
+            epsilon: *epsilon,
+        };
+        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
+    }
+
     // Elementwise and other float ops.
     if let Some(float_op) = kernel.as_float_op() {
         return backend.dispatch_float_chained(&float_op, inputs, out_buf);
@@ -4265,6 +4315,12 @@ impl EnumTape {
                     TapeKernel::InlineMatMul { .. }
                         | TapeKernel::InlineConv2d { .. }
                         | TapeKernel::InlineConv2dLut4 { .. }
+                        | TapeKernel::InlineInstanceNorm { .. }
+                        | TapeKernel::InlineLayerNorm { .. }
+                        | TapeKernel::InlineTranspose { .. }
+                        | TapeKernel::InlineReshape
+                        | TapeKernel::InlineSlice { .. }
+                        | TapeKernel::InlineConcat { .. }
                 );
             if try_gpu {
                 let bufs_ptr = bufs.as_mut_ptr();
@@ -4525,6 +4581,31 @@ impl EnumTape {
 
         // Write all instruction output buffers back to arena so callers
         // (collect_outputs, tests) can access results by NodeId.
+        // Final GPU readback: flush and copy any remaining GPU buffers
+        // into the CPU bufs so the arena output loop below can access them.
+        {
+            let backend_ref = tape_ctx.backend.resolve();
+            let mut any_gpu = false;
+            for gb in gpu_bufs.iter() {
+                if gb.is_some() {
+                    any_gpu = true;
+                    break;
+                }
+            }
+            if any_gpu {
+                backend_ref.flush();
+                for (i, slot) in gpu_bufs.iter_mut().enumerate() {
+                    if let Some(gbuf) = slot.take() {
+                        let byte_len = gbuf.byte_len();
+                        if i < bufs.len() {
+                            bufs[i].resize(byte_len, 0);
+                            gbuf.readback_into(bufs[i].as_mut_slice());
+                        }
+                    }
+                }
+            }
+        }
+
         for instr in &self.instructions {
             let idx = instr.output_idx as usize;
             if idx < bufs.len() {

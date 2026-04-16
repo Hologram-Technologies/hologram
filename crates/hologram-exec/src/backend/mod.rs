@@ -44,6 +44,17 @@ impl GpuBuffer {
         }
     }
 
+    /// Clone the GPU buffer reference (reference-counted, zero-copy).
+    /// Used for Reshape which reinterprets the same data with a new shape.
+    pub fn try_clone(&self) -> Option<Self> {
+        match self {
+            #[cfg(has_metal)]
+            GpuBuffer::Metal(buf) => Some(GpuBuffer::Metal(buf.clone())),
+            #[cfg(has_webgpu)]
+            GpuBuffer::Wgpu(_) => None, // WebGPU buffers can't be cheaply cloned.
+        }
+    }
+
     /// Read GPU data back to CPU. Caller must flush the backend first.
     ///
     /// For Metal (unified memory): zero-copy read from shared pointer.
@@ -300,6 +311,19 @@ pub trait ComputeBackend: Send + Sync {
         Ok(KernelOutput::Skipped)
     }
 
+    /// Dispatch a 4D transpose with GPU-chained inputs.
+    ///
+    /// Default: returns Skipped. Metal backend overrides with transpose_4d kernel.
+    fn dispatch_transpose_chained(
+        &self,
+        _input: &GpuInput<'_>,
+        _shape: [u32; 4],
+        _perm: [u32; 4],
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        Ok(KernelOutput::Skipped)
+    }
+
     /// Backend name for diagnostics and logging.
     fn name(&self) -> &'static str;
 
@@ -473,6 +497,16 @@ impl ComputeBackend for CachedMetalBackend {
         out_buf: &mut OutputBuffer,
     ) -> ExecResult<KernelOutput> {
         self.0.dispatch_conv2d_chained(inputs, params, out_buf)
+    }
+    fn dispatch_transpose_chained(
+        &self,
+        input: &GpuInput<'_>,
+        shape: [u32; 4],
+        perm: [u32; 4],
+        out_buf: &mut OutputBuffer,
+    ) -> ExecResult<KernelOutput> {
+        self.0
+            .dispatch_transpose_chained(input, shape, perm, out_buf)
     }
     fn name(&self) -> &'static str {
         "metal"

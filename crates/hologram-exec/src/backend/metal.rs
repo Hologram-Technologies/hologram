@@ -1562,8 +1562,152 @@ impl ComputeBackend for MetalBackend {
         inputs: &[super::GpuInput<'_>],
         _out_buf: &mut OutputBuffer,
     ) -> ExecResult<super::KernelOutput> {
-        // Softmax/RmsNorm/MatMul have dedicated dispatch paths — skip chaining
-        // for now and let them fall back to the default (readback + dispatch_float).
+        // Transpose: 4D permutation on GPU.
+        if let FloatOp::Transpose { perm, .. } = op {
+            if let Some(pipeline) = self.pipelines.get("transpose_4d") {
+                let input_buf = self.resolve_input(&inputs[0]);
+                let n_floats = input_buf.length() as usize / 4;
+                let out_buf_metal = self
+                    .device
+                    .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+                // Extract shape from input metadata or infer from perm + total.
+                // For now, pass perm and total — shape needs to be computed
+                // from the input buffer size and the perm axes.
+                // Use 4D: pad shape to 4 dims.
+                let total = n_floats as u32;
+                let perm_u32 = [
+                    perm.first().copied().unwrap_or(0) as u32,
+                    perm.get(1).copied().unwrap_or(1) as u32,
+                    perm.get(2).copied().unwrap_or(2) as u32,
+                    perm.get(3).copied().unwrap_or(3) as u32,
+                ];
+                // We need the input shape to decompose indices. Since we don't
+                // have it here, fall back to the readback path for now.
+                // TODO: pass shape metadata through GpuInput or dispatch params.
+                let _ = (pipeline, out_buf_metal, total, perm_u32);
+            }
+        }
+
+        // InstanceNorm: per-channel normalization.
+        if let FloatOp::InstanceNorm { size, epsilon } = op {
+            if let Some(pipeline) = self.pipelines.get("instance_norm") {
+                if inputs.len() >= 3 {
+                    let input_buf = self.resolve_input(&inputs[0]);
+                    let scale_buf = self.resolve_input(&inputs[1]);
+                    let bias_buf = self.resolve_input(&inputs[2]);
+                    let total = (input_buf.length() as usize / 4) as u32;
+                    let spatial = *size;
+                    let eps = f32::from_bits(*epsilon);
+
+                    let out_metal = self
+                        .device
+                        .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+
+                    let make_u32 = |v: u32| -> metal::Buffer {
+                        self.device.new_buffer_with_data(
+                            &v as *const u32 as *const _,
+                            4,
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    };
+                    let make_f32 = |v: f32| -> metal::Buffer {
+                        self.device.new_buffer_with_data(
+                            &v as *const f32 as *const _,
+                            4,
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    };
+
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for instance_norm");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(&input_buf), 0);
+                    enc.set_buffer(1, Some(&scale_buf), 0);
+                    enc.set_buffer(2, Some(&bias_buf), 0);
+                    enc.set_buffer(3, Some(&out_metal), 0);
+                    enc.set_buffer(4, Some(&make_u32(total)), 0);
+                    enc.set_buffer(5, Some(&make_u32(spatial)), 0);
+                    enc.set_buffer(6, Some(&make_f32(eps)), 0);
+
+                    let tg = metal::MTLSize::new(
+                        pipeline.max_total_threads_per_threadgroup().min(256),
+                        1,
+                        1,
+                    );
+                    let grid = metal::MTLSize::new(total as u64, 1, 1);
+                    enc.dispatch_threads(grid, tg);
+                    enc.end_encoding();
+                    drop(pending);
+
+                    return Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+                        out_metal,
+                    )));
+                }
+            }
+        }
+
+        // LayerNorm: mean + variance normalization.
+        if let FloatOp::LayerNorm { size, epsilon } = op {
+            if let Some(pipeline) = self.pipelines.get("layer_norm") {
+                if inputs.len() >= 3 {
+                    let input_buf = self.resolve_input(&inputs[0]);
+                    let weight_buf = self.resolve_input(&inputs[1]);
+                    let bias_buf = self.resolve_input(&inputs[2]);
+                    let total = (input_buf.length() as usize / 4) as u32;
+                    let row_size = *size;
+                    let eps = f32::from_bits(*epsilon);
+
+                    let out_metal = self
+                        .device
+                        .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+
+                    let make_u32 = |v: u32| -> metal::Buffer {
+                        self.device.new_buffer_with_data(
+                            &v as *const u32 as *const _,
+                            4,
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    };
+                    let make_f32 = |v: f32| -> metal::Buffer {
+                        self.device.new_buffer_with_data(
+                            &v as *const f32 as *const _,
+                            4,
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    };
+
+                    let pending = self.get_or_create_cmd_buf();
+                    let cmd = pending.as_ref().expect("Metal cmd buf for layer_norm");
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipeline);
+                    enc.set_buffer(0, Some(&input_buf), 0);
+                    enc.set_buffer(1, Some(&weight_buf), 0);
+                    enc.set_buffer(2, Some(&bias_buf), 0);
+                    enc.set_buffer(3, Some(&out_metal), 0);
+                    enc.set_buffer(4, Some(&make_u32(total)), 0);
+                    enc.set_buffer(5, Some(&make_u32(row_size)), 0);
+                    enc.set_buffer(6, Some(&make_f32(eps)), 0);
+
+                    let tg = metal::MTLSize::new(
+                        pipeline.max_total_threads_per_threadgroup().min(256),
+                        1,
+                        1,
+                    );
+                    let grid = metal::MTLSize::new(total as u64, 1, 1);
+                    enc.dispatch_threads(grid, tg);
+                    enc.end_encoding();
+                    drop(pending);
+
+                    return Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+                        out_metal,
+                    )));
+                }
+            }
+        }
+
+        // Softmax/RmsNorm/MatMul have dedicated dispatch paths — use
+        // readback-then-dispatch for now.
         if matches!(
             op,
             FloatOp::Softmax { .. } | FloatOp::RmsNorm { .. } | FloatOp::MatMul { .. }
@@ -1586,9 +1730,11 @@ impl ComputeBackend for MetalBackend {
             return self.dispatch_float(op, &refs, _out_buf);
         }
 
-        // Skip Metal for small buffers.
+        // Skip Metal for small CPU-origin buffers. When inputs are already
+        // on GPU, always dispatch on GPU to avoid readback overhead.
+        let any_gpu_input = inputs.iter().any(|i| matches!(i, super::GpuInput::Gpu(_)));
         let input_bytes = inputs.first().map(|i| i.byte_len()).unwrap_or(0);
-        if input_bytes < self.thresholds.elementwise_min_bytes {
+        if !any_gpu_input && input_bytes < self.thresholds.elementwise_min_bytes {
             return Ok(super::KernelOutput::Skipped);
         }
 
@@ -1636,6 +1782,62 @@ impl ComputeBackend for MetalBackend {
 
         let buf = self.dispatch_conv2d_gpu(&inputs[0], weight_input, bias, params)?;
         Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(buf)))
+    }
+
+    fn dispatch_transpose_chained(
+        &self,
+        input: &super::GpuInput<'_>,
+        shape: [u32; 4],
+        perm: [u32; 4],
+        _out_buf: &mut OutputBuffer,
+    ) -> ExecResult<super::KernelOutput> {
+        let pipeline = match self.pipelines.get("transpose_4d") {
+            Some(p) => p,
+            None => return Ok(super::KernelOutput::Skipped),
+        };
+
+        let input_buf = self.resolve_input(input);
+        let n_floats = input_buf.length() as usize / 4;
+        let out_buf_metal = self
+            .device
+            .new_buffer(input_buf.length(), MTLResourceOptions::StorageModeShared);
+
+        let total = n_floats as u32;
+        let total_buf = self.device.new_buffer_with_data(
+            &total as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let shape_buf = self.device.new_buffer_with_data(
+            shape.as_ptr() as *const _,
+            16,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let perm_buf = self.device.new_buffer_with_data(
+            perm.as_ptr() as *const _,
+            16,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let pending = self.get_or_create_cmd_buf();
+        let cmd = pending.as_ref().expect("Metal cmd buf for transpose");
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(pipeline);
+        enc.set_buffer(0, Some(&input_buf), 0);
+        enc.set_buffer(1, Some(&out_buf_metal), 0);
+        enc.set_buffer(2, Some(&total_buf), 0);
+        enc.set_buffer(3, Some(&shape_buf), 0);
+        enc.set_buffer(4, Some(&perm_buf), 0);
+
+        let tg = metal::MTLSize::new(pipeline.max_total_threads_per_threadgroup().min(256), 1, 1);
+        let grid = metal::MTLSize::new(n_floats as u64, 1, 1);
+        enc.dispatch_threads(grid, tg);
+        enc.end_encoding();
+        drop(pending);
+
+        Ok(super::KernelOutput::GpuBuffer(super::GpuBuffer::Metal(
+            out_buf_metal,
+        )))
     }
 
     fn dispatch_matmul_chained(
