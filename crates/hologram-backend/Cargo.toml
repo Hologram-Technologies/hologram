@@ -1,33 +1,29 @@
 [package]
 name = "hologram-backend"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Device-native compute backends for hologram execution"
 license = "MIT OR Apache-2.0"
+build = "build.rs"
 
 [dependencies]
 hologram-core = { path = "../hologram-core" }
 smallvec = "1"
 tracing = "0.1"
 thiserror = "2"
+bytemuck = "1"
 
-# CPU backend: Accelerate BLAS on macOS
+# Metal backend (macOS / iOS) — linked automatically via build.rs
 [target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33"
+objc = "0.2"
 
 [features]
 default = []
-# Metal backend (macOS / iOS)
-metal-backend = ["dep:metal", "dep:objc"]
 # WebGPU backend (browser + wgpu)
-webgpu-backend = ["dep:wgpu"]
-
-[dependencies.metal]
-version = "0.33"
-optional = true
-
-[dependencies.objc]
-version = "0.2"
-optional = true
+webgpu = ["dep:wgpu"]
+# CUDA backend (NVIDIA GPU) — low priority
+cuda = []
 
 [dependencies.wgpu]
 version = "24"

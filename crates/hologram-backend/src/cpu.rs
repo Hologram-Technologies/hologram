@@ -32,6 +32,17 @@ impl ComputeMemory for CpuMemory {
     fn byte_len(&self, buf: &Vec<u8>) -> usize {
         buf.len()
     }
+
+    fn mmap(&self, data: &[u8]) -> Option<Vec<u8>> {
+        // CPU mmap: return a copy. True mmap (backed by file pages)
+        // will be added when integrating with the archive loader.
+        Some(data.to_vec())
+    }
+
+    fn evict(&self, buf: &mut Vec<u8>) {
+        // Drop the allocation and shrink to zero.
+        *buf = Vec::new();
+    }
 }
 
 /// CPU compute backend: dispatches ops using SIMD + BLAS.

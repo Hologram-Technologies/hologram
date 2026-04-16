@@ -727,6 +727,7 @@ dependencies = [
 name = "hologram-backend"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "hologram-core",
  "metal 0.33.0",
  "objc",
@@ -822,6 +823,7 @@ version = "0.4.1"
 dependencies = [
  "bytemuck",
  "hologram-archive",
+ "hologram-backend",
  "hologram-core",
  "hologram-graph",
  "hologram-ring",

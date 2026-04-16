@@ -50,3 +50,4 @@ macro_rules! register_op {
         $registry.register($crate::CustomOpId($id), $arity, ::std::sync::Arc::new($h))
     };
 }
+pub mod executor;

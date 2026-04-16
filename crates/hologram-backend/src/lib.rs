@@ -14,11 +14,14 @@
 
 pub mod cpu;
 
-#[cfg(feature = "metal-backend")]
+#[cfg(has_metal)]
 pub mod metal;
 
-#[cfg(feature = "webgpu-backend")]
+#[cfg(has_webgpu)]
 pub mod webgpu;
+
+#[cfg(has_cuda)]
+pub mod cuda;
 
 use hologram_core::op::FloatOp;
 
@@ -68,6 +71,22 @@ pub trait ComputeMemory: Send + Sync {
 
     /// Byte length of a buffer.
     fn byte_len(&self, buf: &Self::Buffer) -> usize;
+
+    /// Memory-map a file region directly to a device buffer.
+    ///
+    /// For CPU: returns a view into the mmap'd region (zero-copy).
+    /// For Metal: creates a SharedStorage buffer backed by the mmap'd pages.
+    /// Returns `None` if mmap is not supported on this device.
+    fn mmap(&self, _data: &[u8]) -> Option<Self::Buffer> {
+        None // Default: mmap not supported. CPU and Metal override.
+    }
+
+    /// Evict (free) a buffer to reclaim device memory.
+    ///
+    /// For CPU: drops the Vec, returns pages to the OS.
+    /// For GPU: releases the Metal/WebGPU buffer.
+    /// Called by the executor after a buffer's last consumer has run.
+    fn evict(&self, buf: &mut Self::Buffer);
 }
 
 /// Kernel parameters for dispatch.
