@@ -53,8 +53,8 @@ pub use hologram_graph::{
 // Execution
 pub use hologram_exec::kv_cache;
 pub use hologram_exec::{
-    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
-    execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
+    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_on_backend,
+    execute_tape_with_kv, execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
     execute_tape_with_kv_shapes_cached, execute_tape_with_shapes, execute_tape_with_weight_cache,
     BufferArena, CustomHandler, CustomOpRegistry, GraphInputs, GraphOutputs, InferenceSession,
     KvCacheState, KvStore, WeightCache,

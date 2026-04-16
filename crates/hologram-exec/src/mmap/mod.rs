@@ -11,6 +11,58 @@ use crate::eval::schedule_bridge::build_schedule;
 use crate::kv::CustomOpRegistry;
 use crate::kv_cache::KvCacheState;
 
+// ── Backend-native execution (Plan 067) ──────────────────────────────────
+
+/// Execute a tape on a device-native backend.
+///
+/// Uses the existing archive loading + arena seeding, then dispatches
+/// all ops through the backend. All intermediate buffers live on the
+/// target device. One flush at the end.
+pub fn execute_tape_on_backend<M, B>(
+    tape: &crate::tape::EnumTape,
+    plan: &LoadedPlan,
+    inputs: &GraphInputs,
+    memory: &M,
+    backend: &B,
+) -> ExecResult<GraphOutputs>
+where
+    M: hologram_backend::ComputeMemory,
+    B: hologram_backend::ComputeBackend<M>,
+{
+    let sg = plan.graph();
+    let weights = plan.weights();
+    let compiled_dtypes = sg.node_dtypes_map();
+    let compiled_shapes = sg.node_shapes_map();
+
+    // Seed arena with constants and graph inputs (existing logic).
+    let mut arena = crate::buffer::BufferArena::with_capacity(sg.nodes.len());
+    seed_arena(
+        sg,
+        weights,
+        &compiled_dtypes,
+        &compiled_shapes,
+        inputs,
+        &mut arena,
+    )?;
+
+    // Execute through the backend.
+    let slot_data = crate::executor::execute_on_backend(tape, &arena, memory, backend)?;
+
+    // Write backend outputs back into the arena so collect_outputs can
+    // find them by node_id. Each instruction's output_idx maps to a slot.
+    for instr in &tape.instructions {
+        let idx = instr.output_idx as usize;
+        if idx < slot_data.len() && !slot_data[idx].is_empty() {
+            arena.insert(
+                hologram_graph::NodeId::new(instr.output_idx, 0),
+                slot_data[idx].clone(),
+            );
+        }
+    }
+
+    collect_outputs(sg, &mut arena)
+}
+
 // ── Tape-based execution ──────────────────────────────────────────────────
 
 /// Build a pre-compiled [`EnumTape`] from a loaded plan.
