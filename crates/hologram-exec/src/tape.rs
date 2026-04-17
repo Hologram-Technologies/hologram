@@ -4358,25 +4358,12 @@ impl EnumTape {
                         .collect()
                 };
 
-            // ── GPU-first dispatch: try ALL ops on the backend ──────────
-            // Only enter the GPU path if the backend is GPU-capable AND
-            // either we have GPU inputs or the op has a GPU kernel.
-            let try_gpu = has_gpu_inputs
-                || instr.kernel.as_float_op().is_some()
-                || matches!(
-                    instr.kernel,
-                    TapeKernel::InlineMatMul { .. }
-                        | TapeKernel::InlineConv2d { .. }
-                        | TapeKernel::InlineConv2dLut4 { .. }
-                        | TapeKernel::InlineInstanceNorm { .. }
-                        | TapeKernel::InlineLayerNorm { .. }
-                        | TapeKernel::InlineTranspose { .. }
-                        | TapeKernel::InlineGemm { .. }
-                        | TapeKernel::InlineReshape
-                        | TapeKernel::InlineSlice { .. }
-                        | TapeKernel::InlineConcat { .. }
-                );
-            if try_gpu {
+            // ── GPU dispatch: only when inputs are already on GPU ──────────
+            // For CPU-only execution (LLM decode at M=1), skip the GPU path
+            // entirely to avoid GpuInput construction overhead (~40% perf hit).
+            // For CPU-only execution (LLM decode), skip the GPU path entirely
+            // to avoid the overhead of GpuInput construction and backend dispatch.
+            if has_gpu_inputs {
                 let bufs_ptr = bufs.as_mut_ptr();
                 let bufs_len = bufs.len();
                 let backend_ref = tape_ctx.backend.resolve();
