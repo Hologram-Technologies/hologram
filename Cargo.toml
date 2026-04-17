@@ -14,6 +14,7 @@ hologram-core = { path = "crates/hologram-core", default-features = false }
 hologram-graph = { path = "crates/hologram-graph" }
 hologram-archive = { path = "crates/hologram-archive" }
 hologram-exec = { path = "crates/hologram-exec" }
+hologram-backend = { path = "crates/hologram-backend" }
 hologram-compiler = { path = "crates/hologram-compiler" }
 hologram-async = { path = "crates/hologram-async" }
 hologram-cli = { path = "crates/hologram-cli" }
@@ -92,6 +93,7 @@ hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
 hologram-archive = { workspace = true }
 hologram-exec = { workspace = true }
+hologram-backend = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 serde = { workspace = true, optional = true }

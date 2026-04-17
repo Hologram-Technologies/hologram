@@ -562,18 +562,8 @@ kernel void resize_nearest(
     uint in_idx = c_and_n * (in_h * in_w) + sh * in_w + sw;
     output[gid] = input[in_idx];
 }
-"#;
-
-/// Metal GPU backend for Apple Silicon / macOS.
-///
-/// Phase 8.2: Command buffer batching. Multiple kernel dispatches are encoded
-/// into a single command buffer without committing. Call `flush()` at level
-/// boundaries to commit + wait for all pending GPU work. This amortizes the
-/// ~10-50µs per-commit overhead across multiple kernels.
 
 // ── Ring LUT: byte-domain transform via 256-byte lookup table ──────────
-// Each byte in the input is mapped through the LUT to produce the output.
-// This is the GPU-native implementation of UOR ring arithmetic.
 kernel void ring_lut(
     device const uchar* input [[buffer(0)]],
     device uchar* output [[buffer(1)]],
@@ -587,8 +577,6 @@ kernel void ring_lut(
 }
 
 // ── Ring binary LUT: two-input byte-domain operation ───────────────────
-// Maps (a[i], b[i]) through a 256×256 LUT for binary ring ops.
-// The LUT is flattened: result = lut[a * 256 + b].
 kernel void ring_binary_lut(
     device const uchar* input_a [[buffer(0)]],
     device const uchar* input_b [[buffer(1)]],

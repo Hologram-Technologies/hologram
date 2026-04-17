@@ -685,6 +685,7 @@ dependencies = [
  "bytemuck",
  "hologram-archive",
  "hologram-async",
+ "hologram-backend",
  "hologram-cli",
  "hologram-compiler",
  "hologram-core",

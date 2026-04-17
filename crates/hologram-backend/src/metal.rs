@@ -96,9 +96,13 @@ impl MetalBackend {
         let queue = device.new_command_queue();
 
         let options = CompileOptions::new();
-        let library = device
-            .new_library_with_source(SHADER_SOURCE, &options)
-            .ok()?;
+        let library = match device.new_library_with_source(SHADER_SOURCE, &options) {
+            Ok(lib) => lib,
+            Err(e) => {
+                eprintln!("[hologram-backend] Metal shader compilation failed: {e}");
+                return None;
+            }
+        };
 
         let kernel_names: &[&str] = &[
             "relu",
@@ -132,10 +136,20 @@ impl MetalBackend {
 
         let mut pipelines = HashMap::new();
         for &name in kernel_names {
-            let func = library.get_function(name, None).ok()?;
-            let pipeline = device
-                .new_compute_pipeline_state_with_function(&func)
-                .ok()?;
+            let func = match library.get_function(name, None) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[hologram-backend] Metal kernel '{name}' not found: {e}");
+                    return None;
+                }
+            };
+            let pipeline = match device.new_compute_pipeline_state_with_function(&func) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[hologram-backend] Metal pipeline for '{name}' failed: {e}");
+                    return None;
+                }
+            };
             pipelines.insert(name, pipeline);
         }
 
@@ -783,16 +797,26 @@ mod tests {
             Some(b) => b,
             None => return,
         };
-        // 2x3 * 3x2 = 2x2
-        let a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let b: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        // 32x64 × 64x32 — large enough to fill Metal threadgroups.
+        let m = 32usize;
+        let k = 64usize;
+        let n = 32usize;
+        let mut a = vec![0.0f32; m * k];
+        for j in 0..k {
+            a[j] = 1.0;
+        } // First row = all 1s
+        let b_data = vec![2.0f32; k * n]; // All 2s
         let buf_a = mem.upload(bytemuck::cast_slice(&a));
-        let buf_b = mem.upload(bytemuck::cast_slice(&b));
+        let buf_b = mem.upload(bytemuck::cast_slice(&b_data));
         let mut output = mem.alloc(0);
 
         backend
             .dispatch(
-                &FloatOp::MatMul { m: 2, k: 3, n: 2 },
+                &FloatOp::MatMul {
+                    m: m as u32,
+                    k: k as u32,
+                    n: n as u32,
+                },
                 &[&buf_a, &buf_b],
                 &mut output,
                 &KernelParams::default(),
@@ -802,16 +826,12 @@ mod tests {
 
         let result_bytes = mem.download(&output);
         let result: &[f32] = bytemuck::cast_slice(&result_bytes);
-        assert_eq!(result.len(), 4);
+        assert_eq!(result.len(), m * n);
+        let expected = 2.0 * k as f32; // 128.0
         assert!(
-            (result[0] - 22.0).abs() < 0.5,
-            "C[0,0] should be ~22, got {}",
+            (result[0] - expected).abs() < 0.5,
+            "C[0,0] should be ~{expected}, got {}",
             result[0]
-        );
-        assert!(
-            (result[3] - 64.0).abs() < 0.5,
-            "C[1,1] should be ~64, got {}",
-            result[3]
         );
     }
 

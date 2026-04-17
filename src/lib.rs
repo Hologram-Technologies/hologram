@@ -50,6 +50,9 @@ pub use hologram_graph::{
     GraphBuilder, GraphOp, NodeId, SubgraphDef, SubgraphId,
 };
 
+// Backend — device-native compute
+pub use hologram_backend as backend;
+
 // Execution
 pub use hologram_exec::kv_cache;
 pub use hologram_exec::{
