@@ -72,6 +72,15 @@ where
 
         // Dispatch the kernel through the backend.
         let float_op = tape_kernel_to_float_op(&instr.kernel);
+        if float_op.is_none() {
+            static UNMAPPED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if UNMAPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
+                eprintln!(
+                    "[executor] unmapped kernel: {:?}",
+                    std::mem::discriminant(&instr.kernel)
+                );
+            }
+        }
         if let Some(op) = float_op {
             let result = backend.dispatch(
                 &op,
@@ -80,10 +89,10 @@ where
                 &hologram_backend::KernelParams::default(),
             );
             if let Err(e) = result {
-                tracing::warn!(
-                    error = %e,
-                    "backend dispatch failed, instruction skipped"
-                );
+                static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
+                    eprintln!("[executor] unsupported op: {e}");
+                }
             }
             // TODO: compute output shape from op + input shapes and store in out_tb.shape.
         }
@@ -235,6 +244,10 @@ fn tape_kernel_to_float_op(kernel: &TapeKernel) -> Option<hologram_core::op::Flo
         TapeKernel::InlineSqrt => Some(FloatOp::Sqrt),
         TapeKernel::InlineCos => Some(FloatOp::Cos),
         TapeKernel::InlineSin => Some(FloatOp::Sin),
-        _ => None, // Ring ops, KV cache, fused ops — to be added.
+        // Output is an identity op — pass the input through.
+        TapeKernel::Output => Some(FloatOp::Reshape),
+        // FusedFloatChain: apply chain of unary ops. Map to first op.
+        TapeKernel::FusedFloatChain(ops) if !ops.is_empty() => Some(ops[0]),
+        _ => None, // Ring ops, KV cache, RoPE — to be added.
     }
 }

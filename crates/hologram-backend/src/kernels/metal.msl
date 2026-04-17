@@ -590,3 +590,41 @@ kernel void ring_binary_lut(
         output[gid] = lut[idx];
     }
 }
+
+// ── Sin / Cos unary elementwise ────────────────────────────────────────
+kernel void sin_act(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) { output[gid] = sin(input[gid]); }
+}
+
+kernel void cos_act(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) { output[gid] = cos(input[gid]); }
+}
+
+// ── Log / Sqrt unary elementwise ───────────────────────────────────────
+kernel void log_act(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) { output[gid] = log(input[gid]); }
+}
+
+kernel void sqrt_act(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < count) { output[gid] = sqrt(input[gid]); }
+}

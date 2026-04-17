@@ -132,6 +132,10 @@ impl MetalBackend {
             "resize_nearest",
             "ring_lut",
             "ring_binary_lut",
+            "sin_act",
+            "cos_act",
+            "log_act",
+            "sqrt_act",
         ];
 
         let mut pipelines = HashMap::new();
@@ -267,6 +271,10 @@ impl MetalBackend {
             FloatOp::Reciprocal => Some("reciprocal"),
             FloatOp::Gelu => Some("gelu"),
             FloatOp::Erf => Some("erf_act"),
+            FloatOp::Sin => Some("sin_act"),
+            FloatOp::Cos => Some("cos_act"),
+            FloatOp::Log => Some("log_act"),
+            FloatOp::Sqrt => Some("sqrt_act"),
             FloatOp::Add => Some("add_op"),
             FloatOp::Mul => Some("mul_op"),
             FloatOp::Sub => Some("sub_op"),
@@ -613,6 +621,189 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
         if matches!(op, FloatOp::Reshape) && !inputs.is_empty() {
             *output = inputs[0].clone();
             return Ok(output.length() as usize);
+        }
+
+        // Conv2d: im2col on GPU + SGEMM.
+        if let FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group: _,
+            input_h,
+            input_w,
+        } = op
+        {
+            let h = *input_h as usize;
+            let w = *input_w as usize;
+            let kh = *kernel_h as usize;
+            let kw = *kernel_w as usize;
+            let sh = (*stride_h).max(1) as usize;
+            let sw = (*stride_w).max(1) as usize;
+            let ph = *pad_h as usize;
+            let pw = *pad_w as usize;
+            let dh = (*dilation_h).max(1) as usize;
+            let dw = (*dilation_w).max(1) as usize;
+
+            if inputs.len() >= 2 && h > 0 && w > 0 && kh > 0 && kw > 0 {
+                let w_floats = inputs[1].length() as usize / 4;
+                let d_floats = inputs[0].length() as usize / 4;
+                let spatial = h * w;
+                let ic = if spatial > 0 { d_floats / spatial } else { 0 };
+                let oc = if ic > 0 && kh > 0 && kw > 0 {
+                    w_floats / (ic * kh * kw)
+                } else {
+                    0
+                };
+
+                if ic > 0 && oc > 0 {
+                    let out_h = (h + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
+                    let out_w = (w + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
+                    let col_rows = ic * kh * kw;
+                    let col_cols = out_h * out_w;
+                    let col_elems = col_rows * col_cols;
+
+                    // Step 1: im2col.
+                    if let Some(im2col_pipe) = self.pipelines.get("im2col") {
+                        let col_buf = self.device.new_buffer(
+                            (col_elems * 4) as u64,
+                            MTLResourceOptions::StorageModeShared,
+                        );
+                        let pending = self.get_or_create_cmd_buf();
+                        let cmd = pending.as_ref().expect("Metal cmd for im2col");
+                        let enc = cmd.new_compute_command_encoder();
+                        enc.set_compute_pipeline_state(im2col_pipe);
+                        enc.set_buffer(0, Some(inputs[0]), 0);
+                        enc.set_buffer(1, Some(&col_buf), 0);
+                        enc.set_buffer(2, Some(&self.u32_buf(ic as u32)), 0);
+                        enc.set_buffer(3, Some(&self.u32_buf(h as u32)), 0);
+                        enc.set_buffer(4, Some(&self.u32_buf(w as u32)), 0);
+                        enc.set_buffer(5, Some(&self.u32_buf(kh as u32)), 0);
+                        enc.set_buffer(6, Some(&self.u32_buf(kw as u32)), 0);
+                        enc.set_buffer(7, Some(&self.u32_buf(ph as u32)), 0);
+                        enc.set_buffer(8, Some(&self.u32_buf(pw as u32)), 0);
+                        enc.set_buffer(9, Some(&self.u32_buf(sh as u32)), 0);
+                        enc.set_buffer(10, Some(&self.u32_buf(sw as u32)), 0);
+                        enc.set_buffer(11, Some(&self.u32_buf(dh as u32)), 0);
+                        enc.set_buffer(12, Some(&self.u32_buf(dw as u32)), 0);
+                        enc.set_buffer(13, Some(&self.u32_buf(out_h as u32)), 0);
+                        enc.set_buffer(14, Some(&self.u32_buf(out_w as u32)), 0);
+                        let tg = MTLSize::new(
+                            im2col_pipe.max_total_threads_per_threadgroup().min(256),
+                            1,
+                            1,
+                        );
+                        enc.dispatch_threads(MTLSize::new(col_elems as u64, 1, 1), tg);
+                        enc.end_encoding();
+                        drop(pending);
+
+                        // Step 2: SGEMM weight[oc, col_rows] × col[col_rows, col_cols].
+                        if let Some(sgemm_pipe) = self.pipelines.get("sgemm") {
+                            let out_elems = oc * col_cols;
+                            let out_buf = self.device.new_buffer(
+                                (out_elems * 4) as u64,
+                                MTLResourceOptions::StorageModeShared,
+                            );
+                            let pending = self.get_or_create_cmd_buf();
+                            let cmd = pending.as_ref().expect("Metal cmd for conv sgemm");
+                            let enc = cmd.new_compute_command_encoder();
+                            enc.set_compute_pipeline_state(sgemm_pipe);
+                            enc.set_buffer(0, Some(inputs[1]), 0);
+                            enc.set_buffer(1, Some(&col_buf), 0);
+                            enc.set_buffer(2, Some(&out_buf), 0);
+                            enc.set_buffer(3, Some(&self.u32_buf(oc as u32)), 0);
+                            enc.set_buffer(4, Some(&self.u32_buf(col_rows as u32)), 0);
+                            enc.set_buffer(5, Some(&self.u32_buf(col_cols as u32)), 0);
+                            let tg = MTLSize::new(16, 16, 1);
+                            enc.dispatch_threads(MTLSize::new(col_cols as u64, oc as u64, 1), tg);
+                            enc.end_encoding();
+                            drop(pending);
+
+                            // Bias add (CPU for simplicity — bias is small).
+                            if inputs.len() >= 3 && inputs[2].length() > 0 {
+                                self.flush();
+                                let out_ptr = out_buf.contents() as *mut f32;
+                                let bias_ptr = inputs[2].contents() as *const f32;
+                                let bias_len = inputs[2].length() as usize / 4;
+                                for c in 0..oc.min(bias_len) {
+                                    for s in 0..col_cols {
+                                        unsafe {
+                                            *out_ptr.add(c * col_cols + s) += *bias_ptr.add(c);
+                                        }
+                                    }
+                                }
+                            }
+
+                            *output = out_buf;
+                            return Ok(output.length() as usize);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resize: nearest neighbor upsampling (mode=0).
+        if let FloatOp::Resize { mode } = op {
+            if *mode == 0 && !inputs.is_empty() {
+                if let Some(pipeline) = self.pipelines.get("resize_nearest") {
+                    // Scale factor from params or infer from output size hint.
+                    // For now, use 2× upsampling (most common in SD UNet).
+                    let in_floats = inputs[0].length() as usize / 4;
+                    let scale = _params.u32s.first().copied().unwrap_or(2) as usize;
+                    // Infer spatial dims: assume NCHW, try common channel counts.
+                    let (channels, in_h, in_w) = if _params.u32s.len() >= 4 {
+                        (
+                            _params.u32s[1] as usize,
+                            _params.u32s[2] as usize,
+                            _params.u32s[3] as usize,
+                        )
+                    } else {
+                        // Heuristic: try sqrt for square spatial.
+                        let per_channel = in_floats;
+                        let s = (per_channel as f64).sqrt() as usize;
+                        if s > 0 && (s * s) == per_channel {
+                            (1, s, s)
+                        } else {
+                            (0, 0, 0)
+                        }
+                    };
+                    if channels > 0 && in_h > 0 && in_w > 0 {
+                        let out_h = in_h * scale;
+                        let out_w = in_w * scale;
+                        let out_total = channels * out_h * out_w;
+                        let out_buf = self.device.new_buffer(
+                            (out_total * 4) as u64,
+                            MTLResourceOptions::StorageModeShared,
+                        );
+                        let pending = self.get_or_create_cmd_buf();
+                        let cmd = pending.as_ref().expect("Metal cmd for resize");
+                        let enc = cmd.new_compute_command_encoder();
+                        enc.set_compute_pipeline_state(pipeline);
+                        enc.set_buffer(0, Some(inputs[0]), 0);
+                        enc.set_buffer(1, Some(&out_buf), 0);
+                        enc.set_buffer(2, Some(&self.u32_buf(out_total as u32)), 0);
+                        enc.set_buffer(3, Some(&self.u32_buf(in_h as u32)), 0);
+                        enc.set_buffer(4, Some(&self.u32_buf(in_w as u32)), 0);
+                        enc.set_buffer(5, Some(&self.u32_buf(out_h as u32)), 0);
+                        enc.set_buffer(6, Some(&self.u32_buf(out_w as u32)), 0);
+                        enc.set_buffer(7, Some(&self.u32_buf(channels as u32)), 0);
+                        let tg = MTLSize::new(
+                            pipeline.max_total_threads_per_threadgroup().min(256),
+                            1,
+                            1,
+                        );
+                        enc.dispatch_threads(MTLSize::new(out_total as u64, 1, 1), tg);
+                        enc.end_encoding();
+                        drop(pending);
+                        *output = out_buf;
+                        return Ok(output.length() as usize);
+                    }
+                }
+            }
         }
 
         Err(BackendError::Unsupported(format!(
