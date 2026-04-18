@@ -1036,128 +1036,58 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
 
-        // ── Inline hot ops (Phase 9a) ─────────────────────────────────
-        // Direct kernel call — no backend, no dispatch_float_into, no category match.
-        TapeKernel::InlineRelu => {
-            inline_unary(inputs[0], out_buf, |v| v.max(0.0));
+        // ── Trivial unary/binary float ops — delegated to float_dispatch ──
+        //
+        // All simple element-wise ops are converted to FloatOp and dispatched
+        // through `dispatch_float_into`, which provides monomorphized closures
+        // and SIMD autovectorization for common ops.
+        TapeKernel::InlineRelu
+        | TapeKernel::InlineNeg
+        | TapeKernel::InlineSigmoid
+        | TapeKernel::InlineSilu
+        | TapeKernel::InlineTanh
+        | TapeKernel::InlineGelu
+        | TapeKernel::InlineExp
+        | TapeKernel::InlineAbs
+        | TapeKernel::InlineReciprocal
+        | TapeKernel::InlineLog
+        | TapeKernel::InlineSqrt
+        | TapeKernel::InlineCos
+        | TapeKernel::InlineSin
+        | TapeKernel::InlineSign
+        | TapeKernel::InlineFloor
+        | TapeKernel::InlineCeil
+        | TapeKernel::InlineRound
+        | TapeKernel::InlineErf
+        | TapeKernel::InlineAdd
+        | TapeKernel::InlineMul
+        | TapeKernel::InlineSub
+        | TapeKernel::InlineDiv
+        | TapeKernel::InlineMin
+        | TapeKernel::InlineMax
+        | TapeKernel::InlinePow
+        | TapeKernel::InlineMod
+        | TapeKernel::InlineIsNaN
+        | TapeKernel::InlineNot
+        | TapeKernel::InlineAnd
+        | TapeKernel::InlineOr
+        | TapeKernel::InlineXor
+        | TapeKernel::InlineEqual
+        | TapeKernel::InlineLess
+        | TapeKernel::InlineLessOrEqual
+        | TapeKernel::InlineGreater
+        | TapeKernel::InlineGreaterOrEqual
+        | TapeKernel::InlineFusedSwiGLU => {
+            let float_op = tape_kernel_as_float_op(kernel);
+            float_dispatch::dispatch_float_into(&float_op, inputs, tape_ctx.ctx.as_ref(), out_buf)?;
             Ok(DispatchOk)
         }
-        TapeKernel::InlineNeg => {
-            inline_unary(inputs[0], out_buf, |v| -v);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSigmoid => {
-            inline_unary(inputs[0], out_buf, |v| 1.0 / (1.0 + (-v).exp()));
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSilu => {
-            inline_unary(inputs[0], out_buf, |v| v * (1.0 / (1.0 + (-v).exp())));
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineTanh => {
-            inline_unary(inputs[0], out_buf, |v| v.tanh());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineGelu => {
-            inline_unary(inputs[0], out_buf, |v| {
-                0.5 * v
-                    * (1.0
-                        + (std::f32::consts::FRAC_2_SQRT_PI
-                            * std::f32::consts::FRAC_1_SQRT_2
-                            * (v + 0.044715 * v * v * v))
-                            .tanh())
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineExp => {
-            inline_unary(inputs[0], out_buf, |v| v.exp());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineAdd => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a + b);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineMul => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a * b);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSub => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a - b);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineDiv => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineAbs => {
-            inline_unary(inputs[0], out_buf, |v| v.abs());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineReciprocal => {
-            inline_unary(inputs[0], out_buf, |v| 1.0 / v);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineLog => {
-            inline_unary(inputs[0], out_buf, |v| v.ln());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSqrt => {
-            inline_unary(inputs[0], out_buf, |v| v.sqrt());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineCos => {
-            inline_unary(inputs[0], out_buf, |v| v.cos());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSin => {
-            inline_unary(inputs[0], out_buf, |v| v.sin());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineSign => {
-            inline_unary(inputs[0], out_buf, |v| v.signum());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineFloor => {
-            inline_unary(inputs[0], out_buf, |v| v.floor());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineCeil => {
-            inline_unary(inputs[0], out_buf, |v| v.ceil());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineRound => {
-            inline_unary(inputs[0], out_buf, |v| v.round());
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineErf => {
-            inline_unary(inputs[0], out_buf, |v| {
-                // Abramowitz & Stegun approximation
-                #[allow(clippy::excessive_precision)]
-                const A1: f32 = 0.254_829_592;
-                #[allow(clippy::excessive_precision)]
-                const A2: f32 = -0.284_496_736;
-                #[allow(clippy::excessive_precision)]
-                const A3: f32 = 1.421_413_741;
-                #[allow(clippy::excessive_precision)]
-                const A4: f32 = -1.453_152_027;
-                #[allow(clippy::excessive_precision)]
-                const A5: f32 = 1.061_405_429;
-                #[allow(clippy::excessive_precision)]
-                const P: f32 = 0.327_591_1;
-                let sign = if v >= 0.0 { 1.0f32 } else { -1.0f32 };
-                let x = v.abs();
-                let t = 1.0 / (1.0 + P * x);
-                let y = 1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t * (-x * x).exp();
-                sign * y
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineMin => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.min(b));
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineMax => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.max(b));
+        TapeKernel::InlineClip { min, max } => {
+            let float_op = FloatOp::Clip {
+                min: *min,
+                max: *max,
+            };
+            float_dispatch::dispatch_float_into(&float_op, inputs, tape_ctx.ctx.as_ref(), out_buf)?;
             Ok(DispatchOk)
         }
         TapeKernel::InlineLayerNorm { size, epsilon } => {
@@ -1330,114 +1260,6 @@ fn dispatch_kernel(
                 inputs,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchOk)
-        }
-
-        // ── New inline simple ops (Phase 10: complete TapeKernel coverage) ──
-        TapeKernel::InlinePow => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.powf(b));
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineMod => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| a % b);
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineClip { min, max } => {
-            let min_f = hologram_core::op::bits_to_f32(*min);
-            let max_f = hologram_core::op::bits_to_f32(*max);
-            inline_unary(inputs[0], out_buf, |v| v.max(min_f).min(max_f));
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineIsNaN => {
-            inline_unary(inputs[0], out_buf, |v| if v.is_nan() { 1.0 } else { 0.0 });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineNot => {
-            inline_unary(inputs[0], out_buf, |v| if v == 0.0 { 1.0 } else { 0.0 });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineAnd => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if a != 0.0 && b != 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineOr => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if a != 0.0 || b != 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineXor => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if (a != 0.0) ^ (b != 0.0) {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineEqual => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if a == b {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineLess => {
-            inline_binary(
-                inputs[0],
-                inputs[1],
-                out_buf,
-                |a, b| if a < b { 1.0 } else { 0.0 },
-            );
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineLessOrEqual => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if a <= b {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineGreater => {
-            inline_binary(
-                inputs[0],
-                inputs[1],
-                out_buf,
-                |a, b| if a > b { 1.0 } else { 0.0 },
-            );
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineGreaterOrEqual => {
-            inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
-                if a >= b {
-                    1.0
-                } else {
-                    0.0
-                }
-            });
-            Ok(DispatchOk)
-        }
-        TapeKernel::InlineFusedSwiGLU => {
-            inline_binary(inputs[0], inputs[1], out_buf, |g, u| {
-                g * (1.0 / (1.0 + (-g).exp())) * u
-            });
             Ok(DispatchOk)
         }
 
@@ -2453,6 +2275,7 @@ fn safe_cast_f32(bytes: &[u8]) -> std::borrow::Cow<'_, [f32]> {
 }
 
 /// Binary elementwise with broadcasting. Fast paths avoid per-element modulo.
+#[cfg(test)]
 #[inline(always)]
 fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) -> f32) {
     if a.len() == b.len() {
@@ -2477,28 +2300,63 @@ fn binary_broadcast(a: &[f32], b: &[f32], dst: &mut [f32], f: impl Fn(f32, f32) 
     // If either input is empty, dst is left as zeros (from allocation).
 }
 
-/// Inline unary kernel — writes directly to out_buf as f32 via bytemuck cast.
-/// No dispatch overhead, no intermediate allocation.
-#[inline(always)]
-fn inline_unary(input: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32) -> f32) {
-    let x = safe_cast_f32(input);
-    let mut dst = vec![0.0f32; x.len()];
-    for (d, &s) in dst.iter_mut().zip(x.iter()) {
-        *d = f(s);
+/// Convert a trivial `TapeKernel` variant to its corresponding `FloatOp`.
+///
+/// Only handles the simple unary/binary/comparison/logical ops that have a
+/// direct 1:1 mapping. Called from the consolidated dispatch arm.
+///
+/// # Panics
+/// Panics if called with a non-trivial kernel variant (should never happen
+/// since the match arm only routes the listed variants here).
+fn tape_kernel_as_float_op(kernel: &TapeKernel) -> FloatOp {
+    match kernel {
+        // Unary activations / math
+        TapeKernel::InlineRelu => FloatOp::Relu,
+        TapeKernel::InlineNeg => FloatOp::Neg,
+        TapeKernel::InlineSigmoid => FloatOp::Sigmoid,
+        TapeKernel::InlineSilu => FloatOp::Silu,
+        TapeKernel::InlineTanh => FloatOp::Tanh,
+        TapeKernel::InlineGelu => FloatOp::Gelu,
+        TapeKernel::InlineExp => FloatOp::Exp,
+        TapeKernel::InlineAbs => FloatOp::Abs,
+        TapeKernel::InlineReciprocal => FloatOp::Reciprocal,
+        TapeKernel::InlineLog => FloatOp::Log,
+        TapeKernel::InlineSqrt => FloatOp::Sqrt,
+        TapeKernel::InlineCos => FloatOp::Cos,
+        TapeKernel::InlineSin => FloatOp::Sin,
+        TapeKernel::InlineSign => FloatOp::Sign,
+        TapeKernel::InlineFloor => FloatOp::Floor,
+        TapeKernel::InlineCeil => FloatOp::Ceil,
+        TapeKernel::InlineRound => FloatOp::Round,
+        TapeKernel::InlineErf => FloatOp::Erf,
+        TapeKernel::InlineIsNaN => FloatOp::IsNaN,
+        TapeKernel::InlineNot => FloatOp::Not,
+        // Binary arithmetic
+        TapeKernel::InlineAdd => FloatOp::Add,
+        TapeKernel::InlineMul => FloatOp::Mul,
+        TapeKernel::InlineSub => FloatOp::Sub,
+        TapeKernel::InlineDiv => FloatOp::Div,
+        TapeKernel::InlineMin => FloatOp::Min,
+        TapeKernel::InlineMax => FloatOp::Max,
+        TapeKernel::InlinePow => FloatOp::Pow,
+        TapeKernel::InlineMod => FloatOp::Mod,
+        // Binary logical
+        TapeKernel::InlineAnd => FloatOp::And,
+        TapeKernel::InlineOr => FloatOp::Or,
+        TapeKernel::InlineXor => FloatOp::Xor,
+        // Binary comparison
+        TapeKernel::InlineEqual => FloatOp::Equal,
+        TapeKernel::InlineLess => FloatOp::Less,
+        TapeKernel::InlineLessOrEqual => FloatOp::LessOrEqual,
+        TapeKernel::InlineGreater => FloatOp::Greater,
+        TapeKernel::InlineGreaterOrEqual => FloatOp::GreaterOrEqual,
+        // Fused
+        TapeKernel::InlineFusedSwiGLU => FloatOp::FusedSwiGLU,
+        _ => unreachable!(
+            "tape_kernel_as_float_op called with non-trivial kernel: {:?}",
+            std::mem::discriminant(kernel)
+        ),
     }
-    out_buf.extend_from_slice(bytemuck::cast_slice(&dst));
-}
-
-/// Inline binary kernel — writes directly to out_buf as f32 via bytemuck cast.
-#[inline(always)]
-fn inline_binary(a: &[u8], b: &[u8], out_buf: &mut OutputBuffer, f: impl Fn(f32, f32) -> f32) {
-    let a = safe_cast_f32(a);
-    let b = safe_cast_f32(b);
-    let out_len = a.len().max(b.len());
-    // Write into a fresh aligned Vec<f32>, then copy bytes into out_buf.
-    let mut dst = vec![0.0f32; out_len];
-    binary_broadcast(&a, &b, &mut dst, f);
-    out_buf.extend_from_slice(bytemuck::cast_slice(&dst));
 }
 
 /// Apply activation element-wise to an out_buf that contains f32 data.
@@ -4516,8 +4374,8 @@ mod tests {
     #[test]
     fn inline_sign() {
         let out = run_unary_tape(TapeKernel::InlineSign, &[-5.0, 0.0, 3.0]);
-        // f32::signum() returns 1.0 for +0.0 (IEEE 754 behavior).
-        assert_eq!(out, [-1.0, 1.0, 1.0]);
+        // ONNX Sign spec: Sign(0) = 0 (not IEEE signum which returns 1.0 for +0.0).
+        assert_eq!(out, [-1.0, 0.0, 1.0]);
     }
 
     #[test]
