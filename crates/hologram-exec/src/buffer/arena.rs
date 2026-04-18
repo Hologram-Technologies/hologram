@@ -99,10 +99,6 @@ enum ArenaBuffer<'a> {
     /// The `f32_len` field tracks the original byte length (f32_len = f16_data.len() * 2).
     /// On read, data is expanded f16→f32 into the arena's scratch buffer.
     F16Compressed { data: MmapBuffer, f32_len: usize },
-    /// Metal GPU buffer (shared memory on Apple Silicon).
-    /// CPU-readable via `contents()` pointer — zero-copy for both directions.
-    #[cfg(has_metal)]
-    Metal(metal::Buffer),
 }
 
 impl<'a> ArenaBuffer<'a> {
@@ -117,11 +113,6 @@ impl<'a> ArenaBuffer<'a> {
             ArenaBuffer::VecOwned(v) => v.as_slice(),
             ArenaBuffer::Borrowed(s) => s,
             ArenaBuffer::F16Compressed { data, .. } => data.as_slice(),
-            #[cfg(has_metal)]
-            ArenaBuffer::Metal(buf) => {
-                let ptr = buf.contents() as *const u8;
-                unsafe { std::slice::from_raw_parts(ptr, buf.length() as usize) }
-            }
         }
     }
 
@@ -140,7 +131,7 @@ impl<'a> ArenaBuffer<'a> {
         }
     }
 
-    /// Convert to owned Vec<u8> (copies mmap/borrowed/Metal data).
+    /// Convert to owned Vec<u8> (copies mmap/borrowed data).
     fn into_owned(self) -> Vec<u8> {
         match self {
             ArenaBuffer::Owned(m) => m.into_vec(),
@@ -158,12 +149,6 @@ impl<'a> ArenaBuffer<'a> {
                 }
                 out
             }
-            #[cfg(has_metal)]
-            ArenaBuffer::Metal(buf) => {
-                let ptr = buf.contents() as *const u8;
-                let len = buf.length() as usize;
-                unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
-            }
         }
     }
 }
@@ -174,9 +159,8 @@ impl<'a> ArenaBuffer<'a> {
 /// O(1) lookup without hashing overhead. This is safe because node indices
 /// are dense sequential integers assigned by the graph builder.
 ///
-/// Buffers can be owned (CPU `Vec<u8>`), borrowed (mmap'd `&[u8]`), or
-/// Metal GPU buffers (shared memory on Apple Silicon). Reading always
-/// returns `&[u8]` regardless of backing storage.
+/// Buffers can be owned (CPU `Vec<u8>`) or borrowed (mmap'd `&[u8]`).
+/// Reading always returns `&[u8]` regardless of backing storage.
 ///
 /// Each buffer also tracks its element size in bytes (4 for f32, 8 for i64,
 /// 1 for bool/u8). This eliminates all hardcoded `/4` assumptions in shape
@@ -403,18 +387,6 @@ impl<'a> BufferArena<'a> {
         }
     }
 
-    /// Insert a Metal GPU buffer (zero-copy on Apple Silicon unified memory).
-    #[cfg(has_metal)]
-    pub fn insert_metal(&mut self, id: NodeId, buffer: metal::Buffer, elem_size: usize) {
-        let idx = id.index() as usize;
-        self.ensure_capacity(idx);
-        if self.buffers[idx].is_none() {
-            self.count += 1;
-        }
-        self.buffers[idx] = Some(ArenaBuffer::Metal(buffer));
-        self.elem_sizes[idx] = elem_size as u8;
-    }
-
     /// Set the element size for a node (without changing its buffer).
     pub fn set_elem_size(&mut self, id: NodeId, elem_size: usize) {
         let idx = id.index() as usize;
@@ -537,8 +509,8 @@ impl<'a> BufferArena<'a> {
 
     /// Get a mutable f32 slice for in-place ops (only works on `Owned` buffers).
     ///
-    /// Returns an error for `Borrowed` or `Metal` buffers since those
-    /// cannot be modified in-place.
+    /// Returns an error for `Borrowed` buffers since those cannot be modified
+    /// in-place.
     #[inline]
     pub fn get_mut_f32(&mut self, id: NodeId) -> ExecResult<&mut [f32]> {
         let idx = id.index() as usize;
