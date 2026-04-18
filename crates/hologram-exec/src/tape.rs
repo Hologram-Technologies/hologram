@@ -31,7 +31,6 @@ use hologram_core::ring::byte_io::{read_le_u64, write_le_u64};
 use hologram_core::view::ElementWiseView;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 
-use crate::backend::BackendSelector;
 use crate::kv::weight_cache::WeightCache;
 use crate::kv_cache::KvCacheState;
 
@@ -39,7 +38,6 @@ use crate::kv_cache::KvCacheState;
 ///
 /// Carries weight archive access, a lazily-populated weight cache
 /// for LUT-GEMM ops, an optional KV cache for autoregressive generation,
-/// and a backend selector for multi-backend dispatch (CPU/Metal/CUDA/WebGPU).
 pub struct TapeContext<'a> {
     /// Optional per-inference execution state (position offset, etc.).
     pub ctx: Option<ExecutionContext>,
@@ -54,9 +52,6 @@ pub struct TapeContext<'a> {
     pub weight_cache: &'a parking_lot::RwLock<WeightCache>,
     /// Optional KV cache for autoregressive generation (KvWrite/KvRead ops).
     pub kv_state: Option<RefCell<KvCacheState>>,
-    /// Backend selector (Auto/Cpu/Metal/Cuda/WebGpu).
-    /// Resolved to a concrete `&dyn ComputeBackend` once at execute start.
-    pub backend: BackendSelector,
     /// Pre-computed shape overrides from `ShapeContextGraph`.
     /// Keyed by raw node index. When present, the executor sets this as the
     /// output `TensorMeta` after dispatch, overriding any heuristic inference.
@@ -75,7 +70,6 @@ pub struct TapeContext<'a> {
 
 impl<'a> TapeContext<'a> {
     /// Create a context from a constant store and weight archive.
-    /// Uses `BackendSelector::Auto` (best available backend).
     #[must_use]
     pub fn new(
         constants: &'a ConstantStore,
@@ -88,7 +82,6 @@ impl<'a> TapeContext<'a> {
             weights,
             weight_cache,
             kv_state: None,
-            backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
             cancel: None,
@@ -109,7 +102,6 @@ impl<'a> TapeContext<'a> {
             weights,
             weight_cache,
             kv_state: Some(RefCell::new(kv)),
-            backend: BackendSelector::Auto,
             shape_overrides: &EMPTY_SHAPE_MAP,
             flux: Cell::new(hologram_core::carry::CurvatureFlux::ZERO),
             cancel: None,
@@ -633,32 +625,6 @@ impl TapeKernel {
     }
 
     /// Short name for profiling output.
-    /// Return the `FloatOp` for GPU-dispatchable elementwise ops, if applicable.
-    /// Used to route through `dispatch_float_chained`.
-    fn as_float_op(&self) -> Option<FloatOp> {
-        match self {
-            TapeKernel::InlineAdd => Some(FloatOp::Add),
-            TapeKernel::InlineMul => Some(FloatOp::Mul),
-            TapeKernel::InlineDiv => Some(FloatOp::Div),
-            TapeKernel::InlineErf => Some(FloatOp::Erf),
-            TapeKernel::InlineRelu => Some(FloatOp::Relu),
-            TapeKernel::InlineSigmoid => Some(FloatOp::Sigmoid),
-            TapeKernel::InlineSilu => Some(FloatOp::Silu),
-            TapeKernel::InlineTanh => Some(FloatOp::Tanh),
-            TapeKernel::InlineNeg => Some(FloatOp::Neg),
-            TapeKernel::InlineAbs => Some(FloatOp::Abs),
-            TapeKernel::InlineGelu => Some(FloatOp::Gelu),
-            TapeKernel::InlineExp => Some(FloatOp::Exp),
-            TapeKernel::InlineReciprocal => Some(FloatOp::Reciprocal),
-            TapeKernel::InlineSoftmax { size } => Some(FloatOp::Softmax { size: *size }),
-            TapeKernel::InlineRmsNorm { size, epsilon } => Some(FloatOp::RmsNorm {
-                size: *size,
-                epsilon: *epsilon,
-            }),
-            _ => None,
-        }
-    }
-
     fn profile_name(&self) -> String {
         match self {
             Self::MatMulLut4(_) => "MatMulLut4".into(),
@@ -773,301 +739,22 @@ impl TapeKernel {
     }
 }
 
-/// Result of kernel dispatch — tells the execute loop how to store the output.
-#[allow(dead_code)] // Fields read by dispatch_kernel callers; execute_direct ignores result.
-enum DispatchResult {
-    /// Output written to `out_buf`. Store via swap_insert.
-    InOutBuf,
-    /// Output written to `out_buf` with runtime-computed metadata that
-    /// overrides the compiled output_meta (e.g., KV cache decode produces
-    /// different shapes than compiled).
-    InOutBufWithMeta(hologram_core::op::TensorMeta),
-    /// Output stored in a GPU buffer for deferred readback or chaining.
-    GpuBuffer(crate::backend::GpuBuffer),
-    /// Output deferred to `flush_deferred()`. Skip swap_insert for now.
-    #[cfg(has_webgpu)]
-    WgpuDeferred,
-}
-
-/// Dispatch a `TapeKernel`, returning how the output should be stored.
+/// Result of kernel dispatch — output written to `out_buf`.
 ///
-/// For `Float` and `MatMul` ops, tries the selected backend first.
-/// GPU-first kernel dispatch. Tries the backend for all supported ops.
-/// Returns `GpuBuffer` when the backend handles the op, `Skipped` for CPU fallback.
-fn dispatch_kernel_gpu(
-    kernel: &TapeKernel,
-    inputs: &[crate::backend::GpuInput<'_>],
-    input_metas: &crate::shape_resolve::InputMetas,
-    backend: &dyn crate::backend::ComputeBackend,
-    out_buf: &mut OutputBuffer,
-) -> ExecResult<crate::backend::KernelOutput> {
-    // MatMul.
-    if let TapeKernel::InlineMatMul { k, n, .. } = kernel {
-        let baked_k = *k as usize;
-        let baked_n = *n as usize;
-        if baked_k > 0 && baked_n > 0 && !inputs.is_empty() {
-            let actual_m = inputs[0].byte_len() / (baked_k * 4);
-            if actual_m > 0 {
-                return backend
-                    .dispatch_matmul_chained(inputs, actual_m, baked_k, baked_n, out_buf);
-            }
-        }
-        return Ok(crate::backend::KernelOutput::Skipped);
-    }
+/// This is a unit struct; the execute loop discards it (only `?` propagation
+/// for errors). Kept as a named type rather than `()` for readability in
+/// dispatch_kernel match arms.
+struct DispatchOk;
 
-    // Conv2d (f32 and Q4 LUT4): extract params and dispatch via im2col + SGEMM.
-    // On macOS with Accelerate, Conv2dLut4 inputs are already f32.
-    let conv_params = match kernel {
-        TapeKernel::InlineConv2d {
-            kernel_h,
-            kernel_w,
-            stride_h,
-            stride_w,
-            pad_h,
-            pad_w,
-            dilation_h,
-            dilation_w,
-            group,
-            input_h,
-            input_w,
-        }
-        | TapeKernel::InlineConv2dLut4 {
-            kernel_h,
-            kernel_w,
-            stride_h,
-            stride_w,
-            pad_h,
-            pad_w,
-            dilation_h,
-            dilation_w,
-            group,
-            input_h,
-            input_w,
-            ..
-        } => Some((
-            *kernel_h,
-            *kernel_w,
-            *stride_h,
-            *stride_w,
-            *pad_h,
-            *pad_w,
-            *dilation_h,
-            *dilation_w,
-            *group,
-            *input_h,
-            *input_w,
-        )),
-        _ => None,
-    };
-    if let Some((
-        kernel_h,
-        kernel_w,
-        stride_h,
-        stride_w,
-        pad_h,
-        pad_w,
-        dilation_h,
-        dilation_w,
-        group,
-        input_h,
-        input_w,
-    )) = conv_params
-    {
-        if inputs.len() >= 2 {
-            let kh = kernel_h as usize;
-            let kw = kernel_w as usize;
-            let g = group.max(1) as usize;
-            let w_floats = inputs[1].byte_len() / 4;
-            let d_floats = inputs[0].byte_len() / 4;
-
-            if g == 1 && kh > 0 && kw > 0 && w_floats > 0 && d_floats > 0 {
-                let ic_times_oc = w_floats / (kh * kw);
-
-                let (h, w, ic, oc) =
-                    if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
-                        if in_meta.ndim >= 4 {
-                            let ic = in_meta.dims[1] as usize;
-                            (
-                                in_meta.dims[2] as usize,
-                                in_meta.dims[3] as usize,
-                                ic,
-                                if ic > 0 { ic_times_oc / ic } else { 0 },
-                            )
-                        } else {
-                            (0, 0, 0, 0)
-                        }
-                    } else {
-                        let bh = input_h as usize;
-                        let bw = input_w as usize;
-                        if bh > 0 && bw > 0 && d_floats.is_multiple_of(bh * bw) {
-                            let n_ic = d_floats / (bh * bw);
-                            if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
-                                (bh, bw, n_ic, ic_times_oc / n_ic)
-                            } else {
-                                (0, 0, 0, 0)
-                            }
-                        } else {
-                            // Infer square spatial.
-                            let mut found = (0, 0, 0, 0);
-                            for &sh in &[64usize, 32, 16, 8, 128] {
-                                let sp = sh * sh;
-                                if d_floats.is_multiple_of(sp) {
-                                    let n_ic = d_floats / sp;
-                                    if n_ic > 0 && ic_times_oc.is_multiple_of(n_ic) {
-                                        found = (sh, sh, n_ic, ic_times_oc / n_ic);
-                                        break;
-                                    }
-                                }
-                            }
-                            found
-                        }
-                    };
-
-                if h > 0 && w > 0 && ic > 0 && oc > 0 {
-                    let params = crate::backend::Conv2dParams {
-                        ic,
-                        h,
-                        w,
-                        oc,
-                        kh,
-                        kw,
-                        pad_h: pad_h as usize,
-                        pad_w: pad_w as usize,
-                        stride_h: stride_h.max(1) as usize,
-                        stride_w: stride_w.max(1) as usize,
-                        dil_h: dilation_h.max(1) as usize,
-                        dil_w: dilation_w.max(1) as usize,
-                    };
-                    return backend.dispatch_conv2d_chained(inputs, &params, out_buf);
-                }
-            }
-        }
-        return Ok(crate::backend::KernelOutput::Skipped);
-    }
-
-    // Transpose: pass shape + perm directly to backend.
-    if let TapeKernel::InlineTranspose {
-        perm,
-        input_shape,
-        ndim,
-    } = kernel
-    {
-        let n = *ndim as usize;
-        if (2..=4).contains(&n) && !inputs.is_empty() {
-            let shape_4d = [
-                input_shape[0],
-                if n > 1 { input_shape[1] } else { 1 },
-                if n > 2 { input_shape[2] } else { 1 },
-                if n > 3 { input_shape[3] } else { 1 },
-            ];
-            let perm_4d = [
-                perm[0] as u32,
-                if n > 1 { perm[1] as u32 } else { 1 },
-                if n > 2 { perm[2] as u32 } else { 2 },
-                if n > 3 { perm[3] as u32 } else { 3 },
-            ];
-            return backend.dispatch_transpose_chained(&inputs[0], shape_4d, perm_4d, out_buf);
-        }
-    }
-
-    // Reshape: GPU no-op — return the same buffer with zero-copy.
-    if matches!(kernel, TapeKernel::InlineReshape) {
-        if let Some(crate::backend::GpuInput::Gpu(gb)) = inputs.first() {
-            if let Some(cloned) = gb.try_clone() {
-                return Ok(crate::backend::KernelOutput::GpuBuffer(cloned));
-            }
-        }
-    }
-
-    // InstanceNorm + LayerNorm: route as FloatOps.
-    if let TapeKernel::InlineInstanceNorm { size, epsilon } = kernel {
-        let float_op = FloatOp::InstanceNorm {
-            size: *size,
-            epsilon: *epsilon,
-        };
-        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
-    }
-    if let TapeKernel::InlineLayerNorm { size, epsilon } = kernel {
-        let float_op = FloatOp::LayerNorm {
-            size: *size,
-            epsilon: *epsilon,
-        };
-        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
-    }
-
-    // Gemm: MatMul with alpha/beta scaling. Route as MatMul (alpha/beta
-    // applied as post-processing if needed, but most SD UNet Gemms have
-    // alpha=1, beta=0 which is a pure MatMul).
-    if let TapeKernel::InlineGemm { m, k, n, .. } = kernel {
-        let baked_m = *m as usize;
-        let baked_k = *k as usize;
-        let baked_n = *n as usize;
-        if baked_k > 0 && baked_n > 0 && !inputs.is_empty() {
-            let actual_m = if baked_m > 0 {
-                baked_m
-            } else {
-                inputs[0].byte_len() / (baked_k * 4)
-            };
-            if actual_m > 0 {
-                return backend
-                    .dispatch_matmul_chained(inputs, actual_m, baked_k, baked_n, out_buf);
-            }
-        }
-    }
-
-    // Slice: contiguous sub-range copy.
-    if let TapeKernel::InlineSlice {
-        start,
-        end,
-        axis_size,
-        ..
-    } = kernel
-    {
-        if !inputs.is_empty() {
-            let total_floats = inputs[0].byte_len() / 4;
-            let s = *start as usize;
-            let e = *end as usize;
-            let ax_size = *axis_size as usize;
-
-            // For contiguous slicing (axis is the outermost varying axis):
-            // offset = start * stride, count = (end - start) * stride
-            // where stride = total_floats / axis_size.
-            if ax_size > 0 && total_floats > 0 && total_floats.is_multiple_of(ax_size) {
-                let stride = total_floats / ax_size;
-                let src_offset = s * stride;
-                let count = (e - s) * stride;
-                if count > 0 && src_offset + count <= total_floats {
-                    return backend.dispatch_slice_chained(&inputs[0], src_offset, count, out_buf);
-                }
-            }
-        }
-    }
-
-    // Concat: combine two buffers into one output.
-    if matches!(kernel, TapeKernel::InlineConcat { .. }) && inputs.len() >= 2 {
-        return backend.dispatch_concat_chained(inputs, out_buf);
-    }
-
-    // Elementwise and other float ops.
-    if let Some(float_op) = kernel.as_float_op() {
-        return backend.dispatch_float_chained(&float_op, inputs, out_buf);
-    }
-
-    // Unsupported — fall back to CPU.
-    Ok(crate::backend::KernelOutput::Skipped)
-}
-
-/// Falls back to CPU dispatch if the backend returns `Skipped`.
+/// CPU-only kernel dispatch.
 #[inline]
 fn dispatch_kernel(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
     input_metas: &crate::shape_resolve::InputMetas,
     tape_ctx: &TapeContext<'_>,
-    backend: &dyn crate::backend::ComputeBackend,
     out_buf: &mut OutputBuffer,
-) -> ExecResult<DispatchResult> {
-    use crate::backend::KernelOutput;
+) -> ExecResult<DispatchOk> {
     use crate::float_dispatch;
     use crate::kv::KvStore;
     use crate::shape_resolve;
@@ -1088,17 +775,17 @@ fn dispatch_kernel(
     match kernel {
         TapeKernel::FusedFloatChain(chain) => {
             float_dispatch::dispatch_fused_chain_into(chain, inputs, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::Output => {
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::LutView(view) | TapeKernel::PrimUnary(view) => {
             KvStore::apply_unary_into(view, inputs[0], out_buf);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::LutView16(view) => {
             let input = inputs[0];
@@ -1107,11 +794,11 @@ fn dispatch_kernel(
             out_buf[base..].copy_from_slice(input);
             let dst: &mut [u16] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
             view.apply_slice(dst);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::PrimBinary(p) => {
             KvStore::apply_binary_into(*p, inputs[0], inputs[1], out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::RingPrimUnary { op, level } => {
             let input = inputs[0];
@@ -1137,7 +824,7 @@ fn dispatch_kernel(
                 flux.accumulate_at(curvature, level.to_quantum());
                 tape_ctx.flux.set(flux);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::RingPrimBinary { op, level } => {
             let (lhs, rhs) = (inputs[0], inputs[1]);
@@ -1170,7 +857,7 @@ fn dispatch_kernel(
                 flux.accumulate_at(curvature, level.to_quantum());
                 tape_ctx.flux.set(flux);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::RingActivation { op, level } => {
             let input = inputs[0];
@@ -1225,7 +912,7 @@ fn dispatch_kernel(
                 flux.accumulate(curvature, effective_level);
                 tape_ctx.flux.set(flux);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::RingAccumulate { level } => {
             // Three inputs: acc, a, b. Element-wise: acc + a * b
@@ -1282,38 +969,38 @@ fn dispatch_kernel(
                     }
                 }
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut4(cid) => {
             dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut8(cid) => {
             dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut4Activation(cid, activation) => {
             dispatch_lut_gemm_4(inputs, *cid, tape_ctx, out_buf)?;
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut8Activation(cid, activation) => {
             dispatch_lut_gemm_8(inputs, *cid, tape_ctx, out_buf)?;
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut16(cid) => {
             dispatch_lut_gemm_16(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut2(cid) => {
             dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::MatMulLut2Activation(cid, activation) => {
             dispatch_lut_gemm_2(inputs, *cid, tape_ctx, out_buf)?;
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::KvWrite {
             layer,
@@ -1322,7 +1009,7 @@ fn dispatch_kernel(
             is_key,
             heads_first,
         } => {
-            let kv_meta = dispatch_kv_write(
+            dispatch_kv_write(
                 inputs,
                 KvWriteParams::new(*layer, *n_kv_heads, *head_dim)
                     .with_is_key(*is_key)
@@ -1330,7 +1017,7 @@ fn dispatch_kernel(
                 tape_ctx,
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBufWithMeta(kv_meta))
+            Ok(DispatchOk)
         }
         TapeKernel::KvRead {
             layer,
@@ -1346,30 +1033,30 @@ fn dispatch_kernel(
                 tape_ctx,
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         // ── Inline hot ops (Phase 9a) ─────────────────────────────────
         // Direct kernel call — no backend, no dispatch_float_into, no category match.
         TapeKernel::InlineRelu => {
             inline_unary(inputs[0], out_buf, |v| v.max(0.0));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineNeg => {
             inline_unary(inputs[0], out_buf, |v| -v);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSigmoid => {
             inline_unary(inputs[0], out_buf, |v| 1.0 / (1.0 + (-v).exp()));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSilu => {
             inline_unary(inputs[0], out_buf, |v| v * (1.0 / (1.0 + (-v).exp())));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineTanh => {
             inline_unary(inputs[0], out_buf, |v| v.tanh());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGelu => {
             inline_unary(inputs[0], out_buf, |v| {
@@ -1380,67 +1067,67 @@ fn dispatch_kernel(
                             * (v + 0.044715 * v * v * v))
                             .tanh())
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineExp => {
             inline_unary(inputs[0], out_buf, |v| v.exp());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAdd => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a + b);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMul => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a * b);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSub => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a - b);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineDiv => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a / b);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAbs => {
             inline_unary(inputs[0], out_buf, |v| v.abs());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReciprocal => {
             inline_unary(inputs[0], out_buf, |v| 1.0 / v);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLog => {
             inline_unary(inputs[0], out_buf, |v| v.ln());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSqrt => {
             inline_unary(inputs[0], out_buf, |v| v.sqrt());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineCos => {
             inline_unary(inputs[0], out_buf, |v| v.cos());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSin => {
             inline_unary(inputs[0], out_buf, |v| v.sin());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSign => {
             inline_unary(inputs[0], out_buf, |v| v.signum());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineFloor => {
             inline_unary(inputs[0], out_buf, |v| v.floor());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineCeil => {
             inline_unary(inputs[0], out_buf, |v| v.ceil());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineRound => {
             inline_unary(inputs[0], out_buf, |v| v.round());
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineErf => {
             inline_unary(inputs[0], out_buf, |v| {
@@ -1463,15 +1150,15 @@ fn dispatch_kernel(
                 let y = 1.0 - (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t * (-x * x).exp();
                 sign * y
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMin => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.min(b));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMax => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.max(b));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLayerNorm { size, epsilon } => {
             let actual = shape_resolve::resolve_last_dim_with_weight(
@@ -1486,7 +1173,7 @@ fn dispatch_kernel(
                 f32::from_bits(*epsilon),
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAddRmsNorm { size, epsilon } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1500,7 +1187,7 @@ fn dispatch_kernel(
                 f32::from_bits(*epsilon),
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLogSoftmax { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1509,7 +1196,7 @@ fn dispatch_kernel(
                 inputs.first().map(|b| b.len()).unwrap_or(0),
             );
             crate::float_dispatch::norm::dispatch_log_softmax_into(inputs, actual, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAttention {
             head_dim,
@@ -1533,7 +1220,7 @@ fn dispatch_kernel(
                 .with_sparse_v(*sparse_v),
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineRoPE { dim, base, n_heads } => {
             let start_pos = tape_ctx
@@ -1549,7 +1236,7 @@ fn dispatch_kernel(
                 start_pos,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGather { dim, dtype } => {
             let result = crate::float_dispatch::gather_concat::dispatch_gather(
@@ -1558,7 +1245,7 @@ fn dispatch_kernel(
                 *dtype,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineConcat {
             size_a,
@@ -1572,7 +1259,7 @@ fn dispatch_kernel(
                 *dtype,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineTranspose {
             perm,
@@ -1613,29 +1300,26 @@ fn dispatch_kernel(
             } else {
                 // Can't determine shape — passthrough (identity).
                 out_buf.extend_from_slice(inputs[0]);
-                return Ok(DispatchResult::InOutBuf);
+                return Ok(DispatchOk);
             };
 
-            let (result, out_shape) =
+            let (result, _out_shape) =
                 crate::float_dispatch::dispatch_transpose(inputs[0], perm_slice, &shape)?;
             out_buf.extend_from_slice(&result);
-            // Propagate permuted shape as output meta.
-            let meta =
-                hologram_core::op::TensorMeta::new(hologram_core::op::FloatDType::F32, &out_shape);
-            Ok(DispatchResult::InOutBufWithMeta(meta))
+            Ok(DispatchOk)
         }
         TapeKernel::Passthrough => {
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReshape => {
             // Zero-copy: bytes unchanged, only metadata changes.
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineExpand { ndim, target_shape } => {
             let result = crate::float_dispatch::dispatch_float(
@@ -1646,31 +1330,31 @@ fn dispatch_kernel(
                 inputs,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         // ── New inline simple ops (Phase 10: complete TapeKernel coverage) ──
         TapeKernel::InlinePow => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a.powf(b));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMod => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| a % b);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineClip { min, max } => {
             let min_f = hologram_core::op::bits_to_f32(*min);
             let max_f = hologram_core::op::bits_to_f32(*max);
             inline_unary(inputs[0], out_buf, |v| v.max(min_f).min(max_f));
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineIsNaN => {
             inline_unary(inputs[0], out_buf, |v| if v.is_nan() { 1.0 } else { 0.0 });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineNot => {
             inline_unary(inputs[0], out_buf, |v| if v == 0.0 { 1.0 } else { 0.0 });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAnd => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1680,7 +1364,7 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineOr => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1690,7 +1374,7 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineXor => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1700,7 +1384,7 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineEqual => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1710,7 +1394,7 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLess => {
             inline_binary(
@@ -1719,7 +1403,7 @@ fn dispatch_kernel(
                 out_buf,
                 |a, b| if a < b { 1.0 } else { 0.0 },
             );
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLessOrEqual => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1729,7 +1413,7 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGreater => {
             inline_binary(
@@ -1738,7 +1422,7 @@ fn dispatch_kernel(
                 out_buf,
                 |a, b| if a > b { 1.0 } else { 0.0 },
             );
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGreaterOrEqual => {
             inline_binary(inputs[0], inputs[1], out_buf, |a, b| {
@@ -1748,13 +1432,13 @@ fn dispatch_kernel(
                     0.0
                 }
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineFusedSwiGLU => {
             inline_binary(inputs[0], inputs[1], out_buf, |g, u| {
                 g * (1.0 / (1.0 + (-g).exp())) * u
             });
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         // ── Complex ops (call existing handlers) ──────────────────────────
@@ -1813,11 +1497,7 @@ fn dispatch_kernel(
                             b,
                             out,
                         );
-                        let meta = hologram_core::op::TensorMeta::new(
-                            hologram_core::op::FloatDType::F32,
-                            &[actual_m, baked_n],
-                        );
-                        return Ok(DispatchResult::InOutBufWithMeta(meta));
+                        return Ok(DispatchOk);
                     }
                 }
             }
@@ -1846,12 +1526,7 @@ fn dispatch_kernel(
                 *quant_b,
             )?;
             out_buf.extend_from_slice(&result);
-            // Gemm output: [M, N]
-            let meta = hologram_core::op::TensorMeta::new(
-                hologram_core::op::FloatDType::F32,
-                &[actual_m, actual_n],
-            );
-            Ok(DispatchResult::InOutBufWithMeta(meta))
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReduceSum { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1865,7 +1540,7 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_sum,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMean { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1879,7 +1554,7 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_mean,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMax { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1893,7 +1568,7 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_max,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMin { size } => {
             let actual = shape_resolve::resolve_last_dim(
@@ -1907,7 +1582,7 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_min,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReduceProd { size } => {
             let result = float_dispatch::reduce::dispatch_reduce(
@@ -1916,7 +1591,7 @@ fn dispatch_kernel(
                 float_dispatch::reduce::reduce_prod,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineArgMax { axis, keepdims } => {
             let input = inputs.first().copied().unwrap_or(&[]);
@@ -1928,7 +1603,7 @@ fn dispatch_kernel(
                 input.len(),
             );
             if axis_size == 0 || floats.is_empty() {
-                return Ok(DispatchResult::InOutBuf);
+                return Ok(DispatchOk);
             }
             let n_rows = floats.len() / axis_size;
             let argmax_row = |row: &[f32]| -> i64 {
@@ -1957,33 +1632,33 @@ fn dispatch_kernel(
             let result_bytes: Vec<u8> = indices.iter().flat_map(|v| v.to_le_bytes()).collect();
             out_buf.extend_from_slice(&result_bytes);
             let _ = keepdims; // Shape adjustment handled by output meta.
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineCast { from, to } => {
             let result = float_dispatch::cast::dispatch_cast(inputs, *from, *to)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineEmbed { dim, quant } => {
             let result = float_dispatch::cast::dispatch_embed(inputs, *dim as usize, *quant)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineWhere => {
             let result = float_dispatch::gather_concat::dispatch_where(inputs)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineRange => {
             let result = float_dispatch::gather_concat::dispatch_range(inputs)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineShape { dtype, start, end } => {
             let result =
                 float_dispatch::gather_concat::dispatch_shape(inputs, *dtype, *start, *end)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSlice {
             axis_from_end,
@@ -2002,34 +1677,19 @@ fn dispatch_kernel(
                 tape_ctx.ctx.as_ref(),
             )?;
             out_buf.extend_from_slice(&result);
-            // Compute output meta: adjust sliced axis dimension.
-            if let Some(in_meta) = input_metas.first().and_then(|m| m.as_ref()) {
-                let n = in_meta.ndim as usize;
-                let axis = if (*axis_from_end as usize) < n {
-                    n - *axis_from_end as usize - 1
-                } else {
-                    0
-                };
-                let slice_len = (*end).saturating_sub(*start);
-                let mut out_meta = *in_meta;
-                if axis < n {
-                    out_meta.dims[axis] = slice_len;
-                }
-                return Ok(DispatchResult::InOutBufWithMeta(out_meta));
-            }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGatherND => {
             // GatherND: pass-through (same as Reshape — data unchanged).
             if let Some(b) = inputs.first() {
                 out_buf.extend_from_slice(b);
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineDequantize => {
             let result = float_dispatch::cast::dispatch_dequantize(inputs)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineConv2d {
             kernel_h,
@@ -2050,117 +1710,9 @@ fn dispatch_kernel(
                 input_metas.first().and_then(|m| m.as_ref()),
             );
 
-            // ── 1×1 pointwise GPU fast path ──────────────────────────
-            // For 1×1 conv with group=1 and no padding/dilation/stride,
-            // the convolution is a pure matmul:
-            //   weight[oc, ic] × input[ic, N*H*W] → output[oc, N*H*W]
-            // Route through Metal when the output is large enough.
             let kh = *kernel_h as usize;
             let kw = *kernel_w as usize;
-            let used_gpu_conv = if kh == 1
-                && kw == 1
-                && *pad_h == 0
-                && *pad_w == 0
-                && *dilation_h <= 1
-                && *dilation_w <= 1
-                && *stride_h <= 1
-                && *stride_w <= 1
-                && *group <= 1
-                && inputs.len() >= 2
             {
-                // weight is [oc, ic, 1, 1] = oc*ic f32s
-                let w_floats = inputs[1].len() / 4;
-                let d_floats = inputs[0].len() / 4;
-                // ic from weight shape: w_floats = oc * ic
-                // We need oc. From input meta or from data shape.
-                let spatial = actual_h * actual_w;
-                if spatial > 0 && d_floats > 0 {
-                    // ic = d_floats / (N * spatial), and N*spatial is the matmul N dim.
-                    // From weight: oc * ic = w_floats.
-                    // From data: N * ic * spatial = d_floats → ic = d_floats / (N * spatial).
-                    // We don't know N directly, but: ic divides both w_floats and d_floats/spatial.
-                    // Use weight shape from meta if available.
-                    let (oc, ic) = if let Some(w_meta) = input_metas.get(1).and_then(|m| m.as_ref())
-                    {
-                        if w_meta.ndim >= 2 {
-                            (w_meta.dims[0] as usize, w_meta.dims[1] as usize)
-                        } else {
-                            (0, 0)
-                        }
-                    } else {
-                        // Fallback: infer from data. N*ic*spatial = d_floats.
-                        // oc*ic = w_floats. Try ic candidates.
-                        let mut found = (0, 0);
-                        if w_floats > 0 && d_floats.is_multiple_of(spatial) {
-                            let n_ic = d_floats / spatial; // N * ic
-                                                           // oc * ic = w_floats, ic divides n_ic
-                            let ic_cand = w_floats.min(n_ic);
-                            if ic_cand > 0
-                                && w_floats.is_multiple_of(ic_cand)
-                                && n_ic.is_multiple_of(ic_cand)
-                            {
-                                found = (w_floats / ic_cand, ic_cand);
-                            }
-                        }
-                        found
-                    };
-
-                    if oc > 0 && ic > 0 && d_floats.is_multiple_of(ic * spatial) {
-                        let batch = d_floats / (ic * spatial);
-                        let matmul_n = batch * spatial;
-                        // M=oc, K=ic, N=batch*spatial
-                        // weight bytes = inputs[1][..oc*ic*4], data bytes = inputs[0]
-                        let w_bytes = oc * ic * 4;
-                        let matmul_inputs: &[&[u8]] = &[&inputs[1][..w_bytes], inputs[0]];
-                        match backend.dispatch_matmul(matmul_inputs, oc, ic, matmul_n, out_buf)? {
-                            KernelOutput::Bytes => true,
-
-                            KernelOutput::GpuBuffer(gbuf) => {
-                                backend.flush();
-                                let byte_len = oc * matmul_n * 4;
-                                out_buf.resize(byte_len, 0);
-                                gbuf.readback_into(out_buf.as_mut_slice());
-                                true
-                            }
-                            #[cfg(has_webgpu)]
-                            KernelOutput::WgpuDeferred => {
-                                return Ok(DispatchResult::WgpuDeferred);
-                            }
-                            KernelOutput::Skipped => false,
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            if used_gpu_conv {
-                // Apply bias to GPU matmul output if present.
-                // Conv bias is inputs[2], broadcast as [oc, spatial] += bias[oc].
-                if inputs.len() >= 3 && !inputs[2].is_empty() {
-                    if let Ok(bias) = bytemuck::try_cast_slice::<u8, f32>(inputs[2]) {
-                        if let Ok(out_f32) =
-                            bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
-                        {
-                            let bias_len = bias.len();
-                            // output is [oc, spatial], each row gets bias[c]
-                            let spatial = out_f32.len() / bias_len.max(1);
-                            for (c, &bv) in bias.iter().enumerate() {
-                                let base = c * spatial;
-                                if base + spatial <= out_f32.len() {
-                                    for s in &mut out_f32[base..base + spatial] {
-                                        *s += bv;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
                 let result = float_dispatch::conv::dispatch_conv2d_direct(
                     inputs,
                     float_dispatch::conv::Conv2dAttrs::new(kh, kw)
@@ -2173,32 +1725,7 @@ fn dispatch_kernel(
                 )?;
                 out_buf.extend_from_slice(&result);
             }
-            // Compute output meta: [N, C_out, H_out, W_out] from input + weight shapes.
-            if let (Some(in_meta), Some(w_meta)) = (
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-            ) {
-                if in_meta.ndim >= 4 && w_meta.ndim >= 1 {
-                    let n = in_meta.dims[0] as usize;
-                    let c_out = w_meta.dims[0] as usize;
-                    let sh = (*stride_h).max(1) as usize;
-                    let sw = (*stride_w).max(1) as usize;
-                    let dh = (*dilation_h).max(1) as usize;
-                    let dw = (*dilation_w).max(1) as usize;
-                    let h_out =
-                        (actual_h + 2 * (*pad_h as usize) - dh * (*kernel_h as usize - 1) - 1) / sh
-                            + 1;
-                    let w_out =
-                        (actual_w + 2 * (*pad_w as usize) - dw * (*kernel_w as usize - 1) - 1) / sw
-                            + 1;
-                    let meta = hologram_core::op::TensorMeta::new(
-                        hologram_core::op::FloatDType::F32,
-                        &[n, c_out, h_out, w_out],
-                    );
-                    return Ok(DispatchResult::InOutBufWithMeta(meta));
-                }
-            }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineConv2dActivation {
             kernel_h,
@@ -2246,32 +1773,7 @@ fn dispatch_kernel(
             out_buf.extend_from_slice(&result);
             // Epilogue: apply activation to cache-hot conv output.
             apply_activation_to_out_buf(out_buf, activation);
-            // Compute output meta.
-            if let (Some(in_meta), Some(w_meta)) = (
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-            ) {
-                if in_meta.ndim >= 4 && w_meta.ndim >= 1 {
-                    let n = in_meta.dims[0] as usize;
-                    let c_out = w_meta.dims[0] as usize;
-                    let sh = (*stride_h).max(1) as usize;
-                    let sw = (*stride_w).max(1) as usize;
-                    let dh = (*dilation_h).max(1) as usize;
-                    let dw = (*dilation_w).max(1) as usize;
-                    let h_out =
-                        (actual_h + 2 * (*pad_h as usize) - dh * (*kernel_h as usize - 1) - 1) / sh
-                            + 1;
-                    let w_out =
-                        (actual_w + 2 * (*pad_w as usize) - dw * (*kernel_w as usize - 1) - 1) / sw
-                            + 1;
-                    let meta = hologram_core::op::TensorMeta::new(
-                        hologram_core::op::FloatDType::F32,
-                        &[n, c_out, h_out, w_out],
-                    );
-                    return Ok(DispatchResult::InOutBufWithMeta(meta));
-                }
-            }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineConv2dLut4 {
             cid,
@@ -2305,32 +1807,7 @@ fn dispatch_kernel(
                 actual_w,
             )?;
             out_buf.extend_from_slice(&result);
-            // Compute output meta: [N, C_out, H_out, W_out].
-            if let (Some(in_meta), Some(w_meta)) = (
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-            ) {
-                if in_meta.ndim >= 4 && w_meta.ndim >= 1 {
-                    let n = in_meta.dims[0] as usize;
-                    let c_out = w_meta.dims[0] as usize;
-                    let sh = (*stride_h).max(1) as usize;
-                    let sw = (*stride_w).max(1) as usize;
-                    let dh = (*dilation_h).max(1) as usize;
-                    let dw = (*dilation_w).max(1) as usize;
-                    let h_out =
-                        (actual_h + 2 * (*pad_h as usize) - dh * (*kernel_h as usize - 1) - 1) / sh
-                            + 1;
-                    let w_out =
-                        (actual_w + 2 * (*pad_w as usize) - dw * (*kernel_w as usize - 1) - 1) / sw
-                            + 1;
-                    let meta = hologram_core::op::TensorMeta::new(
-                        hologram_core::op::FloatDType::F32,
-                        &[n, c_out, h_out, w_out],
-                    );
-                    return Ok(DispatchResult::InOutBufWithMeta(meta));
-                }
-            }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineConvTranspose {
             kernel_h,
@@ -2365,7 +1842,7 @@ fn dispatch_kernel(
                 actual_w,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMaxPool2d {
             kernel_h,
@@ -2382,7 +1859,7 @@ fn dispatch_kernel(
                     .with_padding(*pad_h as usize, *pad_w as usize),
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAvgPool2d {
             kernel_h,
@@ -2399,7 +1876,7 @@ fn dispatch_kernel(
                     .with_padding(*pad_h as usize, *pad_w as usize),
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGlobalAvgPool {
             channels,
@@ -2416,7 +1893,7 @@ fn dispatch_kernel(
                 inputs, actual_c, actual_h, actual_w,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineResize { mode } => {
             let input_meta = input_metas.first().and_then(|m| m.as_ref());
@@ -2428,30 +1905,12 @@ fn dispatch_kernel(
                 input_shape.as_deref(),
             )?;
             out_buf.extend_from_slice(&result);
-            // Compute output meta: scale input shape's spatial dims by 2x.
-            // This ensures downstream Conv2d gets correct h_in/w_in from TensorMeta.
-            if let Some(meta) = input_meta {
-                let shape = meta.shape();
-                if shape.len() == 4 {
-                    let out_floats = result.len() / 4;
-                    let nc = (shape[0] as usize) * (shape[1] as usize);
-                    let out_spatial = if nc > 0 { out_floats / nc } else { 0 };
-                    let side = (out_spatial as f64).sqrt() as usize;
-                    if side > 0 && side * side == out_spatial {
-                        let out_meta = hologram_core::op::TensorMeta::new(
-                            meta.dtype,
-                            &[shape[0] as usize, shape[1] as usize, side, side],
-                        );
-                        return Ok(DispatchResult::InOutBufWithMeta(out_meta));
-                    }
-                }
-            }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlinePad { mode } => {
             let result = float_dispatch::spatial::dispatch_pad(inputs, *mode)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineInstanceNorm { size, epsilon } => {
             // InstanceNorm normalizes across ALL spatial dims (H×W), not just
@@ -2490,7 +1949,7 @@ fn dispatch_kernel(
                 f32::from_bits(*epsilon),
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGroupNorm {
             num_groups,
@@ -2502,7 +1961,7 @@ fn dispatch_kernel(
                 f32::from_bits(*epsilon),
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         // ── Fused norm + activation (epilogue fusion) ────────────────
@@ -2523,7 +1982,7 @@ fn dispatch_kernel(
                 out_buf,
             )?;
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineLayerNormActivation {
             size,
@@ -2543,7 +2002,7 @@ fn dispatch_kernel(
                 out_buf,
             )?;
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineGroupNormActivation {
             num_groups,
@@ -2557,7 +2016,7 @@ fn dispatch_kernel(
                 activation,
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         TapeKernel::InlineAddRmsNormActivation {
@@ -2572,7 +2031,7 @@ fn dispatch_kernel(
             )?;
             out_buf.extend_from_slice(&result);
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineInstanceNormActivation {
             size,
@@ -2586,7 +2045,7 @@ fn dispatch_kernel(
             )?;
             out_buf.extend_from_slice(&result);
             apply_activation_to_out_buf(out_buf, activation);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         TapeKernel::InlineLRN {
@@ -2603,32 +2062,32 @@ fn dispatch_kernel(
                 hologram_core::op::bits_to_f32(*bias),
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineTopK { axis, largest } => {
             let result = float_dispatch::misc::dispatch_top_k(inputs, *axis as usize, *largest)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineScatterND => {
             let result = float_dispatch::misc::dispatch_scatter_nd(inputs)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineCumSum { axis } => {
             let result = float_dispatch::misc::dispatch_cumsum(inputs, *axis as usize)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineNonZero => {
             let result = float_dispatch::misc::dispatch_nonzero(inputs)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineCompress { axis } => {
             let result = float_dispatch::misc::dispatch_compress(inputs, *axis as usize)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineReverseSequence {
             batch_axis,
@@ -2640,54 +2099,22 @@ fn dispatch_kernel(
                 *time_axis as usize,
             )?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
-        // ── Inline custom ops (Phase 9a.3–9a.4) ─────────────────────────
-        // Try backend (GPU) first, then direct CPU kernel call.
+        // ── Inline custom ops ─────────────────────────────────────────────
         TapeKernel::InlineMatMul { m, k, n } => {
+            // Used by Accelerate BLAS fast path (cfg-gated on macOS).
             let baked_k = *k as usize;
             let baked_n = *n as usize;
-
-            // ── GPU backend dispatch (Metal/WebGPU) ───────────────────
-            // Resolve actual_m early so we can pass correct dims to the
-            // backend. The backend checks element thresholds internally
-            // and returns Skipped for small matrices.
-            let actual_m_for_gpu = if baked_k > 0 && inputs[0].len().is_multiple_of(baked_k * 4) {
-                inputs[0].len() / (baked_k * 4)
-            } else {
-                0
-            };
-
-            let mut used_gpu = false;
-            if actual_m_for_gpu > 0 && baked_n > 0 {
-                match backend.dispatch_matmul(
-                    inputs,
-                    actual_m_for_gpu,
-                    baked_k,
-                    baked_n,
-                    out_buf,
-                )? {
-                    KernelOutput::Bytes => {
-                        used_gpu = true;
-                    }
-
-                    KernelOutput::GpuBuffer(gbuf) => {
-                        return Ok(DispatchResult::GpuBuffer(gbuf));
-                    }
-                    #[cfg(has_webgpu)]
-                    KernelOutput::WgpuDeferred => {
-                        return Ok(DispatchResult::WgpuDeferred);
-                    }
-                    KernelOutput::Skipped => {}
-                }
-            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            let _ = (baked_k, baked_n);
 
             // ── CPU fast path (Accelerate BLAS) ───────────────────────
             // The BLAS block has side effects (writes to out_buf) despite
             // returning bool — clippy's needless_bool doesn't see them.
             #[allow(clippy::needless_bool)]
-            let used_cpu_blas = if !used_gpu {
+            let used_cpu_blas = {
                 #[cfg(all(feature = "accelerate", target_os = "macos"))]
                 {
                     if baked_k > 0
@@ -2719,15 +2146,9 @@ fn dispatch_kernel(
                 {
                     false
                 }
-            } else {
-                false
             };
-            let used_fast_path = used_gpu || used_cpu_blas;
 
-            let (actual_m, actual_k, actual_n) = if used_fast_path {
-                let actual_m = inputs[0].len() / (baked_k * 4);
-                (actual_m, baked_k, baked_n)
-            } else {
+            if !used_cpu_blas {
                 // General path with dim resolution.
                 let meta_dims = shape_resolve::resolve_matmul_dims(
                     *m,
@@ -2757,27 +2178,8 @@ fn dispatch_kernel(
                     )
                 };
                 crate::float_dispatch::matmul::dispatch_matmul_into(inputs, am, ak, an, out_buf)?;
-                (am, ak, an)
-            };
-            // Compute output meta: [batch, M, N] from resolved dims.
-            let a_floats = inputs[0].len() / 4;
-            let batch = if actual_m > 0 && actual_k > 0 {
-                a_floats / (actual_m * actual_k)
-            } else {
-                1
-            };
-            let meta = if batch > 1 {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[batch, actual_m, actual_n],
-                )
-            } else {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[actual_m, actual_n],
-                )
-            };
-            Ok(DispatchResult::InOutBufWithMeta(meta))
+            }
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMatMulBiasActivation {
             m,
@@ -2818,76 +2220,16 @@ fn dispatch_kernel(
                 )
             };
 
-            // ── GPU backend for matmul, then CPU epilogue ─────────
-            let mut used_gpu = false;
-            if actual_m > 0 && actual_k > 0 && actual_n > 0 {
-                match backend.dispatch_matmul(
-                    &inputs[..2],
-                    actual_m,
-                    actual_k,
-                    actual_n,
-                    out_buf,
-                )? {
-                    KernelOutput::Bytes => {
-                        used_gpu = true;
-                    }
-
-                    KernelOutput::GpuBuffer(gbuf) => {
-                        backend.flush();
-                        let byte_len = actual_m * actual_n * 4;
-                        out_buf.resize(byte_len, 0);
-                        gbuf.readback_into(out_buf.as_mut_slice());
-                        used_gpu = true;
-                    }
-                    #[cfg(has_webgpu)]
-                    KernelOutput::WgpuDeferred => {
-                        return Ok(DispatchResult::WgpuDeferred);
-                    }
-                    KernelOutput::Skipped => {}
-                }
-            }
-
-            if used_gpu {
-                // Apply bias + activation epilogue on the GPU matmul output.
-                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
-                {
-                    let bias_len = bias.len();
-                    if bias_len > 0 {
-                        for row in floats.chunks_mut(bias_len) {
-                            for (j, v) in row.iter_mut().enumerate() {
-                                *v = activation.apply_unary(*v + bias[j]);
-                            }
-                        }
-                    }
-                }
-            } else {
-                crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
-                    &inputs[..2],
-                    actual_m,
-                    actual_k,
-                    actual_n,
-                    bias,
-                    activation,
-                    out_buf,
-                )?;
-            }
-            let batch = if actual_m > 0 && actual_k > 0 {
-                a_floats / (actual_m * actual_k)
-            } else {
-                1
-            };
-            let meta = if batch > 1 {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[batch, actual_m, actual_n],
-                )
-            } else {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[actual_m, actual_n],
-                )
-            };
-            Ok(DispatchResult::InOutBufWithMeta(meta))
+            crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
+                &inputs[..2],
+                actual_m,
+                actual_k,
+                actual_n,
+                bias,
+                activation,
+                out_buf,
+            )?;
+            Ok(DispatchOk)
         }
         TapeKernel::InlineMatMulActivation {
             m,
@@ -2922,97 +2264,21 @@ fn dispatch_kernel(
                     b_floats,
                 )
             };
-            // ── GPU backend for matmul, then CPU epilogue ─────────
-            let mut used_gpu = false;
-            if actual_m > 0 && actual_k > 0 && actual_n > 0 {
-                match backend.dispatch_matmul(inputs, actual_m, actual_k, actual_n, out_buf)? {
-                    KernelOutput::Bytes => {
-                        used_gpu = true;
-                    }
-
-                    KernelOutput::GpuBuffer(gbuf) => {
-                        backend.flush();
-                        let byte_len = actual_m * actual_n * 4;
-                        out_buf.resize(byte_len, 0);
-                        gbuf.readback_into(out_buf.as_mut_slice());
-                        used_gpu = true;
-                    }
-                    #[cfg(has_webgpu)]
-                    KernelOutput::WgpuDeferred => {
-                        return Ok(DispatchResult::WgpuDeferred);
-                    }
-                    KernelOutput::Skipped => {}
-                }
-            }
-
-            if used_gpu {
-                // Apply activation epilogue on the GPU matmul output.
-                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf.as_mut_slice())
-                {
-                    for v in floats.iter_mut() {
-                        *v = activation.apply_unary(*v);
-                    }
-                }
-            } else {
-                crate::float_dispatch::matmul::dispatch_matmul_activation_into(
-                    inputs, actual_m, actual_k, actual_n, activation, out_buf,
-                )?;
-            }
-            let batch = if actual_m > 0 && actual_k > 0 {
-                a_floats / (actual_m * actual_k)
-            } else {
-                1
-            };
-            let meta = if batch > 1 {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[batch, actual_m, actual_n],
-                )
-            } else {
-                hologram_core::op::TensorMeta::new(
-                    hologram_core::op::FloatDType::F32,
-                    &[actual_m, actual_n],
-                )
-            };
-            Ok(DispatchResult::InOutBufWithMeta(meta))
+            crate::float_dispatch::matmul::dispatch_matmul_activation_into(
+                inputs, actual_m, actual_k, actual_n, activation, out_buf,
+            )?;
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSoftmax { size } => {
-            match backend.dispatch_float(&FloatOp::Softmax { size: *size }, inputs, out_buf)? {
-                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-
-                KernelOutput::GpuBuffer(gbuf) => {
-                    return Ok(DispatchResult::GpuBuffer(gbuf));
-                }
-                #[cfg(has_webgpu)]
-                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
-                KernelOutput::Skipped => {}
-            }
             let actual = crate::shape_resolve::resolve_last_dim(
                 *size,
                 input_metas.first().and_then(|m| m.as_ref()),
                 inputs.first().map(|b| b.len()).unwrap_or(0),
             );
             crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineRmsNorm { size, epsilon } => {
-            match backend.dispatch_float(
-                &FloatOp::RmsNorm {
-                    size: *size,
-                    epsilon: *epsilon,
-                },
-                inputs,
-                out_buf,
-            )? {
-                KernelOutput::Bytes => return Ok(DispatchResult::InOutBuf),
-
-                KernelOutput::GpuBuffer(gbuf) => {
-                    return Ok(DispatchResult::GpuBuffer(gbuf));
-                }
-                #[cfg(has_webgpu)]
-                KernelOutput::WgpuDeferred => return Ok(DispatchResult::WgpuDeferred),
-                KernelOutput::Skipped => {}
-            }
             let actual = crate::shape_resolve::resolve_last_dim(
                 *size,
                 input_metas.first().and_then(|m| m.as_ref()),
@@ -3024,7 +2290,7 @@ fn dispatch_kernel(
                 f32::from_bits(*epsilon),
                 out_buf,
             )?;
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         // ── Deep decode fusions (Plan 054) ──────────────────────────────
         //
@@ -3077,7 +2343,7 @@ fn dispatch_kernel(
                     out_buf,
                 )?;
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineAddNormProjectionGemv {
             norm_size,
@@ -3129,7 +2395,7 @@ fn dispatch_kernel(
                     out_buf,
                 )?;
             }
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
         TapeKernel::InlineSwiGluProjectionGemv { k, n } => {
             // Fused: SwiGLU(gate, up) → MatMul(activated, W_down)
@@ -3159,13 +2425,13 @@ fn dispatch_kernel(
                 out_buf,
             )?;
             drop(activated_f32);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
 
         TapeKernel::Custom(handler) => {
             let result = handler(inputs, tape_ctx.constants)?;
             out_buf.extend_from_slice(&result);
-            Ok(DispatchResult::InOutBuf)
+            Ok(DispatchOk)
         }
     }
 }
@@ -4233,12 +3499,6 @@ impl EnumTape {
         let mut op_times: std::collections::HashMap<String, (std::time::Duration, usize)> =
             std::collections::HashMap::new();
 
-        // GPU buffer storage: when dispatch returns GpuBuffer, the result
-        // stays on the GPU until a downstream CPU op needs it. This avoids
-        // per-op flush+readback overhead by batching GPU work.
-        let mut gpu_bufs: Vec<Option<crate::backend::GpuBuffer>> =
-            (0..max_idx).map(|_| None).collect();
-
         let evict = self.checkpoint_enabled;
         let mut live_counts: Vec<u32> = if evict {
             let mut lc = self.consumer_counts.clone();
@@ -4328,18 +3588,7 @@ impl EnumTape {
             // SAFETY: output_idx != any input_idx in a valid DAG.
             let out_idx = instr.output_idx as usize;
 
-            // Lazy Metal readback: if any input lives in a GPU buffer,
-            // flush the GPU command queue and copy data into the CPU
-            // OutputBuffer. This happens once per buffer, not per-op —
-            // subsequent reads of the same buffer hit the CPU copy.
-            // Check if any input is a GPU buffer.
-            let has_gpu_inputs = instr.input_indices.iter().any(|&idx| {
-                let i = idx as usize;
-                i < gpu_bufs.len() && gpu_bufs[i].is_some()
-            });
-
-            // Build input_metas early — needed by both GPU chaining and CPU dispatch
-            // for resolving variable-length dimensions from shape_overrides.
+            // Build input_metas for resolving variable-length dimensions from shape_overrides.
             let input_metas: crate::shape_resolve::InputMetas =
                 if tape_ctx.shape_overrides.is_empty() {
                     SmallVec::new()
@@ -4357,93 +3606,6 @@ impl EnumTape {
                         })
                         .collect()
                 };
-
-            // ── GPU dispatch: only when inputs are already on GPU ──────────
-            // For CPU-only execution (LLM decode at M=1), skip the GPU path
-            // entirely to avoid GpuInput construction overhead (~40% perf hit).
-            // For CPU-only execution (LLM decode), skip the GPU path entirely
-            // to avoid the overhead of GpuInput construction and backend dispatch.
-            if has_gpu_inputs {
-                let bufs_ptr = bufs.as_mut_ptr();
-                let bufs_len = bufs.len();
-                let backend_ref = tape_ctx.backend.resolve();
-
-                let gpu_inputs: SmallVec<[crate::backend::GpuInput<'_>; 4]> = instr
-                    .input_indices
-                    .iter()
-                    .map(|&idx| {
-                        let i = idx as usize;
-                        if i < gpu_bufs.len() {
-                            if let Some(ref gb) = gpu_bufs[i] {
-                                return crate::backend::GpuInput::Gpu(gb);
-                            }
-                        }
-                        // SAFETY: output_idx != any input_idx in a valid DAG.
-                        let cpu_slice = if i < bufs_len {
-                            let buf = unsafe { &*bufs_ptr.add(i) };
-                            if !buf.is_empty() {
-                                buf.as_slice()
-                            } else {
-                                arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
-                            }
-                        } else {
-                            arena.get(NodeId::new(idx, 0)).unwrap_or(&[])
-                        };
-                        crate::backend::GpuInput::Cpu(cpu_slice)
-                    })
-                    .collect();
-
-                // SAFETY: output_idx != any input_idx (DAG invariant).
-                let out_buf = unsafe { &mut *bufs_ptr.add(out_idx) };
-                out_buf.clear();
-
-                let chained_result = dispatch_kernel_gpu(
-                    &instr.kernel,
-                    &gpu_inputs,
-                    &input_metas,
-                    &*backend_ref,
-                    out_buf,
-                )?;
-
-                // Drop borrows before modifying gpu_bufs.
-                drop(gpu_inputs);
-
-                match chained_result {
-                    crate::backend::KernelOutput::GpuBuffer(gbuf) => {
-                        if out_idx < gpu_bufs.len() {
-                            gpu_bufs[out_idx] = Some(gbuf);
-                        }
-                        continue;
-                    }
-                    crate::backend::KernelOutput::Bytes => {
-                        if out_idx < gpu_bufs.len() {
-                            gpu_bufs[out_idx] = None;
-                        }
-                        continue;
-                    }
-                    crate::backend::KernelOutput::Skipped => {}
-                    #[cfg(has_webgpu)]
-                    crate::backend::KernelOutput::WgpuDeferred => {
-                        continue;
-                    }
-                }
-            }
-
-            // CPU path: readback any GPU inputs before building &[u8] refs.
-            if has_gpu_inputs {
-                let backend_ref = tape_ctx.backend.resolve();
-                backend_ref.flush();
-                for &idx in &instr.input_indices {
-                    let i = idx as usize;
-                    if i < gpu_bufs.len() {
-                        if let Some(gbuf) = gpu_bufs[i].take() {
-                            let byte_len = gbuf.byte_len();
-                            bufs[i].resize(byte_len, 0);
-                            gbuf.readback_into(bufs[i].as_mut_slice());
-                        }
-                    }
-                }
-            }
 
             let bufs_ptr = bufs.as_mut_ptr();
             let bufs_len = bufs.len();
@@ -4494,30 +3656,11 @@ impl EnumTape {
 
             let t0 = std::time::Instant::now();
 
-            // input_metas already built above (before GPU chaining block).
-            // Reuse the same metas for the CPU dispatch path.
-            let result = dispatch_kernel(
-                &instr.kernel,
-                &input_refs,
-                &input_metas,
-                tape_ctx,
-                &*tape_ctx.backend.resolve(),
-                out_buf,
-            )?;
+            dispatch_kernel(&instr.kernel, &input_refs, &input_metas, tape_ctx, out_buf)?;
 
             // Drop input refs before mutating bufs again — `input_refs`
             // borrows from `bufs` via raw pointer.
             drop(input_refs);
-
-            // Handle Metal GPU buffer results: store in the parallel metal_bufs
-            // array for deferred readback. The GPU command buffer is NOT flushed
-            // here — multiple ops accumulate on the GPU, and flush happens lazily
-            // when a downstream CPU op needs the data.
-            if let DispatchResult::GpuBuffer(gbuf) = result {
-                if out_idx < gpu_bufs.len() {
-                    gpu_bufs[out_idx] = Some(gbuf);
-                }
-            }
 
             // Evict input buffers whose last consumer was this instruction
             // (only when explicitly enabled — see live_counts setup above).
@@ -4622,31 +3765,6 @@ impl EnumTape {
 
         // Write all instruction output buffers back to arena so callers
         // (collect_outputs, tests) can access results by NodeId.
-        // Final GPU readback: flush and copy any remaining GPU buffers
-        // into the CPU bufs so the arena output loop below can access them.
-        {
-            let backend_ref = tape_ctx.backend.resolve();
-            let mut any_gpu = false;
-            for gb in gpu_bufs.iter() {
-                if gb.is_some() {
-                    any_gpu = true;
-                    break;
-                }
-            }
-            if any_gpu {
-                backend_ref.flush();
-                for (i, slot) in gpu_bufs.iter_mut().enumerate() {
-                    if let Some(gbuf) = slot.take() {
-                        let byte_len = gbuf.byte_len();
-                        if i < bufs.len() {
-                            bufs[i].resize(byte_len, 0);
-                            gbuf.readback_into(bufs[i].as_mut_slice());
-                        }
-                    }
-                }
-            }
-        }
-
         for instr in &self.instructions {
             let idx = instr.output_idx as usize;
             if idx < bufs.len() {
@@ -4736,7 +3854,6 @@ impl EnumTape {
             v
         };
 
-        let backend = tape_ctx.backend.resolve();
         let mut peak_activation_bytes: usize = 0;
 
         for instr in self.instructions.iter() {
@@ -4806,14 +3923,7 @@ impl EnumTape {
                         .collect()
                 };
 
-            dispatch_kernel(
-                &instr.kernel,
-                &input_refs,
-                &input_metas,
-                tape_ctx,
-                &*backend,
-                out_buf,
-            )?;
+            dispatch_kernel(&instr.kernel, &input_refs, &input_metas, tape_ctx, out_buf)?;
 
             drop(input_refs);
 

@@ -6,7 +6,6 @@
 
 use std::collections::HashSet;
 
-use crate::backend::BackendSelector;
 use crate::tape::TapeKernel;
 
 /// Weight residency policy for constrained execution.
@@ -507,8 +506,6 @@ pub struct ConstrainedProfile {
     pub max_activation_bytes: usize,
     /// Weight loading/eviction policy.
     pub weight_policy: WeightPolicy,
-    /// Backend selector (CPU, Metal, WebGPU, Auto).
-    pub backend: BackendSelector,
     /// Optional kernel allowlist. `None` means all kernels are allowed.
     pub kernel_allowlist: Option<KernelAllowlist>,
     /// Whether custom ops are permitted.
@@ -523,7 +520,6 @@ impl Default for ConstrainedProfile {
             max_weight_bytes: 256 * 1024 * 1024,    // 256 MB
             max_activation_bytes: 64 * 1024 * 1024, // 64 MB
             weight_policy: WeightPolicy::BoundedWindow,
-            backend: BackendSelector::Auto,
             kernel_allowlist: None,
             allow_custom_ops: false,
             allow_fallback_kernels: false,
