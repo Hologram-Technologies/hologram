@@ -318,11 +318,18 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
             enc.set_buffer(0, Some(inputs[0]), 0);
             enc.set_buffer(1, Some(inputs[1]), 0);
             enc.set_buffer(2, Some(&out), 0);
-            enc.set_buffer(3, Some(&self.u32_buf(m as u32)), 0);
-            enc.set_buffer(4, Some(&self.u32_buf(k as u32)), 0);
-            enc.set_buffer(5, Some(&self.u32_buf(n as u32)), 0);
+            // Bind dimension buffers to locals so they outlive the encoder.
+            let m_buf = self.u32_buf(m as u32);
+            let k_buf = self.u32_buf(k as u32);
+            let n_buf = self.u32_buf(n as u32);
+            enc.set_buffer(3, Some(&m_buf), 0);
+            enc.set_buffer(4, Some(&k_buf), 0);
+            enc.set_buffer(5, Some(&n_buf), 0);
             let tg = MTLSize::new(16, 16, 1);
-            enc.dispatch_threads(MTLSize::new(n as u64, m as u64, 1), tg);
+            // Use dispatch_threadgroups (not dispatch_threads) for correct
+            // threadgroup barrier behavior with the tiled sgemm kernel.
+            let grid = MTLSize::new((n as u64).div_ceil(16), (m as u64).div_ceil(16), 1);
+            enc.dispatch_thread_groups(grid, tg);
             enc.end_encoding();
             drop(pending);
 
@@ -653,8 +660,12 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
                 let w_floats = inputs[1].length() as usize / 4;
                 let d_floats = inputs[0].length() as usize / 4;
                 let spatial = h * w;
-                let ic = if spatial > 0 { d_floats / spatial } else { 0 };
-                let oc = if ic > 0 && kh > 0 && kw > 0 {
+                let ic = if spatial > 0 && d_floats.is_multiple_of(spatial) {
+                    d_floats / spatial
+                } else {
+                    0
+                };
+                let oc = if ic > 0 && kh > 0 && kw > 0 && w_floats.is_multiple_of(ic * kh * kw) {
                     w_floats / (ic * kh * kw)
                 } else {
                     0
@@ -715,11 +726,19 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
                             enc.set_buffer(0, Some(inputs[1]), 0);
                             enc.set_buffer(1, Some(&col_buf), 0);
                             enc.set_buffer(2, Some(&out_buf), 0);
-                            enc.set_buffer(3, Some(&self.u32_buf(oc as u32)), 0);
-                            enc.set_buffer(4, Some(&self.u32_buf(col_rows as u32)), 0);
-                            enc.set_buffer(5, Some(&self.u32_buf(col_cols as u32)), 0);
+                            let m_buf = self.u32_buf(oc as u32);
+                            let k_buf = self.u32_buf(col_rows as u32);
+                            let n_buf = self.u32_buf(col_cols as u32);
+                            enc.set_buffer(3, Some(&m_buf), 0);
+                            enc.set_buffer(4, Some(&k_buf), 0);
+                            enc.set_buffer(5, Some(&n_buf), 0);
                             let tg = MTLSize::new(16, 16, 1);
-                            enc.dispatch_threads(MTLSize::new(col_cols as u64, oc as u64, 1), tg);
+                            let grid = MTLSize::new(
+                                (col_cols as u64).div_ceil(16),
+                                (oc as u64).div_ceil(16),
+                                1,
+                            );
+                            enc.dispatch_thread_groups(grid, tg);
                             enc.end_encoding();
                             drop(pending);
 
