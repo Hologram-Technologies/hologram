@@ -380,6 +380,9 @@ pub(crate) fn seed_arena<'a>(
                         .copied()
                         .unwrap_or(hologram_core::op::FloatDType::F32);
                     arena.set_meta(node.id, hologram_core::op::TensorMeta::new(dtype, shape));
+                    // Seed the shape registry so downstream ops can read
+                    // exact dimensions instead of guessing from byte lengths.
+                    arena.set_shape(node.id, hologram_shape::TensorShape::new(dtype, shape));
                 }
             }
             GraphOp::Input => {
@@ -405,6 +408,8 @@ pub(crate) fn seed_arena<'a>(
                             .copied()
                             .unwrap_or(hologram_core::op::FloatDType::F32);
                         arena.set_meta(node.id, hologram_core::op::TensorMeta::new(dtype, shape));
+                        // Seed the shape registry for graph inputs.
+                        arena.set_shape(node.id, hologram_shape::TensorShape::new(dtype, shape));
                     }
                 }
             }

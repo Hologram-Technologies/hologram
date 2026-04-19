@@ -752,6 +752,7 @@ fn dispatch_kernel(
     kernel: &TapeKernel,
     inputs: &[&[u8]],
     input_metas: &crate::shape_resolve::InputMetas,
+    input_shapes: &[Option<hologram_shape::TensorShape>],
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut OutputBuffer,
 ) -> ExecResult<DispatchOk> {
@@ -771,6 +772,51 @@ fn dispatch_kernel(
         };
         tracing::debug!(dk, name, "dispatch_kernel");
     }
+
+    // Helper: get the last dim from an input shape, if available.
+    let shape_last_dim =
+        |idx: usize| -> Option<usize> { input_shapes.get(idx)?.as_ref()?.last_dim() };
+
+    // Helper: get spatial (H, W) from dims[-2], dims[-1] of a 4-D+ shape.
+    let shape_spatial_hw = |idx: usize| -> Option<(usize, usize)> {
+        let s = input_shapes.get(idx)?.as_ref()?;
+        if s.ndim() >= 4 {
+            Some((s.dims[s.ndim() - 2], s.dims[s.ndim() - 1]))
+        } else {
+            None
+        }
+    };
+
+    // Helper: get (C, H, W) from dims[-3], dims[-2], dims[-1] of a 3-D+ shape.
+    let shape_chw = |idx: usize| -> Option<(usize, usize, usize)> {
+        let s = input_shapes.get(idx)?.as_ref()?;
+        if s.ndim() >= 3 {
+            let n = s.ndim();
+            let c = s.dims[n - 3];
+            let h = s.dims[n - 2];
+            let w = s.dims[n - 1];
+            if c > 0 && h > 0 && w > 0 {
+                Some((c, h, w))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    // Helper: resolve M for matmul from input_shapes[0].
+    // M = total_elements / last_dim (where last_dim is K).
+    let shape_matmul_m = |k_val: u32| -> Option<usize> {
+        let s = input_shapes.first()?.as_ref()?;
+        let total = s.total_elements();
+        let k = k_val as usize;
+        if k > 0 && total > 0 && total % k == 0 {
+            Some(total / k)
+        } else {
+            None
+        }
+    };
 
     match kernel {
         TapeKernel::FusedFloatChain(chain) => {
@@ -1091,12 +1137,14 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineLayerNorm { size, epsilon } => {
-            let actual = shape_resolve::resolve_last_dim_with_weight(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-                inputs.get(1).map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim_with_weight(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                    inputs.get(1).map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_layer_norm_into(
                 inputs,
                 actual,
@@ -1106,11 +1154,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineAddRmsNorm { size, epsilon } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_add_rms_norm_into(
                 inputs,
                 actual,
@@ -1120,11 +1170,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineLogSoftmax { size } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_log_softmax_into(inputs, actual, out_buf)?;
             Ok(DispatchOk)
         }
@@ -1325,15 +1377,19 @@ fn dispatch_kernel(
             }
 
             // General path.
-            let (actual_m, actual_k, actual_n) = shape_resolve::resolve_matmul_dims(
-                *m,
-                *k,
-                *n,
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-                inputs[0].len(),
-                inputs.get(1).map(|b| b.len()).unwrap_or(0),
-            );
+            let (actual_m, actual_k, actual_n) = if let Some(am) = shape_matmul_m(*k) {
+                (am, *k as usize, *n as usize)
+            } else {
+                shape_resolve::resolve_matmul_dims(
+                    *m,
+                    *k,
+                    *n,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    input_metas.get(1).and_then(|m| m.as_ref()),
+                    inputs[0].len(),
+                    inputs.get(1).map(|b| b.len()).unwrap_or(0),
+                )
+            };
             let result = float_dispatch::matmul::dispatch_gemm(
                 inputs,
                 float_dispatch::matmul::GemmParams {
@@ -1351,11 +1407,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineReduceSum { size } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -1365,11 +1423,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMean { size } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -1379,11 +1439,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMax { size } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -1393,11 +1455,13 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineReduceMin { size } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             let result = float_dispatch::reduce::dispatch_reduce(
                 inputs,
                 actual,
@@ -1418,12 +1482,14 @@ fn dispatch_kernel(
         TapeKernel::InlineArgMax { axis, keepdims } => {
             let input = inputs.first().copied().unwrap_or(&[]);
             let floats = safe_cast_f32(input);
-            // Resolve axis size from input meta or compiled value.
-            let axis_size = shape_resolve::resolve_last_dim(
-                *axis,
-                input_metas.first().and_then(|m| m.as_ref()),
-                input.len(),
-            );
+            // Resolve axis size from input shape, meta, or compiled value.
+            let axis_size = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *axis,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    input.len(),
+                )
+            });
             if axis_size == 0 || floats.is_empty() {
                 return Ok(DispatchOk);
             }
@@ -1526,11 +1592,13 @@ fn dispatch_kernel(
             input_h,
             input_w,
         } => {
-            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
-                *input_h,
-                *input_w,
-                input_metas.first().and_then(|m| m.as_ref()),
-            );
+            let (actual_h, actual_w) = shape_spatial_hw(0).unwrap_or_else(|| {
+                shape_resolve::resolve_spatial_dims(
+                    *input_h,
+                    *input_w,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                )
+            });
 
             let kh = *kernel_h as usize;
             let kw = *kernel_w as usize;
@@ -1577,11 +1645,13 @@ fn dispatch_kernel(
             input_w,
             activation,
         } => {
-            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
-                *input_h,
-                *input_w,
-                input_metas.first().and_then(|m| m.as_ref()),
-            );
+            let (actual_h, actual_w) = shape_spatial_hw(0).unwrap_or_else(|| {
+                shape_resolve::resolve_spatial_dims(
+                    *input_h,
+                    *input_w,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                )
+            });
             let result = float_dispatch::conv::dispatch_conv2d_direct(
                 inputs,
                 float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
@@ -1611,11 +1681,13 @@ fn dispatch_kernel(
             input_h,
             input_w,
         } => {
-            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
-                *input_h,
-                *input_w,
-                input_metas.first().and_then(|m| m.as_ref()),
-            );
+            let (actual_h, actual_w) = shape_spatial_hw(0).unwrap_or_else(|| {
+                shape_resolve::resolve_spatial_dims(
+                    *input_h,
+                    *input_w,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                )
+            });
             let result = float_dispatch::conv::dispatch_conv2d_lut4(
                 inputs,
                 *cid,
@@ -1646,11 +1718,13 @@ fn dispatch_kernel(
             input_h,
             input_w,
         } => {
-            let (actual_h, actual_w) = shape_resolve::resolve_spatial_dims(
-                *input_h,
-                *input_w,
-                input_metas.first().and_then(|m| m.as_ref()),
-            );
+            let (actual_h, actual_w) = shape_spatial_hw(0).unwrap_or_else(|| {
+                shape_resolve::resolve_spatial_dims(
+                    *input_h,
+                    *input_w,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                )
+            });
             let result = float_dispatch::conv::dispatch_conv_transpose(
                 inputs,
                 float_dispatch::conv::Conv2dAttrs::new(*kernel_h as usize, *kernel_w as usize)
@@ -1705,12 +1779,14 @@ fn dispatch_kernel(
             spatial_h,
             spatial_w,
         } => {
-            let (actual_c, actual_h, actual_w) = shape_resolve::resolve_global_avg_pool_dims(
-                *channels,
-                *spatial_h,
-                *spatial_w,
-                input_metas.first().and_then(|m| m.as_ref()),
-            );
+            let (actual_c, actual_h, actual_w) = shape_chw(0).unwrap_or_else(|| {
+                shape_resolve::resolve_global_avg_pool_dims(
+                    *channels,
+                    *spatial_h,
+                    *spatial_w,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                )
+            });
             let result = float_dispatch::pool::dispatch_global_avg_pool_direct(
                 inputs, actual_c, actual_h, actual_w,
             )?;
@@ -1718,9 +1794,17 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineResize { mode } => {
-            let input_meta = input_metas.first().and_then(|m| m.as_ref());
-            let input_shape: Option<Vec<usize>> =
-                input_meta.map(|m| m.shape().iter().map(|&d| d as usize).collect());
+            // Prefer input_shapes, fall back to input_metas.
+            let input_shape: Option<Vec<usize>> = input_shapes
+                .first()
+                .and_then(|s| s.as_ref())
+                .map(|s| s.dims.to_vec())
+                .or_else(|| {
+                    input_metas
+                        .first()
+                        .and_then(|m| m.as_ref())
+                        .map(|m| m.shape().iter().map(|&d| d as usize).collect())
+                });
             let result = float_dispatch::spatial::dispatch_resize_with_shape(
                 inputs,
                 *mode,
@@ -1736,16 +1820,14 @@ fn dispatch_kernel(
         }
         TapeKernel::InlineInstanceNorm { size, epsilon } => {
             // InstanceNorm normalizes across ALL spatial dims (H×W), not just
-            // the last dim. Compute spatial size from TensorMeta shape or
-            // fall back to compiled size (which should be H×W from lowering).
-            let actual = input_metas
+            // the last dim. Compute spatial size from input_shapes, TensorMeta,
+            // or fall back to compiled size (which should be H×W from lowering).
+            let actual = input_shapes
                 .first()
-                .and_then(|m| m.as_ref())
-                .and_then(|meta| {
-                    let shape = meta.shape();
-                    if shape.len() >= 3 {
-                        // Product of all spatial dims (dims 2+).
-                        let spatial: usize = shape[2..].iter().map(|&d| d as usize).product();
+                .and_then(|s| s.as_ref())
+                .and_then(|s| {
+                    if s.ndim() >= 3 {
+                        let spatial: usize = s.dims[2..].iter().product();
                         if spatial > 0 {
                             Some(spatial)
                         } else {
@@ -1754,6 +1836,25 @@ fn dispatch_kernel(
                     } else {
                         None
                     }
+                })
+                .or_else(|| {
+                    input_metas
+                        .first()
+                        .and_then(|m| m.as_ref())
+                        .and_then(|meta| {
+                            let shape = meta.shape();
+                            if shape.len() >= 3 {
+                                let spatial: usize =
+                                    shape[2..].iter().map(|&d| d as usize).product();
+                                if spatial > 0 {
+                                    Some(spatial)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
                 })
                 .unwrap_or_else(|| {
                     if *size > 0 {
@@ -1792,11 +1893,13 @@ fn dispatch_kernel(
             epsilon,
             activation,
         } => {
-            let actual = shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_rms_norm_into(
                 inputs,
                 actual,
@@ -1811,12 +1914,14 @@ fn dispatch_kernel(
             epsilon,
             activation,
         } => {
-            let actual = shape_resolve::resolve_last_dim_with_weight(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-                inputs.get(1).map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                shape_resolve::resolve_last_dim_with_weight(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                    inputs.get(1).map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_layer_norm_into(
                 inputs,
                 actual,
@@ -1972,32 +2077,36 @@ fn dispatch_kernel(
 
             if !used_cpu_blas {
                 // General path with dim resolution.
-                let meta_dims = shape_resolve::resolve_matmul_dims(
-                    *m,
-                    *k,
-                    *n,
-                    input_metas.first().and_then(|m| m.as_ref()),
-                    input_metas.get(1).and_then(|m| m.as_ref()),
-                    inputs[0].len(),
-                    inputs[1].len(),
-                );
-                let a_floats = inputs[0].len() / 4;
-                let b_floats = inputs[1].len() / 4;
-                let (am, ak, an) = if meta_dims.1 > 0
-                    && a_floats > 0
-                    && b_floats > 0
-                    && a_floats.is_multiple_of(meta_dims.1)
-                    && b_floats.is_multiple_of(meta_dims.1)
-                {
-                    meta_dims
+                let (am, ak, an) = if let Some(sm) = shape_matmul_m(*k) {
+                    (sm, *k as usize, *n as usize)
                 } else {
-                    crate::float_dispatch::matmul::infer_matmul_dims(
-                        *m as usize,
-                        *k as usize,
-                        *n as usize,
-                        a_floats,
-                        b_floats,
-                    )
+                    let meta_dims = shape_resolve::resolve_matmul_dims(
+                        *m,
+                        *k,
+                        *n,
+                        input_metas.first().and_then(|m| m.as_ref()),
+                        input_metas.get(1).and_then(|m| m.as_ref()),
+                        inputs[0].len(),
+                        inputs[1].len(),
+                    );
+                    let a_floats = inputs[0].len() / 4;
+                    let b_floats = inputs[1].len() / 4;
+                    if meta_dims.1 > 0
+                        && a_floats > 0
+                        && b_floats > 0
+                        && a_floats.is_multiple_of(meta_dims.1)
+                        && b_floats.is_multiple_of(meta_dims.1)
+                    {
+                        meta_dims
+                    } else {
+                        crate::float_dispatch::matmul::infer_matmul_dims(
+                            *m as usize,
+                            *k as usize,
+                            *n as usize,
+                            a_floats,
+                            b_floats,
+                        )
+                    }
                 };
                 crate::float_dispatch::matmul::dispatch_matmul_into(inputs, am, ak, an, out_buf)?;
             }
@@ -2013,33 +2122,37 @@ fn dispatch_kernel(
             let bias: &[f32] = bytemuck::try_cast_slice(inputs[2]).map_err(|_| {
                 crate::error::ExecError::UnsupportedOp("bias not f32-aligned".into())
             })?;
-            // Resolve runtime dimensions from N-D input metas (same as InlineMatMul).
-            let meta_dims = shape_resolve::resolve_matmul_dims(
-                *m,
-                *k,
-                *n,
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-                inputs[0].len(),
-                inputs[1].len(),
-            );
-            let a_floats = inputs[0].len() / 4;
-            let b_floats = inputs[1].len() / 4;
-            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
-                && a_floats > 0
-                && b_floats > 0
-                && a_floats.is_multiple_of(meta_dims.1)
-                && b_floats.is_multiple_of(meta_dims.1)
-            {
-                meta_dims
+            // Resolve runtime dimensions from input shapes, N-D input metas, or compiled values.
+            let (actual_m, actual_k, actual_n) = if let Some(sm) = shape_matmul_m(*k) {
+                (sm, *k as usize, *n as usize)
             } else {
-                crate::float_dispatch::matmul::infer_matmul_dims(
-                    *m as usize,
-                    *k as usize,
-                    *n as usize,
-                    a_floats,
-                    b_floats,
-                )
+                let meta_dims = shape_resolve::resolve_matmul_dims(
+                    *m,
+                    *k,
+                    *n,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    input_metas.get(1).and_then(|m| m.as_ref()),
+                    inputs[0].len(),
+                    inputs[1].len(),
+                );
+                let a_floats = inputs[0].len() / 4;
+                let b_floats = inputs[1].len() / 4;
+                if meta_dims.1 > 0
+                    && a_floats > 0
+                    && b_floats > 0
+                    && a_floats.is_multiple_of(meta_dims.1)
+                    && b_floats.is_multiple_of(meta_dims.1)
+                {
+                    meta_dims
+                } else {
+                    crate::float_dispatch::matmul::infer_matmul_dims(
+                        *m as usize,
+                        *k as usize,
+                        *n as usize,
+                        a_floats,
+                        b_floats,
+                    )
+                }
             };
 
             crate::float_dispatch::matmul::dispatch_matmul_bias_activation_into(
@@ -2059,32 +2172,36 @@ fn dispatch_kernel(
             n,
             activation,
         } => {
-            let meta_dims = shape_resolve::resolve_matmul_dims(
-                *m,
-                *k,
-                *n,
-                input_metas.first().and_then(|m| m.as_ref()),
-                input_metas.get(1).and_then(|m| m.as_ref()),
-                inputs[0].len(),
-                inputs[1].len(),
-            );
-            let a_floats = inputs[0].len() / 4;
-            let b_floats = inputs[1].len() / 4;
-            let (actual_m, actual_k, actual_n) = if meta_dims.1 > 0
-                && a_floats > 0
-                && b_floats > 0
-                && a_floats.is_multiple_of(meta_dims.1)
-                && b_floats.is_multiple_of(meta_dims.1)
-            {
-                meta_dims
+            let (actual_m, actual_k, actual_n) = if let Some(sm) = shape_matmul_m(*k) {
+                (sm, *k as usize, *n as usize)
             } else {
-                crate::float_dispatch::matmul::infer_matmul_dims(
-                    *m as usize,
-                    *k as usize,
-                    *n as usize,
-                    a_floats,
-                    b_floats,
-                )
+                let meta_dims = shape_resolve::resolve_matmul_dims(
+                    *m,
+                    *k,
+                    *n,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    input_metas.get(1).and_then(|m| m.as_ref()),
+                    inputs[0].len(),
+                    inputs[1].len(),
+                );
+                let a_floats = inputs[0].len() / 4;
+                let b_floats = inputs[1].len() / 4;
+                if meta_dims.1 > 0
+                    && a_floats > 0
+                    && b_floats > 0
+                    && a_floats.is_multiple_of(meta_dims.1)
+                    && b_floats.is_multiple_of(meta_dims.1)
+                {
+                    meta_dims
+                } else {
+                    crate::float_dispatch::matmul::infer_matmul_dims(
+                        *m as usize,
+                        *k as usize,
+                        *n as usize,
+                        a_floats,
+                        b_floats,
+                    )
+                }
             };
             crate::float_dispatch::matmul::dispatch_matmul_activation_into(
                 inputs, actual_m, actual_k, actual_n, activation, out_buf,
@@ -2092,20 +2209,24 @@ fn dispatch_kernel(
             Ok(DispatchOk)
         }
         TapeKernel::InlineSoftmax { size } => {
-            let actual = crate::shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                crate::shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_softmax_into(inputs, actual, out_buf)?;
             Ok(DispatchOk)
         }
         TapeKernel::InlineRmsNorm { size, epsilon } => {
-            let actual = crate::shape_resolve::resolve_last_dim(
-                *size,
-                input_metas.first().and_then(|m| m.as_ref()),
-                inputs.first().map(|b| b.len()).unwrap_or(0),
-            );
+            let actual = shape_last_dim(0).unwrap_or_else(|| {
+                crate::shape_resolve::resolve_last_dim(
+                    *size,
+                    input_metas.first().and_then(|m| m.as_ref()),
+                    inputs.first().map(|b| b.len()).unwrap_or(0),
+                )
+            });
             crate::float_dispatch::norm::dispatch_rms_norm_into(
                 inputs,
                 actual,
@@ -3512,9 +3633,23 @@ impl EnumTape {
                 );
             }
 
+            // Collect input shapes from the arena's shape registry.
+            let input_shapes: SmallVec<[Option<hologram_shape::TensorShape>; 4]> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| arena.get_shape(NodeId::new(idx, 0)).cloned())
+                .collect();
+
             let t0 = std::time::Instant::now();
 
-            dispatch_kernel(&instr.kernel, &input_refs, &input_metas, tape_ctx, out_buf)?;
+            dispatch_kernel(
+                &instr.kernel,
+                &input_refs,
+                &input_metas,
+                &input_shapes,
+                tape_ctx,
+                out_buf,
+            )?;
 
             // Drop input refs before mutating bufs again — `input_refs`
             // borrows from `bufs` via raw pointer.
@@ -3804,7 +3939,20 @@ impl EnumTape {
                         .collect()
                 };
 
-            dispatch_kernel(&instr.kernel, &input_refs, &input_metas, tape_ctx, out_buf)?;
+            let input_shapes: SmallVec<[Option<hologram_shape::TensorShape>; 4]> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| arena.get_shape(NodeId::new(idx, 0)).cloned())
+                .collect();
+
+            dispatch_kernel(
+                &instr.kernel,
+                &input_refs,
+                &input_metas,
+                &input_shapes,
+                tape_ctx,
+                out_buf,
+            )?;
 
             drop(input_refs);
 
