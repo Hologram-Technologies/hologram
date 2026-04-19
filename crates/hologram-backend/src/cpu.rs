@@ -184,7 +184,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 Ok(output.len())
             }
             OpCategory::Custom => {
-                // MatMul: naive implementation (Accelerate BLAS to be wired later).
+                // MatMul: Accelerate BLAS on macOS, naive loop elsewhere.
                 if let FloatOp::MatMul { m, k, n } = op {
                     if inputs.len() < 2 {
                         return Err(BackendError::Shape("matmul requires 2 inputs".into()));
@@ -631,24 +631,57 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                         }
                     }
 
-                    // Compute alpha * op(A) * op(B) + beta*C.
-                    for i in 0..actual_m {
-                        for j in 0..n_val {
-                            let mut sum = 0.0f32;
-                            for p in 0..k_val {
-                                let a_idx = if *trans_a {
-                                    p * actual_m + i
-                                } else {
-                                    i * k_val + p
-                                };
-                                let b_idx = if *trans_b {
-                                    j * k_val + p
-                                } else {
-                                    p * n_val + j
-                                };
-                                sum += a_f[a_idx] * b_f[b_idx];
+                    #[cfg(has_accelerate)]
+                    {
+                        // Accelerate BLAS sgemm with transpose support.
+                        let ta = if *trans_a { 112 } else { 111 }; // CblasTrans / CblasNoTrans
+                        let tb = if *trans_b { 112 } else { 111 };
+                        let lda = if *trans_a {
+                            actual_m as i32
+                        } else {
+                            k_val as i32
+                        };
+                        let ldb = if *trans_b { k_val as i32 } else { n_val as i32 };
+                        unsafe {
+                            cblas_sgemm(
+                                101, // CblasRowMajor
+                                ta,
+                                tb,
+                                actual_m as i32,
+                                n_val as i32,
+                                k_val as i32,
+                                alpha_f,
+                                a_f.as_ptr(),
+                                lda,
+                                b_f.as_ptr(),
+                                ldb,
+                                if inputs.get(2).is_some() { 1.0 } else { 0.0 },
+                                out.as_mut_ptr(),
+                                n_val as i32,
+                            );
+                        }
+                    }
+                    #[cfg(not(has_accelerate))]
+                    {
+                        // Naive Gemm with transpose support.
+                        for i in 0..actual_m {
+                            for j in 0..n_val {
+                                let mut sum = 0.0f32;
+                                for p in 0..k_val {
+                                    let a_idx = if *trans_a {
+                                        p * actual_m + i
+                                    } else {
+                                        i * k_val + p
+                                    };
+                                    let b_idx = if *trans_b {
+                                        j * k_val + p
+                                    } else {
+                                        p * n_val + j
+                                    };
+                                    sum += a_f[a_idx] * b_f[b_idx];
+                                }
+                                out[i * n_val + j] += alpha_f * sum;
                             }
-                            out[i * n_val + j] += alpha_f * sum;
                         }
                     }
                     *output = bytemuck::cast_slice(&out).to_vec();
