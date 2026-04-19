@@ -21,6 +21,9 @@ pub struct HoloWriter {
     graph_input_names: Vec<String>,
     graph_output_names: Vec<String>,
     weight_bytes: Option<Vec<u8>>,
+    /// File-backed weight source for large models. When set, weights are
+    /// streamed from this file during `build_to_file()` — never held in memory.
+    weight_file: Option<WeightSource>,
     sections: Vec<(u32, Vec<u8>)>,
     /// When true, `graph_bytes` are already compressed and should not be
     /// compressed again during `build()`.
@@ -51,6 +54,7 @@ impl HoloWriter {
             graph_input_names: Vec::new(),
             graph_output_names: Vec::new(),
             weight_bytes: None,
+            weight_file: None,
             sections: Vec::new(),
             graph_pre_compressed: false,
             compress_weights: false,
@@ -95,10 +99,24 @@ impl HoloWriter {
         self
     }
 
-    /// Set raw weight data.
+    /// Set raw weight data (in-memory).
     #[must_use]
     pub fn set_weights(mut self, weights: Vec<u8>) -> Self {
         self.weight_bytes = Some(weights);
+        self
+    }
+
+    /// Set weight data from a file on disk (streaming).
+    ///
+    /// The weights are read from the file at build time and streamed
+    /// directly to the output archive — never held in memory. Use this
+    /// for large models (SDXL UNet = 10 GB) to keep RSS bounded.
+    #[must_use]
+    pub fn set_weight_source(mut self, source: WeightSource) -> Self {
+        match source {
+            WeightSource::Bytes(v) => self.weight_bytes = Some(v),
+            WeightSource::File { .. } => self.weight_file = Some(source),
+        }
         self
     }
 
@@ -224,6 +242,61 @@ impl HoloWriter {
         )
     }
 
+    /// Build the archive to a file, streaming weights from disk.
+    ///
+    /// Unlike `build()` which holds the entire archive in memory, this writes
+    /// each section to the output file via buffered I/O. Peak memory is bounded
+    /// by the graph + sections (~tens of MB), not the weight data.
+    ///
+    /// Use `set_weight_source(WeightSource::File { .. })` to provide file-backed
+    /// weights. Falls back to in-memory weights from `set_weights()` if no
+    /// file source was set.
+    pub fn build_to_file(mut self, output_path: &std::path::Path) -> ArchiveResult<()> {
+        self.ensure_layer_header();
+        let graph_data = self.graph_bytes.unwrap_or_default();
+
+        // Determine weight source: prefer file-backed, fall back to in-memory.
+        let weight_source = self
+            .weight_file
+            .unwrap_or_else(|| WeightSource::Bytes(self.weight_bytes.unwrap_or_default()));
+
+        // Compute layout using weight byte length (no data loaded).
+        let weight_len = weight_source.len();
+        let (layout, table_bytes) =
+            compute_layout(graph_data.len() as u64, weight_len, &self.sections);
+
+        let header = {
+            // For file-backed weights, we can't compute a checksum without
+            // loading the data. Use zero checksum — the loader validates
+            // via section checksums instead.
+            let empty_weights: Vec<u8> = Vec::new();
+            let weight_ref = match &weight_source {
+                WeightSource::Bytes(v) => v.as_slice(),
+                WeightSource::File { .. } => &empty_weights,
+            };
+            let mut h = build_header(&layout, &graph_data, weight_ref);
+            if self.tensor_page_aligned {
+                h.flags |= crate::format::header::FLAG_TENSOR_PAGE_ALIGNED;
+            }
+            // Zero out the weights checksum for streaming archives — we can't
+            // compute it without loading all weights into memory.
+            if matches!(weight_source, WeightSource::File { .. }) {
+                h.weights_checksum = [0u8; 32];
+            }
+            h
+        };
+
+        assemble_archive_to_file(
+            header,
+            &layout,
+            &graph_data,
+            &weight_source,
+            &self.sections,
+            &table_bytes,
+            output_path,
+        )
+    }
+
     /// Add a default `LayerHeader` if a graph was set and none was provided.
     fn ensure_layer_header(&mut self) {
         if self.graph_bytes.is_none() {
@@ -275,6 +348,7 @@ struct ArchiveLayout {
     section_table_offset: u64,
     section_table_size: u64,
     weights_offset: u64,
+    weights_size: u64,
     total_size: u64,
 }
 
@@ -323,6 +397,7 @@ fn compute_layout(
             section_table_offset,
             section_table_size,
             weights_offset,
+            weights_size,
             total_size,
         },
         table_bytes,
@@ -349,7 +424,7 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         graph_offset: layout.graph_offset,
         graph_size: graph_data.len() as u64,
         weights_offset: layout.weights_offset,
-        weights_size: weight_data.len() as u64,
+        weights_size: layout.weights_size,
         section_table_offset: layout.section_table_offset,
         section_table_size: layout.section_table_size,
         total_size: layout.total_size,
@@ -361,6 +436,100 @@ fn build_header(layout: &ArchiveLayout, graph_data: &[u8], weight_data: &[u8]) -
         section_count: layout.section_offsets.len() as u32,
         flags: 0,
     }
+}
+
+/// Source for weight data — either in-memory bytes or a file on disk.
+pub enum WeightSource {
+    /// In-memory byte vector (small models).
+    Bytes(Vec<u8>),
+    /// File on disk (large models). The weights are read from the file
+    /// at build time and streamed to the output, never held in memory.
+    File { path: std::path::PathBuf, len: u64 },
+}
+
+impl WeightSource {
+    /// Byte length of the weight data.
+    pub fn len(&self) -> u64 {
+        match self {
+            Self::Bytes(v) => v.len() as u64,
+            Self::File { len, .. } => *len,
+        }
+    }
+
+    /// Whether the source is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Build a .holo archive to a file, streaming weights from the source.
+///
+/// Unlike `assemble_archive` (which allocates the entire archive in memory),
+/// this writes each section to the output file via buffered I/O. Peak memory
+/// is bounded by the graph + sections (~tens of MB), not the weight data.
+fn assemble_archive_to_file(
+    header: HoloHeader,
+    layout: &ArchiveLayout,
+    graph_data: &[u8],
+    weight_source: &WeightSource,
+    sections: &[(u32, Vec<u8>)],
+    table_bytes: &[u8],
+    output_path: &std::path::Path,
+) -> ArchiveResult<()> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let mut w = std::fs::File::create(output_path).map_err(crate::error::ArchiveError::Io)?;
+    // Pre-allocate the file to the final size for efficient sequential writes.
+    w.set_len(layout.total_size)
+        .map_err(crate::error::ArchiveError::Io)?;
+
+    // Header (fixed-layout via bytemuck).
+    w.write_all(header.as_bytes())
+        .map_err(crate::error::ArchiveError::Io)?;
+
+    // Graph — write sequentially after header (graph_offset is always right after header).
+    w.seek(SeekFrom::Start(layout.graph_offset))
+        .map_err(crate::error::ArchiveError::Io)?;
+    w.write_all(graph_data)
+        .map_err(crate::error::ArchiveError::Io)?;
+
+    // Sections.
+    for ((_, data), &offset) in sections.iter().zip(layout.section_offsets.iter()) {
+        w.seek(SeekFrom::Start(offset))
+            .map_err(crate::error::ArchiveError::Io)?;
+        w.write_all(data).map_err(crate::error::ArchiveError::Io)?;
+    }
+
+    // Section table.
+    w.seek(SeekFrom::Start(layout.section_table_offset))
+        .map_err(crate::error::ArchiveError::Io)?;
+    w.write_all(table_bytes)
+        .map_err(crate::error::ArchiveError::Io)?;
+
+    // Weights — streamed from source with manual buffering.
+    w.seek(SeekFrom::Start(layout.weights_offset))
+        .map_err(crate::error::ArchiveError::Io)?;
+    match weight_source {
+        WeightSource::Bytes(data) => {
+            w.write_all(data).map_err(crate::error::ArchiveError::Io)?;
+        }
+        WeightSource::File { path, len } => {
+            let mut src = std::fs::File::open(path).map_err(crate::error::ArchiveError::Io)?;
+            let mut remaining = *len as usize;
+            let mut buf = vec![0u8; 1024 * 1024]; // 1 MB streaming buffer
+            while remaining > 0 {
+                let to_read = remaining.min(buf.len());
+                std::io::Read::read_exact(&mut src, &mut buf[..to_read])
+                    .map_err(crate::error::ArchiveError::Io)?;
+                w.write_all(&buf[..to_read])
+                    .map_err(crate::error::ArchiveError::Io)?;
+                remaining -= to_read;
+            }
+        }
+    }
+
+    w.sync_all().map_err(crate::error::ArchiveError::Io)?;
+    Ok(())
 }
 
 fn assemble_archive(

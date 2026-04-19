@@ -1068,3 +1068,37 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - fusion::fuse(100_nodes): **44 µs → 31 µs** (-30%)
 - compile/100_nodes: **79 µs → 60 µs** (-24%)
 - compile/50_nodes: **45 µs → 41 µs** (-9%)
+
+## Sprint: ComputeBackend + ComputeMemory Rewrite (Plan 067)
+
+**Plan**: [plans/067-compute-backend-rewrite.md](plans/067-compute-backend-rewrite.md)
+
+Goal: single-device execution — all data lives on one device (Metal/WebGPU/CPU),
+all computation happens on that device. No CPU↔GPU transfers during execution.
+New `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
+
+### Phase 1: Traits + CpuMemory (non-breaking)
+- [ ] Create `hologram-backend` crate
+- [ ] Define `ComputeMemory` trait (alloc, upload, download, reshape)
+- [ ] Define `ComputeBackend<M>` trait (dispatch, load_ring_tables, flush)
+- [ ] Implement `CpuMemory` + `CpuBackend` (wraps existing CPU dispatch)
+
+### Phase 2: MetalMemory + device-native weight loading
+- [ ] Implement `MetalMemory` (metal::Buffer allocation)
+- [ ] Load weights directly into Metal buffers at archive load time
+- [ ] Load UOR LUT tables onto Metal device
+
+### Phase 3: Single-path executor
+- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-backend
+- [ ] All ops dispatch through `backend.dispatch()` — no CPU fallback
+- [ ] Single flush at end of execution
+
+### Phase 4: Complete Metal kernel coverage
+- [ ] Q4 dequant+GEMM kernel for Conv2dLut4/MatMulLut4
+- [ ] Ring op kernels on Metal (Z/256Z LUT lookups)
+- [ ] All TapeKernel variants covered
+
+### Phase 5: WebGPU backend skeleton
+- [ ] `WebGpuMemory` + `WebGpuBackend` (async-aware)
+- [ ] WGSL shader source for core kernels
+- [ ] WASM target compatibility

@@ -462,9 +462,21 @@ pub(crate) fn dispatch_attention(inputs: &[&[u8]], params: AttentionParams) -> E
     let group_size = num_q_heads / num_kv_heads.max(1);
 
     let mut out = vec![0.0f32; num_q_heads * seq_q * head_dim];
+    // For large attention matrices (e.g., SD self-attention at 4096×4096),
+    // the online softmax path avoids materializing the O(seq²) score matrix
+    // and its associated memory bandwidth cost. Use BLAS path only for
+    // smaller sequences where the matmul speedup outweighs the memory cost.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    let use_blas_attention = seq_q * seq_k <= 1_048_576; // 1M elements ≈ 4MB
+    #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+    let use_blas_attention = false;
     // Scores buffer only needed for BLAS path (non-BLAS uses online softmax).
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
-    let mut scores = vec![0.0f32; seq_q * seq_k];
+    let mut scores = if use_blas_attention {
+        vec![0.0f32; seq_q * seq_k]
+    } else {
+        Vec::new()
+    };
 
     // Pre-compute per-head offsets: avoids repeated division/multiplication
     // in the per-head loop. For GQA, multiple Q heads map to the same KV head.
@@ -482,54 +494,76 @@ pub(crate) fn dispatch_attention(inputs: &[&[u8]], params: AttentionParams) -> E
         let k_head = &k[k_off..k_off + k_stride];
         let v_head = &v[k_off..k_off + k_stride];
 
-        // scores = Q_head × K_head^T * scale → [seq_q, seq_k]
-        #[cfg(all(feature = "accelerate", target_os = "macos"))]
-        {
-            super::matmul::blas::sgemm_full(
-                GemmParams {
-                    m: seq_q,
-                    n: seq_k,
-                    k: head_dim,
-                    alpha: scale,
-                    beta: 0.0,
-                    trans_a: false,
-                    trans_b: true,
-                },
-                q_head,
-                k_head,
-                &mut scores,
-            );
-            // Apply mask after BLAS.
-            if let Some(ref m) = mask {
-                // Additive mask: scores[i,j] += mask[broadcast(i,j)].
-                // Mask shape is typically [1, 1, seq_q, seq_k] or [seq_q, seq_k].
-                // The last seq_q*seq_k elements are the per-position mask.
-                let mask_2d_size = seq_q * seq_k;
-                let mask_offset = if m.len() > mask_2d_size {
-                    m.len() - mask_2d_size // Take the last [seq_q, seq_k] slice.
-                } else {
-                    0
-                };
-                for idx in 0..mask_2d_size {
-                    if mask_offset + idx < m.len() {
-                        scores[idx] += m[mask_offset + idx];
+        if use_blas_attention {
+            // BLAS path: materialize full [seq_q, seq_k] score matrix.
+            // Fast for small sequences but O(seq²) memory.
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                super::matmul::blas::sgemm_full(
+                    GemmParams {
+                        m: seq_q,
+                        n: seq_k,
+                        k: head_dim,
+                        alpha: scale,
+                        beta: 0.0,
+                        trans_a: false,
+                        trans_b: true,
+                    },
+                    q_head,
+                    k_head,
+                    &mut scores,
+                );
+                // Apply mask after BLAS.
+                if let Some(ref m) = mask {
+                    let mask_2d_size = seq_q * seq_k;
+                    let mask_offset = if m.len() > mask_2d_size {
+                        m.len() - mask_2d_size
+                    } else {
+                        0
+                    };
+                    for idx in 0..mask_2d_size {
+                        if mask_offset + idx < m.len() {
+                            scores[idx] += m[mask_offset + idx];
+                        }
+                    }
+                } else if causal {
+                    for i in 0..seq_q {
+                        let abs_pos = seq_k - seq_q + i;
+                        for j in (abs_pos + 1)..seq_k {
+                            scores[i * seq_k + j] = f32::NEG_INFINITY;
+                        }
                     }
                 }
-            } else if causal {
-                // When seq_q < seq_k (KV cache decode), use absolute positions.
-                for i in 0..seq_q {
-                    let abs_pos = seq_k - seq_q + i;
-                    for j in (abs_pos + 1)..seq_k {
-                        scores[i * seq_k + j] = f32::NEG_INFINITY;
+
+                // Softmax each row.
+                for row in scores.chunks_mut(seq_k) {
+                    let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut sum = 0.0f32;
+                    for val in row.iter_mut() {
+                        *val = (*val - max).exp();
+                        sum += *val;
+                    }
+                    if sum > 0.0 {
+                        let inv = 1.0 / sum;
+                        for val in row.iter_mut() {
+                            *val *= inv;
+                            if sparse_v && *val < sparse_v_threshold() {
+                                *val = 0.0;
+                            }
+                        }
                     }
                 }
+
+                // out_head = scores × V_head → [seq_q, head_dim]
+                let out_head = &mut out[o_off..o_off + seq_q * head_dim];
+                super::matmul::blas::sgemm(seq_q, head_dim, seq_k, &scores, v_head, out_head);
             }
-        }
-        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
-        {
+        } else {
             // Online softmax attention (Flash Attention-style).
             // Fuses QK^T, softmax, and score×V into a single pass per query row.
             // Avoids materializing the full [seq_q, seq_k] scores matrix.
+            // Used for large attention matrices (SD self-attention 4096×4096)
+            // where O(seq²) memory cost dominates.
             let out_head = &mut out[o_off..o_off + seq_q * head_dim];
             out_head.fill(0.0);
 
@@ -568,8 +602,6 @@ pub(crate) fn dispatch_attention(inputs: &[&[u8]], params: AttentionParams) -> E
                     row_sum += w;
 
                     // Sparse V: skip V accumulation for negligible weights.
-                    // At long context 90%+ of positions have near-zero weight;
-                    // skipping them avoids head_dim multiply-adds per position.
                     if sparse_v && w < sparse_v_threshold() {
                         continue;
                     }
@@ -584,38 +616,6 @@ pub(crate) fn dispatch_attention(inputs: &[&[u8]], params: AttentionParams) -> E
                     scale_slice(o_row, 1.0 / row_sum);
                 }
             }
-        }
-
-        // BLAS path: use the existing 3-phase approach with score buffer.
-        #[cfg(all(feature = "accelerate", target_os = "macos"))]
-        {
-            // scores = Q_head × K_head^T * scale → [seq_q, seq_k]
-            // (BLAS sgemm already computed scores above.)
-
-            // Softmax each row (2-pass: max+exp+sum, then divide).
-            // Sparse V: zero out negligible weights after normalization.
-            for row in scores.chunks_mut(seq_k) {
-                let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                let mut sum = 0.0f32;
-                for val in row.iter_mut() {
-                    *val = (*val - max).exp();
-                    sum += *val;
-                }
-                if sum > 0.0 {
-                    let inv = 1.0 / sum;
-                    for val in row.iter_mut() {
-                        *val *= inv;
-                        // Sparse V: zero out negligible normalized weights.
-                        if sparse_v && *val < sparse_v_threshold() {
-                            *val = 0.0;
-                        }
-                    }
-                }
-            }
-
-            // out_head = scores × V_head → [seq_q, head_dim]
-            let out_head = &mut out[o_off..o_off + seq_q * head_dim];
-            super::matmul::blas::sgemm(seq_q, head_dim, seq_k, &scores, v_head, out_head);
         }
     }
 

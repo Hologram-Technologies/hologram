@@ -37,6 +37,21 @@ impl EmbeddableSection for PipelineHeader {
     }
 }
 
+/// A model in the pipeline — either fully in-memory or with streamed weights.
+enum PipelineModel {
+    /// Complete sub-archive in memory (small models or non-streaming).
+    InMemory(Vec<u8>),
+    /// Sub-archive with graph/sections in memory and weights on disk.
+    /// The sub-archive bytes contain a valid .holo with an empty weight
+    /// region; the real weights are in the `WeightSource`.
+    Streaming {
+        /// Sub-archive bytes (graph + sections, placeholder weights).
+        sub_archive: Vec<u8>,
+        /// Real model weights to stream into the sub-archive's weight region.
+        weight_source: crate::writer::holo_writer::WeightSource,
+    },
+}
+
 /// Builder for multi-model pipeline archives.
 ///
 /// Each model is a complete .holo archive. The pipeline wraps them
@@ -44,7 +59,7 @@ impl EmbeddableSection for PipelineHeader {
 /// metadata sections (e.g., component roles, connections) can be
 /// embedded in the wrapper via [`add_section`](Self::add_section).
 pub struct PipelineWriter {
-    models: Vec<(String, Vec<u8>)>,
+    models: Vec<(String, PipelineModel)>,
     extra_sections: Vec<(u32, Vec<u8>)>,
 }
 
@@ -67,7 +82,30 @@ impl PipelineWriter {
     /// Add a named model (as a complete .holo archive).
     #[must_use]
     pub fn add_model(mut self, name: impl Into<String>, archive: Vec<u8>) -> Self {
-        self.models.push((name.into(), archive));
+        self.models
+            .push((name.into(), PipelineModel::InMemory(archive)));
+        self
+    }
+
+    /// Add a named model with streaming weights.
+    ///
+    /// The `sub_archive` contains the compiled graph and sections with
+    /// an empty weight region. The real weights are read from
+    /// `weight_source` at build time, never held in memory.
+    #[must_use]
+    pub fn add_model_streaming(
+        mut self,
+        name: impl Into<String>,
+        sub_archive: Vec<u8>,
+        weight_source: crate::writer::holo_writer::WeightSource,
+    ) -> Self {
+        self.models.push((
+            name.into(),
+            PipelineModel::Streaming {
+                sub_archive,
+                weight_source,
+            },
+        ));
         self
     }
 
@@ -82,10 +120,13 @@ impl PipelineWriter {
         self
     }
 
-    /// Build the pipeline archive.
+    /// Build the pipeline archive in memory.
     ///
     /// Creates a wrapper .holo archive containing a `PipelineHeader`
     /// section and all model sub-archives in the weights section.
+    ///
+    /// All models must be `InMemory`. For streaming models, use
+    /// [`build_to_file`](Self::build_to_file).
     pub fn build(self) -> ArchiveResult<Vec<u8>> {
         if self.models.is_empty() {
             return Err(ArchiveError::GraphError(
@@ -96,7 +137,15 @@ impl PipelineWriter {
         // Concatenate model archives, track offsets
         let mut combined = Vec::new();
         let mut entries = Vec::new();
-        for (name, data) in &self.models {
+        for (name, model) in &self.models {
+            let data = match model {
+                PipelineModel::InMemory(d) => d,
+                PipelineModel::Streaming { .. } => {
+                    return Err(ArchiveError::GraphError(
+                        "streaming models require build_to_file, not build".into(),
+                    ));
+                }
+            };
             let offset = combined.len() as u64;
             let size = data.len() as u64;
             let cksum = checksum::checksum(data);
@@ -127,6 +176,133 @@ impl PipelineWriter {
         writer.build()
     }
 
+    /// Build the pipeline archive to a file, streaming weights from disk.
+    ///
+    /// Assembles the pipeline weight region (concatenated sub-archives)
+    /// into `scratch_path`, streaming large model weights directly from
+    /// their `WeightSource` without loading them into memory.
+    /// The caller is responsible for providing (and later cleaning up)
+    /// `scratch_path` — typically a temp file.
+    pub fn build_to_file(
+        self,
+        output_path: &std::path::Path,
+        scratch_path: &std::path::Path,
+    ) -> ArchiveResult<()> {
+        use crate::writer::holo_writer::{HoloWriter, WeightSource};
+        use std::io::Write;
+
+        if self.models.is_empty() {
+            return Err(ArchiveError::GraphError(
+                "pipeline must have at least one model".into(),
+            ));
+        }
+
+        // Build the concatenated sub-archive region in the scratch file.
+        let mut file = std::fs::File::create(scratch_path).map_err(ArchiveError::Io)?;
+        let mut entries = Vec::new();
+        let mut pos: u64 = 0;
+
+        for (name, model) in &self.models {
+            let offset = pos;
+
+            match model {
+                PipelineModel::InMemory(data) => {
+                    let size = data.len() as u64;
+                    entries.push(PipelineEntry {
+                        name: name.clone(),
+                        offset,
+                        size,
+                        checksum: [0u8; 32],
+                    });
+                    file.write_all(data).map_err(ArchiveError::Io)?;
+                    pos += size;
+                }
+                PipelineModel::Streaming {
+                    sub_archive,
+                    weight_source,
+                } => {
+                    // The sub-archive was built with empty weights.
+                    // Patch the header with the real weight size, then
+                    // stream the real weights after the prefix.
+                    let sub_header = crate::format::header::HoloHeader::from_bytes(sub_archive)
+                        .ok_or_else(|| {
+                            ArchiveError::ValidationFailed("sub-archive header parse failed".into())
+                        })?;
+
+                    let prefix_len = sub_header.weights_offset as usize;
+                    let real_weight_len = weight_source.len();
+
+                    // Patch header: correct weights_size, zero checksum.
+                    let mut new_header = sub_header;
+                    new_header.weights_size = real_weight_len;
+                    new_header.weights_checksum = [0u8; 32];
+                    let header_bytes = new_header.as_bytes();
+
+                    // Write patched header.
+                    file.write_all(header_bytes).map_err(ArchiveError::Io)?;
+                    // Write the rest of the prefix (graph, sections, section table).
+                    let header_len = header_bytes.len();
+                    if prefix_len > header_len {
+                        file.write_all(&sub_archive[header_len..prefix_len])
+                            .map_err(ArchiveError::Io)?;
+                    }
+
+                    // Stream real weights from source.
+                    match weight_source {
+                        WeightSource::Bytes(v) => {
+                            file.write_all(v).map_err(ArchiveError::Io)?;
+                        }
+                        WeightSource::File { path, len } => {
+                            let mut src = std::fs::File::open(path).map_err(ArchiveError::Io)?;
+                            let copied =
+                                std::io::copy(&mut src, &mut file).map_err(ArchiveError::Io)?;
+                            if copied != *len {
+                                return Err(ArchiveError::ValidationFailed(format!(
+                                    "weight file size mismatch: expected {len}, copied {copied}"
+                                )));
+                            }
+                        }
+                    }
+
+                    let total_size = prefix_len as u64 + real_weight_len;
+                    entries.push(PipelineEntry {
+                        name: name.clone(),
+                        offset,
+                        size: total_size,
+                        checksum: [0u8; 32],
+                    });
+                    pos += total_size;
+                }
+            }
+
+            // Page-align between models.
+            let aligned = align_to_page(pos);
+            if aligned > pos {
+                let padding = vec![0u8; (aligned - pos) as usize];
+                file.write_all(&padding).map_err(ArchiveError::Io)?;
+                pos = aligned;
+            }
+        }
+
+        file.flush().map_err(ArchiveError::Io)?;
+        drop(file);
+
+        // Build the outer wrapper archive using the scratch file as weights.
+        let pipeline_header = PipelineHeader { models: entries };
+        let mut writer = HoloWriter::new()
+            .set_weight_source(WeightSource::File {
+                path: scratch_path.to_path_buf(),
+                len: pos,
+            })
+            .add_section(&pipeline_header);
+
+        for (kind, bytes) in self.extra_sections {
+            writer = writer.add_raw_section(kind, bytes);
+        }
+
+        writer.build_to_file(output_path)
+    }
+
     /// Build a pipeline archive with shared (deduplicated) weights.
     ///
     /// Sub-archives contain only graph + sections (no embedded weights).
@@ -152,7 +328,15 @@ impl PipelineWriter {
         // Concatenate graph-only sub-archives, then append shared weights.
         let mut combined = Vec::new();
         let mut entries = Vec::new();
-        for (name, data) in &self.models {
+        for (name, model) in &self.models {
+            let data = match model {
+                PipelineModel::InMemory(d) => d,
+                PipelineModel::Streaming { .. } => {
+                    return Err(ArchiveError::GraphError(
+                        "streaming models require build_to_file".into(),
+                    ));
+                }
+            };
             let offset = combined.len() as u64;
             let size = data.len() as u64;
             let cksum = checksum::checksum(data);

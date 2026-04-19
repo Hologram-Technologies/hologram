@@ -738,6 +738,10 @@ fn dispatch_custom(
             let post = 1;
             let chunk = post * 4; // bytes per element along axis
             let src_stride = axis_size * chunk;
+            // Clamp end to the actual axis size. For variable-length execution,
+            // the compiled end may exceed the runtime axis size (e.g., compiled
+            // seq_len=2048 but runtime seq=2). Also clamp to the number of
+            // complete strides in the input buffer to avoid out-of-bounds reads.
             let actual_end = end.min(axis_size);
             if start >= actual_end {
                 return Ok(vec![]);

@@ -4,8 +4,8 @@
 //! Graphs are executed level-by-level, where nodes within a level have
 //! all dependencies satisfied and can run concurrently (via rayon when enabled).
 
-pub mod backend;
 pub mod buffer;
+pub mod constrained;
 pub mod error;
 pub mod eval;
 pub mod float_dispatch;
@@ -29,8 +29,8 @@ pub use kv::WeightCache;
 pub use kv::{CustomHandler, CustomOpRegistry, KvStore};
 pub use kv_cache::{KvBits, KvCacheConfig, KvCacheState};
 pub use mmap::{
-    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_with_kv,
-    execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
+    build_tape_from_plan, build_tape_from_plan_with_ops, execute_tape, execute_tape_on_backend,
+    execute_tape_with_kv, execute_tape_with_kv_and_shapes, execute_tape_with_kv_cached,
     execute_tape_with_kv_shapes_cached, execute_tape_with_shapes, execute_tape_with_weight_cache,
     InferenceSession,
 };
@@ -49,3 +49,4 @@ macro_rules! register_op {
         $registry.register($crate::CustomOpId($id), $arity, ::std::sync::Arc::new($h))
     };
 }
+pub mod executor;
