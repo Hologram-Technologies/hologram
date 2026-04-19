@@ -1,5 +1,66 @@
 # Sprint Tracking
 
+## Sprint 33: hologram-shape — Runtime Shape Tracking (ACTIVE)
+
+**Plan:** [plans/073-hologram-shape-crate.md](plans/073-hologram-shape-crate.md)
+
+Goal: eliminate all variable-length execution bugs by tracking tensor shapes
+explicitly alongside data buffers. Every buffer gets a `TensorShape` — no more
+guessing dimensions from byte lengths. Fixes the prefill garbage bug (long
+prompts produce wrong output) and the entire class of shape-inference errors.
+
+**Blocker:** Long prompts (>8 tokens) produce garbage during prefill due to
+heuristic shape resolution failures in the 848-instruction execution chain.
+
+### Phase 1: Core Types + Shape Inference
+- [ ] **1.1**: Create `hologram-shape` crate with `TensorShape`, `ShapeRegistry`
+- [ ] **1.2**: Implement `infer_output_shape` for all FloatOp categories
+- [ ] **1.3**: Unit tests for shape inference rules (≥30 tests)
+
+### Phase 2: Wire into BufferArena
+- [ ] **2.1**: Add `ShapeRegistry` to `BufferArena`
+- [ ] **2.2**: Seed shapes from graph inputs + constants at execution start
+- [ ] **2.3**: Add `get_shape()` / `set_shape()` methods
+
+### Phase 3: Wire into execute_direct
+- [ ] **3.1**: Compute + store output shape after each dispatch_kernel
+- [ ] **3.2**: Pass input shapes to dispatch_kernel
+- [ ] **3.3**: Debug assertions: validate buffer byte length matches shape
+
+### Phase 4: Replace Heuristic Resolution (net line reduction)
+- [ ] **4.1**: Replace `resolve_last_dim` with direct shape reads
+- [ ] **4.2**: Replace `resolve_matmul_dims` with direct shape reads
+- [ ] **4.3**: Delete `shape_resolve.rs` (359 lines) + `InputMetas` type
+- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77
+
+### Phase 5: Propagate to hologram-backend
+- [ ] **5.1**: Wire `infer_output_shape` into `execute_on_backend`
+- [ ] **5.2**: Shape-validated Metal + CPU backend execution
+
+---
+
+## Sprint 32: hologram-backend + hologram-exec Cleanup (COMPLETE)
+
+**Plan:** [plans/067-compute-backend-rewrite.md](plans/067-compute-backend-rewrite.md)
+
+Goal: create `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>`
+traits. Clean up hologram-exec by removing the old backend/ module and GPU
+dispatch infrastructure. All GPU execution routes through the new backend.
+
+- [x] Create hologram-backend crate (CpuBackend + MetalBackend)
+- [x] CpuBackend: all 60+ FloatOp variants with Accelerate BLAS
+- [x] MetalBackend: tiled SGEMM, im2col Conv2d, elementwise, norms, ring LUT
+- [x] Fix Metal SGEMM dispatch (dispatch_thread_groups)
+- [x] Comprehensive TapeKernel→FloatOp mapping (90+ ops)
+- [x] Delete old backend/ module from hologram-exec (-4,337 lines)
+- [x] Remove Metal/WebGPU deps + cfg flags from hologram-exec
+- [x] Consolidate 35 trivial dispatch_kernel arms via dispatch_float_into
+- [x] Upgrade CpuBackend Gemm to use Accelerate BLAS with transpose
+
+**Result:** hologram-exec -5,500 lines. hologram-backend 3,969 lines. 535 tests pass.
+
+---
+
 ## Backlog
 
 - [x] Function length & argument count refactor — [plan](plans/003-function-length-refactor.md)
