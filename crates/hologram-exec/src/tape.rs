@@ -3520,6 +3520,29 @@ impl EnumTape {
             // borrows from `bufs` via raw pointer.
             drop(input_refs);
 
+            // ── Shape tracking: record output shape after dispatch ────────
+            // Convert TapeKernel → FloatOp, collect input shapes, infer
+            // output shape, and store in the arena's shape registry.
+            {
+                let out_shape =
+                    crate::executor::tape_kernel_to_float_op(&instr.kernel).and_then(|float_op| {
+                        let input_shapes: SmallVec<[hologram_shape::TensorShape; 4]> = instr
+                            .input_indices
+                            .iter()
+                            .filter_map(|&idx| arena.get_shape(NodeId::new(idx, 0)).cloned())
+                            .collect();
+                        if input_shapes.is_empty() {
+                            return None;
+                        }
+                        let refs: SmallVec<[&hologram_shape::TensorShape; 4]> =
+                            input_shapes.iter().collect();
+                        hologram_shape::infer_output_shape(&float_op, &refs).ok()
+                    });
+                if let Some(shape) = out_shape {
+                    arena.set_shape(NodeId::new(instr.output_idx, 0), shape);
+                }
+            }
+
             // Evict input buffers whose last consumer was this instruction
             // (only when explicitly enabled — see live_counts setup above).
             if evict {

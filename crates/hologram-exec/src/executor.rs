@@ -122,7 +122,7 @@ where
 ///
 /// This bridges the tape's instruction encoding to the backend's op type.
 /// Eventually the tape should use FloatOp directly, eliminating this mapping.
-fn tape_kernel_to_float_op(kernel: &TapeKernel) -> Option<hologram_core::op::FloatOp> {
+pub fn tape_kernel_to_float_op(kernel: &TapeKernel) -> Option<hologram_core::op::FloatOp> {
     use hologram_core::op::FloatOp;
 
     match kernel {
