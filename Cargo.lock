@@ -810,6 +810,7 @@ dependencies = [
  "hologram-core",
  "hologram-graph",
  "hologram-ring",
+ "hologram-shape",
  "libc",
  "parking_lot",
  "rayon",

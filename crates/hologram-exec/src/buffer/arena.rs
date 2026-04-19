@@ -173,6 +173,10 @@ pub struct BufferArena<'a> {
     /// Per-buffer tensor metadata (shape, dtype). Parallel to `buffers`.
     /// `None` = no metadata available (legacy path, infer from buffer size).
     metas: Vec<Option<hologram_core::op::TensorMeta>>,
+    /// Runtime shape tracking. Maps buffer slot index → TensorShape.
+    /// Populated during execution via `set_shape()` after each op dispatch.
+    /// Read via `get_shape()` to get concrete dimensions without guessing.
+    shapes: hologram_shape::ShapeRegistry,
     /// Number of populated slots.
     count: usize,
     /// Free-list of recycled MmapBuffers. Evicted large buffers are pushed here
@@ -194,6 +198,7 @@ impl<'a> BufferArena<'a> {
             buffers: Vec::new(),
             elem_sizes: Vec::new(),
             metas: Vec::new(),
+            shapes: hologram_shape::ShapeRegistry::new(0),
             count: 0,
             free_mmaps: Vec::new(),
         }
@@ -210,6 +215,7 @@ impl<'a> BufferArena<'a> {
             buffers,
             elem_sizes,
             metas,
+            shapes: hologram_shape::ShapeRegistry::new(cap),
             count: 0,
             free_mmaps: Vec::new(),
         }
@@ -408,6 +414,29 @@ impl<'a> BufferArena<'a> {
         } else {
             4
         }
+    }
+
+    /// Set the tensor shape for a buffer slot.
+    ///
+    /// Called after each op dispatch to record the output's concrete dimensions.
+    /// Shapes are used by downstream ops instead of guessing from byte lengths.
+    pub fn set_shape(&mut self, id: NodeId, shape: hologram_shape::TensorShape) {
+        self.shapes.set(id.index() as usize, shape);
+    }
+
+    /// Get the tensor shape for a buffer slot.
+    ///
+    /// Returns `None` if no shape has been set (e.g., constants loaded from
+    /// the archive without shape metadata, or the legacy execution path).
+    #[must_use]
+    pub fn get_shape(&self, id: NodeId) -> Option<&hologram_shape::TensorShape> {
+        self.shapes.get(id.index() as usize)
+    }
+
+    /// Get a reference to the shape registry for batch queries.
+    #[must_use]
+    pub fn shape_registry(&self) -> &hologram_shape::ShapeRegistry {
+        &self.shapes
     }
 
     /// Get the element count for a node: `data.len() / elem_size`.
