@@ -70,6 +70,7 @@ pub struct MiniBpeEncoder {
     merge_ranks: HashMap<(Vec<u8>, Vec<u8>), u32>,
     byte_fallback: bool,
     use_metaspace: bool,
+    use_byte_level: bool,
     unk_id: u32,
     bos_id: Option<u32>,
     eos_id: u32,
@@ -123,12 +124,17 @@ impl MiniBpeEncoder {
 
         let vocab_size = id_to_token.len();
 
+        // Detect byte-level BPE: if "Ġ" (U+0120, the byte-level space) is in
+        // the vocab, this tokenizer uses GPT-2 byte-level encoding.
+        let use_byte_level = token_to_id.contains_key("Ġ".as_bytes());
+
         Self {
             id_to_token,
             token_to_id,
             merge_ranks,
             byte_fallback,
             use_metaspace,
+            use_byte_level,
             unk_id,
             bos_id,
             eos_id,
@@ -163,6 +169,8 @@ impl MiniBpeEncoder {
 
         let words = if self.use_metaspace {
             metaspace_split(text)
+        } else if self.use_byte_level {
+            byte_level_split(text)
         } else {
             vec![text.to_string()]
         };
@@ -263,6 +271,62 @@ fn metaspace_split(text: &str) -> Vec<String> {
         words.push(current);
     }
     words
+}
+
+/// Byte-level pre-tokenization (GPT-2 / Qwen style).
+///
+/// Splits text on whitespace boundaries (keeping the space attached to the
+/// following word), then maps each byte through the GPT-2 byte-to-unicode table.
+/// This produces strings like "Ġcapital" for " capital" where "Ġ" is U+0120
+/// (the byte-level encoding of the space character).
+fn byte_level_split(text: &str) -> Vec<String> {
+    let table = byte_to_unicode_table();
+
+    // Simple word-boundary split: spaces attach to the following word.
+    // More sophisticated models use a regex, but this covers the common case.
+    let mut fragments: Vec<&str> = Vec::new();
+    let mut last = 0;
+    let bytes = text.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b' ' && i > 0 {
+            fragments.push(&text[last..i]);
+            last = i; // space starts with next fragment
+        }
+    }
+    if last < text.len() {
+        fragments.push(&text[last..]);
+    }
+    if fragments.is_empty() {
+        fragments.push(text);
+    }
+
+    // Map each fragment through byte-to-unicode
+    fragments
+        .into_iter()
+        .filter(|f| !f.is_empty())
+        .map(|frag| frag.bytes().map(|b| table[b as usize]).collect::<String>())
+        .collect()
+}
+
+/// GPT-2 byte-to-unicode mapping table.
+///
+/// Maps each byte (0–255) to a unique Unicode character. Printable ASCII maps
+/// to itself; non-printable bytes map to U+0100+.
+fn byte_to_unicode_table() -> [char; 256] {
+    let mut table = ['\0'; 256];
+    let mut n: u32 = 0;
+    for b in 0u8..=255 {
+        let ch = match b {
+            33..=126 | 161..=172 | 174..=255 => b as u32,
+            _ => {
+                let ch = 256 + n;
+                n += 1;
+                ch
+            }
+        };
+        table[b as usize] = char::from_u32(ch).expect("valid unicode codepoint");
+    }
+    table
 }
 
 /// Parse a `<0xNN>` byte-fallback token to its byte value.

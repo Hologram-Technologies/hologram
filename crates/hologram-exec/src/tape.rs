@@ -3655,6 +3655,33 @@ impl EnumTape {
             // borrows from `bufs` via raw pointer.
             drop(input_refs);
 
+            // ── Intermediate dump (HOLOGRAM_DUMP_DIR=<path>) ─────────────
+            // Saves each instruction's output as a raw binary file for
+            // node-by-node comparison with ORT.
+            if let Ok(dump_dir) = std::env::var("HOLOGRAM_DUMP_DIR") {
+                let out_data = out_buf.as_slice();
+                let path = format!("{dump_dir}/node_{instr_idx:05}_{}.bin", instr.output_idx);
+                if let Err(e) = std::fs::write(&path, out_data) {
+                    eprintln!("[dump] failed to write {path}: {e}");
+                }
+                // Also write a metadata line to a manifest file
+                let manifest_path = format!("{dump_dir}/manifest.csv");
+                let line = format!(
+                    "{instr_idx},{},{},{}\n",
+                    instr.output_idx,
+                    out_data.len(),
+                    instr.kernel.profile_name(),
+                );
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&manifest_path)
+                {
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+
             // ── Shape tracking: record output shape after dispatch ────────
             // Convert TapeKernel → FloatOp, collect input shapes, infer
             // output shape, and store in the arena's shape registry.
