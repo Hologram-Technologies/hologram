@@ -30,6 +30,9 @@ pub struct WeightCache {
     /// Key: ConstantId raw value. Value: dequantized [k, n] f32 row-major.
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     dequantized_f32: HashMap<u32, Vec<f32>>,
+    /// Q8 dequant cache (same principle as Q4 but simpler — no nibble unpacking).
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    dequantized_f32_q8: HashMap<u32, Vec<f32>>,
 }
 
 impl WeightCache {
@@ -40,6 +43,8 @@ impl WeightCache {
             entries: HashMap::new(),
             #[cfg(all(feature = "accelerate", target_os = "macos"))]
             dequantized_f32: HashMap::new(),
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            dequantized_f32_q8: HashMap::new(),
         }
     }
 
@@ -66,6 +71,38 @@ impl WeightCache {
                 let key = cid.raw();
                 if !self.dequantized_f32.contains_key(&key) {
                     let _ = self.get_dequantized_f32(cid, constants, weights);
+                }
+            }
+        }
+    }
+
+    /// Pre-warm the cache for all Q8 constants in a tape.
+    ///
+    /// On macOS with Accelerate: populates dequantized f32 cache.
+    /// On other platforms: deserializes rkyv Q8 weights.
+    pub fn prewarm_q8(
+        &mut self,
+        tape: &crate::tape::EnumTape,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) {
+        use crate::tape::TapeKernel;
+        for instr in &tape.instructions {
+            let cid = match &instr.kernel {
+                TapeKernel::MatMulLut8(c) => Some(*c),
+                _ => None,
+            };
+            if let Some(cid) = cid {
+                #[cfg(all(feature = "accelerate", target_os = "macos"))]
+                {
+                    let key = cid.raw();
+                    if !self.dequantized_f32_q8.contains_key(&key) {
+                        let _ = self.get_dequantized_f32_q8(cid, constants, weights);
+                    }
+                }
+                #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+                {
+                    let _ = self.get_q8(cid, constants, weights);
                 }
             }
         }
@@ -116,6 +153,31 @@ impl WeightCache {
             self.dequantized_f32.insert(key, buf);
         }
         Ok(self.dequantized_f32.get(&key).expect("just inserted"))
+    }
+
+    /// Get or compute a dequantized f32 matrix from a Q8 weight constant.
+    ///
+    /// Simpler than Q4: one byte per index (no nibble packing), 256 centroids.
+    /// Dequant: `output[i] = centroids[indices[i]]`.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    pub fn get_dequantized_f32_q8(
+        &mut self,
+        cid: ConstantId,
+        constants: &ConstantStore,
+        weights: &[u8],
+    ) -> ExecResult<&[f32]> {
+        let key = cid.raw();
+        if !self.dequantized_f32_q8.contains_key(&key) {
+            let qw = self.get_q8(cid, constants, weights)?;
+            let total = qw.rows as usize * qw.cols as usize;
+            let mut buf = vec![0.0f32; total];
+            for (i, o) in buf.iter_mut().enumerate() {
+                let idx = qw.indices[i] as usize;
+                *o = qw.centroids[idx];
+            }
+            self.dequantized_f32_q8.insert(key, buf);
+        }
+        Ok(self.dequantized_f32_q8.get(&key).expect("just inserted"))
     }
 
     /// Get or deserialize a Q4 weight constant.

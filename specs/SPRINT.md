@@ -1,5 +1,48 @@
 # Sprint Tracking
 
+## Sprint 34: uor-foundation 0.3.0 Upgrade (ACTIVE)
+
+**Plan:** [plans/074-uor-foundation-0.3.0-upgrade.md](plans/074-uor-foundation-0.3.0-upgrade.md)
+
+Goal: upgrade uor-foundation from 0.1.4 to 0.3.0. Major rename: QuantumLevel → WittLevel
+(struct, not enum), const_ring_eval_q* → const_ring_eval_w*, ViolationKind removed.
+Archive format preserved via RingLevel bridge.
+
+### Phase 1: Bump + Capture Errors
+- [ ] **1.1**: Edit `Cargo.toml:33` → `uor-foundation = "0.3.0"`
+- [ ] **1.2**: Run `cargo check --workspace`, capture all errors
+
+### Phase 2: Mechanical Renames
+- [ ] **2.1**: Re-export alias `pub use uor_foundation::WittLevel as QuantumLevel` in op/mod.rs
+- [ ] **2.2**: Update `RingLevel::from_quantum()` — match on `.witt_length()` (8/16/24/32)
+- [ ] **2.3**: Update `RingLevel::to_quantum()` — return W8/W16/W24/W32
+- [ ] **2.4**: Update `QuantumLevelExt::byte_width()` — `witt_length() / 8`
+- [ ] **2.5**: Update `From<WittLevel> for RingLevel` and `From<RingLevel> for WittLevel`
+- [ ] **2.6**: Rename const_ring_eval imports (q0→w8, q1→w16, q3→w32, q7→w64)
+- [ ] **2.7**: Update eval_binary/eval_unary function bodies
+- [ ] **2.8**: Fix all direct `uor_foundation::QuantumLevel` imports across crates
+- [ ] **2.9**: Remove ViolationKind usage (3 sites in cascade + compiler)
+
+### Phase 3: Semantic Fixes (compiler-driven)
+- [ ] **3.1**: Fix `.index()` → `.witt_length()` in precision.rs, certificate.rs, shape.rs
+- [ ] **3.2**: Fix `QuantumLevel::new(k)` → `WittLevel::new(8*(k+1))` construction sites
+- [ ] **3.3**: Update hologram-ring trait impls returning QuantumLevel constants
+- [ ] **3.4**: Implement HostTypes if required by CompileUnitBuilder
+- [ ] **3.5**: Fix any additional trait method renames (at_quantum_level → at_witt_level)
+
+### Phase 3b: Archive Backward Compatibility
+- [ ] **3b.1**: Update engine.rs:407 to encode via RingLevel (not .index())
+- [ ] **3b.2**: Update certificate.rs encoding to use RingLevel bridge
+- [ ] **3b.3**: Add round-trip test verifying W8→0, W16→1, W24→2, W32→3 encoding
+
+### Phase 4: Verify
+- [ ] **4.1**: `cargo check --workspace` — zero errors
+- [ ] **4.2**: `cargo test --workspace` — all pass
+- [ ] **4.3**: `cargo clippy --workspace -- -D warnings` — clean
+- [ ] **4.4**: `cargo check --workspace --target wasm32-unknown-unknown` — wasm compat
+
+---
+
 ## Sprint 33: hologram-shape — Runtime Shape Tracking (ACTIVE)
 
 **Plan:** [plans/073-hologram-shape-crate.md](plans/073-hologram-shape-crate.md)

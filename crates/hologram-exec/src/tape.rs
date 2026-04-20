@@ -1291,7 +1291,10 @@ fn dispatch_kernel(
                     .product::<usize>()
                     .max(1);
                 let zero_count = resolved.iter().filter(|&&d| d == 0).count();
-                if zero_count == 1 && nonzero_product > 0 && input_elems.is_multiple_of(nonzero_product) {
+                if zero_count == 1
+                    && nonzero_product > 0
+                    && input_elems.is_multiple_of(nonzero_product)
+                {
                     let inferred = input_elems / nonzero_product;
                     for d in &mut resolved {
                         if *d == 0 {
@@ -2571,22 +2574,37 @@ fn dispatch_lut_gemm_8(
     tape_ctx: &TapeContext<'_>,
     out_buf: &mut OutputBuffer,
 ) -> ExecResult<()> {
-    let mut cache = tape_ctx.weight_cache.write();
-    let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
     let activations: &[f32] = bytemuck::try_cast_slice(inputs[0]).map_err(|_| {
         crate::error::ExecError::UnsupportedOp("Q8: activation not f32-aligned".into())
     })?;
+
+    let mut cache = tape_ctx.weight_cache.write();
+    let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
     let m = if k > 0 { activations.len() / k } else { 0 };
-    let output_bytes = m * n * 4;
-    let base = out_buf.len();
-    out_buf.resize(base + output_bytes, 0);
-    let output_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut out_buf[base..]);
-    #[cfg(feature = "parallel")]
-    crate::lut_gemm::lut_gemm_8bit_par(activations, qw, output_slice);
-    #[cfg(not(feature = "parallel"))]
-    crate::lut_gemm::lut_gemm_8bit(activations, qw, output_slice);
+    let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
+
+    // Q8 + BLAS pipeline: dequant Q8 centroids → cached f32, then BLAS sgemm.
+    // Same pattern as Q4 — AMX hardware outperforms software LUT kernels.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    {
+        drop(cache);
+        let mut cache = tape_ctx.weight_cache.write();
+        let dequantized =
+            cache.get_dequantized_f32_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
+        crate::float_dispatch::matmul::blas::sgemm(m, n, k, activations, dequantized, out);
+        return Ok(());
+    }
+
+    // Non-BLAS fallback: LUT-GEMM Q8 integer kernel.
+    #[allow(unreachable_code)]
+    {
+        #[cfg(feature = "parallel")]
+        crate::lut_gemm::lut_gemm_8bit_par(activations, qw, out);
+        #[cfg(not(feature = "parallel"))]
+        crate::lut_gemm::lut_gemm_8bit(activations, qw, out);
+    }
     Ok(())
 }
 
