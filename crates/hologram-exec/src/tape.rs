@@ -1279,8 +1279,36 @@ fn dispatch_kernel(
                     }
                 }
                 adjusted
+            } else if input_elems > 0 {
+                // compiled_elems == 0: one or more dims are 0-sentinels.
+                // Resolve the sentinel dims from the buffer size and the
+                // known (non-zero) dims. For a shape like [32, 0] with
+                // input_elems=160, the 0-dim resolves to 160/32=5.
+                let mut resolved = compiled_shape.clone();
+                let nonzero_product: usize = resolved
+                    .iter()
+                    .filter(|&&d| d > 0)
+                    .product::<usize>()
+                    .max(1);
+                let zero_count = resolved.iter().filter(|&&d| d == 0).count();
+                if zero_count == 1 && nonzero_product > 0 && input_elems.is_multiple_of(nonzero_product) {
+                    let inferred = input_elems / nonzero_product;
+                    for d in &mut resolved {
+                        if *d == 0 {
+                            *d = inferred;
+                        }
+                    }
+                } else if let Some(Some(shape)) = input_shapes.first() {
+                    // Fallback: use tracked runtime shape from arena.
+                    resolved = shape.dims.to_vec();
+                } else {
+                    // Last resort: passthrough.
+                    out_buf.extend_from_slice(inputs[0]);
+                    return Ok(DispatchOk);
+                }
+                resolved
             } else {
-                // Can't determine shape — passthrough (identity).
+                // Empty input — passthrough.
                 out_buf.extend_from_slice(inputs[0]);
                 return Ok(DispatchOk);
             };
