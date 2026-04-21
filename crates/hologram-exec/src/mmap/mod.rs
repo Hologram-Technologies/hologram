@@ -359,6 +359,9 @@ pub(crate) fn seed_arena<'a>(
                         }
                         &weights[start..end]
                     }
+                    Some(ConstantData::ContentAddressed { .. }) => {
+                        return Err(ExecError::ConstantNotFound(cid.raw()));
+                    }
                     None => return Err(ExecError::ConstantNotFound(cid.raw())),
                 };
                 let es = compiled_dtypes

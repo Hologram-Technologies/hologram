@@ -502,6 +502,13 @@ fn resolve_constant_bytes<'a>(
             }
             Ok(&weights[start..end])
         }
+        ConstantData::ContentAddressed { .. } => {
+            // Content-addressed resolution requires a ContentAddressIndex.
+            // This path is handled by the WeightResolver trait in the new
+            // execution pipeline. For now, return not-found so callers fall
+            // back to the WeightResolver path.
+            Err(ExecError::ConstantNotFound(cid.raw()))
+        }
     }
 }
 

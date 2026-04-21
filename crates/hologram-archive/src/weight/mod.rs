@@ -1,6 +1,8 @@
 //! Weight tensor metadata and data types.
 
+pub mod content_addr;
 pub mod dedup;
+pub mod encoding;
 pub mod index;
 pub mod quantize;
 
@@ -75,12 +77,15 @@ pub struct TensorMetadata {
     pub offset: u64,
     /// Total byte size of this tensor's data.
     pub size: u64,
-    /// Optional quantization parameters.
+    /// Optional quantization parameters (legacy — prefer `encoding`).
     pub quantization: Option<quantize::QuantizationParams>,
     /// BLAKE3 hash of this tensor's raw bytes.
     pub checksum: [u8; 32],
     /// Compression scheme: 0 = none, 1 = stratum, 2 = ring_diff, 3 = orbit_torus.
     pub compression_scheme: u8,
+    /// UOR tensor encoding descriptor. Describes how logical values are
+    /// encoded in the weight blob. `None` for legacy (pre-v3) archives.
+    pub encoding: Option<encoding::TensorEncoding>,
 }
 
 impl TensorMetadata {
@@ -119,6 +124,7 @@ mod tests {
             quantization: None,
             checksum: [0u8; 32],
             compression_scheme: 0,
+            encoding: None,
         };
         assert_eq!(m.num_elements(), 1);
     }
@@ -134,6 +140,7 @@ mod tests {
             quantization: None,
             checksum: [0u8; 32],
             compression_scheme: 0,
+            encoding: None,
         };
         assert_eq!(m.num_elements(), 12);
     }
@@ -157,6 +164,7 @@ mod tests {
             quantization: None,
             checksum: [0xAB; 32],
             compression_scheme: 0,
+            encoding: None,
         };
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&m).unwrap();
         let archived =

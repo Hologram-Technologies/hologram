@@ -104,25 +104,21 @@ fn validate_literal_range(
     // Iterate all nodes in the arena (O(n), sequential, cache-friendly).
     for (id, node) in arena.iter() {
         match node.kind {
-            TermKind::IntLit(v) => {
-                if v < 0 || (v as u64) > max_value {
-                    return Err(ShapeError::LiteralOutOfRange {
-                        term_id: id.0,
-                        value: v,
-                        max_value,
-                        level,
-                    });
-                }
+            TermKind::IntLit(v) if (v < 0 || (v as u64) > max_value) => {
+                return Err(ShapeError::LiteralOutOfRange {
+                    term_id: id.0,
+                    value: v,
+                    max_value,
+                    level,
+                });
             }
-            TermKind::QuantumLit { value, .. } => {
-                if (value as u64) > max_value {
-                    return Err(ShapeError::LiteralOutOfRange {
-                        term_id: id.0,
-                        value: value as i64,
-                        max_value,
-                        level,
-                    });
-                }
+            TermKind::QuantumLit { value, .. } if (value as u64) > max_value => {
+                return Err(ShapeError::LiteralOutOfRange {
+                    term_id: id.0,
+                    value: value as i64,
+                    max_value,
+                    level,
+                });
             }
             _ => {}
         }

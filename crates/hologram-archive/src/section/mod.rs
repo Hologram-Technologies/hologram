@@ -16,6 +16,8 @@ pub const SECTION_PIPELINE: u32 = 3;
 pub const SECTION_WEIGHT_DEDUP: u32 = 4;
 /// Well-known section kind: CompileUnit metadata.
 pub const SECTION_COMPILE_UNIT_META: u32 = 5;
+/// Well-known section kind: content address index (UOR weight resolution).
+pub const SECTION_CONTENT_ADDRESS_INDEX: u32 = 6;
 /// Base kind for custom sections.
 pub const SECTION_CUSTOM_BASE: u32 = 0x1000;
 
@@ -39,6 +41,7 @@ mod tests {
             SECTION_PIPELINE,
             SECTION_WEIGHT_DEDUP,
             SECTION_COMPILE_UNIT_META,
+            SECTION_CONTENT_ADDRESS_INDEX,
             SECTION_CUSTOM_BASE,
         ];
         for (i, a) in kinds.iter().enumerate() {

@@ -1,3 +1,5 @@
+// Rust 1.95 lint: manual zero-checks before division are intentional here.
+#![allow(clippy::manual_checked_ops)]
 //! Device-native compute backends for hologram execution.
 //!
 //! This crate defines the `ComputeMemory` and `ComputeBackend` traits that

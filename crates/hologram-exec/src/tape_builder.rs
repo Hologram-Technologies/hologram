@@ -261,16 +261,16 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
     for instr in &mut tape.instructions {
         match &instr.kernel {
             // Output passthrough: move buffer directly if input has one consumer.
-            TapeKernel::Output if instr.input_indices.len() == 1 => {
-                if is_single_consumer(instr.input_indices[0]) {
-                    instr.passthrough = true;
-                }
+            TapeKernel::Output
+                if instr.input_indices.len() == 1 && is_single_consumer(instr.input_indices[0]) =>
+            {
+                instr.passthrough = true;
             }
             // Identity passthrough: zero-copy forward; always set passthrough.
-            TapeKernel::Passthrough if instr.input_indices.len() == 1 => {
-                if is_single_consumer(instr.input_indices[0]) {
-                    instr.passthrough = true;
-                }
+            TapeKernel::Passthrough
+                if instr.input_indices.len() == 1 && is_single_consumer(instr.input_indices[0]) =>
+            {
+                instr.passthrough = true;
             }
             // Unary inline ops: reuse input buffer in-place if single consumer.
             TapeKernel::InlineRelu
@@ -294,19 +294,17 @@ fn apply_reuse_flags(tape: &mut EnumTape) {
             | TapeKernel::InlineClip { .. }
             | TapeKernel::InlineNot
             | TapeKernel::InlineIsNaN
-                if instr.input_indices.len() == 1 =>
+                if instr.input_indices.len() == 1 && is_single_consumer(instr.input_indices[0]) =>
             {
-                if is_single_consumer(instr.input_indices[0]) {
-                    instr.can_reuse_input = true;
-                }
+                instr.can_reuse_input = true;
             }
             // Binary element-wise Add: reuse first input buffer in-place if
             // it's single-consumed. This enables Attention → Add(residual) to
             // write directly into the attention output buffer without allocation.
-            TapeKernel::InlineAdd if instr.input_indices.len() == 2 => {
-                if is_single_consumer(instr.input_indices[0]) {
-                    instr.can_reuse_input = true;
-                }
+            TapeKernel::InlineAdd
+                if instr.input_indices.len() == 2 && is_single_consumer(instr.input_indices[0]) =>
+            {
+                instr.can_reuse_input = true;
             }
             _ => {}
         }

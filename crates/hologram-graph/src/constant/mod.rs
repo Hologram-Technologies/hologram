@@ -25,13 +25,38 @@ impl ConstantId {
     }
 }
 
+/// Encoding scheme tag for content-addressed constants.
+/// Mirrors `hologram_archive::weight::encoding::TensorEncoding` but kept
+/// minimal here to avoid a circular crate dependency (graph → archive).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
+pub enum ConstantEncoding {
+    /// Raw unquantized (f32/f16/etc).
+    Identity,
+    /// K-means clustered at given bit width (4 = Q4 LUT-GEMM, 8 = Q8).
+    Clustered { bits: u8 },
+    /// Block-quantized at given bit width.
+    BlockQuantized { bits: u8 },
+}
+
 /// Constant data stored in the graph.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum ConstantData {
     /// Inline byte blob.
     Bytes(Vec<u8>),
-    /// Deferred: loaded from archive at runtime.
+    /// Deferred: loaded from archive at runtime via byte offset.
     Deferred { byte_size: u64, source_id: u64 },
+    /// Content-addressed: resolved via BLAKE3 digest + ContentAddressIndex.
+    /// Unifies mmap/in-memory/streaming behind address-based lookup.
+    ContentAddressed {
+        /// Total byte size of the encoded data.
+        byte_size: u64,
+        /// BLAKE3 hash of the encoded bytes (the content address).
+        digest: [u8; 32],
+        /// How the data is encoded (determines runtime decode path).
+        encoding: ConstantEncoding,
+    },
 }
 
 impl ConstantData {
@@ -40,7 +65,9 @@ impl ConstantData {
     pub fn byte_size(&self) -> u64 {
         match self {
             Self::Bytes(v) => v.len() as u64,
-            Self::Deferred { byte_size, .. } => *byte_size,
+            Self::Deferred { byte_size, .. } | Self::ContentAddressed { byte_size, .. } => {
+                *byte_size
+            }
         }
     }
 
@@ -48,6 +75,12 @@ impl ConstantData {
     #[must_use]
     pub const fn is_deferred(&self) -> bool {
         matches!(self, Self::Deferred { .. })
+    }
+
+    /// Whether this is content-addressed (resolved via BLAKE3 digest).
+    #[must_use]
+    pub const fn is_content_addressed(&self) -> bool {
+        matches!(self, Self::ContentAddressed { .. })
     }
 }
 
@@ -138,6 +171,16 @@ mod tests {
         assert_eq!(deferred.byte_size(), 1024);
         assert!(deferred.is_deferred());
         assert!(!inline.is_deferred());
+
+        let content_addressed = ConstantData::ContentAddressed {
+            byte_size: 2048,
+            digest: [0xAB; 32],
+            encoding: ConstantEncoding::Clustered { bits: 4 },
+        };
+        assert_eq!(content_addressed.byte_size(), 2048);
+        assert!(content_addressed.is_content_addressed());
+        assert!(!content_addressed.is_deferred());
+        assert!(!inline.is_content_addressed());
     }
 
     #[test]

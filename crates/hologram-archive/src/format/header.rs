@@ -73,6 +73,11 @@ pub const FLAG_BLAKE3_CHECKSUMS: u32 = 1 << 2;
 /// enabling zero-copy GPU buffer creation (e.g., Metal `newBuffer(bytesNoCopy:)`).
 pub const FLAG_TENSOR_PAGE_ALIGNED: u32 = 1 << 3;
 
+/// Flag bit: archive contains a ContentAddressIndex section and the graph
+/// may contain `ConstantData::ContentAddressed` variants. Enables UOR-based
+/// weight resolution via BLAKE3 content addresses.
+pub const FLAG_CONTENT_ADDRESSED: u32 = 1 << 5;
+
 /// Mask for quantum_index stored in flags bits 16-23.
 const QUANTUM_INDEX_SHIFT: u32 = 16;
 const QUANTUM_INDEX_MASK: u32 = 0xFF << QUANTUM_INDEX_SHIFT;
@@ -125,10 +130,16 @@ impl HoloHeader {
         self.magic == HOLO_MAGIC
     }
 
-    /// Whether the format version is supported.
+    /// Whether the format version is supported (v2 and v3).
     #[must_use]
     pub fn is_supported_version(&self) -> bool {
-        self.version == FORMAT_VERSION
+        self.version == FORMAT_VERSION || self.version == 3
+    }
+
+    /// Whether this archive uses content-addressed weight resolution.
+    #[must_use]
+    pub fn is_content_addressed(&self) -> bool {
+        self.flags & FLAG_CONTENT_ADDRESSED != 0
     }
 
     /// Serialize the header to a byte slice.
