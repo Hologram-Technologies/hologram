@@ -540,7 +540,7 @@ pub fn lut_gemm_8bit_tiled(activations: &[f32], weights: &QuantizedWeights8, out
 pub fn lut_gemm_16bit(activations: &[f32], weights: &QuantizedWeights16, output: &mut [f32]) {
     let k = weights.rows as usize;
     let n = weights.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
+    let m = activations.len().checked_div(k).unwrap_or(0);
     debug_assert_eq!(output.len(), m * n);
     debug_assert_eq!(weights.indices.len(), k * n);
 

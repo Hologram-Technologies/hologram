@@ -544,7 +544,7 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
                     let e = *end as usize;
                     let ax = *axis_size as usize;
                     let total_floats = inputs[0].length() as usize / 4;
-                    let stride = if ax > 0 { total_floats / ax } else { 1 };
+                    let stride = total_floats.checked_div(ax).unwrap_or(1);
                     let src_offset = s * stride;
                     let count = (e - s) * stride;
 

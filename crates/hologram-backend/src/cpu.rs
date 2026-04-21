@@ -198,10 +198,8 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     // Resolve actual M from input size if baked M is 0 (variable-length).
                     let actual_m = if m > 0 {
                         m
-                    } else if k > 0 {
-                        a.len() / k
                     } else {
-                        0
+                        a.len().checked_div(k).unwrap_or(0)
                     };
                     if actual_m == 0 || k == 0 || n == 0 {
                         return Err(BackendError::Shape(format!(
@@ -433,16 +431,12 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
                     let spatial_in = h_in * w_in;
                     let spatial_out = h_out * w_out;
-                    let ic = if spatial_in > 0 {
-                        data.len() / spatial_in
-                    } else {
-                        0
-                    };
-                    let oc = if ic > 0 && kh > 0 && kw > 0 {
-                        weight.len() / (ic / g * kh * kw)
-                    } else {
-                        0
-                    };
+                    let ic = data.len().checked_div(spatial_in).unwrap_or(0);
+                    let oc = (ic / g)
+                        .checked_mul(kh)
+                        .and_then(|v| v.checked_mul(kw))
+                        .and_then(|denom| weight.len().checked_div(denom))
+                        .unwrap_or(0);
 
                     if oc == 0 || ic == 0 {
                         return Err(BackendError::Shape("conv2d: can't infer channels".into()));
@@ -610,10 +604,8 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     // Resolve actual M from input size if baked M is 0 (variable-length).
                     let actual_m = if m_val > 0 {
                         m_val
-                    } else if k_val > 0 {
-                        a_f.len() / k_val
                     } else {
-                        0
+                        a_f.len().checked_div(k_val).unwrap_or(0)
                     };
                     if actual_m == 0 || k_val == 0 || n_val == 0 {
                         return Err(BackendError::Shape(format!(
@@ -926,7 +918,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
 
                     // Each chunk of dim_val floats is one (head, position) pair.
                     // Position = chunk_index / n_heads.
-                    let n_heads_eff = if n_h > 0 { n_h } else { 1 };
+                    let n_heads_eff = n_h.max(1);
                     for (chunk_idx, chunk) in out.chunks_mut(dim_val).enumerate() {
                         let pos = (chunk_idx / n_heads_eff) as f32;
                         for i in 0..half_dim.min(chunk.len() / 2) {
@@ -969,11 +961,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     } else {
                         data.len() / elem_size
                     };
-                    let row_bytes = if axis_dim > 0 {
-                        data.len() / axis_dim
-                    } else {
-                        row_size
-                    };
+                    let row_bytes = data.len().checked_div(axis_dim).unwrap_or(row_size);
 
                     let mut result = Vec::with_capacity(indices.len() * row_bytes);
                     for &idx in indices {
@@ -1335,11 +1323,11 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     // weight: [ic, oc_per_group, kh, kw] for conv_transpose
                     let ic = data.len() / spatial_in;
                     let ic_per_group = ic / g;
-                    let oc_per_group = if ic_per_group > 0 && kh > 0 && kw > 0 {
-                        weight.len() / (ic * kh * kw)
-                    } else {
-                        0
-                    };
+                    let oc_per_group = ic
+                        .checked_mul(kh)
+                        .and_then(|v| v.checked_mul(kw))
+                        .and_then(|denom| weight.len().checked_div(denom))
+                        .unwrap_or(0);
                     let oc = oc_per_group * g;
 
                     if oc == 0 || ic == 0 {
@@ -1920,11 +1908,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                     } else {
                         in_f.len()
                     };
-                    let spatial = if channels > 0 {
-                        in_f.len() / channels
-                    } else {
-                        1
-                    };
+                    let spatial = in_f.len().checked_div(channels).unwrap_or(1);
 
                     let mut out = vec![0.0f32; in_f.len()];
                     let half = s / 2;

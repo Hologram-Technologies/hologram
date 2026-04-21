@@ -226,11 +226,7 @@ pub fn compute_output_meta(
     out_bytes: usize,
     elem_size: usize,
 ) -> Option<TensorMeta> {
-    let out_elems = if elem_size > 0 {
-        out_bytes / elem_size
-    } else {
-        out_bytes / 4
-    };
+    let out_elems = out_bytes.checked_div(elem_size).unwrap_or(out_bytes / 4);
     let dtype = input_metas
         .first()
         .and_then(|m| m.as_ref())

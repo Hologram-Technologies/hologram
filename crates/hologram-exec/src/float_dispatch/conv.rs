@@ -801,11 +801,9 @@ fn conv2d_core(call: Conv2dCoreCall<'_>) -> Vec<f32> {
     // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
     // Tiled im2col: bound the col buffer to at most TILE_CAP floats.
     const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
-    let tile_size = if kernel_size > 0 {
-        (TILE_CAP / kernel_size).max(1).min(spatial_out)
-    } else {
-        spatial_out
-    };
+    let tile_size = (TILE_CAP.checked_div(kernel_size).unwrap_or(spatial_out))
+        .max(1)
+        .min(spatial_out);
     let mut col = vec![0.0f32; kernel_size * tile_size];
     // Pre-allocate tile buffers once — reused across all tiles to avoid per-tile allocation.
     let mut tile_out = vec![0.0f32; oc_per_group * tile_size];
@@ -1209,19 +1207,14 @@ pub(crate) fn dispatch_conv2d_lut4(
         let h_in = h_in.max(1);
         let w_in = w_in.max(1);
         let spatial = h_in * w_in;
-        let ic = if spatial > 0 { data.len() / spatial } else { 1 };
-        let n = if ic > 0 && spatial > 0 {
-            data.len() / (ic * spatial)
-        } else {
-            1
-        };
+        let ic = data.len().checked_div(spatial).unwrap_or(1);
+        let n = ic
+            .checked_mul(spatial)
+            .and_then(|denom| data.len().checked_div(denom))
+            .unwrap_or(1);
         let ic_per_group = (ic / group.max(1)).max(1);
         let kernel_size = ic_per_group * kh * kw;
-        let oc = if kernel_size > 0 {
-            weight.len() / kernel_size
-        } else {
-            1
-        };
+        let oc = weight.len().checked_div(kernel_size).unwrap_or(1);
         let oc_per_group = oc / group.max(1);
         let h_out = (h_in + 2 * ph - dh * (kh - 1) - 1) / sh + 1;
         let w_out = (w_in + 2 * pw - dw * (kw - 1) - 1) / sw + 1;
@@ -1249,11 +1242,9 @@ pub(crate) fn dispatch_conv2d_lut4(
 
         // Tiled im2col (same tile sizing as conv2d_core).
         const TILE_CAP: usize = 4 * 1024 * 1024; // 16 MB as f32
-        let tile_size = if kernel_size > 0 {
-            (TILE_CAP / kernel_size).max(1).min(spatial_out)
-        } else {
-            spatial_out
-        };
+        let tile_size = (TILE_CAP.checked_div(kernel_size).unwrap_or(spatial_out))
+            .max(1)
+            .min(spatial_out);
         let mut col = vec![0.0f32; kernel_size * tile_size];
         // Pre-allocate transpose + output buffers — reused across all tiles.
         let mut col_t_buf = vec![0.0f32; tile_size * kernel_size];

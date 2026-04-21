@@ -1,7 +1,3 @@
-// Rust 1.95 lint: manual zero-checks before division are intentional here.
-#![allow(clippy::manual_checked_ops)]
-// Rust 1.95 lint: sort_by with key extraction is fine for complex keys.
-#![allow(clippy::unnecessary_sort_by)]
 //! Tape-based execution engine with parallel level scheduling.
 //!
 //! Every operation is an O(1) key-value lookup into precomputed tables.

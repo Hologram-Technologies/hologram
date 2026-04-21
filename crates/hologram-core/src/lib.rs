@@ -1,5 +1,3 @@
-// Rust 1.95 lint: manual zero-checks before division are intentional here.
-#![allow(clippy::manual_checked_ops)]
 //! Core LUT tables, views, ring algebra, and encoding for O(1) computation.
 //!
 //! This crate provides the mathematical foundation: precomputed lookup tables,

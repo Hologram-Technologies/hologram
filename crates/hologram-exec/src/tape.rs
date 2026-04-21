@@ -2545,7 +2545,7 @@ fn dispatch_lut_gemm_4(
     let qw = cache.get_q4(cid, tape_ctx.constants, tape_ctx.weights)?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
+    let m = activations.len().checked_div(k).unwrap_or(0);
     let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
 
     // LUT + BLAS pipeline: LUT handles Q4→f32 dequant (cached), BLAS handles matmul.
@@ -2582,7 +2582,7 @@ fn dispatch_lut_gemm_8(
     let qw = cache.get_q8(cid, tape_ctx.constants, tape_ctx.weights)?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
+    let m = activations.len().checked_div(k).unwrap_or(0);
     let out = crate::float_dispatch::helpers::alloc_f32_in(out_buf, m * n);
 
     // Q8 + BLAS pipeline: dequant Q8 centroids → cached f32, then BLAS sgemm.
@@ -2622,7 +2622,7 @@ fn dispatch_lut_gemm_16(
     })?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
+    let m = activations.len().checked_div(k).unwrap_or(0);
     let output_bytes = m * n * 4;
     let base = out_buf.len();
     out_buf.resize(base + output_bytes, 0);
@@ -2648,7 +2648,7 @@ fn dispatch_lut_gemm_2(
     })?;
     let k = qw.rows as usize;
     let n = qw.cols as usize;
-    let m = if k > 0 { activations.len() / k } else { 0 };
+    let m = activations.len().checked_div(k).unwrap_or(0);
     let mut output = vec![0.0f32; m * n];
     crate::lut_gemm::lut_gemm_2bit(activations, qw, &mut output);
     out_buf.extend_from_slice(bytemuck::cast_slice(&output));
@@ -2728,7 +2728,7 @@ fn dispatch_kv_write(
     let nkv = n_kv_heads as usize;
     let hd = head_dim as usize;
     let stride = nkv * hd;
-    let seq = if stride > 0 { floats.len() / stride } else { 1 };
+    let seq = floats.len().checked_div(stride).unwrap_or(1);
 
     // Convert to seq-first for cache storage if input is heads-first.
     let seq_first_data: Vec<f32>;
@@ -3840,7 +3840,7 @@ impl EnumTape {
 
         if profile {
             let mut entries: Vec<_> = profile_times.into_iter().collect();
-            entries.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            entries.sort_by_key(|e| std::cmp::Reverse(e.1 .0));
             let total: std::time::Duration = entries.iter().map(|(_, (d, _))| *d).sum();
             tracing::info!("PROFILE total={:.1}ms", total.as_secs_f64() * 1000.0);
             for (name, (dur, count)) in &entries {
@@ -3865,7 +3865,7 @@ impl EnumTape {
         // Profile summary.
         if do_profile {
             let mut entries: Vec<_> = op_times.into_iter().collect();
-            entries.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            entries.sort_by_key(|e| std::cmp::Reverse(e.1 .0));
             let total: std::time::Duration = entries.iter().map(|(_, (d, _))| *d).sum();
             eprintln!(
                 "\n[PROFILE] Op timing ({:.1}ms total):",

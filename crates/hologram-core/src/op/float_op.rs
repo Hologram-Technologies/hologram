@@ -92,11 +92,7 @@ impl TensorMeta {
 
     /// Create 1-D metadata inferred from buffer byte length and element size.
     pub fn infer_1d(byte_len: usize, elem_size: usize) -> Self {
-        let n_elems = if elem_size > 0 {
-            byte_len / elem_size
-        } else {
-            byte_len
-        };
+        let n_elems = byte_len.checked_div(elem_size).unwrap_or(byte_len);
         let dtype = FloatDType::from_byte_size(elem_size);
         Self {
             ndim: 1,

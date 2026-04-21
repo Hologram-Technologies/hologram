@@ -182,7 +182,7 @@ fn parse_shape_values(shape_bytes: &[u8], n_elems: usize) -> Option<Vec<usize>> 
     let zero_count = shape.iter().filter(|&&d| d == 0).count();
     if zero_count == 1 {
         let known: usize = shape.iter().filter(|&&d| d > 0).product::<usize>().max(1);
-        let unknown = if known > 0 { n_elems / known } else { n_elems };
+        let unknown = n_elems.checked_div(known).unwrap_or(n_elems);
         Some(
             shape
                 .iter()

@@ -268,11 +268,7 @@ pub(crate) fn dispatch_instance_norm(
     let bias = cast_f32(inputs[2])?;
 
     let n_channels = scale.len();
-    let spatial = if n_channels > 0 {
-        data.len() / n_channels
-    } else {
-        data.len()
-    };
+    let spatial = data.len().checked_div(n_channels).unwrap_or(data.len());
     let actual_size = if size > 0 { size } else { spatial };
 
     let mut out = data.into_owned();

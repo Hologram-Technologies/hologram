@@ -240,9 +240,9 @@ pub(crate) fn infer_matmul_dims(
         (compiled_m, actual_k, compiled_n)
     } else if actual_k > 0 {
         // Non-batched: infer m from buffer size.
-        let actual_m = a_elems / actual_k;
+        let actual_m = a_elems.checked_div(actual_k).unwrap_or(0);
         let actual_n = if b_elems >= actual_k {
-            b_elems / actual_k
+            b_elems.checked_div(actual_k).unwrap_or(compiled_n)
         } else {
             compiled_n
         };
@@ -469,11 +469,7 @@ pub fn dispatch_batched_matmul(
 
     // Support broadcast: 2-D B (shared weight) reuses the same matrix for
     // every batch slice. b_batch_count=1 means b_off stays at 0 each iteration.
-    let b_batch_count = if b_stride > 0 {
-        (b.len() / b_stride).max(1)
-    } else {
-        1
-    };
+    let b_batch_count = b.len().checked_div(b_stride).unwrap_or(1).max(1);
 
     // Validate sizes.
     if batch * a_stride > a.len() || b_stride > b.len() {
@@ -615,7 +611,7 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
         if k > 0 && expected_f32_count > 0 {
             let n = expected_f32_count / k;
             let a = cast_f32(inputs[0])?;
-            let m = if k > 0 { a.len() / k } else { 0 };
+            let m = a.len().checked_div(k).unwrap_or(0);
             if n.is_multiple_of(Q4_0_BLOCK_VALUES) && m > 0 && n > 0 {
                 let mut out = vec![0.0f32; m * n];
                 matmul_dequant_q4_0(&a, b_q4, &mut out, m, k, n);
@@ -632,7 +628,7 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
         if k > 0 && expected_f32_count > 0 {
             let n = expected_f32_count / k;
             let a = cast_f32(inputs[0])?;
-            let m = if k > 0 { a.len() / k } else { 0 };
+            let m = a.len().checked_div(k).unwrap_or(0);
             if n.is_multiple_of(Q6_K_BLOCK_VALUES) && m > 0 && n > 0 {
                 let mut out = vec![0.0f32; m * n];
                 matmul_dequant_q6_k(&a, b_q6k, &mut out, m, k, n);
@@ -651,8 +647,8 @@ pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> Exe
     };
     // Derive m, n, and batch from actual inputs.
     let k = p.k;
-    let flat_n = if k > 0 { b.len() / k } else { 0 };
-    let flat_m = if k > 0 { a.len() / k } else { 0 };
+    let flat_n = b.len().checked_div(k).unwrap_or(0);
+    let flat_m = a.len().checked_div(k).unwrap_or(0);
 
     // Detect batched Gemm: if compiled m/n are set and total elements exceed
     // m*k / k*n, there are batch dimensions (e.g., 4D multi-head attention).

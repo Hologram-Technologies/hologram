@@ -104,10 +104,9 @@ pub static SQRT_256: [u8; 256] = {
         }
         let remainder = x - low * low;
         let next_diff = 2 * low + 1;
-        let frac = if next_diff > 0 {
-            (remainder * 16) / next_diff
-        } else {
-            0
+        let frac = match (remainder * 16).checked_div(next_diff) {
+            Some(v) => v,
+            None => 0,
         };
         let scaled = low * 16 + frac;
         t[i as usize] = if scaled > 255 { 255 } else { scaled as u8 };
