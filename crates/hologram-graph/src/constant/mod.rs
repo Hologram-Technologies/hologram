@@ -112,6 +112,17 @@ impl ConstantStore {
         self.data.get(id.0 as usize)
     }
 
+    /// Replace the data of an existing constant.
+    /// Returns `true` if the constant was found and replaced.
+    pub fn replace(&mut self, id: ConstantId, data: ConstantData) -> bool {
+        if let Some(slot) = self.data.get_mut(id.0 as usize) {
+            *slot = data;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Number of stored constants.
     #[must_use]
     pub fn len(&self) -> usize {

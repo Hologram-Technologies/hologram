@@ -708,6 +708,11 @@ impl Graph {
         self.constants.get(id)
     }
 
+    /// Replace a constant's data. Returns true if found and replaced.
+    pub fn replace_constant(&mut self, id: ConstantId, data: ConstantData) -> bool {
+        self.constants.replace(id, data)
+    }
+
     /// Reference to the constant store.
     #[must_use]
     pub fn constant_store(&self) -> &ConstantStore {
