@@ -1,9 +1,8 @@
 //! Shape inference: given a `FloatOp` and input shapes, compute the output shape.
 
-use crate::validate::broadcast_shapes;
+use crate::infer_rules;
 use crate::TensorShape;
-use hologram_core::op::{FloatDType, FloatOp};
-use smallvec::SmallVec;
+use hologram_core::op::FloatOp;
 
 /// Errors arising from shape inference.
 #[derive(Debug, thiserror::Error)]
@@ -73,13 +72,13 @@ pub fn infer_output_shape(
         | FloatOp::Erf
         | FloatOp::Clip { .. } => {
             need(1)?;
-            Ok(inputs[0].clone())
+            infer_rules::infer_unary_elementwise(inputs)
         }
 
         // ── Boolean/comparison unary: preserve shape, dtype = U8 ──────
         FloatOp::IsNaN | FloatOp::Not => {
             need(1)?;
-            Ok(TensorShape::new(FloatDType::U8, &inputs[0].dims))
+            infer_rules::infer_unary_boolean(inputs)
         }
 
         // ── Binary elementwise: broadcast ─────────────────────────────
@@ -92,21 +91,13 @@ pub fn infer_output_shape(
         | FloatOp::Min
         | FloatOp::Max => {
             need(2)?;
-            let out_dims = broadcast_shapes(&inputs[0].dims, &inputs[1].dims)?;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[0].dtype,
-            })
+            infer_rules::infer_binary_elementwise(inputs)
         }
 
         // ── Binary boolean ops: broadcast, dtype = U8 ─────────────────
         FloatOp::And | FloatOp::Or | FloatOp::Xor => {
             need(2)?;
-            let out_dims = broadcast_shapes(&inputs[0].dims, &inputs[1].dims)?;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: FloatDType::U8,
-            })
+            infer_rules::infer_binary_boolean(inputs)
         }
 
         // ── Binary comparisons: broadcast, dtype = U8 ─────────────────
@@ -116,91 +107,19 @@ pub fn infer_output_shape(
         | FloatOp::Greater
         | FloatOp::GreaterOrEqual => {
             need(2)?;
-            let out_dims = broadcast_shapes(&inputs[0].dims, &inputs[1].dims)?;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: FloatDType::U8,
-            })
+            infer_rules::infer_binary_comparison(inputs)
         }
 
         // ── MatMul ────────────────────────────────────────────────────
-        FloatOp::MatMul { m, k: _, n } => {
+        FloatOp::MatMul { m, k, n } => {
             need(2)?;
-            let a = inputs[0];
-            let b = inputs[1];
-            // Resolve M: if baked m=0 (variable-length), use input[0]'s
-            // second-to-last dim.
-            let actual_m = if *m == 0 {
-                if a.ndim() >= 2 {
-                    a.dims[a.ndim() - 2]
-                } else if a.ndim() == 1 {
-                    // [K] x [K, N] -> [N] (vector-matrix)
-                    1
-                } else {
-                    return Err(ShapeError::Incompatible {
-                        op: op.name(),
-                        detail: "cannot resolve M from scalar input".into(),
-                    });
-                }
-            } else {
-                *m as usize
-            };
-            let actual_n = *n as usize;
-
-            // Batch dims: all dims except last 2 from the larger input.
-            let a_batch = if a.ndim() > 2 {
-                &a.dims[..a.ndim() - 2]
-            } else {
-                &[]
-            };
-            let b_batch = if b.ndim() > 2 {
-                &b.dims[..b.ndim() - 2]
-            } else {
-                &[]
-            };
-            let batch = if a_batch.len() >= b_batch.len() {
-                a_batch
-            } else {
-                b_batch
-            };
-
-            let mut out_dims: SmallVec<[usize; 4]> = SmallVec::from_slice(batch);
-            out_dims.push(actual_m);
-            out_dims.push(actual_n);
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: FloatDType::F32,
-            })
+            infer_rules::infer_matmul(op, inputs, *m, *k, *n)
         }
 
         // ── Gemm ─────────────────────────────────────────────────────
         FloatOp::Gemm { m, n, .. } => {
             need(2)?;
-            let a = inputs[0];
-            let actual_m = if *m == 0 {
-                if a.ndim() >= 2 {
-                    a.dims[a.ndim() - 2]
-                } else {
-                    1
-                }
-            } else {
-                *m as usize
-            };
-            let actual_n = *n as usize;
-
-            // Batch dims from input[0]
-            let batch = if a.ndim() > 2 {
-                &a.dims[..a.ndim() - 2]
-            } else {
-                &[]
-            };
-            let mut out_dims: SmallVec<[usize; 4]> = SmallVec::from_slice(batch);
-            out_dims.push(actual_m);
-            out_dims.push(actual_n);
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: FloatDType::F32,
-            })
+            infer_rules::infer_gemm(inputs, *m, *n)
         }
 
         // ── Softmax / LogSoftmax: preserve shape ─────────────────────
@@ -234,29 +153,7 @@ pub fn infer_output_shape(
         // ── Transpose ────────────────────────────────────────────────
         FloatOp::Transpose { perm, ndim } => {
             need(1)?;
-            let nd = *ndim as usize;
-            let inp = &inputs[0].dims;
-            if inp.len() < nd {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: format!("input has {} dims but transpose expects {nd}", inp.len()),
-                });
-            }
-            let mut out_dims: SmallVec<[usize; 4]> = SmallVec::with_capacity(nd);
-            for (i, &p) in perm.iter().enumerate().take(nd) {
-                let src = p as usize;
-                if src >= inp.len() {
-                    return Err(ShapeError::Incompatible {
-                        op: op.name(),
-                        detail: format!("perm[{i}]={src} out of range for {}-D input", inp.len()),
-                    });
-                }
-                out_dims.push(inp[src]);
-            }
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[0].dtype,
-            })
+            infer_rules::infer_transpose(op, inputs, perm, *ndim)
         }
 
         // ── Reshape: cannot infer without target ─────────────────────
@@ -270,23 +167,7 @@ pub fn infer_output_shape(
             ..
         } => {
             need(1)?;
-            let inp = &inputs[0].dims;
-            let nd = inp.len();
-            let afe = *axis_from_end as usize;
-            if afe == 0 || afe > nd {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: format!("axis_from_end={afe} invalid for {nd}-D input"),
-                });
-            }
-            let axis = nd - afe;
-            let slice_len = (*end as usize).saturating_sub(*start as usize);
-            let mut out_dims = inp.clone();
-            out_dims[axis] = slice_len;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[0].dtype,
-            })
+            infer_rules::infer_slice(op, inputs, *axis_from_end, *start, *end)
         }
 
         // ── Concat: concatenate along last dim ───────────────────────
@@ -296,59 +177,25 @@ pub fn infer_output_shape(
             dtype,
         } => {
             need(2)?;
-            let mut out_dims = inputs[0].dims.clone();
-            if out_dims.is_empty() {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: "cannot concatenate scalars".into(),
-                });
-            }
-            let last = out_dims.len() - 1;
-            out_dims[last] = *size_a as usize + *size_b as usize;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: *dtype,
-            })
+            infer_rules::infer_concat(op, inputs, *size_a, *size_b, *dtype)
         }
 
         // ── Gather: output = indices shape ++ possibly [dim] ─────────
         FloatOp::Gather { dim, dtype } => {
             need(2)?;
-            let indices = inputs[1];
-            // For 1-D indices gathering from a 2-D table, output is [indices..., dim].
-            // For general case, output shape = indices shape (simple gather).
-            if *dim > 0 {
-                let mut out_dims = indices.dims.clone();
-                out_dims.push(*dim as usize);
-                Ok(TensorShape {
-                    dims: out_dims,
-                    dtype: *dtype,
-                })
-            } else {
-                Ok(TensorShape::new(*dtype, &indices.dims))
-            }
+            infer_rules::infer_gather(inputs, *dim, *dtype)
         }
 
         // ── Embed: [len] -> [len, dim] ──────────────────────────────
         FloatOp::Embed { dim, .. } => {
             need(1)?;
-            let ids = inputs[0];
-            let mut out_dims: SmallVec<[usize; 4]> = ids.dims.clone();
-            out_dims.push(*dim as usize);
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: FloatDType::F32,
-            })
+            infer_rules::infer_embed(inputs, *dim)
         }
 
         // ── Where: broadcast(input[1], input[2]) ────────────────────
         FloatOp::Where => {
             need(3)?;
-            let out_dims = broadcast_shapes(&inputs[1].dims, &inputs[2].dims)?;
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[1].dtype,
-            })
+            infer_rules::infer_where(inputs)
         }
 
         // ── Range: 1-D [ceil((limit - start) / delta)] ──────────────
@@ -361,27 +208,13 @@ pub fn infer_output_shape(
         // ── Shape: output is 1-D [ndim] ─────────────────────────────
         FloatOp::Shape { dtype, start, end } => {
             need(1)?;
-            let nd = inputs[0].ndim() as i64;
-            let s = if *start >= 0 {
-                (*start).min(nd)
-            } else {
-                (nd + *start).max(0)
-            };
-            let e = if *end == i64::MAX {
-                nd
-            } else if *end >= 0 {
-                (*end).min(nd)
-            } else {
-                (nd + *end).max(0)
-            };
-            let out_len = (e - s).max(0) as usize;
-            Ok(TensorShape::vector(*dtype, out_len))
+            infer_rules::infer_shape_op(inputs, *dtype, *start, *end)
         }
 
         // ── Cast: same shape, different dtype ────────────────────────
         FloatOp::Cast { to, .. } => {
             need(1)?;
-            Ok(TensorShape::new(*to, &inputs[0].dims))
+            infer_rules::infer_cast(inputs, *to)
         }
 
         // ── Conv2d ───────────────────────────────────────────────────
@@ -399,31 +232,19 @@ pub fn infer_output_shape(
             input_w: _,
         } => {
             need(2)?;
-            let data = inputs[0];
-            let weight = inputs[1];
-            if data.ndim() < 4 {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: format!("data needs >= 4 dims, got {}", data.ndim()),
-                });
-            }
-            let n = data.dims[0];
-            let h_in = data.dims[2];
-            let w_in = data.dims[3];
-            let c_out = weight.dims[0]; // weight is [C_out, C_in/group, kH, kW]
-
-            let h_out = (h_in + 2 * (*pad_h as usize)
-                - (*dilation_h as usize) * (*kernel_h as usize - 1)
-                - 1)
-                / (*stride_h as usize)
-                + 1;
-            let w_out = (w_in + 2 * (*pad_w as usize)
-                - (*dilation_w as usize) * (*kernel_w as usize - 1)
-                - 1)
-                / (*stride_w as usize)
-                + 1;
-
-            Ok(TensorShape::new(data.dtype, &[n, c_out, h_out, w_out]))
+            let p = infer_rules::SpatialParams {
+                kernel_h: *kernel_h,
+                kernel_w: *kernel_w,
+                stride_h: *stride_h,
+                stride_w: *stride_w,
+                pad_h: *pad_h,
+                pad_w: *pad_w,
+                dilation_h: *dilation_h,
+                dilation_w: *dilation_w,
+                output_pad_h: 0,
+                output_pad_w: 0,
+            };
+            infer_rules::infer_conv2d(op, inputs, &p)
         }
 
         // ── ConvTranspose ────────────────────────────────────────────
@@ -443,29 +264,19 @@ pub fn infer_output_shape(
             input_w: _,
         } => {
             need(2)?;
-            let data = inputs[0];
-            let weight = inputs[1];
-            if data.ndim() < 4 {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: format!("data needs >= 4 dims, got {}", data.ndim()),
-                });
-            }
-            let n = data.dims[0];
-            let h_in = data.dims[2];
-            let w_in = data.dims[3];
-            let c_out = weight.dims[1]; // weight is [C_in, C_out/group, kH, kW]
-
-            let h_out = (h_in - 1) * (*stride_h as usize) - 2 * (*pad_h as usize)
-                + (*dilation_h as usize) * (*kernel_h as usize - 1)
-                + *output_pad_h as usize
-                + 1;
-            let w_out = (w_in - 1) * (*stride_w as usize) - 2 * (*pad_w as usize)
-                + (*dilation_w as usize) * (*kernel_w as usize - 1)
-                + *output_pad_w as usize
-                + 1;
-
-            Ok(TensorShape::new(data.dtype, &[n, c_out, h_out, w_out]))
+            let p = infer_rules::SpatialParams {
+                kernel_h: *kernel_h,
+                kernel_w: *kernel_w,
+                stride_h: *stride_h,
+                stride_w: *stride_w,
+                pad_h: *pad_h,
+                pad_w: *pad_w,
+                dilation_h: *dilation_h,
+                dilation_w: *dilation_w,
+                output_pad_h: *output_pad_h,
+                output_pad_w: *output_pad_w,
+            };
+            infer_rules::infer_conv_transpose(op, inputs, &p)
         }
 
         // ── MaxPool2d / AvgPool2d ────────────────────────────────────
@@ -486,38 +297,25 @@ pub fn infer_output_shape(
             pad_w,
         } => {
             need(1)?;
-            let data = inputs[0];
-            if data.ndim() < 4 {
-                return Err(ShapeError::Incompatible {
-                    op: op.name(),
-                    detail: format!("data needs >= 4 dims, got {}", data.ndim()),
-                });
-            }
-            let n = data.dims[0];
-            let c = data.dims[1];
-            let h_in = data.dims[2];
-            let w_in = data.dims[3];
-
-            let h_out =
-                (h_in + 2 * (*pad_h as usize) - *kernel_h as usize) / (*stride_h as usize) + 1;
-            let w_out =
-                (w_in + 2 * (*pad_w as usize) - *kernel_w as usize) / (*stride_w as usize) + 1;
-
-            Ok(TensorShape::new(data.dtype, &[n, c, h_out, w_out]))
+            let p = infer_rules::SpatialParams {
+                kernel_h: *kernel_h,
+                kernel_w: *kernel_w,
+                stride_h: *stride_h,
+                stride_w: *stride_w,
+                pad_h: *pad_h,
+                pad_w: *pad_w,
+                dilation_h: 1,
+                dilation_w: 1,
+                output_pad_h: 0,
+                output_pad_w: 0,
+            };
+            infer_rules::infer_pool2d(op, inputs, &p)
         }
 
         // ── GlobalAvgPool ────────────────────────────────────────────
         FloatOp::GlobalAvgPool { channels, .. } => {
             need(1)?;
-            let n = if inputs[0].ndim() >= 1 {
-                inputs[0].dims[0]
-            } else {
-                1
-            };
-            Ok(TensorShape::new(
-                inputs[0].dtype,
-                &[n, *channels as usize, 1, 1],
-            ))
+            infer_rules::infer_global_avg_pool(inputs, *channels)
         }
 
         // ── Resize: cannot infer ─────────────────────────────────────
@@ -530,15 +328,7 @@ pub fn infer_output_shape(
         | FloatOp::ReduceMin { .. }
         | FloatOp::ReduceProd { .. } => {
             need(1)?;
-            let inp = &inputs[0].dims;
-            if inp.is_empty() {
-                return Ok(inputs[0].clone());
-            }
-            let out_dims: SmallVec<[usize; 4]> = inp[..inp.len() - 1].into();
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[0].dtype,
-            })
+            infer_rules::infer_reduce(inputs)
         }
 
         // ── Expand ───────────────────────────────────────────────────
@@ -546,13 +336,7 @@ pub fn infer_output_shape(
             ndim, target_shape, ..
         } => {
             need(1)?;
-            let nd = *ndim as usize;
-            let out_dims: SmallVec<[usize; 4]> =
-                target_shape[..nd].iter().map(|&d| d as usize).collect();
-            Ok(TensorShape {
-                dims: out_dims,
-                dtype: inputs[0].dtype,
-            })
+            infer_rules::infer_expand(inputs, *ndim, target_shape)
         }
 
         // ── FusedSwiGLU: output = input[0] (gate) shape ─────────────
@@ -564,25 +348,7 @@ pub fn infer_output_shape(
         // ── ArgMax: drop reduced axis ────────────────────────────────
         FloatOp::ArgMax { keepdims, .. } => {
             need(1)?;
-            let inp = &inputs[0].dims;
-            if inp.is_empty() {
-                return Ok(TensorShape::scalar(FloatDType::I64));
-            }
-            if *keepdims {
-                let mut out_dims = inp.clone();
-                let last = out_dims.len() - 1;
-                out_dims[last] = 1;
-                Ok(TensorShape {
-                    dims: out_dims,
-                    dtype: FloatDType::I64,
-                })
-            } else {
-                let out_dims: SmallVec<[usize; 4]> = inp[..inp.len() - 1].into();
-                Ok(TensorShape {
-                    dims: out_dims,
-                    dtype: FloatDType::I64,
-                })
-            }
+            infer_rules::infer_argmax(inputs, *keepdims)
         }
 
         // ── KV cache ops: tape-level, unsupported ────────────────────
@@ -614,6 +380,7 @@ pub fn infer_output_shape(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hologram_core::op::FloatDType;
 
     fn f32_shape(dims: &[usize]) -> TensorShape {
         TensorShape::new(FloatDType::F32, dims)

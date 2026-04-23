@@ -6,6 +6,7 @@
 //! dimension guessing from buffer byte lengths.
 
 mod infer;
+mod infer_rules;
 mod registry;
 mod tensor_shape;
 mod validate;

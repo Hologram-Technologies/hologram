@@ -6,10 +6,13 @@
 pub(crate) mod attention;
 pub(crate) mod cast;
 pub(crate) mod conv;
+pub(crate) mod conv_transpose;
+pub(crate) mod conv_winograd;
 pub(crate) mod elementwise;
 pub(crate) mod gather_concat;
 pub(crate) mod helpers;
 pub mod matmul;
+pub(crate) mod matmul_dequant;
 pub(crate) mod misc;
 pub(crate) mod norm;
 pub(crate) mod pool;

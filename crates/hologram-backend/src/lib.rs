@@ -13,6 +13,7 @@
 //! tables are uploaded to the device at initialization and stay resident.
 
 pub mod cpu;
+pub(crate) mod cpu_cast;
 
 #[cfg(has_metal)]
 pub mod metal;

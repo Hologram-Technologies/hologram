@@ -2,6 +2,7 @@
 //! and FloatOp (typed f32 tensor operations for AI inference).
 
 mod float_op;
+mod float_op_methods;
 mod lut_op;
 mod prim;
 pub mod shape_projection;
