@@ -117,16 +117,25 @@ impl MiniBpeEncoder {
             match name.as_str() {
                 "<unk>" => unk_id = *id,
                 "<s>" | "<|begin_of_text|>" => bos_id = Some(*id),
-                "</s>" | "<|end_of_text|>" => eos_id = *id,
+                "</s>" | "<|end_of_text|>" | "<|endoftext|>" => eos_id = *id,
+                "<|im_end|>" | "<|eot_id|>"
+                    // Chat turn-end tokens: treat as additional stop tokens.
+                    // The primary EOS handles end-of-generation; these handle
+                    // end-of-turn in chat models (Qwen, Llama 3, etc.).
+                    if eos_id == 2 => {
+                        // Only set if no primary EOS was found yet.
+                        eos_id = *id;
+                    }
                 _ => {}
             }
         }
 
         let vocab_size = id_to_token.len();
 
-        // Detect byte-level BPE: if "Ġ" (U+0120, the byte-level space) is in
-        // the vocab, this tokenizer uses GPT-2 byte-level encoding.
-        let use_byte_level = token_to_id.contains_key("Ġ".as_bytes());
+        // Detect byte-level BPE: uses GPT-2 byte-to-unicode encoding.
+        // Only enabled if Metaspace is NOT detected (they're mutually exclusive).
+        // Heuristic: Ġ (U+0120) in vocab AND no Metaspace ▁-prefixed tokens.
+        let use_byte_level = !use_metaspace && token_to_id.contains_key("Ġ".as_bytes());
 
         Self {
             id_to_token,
@@ -248,8 +257,23 @@ impl MiniBpeEncoder {
                 bytes.extend_from_slice(tok);
             }
         }
-        let s = String::from_utf8_lossy(&bytes).replace('\u{2581}', " ");
-        s.strip_prefix(' ').unwrap_or(&s).to_string()
+
+        if self.use_byte_level {
+            // Byte-level BPE (GPT-2 / Qwen): vocab stores Unicode-mapped
+            // characters (e.g., space 0x20 → Ġ U+0120). Reverse the mapping
+            // to recover original bytes, then decode as UTF-8.
+            let table = unicode_to_byte_table();
+            let text = String::from_utf8_lossy(&bytes);
+            let raw: Vec<u8> = text
+                .chars()
+                .filter_map(|c| table.get(&c).copied())
+                .collect();
+            String::from_utf8_lossy(&raw).into_owned()
+        } else {
+            // Metaspace (SentencePiece): replace ▁ with space
+            let s = String::from_utf8_lossy(&bytes).replace('\u{2581}', " ");
+            s.strip_prefix(' ').unwrap_or(&s).to_string()
+        }
     }
 }
 
@@ -327,6 +351,19 @@ fn byte_to_unicode_table() -> [char; 256] {
         table[b as usize] = char::from_u32(ch).expect("valid unicode codepoint");
     }
     table
+}
+
+/// Reverse mapping: Unicode char → original byte value.
+///
+/// Inverts `byte_to_unicode_table()` for decoding byte-level BPE tokens
+/// back to raw bytes.
+fn unicode_to_byte_table() -> HashMap<char, u8> {
+    let forward = byte_to_unicode_table();
+    let mut reverse = HashMap::with_capacity(256);
+    for (byte_val, &ch) in forward.iter().enumerate() {
+        reverse.insert(ch, byte_val as u8);
+    }
+    reverse
 }
 
 /// Parse a `<0xNN>` byte-fallback token to its byte value.

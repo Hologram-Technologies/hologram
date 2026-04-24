@@ -151,6 +151,44 @@ impl LoadedPlan {
         }
     }
 
+    /// Resolve all `Deferred` constants in the graph to `Bytes` by reading
+    /// from the plan's weight blob. After this call, all constants are inline
+    /// and the weight blob is no longer needed for constant access.
+    ///
+    /// This is the load-time counterpart to compile-time externalization:
+    /// at compile time, large constants are externalized to a shared blob
+    /// for deduplication. At load time, they're resolved back to Bytes for
+    /// fast zero-copy rkyv access during execution.
+    pub fn resolve_deferred_constants(&mut self) {
+        // Force graph deserialization if not yet done.
+        let weights = match &self.weights {
+            std::borrow::Cow::Borrowed(w) => *w,
+            std::borrow::Cow::Owned(w) => w.as_slice(),
+        };
+        if weights.is_empty() {
+            return;
+        }
+        // We need mutable access to the graph. Force deserialization into Owned.
+        match &self.graph {
+            GraphAccess::Archived { bytes, cache } => {
+                let mut sg = cache
+                    .get_or_init(|| {
+                        rkyv::from_bytes::<SerializedGraph, rkyv::rancor::Error>(bytes)
+                            .expect("archived graph bytes should be valid rkyv")
+                    })
+                    .clone();
+                sg.resolve_deferred_constants(weights);
+                self.graph = GraphAccess::Owned(sg);
+            }
+            GraphAccess::Owned(_) => {
+                // Already owned — need to extract, mutate, re-insert.
+                if let GraphAccess::Owned(ref mut sg) = self.graph {
+                    sg.resolve_deferred_constants(weights);
+                }
+            }
+        }
+    }
+
     /// Raw weight bytes.
     #[must_use]
     pub fn weights(&self) -> &[u8] {

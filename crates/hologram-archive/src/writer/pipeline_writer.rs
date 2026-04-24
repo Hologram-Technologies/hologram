@@ -354,14 +354,30 @@ impl PipelineWriter {
         // Append the shared weight blob (page-aligned).
         let aligned = align_to_page(combined.len() as u64) as usize;
         combined.resize(aligned, 0);
+        let shared_blob_base = combined.len() as u64;
         combined.extend_from_slice(&shared_weights);
 
         let pipeline_header = PipelineHeader { models: entries };
 
         use crate::section::SECTION_WEIGHT_DEDUP;
+        use crate::weight::dedup::WeightDedupIndex;
         use crate::writer::holo_writer::HoloWriter;
 
-        let dedup_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(dedup_index)
+        // Adjust dedup offsets to be relative to the full weight region
+        // (sub-archives come first, shared blob is appended after).
+        let adjusted_index = WeightDedupIndex {
+            entries: dedup_index
+                .entries
+                .iter()
+                .map(|e| crate::weight::dedup::WeightDedupEntry {
+                    component: e.component.clone(),
+                    offset: e.offset + shared_blob_base,
+                    size: e.size,
+                })
+                .collect(),
+        };
+
+        let dedup_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&adjusted_index)
             .map_err(|e| ArchiveError::GraphError(format!("dedup index serialization: {e}")))?
             .to_vec();
 

@@ -112,6 +112,119 @@ impl SerializedGraph {
         }
     }
 
+    /// Create from a live Graph, externalizing large constants into a
+    /// separate weight blob for pipeline-level deduplication.
+    ///
+    /// Constants with `Bytes` data larger than `size_threshold` are replaced
+    /// with `Deferred` entries pointing into the returned weight blob. The
+    /// caller (typically `PipelineWriter`) feeds these blobs through
+    /// `WeightStore` for cross-component deduplication.
+    ///
+    /// Returns `(graph, external_weights)`. If no constants exceed the
+    /// threshold, `external_weights` is empty.
+    #[must_use]
+    pub fn from_graph_externalize_constants(
+        graph: &Graph,
+        size_threshold: usize,
+    ) -> (Self, Vec<u8>) {
+        use hologram_graph::constant::ConstantData;
+
+        let nodes: Vec<Node> = graph.nodes().cloned().collect();
+        let input_names: Vec<String> = graph.inputs().to_vec();
+        let (mut output_names, mut output_node_ids): (Vec<_>, Vec<_>) =
+            graph.outputs().iter().cloned().unzip();
+
+        if output_node_ids.is_empty() {
+            for node in &nodes {
+                if matches!(node.op, GraphOp::Output) {
+                    output_names.push(String::new());
+                    output_node_ids.push(node.id);
+                }
+            }
+        }
+
+        // Clone the constant store and externalize large Bytes constants.
+        let mut constants = graph.constant_store().clone();
+        let mut external_blob = Vec::new();
+
+        for i in 0..constants.len() {
+            let cid = ConstantId::new(i as u32);
+            let should_externalize = constants.get(cid).is_some_and(
+                |c| matches!(c, ConstantData::Bytes(b) if b.len() >= size_threshold),
+            );
+
+            if should_externalize {
+                if let Some(ConstantData::Bytes(data)) = constants.get(cid) {
+                    let offset = external_blob.len() as u64;
+                    let byte_size = data.len() as u64;
+                    external_blob.extend_from_slice(data);
+                    constants.replace(
+                        cid,
+                        ConstantData::Deferred {
+                            byte_size,
+                            source_id: offset,
+                        },
+                    );
+                }
+            }
+        }
+
+        let constant_shapes: Vec<(ConstantId, Vec<usize>)> = graph
+            .constant_shapes()
+            .iter()
+            .map(|(&k, v)| (k, v.clone()))
+            .collect();
+        let node_shapes: Vec<(NodeId, Vec<usize>)> = graph
+            .node_shapes()
+            .iter()
+            .map(|(&k, v)| (k, v.clone()))
+            .collect();
+        let node_dtypes: Vec<(NodeId, FloatDType)> =
+            graph.node_dtypes().iter().map(|(&k, &v)| (k, v)).collect();
+
+        let sg = Self {
+            nodes,
+            input_names,
+            output_names,
+            output_node_ids,
+            constants,
+            constant_shapes,
+            node_shapes,
+            node_dtypes,
+        };
+        (sg, external_blob)
+    }
+
+    /// Resolve all `ConstantData::Deferred` entries back to `Bytes` by
+    /// reading from the weight blob. This converts the on-disk representation
+    /// (compact, Deferred pointing into shared blob) to the in-memory
+    /// representation (fast, Bytes for zero-copy rkyv access).
+    ///
+    /// Called at archive load time for plans that use pipeline-level constant
+    /// deduplication. The one-time copy cost is amortized over all decode steps.
+    pub fn resolve_deferred_constants(&mut self, weights: &[u8]) {
+        use hologram_graph::constant::ConstantData;
+        let n = self.constants.len();
+        for i in 0..n {
+            let cid = ConstantId::new(i as u32);
+            let should_resolve = self.constants.get(cid).is_some_and(|c| c.is_deferred());
+            if should_resolve {
+                if let Some(ConstantData::Deferred {
+                    byte_size,
+                    source_id,
+                }) = self.constants.get(cid)
+                {
+                    let start = *source_id as usize;
+                    let end = start + *byte_size as usize;
+                    if end <= weights.len() {
+                        let data = weights[start..end].to_vec();
+                        self.constants.replace(cid, ConstantData::Bytes(data));
+                    }
+                }
+            }
+        }
+    }
+
     /// Number of nodes in the serialized graph.
     #[must_use]
     pub fn node_count(&self) -> usize {
