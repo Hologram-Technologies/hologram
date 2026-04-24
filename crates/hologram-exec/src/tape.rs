@@ -873,6 +873,51 @@ impl EnumTape {
         }
     }
 
+    /// Log level statistics: how many instructions per level, which levels
+    /// are candidates for parallel execution.
+    pub fn log_level_stats(&self) {
+        if self.level_offsets.len() <= 1 {
+            return;
+        }
+        let n_levels = self.level_offsets.len() - 1;
+        let mut parallel_candidates = 0usize;
+        let mut max_level_size = 0usize;
+        let mut size_histogram = [0usize; 8]; // [1, 2, 3, 4, 5, 6, 7, 8+]
+        for i in 0..n_levels {
+            let start = self.level_offsets[i];
+            let end = self
+                .level_offsets
+                .get(i + 1)
+                .copied()
+                .unwrap_or(self.instructions.len());
+            let size = end - start;
+            if size > max_level_size {
+                max_level_size = size;
+            }
+            if size >= 2 {
+                parallel_candidates += 1;
+            }
+            let bucket = size.min(8) - 1;
+            size_histogram[bucket] += 1;
+        }
+        tracing::info!(
+            n_levels,
+            total_instructions = self.instructions.len(),
+            parallel_candidate_levels = parallel_candidates,
+            max_level_size,
+            "level={} 1:{} 2:{} 3:{} 4:{} 5:{} 6:{} 7:{} 8+:{}",
+            n_levels,
+            size_histogram[0],
+            size_histogram[1],
+            size_histogram[2],
+            size_histogram[3],
+            size_histogram[4],
+            size_histogram[5],
+            size_histogram[6],
+            size_histogram[7],
+        );
+    }
+
     /// Create a tape with pre-allocated capacity.
     #[must_use]
     pub fn with_capacity(n_instructions: usize, n_levels: usize) -> Self {

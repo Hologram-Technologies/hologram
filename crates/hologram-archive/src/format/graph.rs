@@ -149,9 +149,9 @@ impl SerializedGraph {
 
         for i in 0..constants.len() {
             let cid = ConstantId::new(i as u32);
-            let should_externalize = constants.get(cid).is_some_and(
-                |c| matches!(c, ConstantData::Bytes(b) if b.len() >= size_threshold),
-            );
+            let should_externalize = constants
+                .get(cid)
+                .is_some_and(|c| matches!(c, ConstantData::Bytes(b) if b.len() >= size_threshold));
 
             if should_externalize {
                 if let Some(ConstantData::Bytes(data)) = constants.get(cid) {
