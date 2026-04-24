@@ -76,6 +76,31 @@ impl HoloWriter {
         self
     }
 
+    /// Set the graph from a live `Graph`, externalizing large constants.
+    ///
+    /// Constants with `Bytes` data >= `size_threshold` are moved into a
+    /// separate weight blob (returned) and replaced with `Deferred` entries
+    /// in the serialized graph. The caller should feed the returned blob
+    /// through `WeightStore` for cross-component deduplication.
+    ///
+    /// Returns the externalized weight blob. If no constants exceed the
+    /// threshold, returns an empty Vec.
+    pub fn set_graph_externalize(
+        mut self,
+        graph: &hologram_graph::Graph,
+        size_threshold: usize,
+    ) -> (Self, Vec<u8>) {
+        let (sg, external_weights) =
+            SerializedGraph::from_graph_externalize_constants(graph, size_threshold);
+        self.graph_input_names = sg.input_names.clone();
+        self.graph_output_names = sg.output_names.clone();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg)
+            .expect("graph serialization")
+            .to_vec();
+        self.graph_bytes = Some(bytes);
+        (self, external_weights)
+    }
+
     /// Set the graph from pre-serialized (and already compressed) bytes.
     ///
     /// These bytes are assumed to already be compressed and will NOT be

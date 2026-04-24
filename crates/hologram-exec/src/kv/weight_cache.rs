@@ -48,6 +48,19 @@ impl WeightCache {
         }
     }
 
+    /// Number of cached dequantized f32 Q4 entries.
+    #[must_use]
+    pub fn dequant_f32_count(&self) -> usize {
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            self.dequantized_f32.len()
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            0
+        }
+    }
+
     /// Pre-warm the dequant cache for all Q4 constants in a tape.
     ///
     /// Scans tape instructions for MatMulLut4 ConstantIds and pre-populates
