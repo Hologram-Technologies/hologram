@@ -47,13 +47,22 @@ pub(crate) fn dispatch_kernel(
         |idx: usize| -> Option<usize> { input_shapes.get(idx)?.as_ref()?.last_dim() };
 
     // Helper: get spatial (H, W) from dims[-2], dims[-1] of a 4-D+ shape.
+    // Validates the shape's volume against the data buffer length — runtime
+    // shape inference at intermediate nodes can mistakenly populate a tensor's
+    // shape from a sibling input (e.g. a conv weight's [out_c, in_c, k, k])
+    // when the real data shape is unknown. Trust the shape only if it matches
+    // the actual byte count.
     let shape_spatial_hw = |idx: usize| -> Option<(usize, usize)> {
         let s = input_shapes.get(idx)?.as_ref()?;
-        if s.ndim() >= 4 {
-            Some((s.dims[s.ndim() - 2], s.dims[s.ndim() - 1]))
-        } else {
-            None
+        if s.ndim() < 4 {
+            return None;
         }
+        let shape_vol: usize = s.dims.iter().copied().product();
+        let data_floats = inputs.get(idx).map(|b| b.len() / 4).unwrap_or(0);
+        if data_floats > 0 && shape_vol != data_floats {
+            return None;
+        }
+        Some((s.dims[s.ndim() - 2], s.dims[s.ndim() - 1]))
     };
 
     // Helper: get (C, H, W) from dims[-3], dims[-2], dims[-1] of a 3-D+ shape.

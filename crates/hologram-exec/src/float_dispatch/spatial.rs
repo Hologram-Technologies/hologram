@@ -93,7 +93,12 @@ pub(crate) fn dispatch_resize_with_shape(
     // Use shape metadata to determine NCHW dims.
     if scales.len() >= 4 && (scales[2] != 1.0 || scales[3] != 1.0) {
         if let Some(shape) = input_shape {
-            if shape.len() == 4 {
+            // Only trust the shape if its volume matches the actual data
+            // length. Mismatches happen when the kernel-dispatch caller
+            // hands us a sibling input's shape (e.g. a conv weight's
+            // [out_c, in_c, k, k]) instead of the data's shape.
+            let shape_vol: usize = shape.iter().product();
+            if shape.len() == 4 && shape_vol == data.len() {
                 let n = shape[0];
                 let c = shape[1];
                 let h_in = shape[2];
@@ -106,8 +111,8 @@ pub(crate) fn dispatch_resize_with_shape(
                 );
             }
         }
-        // No shape metadata — fall back to flat 1D resize.
-        // The heuristic NCHW path misidentifies spatial dims for large tensors.
+        // No (matching) shape metadata — fall back to heuristic NCHW.
+        return dispatch_resize_nchw(&data, scales[2], scales[3], mode);
     }
 
     // 1D fallback
