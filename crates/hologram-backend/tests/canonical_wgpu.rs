@@ -11,12 +11,12 @@
 
 use hologram_backend::canonical::WgpuBackend;
 use hologram_transform::{
-    check_forward, check_forward_then_backward, AddCall, AddGradCall, AddRmsNormCall, AddressTable,
-    BinaryCall, CompiledPlan, ConcatCall, Conv2dCall, ConvTransposeCall, CpuBackend,
-    GlobalAvgPoolCall, InstanceNormGradCall, KernelCall, LayerNormGradCall, MatMulCall,
-    MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind,
-    ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall,
-    SubGradCall, Tolerance, UnaryCall, UnaryKind, WorkspaceLayout,
+    check_forward, check_forward_then_backward, AddCall, AddGradCall, AddRmsNormCall,
+    AddRmsNormGradCall, AddressTable, BinaryCall, CompiledPlan, ConcatCall, Conv2dCall,
+    ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, InstanceNormGradCall, KernelCall,
+    LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall,
+    Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall,
+    SlotSpan, SoftmaxCall, SubGradCall, Tolerance, UnaryCall, UnaryKind, WorkspaceLayout,
 };
 
 const N: usize = 64;
@@ -1385,6 +1385,99 @@ fn wgpu_rms_norm_grad_matches_cpu_reference() {
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_instance_norm_grad_matches_cpu_reference() {
     norm_grad_test(/* layer = */ true);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_add_rms_norm_grad_matches_cpu_reference() {
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let size = 8_u32;
+    let rows = 4_usize;
+    let in_n = (size as usize) * rows;
+    let eps_bits = 1.0e-5_f32.to_bits();
+    // Workspace: residual | input | weight | dy | d_residual | d_input | dw.
+    let plan = CompiledPlan {
+        forward: Box::new([]),
+        backward: Box::new([KernelCall::AddRmsNormGrad(AddRmsNormGradCall {
+            residual: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            input: SlotSpan {
+                offset: in_n,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: 2 * in_n,
+                len: size as usize,
+            },
+            dy: SlotSpan {
+                offset: 2 * in_n + size as usize,
+                len: in_n,
+            },
+            d_residual: SlotSpan {
+                offset: 3 * in_n + size as usize,
+                len: in_n,
+            },
+            d_input: SlotSpan {
+                offset: 4 * in_n + size as usize,
+                len: in_n,
+            },
+            dw: SlotSpan {
+                offset: 5 * in_n + size as usize,
+                len: size as usize,
+            },
+            size,
+            epsilon: eps_bits,
+        })]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: 5 * in_n + 2 * size as usize,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward_then_backward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let res_data: Vec<f32> = (0..in_n).map(|i| 0.03 * i as f32 - 0.2).collect();
+            let in_data: Vec<f32> = (0..in_n).map(|i| -0.02 * i as f32 + 0.4).collect();
+            let ws: Vec<f32> = (0..size as usize).map(|i| 1.0 + 0.1 * i as f32).collect();
+            let dy: Vec<f32> = (0..in_n).map(|i| 0.02 * i as f32 + 0.1).collect();
+            buf.write_span(
+                SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                &res_data,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n,
+                    len: in_n,
+                },
+                &in_data,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: 2 * in_n,
+                    len: size as usize,
+                },
+                &ws,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: 2 * in_n + size as usize,
+                    len: in_n,
+                },
+                &dy,
+            );
+        },
+        Tolerance::new(1e-4, 1e-4),
+    )
+    .expect("conformance run");
+    assert!(res.is_match(), "wgpu AddRmsNormGrad diverged: {:?}", res);
 }
 
 #[test]

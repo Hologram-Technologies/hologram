@@ -27,11 +27,11 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use hologram_transform::{
-    AddCall, AddGradCall, AddRmsNormCall, BinaryCall, CanonicalBackend, ConcatCall, Conv2dCall,
-    ConvTransposeCall, ExecError, GlobalAvgPoolCall, InstanceNormGradCall, KernelCall,
-    LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NegGradCall, NormFullCall,
-    NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall,
-    SliceCall, SlotSpan, SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
+    AddCall, AddGradCall, AddRmsNormCall, AddRmsNormGradCall, BinaryCall, CanonicalBackend,
+    ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall, InstanceNormGradCall,
+    KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NegGradCall,
+    NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall,
+    RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
 };
 
 /// WebGPU canonical backend.
@@ -47,6 +47,7 @@ pub struct WgpuBackend {
     conv_bind_layout: wgpu::BindGroupLayout,
     norm_grad2_bind_layout: wgpu::BindGroupLayout,
     norm_grad3_bind_layout: wgpu::BindGroupLayout,
+    norm_grad_addrms_bind_layout: wgpu::BindGroupLayout,
     binary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     unary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     reduce_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
@@ -174,6 +175,22 @@ impl WgpuBackend {
                     storage_binding(4, false),
                     storage_binding(5, false),
                     uniform_binding(6),
+                ],
+            });
+        // AddRmsNormGrad: residual + input + weight + dy + d_residual
+        // (rw) + d_input (rw) + dw (rw) + uniform = 8 bindings.
+        let norm_grad_addrms_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("norm_grad_addrms.binds.layout"),
+                entries: &[
+                    storage_binding(0, true),
+                    storage_binding(1, true),
+                    storage_binding(2, true),
+                    storage_binding(3, true),
+                    storage_binding(4, false),
+                    storage_binding(5, false),
+                    storage_binding(6, false),
+                    uniform_binding(7),
                 ],
             });
         // Conv2d forward: input + weight + bias + output + uniform
@@ -368,6 +385,15 @@ impl WgpuBackend {
                 build_pipeline(&device, &norm_grad3_bind_layout, name, source),
             );
         }
+        for (name, source) in [
+            ("add_rms_norm_grad_dx", ADD_RMS_NORM_GRAD_DX_WGSL),
+            ("add_rms_norm_grad_dw", ADD_RMS_NORM_GRAD_DW_WGSL),
+        ] {
+            norm_grad_pipelines.insert(
+                name,
+                build_pipeline(&device, &norm_grad_addrms_bind_layout, name, source),
+            );
+        }
 
         Ok(Self {
             device,
@@ -381,6 +407,7 @@ impl WgpuBackend {
             conv_bind_layout,
             norm_grad2_bind_layout,
             norm_grad3_bind_layout,
+            norm_grad_addrms_bind_layout,
             binary_pipelines,
             unary_pipelines,
             reduce_pipelines,
@@ -441,6 +468,7 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::RmsNormGrad(c) => self.dispatch_rms_norm_grad(storage, c),
             KernelCall::InstanceNormGrad(c) => self.dispatch_instance_norm_grad(storage, c),
             KernelCall::LayerNormGrad(c) => self.dispatch_layer_norm_grad(storage, c),
+            KernelCall::AddRmsNormGrad(c) => self.dispatch_add_rms_norm_grad(storage, c),
             // ── CPU-fallback variants ──────────────────────────────────
             // Every remaining variant routes through the canonical CPU
             // reference. These are correct (the canonical CPU is the
@@ -463,7 +491,6 @@ impl CanonicalBackend for WgpuBackend {
             | KernelCall::ConcatGrad(_)
             | KernelCall::SliceGrad(_)
             | KernelCall::TransposeGrad(_)
-            | KernelCall::AddRmsNormGrad(_)
             | KernelCall::GroupNormGrad(_)
             | KernelCall::Pool2dGrad(_, _)
             | KernelCall::GlobalAvgPoolGrad(_)
@@ -1276,6 +1303,212 @@ impl WgpuBackend {
         if call.db.len > 0 {
             let out = read_back(&self.device, &db_staging, size_us).map_err(ExecError::Backend)?;
             storage[call.db.offset..call.db.offset + size_us].copy_from_slice(&out);
+        }
+        Ok(())
+    }
+
+    fn dispatch_add_rms_norm_grad(
+        &self,
+        storage: &mut [f32],
+        call: &AddRmsNormGradCall,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        let size_us = size as usize;
+        if size_us == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if call.residual.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad residual length must equal input length".into(),
+            ));
+        }
+        if !call.input.len.is_multiple_of(size_us) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad input length not divisible by size".into(),
+            ));
+        }
+        let rows = call.input.len / size_us;
+        let dr_len = call.d_residual.len;
+        let di_len = call.d_input.len;
+        if dr_len != 0 && dr_len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad d_residual length must equal input length".into(),
+            ));
+        }
+        if di_len != 0 && di_len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad d_input length must equal input length".into(),
+            ));
+        }
+        if call.dw.len != 0 && call.dw.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad dw length must equal size".into(),
+            ));
+        }
+        if call.dy.len != call.input.len || call.weight.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad span sizes inconsistent".into(),
+            ));
+        }
+        let dx_pipe = self
+            .norm_grad_pipelines
+            .get("add_rms_norm_grad_dx")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing add_rms_norm_grad_dx".into())
+            })?;
+        let dw_pipe = self
+            .norm_grad_pipelines
+            .get("add_rms_norm_grad_dw")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing add_rms_norm_grad_dw".into())
+            })?;
+
+        let res_buf = self.upload(
+            &storage[call.residual.offset..call.residual.offset + call.residual.len],
+            "addrms_grad.residual",
+        );
+        let in_buf = self.upload(
+            &storage[call.input.offset..call.input.offset + call.input.len],
+            "addrms_grad.input",
+        );
+        let weight_buf = self.upload(
+            &storage[call.weight.offset..call.weight.offset + size_us],
+            "addrms_grad.weight",
+        );
+        let dy_buf = self.upload(
+            &storage[call.dy.offset..call.dy.offset + call.dy.len],
+            "addrms_grad.dy",
+        );
+        let dr_seed = if dr_len > 0 {
+            storage[call.d_residual.offset..call.d_residual.offset + dr_len].to_vec()
+        } else {
+            vec![0.0_f32; call.input.len]
+        };
+        let dr_buf = self.upload_rw(&dr_seed, "addrms_grad.d_residual");
+        let di_seed = if di_len > 0 {
+            storage[call.d_input.offset..call.d_input.offset + di_len].to_vec()
+        } else {
+            vec![0.0_f32; call.input.len]
+        };
+        let di_buf = self.upload_rw(&di_seed, "addrms_grad.d_input");
+        let dw_seed = if call.dw.len > 0 {
+            storage[call.dw.offset..call.dw.offset + size_us].to_vec()
+        } else {
+            vec![0.0_f32; size_us]
+        };
+        let dw_buf = self.upload_rw(&dw_seed, "addrms_grad.dw");
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 4] = [size, call.epsilon, rows as u32, 0];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("addrms_grad.params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("addrms_grad.binds"),
+            layout: &self.norm_grad_addrms_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: res_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: weight_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dr_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: di_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: dw_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let dr_staging = self.alloc_staging(call.input.len);
+        let di_staging = self.alloc_staging(call.input.len);
+        let dw_staging = self.alloc_staging(size_us);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("addrms_grad"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("addrms_grad.dx"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dx_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("addrms_grad.dw"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dw_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(size_us.div_ceil(64) as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &dr_buf,
+            0,
+            &dr_staging,
+            0,
+            (call.input.len * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        encoder.copy_buffer_to_buffer(
+            &di_buf,
+            0,
+            &di_staging,
+            0,
+            (call.input.len * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        encoder.copy_buffer_to_buffer(
+            &dw_buf,
+            0,
+            &dw_staging,
+            0,
+            (size_us * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        if dr_len > 0 {
+            let out =
+                read_back(&self.device, &dr_staging, call.input.len).map_err(ExecError::Backend)?;
+            storage[call.d_residual.offset..call.d_residual.offset + dr_len].copy_from_slice(&out);
+        }
+        if di_len > 0 {
+            let out =
+                read_back(&self.device, &di_staging, call.input.len).map_err(ExecError::Backend)?;
+            storage[call.d_input.offset..call.d_input.offset + di_len].copy_from_slice(&out);
+        }
+        if call.dw.len > 0 {
+            let out = read_back(&self.device, &dw_staging, size_us).map_err(ExecError::Backend)?;
+            storage[call.dw.offset..call.dw.offset + size_us].copy_from_slice(&out);
         }
         Ok(())
     }
@@ -2599,6 +2832,89 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     dw[i] = dw[i] + dw_acc;
     db[i] = db[i] + db_acc;
+}
+"#;
+
+// ── AddRmsNormGrad shaders (4-input layout) ───────────────────────────
+//
+// Forward: y = rms_norm(s = residual + input, weight). Since y is
+// symmetric in (residual, input) the partials are equal:
+// d_residual = d_input = standard rms-norm-grad dx evaluated on `s`.
+// dw is the standard rms-norm dw computed against `s`.
+//
+// Bind layout: residual(0) input(1) weight(2) dy(3) d_residual(4,rw)
+// d_input(5,rw) dw(6,rw) params(7,uniform). Params: { size, epsilon,
+// rows, _ }.
+
+const ADD_RMS_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> residual: array<f32>;
+@group(0) @binding(1) var<storage, read> input: array<f32>;
+@group(0) @binding(2) var<storage, read> weight: array<f32>;
+@group(0) @binding(3) var<storage, read> dy: array<f32>;
+@group(0) @binding(4) var<storage, read_write> d_residual: array<f32>;
+@group(0) @binding(5) var<storage, read_write> d_input: array<f32>;
+@group(0) @binding(6) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(7) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let r = gid.x;
+    if (r >= params.rows) { return; }
+    let off = r * params.size;
+    let inv_size = 1.0 / f32(params.size);
+
+    var sq: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let s = residual[off + i] + input[off + i];
+        sq = sq + s * s;
+    }
+    let rstd = 1.0 / sqrt(sq * inv_size + params.epsilon);
+
+    var dot: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let s = residual[off + i] + input[off + i];
+        dot = dot + dy[off + i] * weight[i] * s;
+    }
+    let dot_term = rstd * rstd * rstd * inv_size * dot;
+
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let s = residual[off + i] + input[off + i];
+        let contrib = weight[i] * dy[off + i] * rstd - s * dot_term;
+        d_residual[off + i] = d_residual[off + i] + contrib;
+        d_input[off + i] = d_input[off + i] + contrib;
+    }
+}
+"#;
+
+const ADD_RMS_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> residual: array<f32>;
+@group(0) @binding(1) var<storage, read> input: array<f32>;
+@group(0) @binding(2) var<storage, read> weight: array<f32>;
+@group(0) @binding(3) var<storage, read> dy: array<f32>;
+@group(0) @binding(4) var<storage, read_write> d_residual: array<f32>;
+@group(0) @binding(5) var<storage, read_write> d_input: array<f32>;
+@group(0) @binding(6) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(7) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.size) { return; }
+    let inv_size = 1.0 / f32(params.size);
+
+    var acc: f32 = 0.0;
+    for (var r: u32 = 0u; r < params.rows; r = r + 1u) {
+        let off = r * params.size;
+        var sq: f32 = 0.0;
+        for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+            let s = residual[off + j] + input[off + j];
+            sq = sq + s * s;
+        }
+        let rstd = 1.0 / sqrt(sq * inv_size + params.epsilon);
+        let s_i = residual[off + i] + input[off + i];
+        acc = acc + dy[off + i] * s_i * rstd;
+    }
+    dw[i] = dw[i] + acc;
 }
 "#;
 
