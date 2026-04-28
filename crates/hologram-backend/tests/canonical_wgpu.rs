@@ -12,10 +12,10 @@
 use hologram_backend::canonical::WgpuBackend;
 use hologram_transform::{
     check_forward, AddCall, AddGradCall, AddRmsNormCall, AddressTable, BinaryCall, CompiledPlan,
-    ConcatCall, CpuBackend, GlobalAvgPoolCall, KernelCall, MatMulCall, MatMulGradACall,
-    MatMulGradBCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind,
-    ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, Tolerance, UnaryCall, UnaryKind,
-    WorkspaceLayout,
+    ConcatCall, Conv2dCall, ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, KernelCall,
+    MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall, Pool2dCall,
+    Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall,
+    Tolerance, UnaryCall, UnaryKind, WorkspaceLayout,
 };
 
 const N: usize = 64;
@@ -1174,36 +1174,271 @@ fn wgpu_global_avg_pool_matches_cpu_reference() {
 
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
-fn wgpu_unsupported_variant_returns_named_error() {
-    use hologram_transform::{CanonicalBackend, ExecError};
+fn wgpu_conv2d_matches_cpu_reference() {
+    // 1×2×4×4 input, 3 output channels with 3×3 kernel, padding 1,
+    // stride 1 → 1×3×4×4 output. Bias present.
     let mut gpu = WgpuBackend::new().expect("wgpu init");
-    let mut storage = vec![0.0_f32; 4];
-    // Conv2d has neither a GPU shader nor a CPU-fallback arm yet.
-    use hologram_transform::Conv2dCall;
-    let call = KernelCall::Conv2d(Conv2dCall {
-        input: SlotSpan { offset: 0, len: 1 },
-        weight: SlotSpan { offset: 1, len: 1 },
-        bias: SlotSpan { offset: 2, len: 0 },
-        output: SlotSpan { offset: 3, len: 1 },
-        n: 1,
-        c_in: 1,
-        c_out: 1,
-        h_in: 1,
-        w_in: 1,
-        h_out: 1,
-        w_out: 1,
-        kernel_h: 1,
-        kernel_w: 1,
-        stride_h: 1,
-        stride_w: 1,
-        pad_h: 0,
-        pad_w: 0,
-        dilation_h: 1,
-        dilation_w: 1,
-        group: 1,
-    });
-    match gpu.dispatch(&mut storage, &call) {
-        Err(ExecError::Backend(msg)) => assert!(msg.contains("Conv2d"), "msg: {msg}"),
-        other => panic!("expected Backend error mentioning Conv2d, got {other:?}"),
-    }
+    let n = 1_u32;
+    let c_in = 2_u32;
+    let c_out = 3_u32;
+    let h_in = 4_u32;
+    let w_in = 4_u32;
+    let h_out = 4_u32;
+    let w_out = 4_u32;
+    let kernel_h = 3_u32;
+    let kernel_w = 3_u32;
+    let in_n = (n * c_in * h_in * w_in) as usize;
+    let weight_n = (c_out * c_in * kernel_h * kernel_w) as usize;
+    let bias_n = c_out as usize;
+    let out_n = (n * c_out * h_out * w_out) as usize;
+
+    let plan = CompiledPlan {
+        forward: Box::new([KernelCall::Conv2d(Conv2dCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: in_n,
+                len: weight_n,
+            },
+            bias: SlotSpan {
+                offset: in_n + weight_n,
+                len: bias_n,
+            },
+            output: SlotSpan {
+                offset: in_n + weight_n + bias_n,
+                len: out_n,
+            },
+            n,
+            c_in,
+            c_out,
+            h_in,
+            w_in,
+            h_out,
+            w_out,
+            kernel_h,
+            kernel_w,
+            stride_h: 1,
+            stride_w: 1,
+            pad_h: 1,
+            pad_w: 1,
+            dilation_h: 1,
+            dilation_w: 1,
+            group: 1,
+        })]),
+        backward: Box::new([]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: in_n + weight_n + bias_n + out_n,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 0.5).collect();
+            let ws: Vec<f32> = (0..weight_n)
+                .map(|i| ((i as f32) * 0.07).cos() * 0.3)
+                .collect();
+            let bs: Vec<f32> = (0..bias_n).map(|i| 0.1 * i as f32).collect();
+            buf.write_span(
+                SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                &xs,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n,
+                    len: weight_n,
+                },
+                &ws,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n + weight_n,
+                    len: bias_n,
+                },
+                &bs,
+            );
+        },
+        Tolerance::new(5e-5, 5e-5),
+    )
+    .expect("conformance run");
+    assert!(res.is_match(), "wgpu Conv2d diverged: {:?}", res);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_conv_transpose_2d_matches_cpu_reference() {
+    // 1×2×3×3 input, 3 output channels, 3×3 kernel, stride 2 → 1×3×7×7
+    // (the upsampling case that exercises stride-aware index inversion).
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let n = 1_u32;
+    let c_in = 2_u32;
+    let c_out = 3_u32;
+    let h_in = 3_u32;
+    let w_in = 3_u32;
+    let h_out = 7_u32;
+    let w_out = 7_u32;
+    let kernel_h = 3_u32;
+    let kernel_w = 3_u32;
+    let in_n = (n * c_in * h_in * w_in) as usize;
+    // ConvTranspose weight is [C_in, C_out/group, kH, kW].
+    let weight_n = (c_in * c_out * kernel_h * kernel_w) as usize;
+    let bias_n = c_out as usize;
+    let out_n = (n * c_out * h_out * w_out) as usize;
+
+    let plan = CompiledPlan {
+        forward: Box::new([KernelCall::ConvTranspose2d(ConvTransposeCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: in_n,
+                len: weight_n,
+            },
+            bias: SlotSpan {
+                offset: in_n + weight_n,
+                len: bias_n,
+            },
+            output: SlotSpan {
+                offset: in_n + weight_n + bias_n,
+                len: out_n,
+            },
+            n,
+            c_in,
+            c_out,
+            h_in,
+            w_in,
+            h_out,
+            w_out,
+            kernel_h,
+            kernel_w,
+            stride_h: 2,
+            stride_w: 2,
+            pad_h: 0,
+            pad_w: 0,
+            dilation_h: 1,
+            dilation_w: 1,
+            group: 1,
+        })]),
+        backward: Box::new([]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: in_n + weight_n + bias_n + out_n,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let xs: Vec<f32> = (0..in_n).map(|i| 0.1 * i as f32 - 0.5).collect();
+            let ws: Vec<f32> = (0..weight_n)
+                .map(|i| ((i as f32) * 0.07).sin() * 0.4)
+                .collect();
+            let bs: Vec<f32> = (0..bias_n).map(|i| 0.05 * i as f32).collect();
+            buf.write_span(
+                SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                &xs,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n,
+                    len: weight_n,
+                },
+                &ws,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n + weight_n,
+                    len: bias_n,
+                },
+                &bs,
+            );
+        },
+        Tolerance::new(5e-5, 5e-5),
+    )
+    .expect("conformance run");
+    assert!(res.is_match(), "wgpu ConvTranspose2d diverged: {:?}", res);
+}
+
+/// Confirms the dispatch arm is exhaustive: every canonical
+/// `KernelCall` variant either runs a real WGSL shader or routes
+/// through `host_cpu_fallback`. Adding a new variant without
+/// updating the match fails the build (no `_` arm) — this test just
+/// verifies a representative still-fallback variant returns success
+/// with correct values.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_attention_via_cpu_fallback_matches_reference() {
+    use hologram_transform::AttentionCall;
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let head_dim = 4_usize;
+    let seq = 3_usize;
+    let n = seq * head_dim;
+    let plan = CompiledPlan {
+        forward: Box::new([KernelCall::Attention(AttentionCall {
+            q: SlotSpan { offset: 0, len: n },
+            k: SlotSpan { offset: n, len: n },
+            v: SlotSpan {
+                offset: 2 * n,
+                len: n,
+            },
+            output: SlotSpan {
+                offset: 3 * n,
+                len: n,
+            },
+            batch: 1,
+            num_q_heads: 1,
+            num_kv_heads: 1,
+            head_dim: head_dim as u32,
+            seq_q: seq as u32,
+            seq_kv: seq as u32,
+            scale_bits: 1.0_f32.to_bits(),
+            causal: false,
+        })]),
+        backward: Box::new([]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: 4 * n,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let q: Vec<f32> = (0..n).map(|i| 0.05 * i as f32).collect();
+            let k: Vec<f32> = (0..n).map(|i| -0.03 * i as f32 + 0.4).collect();
+            let v: Vec<f32> = (0..n).map(|i| 0.07 * i as f32 - 0.5).collect();
+            buf.write_span(SlotSpan { offset: 0, len: n }, &q);
+            buf.write_span(SlotSpan { offset: n, len: n }, &k);
+            buf.write_span(
+                SlotSpan {
+                    offset: 2 * n,
+                    len: n,
+                },
+                &v,
+            );
+        },
+        Tolerance::TIGHT,
+    )
+    .expect("conformance run");
+    assert!(
+        res.is_match(),
+        "wgpu Attention fallback diverged: {:?}",
+        res
+    );
 }

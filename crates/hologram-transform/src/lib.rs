@@ -47,10 +47,11 @@ pub use error::{ExecError, PlanError};
 pub use executor::Executor;
 pub use hologram_ops::{BackwardRule, MatMulAttrs, Op, OpCategory, OpSignature, SemanticOp};
 pub use plan::{
-    AddCall, AddGradCall, AddRmsNormCall, AddressTable, BinaryCall, CompiledPlan, ConcatCall,
-    Conv2dCall, GlobalAvgPoolCall, GroupNormCall, KernelCall, MatMulCall, MatMulGradACall,
-    MatMulGradBCall, MulGradCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind,
-    ReduceCall, ReduceKind, ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall,
-    TransposeCall, UnaryCall, UnaryGradCall, UnaryGradKind, UnaryKind, WorkspaceLayout,
+    AddCall, AddGradCall, AddRmsNormCall, AddressTable, AttentionCall, BinaryCall, CompiledPlan,
+    ConcatCall, Conv2dCall, Conv2dGradCall, ConvTransposeCall, GlobalAvgPoolCall, GroupNormCall,
+    KernelCall, MatMulCall, MatMulGradACall, MatMulGradBCall, MulGradCall, NegGradCall,
+    NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall,
+    SliceCall, SlotSpan, SoftmaxCall, SubGradCall, TransposeCall, UnaryCall, UnaryGradCall,
+    UnaryGradKind, UnaryKind, WorkspaceLayout,
 };
 pub use planner::compile;

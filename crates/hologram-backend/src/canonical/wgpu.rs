@@ -27,8 +27,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use hologram_transform::{
-    kernel_call_name, AddCall, AddGradCall, AddRmsNormCall, BinaryCall, CanonicalBackend,
-    ConcatCall, ExecError, GlobalAvgPoolCall, KernelCall, MatMulCall, MatMulGradACall,
+    AddCall, AddGradCall, AddRmsNormCall, BinaryCall, CanonicalBackend, ConcatCall, Conv2dCall,
+    ConvTransposeCall, ExecError, GlobalAvgPoolCall, KernelCall, MatMulCall, MatMulGradACall,
     MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall,
     ReduceKind, ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
 };
@@ -43,6 +43,7 @@ pub struct WgpuBackend {
     norm2_bind_layout: wgpu::BindGroupLayout,
     norm3_bind_layout: wgpu::BindGroupLayout,
     matmul_bind_layout: wgpu::BindGroupLayout,
+    conv_bind_layout: wgpu::BindGroupLayout,
     binary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     unary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     reduce_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
@@ -50,6 +51,7 @@ pub struct WgpuBackend {
     norm_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     matmul_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     pool_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    conv_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
 }
 
 impl WgpuBackend {
@@ -129,6 +131,20 @@ impl WgpuBackend {
                     uniform_binding(3),
                 ],
             });
+        // Conv2d forward: input + weight + bias + output + uniform
+        // ConvParams. Bias is always bound (a length-`c_out` zero
+        // buffer when the call carries no bias) so the bind layout
+        // can stay shape-fixed.
+        let conv_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("conv.binds.layout"),
+            entries: &[
+                storage_binding(0, true),
+                storage_binding(1, true),
+                storage_binding(2, true),
+                storage_binding(3, false),
+                uniform_binding(4),
+            ],
+        });
         // Norm-with-3-inputs layout: covers LayerNorm (input, weight,
         // bias) and AddRmsNorm (residual, input, weight). Kernels
         // assign meanings to the bindings; the layout is shape-only.
@@ -269,6 +285,20 @@ impl WgpuBackend {
                 GLOBAL_AVG_POOL_WGSL,
             ),
         );
+        let mut conv_pipelines = HashMap::new();
+        conv_pipelines.insert(
+            "conv2d",
+            build_pipeline(&device, &conv_bind_layout, "conv2d", CONV2D_WGSL),
+        );
+        conv_pipelines.insert(
+            "conv_transpose_2d",
+            build_pipeline(
+                &device,
+                &conv_bind_layout,
+                "conv_transpose_2d",
+                CONV_TRANSPOSE_2D_WGSL,
+            ),
+        );
 
         Ok(Self {
             device,
@@ -279,6 +309,7 @@ impl WgpuBackend {
             norm2_bind_layout,
             norm3_bind_layout,
             matmul_bind_layout,
+            conv_bind_layout,
             binary_pipelines,
             unary_pipelines,
             reduce_pipelines,
@@ -286,6 +317,7 @@ impl WgpuBackend {
             norm_pipelines,
             matmul_pipelines,
             pool_pipelines,
+            conv_pipelines,
         })
     }
 }
@@ -332,13 +364,18 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::MatMulGradB(c) => self.dispatch_matmul_grad_b(storage, c),
             KernelCall::Pool2d(c, kind) => self.dispatch_pool2d(storage, c, *kind),
             KernelCall::GlobalAvgPool(c) => self.dispatch_global_avg_pool(storage, c),
+            KernelCall::Conv2d(c) => self.dispatch_conv2d(storage, c),
+            KernelCall::ConvTranspose2d(c) => self.dispatch_conv_transpose_2d(storage, c),
             // ── CPU-fallback variants ──────────────────────────────────
-            // These all do accumulating elementwise / row-wise math and
-            // are bandwidth-bound at small sizes; routing them through
-            // the canonical CPU reference is correct and avoids
-            // re-implementing the math twice. Promotion to a GPU shader
-            // is incremental — write WGSL, replace the arm, validate
-            // via the conformance harness.
+            // Every remaining variant routes through the canonical CPU
+            // reference. These are correct (the canonical CPU is the
+            // semantic baseline per ADR-050) but bypass the device.
+            // Promotion to a real WGSL shader is incremental: write
+            // WGSL, replace the arm, validate via the conformance
+            // harness. The exhaustive enumeration below means adding a
+            // new `KernelCall` variant fails the build until this
+            // match is updated — keeping the backend honest about
+            // coverage gaps.
             KernelCall::MulGrad(_)
             | KernelCall::DivGrad(_)
             | KernelCall::PowGrad(_)
@@ -346,11 +383,36 @@ impl CanonicalBackend for WgpuBackend {
             | KernelCall::ReduceGrad(_, _)
             | KernelCall::ReduceArgGrad(_, _)
             | KernelCall::ReduceProdGrad(_)
-            | KernelCall::UnaryGrad(_, _) => Self::host_cpu_fallback(storage, call),
-            other => Err(ExecError::Backend(format!(
-                "WgpuBackend: variant {} not yet implemented",
-                kernel_call_name(other)
-            ))),
+            | KernelCall::UnaryGrad(_, _)
+            | KernelCall::SoftmaxGrad(_, _)
+            | KernelCall::ConcatGrad(_)
+            | KernelCall::SliceGrad(_)
+            | KernelCall::TransposeGrad(_)
+            | KernelCall::RmsNormGrad(_)
+            | KernelCall::LayerNormGrad(_)
+            | KernelCall::InstanceNormGrad(_)
+            | KernelCall::AddRmsNormGrad(_)
+            | KernelCall::GroupNormGrad(_)
+            | KernelCall::Pool2dGrad(_, _)
+            | KernelCall::GlobalAvgPoolGrad(_)
+            | KernelCall::FusedSwiGluGrad(_)
+            | KernelCall::Conv2dGrad(_)
+            | KernelCall::ConvTranspose2dGrad(_)
+            | KernelCall::AttentionGrad(_)
+            | KernelCall::Transpose(_)
+            | KernelCall::GroupNorm(_)
+            | KernelCall::FusedSwiGlu(_)
+            | KernelCall::Gemm(_)
+            | KernelCall::Clip(_)
+            | KernelCall::CumSum(_)
+            | KernelCall::Pad(_)
+            | KernelCall::Expand(_)
+            | KernelCall::Where(_)
+            | KernelCall::ResizeNearest(_)
+            | KernelCall::ResizeLinear(_)
+            | KernelCall::Lrn(_)
+            | KernelCall::RotaryEmbedding(_)
+            | KernelCall::Attention(_) => Self::host_cpu_fallback(storage, call),
         }
     }
 
@@ -817,6 +879,258 @@ impl WgpuBackend {
             rows.div_ceil(64) as u32,
             &mut storage[call.output.offset..call.output.offset + call.input.len],
         )
+    }
+
+    fn dispatch_conv2d(&self, storage: &mut [f32], call: &Conv2dCall) -> Result<(), ExecError> {
+        let total_out =
+            call.n as usize * call.c_out as usize * call.h_out as usize * call.w_out as usize;
+        if total_out == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d output length inconsistent with N*C_out*H_out*W_out".into(),
+            ));
+        }
+        let group = call.group.max(1);
+        if !call.c_in.is_multiple_of(group) || !call.c_out.is_multiple_of(group) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d c_in / c_out must divide evenly by group".into(),
+            ));
+        }
+        let pipeline = self
+            .conv_pipelines
+            .get("conv2d")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing conv2d pipeline".into()))?;
+        let in_buf = self.upload(
+            &storage[call.input.offset..call.input.offset + call.input.len],
+            "conv.in",
+        );
+        let weight_buf = self.upload(
+            &storage[call.weight.offset..call.weight.offset + call.weight.len],
+            "conv.weight",
+        );
+        // Bias is optional in `Conv2dCall` (zero-length span). The
+        // bind layout always expects a storage buffer, so synthesise
+        // a zero buffer of length `c_out` when the call has none.
+        let bias_buf = if call.bias.len == call.c_out as usize {
+            self.upload(
+                &storage[call.bias.offset..call.bias.offset + call.bias.len],
+                "conv.bias",
+            )
+        } else if call.bias.len == 0 {
+            let zeros = vec![0.0_f32; call.c_out as usize];
+            self.upload(&zeros, "conv.bias.zero")
+        } else {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d bias length must be 0 or c_out".into(),
+            ));
+        };
+        let out_buf = self.alloc_storage(total_out, "conv.out");
+        let staging = self.alloc_staging(total_out);
+        let params_buf = self.upload_conv_params(
+            call.n,
+            call.c_in,
+            call.c_out,
+            call.h_in,
+            call.w_in,
+            call.h_out,
+            call.w_out,
+            call.kernel_h,
+            call.kernel_w,
+            call.stride_h,
+            call.stride_w,
+            call.pad_h,
+            call.pad_w,
+            call.dilation_h,
+            call.dilation_w,
+            group,
+        );
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("conv.binds"),
+            layout: &self.conv_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: weight_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let workgroups = total_out.div_ceil(64) as u32;
+        self.dispatch_and_read_with_workgroups(
+            pipeline,
+            &bind_group,
+            &out_buf,
+            &staging,
+            total_out,
+            workgroups,
+            &mut storage[call.output.offset..call.output.offset + total_out],
+        )
+    }
+
+    fn dispatch_conv_transpose_2d(
+        &self,
+        storage: &mut [f32],
+        call: &ConvTransposeCall,
+    ) -> Result<(), ExecError> {
+        let total_out =
+            call.n as usize * call.c_out as usize * call.h_out as usize * call.w_out as usize;
+        if total_out == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d output length inconsistent with shape".into(),
+            ));
+        }
+        let group = call.group.max(1);
+        if !call.c_in.is_multiple_of(group) || !call.c_out.is_multiple_of(group) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d c_in / c_out must divide evenly by group".into(),
+            ));
+        }
+        if call.stride_h == 0 || call.stride_w == 0 {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d strides must be > 0".into(),
+            ));
+        }
+        let pipeline = self
+            .conv_pipelines
+            .get("conv_transpose_2d")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing conv_transpose_2d pipeline".into())
+            })?;
+        let in_buf = self.upload(
+            &storage[call.input.offset..call.input.offset + call.input.len],
+            "conv_t.in",
+        );
+        let weight_buf = self.upload(
+            &storage[call.weight.offset..call.weight.offset + call.weight.len],
+            "conv_t.weight",
+        );
+        let bias_buf = if call.bias.len == call.c_out as usize {
+            self.upload(
+                &storage[call.bias.offset..call.bias.offset + call.bias.len],
+                "conv_t.bias",
+            )
+        } else if call.bias.len == 0 {
+            let zeros = vec![0.0_f32; call.c_out as usize];
+            self.upload(&zeros, "conv_t.bias.zero")
+        } else {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d bias length must be 0 or c_out".into(),
+            ));
+        };
+        let out_buf = self.alloc_storage(total_out, "conv_t.out");
+        let staging = self.alloc_staging(total_out);
+        let params_buf = self.upload_conv_params(
+            call.n,
+            call.c_in,
+            call.c_out,
+            call.h_in,
+            call.w_in,
+            call.h_out,
+            call.w_out,
+            call.kernel_h,
+            call.kernel_w,
+            call.stride_h,
+            call.stride_w,
+            call.pad_h,
+            call.pad_w,
+            call.dilation_h,
+            call.dilation_w,
+            group,
+        );
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("conv_t.binds"),
+            layout: &self.conv_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: weight_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let workgroups = total_out.div_ceil(64) as u32;
+        self.dispatch_and_read_with_workgroups(
+            pipeline,
+            &bind_group,
+            &out_buf,
+            &staging,
+            total_out,
+            workgroups,
+            &mut storage[call.output.offset..call.output.offset + total_out],
+        )
+    }
+
+    /// Pack the 16 dimensional fields shared by `Conv2dCall` and
+    /// `ConvTransposeCall` into a uniform buffer matching the WGSL
+    /// `ConvParams` struct. Padded to 20 u32s (80 bytes) for a clean
+    /// 16-byte alignment.
+    #[allow(clippy::too_many_arguments)]
+    fn upload_conv_params(
+        &self,
+        n: u32,
+        c_in: u32,
+        c_out: u32,
+        h_in: u32,
+        w_in: u32,
+        h_out: u32,
+        w_out: u32,
+        kernel_h: u32,
+        kernel_w: u32,
+        stride_h: u32,
+        stride_w: u32,
+        pad_h: u32,
+        pad_w: u32,
+        dilation_h: u32,
+        dilation_w: u32,
+        group: u32,
+    ) -> wgpu::Buffer {
+        use wgpu::util::DeviceExt;
+        let params: [u32; 20] = [
+            n, c_in, c_out, h_in, w_in, h_out, w_out, kernel_h, kernel_w, stride_h, stride_w,
+            pad_h, pad_w, dilation_h, dilation_w, group, 0, 0, 0, 0,
+        ];
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("conv.params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
     }
 
     fn dispatch_pool2d(
@@ -1484,6 +1798,170 @@ fn unary_pipeline_key(kind: UnaryKind) -> Option<&'static str> {
         UnaryKind::IsNaN => "is_nan",
     })
 }
+
+// ── Conv2d forward (NCHW, direct) ─────────────────────────────────────
+//
+// One thread per output element. The shader decomposes the flat
+// `gid.x` into (n, oc, oh, ow), walks the kernel window over
+// (ic_local, ky, kx) for the matching group, and accumulates the
+// convolution sum + bias. This is a correctness-first reference
+// kernel; tile-based / im2col optimisations come later.
+//
+// Layout: input  [N, C_in,  H_in,  W_in]
+//         weight [C_out, C_in/group, kH, kW]
+//         bias   [C_out]   (caller passes a zero buffer if absent)
+//         output [N, C_out, H_out, W_out]
+//
+// Group semantics: `g = oc / c_out_per_g`,
+// `c_in_per_g = c_in / group`, `c_out_per_g = c_out / group`.
+
+const CONV2D_WGSL: &str = r#"struct ConvParams {
+    n: u32, c_in: u32, c_out: u32,
+    h_in: u32, w_in: u32,
+    h_out: u32, w_out: u32,
+    kernel_h: u32, kernel_w: u32,
+    stride_h: u32, stride_w: u32,
+    pad_h: u32, pad_w: u32,
+    dilation_h: u32, dilation_w: u32,
+    group: u32,
+};
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read_write> output: array<f32>;
+@group(0) @binding(4) var<uniform> params: ConvParams;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let total = params.n * params.c_out * params.h_out * params.w_out;
+    let idx = gid.x;
+    if (idx >= total) { return; }
+
+    let ow = idx % params.w_out;
+    let oh = (idx / params.w_out) % params.h_out;
+    let oc = (idx / (params.w_out * params.h_out)) % params.c_out;
+    let ni = idx / (params.w_out * params.h_out * params.c_out);
+
+    let c_in_per_g = params.c_in / params.group;
+    let c_out_per_g = params.c_out / params.group;
+    let g = oc / c_out_per_g;
+    let in_chw = params.c_in * params.h_in * params.w_in;
+    let weight_per_oc = c_in_per_g * params.kernel_h * params.kernel_w;
+
+    var acc: f32 = bias[oc];
+    for (var ic_local: u32 = 0u; ic_local < c_in_per_g; ic_local = ic_local + 1u) {
+        let ic = g * c_in_per_g + ic_local;
+        for (var ky: u32 = 0u; ky < params.kernel_h; ky = ky + 1u) {
+            let ih: i32 = i32(oh * params.stride_h)
+                        + i32(ky * params.dilation_h)
+                        - i32(params.pad_h);
+            if (ih < 0 || ih >= i32(params.h_in)) { continue; }
+            for (var kx: u32 = 0u; kx < params.kernel_w; kx = kx + 1u) {
+                let iw: i32 = i32(ow * params.stride_w)
+                            + i32(kx * params.dilation_w)
+                            - i32(params.pad_w);
+                if (iw < 0 || iw >= i32(params.w_in)) { continue; }
+                let in_idx = ni * in_chw
+                           + ic * params.h_in * params.w_in
+                           + u32(ih) * params.w_in
+                           + u32(iw);
+                let w_idx = oc * weight_per_oc
+                          + ic_local * params.kernel_h * params.kernel_w
+                          + ky * params.kernel_w
+                          + kx;
+                acc = acc + input[in_idx] * weight[w_idx];
+            }
+        }
+    }
+    output[idx] = acc;
+}
+"#;
+
+// ── ConvTranspose2d forward (NCHW, output-centric) ────────────────────
+//
+// The canonical CPU forward is a *scatter*: each input position
+// contributes to many output positions. On GPU that creates write
+// conflicts, so this kernel is a *gather*: one thread per output
+// element, walking the same `(ic, oc_local, ky, kx)` window as the
+// scatter loop and inverting the geometry to find the contributing
+// input position. A position contributes iff
+//
+//     oh = ih·stride_h + ky·dilation_h - pad_h
+//     ow = iw·stride_w + kx·dilation_w - pad_w
+//
+// for some integer `ih`, `iw`. Rearranging,
+//
+//     ih = (oh + pad_h - ky·dilation_h) / stride_h
+//
+// is valid only when the numerator is non-negative *and* a multiple
+// of `stride_h` (else stride zeroes that position out). Same for `iw`.
+// Weight layout `[C_in, C_out/group, kH, kW]` mirrors the canonical
+// CPU reference.
+
+const CONV_TRANSPOSE_2D_WGSL: &str = r#"struct ConvParams {
+    n: u32, c_in: u32, c_out: u32,
+    h_in: u32, w_in: u32,
+    h_out: u32, w_out: u32,
+    kernel_h: u32, kernel_w: u32,
+    stride_h: u32, stride_w: u32,
+    pad_h: u32, pad_w: u32,
+    dilation_h: u32, dilation_w: u32,
+    group: u32,
+};
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read_write> output: array<f32>;
+@group(0) @binding(4) var<uniform> params: ConvParams;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let total = params.n * params.c_out * params.h_out * params.w_out;
+    let idx = gid.x;
+    if (idx >= total) { return; }
+
+    let ow = idx % params.w_out;
+    let oh = (idx / params.w_out) % params.h_out;
+    let oc = (idx / (params.w_out * params.h_out)) % params.c_out;
+    let ni = idx / (params.w_out * params.h_out * params.c_out);
+
+    let c_in_per_g = params.c_in / params.group;
+    let c_out_per_g = params.c_out / params.group;
+    let g = oc / c_out_per_g;
+    let oc_local = oc - g * c_out_per_g;
+    let in_chw = params.c_in * params.h_in * params.w_in;
+    let weight_per_ic = c_out_per_g * params.kernel_h * params.kernel_w;
+
+    var acc: f32 = bias[oc];
+    for (var ic_local: u32 = 0u; ic_local < c_in_per_g; ic_local = ic_local + 1u) {
+        let ic = g * c_in_per_g + ic_local;
+        for (var ky: u32 = 0u; ky < params.kernel_h; ky = ky + 1u) {
+            let oh_pad: i32 = i32(oh) + i32(params.pad_h) - i32(ky * params.dilation_h);
+            if (oh_pad < 0) { continue; }
+            if (u32(oh_pad) % params.stride_h != 0u) { continue; }
+            let ih: u32 = u32(oh_pad) / params.stride_h;
+            if (ih >= params.h_in) { continue; }
+            for (var kx: u32 = 0u; kx < params.kernel_w; kx = kx + 1u) {
+                let ow_pad: i32 = i32(ow) + i32(params.pad_w) - i32(kx * params.dilation_w);
+                if (ow_pad < 0) { continue; }
+                if (u32(ow_pad) % params.stride_w != 0u) { continue; }
+                let iw: u32 = u32(ow_pad) / params.stride_w;
+                if (iw >= params.w_in) { continue; }
+                let in_idx = ni * in_chw
+                           + ic * params.h_in * params.w_in
+                           + ih * params.w_in
+                           + iw;
+                let w_idx = ic * weight_per_ic
+                          + oc_local * params.kernel_h * params.kernel_w
+                          + ky * params.kernel_w
+                          + kx;
+                acc = acc + input[in_idx] * weight[w_idx];
+            }
+        }
+    }
+    output[idx] = acc;
+}
+"#;
 
 // ── Pool family shaders (NCHW) ────────────────────────────────────────
 //
