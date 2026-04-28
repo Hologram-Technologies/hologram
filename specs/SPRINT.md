@@ -414,9 +414,19 @@ heuristic shape resolution failures in the 848-instruction execution chain.
 - [x] **3.3**: Debug assertions: validate buffer byte length matches shape
 
 ### Phase 4: Replace Heuristic Resolution (net line reduction)
-- [x] **4.1**: Replace `resolve_last_dim` with direct shape reads
-- [x] **4.2**: Replace `resolve_matmul_dims` with direct shape reads
-- [x] **4.3**: Delete `shape_resolve.rs` (359 lines) + `InputMetas` type
+- [x] **4.1**: Replace `resolve_last_dim` with direct shape reads — done
+  in commit `1d1e870`. `dispatch_kernel` now reads input shapes via
+  `shape_last_dim`/`shape_spatial_hw`/`shape_chw`/`shape_matmul_m`
+  closures at all 22 resolve sites.
+- [x] **4.2**: Replace `resolve_matmul_dims` with direct shape reads —
+  done in the same commit (`shape_matmul_m` covers it).
+- [ ] **4.3**: Delete `shape_resolve.rs` (355 lines) + `InputMetas` type
+  — **partial**. Direct reads are the fast path, but
+  `shape_resolve::resolve_*` calls remain as `.unwrap_or_else()`
+  fallbacks for archives that lack shape metadata. Full deletion
+  requires an archive-format ADR mandating shape metadata in every
+  archive (so the fallback chain can be removed) — currently legacy
+  archives still hit it.
 - [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 (pending model artefacts)
 
 ### Phase 5: Propagate to hologram-backend
