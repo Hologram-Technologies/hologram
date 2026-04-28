@@ -402,10 +402,19 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   shape table seeded from arena's `ShapeRegistry`, output shape inferred
   per dispatch + debug-assert that inferred volume × dtype size matches
   device buffer byte length).
-- [ ] **5.2**: Shape-validated Metal + CPU backend execution (downstream
-  consumers still read byte-length-only metadata; needs each backend's
-  dispatch path to consult `TensorBuffer.shape` instead of `KernelParams`
-  byte counts).
+- [x] **5.2 (executor side)**: `kernel_params_for(op, input_shapes,
+  output_shape)` populates `KernelParams.u32s` for every op the CPU
+  backend hard-requires (MaxPool2d, AvgPool2d, Resize, GlobalAvgPool —
+  `[channels, h_in, w_in]` family) plus the last-axis ops (Softmax,
+  LogSoftmax, Reduce family, CumSum, LRN) and Transpose (full dims +
+  permutation). `execute_on_backend` calls it before every dispatch so
+  hard-required cases that previously errored now get the right
+  shapes routed through. Other ops fall back to byte-length inference
+  inside the backend as before.
+- [ ] **5.2 (downstream)**: Each backend's dispatch path could
+  additionally consult `TensorBuffer.shape` directly instead of
+  reading dims from `KernelParams.u32s`. Optional cleanup; the
+  current routing is correct, just less direct.
 
 ---
 

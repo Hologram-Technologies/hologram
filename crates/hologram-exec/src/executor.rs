@@ -6,7 +6,8 @@
 //! This replaces the dual-path logic in `tape.rs::execute_direct` with
 //! a clean single-path loop.
 
-use hologram_backend::{ComputeBackend, ComputeMemory, TensorBuffer};
+use hologram_backend::{ComputeBackend, ComputeMemory, KernelParams, TensorBuffer};
+use hologram_core::op::FloatOp;
 use hologram_shape::{infer_output_shape, TensorShape};
 use smallvec::SmallVec;
 
@@ -84,7 +85,6 @@ where
             .iter()
             .map(|&idx| unsafe { &(*bufs_ptr.add(idx as usize)).buffer })
             .collect();
-        let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
 
         // Dispatch the kernel through the backend.
         let float_op = tape_kernel_to_float_op(&instr.kernel);
@@ -98,49 +98,58 @@ where
             }
         }
         if let Some(op) = float_op {
-            let result = backend.dispatch(
-                &op,
-                &input_refs,
-                &mut out_tb.buffer,
-                &hologram_backend::KernelParams::default(),
-            );
+            // Sprint 33 Phase 5.1 + 5.2: gather input shapes, infer the
+            // output shape, then populate `KernelParams` with whatever
+            // the dispatched op needs (e.g. MaxPool2d wants
+            // `[channels, h_in, w_in]`). Sites that fall back to
+            // byte-length inference still work; sites that hard-error
+            // without params (MaxPool2d / AvgPool2d / Resize) now get
+            // the right shapes routed through.
+            drop(input_refs);
+            let input_shapes_opt: Option<SmallVec<[TensorShape; 4]>> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| shapes.get(idx as usize).and_then(|s| s.clone()))
+                .collect();
+            let out_shape = input_shapes_opt.as_ref().and_then(|input_shapes| {
+                let refs: SmallVec<[&TensorShape; 4]> = input_shapes.iter().collect();
+                infer_output_shape(&op, &refs).ok()
+            });
+            let params = match (&input_shapes_opt, out_shape.as_ref()) {
+                (Some(inputs), out) => {
+                    let refs: SmallVec<[&TensorShape; 4]> = inputs.iter().collect();
+                    kernel_params_for(&op, &refs, out)
+                }
+                _ => KernelParams::default(),
+            };
+
+            let input_refs: SmallVec<[&M::Buffer; 4]> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| unsafe { &(*bufs_ptr.add(idx as usize)).buffer })
+                .collect();
+            let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
+            let result = backend.dispatch(&op, &input_refs, &mut out_tb.buffer, &params);
             if let Err(e) = result {
                 static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                 if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
                     eprintln!("[executor] unsupported op: {e}");
                 }
             }
-
-            // Infer output shape from input shapes (Sprint 33 Phase 5.1).
-            // Skipped silently when any input shape is unknown, when the
-            // op isn't supported by `infer_output_shape` yet, or when
-            // input shapes are incompatible — these surface as legacy
-            // byte-length-only resolution downstream.
             drop(input_refs);
-            // Clone input shapes out of the borrow so we can mutate
-            // `shapes[out_idx]` afterwards without aliasing.
-            let input_shapes: Option<SmallVec<[TensorShape; 4]>> = instr
-                .input_indices
-                .iter()
-                .map(|&idx| shapes.get(idx as usize).and_then(|s| s.clone()))
-                .collect();
-            if let Some(input_shapes) = input_shapes {
-                let refs: SmallVec<[&TensorShape; 4]> = input_shapes.iter().collect();
-                if let Ok(out_shape) = infer_output_shape(&op, &refs) {
-                    let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
-                    out_tb.shape = SmallVec::from_slice(&out_shape.dims);
-                    // Phase 5 debug assert: the inferred volume × dtype
-                    // size must match the device buffer the backend
-                    // actually wrote, otherwise downstream ops will see
-                    // a shape that disagrees with the bytes.
-                    debug_assert_eq!(
-                        memory.byte_len(&out_tb.buffer),
-                        out_shape.dims.iter().product::<usize>() * out_shape.dtype.byte_size(),
-                        "inferred shape volume mismatches backend buffer for op {:?}",
-                        op,
-                    );
-                    shapes[out_idx] = Some(out_shape);
-                }
+
+            // Phase 5.1: persist inferred output shape on both the
+            // parallel table and the device buffer's metadata.
+            if let Some(out_shape) = out_shape {
+                let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
+                out_tb.shape = SmallVec::from_slice(&out_shape.dims);
+                debug_assert_eq!(
+                    memory.byte_len(&out_tb.buffer),
+                    out_shape.dims.iter().product::<usize>() * out_shape.dtype.byte_size(),
+                    "inferred shape volume mismatches backend buffer for op {:?}",
+                    op,
+                );
+                shapes[out_idx] = Some(out_shape);
             }
             continue;
         }
@@ -164,6 +173,86 @@ where
         .collect();
 
     Ok(outputs)
+}
+
+/// Build the `KernelParams` a given `FloatOp` expects from input
+/// shapes (and the inferred output shape, when relevant).
+///
+/// The CPU backend's per-op convention varies — some ops want the
+/// last-axis size, NCHW convs want `[channels, h_in, w_in]`,
+/// `Resize` additionally needs `[h_out, w_out]`. This function
+/// centralises the mapping so the executor can populate params
+/// instead of always passing `KernelParams::default()`.
+///
+/// Ops that aren't covered fall back to the default params; the
+/// CPU backend's "infer from byte_len" code paths handle them.
+pub fn kernel_params_for(
+    op: &FloatOp,
+    input_shapes: &[&TensorShape],
+    output_shape: Option<&TensorShape>,
+) -> KernelParams {
+    use smallvec::SmallVec;
+    let mut params = KernelParams::default();
+
+    // Helpers for common NCHW lookups.
+    let nchw = |s: &TensorShape| -> Option<(u32, u32, u32)> {
+        if s.dims.len() < 4 {
+            return None;
+        }
+        Some((s.dims[1] as u32, s.dims[2] as u32, s.dims[3] as u32))
+    };
+    let last = |s: &TensorShape| s.dims.last().copied().map(|d| d as u32);
+
+    match op {
+        // ── NCHW pool / resize: [channels, h_in, w_in] (+ h_out, w_out) ──
+        FloatOp::MaxPool2d { .. } | FloatOp::AvgPool2d { .. } => {
+            if let Some(s) = input_shapes.first() {
+                if let Some((c, h, w)) = nchw(s) {
+                    params.u32s = SmallVec::from_slice(&[c, h, w]);
+                }
+            }
+        }
+        FloatOp::GlobalAvgPool { .. } => {
+            if let Some(s) = input_shapes.first() {
+                if let Some((c, h, w)) = nchw(s) {
+                    params.u32s = SmallVec::from_slice(&[c, h, w]);
+                }
+            }
+        }
+        FloatOp::Resize { .. } => {
+            if let (Some(s_in), Some(out)) = (input_shapes.first(), output_shape) {
+                if let (Some((c, hi, wi)), 4) = (nchw(s_in), out.dims.len()) {
+                    params.u32s =
+                        SmallVec::from_slice(&[c, hi, wi, out.dims[2] as u32, out.dims[3] as u32]);
+                }
+            }
+        }
+        // ── Last-axis ops: u32s[0] = last_dim ───────────────────────────
+        FloatOp::Softmax { .. }
+        | FloatOp::LogSoftmax { .. }
+        | FloatOp::ReduceSum { .. }
+        | FloatOp::ReduceMean { .. }
+        | FloatOp::ReduceMax { .. }
+        | FloatOp::ReduceMin { .. }
+        | FloatOp::ReduceProd { .. }
+        | FloatOp::CumSum { .. }
+        | FloatOp::LRN { .. } => {
+            if let Some(d) = input_shapes.first().and_then(|s| last(s)) {
+                params.u32s = SmallVec::from_slice(&[d]);
+            }
+        }
+        // ── Transpose: full input dims fill u32s; perm via .perm ────────
+        FloatOp::Transpose { perm, ndim } => {
+            if let Some(s) = input_shapes.first() {
+                let dims: SmallVec<[u32; 8]> = s.dims.iter().map(|&d| d as u32).collect();
+                params.u32s = dims;
+                params.perm = *perm;
+                params.perm_len = *ndim;
+            }
+        }
+        _ => {}
+    }
+    params
 }
 
 /// Map a TapeKernel to a FloatOp for backend dispatch.
@@ -666,5 +755,89 @@ pub fn tape_kernel_to_float_op(kernel: &TapeKernel) -> Option<hologram_core::op:
         // Ring/LUT ops are byte-domain; they don't map to FloatOp.
         // The executor handles them separately via dispatch_ring.
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hologram_core::op::FloatDType;
+
+    fn nchw(n: usize, c: usize, h: usize, w: usize) -> TensorShape {
+        TensorShape::new(FloatDType::F32, &[n, c, h, w])
+    }
+
+    #[test]
+    fn kernel_params_for_maxpool_emits_chw() {
+        let s = nchw(1, 16, 32, 64);
+        let p = kernel_params_for(
+            &FloatOp::MaxPool2d {
+                kernel_h: 2,
+                kernel_w: 2,
+                stride_h: 2,
+                stride_w: 2,
+                pad_h: 0,
+                pad_w: 0,
+            },
+            &[&s],
+            None,
+        );
+        assert_eq!(p.u32s.as_slice(), &[16, 32, 64]);
+    }
+
+    #[test]
+    fn kernel_params_for_avgpool_emits_chw() {
+        let s = nchw(2, 8, 16, 16);
+        let p = kernel_params_for(
+            &FloatOp::AvgPool2d {
+                kernel_h: 3,
+                kernel_w: 3,
+                stride_h: 1,
+                stride_w: 1,
+                pad_h: 1,
+                pad_w: 1,
+            },
+            &[&s],
+            None,
+        );
+        assert_eq!(p.u32s.as_slice(), &[8, 16, 16]);
+    }
+
+    #[test]
+    fn kernel_params_for_resize_includes_h_out_w_out() {
+        let s_in = nchw(1, 3, 8, 8);
+        let s_out = nchw(1, 3, 16, 16);
+        let p = kernel_params_for(&FloatOp::Resize { mode: 0 }, &[&s_in], Some(&s_out));
+        assert_eq!(p.u32s.as_slice(), &[3, 8, 8, 16, 16]);
+    }
+
+    #[test]
+    fn kernel_params_for_softmax_emits_last_dim() {
+        let s = TensorShape::new(FloatDType::F32, &[2, 4, 1024]);
+        let p = kernel_params_for(&FloatOp::Softmax { size: 1024 }, &[&s], None);
+        assert_eq!(p.u32s.as_slice(), &[1024]);
+    }
+
+    #[test]
+    fn kernel_params_for_transpose_emits_full_dims_and_perm() {
+        let s = TensorShape::new(FloatDType::F32, &[1, 4, 8, 16]);
+        let p = kernel_params_for(
+            &FloatOp::Transpose {
+                perm: [0, 2, 1, 3, 0, 0, 0, 0],
+                ndim: 4,
+            },
+            &[&s],
+            None,
+        );
+        assert_eq!(p.u32s.as_slice(), &[1, 4, 8, 16]);
+        assert_eq!(p.perm_len, 4);
+        assert_eq!(p.perm[..4], [0, 2, 1, 3]);
+    }
+
+    #[test]
+    fn kernel_params_for_unknown_op_returns_default() {
+        let s = TensorShape::new(FloatDType::F32, &[3, 4]);
+        let p = kernel_params_for(&FloatOp::Add, &[&s, &s], None);
+        assert!(p.u32s.is_empty());
     }
 }
