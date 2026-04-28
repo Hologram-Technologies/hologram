@@ -9,7 +9,7 @@ pub mod shape_projection;
 mod shape_spec;
 
 pub use float_op::{
-    bits_to_f32, f32_to_bits, FloatDType, FloatOp, OpCategory, TensorMeta, RUNTIME,
+    bits_to_f32, f32_to_bits, FloatDType, FloatOp, FloatOpShape, TensorMeta, RUNTIME,
 };
 pub use lut_op::LutOp;
 pub use prim::PrimOp;
@@ -104,58 +104,8 @@ impl QuantumLevelExt for uor_foundation::QuantumLevel {
     }
 }
 
-/// Unified operation enum for all byte-level operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serialize",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
-pub enum Op {
-    /// One of the 10 UOR primitive operations.
-    Prim(PrimOp),
-    /// An activation/scientific function via LUT.
-    Lut(LutOp),
-    /// A typed f32 tensor operation for AI inference.
-    Float(FloatOp),
-}
-
-impl Op {
-    /// Arity of this operation (1 = unary, 2 = binary).
-    #[inline]
-    #[must_use]
-    pub const fn arity(&self) -> u8 {
-        match self {
-            Self::Prim(p) => p.arity(),
-            Self::Lut(_) => 1,
-            Self::Float(f) => f.arity(),
-        }
-    }
-
-    /// Human-readable name.
-    #[must_use]
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Prim(p) => p.name(),
-            Self::Lut(l) => l.name(),
-            Self::Float(f) => f.name(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn op_arity() {
-        assert_eq!(Op::Prim(PrimOp::Neg).arity(), 1);
-        assert_eq!(Op::Prim(PrimOp::Add).arity(), 2);
-        assert_eq!(Op::Lut(LutOp::Sigmoid).arity(), 1);
-    }
-
-    #[test]
-    fn op_name() {
-        assert_eq!(Op::Prim(PrimOp::Neg).name(), "neg");
-        assert_eq!(Op::Lut(LutOp::Relu).name(), "relu");
-    }
-}
+// The legacy unified `Op` sum-type enum was removed (no production
+// callers; dead since `GraphOp` and `SemanticOp` superseded it). The
+// canonical op identity now lives as `hologram_ops::Op` (a trait); the
+// per-domain enums (`PrimOp`, `LutOp`, `FloatOp`) remain as the
+// byte/float dispatch shapes, which is what consumers actually use.

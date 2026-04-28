@@ -292,7 +292,7 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
         output: &mut metal::Buffer,
         _params: &KernelParams,
     ) -> Result<usize> {
-        use hologram_core::op::OpCategory;
+        use hologram_core::op::FloatOpShape;
 
         // MatMul: extract dims from params.
         if let FloatOp::MatMul { m, k, n } = op {
@@ -345,11 +345,11 @@ impl ComputeBackend<MetalMemory> for MetalBackend {
                 .ok_or_else(|| BackendError::Device(format!("{name} pipeline not compiled")))?;
 
             match op.category() {
-                OpCategory::UnaryElementwise if !inputs.is_empty() => {
+                FloatOpShape::UnaryElementwise if !inputs.is_empty() => {
                     *output = self.dispatch_unary(pipeline, inputs[0]);
                     return Ok(output.length() as usize);
                 }
-                OpCategory::BinaryElementwise if inputs.len() >= 2 => {
+                FloatOpShape::BinaryElementwise if inputs.len() >= 2 => {
                     *output = self.dispatch_binary(pipeline, inputs[0], inputs[1]);
                     return Ok(output.length() as usize);
                 }
@@ -921,7 +921,8 @@ mod tests {
             Some(b) => b,
             None => return,
         };
-        let buf = backend.f32_buf(3.14);
+        // Arbitrary scalar — just size-tests the buffer (4 bytes for f32).
+        let buf = backend.f32_buf(2.5);
         assert_eq!(buf.length(), 4);
     }
 
@@ -948,8 +949,8 @@ mod tests {
 
         // NOT table.
         let mut not_table = [0u8; 256];
-        for i in 0..256 {
-            not_table[i] = (255 - i) as u8;
+        for (i, slot) in not_table.iter_mut().enumerate() {
+            *slot = (255 - i) as u8;
         }
         backend.load_ring_tables(&[&not_table], &mem);
 
@@ -1012,9 +1013,10 @@ mod tests {
         let k = 64usize;
         let n = 32usize;
         let mut a = vec![0.0f32; m * k];
-        for j in 0..k {
-            a[j] = 1.0;
-        } // First row = all 1s
+        // First row = all 1s.
+        for slot in a.iter_mut().take(k) {
+            *slot = 1.0;
+        }
         let b_data = vec![2.0f32; k * n]; // All 2s
         let buf_a = mem.upload(bytemuck::cast_slice(&a));
         let buf_b = mem.upload(bytemuck::cast_slice(&b_data));

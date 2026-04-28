@@ -4,7 +4,7 @@
 //! This file contains query methods (`arity`, `name`, `category`, etc.)
 //! and per-element apply functions (`apply_unary`, `apply_binary`, etc.).
 
-use super::float_op::{bits_to_f32, FloatDType, FloatOp, OpCategory};
+use super::float_op::{bits_to_f32, FloatDType, FloatOp, FloatOpShape};
 
 impl FloatOp {
     /// Number of inputs this operation expects.
@@ -565,7 +565,7 @@ impl FloatOp {
 impl FloatOp {
     /// Dispatch category — which generic kernel pattern this op uses.
     #[must_use]
-    pub const fn category(&self) -> OpCategory {
+    pub const fn category(&self) -> FloatOpShape {
         match self {
             Self::Neg
             | Self::Relu
@@ -585,7 +585,7 @@ impl FloatOp {
             | Self::Ceil
             | Self::Round
             | Self::Erf
-            | Self::Clip { .. } => OpCategory::UnaryElementwise,
+            | Self::Clip { .. } => FloatOpShape::UnaryElementwise,
 
             Self::Add
             | Self::Sub
@@ -595,15 +595,15 @@ impl FloatOp {
             | Self::Mod
             | Self::Min
             | Self::Max
-            | Self::FusedSwiGLU => OpCategory::BinaryElementwise,
+            | Self::FusedSwiGLU => FloatOpShape::BinaryElementwise,
 
             Self::Equal | Self::Less | Self::LessOrEqual | Self::Greater | Self::GreaterOrEqual => {
-                OpCategory::BinaryCompare
+                FloatOpShape::BinaryCompare
             }
 
-            Self::And | Self::Or | Self::Xor => OpCategory::BinaryByteBool,
-            Self::Not => OpCategory::UnaryByteBool,
-            Self::IsNaN => OpCategory::UnaryToU8,
+            Self::And | Self::Or | Self::Xor => FloatOpShape::BinaryByteBool,
+            Self::Not => FloatOpShape::UnaryByteBool,
+            Self::IsNaN => FloatOpShape::UnaryToU8,
 
             Self::Conv2d { .. }
             | Self::ConvTranspose { .. }
@@ -621,9 +621,9 @@ impl FloatOp {
             | Self::CumSum { .. }
             | Self::NonZero
             | Self::Compress { .. }
-            | Self::ReverseSequence { .. } => OpCategory::Custom,
+            | Self::ReverseSequence { .. } => FloatOpShape::Custom,
 
-            _ => OpCategory::Custom,
+            _ => FloatOpShape::Custom,
         }
     }
 

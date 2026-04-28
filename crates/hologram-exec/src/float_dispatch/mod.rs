@@ -22,7 +22,7 @@ pub(crate) mod spatial;
 #[cfg(test)]
 mod tests;
 
-use hologram_core::op::{bits_to_f32, FloatOp, OpCategory};
+use hologram_core::op::{bits_to_f32, FloatOp, FloatOpShape};
 
 use crate::buffer::OutputBuffer;
 use crate::error::ExecResult;
@@ -50,21 +50,21 @@ pub fn dispatch_float_ctx(
     ctx: Option<&ExecutionContext>,
 ) -> ExecResult<Vec<u8>> {
     match op.category() {
-        OpCategory::UnaryElementwise => elementwise::unary_map(inputs, |v| op.apply_unary(v)),
-        OpCategory::BinaryElementwise => {
+        FloatOpShape::UnaryElementwise => elementwise::unary_map(inputs, |v| op.apply_unary(v)),
+        FloatOpShape::BinaryElementwise => {
             elementwise::binary_elementwise(inputs, |a, b| op.apply_binary(a, b))
         }
-        OpCategory::BinaryCompare => {
+        FloatOpShape::BinaryCompare => {
             elementwise::binary_compare(inputs, |a, b| op.apply_compare(a, b))
         }
-        OpCategory::BinaryByteBool => {
+        FloatOpShape::BinaryByteBool => {
             elementwise::binary_byte_bool(inputs, |a, b| op.apply_byte_bool(a, b))
         }
-        OpCategory::UnaryByteBool => {
+        FloatOpShape::UnaryByteBool => {
             elementwise::unary_byte_bool(inputs, |a| if a != 0 { 0 } else { 1 })
         }
-        OpCategory::UnaryToU8 => elementwise::dispatch_isnan(inputs),
-        OpCategory::Custom => dispatch_custom(op, inputs, ctx),
+        FloatOpShape::UnaryToU8 => elementwise::dispatch_isnan(inputs),
+        FloatOpShape::Custom => dispatch_custom(op, inputs, ctx),
     }
 }
 
@@ -104,12 +104,12 @@ pub fn dispatch_float_with_shapes(
         );
     }
     match op.category() {
-        OpCategory::BinaryElementwise if input_shapes.len() >= 2 => {
+        FloatOpShape::BinaryElementwise if input_shapes.len() >= 2 => {
             elementwise::binary_elementwise_broadcast(inputs, input_shapes, |a, b| {
                 op.apply_binary(a, b)
             })
         }
-        OpCategory::BinaryCompare if input_shapes.len() >= 2 => {
+        FloatOpShape::BinaryCompare if input_shapes.len() >= 2 => {
             elementwise::binary_compare_broadcast(inputs, input_shapes, |a, b| {
                 op.apply_compare(a, b)
             })
@@ -133,7 +133,7 @@ pub fn dispatch_float_into(
     let _span = tracing::info_span!("float_op", cat = ?op.category()).entered();
 
     match op.category() {
-        OpCategory::UnaryElementwise => {
+        FloatOpShape::UnaryElementwise => {
             // Fast path: monomorphized dispatch for common ops enables autovectorization.
             // The compiler can SIMD-ize x.max(0.0) for Relu, -x for Neg, etc. when the
             // operation is known at compile time instead of hidden behind a closure.
@@ -158,7 +158,7 @@ pub fn dispatch_float_into(
             }
             Ok(())
         }
-        OpCategory::BinaryElementwise => {
+        FloatOpShape::BinaryElementwise => {
             // Monomorphized dispatch for common binary ops — enables autovectorization.
             match op {
                 FloatOp::Add => elementwise::binary_elementwise_into(inputs, |a, b| a + b, out_buf),

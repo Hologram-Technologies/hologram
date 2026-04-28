@@ -37,6 +37,67 @@ specs/
 - **Avoid growing shape_resolve.rs**: new op support belongs in the compiler's shape oracle, not in runtime shape inference. If a new op's output shape cannot be expressed via `ShapeSpec`, add a `ShapeSpec` variant rather than a new `resolve_*` function.
 - **All ops must dispatch through `TapeKernel`**: every operation — float, quantized, fused, or custom — must have a corresponding `TapeKernel` variant and go through `dispatch_kernel()`. Do not introduce op execution paths that bypass the tape (e.g., ad-hoc closures, `Box<dyn Fn>`, or direct kernel calls outside the enum match). New ops require a new `TapeKernel` variant in `tape.rs` and a mapping in `tape_builder.rs`.
 
+### Canonical ops (hologram-ops) and Transformation Chains (hologram-transform)
+
+These rules apply to the canonical-op stack (ADR-044, ADR-045) and the
+transform / planner / executor layer on top of it (ADR-043).
+
+- **`hologram-ops` is the single source of truth for ops.** Every
+  canonical op's full definition — marker struct, `Op` trait impl,
+  `Call` struct, kernel function(s), and (when Plan 074 lands) LUT
+  generator — lives in one file under `hologram-ops/src/kernels/<op>.rs`.
+  Do not split an op's definition across crates. The `SemanticOp`
+  enum, dispatch macro, `KernelCall` enum, and `dispatch()` function
+  are the small touch points that route to the per-op file; everything
+  else is local to that file.
+- **Adding a new op is a checklist, not a search.** New op = new
+  `kernels/<op>.rs` file with the full definition + variant in
+  `SemanticOp` (with macro arm) + variant in `KernelCall` (with
+  `dispatch` arm) + planner arm + builder method + integration test.
+  No edits in `hologram-graph`, `hologram-exec`, or `hologram-backend`
+  unless that op needs a non-canonical lowering.
+- **`SemanticOp` is the closed serialisation surface.** Variants are
+  on the wire format. Adding/removing/reordering variants is a
+  graph-archive-format change.
+- **No virtual dispatch in `dispatch()`.** `KernelCall` is an enum
+  matched exhaustively. Do not add `Box<dyn Kernel>`, function-pointer
+  tables, or trait-object kernel registries on the hot path.
+
+The rules below apply specifically to the chain → plan → execute
+layer in `hologram-transform`:
+
+- **LUT is identity, never execution.** Address layers (`AddressRef`,
+  `TensorId`, `RegionId`, `LayoutId`) describe *which* object — never *how*
+  to compute it. Do not embed kernel pointers, function pointers, or
+  workspace handles in address types.
+- **Transform descriptors are semantic only.** `TransformNode` and
+  `TransformChain` must not allocate a workspace, hold a buffer, or perform
+  any computation. They are pure descriptors safe to clone and rewrite.
+- **Backward computation is planned, not traversed.** Backward passes must
+  be emitted as ordinary `KernelCall`s by the planner. The executor must
+  never traverse a graph to compute gradients at runtime.
+- **No heap allocations in executor hot paths.** `Executor::run_forward`
+  and `Executor::run_backward` must not call `Vec::new`, `Box::new`,
+  `to_vec`, `String::new`, or any allocator-touching API inside the kernel
+  loop. Allocations belong in the planner.
+- **No runtime algorithm selection inside kernels.** Choosing between
+  variants (e.g., padded vs unpadded MatMul) is a planner-time decision
+  that produces a different `KernelCall` variant. Kernels must not branch
+  on shape or dtype to pick an algorithm.
+- **No virtual dispatch in kernels.** `KernelCall` is an enum; dispatch is
+  `match`. Do not introduce `Box<dyn Kernel>`, function-pointer arrays, or
+  trait-object kernel registries on the hot path.
+- **No TODOs or `unimplemented!()` stubs in `hologram-transform`.** Every
+  public item must be fully implemented or removed.
+- **Functions ≤ 15 lines and ≤ 3 args.** When a function naturally needs
+  more arguments, introduce a builder struct or a parameter struct. The
+  planner and executor are deliberately written this way.
+- **Every public item must have tests.** New `KernelCall` variants must be
+  exercised end-to-end (chain → plan → execute) in the crate's test suite.
+- **Docs and specs must be updated with behaviour changes.** Any new op,
+  backward rule, or kernel variant requires an update to ADR-043 (or a new
+  ADR) and the matching plan.
+
 ## Problem-Solving Philosophy
 
 **Think like a principal systems architect, not a patch author.** When encountering bugs, build failures, or design issues, do not apply narrow band-aid fixes that address only the immediate symptom. Instead:

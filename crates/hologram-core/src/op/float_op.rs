@@ -552,10 +552,15 @@ pub enum FloatOp {
 
 /// Dispatch category for `FloatOp`.
 ///
-/// Groups ops by their execution pattern so dispatch can match on the
-/// category instead of every individual variant.
+/// Execution-shape tag for `FloatOp` dispatch.
+///
+/// Groups float ops by the dispatcher routine they need (unary
+/// elementwise, binary-with-broadcast, byte-bool, etc.). Distinct from
+/// [`hologram_ops::OpCategory`], which is the *semantic* category
+/// (Elementwise, LinearAlgebra, Normalisation, …) used by the
+/// canonical-op layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpCategory {
+pub enum FloatOpShape {
     /// Unary f32→f32 element-wise (use `apply_unary`).
     UnaryElementwise,
     /// Binary f32→f32 element-wise with broadcast (use `apply_binary`).

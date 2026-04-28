@@ -6,6 +6,7 @@ use crate::graph::edge;
 use crate::graph::node::NodeId;
 use crate::graph::{CustomOpId, Graph, GraphOp, SubgraphId};
 use crate::subgraph::SubgraphDef;
+use hologram_ops::SemanticOp;
 
 /// Parameters for [`GraphBuilder::conv2d_lut_4bit`].
 ///
@@ -108,6 +109,11 @@ impl GraphBuilder {
         self
     }
 
+    /// Add a canonical semantic compute node, returning `self` for chaining.
+    pub fn compute(self, op: SemanticOp) -> Self {
+        self.node(GraphOp::Compute(op))
+    }
+
     /// Add a node and record its N-D output shape, returning `self` for chaining.
     pub fn node_with_shape(mut self, op: GraphOp, shape: Vec<usize>) -> Self {
         let id = self.graph.add_node(op);
@@ -126,6 +132,11 @@ impl GraphBuilder {
             }
         }
         self
+    }
+
+    /// Add a canonical semantic compute node with edges from builder indices.
+    pub fn compute_with_inputs(self, op: SemanticOp, inputs: &[usize]) -> Self {
+        self.node_with_inputs(GraphOp::Compute(op), inputs)
     }
 
     /// Add a node with edges and an N-D output shape.
@@ -395,6 +406,7 @@ impl GraphBuilder {
 mod tests {
     use super::*;
     use hologram_core::op::{LutOp, PrimOp};
+    use hologram_ops::{MatMulAttrs, SemanticOp};
 
     #[test]
     fn simple_chain() {
@@ -492,5 +504,23 @@ mod tests {
             .edge(0, 99) // invalid target
             .build();
         assert_eq!(g.node_count(), 1);
+    }
+
+    #[test]
+    fn canonical_compute_builder_methods_work() {
+        let g = GraphBuilder::new()
+            .compute(SemanticOp::MatMul(MatMulAttrs { m: 2, k: 3, n: 4 }))
+            .compute_with_inputs(SemanticOp::Relu, &[0])
+            .build();
+        let ids = g.node_ids();
+        assert_eq!(ids.len(), 2);
+        assert!(matches!(
+            g.get(ids[0]).unwrap().op,
+            GraphOp::Compute(SemanticOp::MatMul(_))
+        ));
+        assert!(matches!(
+            g.get(ids[1]).unwrap().op,
+            GraphOp::Compute(SemanticOp::Relu)
+        ));
     }
 }

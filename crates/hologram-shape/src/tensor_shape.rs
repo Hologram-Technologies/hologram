@@ -142,8 +142,8 @@ mod tests {
     fn test_new_and_accessors() {
         let s = TensorShape::new(FloatDType::F32, &[1, 13, 2048]);
         assert_eq!(s.ndim(), 3);
-        assert_eq!(s.total_elements(), 1 * 13 * 2048);
-        assert_eq!(s.byte_len(), 1 * 13 * 2048 * 4);
+        assert_eq!(s.total_elements(), 13 * 2048);
+        assert_eq!(s.byte_len(), 13 * 2048 * 4);
         assert_eq!(s.last_dim(), Some(2048));
         assert!(!s.is_scalar());
     }

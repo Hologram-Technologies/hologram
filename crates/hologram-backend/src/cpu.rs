@@ -96,10 +96,10 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
         output: &mut Vec<u8>,
         _params: &KernelParams,
     ) -> Result<usize> {
-        use hologram_core::op::OpCategory;
+        use hologram_core::op::FloatOpShape;
 
         match op.category() {
-            OpCategory::UnaryElementwise => {
+            FloatOpShape::UnaryElementwise => {
                 let input = inputs
                     .first()
                     .ok_or_else(|| BackendError::Shape("unary op requires 1 input".into()))?;
@@ -111,7 +111,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = bytemuck::cast_slice(&out_floats).to_vec();
                 Ok(output.len())
             }
-            OpCategory::BinaryElementwise => {
+            FloatOpShape::BinaryElementwise => {
                 if inputs.len() < 2 {
                     return Err(BackendError::Shape("binary op requires 2 inputs".into()));
                 }
@@ -127,7 +127,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = bytemuck::cast_slice(&out).to_vec();
                 Ok(output.len())
             }
-            OpCategory::BinaryCompare => {
+            FloatOpShape::BinaryCompare => {
                 if inputs.len() < 2 {
                     return Err(BackendError::Shape("compare op requires 2 inputs".into()));
                 }
@@ -143,7 +143,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = out;
                 Ok(output.len())
             }
-            OpCategory::BinaryByteBool => {
+            FloatOpShape::BinaryByteBool => {
                 if inputs.len() < 2 {
                     return Err(BackendError::Shape("byte bool op requires 2 inputs".into()));
                 }
@@ -159,7 +159,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = out;
                 Ok(output.len())
             }
-            OpCategory::UnaryByteBool => {
+            FloatOpShape::UnaryByteBool => {
                 // NOT: return 1 if input==0, else 0
                 let input = inputs.first().ok_or_else(|| {
                     BackendError::Shape("unary byte bool requires 1 input".into())
@@ -171,7 +171,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = out;
                 Ok(output.len())
             }
-            OpCategory::UnaryToU8 => {
+            FloatOpShape::UnaryToU8 => {
                 // IsNaN: interpret as f32, return 1u8 if NaN, else 0u8
                 let input = inputs
                     .first()
@@ -184,7 +184,7 @@ impl ComputeBackend<CpuMemory> for CpuBackend {
                 *output = out;
                 Ok(output.len())
             }
-            OpCategory::Custom => {
+            FloatOpShape::Custom => {
                 // MatMul: Accelerate BLAS on macOS, naive loop elsewhere.
                 if let FloatOp::MatMul { m, k, n } = op {
                     if inputs.len() < 2 {
@@ -2022,8 +2022,8 @@ mod tests {
 
         // Identity table: table[i] = i
         let mut identity = [0u8; 256];
-        for i in 0..256 {
-            identity[i] = i as u8;
+        for (i, slot) in identity.iter_mut().enumerate() {
+            *slot = i as u8;
         }
         backend.load_ring_tables(&[&identity], &mem);
 
@@ -2044,8 +2044,8 @@ mod tests {
 
         // NOT table: table[i] = 255 - i
         let mut not_table = [0u8; 256];
-        for i in 0..256 {
-            not_table[i] = (255 - i) as u8;
+        for (i, slot) in not_table.iter_mut().enumerate() {
+            *slot = (255 - i) as u8;
         }
         backend.load_ring_tables(&[&not_table], &mem);
 

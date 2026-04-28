@@ -8,6 +8,7 @@ description = "KV-lookup execution engine with parallel level scheduling"
 [dependencies]
 hologram-core = { workspace = true }
 hologram-graph = { workspace = true }
+hologram-ops = { workspace = true }
 hologram-backend = { path = "../hologram-backend" }
 hologram-shape = { path = "../hologram-shape" }
 hologram-ring = { workspace = true, features = ["std"] }
@@ -31,4 +32,3 @@ std = ["hologram-archive/std"]
 parallel = ["rayon"]
 accelerate = []
 profile = []
-

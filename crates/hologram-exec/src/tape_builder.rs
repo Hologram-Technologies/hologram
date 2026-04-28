@@ -114,8 +114,9 @@ pub fn build_tape(
             // are the same byte involution (Neg or Bnot), they cancel to
             // identity — emit Passthrough to skip redundant computation.
             // Zero-clone: compares 1-byte PrimOp discriminants, not 264-byte GraphOp.
-            let kernel = if let GraphOp::Float(FloatOp::Transpose { perm, ndim }) = &node.op {
-                let n = *ndim as usize;
+            let kernel = if let Some(FloatOp::Transpose { perm, ndim }) = node.op.legacy_float_op()
+            {
+                let n = ndim as usize;
                 let input_node_id = node.inputs.first().and_then(|slot| match slot.source {
                     InputSource::Node(id) => Some(id),
                     InputSource::GraphInput { index } => {
@@ -132,7 +133,7 @@ pub fn build_tape(
                         shape_arr[i] = d as u32;
                     }
                     TapeKernel::InlineTranspose {
-                        perm: *perm,
+                        perm,
                         input_shape: shape_arr,
                         ndim: n as u8,
                     }
@@ -375,7 +376,19 @@ fn is_byte_involution(op: &GraphOp) -> bool {
 /// and captures the op parameters inline.
 fn resolve_kernel(op: &GraphOp, registry: Option<&CustomOpRegistry>) -> ExecResult<TapeKernel> {
     match op {
-        GraphOp::Float(fop) => Ok(resolve_float_kernel(fop)),
+        // Canonical (`Compute`) and legacy (`Float`) compute ops both
+        // resolve through `resolve_float_kernel` against the underlying
+        // `FloatOp`. The bridge collapses entirely once exec-side
+        // dispatch is reorganised around `SemanticOp` (Sprint 37 3.1).
+        GraphOp::Compute(_) | GraphOp::Float(_) => {
+            let Some(fop) = op.legacy_float_op() else {
+                return Err(ExecError::UnsupportedOp(format!(
+                    "tape builder: compute op has no execution lowering {:?}",
+                    op
+                )));
+            };
+            Ok(resolve_float_kernel(&fop))
+        }
         GraphOp::FusedFloatChain(chain) => Ok(TapeKernel::FusedFloatChain(chain.clone())),
         GraphOp::FusedMatMulActivation {
             m,
@@ -987,7 +1000,7 @@ fn compute_elem_size(node_id: NodeId, op: &GraphOp, dtypes: &[Option<FloatDType>
         return dtype.byte_size() as u8;
     }
     // Infer from op's output dtype declaration.
-    if let GraphOp::Float(fop) = op {
+    if let Some(fop) = op.legacy_float_op() {
         match fop {
             FloatOp::IsNaN => return 1,
             FloatOp::Cast { to, .. } => return to.byte_size() as u8,
@@ -1050,6 +1063,7 @@ mod tests {
     use super::*;
     use hologram_graph::graph::edge;
     use hologram_graph::graph::Graph;
+    use hologram_ops::SemanticOp;
 
     fn make_simple_graph() -> (SerializedGraph, ExecutionSchedule) {
         let mut graph = Graph::new();
@@ -1057,6 +1071,23 @@ mod tests {
         let input_idx = graph.add_input("x");
 
         let relu_id = graph.add_node(GraphOp::Float(FloatOp::Relu));
+        edge::connect_graph_input(&mut graph, input_idx, relu_id, 0);
+
+        let out_id = graph.add_node(GraphOp::Output);
+        edge::connect(&mut graph, relu_id, out_id, 0);
+        graph.add_output("y", out_id);
+
+        let sg = SerializedGraph::from_graph(&graph);
+        let schedule = ExecutionSchedule::build(&graph).expect("schedule should build");
+        (sg, schedule)
+    }
+
+    fn make_simple_compute_graph() -> (SerializedGraph, ExecutionSchedule) {
+        let mut graph = Graph::new();
+        let _input_id = graph.add_node(GraphOp::Input);
+        let input_idx = graph.add_input("x");
+
+        let relu_id = graph.add_node(GraphOp::Compute(SemanticOp::Relu));
         edge::connect_graph_input(&mut graph, input_idx, relu_id, 0);
 
         let out_id = graph.add_node(GraphOp::Output);
@@ -1101,6 +1132,16 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn build_tape_from_canonical_compute_graph() {
+        let (sg, schedule) = make_simple_compute_graph();
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
+        assert!(tape
+            .instructions
+            .iter()
+            .any(|instr| matches!(instr.kernel, TapeKernel::InlineRelu)));
     }
 
     /// Helper: build tape, seed arena, execute, and collect outputs.
@@ -1158,6 +1199,17 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].0, "y");
         assert!(!outputs[0].1.is_empty(), "output should not be empty");
+        assert_eq!(from_f32_bytes(&outputs[0].1), vec![0.0, 2.0, 0.0, 4.0]);
+    }
+
+    #[test]
+    fn tape_execute_and_collect_outputs_for_canonical_compute() {
+        let (sg, schedule) = make_simple_compute_graph();
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let outputs = execute_graph(&sg, &schedule, &input_data);
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].0, "y");
         assert_eq!(from_f32_bytes(&outputs[0].1), vec![0.0, 2.0, 0.0, 4.0]);
     }
 
@@ -1414,6 +1466,76 @@ mod tests {
             "GraphInput→compute→output should produce data"
         );
         // Relu([-1,2,-3,4])=[0,2,0,4]; Neg→[0,-2,0,-4]
+        assert_eq!(from_f32_bytes(&output_data), vec![0.0, -2.0, 0.0, -4.0]);
+    }
+
+    /// Same chain as the onnx-style test, but using canonical `GraphOp::Compute`
+    /// nodes — verifies canonical compute ops chain correctly through tape exec.
+    #[test]
+    fn tape_execute_chained_canonical_compute() {
+        use crate::buffer::BufferArena;
+        use crate::eval::schedule_bridge::build_schedule;
+        use crate::tape::TapeContext;
+        use hologram_graph::constant::ConstantStore;
+        use hologram_graph::graph::node::{InputSlot, Node};
+
+        fn nid(n: u32) -> NodeId {
+            NodeId::new(n, 0)
+        }
+
+        let sg = SerializedGraph {
+            nodes: vec![
+                Node {
+                    id: nid(0),
+                    op: GraphOp::Input,
+                    inputs: Default::default(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(1),
+                    op: GraphOp::Compute(SemanticOp::Relu),
+                    inputs: vec![InputSlot::from_graph_input(0)].into_iter().collect(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(2),
+                    op: GraphOp::Compute(SemanticOp::Neg),
+                    inputs: vec![InputSlot::from_node(nid(1))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+                Node {
+                    id: nid(3),
+                    op: GraphOp::Output,
+                    inputs: vec![InputSlot::from_node(nid(2))].into_iter().collect(),
+                    num_outputs: 1,
+                },
+            ],
+            input_names: vec!["input".into()],
+            output_names: vec!["result".into()],
+            output_node_ids: vec![nid(3)],
+            constants: ConstantStore::new(),
+            constant_shapes: Vec::new(),
+            node_shapes: Vec::new(),
+            node_dtypes: Vec::new(),
+        };
+
+        let schedule = build_schedule(&sg).expect("schedule should build");
+        let tape = build_tape(&sg, &schedule, None).expect("build_tape should succeed");
+
+        let input_data = to_f32_bytes(&[-1.0, 2.0, -3.0, 4.0]);
+        let mut arena = BufferArena::with_capacity(sg.nodes.len());
+        arena.insert_borrowed_with_elem_size(nid(0), &input_data, 4);
+
+        tape.prewarm_arena(&mut arena);
+        let constants = ConstantStore::default();
+        let wc = parking_lot::RwLock::new(crate::kv::WeightCache::new());
+        let tape_ctx = TapeContext::new(&constants, &[], &wc);
+        tape.execute(&mut arena, &tape_ctx)
+            .expect("tape execution should succeed");
+
+        let output_data = arena
+            .take(sg.output_node_ids[0])
+            .expect("output should be in arena");
         assert_eq!(from_f32_bytes(&output_data), vec![0.0, -2.0, 0.0, -4.0]);
     }
 }

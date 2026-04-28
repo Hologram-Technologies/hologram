@@ -122,6 +122,7 @@ fn op_json(op: &GraphOp, constants: &ConstantStore) -> Value {
         GraphOp::RingReduce { op, axis, level } => {
             json!({"RingReduce": {"op": op.name(), "axis": axis, "level": format!("{:?}", level)}})
         }
+        GraphOp::Compute(op) => json!({"Compute": op.name()}),
         GraphOp::Float(f) => json!({"Float": f.name()}),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();

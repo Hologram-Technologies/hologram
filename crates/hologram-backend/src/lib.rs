@@ -12,6 +12,7 @@
 //! on that device.** No CPU↔GPU transfers during execution. Weights and LUT
 //! tables are uploaded to the device at initialization and stay resident.
 
+pub mod canonical;
 pub mod cpu;
 pub(crate) mod cpu_cast;
 

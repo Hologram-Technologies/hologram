@@ -198,11 +198,13 @@ fn bench_discriminant_and_validation() {
     use hologram_exec::constrained::validate_constrained_tape;
 
     bench("validate_tape_1000_instructions", 5000, || {
-        std::hint::black_box(validate_constrained_tape(&tape, &profile).unwrap());
+        validate_constrained_tape(&tape, &profile).unwrap();
+        std::hint::black_box(());
     });
 
     let profile_no_allowlist = ConstrainedProfile::default();
     bench("validate_tape_1000_no_allowlist", 5000, || {
-        std::hint::black_box(validate_constrained_tape(&tape, &profile_no_allowlist).unwrap());
+        validate_constrained_tape(&tape, &profile_no_allowlist).unwrap();
+        std::hint::black_box(());
     });
 }

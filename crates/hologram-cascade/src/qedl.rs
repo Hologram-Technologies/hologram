@@ -108,7 +108,8 @@ fn domain(op: &GraphOp) -> Domain {
         | GraphOp::RingAccumulate(_)
         | GraphOp::RingReduce { .. } => Domain::Byte,
 
-        GraphOp::Float(_)
+        GraphOp::Compute(_)
+        | GraphOp::Float(_)
         | GraphOp::FusedFloatChain(_)
         | GraphOp::FusedMatMulActivation { .. }
         | GraphOp::FusedMatMulBiasActivation { .. }
@@ -142,6 +143,7 @@ fn domain(op: &GraphOp) -> Domain {
 fn as_float_op(op: &GraphOp) -> Option<FloatOp> {
     match op {
         GraphOp::Float(f) => Some(*f),
+        GraphOp::Compute(_) => op.legacy_float_op(),
         GraphOp::FusedFloatChain(chain) => chain.first().copied(),
         _ => None,
     }

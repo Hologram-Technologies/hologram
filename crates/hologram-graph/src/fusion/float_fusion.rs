@@ -9,6 +9,51 @@ use hologram_core::op::FloatOp;
 use crate::graph::node::{InputSource, NodeId};
 use crate::graph::{Graph, GraphOp};
 
+type Conv2dParams = (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32);
+
+fn unary_chain(op: &GraphOp) -> Option<Vec<FloatOp>> {
+    match op {
+        GraphOp::FusedFloatChain(chain) => Some(chain.clone()),
+        _ => op
+            .legacy_float_op()
+            .filter(FloatOp::is_elementwise_unary)
+            .map(|f| vec![f]),
+    }
+}
+
+fn unary_activation(op: &GraphOp) -> Option<FloatOp> {
+    op.legacy_float_op().filter(FloatOp::is_elementwise_unary)
+}
+
+fn matmul_dims(op: &GraphOp) -> Option<(u32, u32, u32)> {
+    match op.legacy_float_op()? {
+        FloatOp::MatMul { m, k, n } => Some((m, k, n)),
+        _ => None,
+    }
+}
+
+fn conv2d_params(op: &GraphOp) -> Option<Conv2dParams> {
+    match op.legacy_float_op()? {
+        FloatOp::Conv2d {
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            group,
+            input_h,
+            input_w,
+        } => Some((
+            kernel_h, kernel_w, stride_h, stride_w, pad_h, pad_w, dilation_h, dilation_w, group,
+            input_h, input_w,
+        )),
+        _ => None,
+    }
+}
+
 /// Try to fuse a unary float node backward into its predecessor chain.
 ///
 /// If the node and its sole predecessor are both unary element-wise float ops,
@@ -22,10 +67,9 @@ pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId, succ_index: &[Vec<Nod
     };
 
     // Current node must be a fusable float op or an existing FusedFloatChain.
-    let this_chain: Vec<FloatOp> = match &node.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => vec![*f],
-        GraphOp::FusedFloatChain(chain) => chain.clone(),
-        _ => return false,
+    let this_chain = match unary_chain(&node.op) {
+        Some(chain) => chain,
+        None => return false,
     };
 
     // Need exactly one predecessor.
@@ -41,10 +85,9 @@ pub fn try_fuse_float_unary(graph: &mut Graph, id: NodeId, succ_index: &[Vec<Nod
     };
 
     // Predecessor must be a fusable float op or an existing FusedFloatChain.
-    let pred_chain: Vec<FloatOp> = match &pred.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => vec![*f],
-        GraphOp::FusedFloatChain(chain) => chain.clone(),
-        _ => return false,
+    let pred_chain = match unary_chain(&pred.op) {
+        Some(chain) => chain,
+        None => return false,
     };
 
     // Only fuse if predecessor has exactly one successor (this node).
@@ -84,9 +127,9 @@ pub fn try_fuse_matmul_bias_activation(
     };
 
     // Current node must be a MatMul.
-    let (m, k, n) = match &node.op {
-        GraphOp::Float(FloatOp::MatMul { m, k, n }) => (*m, *k, *n),
-        _ => return false,
+    let (m, k, n) = match matmul_dims(&node.op) {
+        Some(dims) => dims,
+        None => return false,
     };
 
     // MatMul must have exactly one successor (the Add).
@@ -102,7 +145,7 @@ pub fn try_fuse_matmul_bias_activation(
     };
 
     // Successor must be Float(Add).
-    if !matches!(&add_node.op, GraphOp::Float(FloatOp::Add)) {
+    if !matches!(add_node.op.legacy_float_op(), Some(FloatOp::Add)) {
         return false;
     }
 
@@ -145,9 +188,9 @@ pub fn try_fuse_matmul_bias_activation(
     };
 
     // Activation must be element-wise unary.
-    let activation = match &act_node.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&act_node.op) {
+        Some(act) => act,
+        None => return false,
     };
 
     // Activation must have exactly one predecessor (the Add).
@@ -201,9 +244,9 @@ pub fn try_fuse_matmul_activation(
     };
 
     // Current node must be a MatMul.
-    let (m, k, n) = match &node.op {
-        GraphOp::Float(FloatOp::MatMul { m, k, n }) => (*m, *k, *n),
-        _ => return false,
+    let (m, k, n) = match matmul_dims(&node.op) {
+        Some(dims) => dims,
+        None => return false,
     };
 
     // MatMul must have exactly one successor.
@@ -219,9 +262,9 @@ pub fn try_fuse_matmul_activation(
     };
 
     // Successor must be an element-wise unary float op.
-    let activation = match &succ.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&succ.op) {
+        Some(act) => act,
+        None => return false,
     };
 
     // Successor must have exactly one predecessor (this MatMul).
@@ -259,44 +302,44 @@ pub fn try_fuse_norm_activation(graph: &mut Graph, id: NodeId, succ_index: &[Vec
     };
 
     // Current node must be a norm op.
-    let fused_op_fn: Box<dyn FnOnce(FloatOp) -> GraphOp> = match &node.op {
-        GraphOp::Float(FloatOp::RmsNorm { size, epsilon }) => {
-            let (s, e) = (*size, *epsilon);
+    let fused_op_fn: Box<dyn FnOnce(FloatOp) -> GraphOp> = match node.op.legacy_float_op() {
+        Some(FloatOp::RmsNorm { size, epsilon }) => {
+            let (s, e) = (size, epsilon);
             Box::new(move |act| GraphOp::FusedRmsNormActivation {
                 size: s,
                 epsilon: e,
                 activation: act,
             })
         }
-        GraphOp::Float(FloatOp::LayerNorm { size, epsilon }) => {
-            let (s, e) = (*size, *epsilon);
+        Some(FloatOp::LayerNorm { size, epsilon }) => {
+            let (s, e) = (size, epsilon);
             Box::new(move |act| GraphOp::FusedLayerNormActivation {
                 size: s,
                 epsilon: e,
                 activation: act,
             })
         }
-        GraphOp::Float(FloatOp::GroupNorm {
+        Some(FloatOp::GroupNorm {
             num_groups,
             epsilon,
         }) => {
-            let (ng, e) = (*num_groups, *epsilon);
+            let (ng, e) = (num_groups, epsilon);
             Box::new(move |act| GraphOp::FusedGroupNormActivation {
                 num_groups: ng,
                 epsilon: e,
                 activation: act,
             })
         }
-        GraphOp::Float(FloatOp::AddRmsNorm { size, epsilon }) => {
-            let (s, e) = (*size, *epsilon);
+        Some(FloatOp::AddRmsNorm { size, epsilon }) => {
+            let (s, e) = (size, epsilon);
             Box::new(move |act| GraphOp::FusedAddRmsNormActivation {
                 size: s,
                 epsilon: e,
                 activation: act,
             })
         }
-        GraphOp::Float(FloatOp::InstanceNorm { size, epsilon }) => {
-            let (s, e) = (*size, *epsilon);
+        Some(FloatOp::InstanceNorm { size, epsilon }) => {
+            let (s, e) = (size, epsilon);
             Box::new(move |act| GraphOp::FusedInstanceNormActivation {
                 size: s,
                 epsilon: e,
@@ -318,9 +361,9 @@ pub fn try_fuse_norm_activation(graph: &mut Graph, id: NodeId, succ_index: &[Vec
         None => return false,
     };
 
-    let activation = match &succ.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&succ.op) {
+        Some(act) => act,
+        None => return false,
     };
     let succ_preds: Vec<NodeId> = succ.dependencies().collect();
     if succ_preds.len() != 1 {
@@ -371,9 +414,9 @@ pub fn try_fuse_lut_gemm_activation(
     };
 
     // Successor must be element-wise unary with single predecessor.
-    let activation = match &succ.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&succ.op) {
+        Some(act) => act,
+        None => return false,
     };
     let succ_preds: Vec<NodeId> = succ.dependencies().collect();
     if succ_preds.len() != 1 {
@@ -410,8 +453,8 @@ pub fn try_eliminate_inverse_transpose(
         None => return false,
     };
 
-    let (perm1, ndim1) = match &node.op {
-        GraphOp::Float(FloatOp::Transpose { perm, ndim }) => (*perm, *ndim as usize),
+    let (perm1, ndim1) = match node.op.legacy_float_op() {
+        Some(FloatOp::Transpose { perm, ndim }) => (perm, ndim as usize),
         _ => return false,
     };
 
@@ -427,8 +470,8 @@ pub fn try_eliminate_inverse_transpose(
         None => return false,
     };
 
-    let (perm2, ndim2) = match &succ.op {
-        GraphOp::Float(FloatOp::Transpose { perm, ndim }) => (*perm, *ndim as usize),
+    let (perm2, ndim2) = match succ.op.legacy_float_op() {
+        Some(FloatOp::Transpose { perm, ndim }) => (perm, ndim as usize),
         _ => return false,
     };
 
@@ -469,7 +512,7 @@ pub fn try_fuse_swiglu(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]
     };
 
     // Current node must be Silu.
-    if !matches!(&node.op, GraphOp::Float(FloatOp::Silu)) {
+    if !matches!(node.op.legacy_float_op(), Some(FloatOp::Silu)) {
         return false;
     }
 
@@ -486,7 +529,7 @@ pub fn try_fuse_swiglu(graph: &mut Graph, id: NodeId, succ_index: &[Vec<NodeId>]
     };
 
     // Successor must be Mul.
-    if !matches!(&mul_node.op, GraphOp::Float(FloatOp::Mul)) {
+    if !matches!(mul_node.op.legacy_float_op(), Some(FloatOp::Mul)) {
         return false;
     }
 
@@ -543,33 +586,9 @@ pub fn try_fuse_conv2d_bias_activation(
         None => return false,
     };
 
-    let conv_params = match &node.op {
-        GraphOp::Float(FloatOp::Conv2d {
-            kernel_h,
-            kernel_w,
-            stride_h,
-            stride_w,
-            pad_h,
-            pad_w,
-            dilation_h,
-            dilation_w,
-            group,
-            input_h,
-            input_w,
-        }) => (
-            *kernel_h,
-            *kernel_w,
-            *stride_h,
-            *stride_w,
-            *pad_h,
-            *pad_w,
-            *dilation_h,
-            *dilation_w,
-            *group,
-            *input_h,
-            *input_w,
-        ),
-        _ => return false,
+    let conv_params = match conv2d_params(&node.op) {
+        Some(params) => params,
+        None => return false,
     };
 
     // Conv2d must have exactly one successor (the Add).
@@ -584,7 +603,7 @@ pub fn try_fuse_conv2d_bias_activation(
         None => return false,
     };
 
-    if !matches!(&add_node.op, GraphOp::Float(FloatOp::Add)) {
+    if !matches!(add_node.op.legacy_float_op(), Some(FloatOp::Add)) {
         return false;
     }
 
@@ -625,9 +644,9 @@ pub fn try_fuse_conv2d_bias_activation(
         None => return false,
     };
 
-    let activation = match &act_node.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&act_node.op) {
+        Some(act) => act,
+        None => return false,
     };
 
     let act_preds: Vec<NodeId> = act_node.dependencies().collect();
@@ -692,33 +711,9 @@ pub fn try_fuse_conv2d_activation(
         None => return false,
     };
 
-    let conv_params = match &node.op {
-        GraphOp::Float(FloatOp::Conv2d {
-            kernel_h,
-            kernel_w,
-            stride_h,
-            stride_w,
-            pad_h,
-            pad_w,
-            dilation_h,
-            dilation_w,
-            group,
-            input_h,
-            input_w,
-        }) => (
-            *kernel_h,
-            *kernel_w,
-            *stride_h,
-            *stride_w,
-            *pad_h,
-            *pad_w,
-            *dilation_h,
-            *dilation_w,
-            *group,
-            *input_h,
-            *input_w,
-        ),
-        _ => return false,
+    let conv_params = match conv2d_params(&node.op) {
+        Some(params) => params,
+        None => return false,
     };
 
     let succs = Graph::successors_from_index(id, succ_index);
@@ -732,9 +727,9 @@ pub fn try_fuse_conv2d_activation(
         None => return false,
     };
 
-    let activation = match &succ.op {
-        GraphOp::Float(f) if f.is_elementwise_unary() => *f,
-        _ => return false,
+    let activation = match unary_activation(&succ.op) {
+        Some(act) => act,
+        None => return false,
     };
 
     let succ_preds: Vec<NodeId> = succ.dependencies().collect();
@@ -808,6 +803,37 @@ mod tests {
             assert_eq!(chain.len(), 2);
             assert_eq!(chain[0], FloatOp::Exp);
             assert_eq!(chain[1], FloatOp::Sigmoid);
+        }
+    }
+
+    #[test]
+    fn fuse_two_canonical_compute_unary() {
+        let mut g = GraphBuilder::new()
+            .node(GraphOp::Input)
+            .compute_with_inputs(hologram_ops::SemanticOp::Exp, &[0])
+            .compute_with_inputs(hologram_ops::SemanticOp::Sigmoid, &[1])
+            .node_with_inputs(GraphOp::Output, &[2])
+            .build();
+
+        let order = toposort::toposort(&g).unwrap();
+        let succ_index = g.build_successor_index();
+        let mut fused = 0;
+        for &id in &order {
+            if g.get(id).is_none() {
+                continue;
+            }
+            while try_fuse_float_unary(&mut g, id, &succ_index) {
+                fused += 1;
+            }
+        }
+        assert_eq!(fused, 1);
+        let fused_node = g
+            .node_ids()
+            .into_iter()
+            .find(|&id| matches!(g.get(id).unwrap().op, GraphOp::FusedFloatChain(_)))
+            .expect("should have FusedFloatChain");
+        if let GraphOp::FusedFloatChain(chain) = &g.get(fused_node).unwrap().op {
+            assert_eq!(chain, &[FloatOp::Exp, FloatOp::Sigmoid]);
         }
     }
 

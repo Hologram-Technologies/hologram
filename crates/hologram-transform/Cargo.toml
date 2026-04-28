@@ -1,0 +1,18 @@
+[package]
+name = "hologram-transform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LUT-addressed transformation / mutation chains: chain → plan → execute"
+
+[dependencies]
+hologram-ops = { workspace = true }
+smallvec = { workspace = true }
+thiserror = "2"
+
+[dev-dependencies]
+hologram-ops = { workspace = true }
+libm = { workspace = true }
+
+[features]
+default = []

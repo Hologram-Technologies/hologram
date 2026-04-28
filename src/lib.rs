@@ -24,6 +24,7 @@ pub use hologram_archive;
 pub use hologram_core;
 pub use hologram_exec;
 pub use hologram_graph;
+pub use hologram_ops;
 
 #[cfg(feature = "compiler")]
 pub use hologram_compiler;
@@ -41,8 +42,15 @@ pub use hologram_cli;
 // Consumers can use `hologram::Graph` instead of `hologram::hologram_graph::Graph`.
 
 // Core primitives
-pub use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, FloatOp, LutOp, Op, PrimOp};
+pub use hologram_core::op::{bits_to_f32, f32_to_bits, FloatDType, LutOp, PrimOp};
+// Note: `FloatOp` is intentionally NOT re-exported at the top level.
+// It remains as exec/backend's internal dispatch encoding (ADR-050)
+// but is not part of the public canonical surface. New code uses
+// `hologram::SemanticOp` via `GraphOp::Compute(...)`. Embedded use
+// cases that genuinely need the legacy enum can still reach it via
+// `hologram_core::op::FloatOp`. Sprint 37 Phase 3.3 Stage 4.
 pub use hologram_core::view::ElementWiseView;
+pub use hologram_ops::{BackwardRule, Op, OpCategory, OpSignature, SemanticOp};
 
 // Graph IR
 pub use hologram_graph::{
