@@ -7,6 +7,7 @@
 //! a clean single-path loop.
 
 use hologram_backend::{ComputeBackend, ComputeMemory, TensorBuffer};
+use hologram_shape::{infer_output_shape, TensorShape};
 use smallvec::SmallVec;
 
 use crate::buffer::BufferArena;
@@ -42,15 +43,30 @@ where
     let mut bufs: Vec<TensorBuffer<M::Buffer>> = (0..num_slots)
         .map(|_| TensorBuffer::unshared(memory.alloc(0)))
         .collect();
+    // Parallel shape table — TensorBuffer.shape only carries `dims`, but
+    // the inference step needs `dtype` too. Track full TensorShapes
+    // here keyed by slot index so each dispatch can look up its
+    // inputs and write its output without round-tripping the arena
+    // (which is `&self` here).
+    let mut shapes: Vec<Option<TensorShape>> = vec![None; num_slots];
 
     // Upload constants and graph inputs from the arena to device memory.
+    // Seed the parallel shape table from the arena's `ShapeRegistry`
+    // (Sprint 33 Phase 2) at the same time.
     for instr in &tape.instructions {
         for &idx in &instr.input_indices {
             let i = idx as usize;
             if i < bufs.len() {
-                if let Ok(data) = arena.get(hologram_graph::NodeId::new(idx, 0)) {
+                let node = hologram_graph::NodeId::new(idx, 0);
+                if let Ok(data) = arena.get(node) {
                     if !data.is_empty() {
                         bufs[i] = TensorBuffer::unshared(memory.upload(data));
+                    }
+                }
+                if shapes[i].is_none() {
+                    if let Some(s) = arena.get_shape(node) {
+                        bufs[i].shape = SmallVec::from_slice(&s.dims);
+                        shapes[i] = Some(s.clone());
                     }
                 }
             }
@@ -94,7 +110,39 @@ where
                     eprintln!("[executor] unsupported op: {e}");
                 }
             }
-            // TODO: compute output shape from op + input shapes and store in out_tb.shape.
+
+            // Infer output shape from input shapes (Sprint 33 Phase 5.1).
+            // Skipped silently when any input shape is unknown, when the
+            // op isn't supported by `infer_output_shape` yet, or when
+            // input shapes are incompatible — these surface as legacy
+            // byte-length-only resolution downstream.
+            drop(input_refs);
+            // Clone input shapes out of the borrow so we can mutate
+            // `shapes[out_idx]` afterwards without aliasing.
+            let input_shapes: Option<SmallVec<[TensorShape; 4]>> = instr
+                .input_indices
+                .iter()
+                .map(|&idx| shapes.get(idx as usize).and_then(|s| s.clone()))
+                .collect();
+            if let Some(input_shapes) = input_shapes {
+                let refs: SmallVec<[&TensorShape; 4]> = input_shapes.iter().collect();
+                if let Ok(out_shape) = infer_output_shape(&op, &refs) {
+                    let out_tb = unsafe { &mut *bufs_ptr.add(out_idx) };
+                    out_tb.shape = SmallVec::from_slice(&out_shape.dims);
+                    // Phase 5 debug assert: the inferred volume × dtype
+                    // size must match the device buffer the backend
+                    // actually wrote, otherwise downstream ops will see
+                    // a shape that disagrees with the bytes.
+                    debug_assert_eq!(
+                        memory.byte_len(&out_tb.buffer),
+                        out_shape.dims.iter().product::<usize>() * out_shape.dtype.byte_size(),
+                        "inferred shape volume mismatches backend buffer for op {:?}",
+                        op,
+                    );
+                    shapes[out_idx] = Some(out_shape);
+                }
+            }
+            continue;
         }
 
         drop(input_refs);

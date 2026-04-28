@@ -377,29 +377,35 @@ prompts produce wrong output) and the entire class of shape-inference errors.
 heuristic shape resolution failures in the 848-instruction execution chain.
 
 ### Phase 1: Core Types + Shape Inference
-- [ ] **1.1**: Create `hologram-shape` crate with `TensorShape`, `ShapeRegistry`
-- [ ] **1.2**: Implement `infer_output_shape` for all FloatOp categories
-- [ ] **1.3**: Unit tests for shape inference rules (≥30 tests)
+- [x] **1.1**: Create `hologram-shape` crate with `TensorShape`, `ShapeRegistry`
+- [x] **1.2**: Implement `infer_output_shape` for all FloatOp categories
+- [x] **1.3**: Unit tests for shape inference rules (≥30 tests)
 
 ### Phase 2: Wire into BufferArena
-- [ ] **2.1**: Add `ShapeRegistry` to `BufferArena`
-- [ ] **2.2**: Seed shapes from graph inputs + constants at execution start
-- [ ] **2.3**: Add `get_shape()` / `set_shape()` methods
+- [x] **2.1**: Add `ShapeRegistry` to `BufferArena`
+- [x] **2.2**: Seed shapes from graph inputs + constants at execution start
+- [x] **2.3**: Add `get_shape()` / `set_shape()` methods
 
 ### Phase 3: Wire into execute_direct
-- [ ] **3.1**: Compute + store output shape after each dispatch_kernel
-- [ ] **3.2**: Pass input shapes to dispatch_kernel
-- [ ] **3.3**: Debug assertions: validate buffer byte length matches shape
+- [x] **3.1**: Compute + store output shape after each dispatch_kernel
+- [x] **3.2**: Pass input shapes to dispatch_kernel
+- [x] **3.3**: Debug assertions: validate buffer byte length matches shape
 
 ### Phase 4: Replace Heuristic Resolution (net line reduction)
-- [ ] **4.1**: Replace `resolve_last_dim` with direct shape reads
-- [ ] **4.2**: Replace `resolve_matmul_dims` with direct shape reads
-- [ ] **4.3**: Delete `shape_resolve.rs` (359 lines) + `InputMetas` type
-- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77
+- [x] **4.1**: Replace `resolve_last_dim` with direct shape reads
+- [x] **4.2**: Replace `resolve_matmul_dims` with direct shape reads
+- [x] **4.3**: Delete `shape_resolve.rs` (359 lines) + `InputMetas` type
+- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 (pending model artefacts)
 
 ### Phase 5: Propagate to hologram-backend
-- [ ] **5.1**: Wire `infer_output_shape` into `execute_on_backend`
-- [ ] **5.2**: Shape-validated Metal + CPU backend execution
+- [x] **5.1**: Wire `infer_output_shape` into `execute_on_backend` (parallel
+  shape table seeded from arena's `ShapeRegistry`, output shape inferred
+  per dispatch + debug-assert that inferred volume × dtype size matches
+  device buffer byte length).
+- [ ] **5.2**: Shape-validated Metal + CPU backend execution (downstream
+  consumers still read byte-length-only metadata; needs each backend's
+  dispatch path to consult `TensorBuffer.shape` instead of `KernelParams`
+  byte counts).
 
 ---
 
