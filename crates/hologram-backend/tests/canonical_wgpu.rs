@@ -16,7 +16,8 @@ use hologram_transform::{
     ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, InstanceNormGradCall, KernelCall,
     LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall,
     Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall,
-    SlotSpan, SoftmaxCall, SubGradCall, Tolerance, UnaryCall, UnaryKind, WorkspaceLayout,
+    SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind, SubGradCall, Tolerance, UnaryCall,
+    UnaryKind, WorkspaceLayout,
 };
 
 const N: usize = 64;
@@ -1385,6 +1386,61 @@ fn wgpu_rms_norm_grad_matches_cpu_reference() {
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_instance_norm_grad_matches_cpu_reference() {
     norm_grad_test(/* layer = */ true);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_softmax_grad_family_matches_cpu_reference() {
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let size = 8;
+    let rows = 4;
+    let n = size * rows;
+    for kind in [SoftmaxGradKind::Softmax, SoftmaxGradKind::LogSoftmax] {
+        let plan = CompiledPlan {
+            forward: Box::new([]),
+            backward: Box::new([KernelCall::SoftmaxGrad(
+                SoftmaxGradCall {
+                    output: SlotSpan { offset: 0, len: n },
+                    dc: SlotSpan { offset: n, len: n },
+                    da: SlotSpan {
+                        offset: 2 * n,
+                        len: n,
+                    },
+                    size,
+                },
+                kind,
+            )]),
+            address_table: empty_address_table(),
+            workspace: WorkspaceLayout {
+                total_elements: 3 * n,
+            },
+        };
+        let mut cpu = CpuBackend::new();
+        let res = check_forward_then_backward(
+            &plan,
+            &mut cpu,
+            &mut gpu,
+            |buf| {
+                // For Softmax the "output" is row-normalised
+                // probabilities ∈ (0, 1). For LogSoftmax it's the row's
+                // log-probabilities (negative). Use a simple seed that
+                // works for both — exp(o) only matters for log-softmax,
+                // and any small finite o keeps things in range.
+                let out: Vec<f32> = (0..n).map(|i| -0.05 * i as f32 + 0.4).collect();
+                let dc: Vec<f32> = (0..n).map(|i| 0.03 * i as f32 - 0.1).collect();
+                buf.write_span(SlotSpan { offset: 0, len: n }, &out);
+                buf.write_span(SlotSpan { offset: n, len: n }, &dc);
+            },
+            Tolerance::new(1e-5, 1e-5),
+        )
+        .expect("conformance run");
+        assert!(
+            res.is_match(),
+            "wgpu SoftmaxGrad {:?} diverged: {:?}",
+            kind,
+            res
+        );
+    }
 }
 
 #[test]

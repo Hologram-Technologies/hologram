@@ -52,7 +52,7 @@ pub use plan::{
     GlobalAvgPoolCall, GroupNormCall, InstanceNormGradCall, KernelCall, LayerNormGradCall,
     MatMulCall, MatMulGradACall, MatMulGradBCall, MulGradCall, NegGradCall, NormFullCall,
     NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall,
-    SliceCall, SlotSpan, SoftmaxCall, SubGradCall, TransposeCall, UnaryCall, UnaryGradCall,
-    UnaryGradKind, UnaryKind, WorkspaceLayout,
+    SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind, SubGradCall, TransposeCall,
+    UnaryCall, UnaryGradCall, UnaryGradKind, UnaryKind, WorkspaceLayout,
 };
 pub use planner::compile;

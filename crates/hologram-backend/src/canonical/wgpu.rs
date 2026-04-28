@@ -31,7 +31,8 @@ use hologram_transform::{
     ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall, InstanceNormGradCall,
     KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NegGradCall,
     NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall,
-    RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
+    RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind,
+    SubGradCall, UnaryCall, UnaryKind,
 };
 
 /// WebGPU canonical backend.
@@ -48,6 +49,7 @@ pub struct WgpuBackend {
     norm_grad2_bind_layout: wgpu::BindGroupLayout,
     norm_grad3_bind_layout: wgpu::BindGroupLayout,
     norm_grad_addrms_bind_layout: wgpu::BindGroupLayout,
+    softmax_grad_bind_layout: wgpu::BindGroupLayout,
     binary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     unary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     reduce_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
@@ -175,6 +177,19 @@ impl WgpuBackend {
                     storage_binding(4, false),
                     storage_binding(5, false),
                     uniform_binding(6),
+                ],
+            });
+        // SoftmaxGrad: forward output (read) + dC (read) + dA (rw) +
+        // uniform `Params { size }`. Same shape covers both Softmax
+        // and LogSoftmax variants — kind selects the WGSL pipeline.
+        let softmax_grad_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("softmax_grad.binds.layout"),
+                entries: &[
+                    storage_binding(0, true),
+                    storage_binding(1, true),
+                    storage_binding(2, false),
+                    uniform_binding(3),
                 ],
             });
         // AddRmsNormGrad: residual + input + weight + dy + d_residual
@@ -394,6 +409,15 @@ impl WgpuBackend {
                 build_pipeline(&device, &norm_grad_addrms_bind_layout, name, source),
             );
         }
+        for (name, source) in [
+            ("softmax_grad", SOFTMAX_GRAD_WGSL),
+            ("log_softmax_grad", LOG_SOFTMAX_GRAD_WGSL),
+        ] {
+            norm_grad_pipelines.insert(
+                name,
+                build_pipeline(&device, &softmax_grad_bind_layout, name, source),
+            );
+        }
 
         Ok(Self {
             device,
@@ -408,6 +432,7 @@ impl WgpuBackend {
             norm_grad2_bind_layout,
             norm_grad3_bind_layout,
             norm_grad_addrms_bind_layout,
+            softmax_grad_bind_layout,
             binary_pipelines,
             unary_pipelines,
             reduce_pipelines,
@@ -469,6 +494,7 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::InstanceNormGrad(c) => self.dispatch_instance_norm_grad(storage, c),
             KernelCall::LayerNormGrad(c) => self.dispatch_layer_norm_grad(storage, c),
             KernelCall::AddRmsNormGrad(c) => self.dispatch_add_rms_norm_grad(storage, c),
+            KernelCall::SoftmaxGrad(c, kind) => self.dispatch_softmax_grad(storage, c, *kind),
             // ── CPU-fallback variants ──────────────────────────────────
             // Every remaining variant routes through the canonical CPU
             // reference. These are correct (the canonical CPU is the
@@ -487,7 +513,6 @@ impl CanonicalBackend for WgpuBackend {
             | KernelCall::ReduceArgGrad(_, _)
             | KernelCall::ReduceProdGrad(_)
             | KernelCall::UnaryGrad(_, _)
-            | KernelCall::SoftmaxGrad(_, _)
             | KernelCall::ConcatGrad(_)
             | KernelCall::SliceGrad(_)
             | KernelCall::TransposeGrad(_)
@@ -1120,6 +1145,107 @@ impl WgpuBackend {
             "instance_norm_grad_dx",
             "instance_norm_grad_dw",
         )
+    }
+
+    fn dispatch_softmax_grad(
+        &self,
+        storage: &mut [f32],
+        call: &SoftmaxGradCall,
+        kind: SoftmaxGradKind,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        if size == 0 || call.output.len == 0 || call.da.len == 0 {
+            return Ok(());
+        }
+        if !call.output.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: SoftmaxGrad output length not divisible by size".into(),
+            ));
+        }
+        if call.da.len != call.output.len || call.dc.len != call.output.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: SoftmaxGrad span sizes inconsistent".into(),
+            ));
+        }
+        let rows = call.output.len / size;
+        let op = match kind {
+            SoftmaxGradKind::Softmax => "softmax_grad",
+            SoftmaxGradKind::LogSoftmax => "log_softmax_grad",
+        };
+        let pipeline = self
+            .norm_grad_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing {op}")))?;
+
+        let out_buf = self.upload(
+            &storage[call.output.offset..call.output.offset + call.output.len],
+            "softmax_grad.output",
+        );
+        let dc_buf = self.upload(
+            &storage[call.dc.offset..call.dc.offset + call.dc.len],
+            "softmax_grad.dc",
+        );
+        let da_seed = storage[call.da.offset..call.da.offset + call.da.len].to_vec();
+        let da_buf = self.upload_rw(&da_seed, "softmax_grad.da");
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 1] = [size as u32];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("softmax_grad.params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("softmax_grad.binds"),
+            layout: &self.softmax_grad_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: dc_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: da_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let staging = self.alloc_staging(call.output.len);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("softmax_grad"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("softmax_grad.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &da_buf,
+            0,
+            &staging,
+            0,
+            (call.output.len * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+        let out = read_back(&self.device, &staging, call.output.len).map_err(ExecError::Backend)?;
+        storage[call.da.offset..call.da.offset + call.da.len].copy_from_slice(&out);
+        Ok(())
     }
 
     fn dispatch_layer_norm_grad(
@@ -2915,6 +3041,61 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         acc = acc + dy[off + i] * s_i * rstd;
     }
     dw[i] = dw[i] + acc;
+}
+"#;
+
+// ── SoftmaxGrad shaders ───────────────────────────────────────────────
+//
+// Per-row backward for both Softmax and LogSoftmax variants. One
+// thread per row; sequential fold over `params.size` elements.
+// Bind layout: output(0) dc(1) da(2,rw) params(3,uniform).
+//
+// Softmax:    dA[r,j] += out[r,j] · (dC[r,j] − Σ_k(dC[r,k] · out[r,k]))
+// LogSoftmax: dA[r,j] += dC[r,j] − exp(out[r,j]) · Σ_k(dC[r,k])
+
+const SOFTMAX_GRAD_WGSL: &str = r#"struct Params { size: u32 };
+@group(0) @binding(0) var<storage, read> output: array<f32>;
+@group(0) @binding(1) var<storage, read> dc: array<f32>;
+@group(0) @binding(2) var<storage, read_write> da: array<f32>;
+@group(0) @binding(3) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let r = gid.x;
+    let off = r * params.size;
+    if (off >= arrayLength(&output)) { return; }
+
+    var dot: f32 = 0.0;
+    for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+        dot = dot + dc[off + j] * output[off + j];
+    }
+    for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+        let p = output[off + j];
+        da[off + j] = da[off + j] + p * (dc[off + j] - dot);
+    }
+}
+"#;
+
+const LOG_SOFTMAX_GRAD_WGSL: &str = r#"struct Params { size: u32 };
+@group(0) @binding(0) var<storage, read> output: array<f32>;
+@group(0) @binding(1) var<storage, read> dc: array<f32>;
+@group(0) @binding(2) var<storage, read_write> da: array<f32>;
+@group(0) @binding(3) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let r = gid.x;
+    let off = r * params.size;
+    if (off >= arrayLength(&output)) { return; }
+
+    var dc_sum: f32 = 0.0;
+    for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+        dc_sum = dc_sum + dc[off + j];
+    }
+    for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+        let p = exp(output[off + j]);
+        da[off + j] = da[off + j] + dc[off + j] - p * dc_sum;
+    }
 }
 "#;
 
