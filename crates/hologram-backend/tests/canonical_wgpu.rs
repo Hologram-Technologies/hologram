@@ -13,11 +13,11 @@ use hologram_backend::canonical::WgpuBackend;
 use hologram_transform::{
     check_forward, check_forward_then_backward, AddCall, AddGradCall, AddRmsNormCall,
     AddRmsNormGradCall, AddressTable, BinaryCall, CompiledPlan, ConcatCall, Conv2dCall,
-    ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, InstanceNormGradCall, KernelCall,
-    LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall,
-    Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall,
-    SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind, SubGradCall, Tolerance, UnaryCall,
-    UnaryKind, WorkspaceLayout,
+    ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, GroupNormCall, InstanceNormGradCall,
+    KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall,
+    NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall,
+    SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind, SubGradCall, Tolerance,
+    UnaryCall, UnaryKind, WorkspaceLayout,
 };
 
 const N: usize = 64;
@@ -1386,6 +1386,94 @@ fn wgpu_rms_norm_grad_matches_cpu_reference() {
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_instance_norm_grad_matches_cpu_reference() {
     norm_grad_test(/* layer = */ true);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_fused_swiglu_matches_cpu_reference() {
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let plan = binary_plan(KernelCall::FusedSwiGlu(BinaryCall {
+        a: SlotSpan { offset: 0, len: N },
+        b: SlotSpan { offset: N, len: N },
+        c: SlotSpan {
+            offset: 2 * N,
+            len: N,
+        },
+    }));
+    run_binary(&plan, &mut gpu, |i| 0.07 * i as f32 + 0.2);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_group_norm_matches_cpu_reference() {
+    // 16-element input with 4 groups → group_elements = 4.
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let in_n = 16_usize;
+    let groups = 4_u32;
+    let group_elements = in_n / groups as usize;
+    let eps_bits = 1.0e-5_f32.to_bits();
+    let plan = CompiledPlan {
+        forward: Box::new([KernelCall::GroupNorm(GroupNormCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: in_n,
+                len: group_elements,
+            },
+            bias: SlotSpan {
+                offset: in_n + group_elements,
+                len: group_elements,
+            },
+            output: SlotSpan {
+                offset: in_n + 2 * group_elements,
+                len: in_n,
+            },
+            num_groups: groups,
+            epsilon: eps_bits,
+        })]),
+        backward: Box::new([]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: 2 * in_n + 2 * group_elements,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let xs: Vec<f32> = (0..in_n).map(|i| 0.1 * i as f32 - 0.5).collect();
+            let ws: Vec<f32> = (0..group_elements).map(|i| 1.0 + 0.1 * i as f32).collect();
+            let bs: Vec<f32> = (0..group_elements).map(|i| 0.05 * i as f32).collect();
+            buf.write_span(
+                SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                &xs,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n,
+                    len: group_elements,
+                },
+                &ws,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n + group_elements,
+                    len: group_elements,
+                },
+                &bs,
+            );
+        },
+        Tolerance::new(1e-5, 1e-5),
+    )
+    .expect("conformance run");
+    assert!(res.is_match(), "wgpu GroupNorm diverged: {:?}", res);
 }
 
 #[test]

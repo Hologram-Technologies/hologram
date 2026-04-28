@@ -28,11 +28,11 @@ use std::collections::HashMap;
 
 use hologram_transform::{
     AddCall, AddGradCall, AddRmsNormCall, AddRmsNormGradCall, BinaryCall, CanonicalBackend,
-    ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall, InstanceNormGradCall,
-    KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall, MatMulGradBCall, NegGradCall,
-    NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall,
-    RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind,
-    SubGradCall, UnaryCall, UnaryKind,
+    ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall, GroupNormCall,
+    InstanceNormGradCall, KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall,
+    MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall,
+    ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall,
+    SoftmaxGradKind, SubGradCall, UnaryCall, UnaryKind,
 };
 
 /// WebGPU canonical backend.
@@ -483,6 +483,8 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::InstanceNorm(c) => self.dispatch_norm_scale(storage, c, "instance_norm"),
             KernelCall::LayerNorm(c) => self.dispatch_norm_full(storage, c, "layer_norm"),
             KernelCall::AddRmsNorm(c) => self.dispatch_add_rms_norm(storage, c),
+            KernelCall::GroupNorm(c) => self.dispatch_group_norm(storage, c),
+            KernelCall::FusedSwiGlu(c) => self.dispatch_binary(storage, c, "swiglu"),
             KernelCall::MatMul(c) => self.dispatch_matmul(storage, c),
             KernelCall::MatMulGradA(c) => self.dispatch_matmul_grad_a(storage, c),
             KernelCall::MatMulGradB(c) => self.dispatch_matmul_grad_b(storage, c),
@@ -524,8 +526,6 @@ impl CanonicalBackend for WgpuBackend {
             | KernelCall::ConvTranspose2dGrad(_)
             | KernelCall::AttentionGrad(_)
             | KernelCall::Transpose(_)
-            | KernelCall::GroupNorm(_)
-            | KernelCall::FusedSwiGlu(_)
             | KernelCall::Gemm(_)
             | KernelCall::Clip(_)
             | KernelCall::CumSum(_)
@@ -920,6 +920,90 @@ impl WgpuBackend {
             &staging,
             call.input.len,
             rows.div_ceil(64) as u32,
+            &mut storage[call.output.offset..call.output.offset + call.input.len],
+        )
+    }
+
+    fn dispatch_group_norm(
+        &self,
+        storage: &mut [f32],
+        call: &GroupNormCall,
+    ) -> Result<(), ExecError> {
+        let groups = call.num_groups;
+        if groups == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(groups as usize) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm input length not divisible by num_groups".into(),
+            ));
+        }
+        let group_elements = call.input.len / groups as usize;
+        if call.weight.len != group_elements || call.bias.len != group_elements {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm weight/bias length must equal group_elements".into(),
+            ));
+        }
+        if call.output.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm output length must equal input length".into(),
+            ));
+        }
+        // GroupNorm = LayerNorm with `size = group_elements` and
+        // `rows = num_groups`. Same shader works as-is once we feed
+        // it the per-group `size` parameter.
+        let pipeline = self
+            .norm_pipelines
+            .get("layer_norm")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing layer_norm pipeline".into()))?;
+        let in_buf = self.upload(
+            &storage[call.input.offset..call.input.offset + call.input.len],
+            "group_norm.in",
+        );
+        let weight_buf = self.upload(
+            &storage[call.weight.offset..call.weight.offset + group_elements],
+            "group_norm.weight",
+        );
+        let bias_buf = self.upload(
+            &storage[call.bias.offset..call.bias.offset + group_elements],
+            "group_norm.bias",
+        );
+        let out_buf = self.alloc_storage(call.input.len, "group_norm.out");
+        let staging = self.alloc_staging(call.input.len);
+        let params_buf = self.upload_norm_params(group_elements as u32, call.epsilon);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("group_norm.binds"),
+            layout: &self.norm3_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: weight_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.dispatch_and_read_with_workgroups(
+            pipeline,
+            &bind_group,
+            &out_buf,
+            &staging,
+            call.input.len,
+            (groups as usize).div_ceil(64) as u32,
             &mut storage[call.output.offset..call.output.offset + call.input.len],
         )
     }
@@ -3631,6 +3715,8 @@ const BINARY_OPS: &[(&str, &str)] = &[
     ("and", "f32(av != 0.0 && bv != 0.0)"),
     ("or", "f32(av != 0.0 || bv != 0.0)"),
     ("xor", "f32((av != 0.0) != (bv != 0.0))"),
+    // FusedSwiGlu: out = silu(gate) * up where silu(x) = x / (1 + e^-x).
+    ("swiglu", "(av / (1.0 + exp(-av))) * bv"),
 ];
 
 /// `(pipeline_name, WGSL expression in terms of `x`)`.
