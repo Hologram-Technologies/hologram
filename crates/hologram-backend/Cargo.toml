@@ -8,10 +8,12 @@ build = "build.rs"
 
 [dependencies]
 hologram-core = { path = "../hologram-core" }
+hologram-transform = { path = "../hologram-transform" }
 smallvec = "1"
 tracing = "0.1"
 thiserror = "2"
 bytemuck = "1"
+pollster = { version = "0.4", optional = true }
 
 # Metal backend (macOS / iOS) — linked automatically via build.rs
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -23,7 +25,7 @@ default = []
 # Metal backend — auto-detected on macOS/iOS, explicit for cross-compile
 metal-backend = []
 # WebGPU backend (browser + wgpu)
-webgpu = ["dep:wgpu"]
+webgpu = ["dep:wgpu", "dep:pollster"]
 # CUDA backend (NVIDIA GPU) — low priority
 cuda = []
 

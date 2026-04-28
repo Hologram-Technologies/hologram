@@ -1,6 +1,327 @@
 # Sprint Tracking
 
-## Sprint 34: uor-foundation 0.3.0 Upgrade (ACTIVE)
+## Sprint 37: Single Source of Truth for Ops (ACTIVE)
+
+**ADR:** [adrs/045-ops-as-single-source-of-truth.md](adrs/045-ops-as-single-source-of-truth.md)
+
+Goal: collapse the op-definition spread by moving every op-related
+artefact (per-op `Call` struct, kernel function, dispatch enum and
+function) into `hologram-ops`. `hologram-transform` becomes a pure
+orchestration crate (chain → plan → execute, addressing, buffer).
+
+- [x] **1.1**: New `hologram-ops/src/kernels/` tree — one module per op
+  (or group of related ops) owns its `Call` struct + forward kernel +
+  backward kernel (where applicable)
+- [x] **1.2**: `KernelCall` enum + `dispatch()` function moved to
+  `hologram_ops::kernels`
+- [x] **1.3**: `SlotSpan` moved to `hologram_ops::span`
+- [x] **1.4**: `hologram-transform/src/kernels/` deleted; executor
+  delegates to `hologram_ops::dispatch`
+- [x] **1.5**: `hologram-transform/src/plan.rs` re-exports the kernel
+  types (back-compat) and keeps only orchestration types
+  (`CompiledPlan`, `AddressTable`, `WorkspaceLayout`)
+- [x] **1.6**: `libm` dep moved to `hologram-ops` (the kernel home);
+  `hologram-transform` no longer needs it as a regular dep
+- [x] **1.7**: All 65 workspace test suites pass, 0 failures, clippy
+  clean across migration-affected crates
+- [x] **1.8 (post-migration sweep)**: 9 pre-existing clippy errors
+  in non-migration files cleaned up — `hologram-shape/tensor_shape.rs`
+  (×2 no-op), `hologram-backend/src/cpu.rs` + `metal.rs` (×5 loop
+  / approx_constant), `hologram-exec/src/buffer/scatter_gather.rs`
+  + `tests/constrained_bench.rs` (×3 io / unit_arg). Workspace
+  `cargo clippy --workspace --tests -- -D warnings` is now
+  fully clean.
+
+### Phase 1.5 — Cleanup (completing ADR-045's promise)
+
+- [x] **1.5.1**: `hologram-ops/src/lib.rs` slimmed from 1010 lines
+  monolithic to ~50 lines of module declarations + re-exports.
+  Per-module split: `trait_def.rs` (Op trait + OpCategory + OpSignature
+  + BackwardRule), `attrs.rs` (all `*Attrs` structs), `semantic.rs`
+  (`SemanticOp` + dispatch macro), `span.rs` (`SlotSpan`), `kernels/`
+  (per-op modules)
+- [x] **1.5.2**: Per-op marker struct + `Op` impl moved into the same
+  file as the kernel — `kernels/<op>.rs` now contains the **complete**
+  definition of the op (struct + Op impl + Call struct(s) + kernel
+  function(s) + tests). The "one file per op" promise is fulfilled.
+- [x] **1.5.3**: Dead `hologram-transform/src/op.rs` re-export file
+  deleted; consumers import directly from `hologram_ops`
+- [x] **1.5.4**: Naming collisions resolved:
+  - `hologram_core::op::OpCategory` (the float dispatch-shape enum)
+    renamed to `FloatOpShape` — frees the `OpCategory` name for the
+    semantic category in `hologram-ops`
+  - `hologram_core::op::Op` (legacy unified sum-type enum) deleted —
+    no production callers; canonical identity is now the
+    `hologram_ops::Op` trait
+  - `hologram::Op` at the top-level now refers to the canonical trait
+- [x] **1.5.5**: `AGENTS.md` updated with the canonical-ops rules
+  (single source of truth, the "add an op" checklist, hot-path
+  invariants linked to ADR-044/045)
+
+### Phase 2 — Per-op LUT generator (TODO, blocked on Plan 074)
+
+This is the third leg of the "every op needs both a LUT *and* a
+transformation" invariant. ADR-045 placed the `Call` struct + kernel
+function in each `hologram-ops/src/kernels/<op>.rs` so the LUT
+generator can land in the *same file* — completing the consolidation.
+
+The LUT layer is provided by `uor-foundation`. Plan 074 upgrades
+`uor-foundation` from 0.1.4 → 0.3.0 which exposes the address /
+identity API the LUT generators consume. **This phase blocks on Plan
+074 landing.**
+
+- [ ] **2.1**: Extend the `Op` trait with a `lut()` method (signature
+  TBD — likely returns a `LutDescriptor` that names the address space,
+  the layout, and the precomputed table-id contract). Default impl
+  returns `None` so non-LUT ops are unaffected.
+- [ ] **2.2**: For each per-op file in `hologram-ops/src/kernels/`,
+  add the per-op LUT generator alongside its `Call` struct + kernel.
+  Co-locating the three (identity, transformation, LUT) in one file
+  is the architectural promise of ADR-045.
+- [ ] **2.3**: Bridge `AddressRef` (in `hologram-transform`) to
+  `uor-foundation`'s LUT-resolved address type. Currently the planner
+  assigns sequential offsets in a flat workspace; with the LUT layer
+  the address resolution becomes ontological lookup, not arithmetic.
+- [ ] **2.4**: Connect the chain's `AddressTable` to LUT-resolved
+  addresses so the same plan can target different backends without
+  re-keying tensor identities.
+- [ ] **2.5**: Per-op tests: each op's LUT generator must round-trip
+  with its kernel — `lut(op).resolve(...) == kernel_output_address(...)`.
+- [ ] **2.6**: Update ADR-043 (LUT-Addressed Transform Chains) Phase 6
+  status from "deferred" to "implemented".
+
+After this phase, `hologram-ops/src/kernels/<op>.rs` contains the
+**complete definition** of the op: identity (`Op` trait), executable
+form (`Call` + kernel), and addressing (`lut()`). One file. One place.
+
+### Phase 3 — Bigger architectural moves (separate ADR-worthy work)
+
+These are intentionally out of scope for this sprint; tracked here so
+they don't get lost.
+
+- [x] **3.1**: Collapse `Compute` / `Float` dispatch duplication in
+  `hologram-exec`. `kv/store.rs::dispatch_with_shapes` and
+  `tape_builder.rs::resolve_kernel` both had two identical match
+  arms; now one each, both routing through `op.legacy_float_op()`.
+  The bridge is the supported architecture per ADR-046; full
+  reorganisation of exec around `SemanticOp` is left to Phase 3.3.
+- [x] **3.2**: Shrink `graph::op` bridge — `semantic_op()` (the
+  unused FloatOp → SemanticOp direction) and its 95-line helper
+  removed. Captured in ADR-046; the bridge is one-way going forward.
+- [x] **3.3 Stage 1**: ADR-047 (staged FloatOp deprecation roadmap).
+  Smart constructor `GraphOp::from_float(FloatOp) -> GraphOp` lands
+  in `hologram-graph::graph::op` — emits `Compute(SemanticOp)` when
+  canonical covers the variant, falls back to `Float(FloatOp)`.
+  Compiler `term_lower` migrated to use it; new lowering paths
+  default to canonical. End state per ADR-047 has 4 stages:
+  smart-construction (done) → canonical surface expansion → exec
+  reorganisation around `SemanticOp` → public `FloatOp` removal.
+- [x] **3.3 Stage 2 complete (36 / 36 migratable ops)**:
+  Canonical coverage expanded across 6 rounds.
+  - Round 1 (15 ops): `Pow`, `Mod`, `Min`, `Max`, `Equal`, `Less`,
+    `LessOrEqual`, `Greater`, `GreaterOrEqual`, `And`, `Or`, `Xor`,
+    `Not`, `IsNaN`.
+  - Round 2 (11 ops): Reductions, Pooling (NCHW-aware), `Where`,
+    `Clip`.
+  - Round 3 (3 ops): `CumSum`, `Pad` (constant mode), `Resize`
+    (nearest mode).
+  - Round 4 (4 ops): `Lrn`, `ConvTranspose2d`, `Gemm`, `Expand`.
+  - Round 5 (2 ops + 2 mode extensions): `RotaryEmbedding`
+    (half-rotation, position = row index), `Pad`-reflect,
+    `Pad`-edge, `Resize`-bilinear.
+  - Round 6 (1 op): `Attention` (scaled dot-product, GQA-aware,
+    causal mask, ADR-049). Un-fused canonical form — RoPE /
+    QK-norm / sparse-V are upstream canonical ops or execution
+    flags, not part of canonical semantics.
+  - All bridge mappings (`from_float` / `legacy_float_op`) and
+    planner arms updated.
+  - **ADRs landed**: ADR-048 (permanent-FloatOp surface),
+    ADR-049 (canonical Attention design). Canonical surface
+    end state: **~75 ops**, exactly as projected.
+
+  **Stage 2 closes Sprint 37 Phase 3.3 forward-only canonical
+  surface coverage.** Remaining Phase 3.3 work is the bigger
+  Stage 3 (exec dispatch reorganisation around `SemanticOp`) and
+  Stage 4 (public `FloatOp` removal — needs an archive-format ADR).
+- [x] **3.3 Stage 3 (reframed and shipped, ADR-050)**: Original
+  framing — "rewrite exec to call canonical kernels" — proved
+  architecturally wrong on inspection. Exec's float dispatch is
+  heavily optimised (monomorphised hot paths, in-place
+  `OutputBuffer`, autovectorisation hints); canonical kernels are
+  reference-grade with explicit scratch allocation. Forcing exec
+  to call canonical would regress every covered op's performance
+  with no semantic gain.
+
+  **Reframed:** canonical kernels are the *semantic contract*, not
+  the execution path. Exec/backend implementations *conform* to
+  canonical semantics; conformance is enforced by tests.
+
+  **Shipped:** `hologram-exec/tests/canonical_conformance.rs` —
+  cross-check infrastructure that for any canonical-covered op
+  asserts exec's output matches the canonical reference within
+  tolerance. 8 representative tests covering unary
+  (Relu, Gelu, Sigmoid), binary (Add, Mul), MatMul, Softmax,
+  ReduceSum. Adding a new canonical op henceforth = one new
+  cross-check test.
+
+  ADR-050 documents the decision and explicitly rejects the
+  "rewrite exec" path as architecturally wrong.
+- [x] **3.3 Stage 4 (public API surface only)**: `FloatOp` is no
+  longer re-exported from the top-level `hologram::*`. New code
+  uses `hologram::SemanticOp` via `GraphOp::Compute(...)`. The
+  underlying enum stays in `hologram_core::op::FloatOp` as
+  exec/backend's internal dispatch encoding (per ADR-050) and is
+  reachable for downstream embedded use cases that need it. Full
+  removal of `GraphOp::Float` from the rkyv archive format is a
+  separate concern (would require an "archive format migration"
+  ADR — not in this sprint's scope).
+- [x] **3.4 (initial batch + unary expansion + Round 4)**:
+  Backward rules for **18 canonical ops** so far:
+  - Round 1: `Add`, `MatMul` (foundation, ADR-043 scope).
+  - Round 2: `Sub`, `Mul`, `Neg`.
+  - Round 3: `Div` (binary), plus 5 differentiable unaries —
+    `Relu`, `Sigmoid`, `Tanh`, `Exp`, `Log` — sharing
+    `KernelCall::UnaryGrad(UnaryGradCall, UnaryGradKind)` (same
+    enum-tag pattern as forward `UnaryKind`). Three of them
+    (`Sigmoid`, `Tanh`, `Exp`) reuse the **forward output** as the
+    derivative source (cheaper than recomputing).
+  - Round 4: `Sqrt`, `Abs`, `Reciprocal` (3 more unaries via
+    `UnaryGradKind` extension), `Min`, `Max` (shared
+    `MinMaxGradCall` + `MinMaxGradKind`, route gradient to whichever
+    input wins; ties go to `A`), `ReduceSum`, `ReduceMean` (shared
+    `ReduceGradCall` + `ReduceGradKind`, broadcast `dC` back across
+    the reduced axis).
+  - Pattern is fully mechanical. Remaining differentiable canonical
+    ops (`Gelu`, `Silu`, `Pow`, `ReduceMax`/`Min`/`Prod`, `Softmax`,
+    `LogSoftmax`, `RmsNorm`, `LayerNorm`, `InstanceNorm`, `GroupNorm`,
+    `AddRmsNorm`, `Conv2d`, `ConvTranspose2d`, `MaxPool2d`,
+    `AvgPool2d`, `GlobalAvgPool`, `Concat`, `Slice`, `Transpose`,
+    `FusedSwiGlu`, `Attention`, …) each follow the same recipe.
+- [ ] **3.5**: Backend executors over the same `CompiledPlan` (Metal,
+  WebGPU). The point of `KernelCall` being closed is that a backend
+  can implement its own `dispatch` against the same enum, conforming
+  to canonical semantics via the ADR-050 conformance tests.
+
+---
+
+## Sprint 36: `Op` Trait — Per-Op-Type Semantic Contract (ACTIVE)
+
+**ADR:** [adrs/044-op-trait-canonical-semantics.md](adrs/044-op-trait-canonical-semantics.md)
+
+Goal: introduce a per-op-type `Op` trait in `hologram-ops` so every fact
+about a canonical op (arity, name, signature, default backward rule,
+category) lives with the op type instead of in scattered enum match arms.
+The closed `SemanticOp` enum stays as the serialisation and dispatch
+surface and forwards to the trait via a single dispatch macro.
+
+- [x] **1.1**: Define `pub trait Op` in `hologram-ops`
+- [x] **1.2**: Add per-op marker structs for every `SemanticOp` variant
+- [x] **1.3**: Macro-driven `SemanticOp` → `Op` forwarding (one match site)
+- [x] **1.4**: Trait conformance tests for representative ops
+- [x] **1.5**: Verify enum dispatch surface unchanged (downstream crates
+  compile, archives unaffected, `cargo test --workspace` clean)
+- [x] **2.1**: Drop `OpKind` from `hologram-ops`; chain layer carries
+  `SemanticOp` directly (no parallel chain-only op enum)
+- [x] **2.2**: `BackwardRule::for_op` / `forward_op` removed — callers use
+  `op.backward()` via the `Op` trait, keeping rule and op in sync
+- [x] **2.3**: `MatMul` dims live on `SemanticOp::MatMul(MatMulAttrs)`;
+  builder validates shapes at construction; planner reads attrs directly
+- [x] **2.4**: Extend transform planner with `Sub` and `Mul` (shared
+  `BinaryCall` shape) — proof that adding canonical ops is now mechanical
+- [x] **3.1**: All 18 unary elementwise ops (Neg, Relu, Gelu, Silu, Tanh,
+  Sigmoid, Exp, Log, Sqrt, Abs, Reciprocal, Cos, Sin, Sign, Floor, Ceil,
+  Round, Erf) wired through a single `KernelCall::Unary(_, UnaryKind)`
+  enum-tag dispatch — one new variant in `KernelCall`, one kernel module
+- [x] **3.2**: `Div` kernel (extends `BinaryCall`)
+- [x] **3.3**: `Softmax` and `LogSoftmax` kernels (numerically stable,
+  per-row over the last axis)
+- [x] **3.4**: `Reshape` kernel (in-storage copy; planner-level span
+  aliasing left as a future optimisation)
+- [x] **3.5**: 7 new integration tests covering the new ops end-to-end
+
+### Phase 4 — Remaining canonical ops
+- [x] **4.0**: Fix `FusedSwiGlu` arity bug (was 1, should be 2 — confirmed
+  against `hologram-exec` float-conformance suite)
+- [x] **4.1**: Norms (`RmsNorm`, `LayerNorm`, `InstanceNorm`, `GroupNorm`,
+  `AddRmsNorm`) — `NormScaleCall` / `NormFullCall` / `GroupNormCall` /
+  `AddRmsNormCall`, shared mean/variance helpers
+- [x] **4.2**: `Transpose` (physical, up to 4-D, n-D index walker)
+- [x] **4.3**: `Slice` (last-axis contiguous; non-last-axis explicitly
+  rejected with a clear `PlanError`)
+- [x] **4.4**: `Concat` (last-axis, two operands)
+- [x] **4.5**: `Conv2d` (direct reference, NCHW, optional bias, groups)
+- [x] **4.6**: `FusedSwiGlu` (`silu(gate) * up`)
+- [x] **4.7**: 10 new integration tests; 22 new kernel unit tests
+
+**Migration complete.** All 36 `SemanticOp` variants now lower to a
+`KernelCall` and execute through the transform stack. The canonical-op
+vocabulary in `hologram-ops` is the single source of truth; chain →
+plan → execute is fully connected.
+
+### Phase 5 — Future work (out of this sprint's scope)
+- [ ] **Per-op LUT generators** — every op needs both a LUT *and* a
+  transformation. The transformation lives in
+  `hologram-ops/src/kernels/<op>.rs` today; the LUT generator will land
+  in the same file once Plan 074 (`uor-foundation` 0.3.0) exposes the
+  address API. Tracked in detail under Sprint 37 Phase 2 (ADR-045).
+- [ ] Backward rules for the new ops (currently only `Add` and `MatMul`
+  are differentiable). Adding backward = new `BackwardRule` variant +
+  `Op::backward()` impl + `KernelCall::*Grad` variant + planner arm.
+- [ ] Planner-level `Reshape` span aliasing (skip the copy when
+  input/output spans can share storage).
+- [ ] Workspace allocation for kernels that need scratch (e.g. im2col
+  Conv2d as a perf path).
+- [ ] Backend executors over the same `CompiledPlan` (Metal, WebGPU).
+
+---
+
+## Sprint 35: LUT-Addressed Transformation / Mutation Chains (ACTIVE)
+
+**Plan:** [plans/043-lut-addressed-transform-chains.md](plans/043-lut-addressed-transform-chains.md)
+**ADR:** [adrs/043-lut-addressed-transform-chains.md](adrs/043-lut-addressed-transform-chains.md)
+
+Goal: introduce a new `hologram-transform` crate that separates LUT/address
+identity, semantic transform descriptors, compile-time planning, and
+runtime execution. Initial op set: ADD and MatMul (forward + backward).
+Preserves all hot-path invariants — O(1) lookup, zero-copy, no dynamic
+allocation, no virtual dispatch in kernels, no runtime algorithm selection.
+
+### Phase 1 — Semantic transform chain
+- [x] **1.1**: Create `hologram-transform` crate, register in workspace
+- [x] **1.2**: Define `OpKind`, `BackwardRule`, `TransformNode`, `TransformChain`
+- [x] **1.3**: Define `AddressRef`, `TensorId`, `NodeId`, `RegionId`, `LayoutId`
+- [x] **1.4**: Add `TransformChain::builder` API + chain-construction tests
+
+### Phase 2 — Address table and planner
+- [x] **2.1**: Define `SlotSpan`, `AddressTable`, `WorkspaceLayout`
+- [x] **2.2**: Implement planner: `TransformChain` → `CompiledPlan`
+- [x] **2.3**: Resolve `AddressRef` → `SlotSpan` (O(1) lookup)
+- [x] **2.4**: Allocate grad slots only for `requires_grad = true`
+
+### Phase 3 — Forward / backward lowering
+- [x] **3.1**: Add `KernelCall::Add`, `KernelCall::AddGrad`
+- [x] **3.2**: Add `KernelCall::MatMul`, `KernelCall::MatMulGradA`,
+  `KernelCall::MatMulGradB`
+- [x] **3.3**: Backward emitted by planner (no runtime traversal)
+
+### Phase 4 — CPU reference executor
+- [x] **4.1**: `BufferSet` (single owned `Box<[f32]>`)
+- [x] **4.2**: `Executor::run_forward`, `Executor::run_backward`
+- [x] **4.3**: Reference CPU kernels: `add`, `add_grad`, `matmul`,
+  `matmul_grad_a`, `matmul_grad_b`
+- [x] **4.4**: Tests: ADD fwd/bwd, MatMul fwd/bwd, no-alloc invariant
+
+### Phase 5 — Fusion + backend specialisation (deferred)
+- [ ] **5.1**: Fusion as a planner pass (rewrites `Box<[KernelCall]>`)
+- [ ] **5.2**: Backend executors (Metal, WebGPU, Atlas) over the same plan
+
+### Phase 6 — UOR / `uor-foundation` integration (deferred)
+- [ ] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after
+  Plan 074 lands the 0.3.0 upgrade)
+
+---
+
+## Sprint 34: uor-foundation 0.3.0 Upgrade
 
 **Plan:** [plans/074-uor-foundation-0.3.0-upgrade.md](plans/074-uor-foundation-0.3.0-upgrade.md)
 

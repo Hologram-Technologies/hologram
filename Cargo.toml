@@ -23,6 +23,9 @@ hologram-ffi = { path = "crates/hologram-ffi" }
 hologram-cascade = { path = "crates/hologram-cascade" }
 # Compression
 hologram-compression = { path = "crates/hologram-compression" }
+# LUT-addressed transformation / mutation chains (ADR-043)
+hologram-transform = { path = "crates/hologram-transform" }
+hologram-ops = { path = "crates/hologram-ops" }
 
 # Ring foundation (parametric ring algebra)
 hologram-ring = { path = "crates/hologram-ring", default-features = false }
@@ -94,6 +97,7 @@ hologram-graph = { workspace = true }
 hologram-archive = { workspace = true }
 hologram-exec = { workspace = true }
 hologram-backend = { workspace = true }
+hologram-ops = { workspace = true }
 rkyv = { workspace = true }
 bytemuck = { workspace = true }
 serde = { workspace = true, optional = true }

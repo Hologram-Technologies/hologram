@@ -274,7 +274,7 @@ mod tests {
 
         // Read 2 bytes, then seek forward 2 from current.
         let mut buf = [0u8; 2];
-        stream.read(&mut buf).unwrap();
+        stream.read_exact(&mut buf).unwrap();
         stream.seek(SeekFrom::Current(2)).unwrap();
         let n = stream.read(&mut buf).unwrap();
         assert_eq!(n, 2);

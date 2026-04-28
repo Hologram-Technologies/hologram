@@ -1,0 +1,13 @@
+[package]
+name = "hologram-ops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical semantic operation model for Hologram"
+
+[dependencies]
+libm = { workspace = true }
+rkyv = { workspace = true }
+
+[features]
+default = []

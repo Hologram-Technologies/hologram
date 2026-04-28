@@ -148,7 +148,10 @@ fn lower_term(
         TermKind::FloatApp { op, arg0, arg1 } => {
             let float_op = *arena.get_float_op(op);
             let a0 = lower_term(arena, bindings, arg0, graph, node_map)?;
-            let nid = graph.add_node(GraphOp::Float(float_op));
+            // Prefer canonical `Compute(SemanticOp)` when the op is
+            // covered by the canonical layer; falls back to legacy
+            // `Float(FloatOp)` otherwise. ADR-047 Sprint 37 Phase 3.3.
+            let nid = graph.add_node(GraphOp::from_float(float_op));
             edge::connect(graph, a0, nid, 0);
             if arg1.0 != u32::MAX {
                 let a1 = lower_term(arena, bindings, arg1, graph, node_map)?;

@@ -178,16 +178,28 @@ impl KvStore {
                 // Q2 + activation: dispatch Q2 matmul, then apply activation.
                 dispatch_lut_gemm_2(inputs[0], *cid, constants, weights)
             }
-            GraphOp::Float(ref f) => {
+            GraphOp::Compute(_) | GraphOp::Float(_) => {
+                // Both canonical (`Compute`) and legacy (`Float`) compute
+                // ops dispatch through the same float-dispatch family.
+                // `legacy_float_op()` returns the underlying `FloatOp` for
+                // either variant; the bridge will collapse entirely once
+                // exec-side dispatch is reorganised around `SemanticOp`
+                // (Sprint 37 Phase 3.1).
+                let Some(f) = op.legacy_float_op() else {
+                    return Err(ExecError::UnsupportedOp(format!(
+                        "compute op has no execution lowering: {:?}",
+                        op
+                    )));
+                };
                 if input_shapes.len() >= 2 {
-                    crate::float_dispatch::dispatch_float_with_shapes(f, inputs, input_shapes)
+                    crate::float_dispatch::dispatch_float_with_shapes(&f, inputs, input_shapes)
                 } else if matches!(f, FloatOp::GlobalAvgPool { .. }) && !input_shapes.is_empty() {
                     crate::float_dispatch::pool::dispatch_global_avg_pool_with_shapes(
                         inputs,
                         input_shapes,
                     )
                 } else {
-                    crate::float_dispatch::dispatch_float_ctx(f, inputs, ctx)
+                    crate::float_dispatch::dispatch_float_ctx(&f, inputs, ctx)
                 }
             }
             GraphOp::FusedFloatChain(ref chain) => {

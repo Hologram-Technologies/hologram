@@ -58,7 +58,7 @@ deployment guarantees:
 
 | Space | Prism Definition | Hologram Crates |
 |-------|-----------------|-----------------|
-| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-core`, `hologram-graph`, `hologram-archive` |
+| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-core`, `hologram-ops`, `hologram-graph`, `hologram-archive` |
 | **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-async` |
 | **user** | Application-configurable; exposed at system boundaries | `hologram-ffi`, `hologram-cli`, `hologram-bench` |
 
@@ -71,15 +71,24 @@ user crates. This enforces the one-way information flow required by the Prism sp
 
 ```
 hologram-core (kernel)
-    └── hologram-graph (kernel)
-            └── hologram-archive (kernel)
-                    └── hologram-exec (bridge)
-                    │       └── hologram-compiler (bridge)
-                    │               └── hologram-async (bridge)
-                    │                       └── hologram-ffi (user)
-                    │                       └── hologram-cli (user)
-                    └── hologram-bench (user)
+    └── hologram-ops (kernel)
+            ├── hologram-graph (kernel)
+            │       └── hologram-archive (kernel)
+            │               └── hologram-exec (bridge)
+            │               │       └── hologram-compiler (bridge)
+            │               │               └── hologram-async (bridge)
+            │               │                       └── hologram-ffi (user)
+            │               │                       └── hologram-cli (user)
+            │               └── hologram-bench (user)
+            └── hologram-transform (kernel)
 ```
+
+`hologram-ops` is the canonical semantic operation vocabulary. It describes
+what an operation means (`OpKind`, `BackwardRule`, semantic signature) without
+committing to any graph encoding, executable kernel format, or device backend.
+`hologram-graph` now has a matching `GraphOp::Compute(...)` path for canonical
+semantic compute nodes, while `GraphOp::Float(...)` remains as a legacy
+execution-compatibility encoding during the migration.
 
 ---
 

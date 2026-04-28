@@ -50,6 +50,7 @@ fn format_op(op: &GraphOp, constants: &ConstantStore) -> String {
         GraphOp::RingReduce { op, axis, level } => {
             format!("RingReduce({}, axis={}, {:?})", op.name(), axis, level)
         }
+        GraphOp::Compute(op) => format!("Compute({})", op.name()),
         GraphOp::Float(f) => f.name().to_string(),
         GraphOp::FusedFloatChain(chain) => {
             let names: Vec<&str> = chain.iter().map(|f| f.name()).collect();
