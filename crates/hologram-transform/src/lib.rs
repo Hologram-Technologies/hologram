@@ -30,6 +30,7 @@ pub mod chain;
 pub mod conformance;
 pub mod error;
 pub mod executor;
+pub mod fusion;
 pub mod plan;
 pub mod planner;
 
@@ -45,6 +46,7 @@ pub use conformance::{
 };
 pub use error::{ExecError, PlanError};
 pub use executor::Executor;
+pub use fusion::{compile_fused, fuse};
 pub use hologram_ops::{BackwardRule, MatMulAttrs, Op, OpCategory, OpSignature, SemanticOp};
 pub use plan::{
     AddCall, AddGradCall, AddRmsNormCall, AddRmsNormGradCall, AddressTable, AttentionCall,

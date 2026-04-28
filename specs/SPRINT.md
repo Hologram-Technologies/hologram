@@ -329,7 +329,16 @@ allocation, no virtual dispatch in kernels, no runtime algorithm selection.
 - [x] **4.4**: Tests: ADD fwd/bwd, MatMul fwd/bwd, no-alloc invariant
 
 ### Phase 5 — Fusion + backend specialisation
-- [ ] **5.1**: Fusion as a planner pass (rewrites `Box<[KernelCall]>`)
+- [x] **5.1 (initial)**: Fusion as a planner pass —
+  `hologram_transform::fusion::fuse(&mut chain)` rewrites the chain's
+  `nodes` slice. Public `compile_fused(&chain)` clones, fuses,
+  compiles. Default `compile(&chain)` path unchanged so unfused
+  plans still exercise via tests / conformance harness. **Initial
+  pattern**: SwiGlu — `Silu(gate) → Mul(silu_out, up)` collapses to
+  `FusedSwiGlu(gate, up)`. Conservative: skips when `silu_out` has
+  more than one consumer or when the Mul's other operand transitively
+  references the Silu input. Adding a new pattern lands as a private
+  `try_fuse_<name>` helper invoked by `fuse()`.
 - [x] **5.2**: Backend executors (Metal, WebGPU, Atlas) over the same plan
   — `CanonicalBackend` trait + `CpuBackend` reference + `WgpuBackend`
   shipped in PR #6. Cross-backend conformance harness validates each
