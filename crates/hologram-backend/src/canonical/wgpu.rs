@@ -28,9 +28,10 @@ use std::collections::HashMap;
 
 use hologram_transform::{
     AddCall, AddGradCall, AddRmsNormCall, BinaryCall, CanonicalBackend, ConcatCall, Conv2dCall,
-    ConvTransposeCall, ExecError, GlobalAvgPoolCall, KernelCall, MatMulCall, MatMulGradACall,
-    MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall,
-    ReduceKind, ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
+    ConvTransposeCall, ExecError, GlobalAvgPoolCall, InstanceNormGradCall, KernelCall, MatMulCall,
+    MatMulGradACall, MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall,
+    Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan,
+    SoftmaxCall, SubGradCall, UnaryCall, UnaryKind,
 };
 
 /// WebGPU canonical backend.
@@ -44,6 +45,7 @@ pub struct WgpuBackend {
     norm3_bind_layout: wgpu::BindGroupLayout,
     matmul_bind_layout: wgpu::BindGroupLayout,
     conv_bind_layout: wgpu::BindGroupLayout,
+    norm_grad2_bind_layout: wgpu::BindGroupLayout,
     binary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     unary_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     reduce_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
@@ -52,6 +54,7 @@ pub struct WgpuBackend {
     matmul_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     pool_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     conv_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    norm_grad_pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
 }
 
 impl WgpuBackend {
@@ -73,12 +76,23 @@ impl WgpuBackend {
             .await
             .ok_or_else(|| ExecError::Backend("wgpu: no compatible adapter".into()))?;
 
+        // Pick limits up to whatever the adapter reports — some
+        // canonical kernels (norm grads) bind 5 storage buffers,
+        // exceeding the `downlevel_defaults` cap of 4. The adapter's
+        // actual limits are typically much higher (≥8 storage buffers
+        // on Metal / Vulkan / WebGPU 1.0).
+        let adapter_limits = adapter.limits();
+        let required_limits = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: adapter_limits
+                .max_storage_buffers_per_shader_stage,
+            ..wgpu::Limits::downlevel_defaults()
+        };
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("hologram-canonical-wgpu"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits,
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
@@ -129,6 +143,21 @@ impl WgpuBackend {
                     storage_binding(1, true),
                     storage_binding(2, false),
                     uniform_binding(3),
+                ],
+            });
+        // RmsNormGrad / InstanceNormGrad: input + weight + dy + dx
+        // (rw, accumulating) + dw (rw, accumulating) + uniform. Both
+        // grads share the math signature (no bias).
+        let norm_grad2_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("norm_grad2.binds.layout"),
+                entries: &[
+                    storage_binding(0, true),
+                    storage_binding(1, true),
+                    storage_binding(2, true),
+                    storage_binding(3, false),
+                    storage_binding(4, false),
+                    uniform_binding(5),
                 ],
             });
         // Conv2d forward: input + weight + bias + output + uniform
@@ -299,6 +328,21 @@ impl WgpuBackend {
                 CONV_TRANSPOSE_2D_WGSL,
             ),
         );
+        // RmsNormGrad runs as two passes (dx + dw) on the same bind
+        // layout. Each pass is its own pipeline; the dispatch helper
+        // records both into a single command encoder.
+        let mut norm_grad_pipelines = HashMap::new();
+        for (name, source) in [
+            ("rms_norm_grad_dx", RMS_NORM_GRAD_DX_WGSL),
+            ("rms_norm_grad_dw", RMS_NORM_GRAD_DW_WGSL),
+            ("instance_norm_grad_dx", INSTANCE_NORM_GRAD_DX_WGSL),
+            ("instance_norm_grad_dw", INSTANCE_NORM_GRAD_DW_WGSL),
+        ] {
+            norm_grad_pipelines.insert(
+                name,
+                build_pipeline(&device, &norm_grad2_bind_layout, name, source),
+            );
+        }
 
         Ok(Self {
             device,
@@ -310,6 +354,7 @@ impl WgpuBackend {
             norm3_bind_layout,
             matmul_bind_layout,
             conv_bind_layout,
+            norm_grad2_bind_layout,
             binary_pipelines,
             unary_pipelines,
             reduce_pipelines,
@@ -318,6 +363,7 @@ impl WgpuBackend {
             matmul_pipelines,
             pool_pipelines,
             conv_pipelines,
+            norm_grad_pipelines,
         })
     }
 }
@@ -366,6 +412,8 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::GlobalAvgPool(c) => self.dispatch_global_avg_pool(storage, c),
             KernelCall::Conv2d(c) => self.dispatch_conv2d(storage, c),
             KernelCall::ConvTranspose2d(c) => self.dispatch_conv_transpose_2d(storage, c),
+            KernelCall::RmsNormGrad(c) => self.dispatch_rms_norm_grad(storage, c),
+            KernelCall::InstanceNormGrad(c) => self.dispatch_instance_norm_grad(storage, c),
             // ── CPU-fallback variants ──────────────────────────────────
             // Every remaining variant routes through the canonical CPU
             // reference. These are correct (the canonical CPU is the
@@ -388,9 +436,7 @@ impl CanonicalBackend for WgpuBackend {
             | KernelCall::ConcatGrad(_)
             | KernelCall::SliceGrad(_)
             | KernelCall::TransposeGrad(_)
-            | KernelCall::RmsNormGrad(_)
             | KernelCall::LayerNormGrad(_)
-            | KernelCall::InstanceNormGrad(_)
             | KernelCall::AddRmsNormGrad(_)
             | KernelCall::GroupNormGrad(_)
             | KernelCall::Pool2dGrad(_, _)
@@ -983,6 +1029,216 @@ impl WgpuBackend {
             workgroups,
             &mut storage[call.output.offset..call.output.offset + total_out],
         )
+    }
+
+    fn dispatch_rms_norm_grad(
+        &self,
+        storage: &mut [f32],
+        call: &RmsNormGradCall,
+    ) -> Result<(), ExecError> {
+        self.run_norm_grad2(
+            storage,
+            call.input,
+            call.weight,
+            call.dy,
+            call.dx,
+            call.dw,
+            call.size,
+            call.epsilon,
+            "rms_norm_grad_dx",
+            "rms_norm_grad_dw",
+        )
+    }
+
+    fn dispatch_instance_norm_grad(
+        &self,
+        storage: &mut [f32],
+        call: &InstanceNormGradCall,
+    ) -> Result<(), ExecError> {
+        self.run_norm_grad2(
+            storage,
+            call.input,
+            call.weight,
+            call.dy,
+            call.dx,
+            call.dw,
+            call.size,
+            call.epsilon,
+            "instance_norm_grad_dx",
+            "instance_norm_grad_dw",
+        )
+    }
+
+    /// Shared dispatch path for the 2-input (no-bias) norm grads.
+    /// Runs two passes in one command encoder: pass 1 computes `dx`
+    /// per row, pass 2 computes `dw` per column-element.
+    #[allow(clippy::too_many_arguments)]
+    fn run_norm_grad2(
+        &self,
+        storage: &mut [f32],
+        input: SlotSpan,
+        weight: SlotSpan,
+        dy: SlotSpan,
+        dx: SlotSpan,
+        dw: SlotSpan,
+        size: u32,
+        epsilon_bits: u32,
+        dx_op: &'static str,
+        dw_op: &'static str,
+    ) -> Result<(), ExecError> {
+        let size_us = size as usize;
+        if size_us == 0 || input.len == 0 {
+            return Ok(());
+        }
+        if !input.len.is_multiple_of(size_us) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad input length not divisible by size".into(),
+            ));
+        }
+        let rows = input.len / size_us;
+        if dx.len != 0 && dx.len != input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad dx length must equal input length".into(),
+            ));
+        }
+        if dw.len != 0 && dw.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad dw length must equal size".into(),
+            ));
+        }
+        if dy.len != input.len || weight.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad span sizes inconsistent".into(),
+            ));
+        }
+        let dx_pipeline = self
+            .norm_grad_pipelines
+            .get(dx_op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing pipeline {dx_op}")))?;
+        let dw_pipeline = self
+            .norm_grad_pipelines
+            .get(dw_op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing pipeline {dw_op}")))?;
+
+        let in_buf = self.upload(
+            &storage[input.offset..input.offset + input.len],
+            "norm_grad.in",
+        );
+        let weight_buf = self.upload(
+            &storage[weight.offset..weight.offset + size_us],
+            "norm_grad.weight",
+        );
+        let dy_buf = self.upload(&storage[dy.offset..dy.offset + dy.len], "norm_grad.dy");
+
+        // Accumulating targets — seed from the host workspace.
+        let dx_seed = if dx.len > 0 {
+            storage[dx.offset..dx.offset + dx.len].to_vec()
+        } else {
+            vec![0.0_f32; input.len]
+        };
+        let dx_buf = self.upload_rw(&dx_seed, "norm_grad.dx");
+        let dw_seed = if dw.len > 0 {
+            storage[dw.offset..dw.offset + size_us].to_vec()
+        } else {
+            vec![0.0_f32; size_us]
+        };
+        let dw_buf = self.upload_rw(&dw_seed, "norm_grad.dw");
+
+        // Uniform: [size, epsilon_bits, rows, padding].
+        use wgpu::util::DeviceExt;
+        let params: [u32; 4] = [size, epsilon_bits, rows as u32, 0];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("norm_grad.params"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("norm_grad.binds"),
+            layout: &self.norm_grad2_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: in_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: weight_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: dy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dx_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dw_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Two passes recorded in one encoder, single submission.
+        let dx_staging = self.alloc_staging(input.len);
+        let dw_staging = self.alloc_staging(size_us);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("norm_grad"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("norm_grad.dx"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dx_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("norm_grad.dw"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dw_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(size_us.div_ceil(64) as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &dx_buf,
+            0,
+            &dx_staging,
+            0,
+            (input.len * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        encoder.copy_buffer_to_buffer(
+            &dw_buf,
+            0,
+            &dw_staging,
+            0,
+            (size_us * std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Read both staging buffers back.
+        if dx.len > 0 {
+            let out =
+                read_back(&self.device, &dx_staging, input.len).map_err(ExecError::Backend)?;
+            storage[dx.offset..dx.offset + dx.len].copy_from_slice(&out);
+        }
+        if dw.len > 0 {
+            let out = read_back(&self.device, &dw_staging, size_us).map_err(ExecError::Backend)?;
+            storage[dw.offset..dw.offset + size_us].copy_from_slice(&out);
+        }
+        Ok(())
     }
 
     fn dispatch_conv_transpose_2d(
@@ -1877,6 +2133,168 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+// ── Norm-grad shaders (RmsNorm, InstanceNorm) ─────────────────────────
+//
+// Both grads decompose into two passes:
+//   - dx pass: one thread per row. Computes the row stats inline and
+//     writes `dx[r, *]` accumulating into the seeded buffer.
+//   - dw pass: one thread per column. For each column, walks every
+//     row, recomputes the row stats, sums the dy * x * rstd
+//     contribution, accumulates into `dw[i]`.
+// The CPU reference fuses these into one row-major loop; we split
+// because a single GPU thread per row would require atomic adds to
+// fold the dw contributions across rows. Recomputing row stats in
+// the dw pass roughly doubles the work but keeps the kernels
+// atomic-free and matches downlevel limits.
+//
+// Bind layout (norm_grad2): input(0) weight(1) dy(2) dx(3,rw)
+// dw(4,rw) params(5,uniform). Params: { size, epsilon, rows, _ }.
+
+const RMS_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dx: array<f32>;
+@group(0) @binding(4) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let r = gid.x;
+    if (r >= params.rows) { return; }
+    let off = r * params.size;
+    let inv_size = 1.0 / f32(params.size);
+
+    var sq: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let v = input[off + i];
+        sq = sq + v * v;
+    }
+    let rstd = 1.0 / sqrt(sq * inv_size + params.epsilon);
+
+    var dot: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        dot = dot + dy[off + i] * weight[i] * input[off + i];
+    }
+    let dot_term = rstd * rstd * rstd * inv_size * dot;
+
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let contrib = weight[i] * dy[off + i] * rstd - input[off + i] * dot_term;
+        dx[off + i] = dx[off + i] + contrib;
+    }
+}
+"#;
+
+const RMS_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dx: array<f32>;
+@group(0) @binding(4) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.size) { return; }
+    let inv_size = 1.0 / f32(params.size);
+
+    var acc: f32 = 0.0;
+    for (var r: u32 = 0u; r < params.rows; r = r + 1u) {
+        let off = r * params.size;
+        var sq: f32 = 0.0;
+        for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+            let v = input[off + j];
+            sq = sq + v * v;
+        }
+        let rstd = 1.0 / sqrt(sq * inv_size + params.epsilon);
+        acc = acc + dy[off + i] * input[off + i] * rstd;
+    }
+    dw[i] = dw[i] + acc;
+}
+"#;
+
+const INSTANCE_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dx: array<f32>;
+@group(0) @binding(4) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let r = gid.x;
+    if (r >= params.rows) { return; }
+    let off = r * params.size;
+    let inv_size = 1.0 / f32(params.size);
+
+    var sum: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        sum = sum + input[off + i];
+    }
+    let mean = sum * inv_size;
+    var var_sum: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let d = input[off + i] - mean;
+        var_sum = var_sum + d * d;
+    }
+    let rstd = 1.0 / sqrt(var_sum * inv_size + params.epsilon);
+
+    var sum_dx_hat: f32 = 0.0;
+    var sum_dx_hat_x_hat: f32 = 0.0;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let x_hat = (input[off + i] - mean) * rstd;
+        let dx_hat = dy[off + i] * weight[i];
+        sum_dx_hat = sum_dx_hat + dx_hat;
+        sum_dx_hat_x_hat = sum_dx_hat_x_hat + dx_hat * x_hat;
+    }
+    let mean_dx_hat = sum_dx_hat * inv_size;
+    let mean_dx_hat_x_hat = sum_dx_hat_x_hat * inv_size;
+    for (var i: u32 = 0u; i < params.size; i = i + 1u) {
+        let x_hat = (input[off + i] - mean) * rstd;
+        let dx_hat = dy[off + i] * weight[i];
+        let contrib = rstd * (dx_hat - mean_dx_hat - x_hat * mean_dx_hat_x_hat);
+        dx[off + i] = dx[off + i] + contrib;
+    }
+}
+"#;
+
+const INSTANCE_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dx: array<f32>;
+@group(0) @binding(4) var<storage, read_write> dw: array<f32>;
+@group(0) @binding(5) var<uniform> params: Params;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.size) { return; }
+    let inv_size = 1.0 / f32(params.size);
+
+    var acc: f32 = 0.0;
+    for (var r: u32 = 0u; r < params.rows; r = r + 1u) {
+        let off = r * params.size;
+        var sum: f32 = 0.0;
+        for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+            sum = sum + input[off + j];
+        }
+        let mean = sum * inv_size;
+        var var_sum: f32 = 0.0;
+        for (var j: u32 = 0u; j < params.size; j = j + 1u) {
+            let d = input[off + j] - mean;
+            var_sum = var_sum + d * d;
+        }
+        let rstd = 1.0 / sqrt(var_sum * inv_size + params.epsilon);
+        let x_hat = (input[off + i] - mean) * rstd;
+        acc = acc + dy[off + i] * x_hat;
+    }
+    dw[i] = dw[i] + acc;
+}
+"#;
+
 // ── ConvTranspose2d forward (NCHW, output-centric) ────────────────────
 //
 // The canonical CPU forward is a *scatter*: each input position
@@ -2551,6 +2969,27 @@ fn copy_disjoint(storage: &mut [f32], src: SlotSpan, dst: SlotSpan) -> Result<()
         left[lo..lo + n].copy_from_slice(&right[..n]);
     }
     Ok(())
+}
+
+/// Map a staging buffer of `n` f32s and return its contents.
+/// Polls the device synchronously; safe to call from the dispatch
+/// arms which are themselves already synchronous via `pollster`.
+fn read_back(device: &wgpu::Device, staging: &wgpu::Buffer, n: usize) -> Result<Vec<f32>, String> {
+    let slice = staging.slice(..);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    device.poll(wgpu::Maintain::Wait);
+    receiver
+        .recv()
+        .map_err(|e| format!("wgpu: map_async channel: {e}"))?
+        .map_err(|e| format!("wgpu: map_async failed: {e}"))?;
+    let view = slice.get_mapped_range();
+    let out: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&view)[..n].to_vec();
+    drop(view);
+    staging.unmap();
+    Ok(out)
 }
 
 fn storage_binding(slot: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {

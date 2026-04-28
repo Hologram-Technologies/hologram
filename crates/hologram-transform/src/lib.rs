@@ -49,9 +49,10 @@ pub use hologram_ops::{BackwardRule, MatMulAttrs, Op, OpCategory, OpSignature, S
 pub use plan::{
     AddCall, AddGradCall, AddRmsNormCall, AddressTable, AttentionCall, BinaryCall, CompiledPlan,
     ConcatCall, Conv2dCall, Conv2dGradCall, ConvTransposeCall, GlobalAvgPoolCall, GroupNormCall,
-    KernelCall, MatMulCall, MatMulGradACall, MatMulGradBCall, MulGradCall, NegGradCall,
-    NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind, ReshapeCall,
-    SliceCall, SlotSpan, SoftmaxCall, SubGradCall, TransposeCall, UnaryCall, UnaryGradCall,
-    UnaryGradKind, UnaryKind, WorkspaceLayout,
+    InstanceNormGradCall, KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall,
+    MatMulGradBCall, MulGradCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind,
+    ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall,
+    SubGradCall, TransposeCall, UnaryCall, UnaryGradCall, UnaryGradKind, UnaryKind,
+    WorkspaceLayout,
 };
 pub use planner::compile;

@@ -11,11 +11,12 @@
 
 use hologram_backend::canonical::WgpuBackend;
 use hologram_transform::{
-    check_forward, AddCall, AddGradCall, AddRmsNormCall, AddressTable, BinaryCall, CompiledPlan,
-    ConcatCall, Conv2dCall, ConvTransposeCall, CpuBackend, GlobalAvgPoolCall, KernelCall,
-    MatMulCall, MatMulGradACall, MatMulGradBCall, NormFullCall, NormScaleCall, Pool2dCall,
-    Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall,
-    Tolerance, UnaryCall, UnaryKind, WorkspaceLayout,
+    check_forward, check_forward_then_backward, AddCall, AddGradCall, AddRmsNormCall, AddressTable,
+    BinaryCall, CompiledPlan, ConcatCall, Conv2dCall, ConvTransposeCall, CpuBackend,
+    GlobalAvgPoolCall, InstanceNormGradCall, KernelCall, MatMulCall, MatMulGradACall,
+    MatMulGradBCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall, ReduceKind,
+    ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SubGradCall, Tolerance,
+    UnaryCall, UnaryKind, WorkspaceLayout,
 };
 
 const N: usize = 64;
@@ -1374,6 +1375,126 @@ fn wgpu_conv_transpose_2d_matches_cpu_reference() {
 }
 
 /// Confirms the dispatch arm is exhaustive: every canonical
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_rms_norm_grad_matches_cpu_reference() {
+    norm_grad_test(/* layer = */ false);
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_instance_norm_grad_matches_cpu_reference() {
+    norm_grad_test(/* layer = */ true);
+}
+
+fn norm_grad_test(instance: bool) {
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let size = 8_u32;
+    let rows = 4_usize;
+    let in_n = (size as usize) * rows;
+    let eps_bits = 1.0e-5_f32.to_bits();
+    // Workspace: input | weight | dy | dx | dw.
+    let plan_call = if instance {
+        KernelCall::InstanceNormGrad(InstanceNormGradCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: in_n,
+                len: size as usize,
+            },
+            dy: SlotSpan {
+                offset: in_n + size as usize,
+                len: in_n,
+            },
+            dx: SlotSpan {
+                offset: 2 * in_n + size as usize,
+                len: in_n,
+            },
+            dw: SlotSpan {
+                offset: 3 * in_n + size as usize,
+                len: size as usize,
+            },
+            size,
+            epsilon: eps_bits,
+        })
+    } else {
+        KernelCall::RmsNormGrad(RmsNormGradCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: in_n,
+                len: size as usize,
+            },
+            dy: SlotSpan {
+                offset: in_n + size as usize,
+                len: in_n,
+            },
+            dx: SlotSpan {
+                offset: 2 * in_n + size as usize,
+                len: in_n,
+            },
+            dw: SlotSpan {
+                offset: 3 * in_n + size as usize,
+                len: size as usize,
+            },
+            size,
+            epsilon: eps_bits,
+        })
+    };
+    let plan = CompiledPlan {
+        forward: Box::new([]),
+        backward: Box::new([plan_call]),
+        address_table: empty_address_table(),
+        workspace: WorkspaceLayout {
+            total_elements: 3 * in_n + 2 * size as usize,
+        },
+    };
+    let mut cpu = CpuBackend::new();
+    let res = check_forward_then_backward(
+        &plan,
+        &mut cpu,
+        &mut gpu,
+        |buf| {
+            let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 0.5).collect();
+            let ws: Vec<f32> = (0..size as usize).map(|i| 1.0 + 0.1 * i as f32).collect();
+            let dy: Vec<f32> = (0..in_n).map(|i| 0.02 * i as f32 + 0.1).collect();
+            buf.write_span(
+                SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                &xs,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n,
+                    len: size as usize,
+                },
+                &ws,
+            );
+            buf.write_span(
+                SlotSpan {
+                    offset: in_n + size as usize,
+                    len: in_n,
+                },
+                &dy,
+            );
+        },
+        Tolerance::new(1e-4, 1e-4),
+    )
+    .expect("conformance run");
+    let label = if instance {
+        "InstanceNormGrad"
+    } else {
+        "RmsNormGrad"
+    };
+    assert!(res.is_match(), "wgpu {label} diverged: {:?}", res);
+}
+
 /// `KernelCall` variant either runs a real WGSL shader or routes
 /// through `host_cpu_fallback`. Adding a new variant without
 /// updating the match fails the build (no `_` arm) — this test just
