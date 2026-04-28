@@ -17,6 +17,7 @@ use crate::address::TensorId;
 use crate::chain::{Tensor, TransformChain};
 use crate::error::PlanError;
 use crate::plan::{AddressTable, CompiledPlan, KernelCall, SlotSpan, WorkspaceLayout};
+use hologram_ops::SemanticOp;
 
 /// Compile a chain into a plan. Allocates only at compile time.
 pub fn compile(chain: &TransformChain) -> Result<CompiledPlan, PlanError> {
@@ -36,17 +37,42 @@ pub fn compile(chain: &TransformChain) -> Result<CompiledPlan, PlanError> {
 
 fn build_address_table(chain: &TransformChain) -> AddressTable {
     let n = chain.n_tensors();
-    let mut spans = Vec::with_capacity(n);
-    let mut grads = Vec::with_capacity(n);
+
+    // Reshape is metadata-only — input/output share the same bytes.
+    // Compute a per-tensor "alias root" so the output of a Reshape
+    // (and chains of reshapes) gets the same `SlotSpan` as the
+    // original storage. The runtime kernel still runs but no-ops via
+    // its existing `input.offset == output.offset` shortcircuit.
+    //
+    // Aliasing is skipped when the in/out tensors disagree on
+    // `total_elements()` (caller's bug — Reshape semantically
+    // requires equal volumes) or on `requires_grad` (would conflate
+    // gradient slot allocation). `chain.nodes` is in execution
+    // order, so when we see a Reshape its input's alias root is
+    // already finalised.
+    let alias_root: Vec<Option<TensorId>> = compute_reshape_alias_roots(chain);
+
+    // Pass 1: allocate spans for every non-aliased tensor.
+    let mut spans: Vec<SlotSpan> = vec![SlotSpan::empty(0); n];
     let mut cursor = 0usize;
-    for t in &chain.tensors {
-        let len = t.total_elements();
-        spans.push(SlotSpan {
-            offset: cursor,
-            len,
-        });
-        cursor += len;
+    for (i, t) in chain.tensors.iter().enumerate() {
+        if alias_root[i].is_none() {
+            let len = t.total_elements();
+            spans[i] = SlotSpan {
+                offset: cursor,
+                len,
+            };
+            cursor += len;
+        }
     }
+    // Pass 2: aliased tensors copy their root's span.
+    for i in 0..n {
+        if let Some(root) = alias_root[i] {
+            spans[i] = spans[root.0 as usize];
+        }
+    }
+
+    let mut grads = Vec::with_capacity(n);
     for t in &chain.tensors {
         grads.push(grad_slot(t.requires_grad, t.total_elements(), &mut cursor));
     }
@@ -54,6 +80,41 @@ fn build_address_table(chain: &TransformChain) -> AddressTable {
         spans: spans.into_boxed_slice(),
         grads: grads.into_boxed_slice(),
     }
+}
+
+/// Walk `chain.nodes` in execution order, recording for each Reshape
+/// output tensor the root (oldest non-Reshape ancestor) whose span
+/// it should share. Returns `alias_root[i] = Some(root)` for tensors
+/// that are Reshape outputs of compatible inputs, `None` otherwise.
+fn compute_reshape_alias_roots(chain: &TransformChain) -> Vec<Option<TensorId>> {
+    let n = chain.n_tensors();
+    let mut alias: Vec<Option<TensorId>> = vec![None; n];
+    for node in &chain.nodes {
+        if !matches!(node.op, SemanticOp::Reshape) {
+            continue;
+        }
+        // Reshape is arity-1; planner-side validation guarantees this.
+        let in_id = node.inputs[0].tensor;
+        let out_id = node.outputs[0].tensor;
+        let in_t = &chain.tensors[in_id.0 as usize];
+        let out_t = &chain.tensors[out_id.0 as usize];
+        if in_t.total_elements() != out_t.total_elements() {
+            // Reshape with mismatched volume is a chain bug, but
+            // bail rather than alias it.
+            continue;
+        }
+        if in_t.requires_grad != out_t.requires_grad {
+            continue;
+        }
+        // Resolve to root (chained reshapes) — input's alias is
+        // already finalised since we walk execution order.
+        let mut root = in_id;
+        while let Some(r) = alias[root.0 as usize] {
+            root = r;
+        }
+        alias[out_id.0 as usize] = Some(root);
+    }
+    alias
 }
 
 fn grad_slot(requires_grad: bool, len: usize, cursor: &mut usize) -> SlotSpan {

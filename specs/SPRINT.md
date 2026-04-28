@@ -277,8 +277,13 @@ plan → execute is fully connected.
 - [x] Backward rules for the new ops — done. All differentiable
   canonical ops have `BackwardRule` + `Op::backward()` + `KernelCall::*Grad`
   + planner arm wired (see Sprint 37 Phase 3.4 for the full list).
-- [ ] Planner-level `Reshape` span aliasing (skip the copy when
-  input/output spans can share storage).
+- [x] Planner-level `Reshape` span aliasing — done. Reshape outputs
+  share their input's `SlotSpan`; chained reshapes resolve to one
+  root. Workspace shrinks correspondingly. Kernel still runs but
+  no-ops via its existing `input.offset == output.offset`
+  shortcircuit. `compute_reshape_alias_roots` walks `chain.nodes` in
+  execution order; alias only applied when in/out tensors agree on
+  `total_elements()` and `requires_grad`.
 - [ ] Workspace allocation for kernels that need scratch (e.g. im2col
   Conv2d as a perf path).
 - [x] Backend executors over the same `CompiledPlan` — done. `WgpuBackend`

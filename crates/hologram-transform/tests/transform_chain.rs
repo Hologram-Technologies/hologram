@@ -565,6 +565,84 @@ fn execute_reshape_copies_values() {
 }
 
 #[test]
+fn reshape_output_aliases_input_span() {
+    // Sprint 36 Phase 5: Reshape output should share its input's
+    // SlotSpan — the kernel's existing offset-equality shortcircuit
+    // then makes it a no-op. Workspace is correspondingly smaller.
+    let mut b = TransformChain::builder();
+    let inp = b.add_tensor(&[6], false);
+    let out = b.add_tensor(&[2, 3], false);
+    b.push_reshape(UnaryInputs {
+        input: AddressRef::of(inp),
+        output: AddressRef::of(out),
+    });
+    let plan = compile(&b.build()).unwrap();
+    let in_span = plan.address_table.span(hologram_transform::TensorId(0));
+    let out_span = plan.address_table.span(hologram_transform::TensorId(1));
+    assert_eq!(in_span.offset, out_span.offset);
+    assert_eq!(in_span.len, out_span.len);
+    // Workspace is just the 6-element input; without aliasing it
+    // would be 12 (input + output).
+    assert_eq!(plan.workspace_elements(), 6);
+}
+
+#[test]
+fn chained_reshapes_alias_to_single_root() {
+    // Reshape → Reshape collapses both outputs onto the original
+    // input's span so the workspace allocates one buffer, not three.
+    let mut b = TransformChain::builder();
+    let inp = b.add_tensor(&[12], false);
+    let mid = b.add_tensor(&[3, 4], false);
+    let out = b.add_tensor(&[2, 6], false);
+    b.push_reshape(UnaryInputs {
+        input: AddressRef::of(inp),
+        output: AddressRef::of(mid),
+    });
+    b.push_reshape(UnaryInputs {
+        input: AddressRef::of(mid),
+        output: AddressRef::of(out),
+    });
+    let plan = compile(&b.build()).unwrap();
+    let in_span = plan.address_table.span(hologram_transform::TensorId(0));
+    let mid_span = plan.address_table.span(hologram_transform::TensorId(1));
+    let out_span = plan.address_table.span(hologram_transform::TensorId(2));
+    assert_eq!(in_span.offset, mid_span.offset);
+    assert_eq!(in_span.offset, out_span.offset);
+    assert_eq!(plan.workspace_elements(), 12);
+}
+
+#[test]
+fn reshape_aliasing_does_not_change_executed_value() {
+    // After aliasing, running the reshape kernel still produces the
+    // correct values at the output tensor (because the bytes are
+    // already there).
+    let mut b = TransformChain::builder();
+    let inp = b.add_tensor(&[6], false);
+    let out = b.add_tensor(&[2, 3], false);
+    b.push_reshape(UnaryInputs {
+        input: AddressRef::of(inp),
+        output: AddressRef::of(out),
+    });
+    let plan = compile(&b.build()).unwrap();
+    let mut buf = BufferSet::for_plan(&plan);
+    buf.write_tensor(
+        &plan,
+        hologram_transform::TensorId(0),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    );
+    Executor::run_forward(&plan, &mut buf).unwrap();
+    // Both reads return the same bytes (aliased span).
+    assert_eq!(
+        buf.read_tensor(&plan, hologram_transform::TensorId(0)),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+    assert_eq!(
+        buf.read_tensor(&plan, hologram_transform::TensorId(1)),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+}
+
+#[test]
 fn push_unary_rejects_non_unary_op() {
     let mut b = TransformChain::builder();
     let a = b.add_tensor(&[2], false);
