@@ -1,11 +1,120 @@
 # Plan 074: uor-foundation 0.1.4 → 0.3.0 Upgrade
 
-**Status:** In progress
-**Date:** 2026-04-16
+**Status:** Scope-revised — see addendum below
+**Date:** 2026-04-16 (revised 2026-04-28)
 
 ## Context
 
 hologram depends on `uor-foundation = "0.1.4"` (workspace root `Cargo.toml:33`). Version 0.3.0 renames `QuantumLevel` → `WittLevel` (a struct with different constants and methods), renames `const_ring_eval_q*` → `const_ring_eval_w*`, removes `ViolationKind`, and reorganizes modules. This upgrade unblocks access to new enforcement APIs and keeps hologram current with the UOR-Framework.
+
+---
+
+## Scope addendum (2026-04-28 — verified against 0.3.0)
+
+The original plan was written assuming 0.2.1 changes; **the actual 0.3.0
+surface is significantly larger.** A fresh `cargo check --workspace`
+against `uor-foundation = "0.3.0"` produces **148 errors**, of which 109
+are downstream cascades of one root: `PrismPrimitives` no longer
+implements the (now-renamed) host-types trait. The breaking changes are:
+
+### Replaced traits (not renamed)
+
+- **`Primitives` trait → `HostTypes` trait.** Different field set entirely:
+  - Old: `String`, `Integer`, `NonNegativeInteger`, `PositiveInteger`,
+    `Decimal`, `Boolean`
+  - New: `Decimal`, `HostString: ?Sized`, `WitnessBytes: ?Sized`
+  - Affects every `<P: Primitives>` trait bound in `hologram-ring` and
+    `hologram-core` (~120 sites).
+  - The `String`/`Integer`/`Boolean` slots are gone from the host-types
+    trait — anywhere the project relied on them needs a different source.
+
+- **`Address` trait → `Element` trait** (`uor_foundation::kernel::address`).
+  Semantic shift, not a rename. New methods require **content-addressable
+  digest semantics**:
+  - `length()`, `addresses()`, `digest()`, `digest_algorithm()`,
+    `canonical_bytes()`, `witt_length()`.
+  - `digest_algorithm` must be `"blake3"` (primary) or `"sha256"` (secondary).
+  - `canonical_bytes` is per *Amendment 43 §2*: `header(k) || le_bytes(x, k+1)`.
+  - **Open question:** which hash algorithm does hologram standardise on
+    for ring datums? Plan needs to commit to one and back-port to the
+    archive format if persisted.
+
+### Method-signature changes on `Datum<H>` and `Ring<H>`
+
+- `Datum::quantum()` → `Datum::witt_length()` (rename)
+- `Datum::glyph()` → `Datum::element()` (semantic shift — returns
+  `Element` impl, not the old glyph value)
+- **New required methods** with no obvious mechanical mapping:
+  - `Datum::value() -> u64`
+  - `Datum::stratum() -> u64`  ← needs domain decision
+  - `Datum::spectrum() -> u64` ← needs domain decision
+- `Ring::ring_quantum()` → `Ring::ring_witt_length()` (rename)
+- `Ring::at_quantum_level()` → `Ring::at_witt_level()` (rename)
+- Old `Datum::Address` associated type removed; new `Datum::Element`
+  associated type bounded by `Element<H>`.
+
+### Renames (mechanical)
+
+- `QuantumLevel` enum → `WittLevel` struct.
+  `Q0/Q1/Q2/Q3` → `W8/W16/W24/W32` (mapping in plan §2b).
+- `.index()` → `.witt_length()` — semantic shift: `Q0.index()` was 0,
+  `W8.witt_length()` is 8.
+- `const_ring_eval_q*` → `const_ring_eval_w*` (per original plan).
+
+### Affected files (verified by `cargo check`)
+
+- `hologram-ring`: every UOR trait impl in `lib.rs` (`PrismPrimitives`),
+  `ring.rs` (`PrismRing`, `PrismDivisionAlgebra`,
+  `PrismMultTable`), `datum.rs`, `address.rs`, `involution.rs`,
+  `prim.rs`. Also `level.rs`'s `QuantumLevel` re-exports.
+- `hologram-core`: `lib.rs` (`HoloPrimitives`),
+  `op/mod.rs` (`RingLevel::to_quantum`/`from_quantum`),
+  `op/prim.rs` (`PrimOp::to_foundation`/`from_foundation`),
+  `q1`/`q2`/`q3` ring + datum modules,
+  `datum/mod.rs` (`ByteDatum::Datum`/`Address` impls), `quantum/mod.rs`,
+  `carry/mod.rs`, `term/compile_unit.rs`, `ring/byte_ring.rs`.
+- `hologram-cascade`: every file under `src/` consuming
+  `uor_foundation::kernel::*`.
+- `hologram-compiler`: preflight + lib + term_lower.
+- Tests: `hologram-core/tests/q3_conformance.rs`,
+  `hologram-core/tests/ring_conformance.rs`.
+
+### Domain decisions required (cannot be answered by mechanical work)
+
+1. **Digest algorithm choice** for `Element::digest_algorithm`. Likely
+   `"blake3"` (foundation's primary) but pins to project policy.
+2. **Canonical-bytes format** per Amendment 43 §2 — needs the spec read
+   to confirm `header(k) || le_bytes(x, k+1)` matches hologram's existing
+   ring-element serialisation, or requires migrating the archive format.
+3. **`Datum::stratum`, `Datum::spectrum` semantics** for hologram's
+   `ByteDatum`, `RingDatum`, `q1`/`q2`/`q3` datums. The 0.3.0 docstring
+   says stratum is "the ring-layer index" and spectrum is "bit-pattern
+   representation in the hypercube geometry of Z/(2^n)Z" — needs project
+   commitment to a specific encoding.
+4. **`HostTypes::HostString` / `HostTypes::WitnessBytes`** target types
+   for `HoloPrimitives` and `PrismPrimitives` — `str`/`[u8]` per
+   `DefaultHostTypes`, or owned types.
+
+### Recommended approach
+
+Given the scope and the open domain questions, this should be a
+**dedicated multi-day branch**, not a sprint-side task. Order of
+operations:
+
+1. Read uor-foundation 0.3.0 docs + Amendment 43 §2 to resolve the
+   digest/canonical-bytes/stratum/spectrum questions.
+2. Bump version on a branch; let the compiler enumerate the work.
+3. Migrate `Primitives` impls first (root cause of 109/148 errors).
+   Pick `HostString = str`, `WitnessBytes = [u8]` unless project policy
+   says otherwise.
+4. Implement `Datum::value/stratum/spectrum/element` for every
+   `*Datum` type in the project — write conformance tests for each.
+5. Implement `Element` trait — defer to a `BlakeAddress` impl or
+   similar that hashes the canonical bytes once at construction.
+6. Apply mechanical renames last (`QuantumLevel`/`Q*`/method names).
+
+Original §2 below describes the 0.2.1-proxy mechanical work that is
+still relevant for that step.
 
 ---
 
