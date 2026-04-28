@@ -175,32 +175,42 @@ they don't get lost.
   removal of `GraphOp::Float` from the rkyv archive format is a
   separate concern (would require an "archive format migration"
   ADR — not in this sprint's scope).
-- [x] **3.4 (initial batch + unary expansion + Round 4)**:
-  Backward rules for **18 canonical ops** so far:
+- [x] **3.4 (complete)**: Backward rules for **all differentiable
+  canonical ops** wired through 10 expansion rounds:
   - Round 1: `Add`, `MatMul` (foundation, ADR-043 scope).
   - Round 2: `Sub`, `Mul`, `Neg`.
-  - Round 3: `Div` (binary), plus 5 differentiable unaries —
-    `Relu`, `Sigmoid`, `Tanh`, `Exp`, `Log` — sharing
-    `KernelCall::UnaryGrad(UnaryGradCall, UnaryGradKind)` (same
-    enum-tag pattern as forward `UnaryKind`). Three of them
-    (`Sigmoid`, `Tanh`, `Exp`) reuse the **forward output** as the
-    derivative source (cheaper than recomputing).
-  - Round 4: `Sqrt`, `Abs`, `Reciprocal` (3 more unaries via
-    `UnaryGradKind` extension), `Min`, `Max` (shared
-    `MinMaxGradCall` + `MinMaxGradKind`, route gradient to whichever
-    input wins; ties go to `A`), `ReduceSum`, `ReduceMean` (shared
-    `ReduceGradCall` + `ReduceGradKind`, broadcast `dC` back across
-    the reduced axis).
-  - Pattern is fully mechanical. Remaining differentiable canonical
-    ops (`Gelu`, `Silu`, `Pow`, `ReduceMax`/`Min`/`Prod`, `Softmax`,
-    `LogSoftmax`, `RmsNorm`, `LayerNorm`, `InstanceNorm`, `GroupNorm`,
-    `AddRmsNorm`, `Conv2d`, `ConvTranspose2d`, `MaxPool2d`,
-    `AvgPool2d`, `GlobalAvgPool`, `Concat`, `Slice`, `Transpose`,
-    `FusedSwiGlu`, `Attention`, …) each follow the same recipe.
-- [ ] **3.5**: Backend executors over the same `CompiledPlan` (Metal,
-  WebGPU). The point of `KernelCall` being closed is that a backend
-  can implement its own `dispatch` against the same enum, conforming
-  to canonical semantics via the ADR-050 conformance tests.
+  - Round 3: `Div`, plus 5 differentiable unaries — `Relu`, `Sigmoid`,
+    `Tanh`, `Exp`, `Log` — sharing `KernelCall::UnaryGrad(UnaryGradCall,
+    UnaryGradKind)`.
+  - Round 4: `Sqrt`, `Abs`, `Reciprocal`, `Min`, `Max`, `ReduceSum`,
+    `ReduceMean` (shared `MinMaxGradCall` and `ReduceGradCall`).
+  - Round 5: `Gelu`, `Silu`, `Pow`, `Concat`, `Slice`, `Transpose`.
+  - Round 6: `ReduceMax`, `ReduceMin` (shared `ReduceArgGradCall`),
+    `Softmax`, `LogSoftmax` (shared `SoftmaxGradCall`).
+  - Round 7: `ReduceProd` (zero-aware), `RmsNorm`, `LayerNorm`.
+  - Round 8: `InstanceNorm`, `AddRmsNorm`, `GlobalAvgPool`, `AvgPool2d`,
+    `MaxPool2d`.
+  - Round 9: `GroupNorm`, `FusedSwiGlu`.
+  - Round 10: `Conv2d`, `ConvTranspose2d`, `Attention` (full GQA-aware,
+    causal-mask-correct backward).
+  Heavyweight grads (norms, conv, conv-transpose, attention) are
+  finite-difference cross-checked in `hologram-ops` unit tests.
+- [x] **3.5**: Backend executors over the same `CompiledPlan` shipped
+  in PR #6 (canonical layer). `CanonicalBackend` trait + `CpuBackend`
+  adapter live in `hologram-transform`; `WgpuBackend` in
+  `hologram-backend/src/canonical/wgpu.rs` covers **51 variants** with
+  real WGSL compute pipelines (binary/unary elementwise families,
+  reductions, softmax/log-softmax, all 5 norm forwards, MatMul +
+  grads, full Pool family, Conv2d, ConvTranspose2d, FusedSwiGlu,
+  GroupNorm, plus 4 norm-grads — RmsNorm/InstanceNorm/LayerNorm/
+  AddRmsNorm — and SoftmaxGrad family). Cross-backend conformance
+  harness (`check_forward`, `check_forward_then_backward`) in
+  `hologram-transform`; 29 `#[ignore]`-gated wgpu integration tests
+  validate every promoted variant against the CPU canonical reference.
+  Remaining variants route through `host_cpu_fallback` — the dispatch
+  arm is exhaustive (no catch-all `_`), so every variant has a working
+  path and adding a new `KernelCall` variant fails the build until it's
+  explicitly handled.
 
 ---
 
@@ -264,14 +274,16 @@ plan → execute is fully connected.
   `hologram-ops/src/kernels/<op>.rs` today; the LUT generator will land
   in the same file once Plan 074 (`uor-foundation` 0.3.0) exposes the
   address API. Tracked in detail under Sprint 37 Phase 2 (ADR-045).
-- [ ] Backward rules for the new ops (currently only `Add` and `MatMul`
-  are differentiable). Adding backward = new `BackwardRule` variant +
-  `Op::backward()` impl + `KernelCall::*Grad` variant + planner arm.
+- [x] Backward rules for the new ops — done. All differentiable
+  canonical ops have `BackwardRule` + `Op::backward()` + `KernelCall::*Grad`
+  + planner arm wired (see Sprint 37 Phase 3.4 for the full list).
 - [ ] Planner-level `Reshape` span aliasing (skip the copy when
   input/output spans can share storage).
 - [ ] Workspace allocation for kernels that need scratch (e.g. im2col
   Conv2d as a perf path).
-- [ ] Backend executors over the same `CompiledPlan` (Metal, WebGPU).
+- [x] Backend executors over the same `CompiledPlan` — done. `WgpuBackend`
+  in `hologram-backend/src/canonical/wgpu.rs` ships in PR #6 with 51
+  GPU-implemented variants conformance-validated against `CpuBackend`.
 
 ---
 
@@ -311,9 +323,14 @@ allocation, no virtual dispatch in kernels, no runtime algorithm selection.
   `matmul_grad_a`, `matmul_grad_b`
 - [x] **4.4**: Tests: ADD fwd/bwd, MatMul fwd/bwd, no-alloc invariant
 
-### Phase 5 — Fusion + backend specialisation (deferred)
+### Phase 5 — Fusion + backend specialisation
 - [ ] **5.1**: Fusion as a planner pass (rewrites `Box<[KernelCall]>`)
-- [ ] **5.2**: Backend executors (Metal, WebGPU, Atlas) over the same plan
+- [x] **5.2**: Backend executors (Metal, WebGPU, Atlas) over the same plan
+  — `CanonicalBackend` trait + `CpuBackend` reference + `WgpuBackend`
+  shipped in PR #6. Cross-backend conformance harness validates each
+  variant. Coverage: 51 GPU-implemented + 6 host-side intentional +
+  remainder via canonical-CPU fallback (every variant has a working
+  dispatch path).
 
 ### Phase 6 — UOR / `uor-foundation` integration (deferred)
 - [ ] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after
