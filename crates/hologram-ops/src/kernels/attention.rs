@@ -32,6 +32,11 @@ pub struct AttentionCall {
     pub v: SlotSpan,
     /// Output span.
     pub output: SlotSpan,
+    /// Workspace scratch (length ≥ `seq_kv`). The forward kernel uses
+    /// it as the per-row softmax-weights buffer. An empty span means
+    /// "no planner-supplied scratch, allocate locally" — used by the
+    /// kernel's stand-alone unit tests.
+    pub scratch: SlotSpan,
     /// Combined batch (product of leading dims before `num_q_heads`).
     pub batch: u32,
     /// Number of Q heads.
@@ -75,11 +80,11 @@ impl Op for Attention {
 
 /// Forward: `out = softmax((Q @ Kᵀ) * scale + causal_mask) @ V`.
 ///
-/// Allocates a per-row `[seq_kv]` scratch buffer for the softmax.
-/// This is the only kernel in `hologram-ops` that allocates inside
-/// its body — the planner must size workspace to account for it (or
-/// callers can reserve a scratch span; future ADR may add a
-/// scratch-span argument to keep the kernel allocation-free).
+/// Uses `call.scratch` (length ≥ `seq_kv`) as the per-row softmax-
+/// weights buffer when supplied; falls back to a local allocation
+/// when `call.scratch.len == 0`. The planner reserves the
+/// scratch span as part of the workspace so production callers
+/// run allocation-free.
 pub fn attention(storage: &mut [f32], call: &AttentionCall) {
     let batch = call.batch as usize;
     let nqh = call.num_q_heads as usize;
@@ -95,7 +100,46 @@ pub fn attention(storage: &mut [f32], call: &AttentionCall) {
     let q_per_kv = nqh / nkh;
     let cross_offset = sk as isize - sq as isize;
 
-    let mut scores = vec![0.0_f32; sk];
+    // Scratch handle: either the planner-supplied span (zero-alloc
+    // hot path) or a one-shot local Vec (fallback for tests).
+    let mut local_scratch: Vec<f32>;
+    let scratch_off: usize;
+    if call.scratch.len >= sk {
+        scratch_off = call.scratch.offset;
+        local_scratch = Vec::new();
+    } else {
+        local_scratch = vec![0.0_f32; sk];
+        scratch_off = usize::MAX;
+    }
+    // Helper closures: read/write `i`-th score either from `storage`
+    // (when `scratch_off != usize::MAX`) or `local_scratch`.
+    macro_rules! score {
+        ($i:expr) => {
+            if scratch_off != usize::MAX {
+                storage[scratch_off + $i]
+            } else {
+                local_scratch[$i]
+            }
+        };
+    }
+    macro_rules! score_set {
+        ($i:expr, $v:expr) => {
+            if scratch_off != usize::MAX {
+                storage[scratch_off + $i] = $v;
+            } else {
+                local_scratch[$i] = $v;
+            }
+        };
+    }
+    macro_rules! score_mul {
+        ($i:expr, $v:expr) => {
+            if scratch_off != usize::MAX {
+                storage[scratch_off + $i] *= $v;
+            } else {
+                local_scratch[$i] *= $v;
+            }
+        };
+    }
 
     for b in 0..batch {
         for qh in 0..nqh {
@@ -108,7 +152,7 @@ pub fn attention(storage: &mut [f32], call: &AttentionCall) {
                 let mut max = f32::NEG_INFINITY;
                 for k in 0..sk {
                     if call.causal && (k as isize) > q as isize + cross_offset {
-                        scores[k] = f32::NEG_INFINITY;
+                        score_set!(k, f32::NEG_INFINITY);
                         continue;
                     }
                     let mut dot = 0.0_f32;
@@ -116,7 +160,7 @@ pub fn attention(storage: &mut [f32], call: &AttentionCall) {
                         dot += storage[q_off + d] * storage[k_plane + k * hd + d];
                     }
                     let s = dot * scale;
-                    scores[k] = s;
+                    score_set!(k, s);
                     if s > max {
                         max = s;
                     }
@@ -124,18 +168,19 @@ pub fn attention(storage: &mut [f32], call: &AttentionCall) {
 
                 // 2. softmax in-place over scores.
                 let mut sum = 0.0_f32;
-                for s in scores.iter_mut().take(sk) {
-                    let e = if s.is_finite() {
-                        libm::expf(*s - max)
+                for k in 0..sk {
+                    let cur = score!(k);
+                    let e = if cur.is_finite() {
+                        libm::expf(cur - max)
                     } else {
                         0.0
                     };
-                    *s = e;
+                    score_set!(k, e);
                     sum += e;
                 }
                 let inv = if sum > 0.0 { 1.0 / sum } else { 0.0 };
-                for s in scores.iter_mut().take(sk) {
-                    *s *= inv;
+                for k in 0..sk {
+                    score_mul!(k, inv);
                 }
 
                 // 3. out = scores @ V (single row of `head_dim`).
@@ -143,7 +188,7 @@ pub fn attention(storage: &mut [f32], call: &AttentionCall) {
                 for d in 0..hd {
                     let mut acc = 0.0_f32;
                     for k in 0..sk {
-                        acc += scores[k] * storage[v_plane + k * hd + d];
+                        acc += score!(k) * storage[v_plane + k * hd + d];
                     }
                     storage[out_off + d] = acc;
                 }
@@ -341,6 +386,7 @@ mod tests {
                 offset: 3 * n,
                 len: n,
             },
+            scratch: SlotSpan::empty(0),
             batch: 1,
             num_q_heads: 1,
             num_kv_heads: 1,
@@ -400,6 +446,7 @@ mod tests {
             k: SlotSpan { offset: 2, len: 1 },
             v: SlotSpan { offset: 3, len: 1 },
             output: SlotSpan { offset: 4, len: 2 },
+            scratch: SlotSpan::empty(0),
             batch: 1,
             num_q_heads: 2,
             num_kv_heads: 1,

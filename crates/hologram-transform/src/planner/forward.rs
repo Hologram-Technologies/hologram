@@ -22,11 +22,15 @@ use hologram_ops::{
     TransposeAttrs,
 };
 
-/// Lower a single forward node to its `KernelCall`.
+/// Lower a single forward node to its `KernelCall`. `op_scratch` is
+/// the per-node scratch span the planner reserved for ops that need
+/// it (currently only `Attention`); pass `SlotSpan::empty(0)` when
+/// no reservation is required.
 pub(super) fn lower_node(
     chain: &TransformChain,
     table: &AddressTable,
     node: &TransformNode,
+    op_scratch: SlotSpan,
 ) -> Result<KernelCall, PlanError> {
     check_arity(node)?;
     if let Some(kind) = unary_kind_of(node.op) {
@@ -113,7 +117,9 @@ pub(super) fn lower_node(
         SemanticOp::RotaryEmbedding(a) => {
             KernelCall::RotaryEmbedding(rotary_call(chain, table, node, a)?)
         }
-        SemanticOp::Attention(a) => KernelCall::Attention(attention_call(chain, table, node, a)?),
+        SemanticOp::Attention(a) => {
+            KernelCall::Attention(attention_call(chain, table, node, a, op_scratch)?)
+        }
         // The unary path is handled above; any remaining op is a planner gap.
         other => return Err(PlanError::UnsupportedOp(other.name())),
     })
@@ -687,6 +693,7 @@ fn attention_call(
     t: &AddressTable,
     n: &TransformNode,
     a: AttentionAttrs,
+    scratch: SlotSpan,
 ) -> Result<AttentionCall, PlanError> {
     if a.num_kv_heads == 0 || !a.num_q_heads.is_multiple_of(a.num_kv_heads) {
         return Err(PlanError::ShapeMismatch {
@@ -732,6 +739,7 @@ fn attention_call(
         k: t.in_span(n, 1),
         v: t.in_span(n, 2),
         output: t.out_span(n, 0),
+        scratch,
         batch: batch as u32,
         num_q_heads: a.num_q_heads,
         num_kv_heads: a.num_kv_heads,

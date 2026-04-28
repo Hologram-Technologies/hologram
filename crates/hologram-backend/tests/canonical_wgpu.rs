@@ -1838,6 +1838,7 @@ fn wgpu_attention_via_cpu_fallback_matches_reference() {
                 offset: 3 * n,
                 len: n,
             },
+            scratch: SlotSpan::empty(0),
             batch: 1,
             num_q_heads: 1,
             num_kv_heads: 1,

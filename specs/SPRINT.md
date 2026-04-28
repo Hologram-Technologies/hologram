@@ -284,8 +284,14 @@ plan → execute is fully connected.
   shortcircuit. `compute_reshape_alias_roots` walks `chain.nodes` in
   execution order; alias only applied when in/out tensors agree on
   `total_elements()` and `requires_grad`.
-- [ ] Workspace allocation for kernels that need scratch (e.g. im2col
-  Conv2d as a perf path).
+- [x] Workspace allocation for kernels that need scratch — initial
+  pass shipped. `AttentionCall` carries a `scratch: SlotSpan` field;
+  the planner reserves `seq_kv` floats per Attention node at the
+  tail of the workspace via `build_op_scratch`. Kernel uses the
+  span when supplied, falls back to a local `Vec` when empty (test
+  path). Forward only — `AttentionGradCall` still allocates locally
+  (two scratches: `probs` + `dp`); future work can extend the same
+  pattern. im2col Conv2d remains a future scratch consumer.
 - [x] Backend executors over the same `CompiledPlan` — done. `WgpuBackend`
   in `hologram-backend/src/canonical/wgpu.rs` ships in PR #6 with 51
   GPU-implemented variants conformance-validated against `CpuBackend`.

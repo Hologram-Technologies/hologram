@@ -22,10 +22,16 @@ use hologram_ops::SemanticOp;
 /// Compile a chain into a plan. Allocates only at compile time.
 pub fn compile(chain: &TransformChain) -> Result<CompiledPlan, PlanError> {
     let address_table = build_address_table(chain);
+    let tensor_workspace = total_workspace(&address_table);
+    // Per-node scratch reservations (currently only Attention).
+    // Scratch lives at the tail of the workspace, after every tensor
+    // and gradient slot. Keeps tensor offsets stable independent of
+    // op-scratch sizing.
+    let (op_scratch, total_workspace_elements) = build_op_scratch(chain, tensor_workspace)?;
     let workspace = WorkspaceLayout {
-        total_elements: total_workspace(&address_table),
+        total_elements: total_workspace_elements,
     };
-    let forward = lower_forward(chain, &address_table)?;
+    let forward = lower_forward(chain, &address_table, &op_scratch)?;
     let backward = lower_backward(chain, &address_table)?;
     Ok(CompiledPlan {
         forward,
@@ -33,6 +39,45 @@ pub fn compile(chain: &TransformChain) -> Result<CompiledPlan, PlanError> {
         address_table,
         workspace,
     })
+}
+
+/// Reserve per-node workspace scratch at the tail of the workspace.
+/// Returns `(op_scratch, total_workspace_elements)` where
+/// `op_scratch[i]` is the span for node `i` (`SlotSpan::empty(0)`
+/// for nodes that need none).
+fn build_op_scratch(
+    chain: &TransformChain,
+    mut cursor: usize,
+) -> Result<(Vec<SlotSpan>, usize), PlanError> {
+    let mut op_scratch = vec![SlotSpan::empty(0); chain.nodes.len()];
+    for (i, node) in chain.nodes.iter().enumerate() {
+        // Attention needs `seq_kv` floats per dispatch as the row-
+        // softmax buffer. Pull `seq_kv` from K's runtime shape
+        // (`dims[2]` in the canonical 4-D `[batch, n_heads, seq, head_dim]`
+        // layout).
+        if let SemanticOp::Attention(_) = node.op {
+            if node.inputs.len() < 2 {
+                continue;
+            }
+            let k_id = node.inputs[1].tensor;
+            let Some(k_tensor) = chain.tensor(k_id) else {
+                continue;
+            };
+            if k_tensor.dims.len() < 4 {
+                continue;
+            }
+            let seq_kv = k_tensor.dims[2];
+            if seq_kv == 0 {
+                continue;
+            }
+            op_scratch[i] = SlotSpan {
+                offset: cursor,
+                len: seq_kv,
+            };
+            cursor += seq_kv;
+        }
+    }
+    Ok((op_scratch, cursor))
 }
 
 fn build_address_table(chain: &TransformChain) -> AddressTable {
@@ -138,10 +183,15 @@ fn total_workspace(table: &AddressTable) -> usize {
 fn lower_forward(
     chain: &TransformChain,
     table: &AddressTable,
+    op_scratch: &[SlotSpan],
 ) -> Result<Box<[KernelCall]>, PlanError> {
     let mut out = Vec::with_capacity(chain.nodes.len());
-    for node in &chain.nodes {
-        out.push(forward::lower_node(chain, table, node)?);
+    for (i, node) in chain.nodes.iter().enumerate() {
+        let scratch = op_scratch
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| SlotSpan::empty(0));
+        out.push(forward::lower_node(chain, table, node, scratch)?);
     }
     Ok(out.into_boxed_slice())
 }
