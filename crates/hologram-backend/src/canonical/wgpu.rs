@@ -447,6 +447,19 @@ impl WgpuBackend {
 }
 
 impl CanonicalBackend for WgpuBackend {
+    // ADR-051 step 1: WgpuBackend opts into the trait machinery using
+    // CpuWorkspace as the workspace type for now (the per-call upload/
+    // download path keeps working). A device-resident WgpuWorkspace is
+    // the natural follow-up commit; this skeleton lets every other
+    // CanonicalBackend trait bound compile against the new shape.
+    type Workspace = hologram_transform::backend::CpuWorkspace;
+
+    fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
+        Ok(hologram_transform::backend::CpuWorkspace::with_capacity(
+            total_elements,
+        ))
+    }
+
     fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {
         match call {
             KernelCall::Add(c) => self.dispatch_add(storage, c),

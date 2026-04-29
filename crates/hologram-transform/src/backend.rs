@@ -24,7 +24,103 @@
 //! [`CpuBackend`]: self::CpuBackend
 
 use crate::error::ExecError;
-use crate::plan::KernelCall;
+use crate::plan::{KernelCall, SlotSpan};
+
+/// Host ↔ workspace bridge per ADR-051.
+///
+/// A [`BackendWorkspace`] is the backend-owned analogue of the
+/// host-side `&mut [f32]` storage slice. Host code seeds inputs and
+/// reads outputs through `write_span` / `read_span`; the backend
+/// itself dispatches against the workspace directly (no per-call
+/// transfer for device backends).
+///
+/// `CpuWorkspace` is a thin wrapper around a `Vec<f32>` — every
+/// span op is a slice copy. `WgpuWorkspace` (separate crate) owns a
+/// device buffer and uploads/downloads only at the explicit span
+/// boundaries.
+pub trait BackendWorkspace {
+    /// Element capacity of the workspace, in `f32` slots.
+    fn capacity(&self) -> usize;
+
+    /// Stamp host data into a workspace slot at the given span.
+    /// Used at plan boundaries (graph inputs, output read-back, KV
+    /// cache prefill). `data.len()` must equal `span.len`.
+    fn write_span(&mut self, span: SlotSpan, data: &[f32]) -> Result<(), ExecError>;
+
+    /// Read a span back to host. For device backends this is the only
+    /// place a transfer happens — the executor schedules these at plan
+    /// boundaries, never per dispatch.
+    fn read_span(&self, span: SlotSpan) -> Result<Vec<f32>, ExecError>;
+}
+
+/// Host-resident workspace: a plain `Vec<f32>` that implements
+/// [`BackendWorkspace`]. Used by [`CpuBackend`] and any other backend
+/// that operates on the host-side slice directly.
+#[derive(Debug, Clone, Default)]
+pub struct CpuWorkspace {
+    storage: Vec<f32>,
+}
+
+impl CpuWorkspace {
+    /// Allocate a zero-initialised workspace of the given element count.
+    #[must_use]
+    pub fn with_capacity(elements: usize) -> Self {
+        Self {
+            storage: vec![0.0; elements],
+        }
+    }
+
+    /// Borrow the underlying slice — the form `dispatch` expects.
+    #[inline]
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [f32] {
+        &mut self.storage
+    }
+
+    /// Borrow the underlying slice immutably.
+    #[inline]
+    #[must_use]
+    pub fn as_slice(&self) -> &[f32] {
+        &self.storage
+    }
+}
+
+impl BackendWorkspace for CpuWorkspace {
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.storage.len()
+    }
+
+    fn write_span(&mut self, span: SlotSpan, data: &[f32]) -> Result<(), ExecError> {
+        if data.len() != span.len {
+            return Err(ExecError::Backend(format!(
+                "write_span: data.len()={} != span.len={}",
+                data.len(),
+                span.len
+            )));
+        }
+        let end = span.offset + span.len;
+        if end > self.storage.len() {
+            return Err(ExecError::WorkspaceMismatch {
+                expected: end,
+                actual: self.storage.len(),
+            });
+        }
+        self.storage[span.offset..end].copy_from_slice(data);
+        Ok(())
+    }
+
+    fn read_span(&self, span: SlotSpan) -> Result<Vec<f32>, ExecError> {
+        let end = span.offset + span.len;
+        if end > self.storage.len() {
+            return Err(ExecError::WorkspaceMismatch {
+                expected: end,
+                actual: self.storage.len(),
+            });
+        }
+        Ok(self.storage[span.offset..end].to_vec())
+    }
+}
 
 /// A device-specific dispatcher for canonical [`KernelCall`]s.
 ///
@@ -33,7 +129,50 @@ use crate::plan::KernelCall;
 /// (referenced via `SlotSpan` offsets inside each call). For
 /// out-of-process backends (Metal/WebGPU) the slice is the host-side
 /// staging area; the backend syncs to/from device memory as needed.
+///
+/// ADR-051 adds the [`BackendWorkspace`] associated type so
+/// device-resident backends can keep storage on-device across calls.
+/// Backends that don't opt into residency use [`CpuWorkspace`] (a
+/// `Vec<f32>` wrapper) and lower `dispatch_resident` onto the existing
+/// slice-based [`Self::dispatch`].
 pub trait CanonicalBackend {
+    /// Backend-owned workspace handle. CPU backends use
+    /// [`CpuWorkspace`]; device backends provide a wrapper over a
+    /// device-resident buffer.
+    type Workspace: BackendWorkspace;
+
+    /// Allocate a workspace sized for the plan. Called once before
+    /// `run_resident` runs the call sequence.
+    fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError>;
+
+    /// Per-call dispatch operating on the device-resident workspace.
+    /// Default impl falls through to [`Self::dispatch`] using the host
+    /// slice (works for `CpuBackend` and any backend whose
+    /// `Workspace = CpuWorkspace`).
+    fn dispatch_resident(
+        &mut self,
+        ws: &mut Self::Workspace,
+        call: &KernelCall,
+    ) -> Result<(), ExecError> {
+        let _ = (ws, call);
+        Err(ExecError::Backend(
+            "backend does not implement dispatch_resident; use dispatch(&mut [f32], …) instead"
+                .into(),
+        ))
+    }
+
+    /// Run a sequence of calls against the resident workspace.
+    fn run_resident(
+        &mut self,
+        ws: &mut Self::Workspace,
+        calls: &[KernelCall],
+    ) -> Result<(), ExecError> {
+        for call in calls {
+            self.dispatch_resident(ws, call)?;
+        }
+        Ok(())
+    }
+
     /// Execute one canonical kernel call.
     fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError>;
 
@@ -77,6 +216,22 @@ impl CpuBackend {
 }
 
 impl CanonicalBackend for CpuBackend {
+    type Workspace = CpuWorkspace;
+
+    fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
+        Ok(CpuWorkspace::with_capacity(total_elements))
+    }
+
+    fn dispatch_resident(
+        &mut self,
+        ws: &mut Self::Workspace,
+        call: &KernelCall,
+    ) -> Result<(), ExecError> {
+        // CPU residency is the host slice itself — no transfer.
+        hologram_ops::dispatch(ws.as_mut_slice(), call);
+        Ok(())
+    }
+
     #[inline]
     fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {
         hologram_ops::dispatch(storage, call);
@@ -132,6 +287,23 @@ impl<Inner: CanonicalBackend> TraceBackend<Inner> {
 }
 
 impl<Inner: CanonicalBackend> CanonicalBackend for TraceBackend<Inner> {
+    type Workspace = Inner::Workspace;
+
+    fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
+        self.inner.alloc_workspace(total_elements)
+    }
+
+    fn dispatch_resident(
+        &mut self,
+        ws: &mut Self::Workspace,
+        call: &KernelCall,
+    ) -> Result<(), ExecError> {
+        self.history.push(TraceEntry {
+            name: kernel_call_name(call),
+        });
+        self.inner.dispatch_resident(ws, call)
+    }
+
     fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {
         self.history.push(TraceEntry {
             name: kernel_call_name(call),
@@ -245,6 +417,12 @@ mod tests {
     }
 
     impl CanonicalBackend for CountingBackend {
+        type Workspace = CpuWorkspace;
+
+        fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
+            Ok(CpuWorkspace::with_capacity(total_elements))
+        }
+
         fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {
             self.calls += 1;
             // Still execute on CPU so downstream values are correct.
@@ -254,6 +432,44 @@ mod tests {
         fn name(&self) -> &'static str {
             "counting"
         }
+    }
+
+    #[test]
+    fn cpu_backend_resident_path_round_trips_an_add() {
+        // Write inputs through the BackendWorkspace seam, run a single
+        // Add via dispatch_resident, read the output back. This is the
+        // contract device backends will satisfy once they implement a
+        // device-resident Workspace.
+        let mut be = CpuBackend::new();
+        let mut ws = be.alloc_workspace(3).unwrap();
+        ws.write_span(SlotSpan { offset: 0, len: 1 }, &[1.0])
+            .unwrap();
+        ws.write_span(SlotSpan { offset: 1, len: 1 }, &[2.0])
+            .unwrap();
+        let call = KernelCall::Add(AddCall {
+            a: SlotSpan { offset: 0, len: 1 },
+            b: SlotSpan { offset: 1, len: 1 },
+            c: SlotSpan { offset: 2, len: 1 },
+        });
+        be.dispatch_resident(&mut ws, &call).unwrap();
+        let out = ws.read_span(SlotSpan { offset: 2, len: 1 }).unwrap();
+        assert_eq!(out, vec![3.0]);
+    }
+
+    #[test]
+    fn cpu_workspace_write_span_rejects_size_mismatch() {
+        let mut ws = CpuWorkspace::with_capacity(4);
+        let err = ws
+            .write_span(SlotSpan { offset: 0, len: 2 }, &[1.0])
+            .unwrap_err();
+        assert!(matches!(err, ExecError::Backend(_)));
+    }
+
+    #[test]
+    fn cpu_workspace_read_span_bounds_checked() {
+        let ws = CpuWorkspace::with_capacity(2);
+        let err = ws.read_span(SlotSpan { offset: 1, len: 5 }).unwrap_err();
+        assert!(matches!(err, ExecError::WorkspaceMismatch { .. }));
     }
 
     #[test]

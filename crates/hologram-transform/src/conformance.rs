@@ -248,6 +248,12 @@ mod tests {
     /// harness actually catches divergence, not just rubber-stamps.
     struct WrongBackend;
     impl CanonicalBackend for WrongBackend {
+        type Workspace = crate::backend::CpuWorkspace;
+
+        fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
+            Ok(crate::backend::CpuWorkspace::with_capacity(total_elements))
+        }
+
         fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {
             // Run the real op, then perturb the destination of every Add.
             hologram_ops::dispatch(storage, call);
