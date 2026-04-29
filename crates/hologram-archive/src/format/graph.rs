@@ -4,13 +4,15 @@
 //! unsuitable for serialization. `SerializedGraph` extracts only live nodes
 //! into a dense representation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use hologram_core::op::FloatDType;
 use hologram_graph::constant::{ConstantId, ConstantStore};
 use hologram_graph::graph::node::{InputSource, Node, NodeId};
 use hologram_graph::graph::GraphOp;
 use hologram_graph::Graph;
+
+use crate::error::{ArchiveError, ArchiveResult};
 
 /// Compact, rkyv-serializable snapshot of a Graph.
 ///
@@ -266,6 +268,47 @@ impl SerializedGraph {
         out
     }
 
+    /// Validate v3 shape-coverage requirements per ADR-053.
+    ///
+    /// A v3-conformant `SerializedGraph` must populate `node_shapes` for
+    /// every non-`Output`/non-`Constant` node and `constant_shapes` for
+    /// every `ConstantId` referenced by a `GraphOp::Constant` node.
+    /// Returns the first missing entry as an error so the writer can
+    /// surface it to the caller, rather than emitting a silently
+    /// incomplete archive.
+    ///
+    /// `Input`, `Output`, and `Constant` nodes are exempt: `Input`'s
+    /// shape comes from the runtime caller seeding the arena, `Output`
+    /// is a passthrough wrapper, and `Constant`'s shape lives in
+    /// `constant_shapes` rather than `node_shapes`.
+    pub fn validate_shape_coverage(&self) -> ArchiveResult<()> {
+        let nodes_with_shape: HashSet<NodeId> =
+            self.node_shapes.iter().map(|(id, _)| *id).collect();
+        let constants_with_shape: HashSet<ConstantId> =
+            self.constant_shapes.iter().map(|(id, _)| *id).collect();
+
+        for node in &self.nodes {
+            match &node.op {
+                GraphOp::Input | GraphOp::Output => continue,
+                GraphOp::Constant(cid) => {
+                    if !constants_with_shape.contains(cid) {
+                        return Err(ArchiveError::MissingConstantShape {
+                            constant_id: cid.raw(),
+                        });
+                    }
+                }
+                _ => {
+                    if !nodes_with_shape.contains(&node.id) {
+                        return Err(ArchiveError::MissingNodeShape {
+                            node_id: node.id.index(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Build a flat `Vec<Option<&[usize]>>` indexed by `node_id.index()`.
     ///
     /// Zero-clone: borrows shapes from `self.node_shapes`, no cloning.
@@ -393,6 +436,51 @@ mod tests {
         let sg = SerializedGraph::from_graph(&g);
         assert_eq!(sg.node_count(), 1);
         assert!(!sg.constants.is_empty());
+    }
+
+    #[test]
+    fn validate_shape_coverage_passes_when_populated() {
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .output("y", 1)
+            .build();
+        let mut sg = SerializedGraph::from_graph(&g);
+        // Populate the Relu's shape (Input is exempt; Output not present here).
+        sg.node_shapes.push((NodeId::new(1, 0), vec![4]));
+        sg.validate_shape_coverage().expect("v3 coverage satisfied");
+    }
+
+    #[test]
+    fn validate_shape_coverage_rejects_missing_node_shape() {
+        let g = GraphBuilder::new()
+            .input("x")
+            .node_from_graph_input(GraphOp::Input, 0)
+            .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .output("y", 1)
+            .build();
+        let sg = SerializedGraph::from_graph(&g);
+        // node_shapes is empty — Relu is non-exempt → error.
+        match sg.validate_shape_coverage() {
+            Err(ArchiveError::MissingNodeShape { node_id }) => assert_eq!(node_id, 1),
+            other => panic!("expected MissingNodeShape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_shape_coverage_rejects_missing_constant_shape() {
+        let g = GraphBuilder::new()
+            .constant(ConstantData::Bytes(vec![42]))
+            .build();
+        let sg = SerializedGraph::from_graph(&g);
+        // The constant node references ConstantId(0) but constant_shapes is empty.
+        match sg.validate_shape_coverage() {
+            Err(ArchiveError::MissingConstantShape { constant_id }) => {
+                assert_eq!(constant_id, 0);
+            }
+            other => panic!("expected MissingConstantShape, got {other:?}"),
+        }
     }
 
     #[test]

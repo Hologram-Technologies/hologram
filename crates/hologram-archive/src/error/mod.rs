@@ -33,6 +33,14 @@ pub enum ArchiveError {
     Io(io::Error),
     /// Graph serialization error.
     GraphError(String),
+    /// v3 archive is missing the required shape metadata for a node.
+    /// Per ADR-053, v3 archives must populate
+    /// [`SerializedGraph::node_shapes`] for every dispatch-producing node.
+    MissingNodeShape { node_id: u32 },
+    /// v3 archive is missing the required shape metadata for a constant.
+    /// Per ADR-053, v3 archives must populate
+    /// [`SerializedGraph::constant_shapes`] for every referenced constant.
+    MissingConstantShape { constant_id: u32 },
 }
 
 impl fmt::Display for ArchiveError {
@@ -62,6 +70,18 @@ impl fmt::Display for ArchiveError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::GraphError(msg) => {
                 write!(f, "graph error: {msg}")
+            }
+            Self::MissingNodeShape { node_id } => {
+                write!(
+                    f,
+                    "v3 archive missing required node_shapes entry for node {node_id}"
+                )
+            }
+            Self::MissingConstantShape { constant_id } => {
+                write!(
+                    f,
+                    "v3 archive missing required constant_shapes entry for constant {constant_id}"
+                )
             }
         }
     }

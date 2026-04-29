@@ -10,7 +10,17 @@ pub const HOLO_MAGIC: [u8; 4] = *b"HOLO";
 pub const PAGE_SIZE: u64 = 4096;
 
 /// Current archive format version.
-pub const FORMAT_VERSION: u32 = 2;
+///
+/// Per ADR-053, v3 mandates per-tensor shape metadata coverage —
+/// `SerializedGraph::node_shapes` and `constant_shapes` are populated
+/// for every dispatch-producing node and every referenced constant.
+/// v2 archives are still readable via a compatibility shim that
+/// synthesises shapes from runtime metadata at load time.
+pub const FORMAT_VERSION: u32 = 3;
+
+/// Earlier supported format version (read-only; written archives are
+/// always [`FORMAT_VERSION`]).
+pub const LEGACY_FORMAT_VERSION_V2: u32 = 2;
 
 /// Align an offset to the next page boundary.
 #[inline]

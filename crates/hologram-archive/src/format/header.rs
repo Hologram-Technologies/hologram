@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use super::{FORMAT_VERSION, HOLO_MAGIC};
+use super::{FORMAT_VERSION, HOLO_MAGIC, LEGACY_FORMAT_VERSION_V2};
 
 /// Fixed size of the serialized header in bytes.
 pub const HEADER_SIZE: usize = 184;
@@ -130,10 +130,18 @@ impl HoloHeader {
         self.magic == HOLO_MAGIC
     }
 
-    /// Whether the format version is supported (v2 and v3).
+    /// Whether the format version is supported (v2 read-only, v3 current).
     #[must_use]
     pub fn is_supported_version(&self) -> bool {
-        self.version == FORMAT_VERSION || self.version == 3
+        self.version == FORMAT_VERSION || self.version == LEGACY_FORMAT_VERSION_V2
+    }
+
+    /// Whether this archive needs the v2 shape-synthesis compat shim.
+    /// Per ADR-053, v3 archives carry full shape metadata; v2 archives
+    /// load through a shim that synthesises shapes from runtime data.
+    #[must_use]
+    pub fn needs_v2_shape_compat(&self) -> bool {
+        self.version == LEGACY_FORMAT_VERSION_V2
     }
 
     /// Whether this archive uses content-addressed weight resolution.
