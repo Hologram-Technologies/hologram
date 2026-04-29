@@ -420,6 +420,18 @@ pub(crate) fn seed_arena<'a>(
                 if let Some(dtype) = compiled_dtypes.get(&node.id) {
                     arena.set_elem_size(node.id, dtype.byte_size());
                 }
+                // ADR-053: pre-seed the ShapeRegistry from compiled shapes
+                // for every dispatch-producing node. Once seeded, the
+                // hot-path dispatch can read input shapes directly without
+                // falling through to shape_resolve heuristics — that
+                // fallback chain is removed in step 5.
+                if let Some(shape) = compiled_shapes.get(&node.id) {
+                    let dtype = compiled_dtypes
+                        .get(&node.id)
+                        .copied()
+                        .unwrap_or(hologram_core::op::FloatDType::F32);
+                    arena.set_shape(node.id, hologram_shape::TensorShape::new(dtype, shape));
+                }
             }
         }
     }
