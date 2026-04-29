@@ -17,14 +17,18 @@ pub struct TripleDatum {
 
 impl TripleDatum {
     /// Additive identity.
-    pub const ZERO: Self = Self::new(0);
+    pub fn zero() -> Self {
+        Self::new(0)
+    }
     /// Multiplicative identity / ring generator.
-    pub const PI1: Self = Self::new(1);
+    pub fn pi1() -> Self {
+        Self::new(1)
+    }
 
     /// Create a datum from a raw 24-bit value. High byte is masked to 0.
     #[inline]
     #[must_use]
-    pub const fn new(value: u32) -> Self {
+    pub fn new(value: u32) -> Self {
         let v = value & 0x00FF_FFFF;
         Self {
             value: v,
@@ -132,7 +136,7 @@ impl core::fmt::Display for TripleDatum {
 impl Default for TripleDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::zero()
     }
 }
 
@@ -160,17 +164,23 @@ impl From<TripleDatum> for u32 {
 pub struct TripleAddress {
     value: u32,
     glyph_buf: [u8; 12], // 4 × 3-byte UTF-8 Braille chars
+    /// Per ADR-052 / Amendment 43 §2: `header(2) || le_bytes(x, 3)`.
+    canonical_buf: [u8; 4],
+    /// Pre-computed `"blake3:<hex>"` digest of `canonical_buf`.
+    digest_buf: [u8; crate::element::DIGEST_STR_LEN],
 }
 
 impl TripleAddress {
     /// Create a Braille address from a 24-bit value.
     #[must_use]
-    pub const fn from_triple(value: u32) -> Self {
+    pub fn from_triple(value: u32) -> Self {
         let v = value & 0x00FF_FFFF;
         let g0 = (v & 0x3F) as u8;
         let g1 = ((v >> 6) & 0x3F) as u8;
         let g2 = ((v >> 12) & 0x3F) as u8;
         let g3 = ((v >> 18) & 0x3F) as u8;
+        let canonical_buf = [0x02, v as u8, (v >> 8) as u8, (v >> 16) as u8];
+        let digest_buf = crate::element::blake3_digest_str(&canonical_buf);
         Self {
             value: v,
             glyph_buf: [
@@ -187,6 +197,8 @@ impl TripleAddress {
                 0xA0,
                 0x80 + g3,
             ],
+            canonical_buf,
+            digest_buf,
         }
     }
 
@@ -211,43 +223,41 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for TripleDatum {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         24
     }
 
+    /// Per ADR-052: stratum is the ring-level index k. Q2 → 2.
     fn stratum(&self) -> u64 {
-        self.value.count_ones() as u64
+        2
     }
 
     fn spectrum(&self) -> u64 {
         self.value as u64
     }
 
-    type Address = TripleAddress;
+    type Element = TripleAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for TripleAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl uor_foundation::kernel::address::Element<HoloPrimitives> for TripleAddress {
     fn length(&self) -> u64 {
         4 // 4 Braille glyphs
     }
 
     fn addresses(&self) -> &str {
-        ""
-    }
-
-    fn digest(&self) -> &str {
         self.as_str()
     }
 
-    fn quantum(&self) -> u64 {
+    fn digest(&self) -> &str {
+        // SAFETY: digest_buf is ASCII (`blake3:` + lowercase hex).
+        unsafe { core::str::from_utf8_unchecked(&self.digest_buf) }
+    }
+
+    fn witt_length(&self) -> u64 {
         24
     }
 
@@ -257,8 +267,8 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for TripleAddress 
     }
 
     #[inline]
-    fn canonical_bytes(&self) -> &str {
-        self.as_str()
+    fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_buf
     }
 }
 
@@ -268,8 +278,8 @@ mod tests {
 
     #[test]
     fn zero_and_pi1() {
-        assert_eq!(TripleDatum::ZERO.value(), 0);
-        assert_eq!(TripleDatum::PI1.value(), 1);
+        assert_eq!(TripleDatum::zero().value(), 0);
+        assert_eq!(TripleDatum::pi1().value(), 1);
     }
 
     #[test]
@@ -326,19 +336,17 @@ mod tests {
         use uor_foundation::kernel::schema::Datum;
         let d = TripleDatum::new(0xABCDEF);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 0xABCDEF);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 24);
-        assert_eq!(
-            Datum::<HoloPrimitives>::stratum(&d),
-            (0xABCDEFu32).count_ones() as u64
-        );
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 24);
+        // Per ADR-052: stratum is the ring-level index k. Q2 → 2.
+        assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 2);
     }
 
     #[test]
     fn address_length() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let a = TripleAddress::from_triple(0);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 4);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 24);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 4);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&a), 24);
         assert_eq!(a.as_str().chars().count(), 4); // 4 Braille glyphs
     }
 
@@ -356,7 +364,7 @@ mod tests {
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(TripleDatum::default(), TripleDatum::ZERO);
+        assert_eq!(TripleDatum::default(), TripleDatum::zero());
     }
 
     #[test]

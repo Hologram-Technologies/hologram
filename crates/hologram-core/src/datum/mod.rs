@@ -19,7 +19,7 @@ impl ByteDatum {
     /// Create a datum from a raw byte value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u8) -> Self {
+    pub fn new(value: u8) -> Self {
         let spectrum = Self::make_spectrum(value);
         let address = ByteAddress::from_byte(value);
         Self {
@@ -73,36 +73,43 @@ impl ByteDatum {
     /// Negation: `(-x) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn neg(self) -> Self {
+    #[allow(clippy::should_implement_trait)]
+    pub fn neg(self) -> Self {
         Self::new(self.value.wrapping_neg())
     }
 
     /// Bitwise complement.
     #[inline]
     #[must_use]
-    pub const fn bnot(self) -> Self {
+    pub fn bnot(self) -> Self {
         Self::new(!self.value)
     }
 
     /// Successor: `(x + 1) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn succ(self) -> Self {
+    pub fn succ(self) -> Self {
         Self::new(self.value.wrapping_add(1))
     }
 
     /// Predecessor: `(x - 1) mod 256`.
     #[inline]
     #[must_use]
-    pub const fn pred(self) -> Self {
+    pub fn pred(self) -> Self {
         Self::new(self.value.wrapping_sub(1))
     }
 
     /// The zero datum (additive identity).
-    pub const ZERO: Self = Self::new(0);
+    #[must_use]
+    pub fn zero() -> Self {
+        Self::new(0)
+    }
 
     /// The generator pi_1 (value = 1).
-    pub const PI1: Self = Self::new(1);
+    #[must_use]
+    pub fn pi1() -> Self {
+        Self::new(1)
+    }
 }
 
 impl core::fmt::Debug for ByteDatum {
@@ -120,7 +127,7 @@ impl core::fmt::Display for ByteDatum {
 impl Default for ByteDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::zero()
     }
 }
 
@@ -152,21 +159,31 @@ impl From<ByteDatum> for u8 {
 pub struct ByteAddress {
     value: u8,
     glyph_buf: [u8; 6],
+    /// Per ADR-052 / Amendment 43 §2: `header(0) || le_bytes(x, 1)`.
+    canonical_buf: [u8; 2],
+    /// Pre-computed `"blake3:<hex>"` digest string.
+    digest_buf: [u8; crate::element::DIGEST_STR_LEN],
 }
 
 impl ByteAddress {
     /// The zero address (byte value 0).
-    pub const ZERO: Self = Self::from_byte(0);
+    #[must_use]
+    pub fn zero() -> Self {
+        Self::from_byte(0)
+    }
 
     /// Create a Braille address from a byte value.
     #[must_use]
-    pub const fn from_byte(value: u8) -> Self {
+    pub fn from_byte(value: u8) -> Self {
         let lo6 = value & 0x3F;
         let hi2 = (value >> 6) & 0x03;
-        // Braille U+2800..U+283F → UTF-8: E2 A0 {80+offset}
+        let canonical_buf = [0x00, value];
+        let digest_buf = crate::element::blake3_digest_str(&canonical_buf);
         Self {
             value,
             glyph_buf: [0xE2, 0xA0, 0x80 + lo6, 0xE2, 0xA0, 0x80 + hi2],
+            canonical_buf,
+            digest_buf,
         }
     }
 
@@ -191,43 +208,41 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for ByteDatum {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         8
     }
 
+    /// Per ADR-052: stratum is the ring-level index k. Q0 → 0.
     fn stratum(&self) -> u64 {
-        self.value.count_ones() as u64
+        0
     }
 
     fn spectrum(&self) -> u64 {
         self.value as u64
     }
 
-    type Address = ByteAddress;
+    type Element = ByteAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl uor_foundation::kernel::address::Element<HoloPrimitives> for ByteAddress {
     fn length(&self) -> u64 {
         2
     }
 
     fn addresses(&self) -> &str {
-        ""
-    }
-
-    fn digest(&self) -> &str {
         self.as_str()
     }
 
-    fn quantum(&self) -> u64 {
+    fn digest(&self) -> &str {
+        // SAFETY: digest_buf is ASCII (`blake3:` + lowercase hex).
+        unsafe { core::str::from_utf8_unchecked(&self.digest_buf) }
+    }
+
+    fn witt_length(&self) -> u64 {
         8
     }
 
@@ -237,8 +252,8 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for ByteAddress {
     }
 
     #[inline]
-    fn canonical_bytes(&self) -> &str {
-        self.as_str()
+    fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_buf
     }
 }
 
@@ -258,14 +273,14 @@ pub struct RingDatum {
     /// The ring element value, masked to the level's byte width.
     pub value: u64,
     /// The quantum level of this datum.
-    pub level: uor_foundation::QuantumLevel,
+    pub level: uor_foundation::WittLevel,
 }
 
 impl RingDatum {
     /// Create a datum at the given quantum level.
     /// The value is masked to the ring modulus.
     #[inline]
-    pub fn new(value: u64, level: uor_foundation::QuantumLevel) -> Self {
+    pub fn new(value: u64, level: uor_foundation::WittLevel) -> Self {
         let bw = level.byte_width();
         let bits = (bw as u32) * 8;
         let mask = if bits >= 64 {
@@ -300,7 +315,7 @@ impl RingDatum {
     /// Construct from a ByteDatum (Q0).
     #[inline]
     pub fn from_byte_datum(d: &ByteDatum) -> Self {
-        Self::new(d.val() as u64, uor_foundation::QuantumLevel::Q0)
+        Self::new(d.val() as u64, uor_foundation::WittLevel::W8)
     }
 }
 
@@ -310,13 +325,14 @@ mod tests {
 
     #[test]
     fn ring_datum_masks_value() {
-        let d = RingDatum::new(300, uor_foundation::QuantumLevel::Q0);
+        let d = RingDatum::new(300, uor_foundation::WittLevel::W8);
         assert_eq!(d.value, 44); // 300 & 0xFF = 44
     }
 
     #[test]
     fn ring_datum_q7_no_mask() {
-        let d = RingDatum::new(u64::MAX, uor_foundation::QuantumLevel::new(7));
+        // Q7 = native u64 = witt_length 64 in 0.3.0 naming.
+        let d = RingDatum::new(u64::MAX, uor_foundation::WittLevel::new(64));
         assert_eq!(d.value, u64::MAX);
     }
 
@@ -325,7 +341,7 @@ mod tests {
         let bd = ByteDatum::new(42);
         let rd = RingDatum::from_byte_datum(&bd);
         assert_eq!(rd.value, 42);
-        assert_eq!(rd.level, uor_foundation::QuantumLevel::Q0);
+        assert_eq!(rd.level, uor_foundation::WittLevel::W8);
     }
 
     #[test]
@@ -399,7 +415,7 @@ mod tests {
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(ByteDatum::default(), ByteDatum::ZERO);
+        assert_eq!(ByteDatum::default(), ByteDatum::zero());
     }
 
     #[test]
@@ -415,15 +431,18 @@ mod tests {
         use uor_foundation::kernel::schema::Datum;
         let d = ByteDatum::new(42);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 42);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 8);
-        assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 3);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 8);
+        // Per ADR-052: stratum is the ring-level index k. Q0 → 0.
+        // (The old popcount interpretation lives on the inherent
+        // `Datum::stratum` u8 method.)
+        assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 0);
     }
 
     #[test]
     fn address_trait_impl() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let a = ByteAddress::from_byte(42);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 2);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 8);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 2);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&a), 8);
     }
 }

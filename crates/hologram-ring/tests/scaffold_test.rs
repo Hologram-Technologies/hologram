@@ -203,13 +203,13 @@ fn activation_op_exists() {
     let _ = ActivationOp::Tanh;
 }
 
-// ── PrismPrimitives implements uor_foundation::Primitives ───────────────
+// ── PrismPrimitives implements uor_foundation::HostTypes ───────────────
 
 #[test]
 fn prism_primitives_exists() {
     use hologram_ring::PrismPrimitives;
     // This test just verifies the type exists and implements the trait.
     // The trait bound is checked at compile time.
-    fn assert_primitives<T: uor_foundation::Primitives>() {}
+    fn assert_primitives<T: uor_foundation::HostTypes>() {}
     assert_primitives::<PrismPrimitives>();
 }

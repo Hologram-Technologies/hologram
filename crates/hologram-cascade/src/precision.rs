@@ -9,7 +9,7 @@ use hologram_core::op::RingLevel;
 use hologram_core::view::ElementWiseView;
 use hologram_graph::graph::node::NodeId;
 use hologram_graph::graph::{Graph, GraphOp};
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Mean stratum (Hamming weight) of a 256-entry output distribution.
 #[inline]
@@ -46,11 +46,11 @@ pub fn select_ring_level(table: &[u8; 256]) -> QuantumLevel {
     let s = mean_stratum_q0(table);
     let c = mean_curvature_q0(table);
     if s > STRATUM_Q2_THRESHOLD {
-        QuantumLevel::Q2
+        QuantumLevel::W24
     } else if s > STRATUM_Q1_THRESHOLD || c > CURVATURE_Q1_THRESHOLD {
-        QuantumLevel::Q1
+        QuantumLevel::W16
     } else {
-        QuantumLevel::Q0
+        QuantumLevel::W8
     }
 }
 
@@ -86,12 +86,12 @@ pub fn promote_prim_ring_levels(graph: &mut Graph) -> usize {
                 None => continue,
             }
         } else {
-            let mut max_level = QuantumLevel::Q0;
+            let mut max_level = QuantumLevel::W8;
             for pid in &pred_ids {
                 if let Some(pred) = graph.get(*pid) {
                     if let Some(view) = pred.op.to_view() {
                         let lv = select_ring_level_for_view(&view);
-                        if lv.index() > max_level.index() {
+                        if lv.witt_length() > max_level.witt_length() {
                             max_level = lv;
                         }
                     }
@@ -100,7 +100,7 @@ pub fn promote_prim_ring_levels(graph: &mut Graph) -> usize {
             max_level
         };
 
-        if level == QuantumLevel::Q0 {
+        if level == QuantumLevel::W8 {
             continue;
         }
 
@@ -128,12 +128,12 @@ mod tests {
 
     #[test]
     fn constant_zero_table_is_q0() {
-        assert_eq!(select_ring_level(&all_same_table(0)), QuantumLevel::Q0);
+        assert_eq!(select_ring_level(&all_same_table(0)), QuantumLevel::W8);
     }
 
     #[test]
     fn all_ff_table_is_q2() {
-        assert_eq!(select_ring_level(&all_same_table(0xFF)), QuantumLevel::Q2);
+        assert_eq!(select_ring_level(&all_same_table(0xFF)), QuantumLevel::W24);
     }
 
     #[test]

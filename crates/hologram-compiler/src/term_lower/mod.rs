@@ -289,7 +289,7 @@ mod tests {
     use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
 
     #[test]
     fn lower_integer_literal() {
@@ -298,7 +298,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -319,7 +319,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -342,7 +342,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -376,7 +376,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -398,7 +398,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            QuantumLevel::W16,
             12.0,
             &[VerificationDomain::Algebraic],
         );
@@ -422,7 +422,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                QuantumLevel::Q0,
+                QuantumLevel::W8,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -458,7 +458,7 @@ mod tests {
             let mut unit = HoloCompileUnit::new(
                 arena,
                 root,
-                QuantumLevel::Q0,
+                QuantumLevel::W8,
                 6.0,
                 &[VerificationDomain::Algebraic],
             );
@@ -488,7 +488,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -506,7 +506,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -547,7 +547,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -569,7 +569,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -593,7 +593,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );

@@ -70,10 +70,10 @@ fn perf_curvature_flux_query() {
 #[test]
 fn perf_carry_lift_q0_q1() {
     use hologram_core::carry::lift;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
     let mut val = 0u64;
     assert_throughput(
-        || val = lift(black_box(42u64), QuantumLevel::Q0, QuantumLevel::Q1),
+        || val = lift(black_box(42u64), QuantumLevel::W8, QuantumLevel::W16),
         1_000_000,
         10, // 1M lifts in < 10ms
         "lift",

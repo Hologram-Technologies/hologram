@@ -116,7 +116,7 @@ mod tests {
     use hologram_core::op::PrimOp;
     use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
 
     #[test]
     fn preflight_passes_valid_unit() {
@@ -131,7 +131,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -148,7 +148,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             5.0, // below Q0 minimum of 5.545
             &[VerificationDomain::Algebraic],
         );
@@ -166,7 +166,7 @@ mod tests {
     fn preflight_rejects_missing_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        let mut unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
+        let mut unit = HoloCompileUnit::new(arena, root, QuantumLevel::W8, 6.0, &[]);
 
         let result = run_preflight(&mut unit);
         assert!(result.is_err());
@@ -183,7 +183,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -203,7 +203,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -214,7 +214,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             10.0, // different budget — should not affect address
             &[
                 VerificationDomain::Algebraic,
@@ -236,7 +236,7 @@ mod tests {
         let mut u1 = HoloCompileUnit::new(
             arena1,
             r1,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -247,7 +247,7 @@ mod tests {
         let mut u2 = HoloCompileUnit::new(
             arena2,
             r2,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );

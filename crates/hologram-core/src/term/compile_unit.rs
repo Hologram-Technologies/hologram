@@ -12,7 +12,7 @@ use crate::HoloPrimitives;
 use super::{Assertion, Binding, TermArena, TermId, TypeId};
 
 use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Maximum number of let-bindings per compile unit.
 pub const MAX_BINDINGS: usize = 64;
@@ -183,7 +183,7 @@ static HOLO_TERM_SINGLETON: HoloTerm = HoloTerm;
 
 /// Content-addressed identifier wrapping a BLAKE3 hash.
 ///
-/// Implements `uor_foundation::kernel::address::Address<HoloPrimitives>`.
+/// Implements `uor_foundation::kernel::address::Element<HoloPrimitives>`.
 /// The digest is a 64-character lowercase hex string of the 32-byte BLAKE3 hash.
 /// The glyph is a 2-character Braille encoding of the first byte.
 pub struct HoloAddress {
@@ -234,18 +234,15 @@ impl HoloAddress {
 
 const HEX_CHARS: [u8; 16] = *b"0123456789abcdef";
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for HoloAddress {
-    fn glyph(&self) -> &str {
-        // SAFETY: glyph_buf contains valid UTF-8 Braille characters.
-        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
-    }
-
+impl uor_foundation::kernel::address::Element<HoloPrimitives> for HoloAddress {
     fn length(&self) -> u64 {
         32
     }
 
     fn addresses(&self) -> &str {
-        self.digest()
+        // The Braille glyph string of the first byte, kept for display.
+        // SAFETY: glyph_buf contains valid UTF-8 Braille characters.
+        unsafe { core::str::from_utf8_unchecked(&self.glyph_buf) }
     }
 
     fn digest(&self) -> &str {
@@ -257,11 +254,13 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for HoloAddress {
         "blake3"
     }
 
-    fn canonical_bytes(&self) -> &str {
-        self.digest()
+    /// Per ADR-052: canonical_bytes are the bytes that hash to digest.
+    /// For `HoloAddress` these are the raw 32-byte BLAKE3 hash bytes.
+    fn canonical_bytes(&self) -> &[u8] {
+        &self.hash
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         256 // 8-bit address space
     }
 }
@@ -276,7 +275,7 @@ impl core::fmt::Debug for HoloAddress {
 
 // ── CompileUnit trait implementation ──────────────────────────────────────────
 
-impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompileUnit {
+impl uor_foundation::kernel::reduction::CompileUnit<HoloPrimitives> for HoloCompileUnit {
     type TermExpression = HoloTerm;
 
     #[inline]
@@ -285,7 +284,7 @@ impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompil
     }
 
     #[inline]
-    fn unit_quantum_level(&self) -> QuantumLevel {
+    fn unit_witt_level(&self) -> QuantumLevel {
         self.quantum_level
     }
 
@@ -294,13 +293,20 @@ impl uor_foundation::kernel::cascade::CompileUnit<HoloPrimitives> for HoloCompil
     }
 
     #[inline]
-    fn thermodynamic_budget(&self) -> f64 {
-        self.thermodynamic_budget
+    fn thermodynamic_budget(&self) -> &str {
+        // 0.3.0 returns &H::HostString = &str. We store the budget as
+        // f64 so format it lazily; this is allocator-bounded but used
+        // only at trait-driven code paths.
+        // For now, return an empty string sentinel — real consumers
+        // read `self.thermodynamic_budget` directly via the inherent
+        // field. Future ADR can introduce a stored string buffer if
+        // the trait method becomes load-bearing.
+        ""
     }
 
-    type Address = HoloAddress;
+    type Element = HoloAddress;
 
-    fn unit_address(&self) -> &Self::Address {
+    fn unit_address(&self) -> &Self::Element {
         &self.address
     }
 }
@@ -375,7 +381,7 @@ mod tests {
     use super::*;
     use crate::op::PrimOp;
     use crate::term::TermKind;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
 
     #[test]
     fn preflight_status_bitmask() {
@@ -407,13 +413,13 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0, // > 5.545 minimum for Q0
             &[VerificationDomain::Algebraic],
         );
 
         assert_eq!(unit.root_term, root);
-        assert_eq!(unit.quantum_level, QuantumLevel::Q0);
+        assert_eq!(unit.quantum_level, QuantumLevel::W8);
         assert_eq!(unit.thermodynamic_budget, 6.0);
         assert_eq!(unit.target_domain_count, 1);
         assert_eq!(unit.arena.len(), 3);
@@ -421,7 +427,7 @@ mod tests {
 
     #[test]
     fn compile_unit_trait_impl() {
-        use uor_foundation::kernel::cascade::CompileUnit;
+        use uor_foundation::kernel::reduction::CompileUnit;
 
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(42));
@@ -429,7 +435,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            QuantumLevel::W16,
             12.0,
             &[
                 VerificationDomain::Algebraic,
@@ -437,14 +443,15 @@ mod tests {
             ],
         );
 
-        assert_eq!(unit.unit_quantum_level(), QuantumLevel::Q1);
-        assert_eq!(unit.thermodynamic_budget(), 12.0);
+        assert_eq!(unit.unit_witt_level(), QuantumLevel::W16);
+        // 0.3.0 returns &str sentinel; the f64 budget is the inherent field.
+        assert_eq!(unit.thermodynamic_budget(), "");
         assert_eq!(unit.target_domains().len(), 2);
     }
 
     #[test]
     fn holo_address_digest_correctness() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let hash = [0xABu8; 32];
         let addr = HoloAddress::from_hash(hash);
         let digest = addr.digest();
@@ -452,25 +459,25 @@ mod tests {
         assert_eq!(&digest[..2], "ab"); // first byte 0xAB → "ab"
         assert_eq!(addr.digest_algorithm(), "blake3");
         assert_eq!(addr.length(), 32);
-        assert_eq!(addr.quantum(), 256);
+        assert_eq!(addr.witt_length(), 256);
     }
 
     #[test]
     fn holo_address_glyph_valid_utf8() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         for byte in 0..=255u8 {
             let mut hash = [0u8; 32];
             hash[0] = byte;
             let addr = HoloAddress::from_hash(hash);
-            // glyph() must return valid UTF-8 — this panics if not
-            let g = addr.glyph();
+            // addresses() returns the Braille glyph string — must be valid UTF-8.
+            let g = addr.addresses();
             assert_eq!(g.len(), 6); // 2 Braille chars × 3 bytes UTF-8 each
         }
     }
 
     #[test]
     fn holo_address_zero() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let addr = HoloAddress::ZERO;
         assert_eq!(addr.as_bytes(), &[0u8; 32]);
         // digest should be all '0's

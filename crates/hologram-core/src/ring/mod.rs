@@ -14,7 +14,7 @@ pub use byte_ring::HoloDivisionAlgebra;
 pub(crate) use byte_ring::{Q1_ALGEBRA, Q2_ALGEBRA, Q3_ALGEBRA};
 
 use crate::op::{PrimOp, QuantumLevelExt};
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Ring implementation for any quantum level.
 ///
@@ -40,10 +40,10 @@ impl UnifiedRing {
     }
 
     /// Ring modulus: 2^(8 * (k+1)) for level k.
-    /// Returns 0 for Q7+ where 2^64 overflows u128 at Q15.
+    /// Returns 0 for W64+ where 2^64 overflows u128 at W128.
     #[inline]
     pub fn modulus(&self) -> u128 {
-        let bits = (self.level.index() + 1) as u128 * 8;
+        let bits = self.level.witt_length() as u128;
         if bits >= 128 {
             0
         } else {
@@ -58,22 +58,24 @@ impl UnifiedRing {
     }
 
     /// Cayley-Dickson algebra dimension: 2^min(k, 3).
-    /// R=1 (Q0), C=2 (Q1), H=4 (Q2), O=8 (Q3+).
+    /// R=1 (W8), C=2 (W16), H=4 (W24), O=8 (W32+).
     #[inline]
     pub fn algebra_dimension(&self) -> u64 {
-        1u64 << self.level.index().min(3)
+        // ring index k = (witt_length / 8) - 1
+        let k = (self.level.witt_length() / 8).saturating_sub(1);
+        1u64 << k.min(3)
     }
 
     /// Whether the algebra is commutative (R and C only).
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        self.level.index() <= 1
+        self.level.witt_length() <= 16
     }
 
     /// Whether the algebra is associative (R, C, H only).
     #[inline]
     pub fn is_associative(&self) -> bool {
-        self.level.index() <= 2
+        self.level.witt_length() <= 24
     }
 
     /// Apply a unary ring operation.
@@ -90,10 +92,10 @@ impl UnifiedRing {
 }
 
 /// Named constants for the standard quantum levels.
-pub const BYTE_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::Q0);
-pub const WORD_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::Q1);
-pub const TRIPLE_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::Q2);
-pub const OCTONION_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::Q3);
+pub const BYTE_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::W8);
+pub const WORD_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::W16);
+pub const TRIPLE_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::W24);
+pub const OCTONION_RING_U: UnifiedRing = UnifiedRing::new(QuantumLevel::W32);
 
 /// The involution enum for the unified ring — Neg and Bnot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,7 +123,7 @@ mod tests {
 
     #[test]
     fn unified_ring_q0_matches_byte_ring() {
-        let ring = UnifiedRing::new(QuantumLevel::Q0);
+        let ring = UnifiedRing::new(QuantumLevel::W8);
         assert_eq!(ring.byte_width(), 1);
         assert_eq!(ring.bits_width(), 8);
         assert_eq!(ring.modulus(), 256);
@@ -132,7 +134,7 @@ mod tests {
 
     #[test]
     fn unified_ring_q3_matches_octonion_ring() {
-        let ring = UnifiedRing::new(QuantumLevel::Q3);
+        let ring = UnifiedRing::new(QuantumLevel::W32);
         assert_eq!(ring.byte_width(), 4);
         assert_eq!(ring.bits_width(), 32);
         assert_eq!(ring.modulus(), 4_294_967_296);
@@ -143,7 +145,7 @@ mod tests {
 
     #[test]
     fn unified_ring_q7_native_u64() {
-        let ring = UnifiedRing::new(QuantumLevel::new(7));
+        let ring = UnifiedRing::new(QuantumLevel::new(64));
         assert_eq!(ring.byte_width(), 8);
         assert_eq!(ring.bits_width(), 64);
         assert_eq!(ring.algebra_dimension(), 8); // capped at octonion
@@ -151,18 +153,19 @@ mod tests {
 
     #[test]
     fn unified_ring_arithmetic() {
-        let ring = UnifiedRing::new(QuantumLevel::Q0);
+        let ring = UnifiedRing::new(QuantumLevel::W8);
         assert_eq!(ring.apply_binary(PrimOp::Add, 200, 100), 44); // 300 mod 256
         assert_eq!(ring.apply_unary(PrimOp::Neg, 1), 255);
 
-        let ring = UnifiedRing::new(QuantumLevel::Q3);
+        let ring = UnifiedRing::new(QuantumLevel::W32);
         assert_eq!(ring.apply_binary(PrimOp::Add, u32::MAX as u64, 1), 0);
     }
 
     #[test]
     fn unified_ring_critical_identity_all_levels() {
         for k in 0..=7u32 {
-            let ring = UnifiedRing::new(QuantumLevel::new(k));
+            // Witt length = (k + 1) * 8.
+            let ring = UnifiedRing::new(QuantumLevel::new(8 * (k + 1)));
             let max_test = if k == 0 { 256 } else { 64 };
             for x in 0..max_test as u64 {
                 let lhs = ring.apply_unary(PrimOp::Neg, ring.apply_unary(PrimOp::Bnot, x));
@@ -181,12 +184,12 @@ mod tests {
 
     #[test]
     fn cayley_dickson_dimension_chain() {
-        assert_eq!(UnifiedRing::new(QuantumLevel::Q0).algebra_dimension(), 1); // R
-        assert_eq!(UnifiedRing::new(QuantumLevel::Q1).algebra_dimension(), 2); // C
-        assert_eq!(UnifiedRing::new(QuantumLevel::Q2).algebra_dimension(), 4); // H
-        assert_eq!(UnifiedRing::new(QuantumLevel::Q3).algebra_dimension(), 8); // O
+        assert_eq!(UnifiedRing::new(QuantumLevel::W8).algebra_dimension(), 1); // R
+        assert_eq!(UnifiedRing::new(QuantumLevel::W16).algebra_dimension(), 2); // C
+        assert_eq!(UnifiedRing::new(QuantumLevel::W24).algebra_dimension(), 4); // H
+        assert_eq!(UnifiedRing::new(QuantumLevel::W32).algebra_dimension(), 8); // O
         assert_eq!(
-            UnifiedRing::new(QuantumLevel::new(4)).algebra_dimension(),
+            UnifiedRing::new(QuantumLevel::new(40)).algebra_dimension(),
             8
         ); // capped at O
     }

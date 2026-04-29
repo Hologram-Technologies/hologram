@@ -63,6 +63,9 @@ macro_rules! impl_involution_uor {
                     Self::_Phantom(_) => unreachable!(),
                 }
             }
+            fn is_ring_op(&self) -> bool {
+                true
+            }
         }
 
         impl uor_foundation::kernel::op::UnaryOp<PrismPrimitives> for Involution<$Q> {}

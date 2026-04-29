@@ -6,7 +6,7 @@
 //! O(1) — a single comparison. No tree walk required.
 
 use hologram_core::term::HoloCompileUnit;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Compute the minimum viable thermodynamic budget for a quantum level.
 ///
@@ -43,64 +43,64 @@ mod tests {
 
     #[test]
     fn q0_minimum_budget() {
-        let min = minimum_budget(QuantumLevel::Q0);
+        let min = minimum_budget(QuantumLevel::W8);
         assert!((min - 5.545).abs() < 0.001, "Q0 min = {}", min);
     }
 
     #[test]
     fn q1_minimum_budget() {
-        let min = minimum_budget(QuantumLevel::Q1);
+        let min = minimum_budget(QuantumLevel::W16);
         assert!((min - 11.090).abs() < 0.001, "Q1 min = {}", min);
     }
 
     #[test]
     fn q2_minimum_budget() {
-        let min = minimum_budget(QuantumLevel::Q2);
+        let min = minimum_budget(QuantumLevel::W24);
         assert!((min - 16.636).abs() < 0.001, "Q2 min = {}", min);
     }
 
     #[test]
     fn q3_minimum_budget() {
-        let min = minimum_budget(QuantumLevel::Q3);
+        let min = minimum_budget(QuantumLevel::W32);
         assert!((min - 22.181).abs() < 0.001, "Q3 min = {}", min);
     }
 
     #[test]
     fn q0_passes_at_minimum() {
-        let unit = make_unit(QuantumLevel::Q0, 5.546);
+        let unit = make_unit(QuantumLevel::W8, 5.546);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q0_fails_below_minimum() {
-        let unit = make_unit(QuantumLevel::Q0, 5.0);
+        let unit = make_unit(QuantumLevel::W8, 5.0);
         assert!(!check_budget_solvency(&unit));
     }
 
     #[test]
     fn q0_passes_exact_minimum() {
-        let min = minimum_budget(QuantumLevel::Q0);
-        let unit = make_unit(QuantumLevel::Q0, min);
+        let min = minimum_budget(QuantumLevel::W8);
+        let unit = make_unit(QuantumLevel::W8, min);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q3_passes_at_minimum() {
-        let min = minimum_budget(QuantumLevel::Q3);
-        let unit = make_unit(QuantumLevel::Q3, min);
+        let min = minimum_budget(QuantumLevel::W32);
+        let unit = make_unit(QuantumLevel::W32, min);
         assert!(check_budget_solvency(&unit));
     }
 
     #[test]
     fn q3_fails_below_minimum() {
-        let unit = make_unit(QuantumLevel::Q3, 22.0);
+        let unit = make_unit(QuantumLevel::W32, 22.0);
         assert!(!check_budget_solvency(&unit));
     }
 
     #[test]
     fn budget_solvency_performance() {
         // Performance contract: 10M checks < 50ms (< 5ns each, O(1))
-        let unit = make_unit(QuantumLevel::Q0, 6.0);
+        let unit = make_unit(QuantumLevel::W8, 6.0);
         let start = std::time::Instant::now();
         for _ in 0..10_000_000 {
             let _ = check_budget_solvency(&unit);

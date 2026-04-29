@@ -57,25 +57,30 @@ impl<Q: QuantumLevel> uor_foundation::kernel::schema::Datum<PrismPrimitives> for
         self.value.to_u64()
     }
 
-    fn quantum(&self) -> u64 {
+    /// Witt level n of this datum, where the ring is Z/(2^n)Z.
+    /// Was named `quantum` in uor-foundation 0.1.x.
+    fn witt_length(&self) -> u64 {
         Q::BITS as u64
     }
 
+    /// Per ADR-052: `stratum` is the ring-level index k (where k = INDEX
+    /// in `QuantumLevel`). The previous u8-popcount interpretation is
+    /// kept on the inherent method `Datum::stratum` for callers that
+    /// want it.
     fn stratum(&self) -> u64 {
-        self.value.count_ones() as u64
+        Q::INDEX as u64
     }
 
+    /// Per ADR-052: `spectrum` is the underlying ring value cast to
+    /// u64. The binary-string representation remains available via
+    /// the inherent method `Datum::spectrum`.
     fn spectrum(&self) -> u64 {
-        // uor-foundation 0.1.4 changed `spectrum` to return P::NonNegativeInteger
-        // (u64 for PrismPrimitives). Return the underlying numeric value;
-        // the binary-string representation is still available via the inherent
-        // `Datum::spectrum` method.
         self.value.to_u64()
     }
 
-    type Address = Address<Q>;
+    type Element = Address<Q>;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }

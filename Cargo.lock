@@ -796,6 +796,7 @@ dependencies = [
 name = "hologram-core"
 version = "0.4.1"
 dependencies = [
+ "blake3",
  "bytemuck",
  "hologram-ring",
  "libm",
@@ -861,6 +862,7 @@ dependencies = [
 name = "hologram-ring"
 version = "0.4.1"
 dependencies = [
+ "blake3",
  "rkyv",
  "uor-foundation",
 ]
@@ -1776,22 +1778,11 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uor-foundation"
-version = "0.1.5"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7288701324f04949c717eb0d3947a396829699b10d896463e646628f0156bf26"
+checksum = "83dd60c9e1535ce5cf908ed43a8c7bc429c604b8d042a1e5cb981d86b9df8d8c"
 dependencies = [
- "uor-foundation-macros",
-]
-
-[[package]]
-name = "uor-foundation-macros"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46799b53869e7321d93b4b14624ba987823e6a1edfa5783409e65f621a59ade2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "libm",
 ]
 
 [[package]]

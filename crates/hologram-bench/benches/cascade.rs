@@ -6,7 +6,7 @@ use hologram_core::op::PrimOp;
 use hologram_core::term::{HoloAddress, HoloCompileUnit, TermArena, TermKind};
 use hologram_graph::{GraphBuilder, GraphOp};
 use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel;
 
 fn make_unit(budget: f64) -> HoloCompileUnit {
     let mut arena = TermArena::new();
@@ -14,7 +14,7 @@ fn make_unit(budget: f64) -> HoloCompileUnit {
     let mut unit = HoloCompileUnit::new(
         arena,
         root,
-        QuantumLevel::Q0,
+        QuantumLevel::W8,
         budget,
         &[VerificationDomain::Algebraic],
     );
@@ -54,7 +54,7 @@ fn bench_certificate_insert(c: &mut Criterion) {
                     addr[0] = i;
                     store.insert(hologram_cascade::Certificate {
                         unit_address: addr,
-                        quantum_level: QuantumLevel::Q0,
+                        quantum_level: QuantumLevel::W8,
                         budget_consumed: 5.0,
                         converged: true,
                     });
@@ -72,7 +72,7 @@ fn bench_certificate_lookup(c: &mut Criterion) {
         addr[0] = i;
         store.insert(hologram_cascade::Certificate {
             unit_address: addr,
-            quantum_level: QuantumLevel::Q0,
+            quantum_level: QuantumLevel::W8,
             budget_consumed: 5.0,
             converged: true,
         });
@@ -82,7 +82,7 @@ fn bench_certificate_lookup(c: &mut Criterion) {
         b.iter(|| {
             let mut addr = [0u8; 32];
             addr[0] = 42;
-            store.get(black_box(&addr), QuantumLevel::Q0)
+            store.get(black_box(&addr), QuantumLevel::W8)
         })
     });
 }

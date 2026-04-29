@@ -33,7 +33,7 @@ mod tests {
     use super::*;
     use hologram_core::term::{TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
 
     #[test]
     fn no_type_decls_passes() {
@@ -42,7 +42,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             100.0,
             &[VerificationDomain::Algebraic],
         );

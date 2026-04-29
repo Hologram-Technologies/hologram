@@ -133,12 +133,12 @@ fn ring_quantum_levels_match() {
     use hologram_core::q1::ring::WordRing;
     use hologram_core::q2::ring::TripleRing;
     use hologram_core::ring::ByteRing;
-    use uor_foundation::enums::QuantumLevel;
     use uor_foundation::kernel::schema::Ring;
+    use uor_foundation::WittLevel as QuantumLevel;
 
-    assert_eq!(ByteRing.at_quantum_level(), QuantumLevel::Q0);
-    assert_eq!(WordRing.at_quantum_level(), QuantumLevel::Q1);
-    assert_eq!(TripleRing.at_quantum_level(), QuantumLevel::Q2);
+    assert_eq!(ByteRing.at_witt_level(), QuantumLevel::W8);
+    assert_eq!(WordRing.at_witt_level(), QuantumLevel::W16);
+    assert_eq!(TripleRing.at_witt_level(), QuantumLevel::W24);
 }
 
 // ── 3. Critical Identity ────────────────────────────────────────────────────

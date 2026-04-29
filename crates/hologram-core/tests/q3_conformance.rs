@@ -91,11 +91,11 @@ fn octonion_ring_properties() {
 #[test]
 fn octonion_ring_quantum_level() {
     use hologram_core::q3::OctonionRing;
-    use uor_foundation::enums::QuantumLevel;
     use uor_foundation::kernel::schema::Ring;
+    use uor_foundation::WittLevel as QuantumLevel;
 
-    assert_eq!(OctonionRing.at_quantum_level(), QuantumLevel::Q3);
-    assert_eq!(OctonionRing.ring_quantum(), 32);
+    assert_eq!(OctonionRing.at_witt_level(), QuantumLevel::W32);
+    assert_eq!(OctonionRing.ring_witt_length(), 32);
     assert_eq!(OctonionRing.modulus(), 4_294_967_296);
 }
 

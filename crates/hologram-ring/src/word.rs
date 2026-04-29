@@ -47,6 +47,9 @@ pub trait RingWord:
     fn from_u64(v: u64) -> Self;
     /// Convert to u64 (zero-extending).
     fn to_u64(self) -> u64;
+    /// Convert to u128 (zero-extending). Used by `Address::canonical_bytes`
+    /// per ADR-052 / Amendment 43 §2 — works uniformly for u8..u128.
+    fn to_u128_le(self) -> u128;
 }
 
 macro_rules! impl_ring_word {
@@ -92,6 +95,10 @@ macro_rules! impl_ring_word {
             #[inline]
             fn to_u64(self) -> u64 {
                 self as u64
+            }
+            #[inline]
+            fn to_u128_le(self) -> u128 {
+                self as u128
             }
         }
     };

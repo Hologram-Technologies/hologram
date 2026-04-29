@@ -20,7 +20,7 @@ use hologram_graph::schedule::ExecutionSchedule;
 use hologram_core::op::RingLevel;
 use hologram_core::term::{HoloAddress, HoloCompileUnit, TermArena, TermKind};
 use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 use crate::error::{CompileError, CompileResult};
 
@@ -267,7 +267,7 @@ pub fn compile_uor_arena<const CAP: usize>(
 pub fn unit_from_graph(graph: &Graph) -> HoloCompileUnit {
     unit_from_graph_with(
         graph,
-        QuantumLevel::Q0,
+        QuantumLevel::W8,
         f64::MAX,
         &[VerificationDomain::Algebraic],
     )

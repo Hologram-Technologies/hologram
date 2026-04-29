@@ -147,6 +147,13 @@ impl uor_foundation::kernel::op::Operation<PrismPrimitives> for PrimOp {
     fn composed_of(&self) -> &str {
         self.name()
     }
+
+    /// Per the 0.3.0 ontology: every PrimOp participates in the
+    /// Z/(2^n)Z ring-arithmetic vocabulary. Drives Lean RingOp class
+    /// generation in UOR/Enforcement.lean.
+    fn is_ring_op(&self) -> bool {
+        true
+    }
 }
 
 impl uor_foundation::kernel::op::BinaryOp<PrismPrimitives> for PrimOp {

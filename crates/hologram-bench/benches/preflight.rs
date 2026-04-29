@@ -5,7 +5,7 @@ use hologram_compiler::preflight;
 use hologram_core::op::PrimOp;
 use hologram_core::term::{HoloCompileUnit, TermArena, TermKind};
 use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel;
 
 /// Build a CompileUnit with `n` nodes (chain of neg(neg(neg(...42...)))).
 fn make_unit(n: usize) -> HoloCompileUnit {
@@ -20,7 +20,7 @@ fn make_unit(n: usize) -> HoloCompileUnit {
     HoloCompileUnit::new(
         arena,
         id,
-        QuantumLevel::Q0,
+        QuantumLevel::W8,
         100.0,
         &[VerificationDomain::Algebraic],
     )

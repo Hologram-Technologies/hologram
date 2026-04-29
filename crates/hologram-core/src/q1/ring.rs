@@ -3,7 +3,8 @@
 use crate::q1::arith;
 use crate::q1::datum::WordDatum;
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use uor_foundation::enums::GeometricCharacter;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// The ring Z/65536Z at quantum level 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,12 +39,16 @@ impl WordRing {
     }
 }
 
-static GENERATOR: WordDatum = WordDatum::PI1;
+use std::sync::OnceLock;
+fn generator_word() -> &'static WordDatum {
+    static G: OnceLock<WordDatum> = OnceLock::new();
+    G.get_or_init(WordDatum::pi1)
+}
 static NEG_INV: WordInvolution = WordInvolution::Neg;
 static BNOT_INV: WordInvolution = WordInvolution::Bnot;
 
 impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for WordRing {
-    fn ring_quantum(&self) -> u64 {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -54,7 +59,7 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for WordRing {
     type Datum = WordDatum;
 
     fn generator(&self) -> &Self::Datum {
-        &GENERATOR
+        generator_word()
     }
 
     type Involution = WordInvolution;
@@ -67,17 +72,17 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for WordRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q1
+    fn at_witt_level(&self) -> QuantumLevel {
+        QuantumLevel::W16
     }
 }
 
-impl uor_foundation::kernel::schema::Q1Ring<HoloPrimitives> for WordRing {
-    fn q1bit_width(&self) -> u64 {
+impl uor_foundation::kernel::schema::W16Ring<HoloPrimitives> for WordRing {
+    fn w16bit_width(&self) -> u64 {
         16
     }
 
-    fn q1capacity(&self) -> u64 {
+    fn w16capacity(&self) -> u64 {
         65536
     }
 }
@@ -129,6 +134,10 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for WordInvolution {
             Self::Neg => "neg",
             Self::Bnot => "bnot",
         }
+    }
+
+    fn is_ring_op(&self) -> bool {
+        true
     }
 }
 
@@ -267,18 +276,18 @@ mod tests {
     fn ring_trait() {
         use uor_foundation::kernel::schema::Ring;
         let r = WordRing;
-        assert_eq!(r.ring_quantum(), 16);
+        assert_eq!(r.ring_witt_length(), 16);
         assert_eq!(r.modulus(), 65536);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q1);
+        assert_eq!(r.at_witt_level(), QuantumLevel::W16);
         assert_eq!(r.generator().val(), 1);
     }
 
     #[test]
     fn q1ring_trait() {
-        use uor_foundation::kernel::schema::Q1Ring;
+        use uor_foundation::kernel::schema::W16Ring;
         let r = WordRing;
-        assert_eq!(r.q1bit_width(), 16);
-        assert_eq!(r.q1capacity(), 65536);
+        assert_eq!(r.w16bit_width(), 16);
+        assert_eq!(r.w16capacity(), 65536);
     }
 
     #[test]

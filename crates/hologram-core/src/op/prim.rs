@@ -241,6 +241,11 @@ impl uor_foundation::kernel::op::Operation<crate::HoloPrimitives> for PrimOp {
     fn composed_of(&self) -> &str {
         self.name()
     }
+
+    #[inline]
+    fn is_ring_op(&self) -> bool {
+        true
+    }
 }
 
 impl uor_foundation::kernel::op::BinaryOp<crate::HoloPrimitives> for PrimOp {

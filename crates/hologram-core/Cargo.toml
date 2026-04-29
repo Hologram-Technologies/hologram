@@ -10,6 +10,10 @@ uor-foundation = { workspace = true }
 hologram-ring = { workspace = true, features = ["std", "serialize"] }
 bytemuck = { workspace = true }
 libm = { workspace = true }
+# Per ADR-052: Element::digest_algorithm = "blake3" across the
+# hologram ecosystem. Used to compute the canonical-bytes digest for
+# Element impls in q1/q2/q3/byte_ring/datum.
+blake3 = { workspace = true }
 # rkyv is optional: only enabled when the 'serialize' feature is on.
 # This allows wasm32/embedded builds to compile without rkyv's std-only deps.
 rkyv = { version = "0.8", default-features = false, optional = true }

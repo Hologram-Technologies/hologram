@@ -24,9 +24,15 @@ pub fn enforcement_validate(unit: &HoloCompileUnit) -> Result<(), ShapeViolation
 
     CompileUnitBuilder::new()
         .root_term(&terms)
-        .quantum_level_ceiling(level)
+        .witt_level_ceiling(level)
         .thermodynamic_budget(unit.thermodynamic_budget as u64)
         .target_domains(&unit.target_domains_array[..unit.target_domain_count as usize])
+        // v0.3.0 added a required `result_type` shape. Hologram doesn't
+        // yet track per-unit result types — declare the open
+        // `ConstrainedTypeInput` shape so the validator accepts the unit.
+        // A future ADR can wire real ConstrainedTypeShape impls through
+        // preflight when hologram has real type metadata to attach.
+        .result_type::<uor_foundation::enforcement::ConstrainedTypeInput>()
         .validate()
         .map(|_validated| ())
 }
@@ -37,7 +43,7 @@ mod tests {
     use hologram_core::op::PrimOp;
     use hologram_core::term::{TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::{QuantumLevel, ViolationKind};
+    use uor_foundation::{ViolationKind, WittLevel as QuantumLevel};
 
     #[test]
     fn enforcement_validate_passes_valid_unit() {
@@ -46,7 +52,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             6.0,
             &[VerificationDomain::Algebraic],
         );
@@ -66,7 +72,7 @@ mod tests {
         let unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q1,
+            QuantumLevel::W16,
             12.0,
             &[
                 VerificationDomain::Algebraic,
@@ -80,7 +86,7 @@ mod tests {
     fn enforcement_validate_rejects_empty_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(42));
-        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
+        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::W8, 6.0, &[]);
         let err = enforcement_validate(&unit);
         assert!(err.is_err());
         let violation = err.unwrap_err();

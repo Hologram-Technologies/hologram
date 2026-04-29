@@ -6,15 +6,15 @@
 
 use hologram_core::carry::{lift, lower, CurvatureFlux};
 use hologram_core::op::RingLevel;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 // ── DC_5: Exact Lift/Lower Round-Trips ──────────────────────────────────────
 
 #[test]
 fn lift_lower_round_trip_exhaustive_q0() {
     for x in 0u8..=255 {
-        let q1 = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1);
-        let back = lower(q1, QuantumLevel::Q1, QuantumLevel::Q0)
+        let q1 = lift(x as u64, QuantumLevel::W8, QuantumLevel::W16);
+        let back = lower(q1, QuantumLevel::W16, QuantumLevel::W8)
             .expect("Q0→Q1→Q0 round-trip must succeed");
         assert_eq!(back as u8, x, "round-trip failed at {x}");
     }
@@ -23,8 +23,8 @@ fn lift_lower_round_trip_exhaustive_q0() {
 #[test]
 fn lift_lower_round_trip_q1_q2() {
     for x in (0u16..=u16::MAX).step_by(257) {
-        let q2 = lift(x as u64, QuantumLevel::Q1, QuantumLevel::Q2);
-        let back = lower(q2, QuantumLevel::Q2, QuantumLevel::Q1)
+        let q2 = lift(x as u64, QuantumLevel::W16, QuantumLevel::W24);
+        let back = lower(q2, QuantumLevel::W24, QuantumLevel::W16)
             .expect("Q1→Q2→Q1 round-trip must succeed");
         assert_eq!(back as u16, x, "round-trip failed at {x}");
     }
@@ -33,11 +33,11 @@ fn lift_lower_round_trip_q1_q2() {
 #[test]
 fn lift_composition_exact() {
     for x in 0u8..=255 {
-        let direct = lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q2);
+        let direct = lift(x as u64, QuantumLevel::W8, QuantumLevel::W24);
         let stepped = lift(
-            lift(x as u64, QuantumLevel::Q0, QuantumLevel::Q1),
-            QuantumLevel::Q1,
-            QuantumLevel::Q2,
+            lift(x as u64, QuantumLevel::W8, QuantumLevel::W16),
+            QuantumLevel::W16,
+            QuantumLevel::W24,
         );
         assert_eq!(direct, stepped, "lift composition not exact at {x}");
     }

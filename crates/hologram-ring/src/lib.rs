@@ -34,14 +34,18 @@ pub use observables::{curvature, domain, rank, stratum};
 pub use prim::PrimOp;
 pub use word::RingWord;
 
-/// The UOR primitive type family for Prism.
+/// The UOR host-types family for Prism.
+///
+/// Per ADR-052, hologram pins `HostTypes` to the `DefaultHostTypes`
+/// shape: `Decimal = f64`, `HostString = str`, `WitnessBytes = [u8]`.
+/// The pre-0.3.0 `Primitives` trait carried `Integer`, `NonNegativeInteger`,
+/// `PositiveInteger`, and `Boolean` slots — those are gone in 0.3.0;
+/// call sites that used them now consume concrete `i64` / `u64` / `bool`
+/// types directly.
 pub struct PrismPrimitives;
 
-impl uor_foundation::Primitives for PrismPrimitives {
-    type String = str;
-    type Integer = i64;
-    type NonNegativeInteger = u64;
-    type PositiveInteger = u64;
+impl uor_foundation::HostTypes for PrismPrimitives {
     type Decimal = f64;
-    type Boolean = bool;
+    type HostString = str;
+    type WitnessBytes = [u8];
 }

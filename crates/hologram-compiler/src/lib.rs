@@ -26,7 +26,7 @@ pub use error::{CompileError, CompileResult};
 pub use hologram_cascade::certificate::CertificateStore;
 
 use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Compile from UOR term language source text.
 ///

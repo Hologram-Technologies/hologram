@@ -3,11 +3,21 @@
 //! Re-exports `const fn` evaluators and provides hologram-native wrappers
 //! dispatched by `RingLevel`. All functions are `#[inline]` and zero-allocation.
 
-pub use uor_foundation::enforcement::{
-    const_ring_eval_q0, const_ring_eval_q1, const_ring_eval_q3, const_ring_eval_q7,
-    const_ring_eval_unary_q0, const_ring_eval_unary_q1, const_ring_eval_unary_q3,
-    const_ring_eval_unary_q7,
-};
+// Per Plan 074, uor-foundation 0.3.0 renamed const_ring_eval_q*
+// to const_ring_eval_w* (W8/W16/W24/W32 = 8/16/24/32-bit ring evaluators).
+// Hologram re-exports under the legacy q0/q1/q3 aliases for downstream
+// compatibility — call sites that previously used q0/q1/q3 see no API
+// change.
+pub use uor_foundation::enforcement::const_ring_eval_unary_w16 as const_ring_eval_unary_q1;
+pub use uor_foundation::enforcement::const_ring_eval_unary_w24 as const_ring_eval_unary_q2;
+pub use uor_foundation::enforcement::const_ring_eval_unary_w32 as const_ring_eval_unary_q3;
+pub use uor_foundation::enforcement::const_ring_eval_unary_w64 as const_ring_eval_unary_q7;
+pub use uor_foundation::enforcement::const_ring_eval_unary_w8 as const_ring_eval_unary_q0;
+pub use uor_foundation::enforcement::const_ring_eval_w16 as const_ring_eval_q1;
+pub use uor_foundation::enforcement::const_ring_eval_w24 as const_ring_eval_q2;
+pub use uor_foundation::enforcement::const_ring_eval_w32 as const_ring_eval_q3;
+pub use uor_foundation::enforcement::const_ring_eval_w64 as const_ring_eval_q7;
+pub use uor_foundation::enforcement::const_ring_eval_w8 as const_ring_eval_q0;
 
 use crate::op::RingLevel;
 use uor_foundation::PrimitiveOp;
@@ -20,9 +30,7 @@ pub fn eval_binary(level: RingLevel, op: PrimitiveOp, a: u64, b: u64) -> u64 {
         RingLevel::Q0 => const_ring_eval_q0(op, a as u8, b as u8) as u64,
         RingLevel::Q1 => const_ring_eval_q1(op, a as u16, b as u16) as u64,
         RingLevel::Q2 => {
-            // Q2 uses Q3 evaluator with 24-bit mask
-            (const_ring_eval_q3(op, (a as u32) & 0x00FF_FFFF, (b as u32) & 0x00FF_FFFF) as u64)
-                & 0x00FF_FFFF
+            const_ring_eval_q2(op, (a as u32) & 0x00FF_FFFF, (b as u32) & 0x00FF_FFFF) as u64
         }
         RingLevel::Q3 => const_ring_eval_q3(op, a as u32, b as u32) as u64,
     }
@@ -35,9 +43,7 @@ pub fn eval_unary(level: RingLevel, op: PrimitiveOp, a: u64) -> u64 {
     match level {
         RingLevel::Q0 => const_ring_eval_unary_q0(op, a as u8) as u64,
         RingLevel::Q1 => const_ring_eval_unary_q1(op, a as u16) as u64,
-        RingLevel::Q2 => {
-            (const_ring_eval_unary_q3(op, (a as u32) & 0x00FF_FFFF) as u64) & 0x00FF_FFFF
-        }
+        RingLevel::Q2 => const_ring_eval_unary_q2(op, (a as u32) & 0x00FF_FFFF) as u64,
         RingLevel::Q3 => const_ring_eval_unary_q3(op, a as u32) as u64,
     }
 }

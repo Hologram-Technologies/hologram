@@ -16,14 +16,18 @@ pub struct QuadDatum {
 
 impl QuadDatum {
     /// Additive identity.
-    pub const ZERO: Self = Self::new(0);
+    pub fn zero() -> Self {
+        Self::new(0)
+    }
     /// Multiplicative identity / ring generator.
-    pub const PI1: Self = Self::new(1);
+    pub fn pi1() -> Self {
+        Self::new(1)
+    }
 
     /// Create a datum from a raw 32-bit value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u32) -> Self {
+    pub fn new(value: u32) -> Self {
         Self {
             value,
             spectrum_buf: Self::make_spectrum(value),
@@ -130,7 +134,7 @@ impl core::fmt::Display for QuadDatum {
 impl Default for QuadDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::zero()
     }
 }
 
@@ -158,18 +162,30 @@ impl From<QuadDatum> for u32 {
 pub struct QuadAddress {
     value: u32,
     glyph_buf: [u8; 18], // 6 × 3-byte UTF-8 Braille chars
+    /// Per ADR-052 / Amendment 43 §2: `header(3) || le_bytes(x, 4)`.
+    canonical_buf: [u8; 5],
+    /// Pre-computed `"blake3:<hex>"` digest of `canonical_buf`.
+    digest_buf: [u8; crate::element::DIGEST_STR_LEN],
 }
 
 impl QuadAddress {
     /// Create a Braille address from a 32-bit value.
     #[must_use]
-    pub const fn from_quad(value: u32) -> Self {
+    pub fn from_quad(value: u32) -> Self {
         let g0 = (value & 0x3F) as u8;
         let g1 = ((value >> 6) & 0x3F) as u8;
         let g2 = ((value >> 12) & 0x3F) as u8;
         let g3 = ((value >> 18) & 0x3F) as u8;
         let g4 = ((value >> 24) & 0x3F) as u8;
         let g5 = ((value >> 30) & 0x03) as u8; // only 2 bits
+        let canonical_buf = [
+            0x03,
+            value as u8,
+            (value >> 8) as u8,
+            (value >> 16) as u8,
+            (value >> 24) as u8,
+        ];
+        let digest_buf = crate::element::blake3_digest_str(&canonical_buf);
         Self {
             value,
             glyph_buf: [
@@ -192,6 +208,8 @@ impl QuadAddress {
                 0xA0,
                 0x80 + g5,
             ],
+            canonical_buf,
+            digest_buf,
         }
     }
 
@@ -216,43 +234,41 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for QuadDatum {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         32
     }
 
+    /// Per ADR-052: stratum is the ring-level index k. Q3 → 3.
     fn stratum(&self) -> u64 {
-        self.value.count_ones() as u64
+        3
     }
 
     fn spectrum(&self) -> u64 {
         self.value as u64
     }
 
-    type Address = QuadAddress;
+    type Element = QuadAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for QuadAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl uor_foundation::kernel::address::Element<HoloPrimitives> for QuadAddress {
     fn length(&self) -> u64 {
         6 // 6 Braille glyphs
     }
 
     fn addresses(&self) -> &str {
-        ""
-    }
-
-    fn digest(&self) -> &str {
         self.as_str()
     }
 
-    fn quantum(&self) -> u64 {
+    fn digest(&self) -> &str {
+        // SAFETY: digest_buf is ASCII (`blake3:` + lowercase hex).
+        unsafe { core::str::from_utf8_unchecked(&self.digest_buf) }
+    }
+
+    fn witt_length(&self) -> u64 {
         32
     }
 
@@ -262,8 +278,8 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for QuadAddress {
     }
 
     #[inline]
-    fn canonical_bytes(&self) -> &str {
-        self.as_str()
+    fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_buf
     }
 }
 
@@ -273,8 +289,8 @@ mod tests {
 
     #[test]
     fn zero_and_pi1() {
-        assert_eq!(QuadDatum::ZERO.value(), 0);
-        assert_eq!(QuadDatum::PI1.value(), 1);
+        assert_eq!(QuadDatum::zero().value(), 0);
+        assert_eq!(QuadDatum::pi1().value(), 1);
     }
 
     #[test]
@@ -308,9 +324,9 @@ mod tests {
 
     #[test]
     fn address_length() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let a = QuadAddress::from_quad(0);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 6);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 6);
         assert_eq!(a.as_str().chars().count(), 6);
     }
 
@@ -327,7 +343,7 @@ mod tests {
         use uor_foundation::kernel::schema::Datum;
         let d = QuadDatum::new(0xDEAD_BEEF);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 0xDEAD_BEEF);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 32);
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 32);
     }
 
     #[test]

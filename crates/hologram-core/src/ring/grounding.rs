@@ -5,32 +5,37 @@
 //! `source` boundary mapping.
 //!
 //! All groundings are O(1), zero-allocation, `#[inline]`.
+//!
+//! Per Plan 074, uor-foundation 0.3.0 reshaped the [`Grounding`] trait to
+//! require a sealed-trait `program()` decomposition. Hologram's only
+//! external consumer ([`ground_at_level`]) just needs the dispatch
+//! function — so these are now plain inherent methods rather than full
+//! `Grounding` impls. If hologram later needs the trait-driven machinery
+//! (verified combinator decomposition, etc.) we can re-implement it then.
 
 use crate::op::RingLevel;
-use uor_foundation::enforcement::{GroundedCoord, Grounding};
+use uor_foundation::enforcement::GroundedCoord;
 
-/// Q0 grounding: external byte → Z/256Z via GroundedCoord::q0.
+/// Q0 grounding: external byte → Z/256Z via `GroundedCoord::w8`.
 pub struct ByteGrounding;
 
-impl Grounding for ByteGrounding {
-    type Output = GroundedCoord;
+impl ByteGrounding {
     #[inline]
-    fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
-        external.first().map(|&b| GroundedCoord::q0(b))
+    pub fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
+        external.first().map(|&b| GroundedCoord::w8(b))
     }
 }
 
-/// Q1 grounding: external 2 bytes (LE) → Z/65536Z via GroundedCoord::q1.
+/// Q1 grounding: external 2 bytes (LE) → Z/65536Z via `GroundedCoord::w16`.
 pub struct WordGrounding;
 
-impl Grounding for WordGrounding {
-    type Output = GroundedCoord;
+impl WordGrounding {
     #[inline]
-    fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
+    pub fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
         if external.len() < 2 {
             return None;
         }
-        Some(GroundedCoord::q1(u16::from_le_bytes([
+        Some(GroundedCoord::w16(u16::from_le_bytes([
             external[0],
             external[1],
         ])))
@@ -40,29 +45,27 @@ impl Grounding for WordGrounding {
 /// Q2 grounding: external 3 bytes (LE, zero-padded to u32) → Z/16777216Z.
 pub struct TripleGrounding;
 
-impl Grounding for TripleGrounding {
-    type Output = GroundedCoord;
+impl TripleGrounding {
     #[inline]
-    fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
+    pub fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
         if external.len() < 3 {
             return None;
         }
         let v = u32::from_le_bytes([external[0], external[1], external[2], 0]);
-        Some(GroundedCoord::q3(v & 0x00FF_FFFF))
+        Some(GroundedCoord::w24(v & 0x00FF_FFFF))
     }
 }
 
-/// Q3 grounding: external 4 bytes (LE) → Z/2^32Z via GroundedCoord::q3.
+/// Q3 grounding: external 4 bytes (LE) → Z/2^32Z via `GroundedCoord::w32`.
 pub struct QuadGrounding;
 
-impl Grounding for QuadGrounding {
-    type Output = GroundedCoord;
+impl QuadGrounding {
     #[inline]
-    fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
+    pub fn ground(&self, external: &[u8]) -> Option<GroundedCoord> {
         if external.len() < 4 {
             return None;
         }
-        Some(GroundedCoord::q3(u32::from_le_bytes([
+        Some(GroundedCoord::w32(u32::from_le_bytes([
             external[0],
             external[1],
             external[2],
@@ -90,26 +93,26 @@ mod tests {
     fn grounding_q0_exhaustive() {
         for b in 0..=255u8 {
             let coord = ByteGrounding.ground(&[b]).unwrap();
-            assert_eq!(coord, GroundedCoord::q0(b));
+            assert_eq!(coord, GroundedCoord::w8(b));
         }
     }
 
     #[test]
     fn grounding_q1_le_order() {
         let coord = WordGrounding.ground(&[0x34, 0x12]).unwrap();
-        assert_eq!(coord, GroundedCoord::q1(0x1234));
+        assert_eq!(coord, GroundedCoord::w16(0x1234));
     }
 
     #[test]
     fn grounding_q2_masks_to_24_bits() {
         let coord = TripleGrounding.ground(&[0xFF, 0xFF, 0xFF]).unwrap();
-        assert_eq!(coord, GroundedCoord::q3(0x00FF_FFFF));
+        assert_eq!(coord, GroundedCoord::w24(0x00FF_FFFF));
     }
 
     #[test]
     fn grounding_q3_le_order() {
         let coord = QuadGrounding.ground(&[0x78, 0x56, 0x34, 0x12]).unwrap();
-        assert_eq!(coord, GroundedCoord::q3(0x12345678));
+        assert_eq!(coord, GroundedCoord::w32(0x12345678));
     }
 
     #[test]

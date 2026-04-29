@@ -5,7 +5,8 @@ use crate::lut::arith;
 use crate::q1::ring::WordRing;
 use crate::q2::ring::TripleRing;
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use uor_foundation::enums::GeometricCharacter;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// The ring Z/256Z at quantum level 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,12 +41,16 @@ impl ByteRing {
     }
 }
 
-static GENERATOR: ByteDatum = ByteDatum::PI1;
+use std::sync::OnceLock;
+fn generator() -> &'static ByteDatum {
+    static G: OnceLock<ByteDatum> = OnceLock::new();
+    G.get_or_init(ByteDatum::pi1)
+}
 static NEG_INV: ByteInvolution = ByteInvolution::Neg;
 static BNOT_INV: ByteInvolution = ByteInvolution::Bnot;
 
 impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for ByteRing {
-    fn ring_quantum(&self) -> u64 {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -56,7 +61,7 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for ByteRing {
     type Datum = ByteDatum;
 
     fn generator(&self) -> &Self::Datum {
-        &GENERATOR
+        generator()
     }
 
     type Involution = ByteInvolution;
@@ -69,8 +74,8 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for ByteRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q0
+    fn at_witt_level(&self) -> QuantumLevel {
+        QuantumLevel::W8
     }
 }
 
@@ -122,6 +127,10 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for ByteInvolution {
             Self::Neg => "neg",
             Self::Bnot => "bnot",
         }
+    }
+
+    fn is_ring_op(&self) -> bool {
+        true
     }
 }
 
@@ -316,9 +325,9 @@ mod tests {
     fn ring_trait() {
         use uor_foundation::kernel::schema::Ring;
         let r = ByteRing;
-        assert_eq!(r.ring_quantum(), 8);
+        assert_eq!(r.ring_witt_length(), 8);
         assert_eq!(r.modulus(), 256);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q0);
+        assert_eq!(r.at_witt_level(), QuantumLevel::W8);
         assert_eq!(r.generator().val(), 1);
     }
 

@@ -4,7 +4,7 @@
 //! Validates structural invariants before cascade admission.
 
 use hologram_core::term::{HoloCompileUnit, TermArena, TermId, TermKind};
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// Shape validation error.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,10 +94,10 @@ fn validate_literal_range(
     _root: TermId,
     level: QuantumLevel,
 ) -> Result<(), ShapeError> {
-    let max_value: u64 = match level.index() {
-        0 => 255,
-        1 => 65535,
-        2 => 0x00FF_FFFF,
+    let max_value: u64 = match level.witt_length() {
+        8 => 255,
+        16 => 65535,
+        24 => 0x00FF_FFFF,
         _ => u32::MAX as u64,
     };
 
@@ -141,13 +141,13 @@ mod tests {
 
     #[test]
     fn valid_unit_passes() {
-        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::W8, 6.0);
         assert!(validate_shape(&unit).is_ok());
     }
 
     #[test]
     fn invalid_budget_nan() {
-        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, f64::NAN);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::W8, f64::NAN);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::InvalidBudget(v)) if v.is_nan()
@@ -156,13 +156,13 @@ mod tests {
 
     #[test]
     fn invalid_budget_zero() {
-        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, 0.0);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::W8, 0.0);
         assert_eq!(validate_shape(&unit), Err(ShapeError::InvalidBudget(0.0)));
     }
 
     #[test]
     fn invalid_budget_negative() {
-        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::Q0, -1.0);
+        let unit = make_unit(TermKind::IntLit(42), QuantumLevel::W8, -1.0);
         assert_eq!(validate_shape(&unit), Err(ShapeError::InvalidBudget(-1.0)));
     }
 
@@ -170,13 +170,13 @@ mod tests {
     fn no_target_domains() {
         let mut arena = TermArena::new();
         let root = arena.alloc(TermKind::IntLit(0));
-        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::Q0, 6.0, &[]);
+        let unit = HoloCompileUnit::new(arena, root, QuantumLevel::W8, 6.0, &[]);
         assert_eq!(validate_shape(&unit), Err(ShapeError::NoTargetDomains));
     }
 
     #[test]
     fn literal_out_of_range_q0() {
-        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::W8, 6.0);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::LiteralOutOfRange { .. })
@@ -185,13 +185,13 @@ mod tests {
 
     #[test]
     fn literal_fits_q1() {
-        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::Q1, 12.0);
+        let unit = make_unit(TermKind::IntLit(256), QuantumLevel::W16, 12.0);
         assert!(validate_shape(&unit).is_ok());
     }
 
     #[test]
     fn negative_literal_rejected() {
-        let unit = make_unit(TermKind::IntLit(-1), QuantumLevel::Q0, 6.0);
+        let unit = make_unit(TermKind::IntLit(-1), QuantumLevel::W8, 6.0);
         assert!(matches!(
             validate_shape(&unit),
             Err(ShapeError::LiteralOutOfRange { .. })

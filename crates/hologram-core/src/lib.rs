@@ -17,6 +17,7 @@ extern crate std;
 pub mod buffer;
 pub mod carry;
 pub mod datum;
+pub mod element;
 pub mod encoding;
 pub mod error;
 pub mod lut;
@@ -29,16 +30,18 @@ pub mod ring;
 pub mod term;
 pub mod view;
 
-/// Hologram primitive type family for uor-foundation traits.
+/// Hologram host-types family for uor-foundation traits.
 ///
-/// Maps XSD primitives to Rust types suitable for O(1) LUT computation.
+/// Per ADR-052, the new 0.3.0 `HostTypes` trait replaced the previous
+/// `Primitives` trait. Hologram adopts the `DefaultHostTypes` shape:
+/// `Decimal = f64`, `HostString = str`, `WitnessBytes = [u8]`. The
+/// removed `Integer`/`NonNegativeInteger`/`PositiveInteger`/`Boolean`
+/// slots had no `HostTypes` analogue — call sites that relied on them
+/// now consume concrete `i64`/`u64`/`bool` directly.
 pub struct HoloPrimitives;
 
-impl uor_foundation::Primitives for HoloPrimitives {
-    type String = str;
-    type Integer = i64;
-    type NonNegativeInteger = u64;
-    type PositiveInteger = u64;
+impl uor_foundation::HostTypes for HoloPrimitives {
     type Decimal = f64;
-    type Boolean = bool;
+    type HostString = str;
+    type WitnessBytes = [u8];
 }

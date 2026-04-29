@@ -18,8 +18,11 @@ pub use shape_spec::{ShapeDim, ShapeSpec};
 // Ring-native activation ops from hologram-ring (parametric ring foundation).
 pub use hologram_ring::activation::ActivationOp;
 
-// Canonical QuantumLevel comes from uor-foundation v0.1.4.
-pub use uor_foundation::QuantumLevel;
+// Canonical Witt level comes from uor-foundation v0.3.0. Per Plan 074 §2a
+// we re-export under the legacy `QuantumLevel` name to keep hologram-ai
+// and other downstream consumers stable. The 0.1.x `index()` method is
+// replaced by `witt_length()` returning bit count.
+pub use uor_foundation::WittLevel as QuantumLevel;
 
 /// Ring quantum level for ring-arithmetic execution.
 ///
@@ -45,27 +48,28 @@ pub enum RingLevel {
 }
 
 impl RingLevel {
-    /// Convert from `uor_foundation::QuantumLevel` to `RingLevel`.
-    /// Returns `None` for quantum levels beyond Q3.
+    /// Convert from `uor_foundation::WittLevel` to `RingLevel`.
+    /// Returns `None` for Witt levels beyond W32 (RingLevel covers
+    /// Q0/Q1/Q2/Q3 = 8/16/24/32 bits).
     #[inline]
-    pub const fn from_quantum(q: uor_foundation::QuantumLevel) -> Option<Self> {
-        match q.index() {
-            0 => Some(Self::Q0),
-            1 => Some(Self::Q1),
-            2 => Some(Self::Q2),
-            3 => Some(Self::Q3),
+    pub const fn from_quantum(q: uor_foundation::WittLevel) -> Option<Self> {
+        match q.witt_length() {
+            8 => Some(Self::Q0),
+            16 => Some(Self::Q1),
+            24 => Some(Self::Q2),
+            32 => Some(Self::Q3),
             _ => None,
         }
     }
 
-    /// Convert to `uor_foundation::QuantumLevel`.
+    /// Convert to `uor_foundation::WittLevel`.
     #[inline]
-    pub const fn to_quantum(self) -> uor_foundation::QuantumLevel {
+    pub const fn to_quantum(self) -> uor_foundation::WittLevel {
         match self {
-            Self::Q0 => uor_foundation::QuantumLevel::Q0,
-            Self::Q1 => uor_foundation::QuantumLevel::Q1,
-            Self::Q2 => uor_foundation::QuantumLevel::Q2,
-            Self::Q3 => uor_foundation::QuantumLevel::Q3,
+            Self::Q0 => uor_foundation::WittLevel::W8,
+            Self::Q1 => uor_foundation::WittLevel::W16,
+            Self::Q2 => uor_foundation::WittLevel::W24,
+            Self::Q3 => uor_foundation::WittLevel::W32,
         }
     }
 
@@ -76,31 +80,30 @@ impl RingLevel {
     }
 }
 
-impl From<uor_foundation::QuantumLevel> for RingLevel {
+impl From<uor_foundation::WittLevel> for RingLevel {
     #[inline]
-    fn from(q: uor_foundation::QuantumLevel) -> Self {
+    fn from(q: uor_foundation::WittLevel) -> Self {
         Self::from_quantum(q).unwrap_or(Self::Q3)
     }
 }
 
-impl From<RingLevel> for uor_foundation::QuantumLevel {
+impl From<RingLevel> for uor_foundation::WittLevel {
     #[inline]
     fn from(r: RingLevel) -> Self {
         r.to_quantum()
     }
 }
 
-/// Extension trait for `QuantumLevel` providing byte-width dispatch.
+/// Extension trait for `WittLevel` providing byte-width dispatch.
 pub trait QuantumLevelExt {
-    /// Byte width for this quantum level: `index + 1`.
-    /// Q0 = 1, Q1 = 2, Q2 = 3, Q3 = 4, Q7 = 8.
+    /// Byte width: 1 for W8, 2 for W16, 3 for W24, 4 for W32, etc.
     fn byte_width(self) -> u8;
 }
 
-impl QuantumLevelExt for uor_foundation::QuantumLevel {
+impl QuantumLevelExt for uor_foundation::WittLevel {
     #[inline(always)]
     fn byte_width(self) -> u8 {
-        (self.index() + 1) as u8
+        (self.witt_length() / 8) as u8
     }
 }
 

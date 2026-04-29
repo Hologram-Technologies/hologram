@@ -33,7 +33,7 @@ hologram-ring = { path = "crates/hologram-ring", default-features = false }
 
 
 # UOR Foundation
-uor-foundation = "0.1.4"
+uor-foundation = "0.3.0"
 
 # Serialization (rkyv only)
 rkyv = { version = "0.8", features = ["tinyvec-1"] }

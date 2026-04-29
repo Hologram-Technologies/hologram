@@ -404,7 +404,7 @@ fn handle_converge(
         let layer_header = build_layer_header(graph, &state.schedule);
         let unit_meta = hologram_archive::section::compile_unit_meta::CompileUnitMeta {
             unit_address: state.unit_address,
-            quantum_level: state.quantum_level.index() as u8,
+            quantum_level: state.quantum_level.witt_length() as u8,
             budget: state.budget_allocated,
             domain_count: unit.target_domain_count,
             term_count: unit.arena.len(),
@@ -552,7 +552,7 @@ mod tests {
     use super::*;
     use hologram_core::term::{TermArena, TermKind};
     use uor_foundation::enums::VerificationDomain;
-    use uor_foundation::QuantumLevel;
+    use uor_foundation::WittLevel as QuantumLevel;
 
     fn make_unit(budget: f64) -> HoloCompileUnit {
         let mut arena = TermArena::new();
@@ -560,7 +560,7 @@ mod tests {
         let mut unit = HoloCompileUnit::new(
             arena,
             root,
-            QuantumLevel::Q0,
+            QuantumLevel::W8,
             budget,
             &[VerificationDomain::Algebraic],
         );
@@ -588,7 +588,7 @@ mod tests {
 
         run_cascade(&unit, &mut store).unwrap();
 
-        let cert = store.get(&unit.unit_address, QuantumLevel::Q0);
+        let cert = store.get(&unit.unit_address, QuantumLevel::W8);
         assert!(cert.is_some());
         assert!(cert.unwrap().converged);
     }
@@ -647,7 +647,7 @@ mod tests {
     fn different_levels_no_cache_hit() {
         let unit_q0 = make_unit(100.0);
         let mut unit_q1 = make_unit(100.0);
-        unit_q1.quantum_level = QuantumLevel::Q1;
+        unit_q1.quantum_level = QuantumLevel::W16;
         unit_q1.unit_address = unit_q0.unit_address;
         unit_q1.address = hologram_core::term::HoloAddress::from_hash(unit_q0.unit_address);
 

@@ -63,7 +63,7 @@ impl EffectStore {
     ) -> Result<u8, ShapeViolation> {
         let _validated = EffectDeclarationBuilder::new()
             .name(name)
-            .target_fibers(target_fibers)
+            .target_sites(target_fibers)
             .budget_delta(budget_delta)
             .commutes(commutes)
             .validate()?;

@@ -19,7 +19,7 @@ impl WordDatum {
     /// Create a datum from a raw word value.
     #[inline]
     #[must_use]
-    pub const fn new(value: u16) -> Self {
+    pub fn new(value: u16) -> Self {
         let spectrum = Self::make_spectrum(value);
         let address = WordAddress::from_word(value);
         Self {
@@ -73,36 +73,41 @@ impl WordDatum {
     /// Negation: `(-x) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn neg(self) -> Self {
+    #[allow(clippy::should_implement_trait)]
+    pub fn neg(self) -> Self {
         Self::new(self.value.wrapping_neg())
     }
 
     /// Bitwise complement.
     #[inline]
     #[must_use]
-    pub const fn bnot(self) -> Self {
+    pub fn bnot(self) -> Self {
         Self::new(!self.value)
     }
 
     /// Successor: `(x + 1) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn succ(self) -> Self {
+    pub fn succ(self) -> Self {
         Self::new(self.value.wrapping_add(1))
     }
 
     /// Predecessor: `(x - 1) mod 65536`.
     #[inline]
     #[must_use]
-    pub const fn pred(self) -> Self {
+    pub fn pred(self) -> Self {
         Self::new(self.value.wrapping_sub(1))
     }
 
     /// The zero datum (additive identity).
-    pub const ZERO: Self = Self::new(0);
+    pub fn zero() -> Self {
+        Self::new(0)
+    }
 
     /// The generator pi_1 (value = 1).
-    pub const PI1: Self = Self::new(1);
+    pub fn pi1() -> Self {
+        Self::new(1)
+    }
 }
 
 impl core::fmt::Debug for WordDatum {
@@ -120,7 +125,7 @@ impl core::fmt::Display for WordDatum {
 impl Default for WordDatum {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::zero()
     }
 }
 
@@ -152,16 +157,23 @@ impl From<WordDatum> for u16 {
 pub struct WordAddress {
     value: u16,
     glyph_buf: [u8; 9],
+    /// Per ADR-052 / Amendment 43 §2: `header(k) || le_bytes(x, k+1)`.
+    /// For Q1, k = 1, so header byte = 0x01 followed by 2 LE value bytes.
+    canonical_buf: [u8; 3],
+    /// Pre-computed `"blake3:<64 hex>"` digest of `canonical_buf`.
+    digest_buf: [u8; crate::element::DIGEST_STR_LEN],
 }
 
 impl WordAddress {
     /// Create a Braille address from a word value.
     #[must_use]
-    pub const fn from_word(value: u16) -> Self {
+    pub fn from_word(value: u16) -> Self {
         let lo6 = (value & 0x3F) as u8;
         let mid6 = ((value >> 6) & 0x3F) as u8;
         let hi4 = ((value >> 12) & 0x0F) as u8;
-        // Braille U+2800..U+283F → UTF-8: E2 A0 {80+offset}
+        // Canonical bytes per Amendment 43 §2 (k=1, 2 value bytes LE).
+        let canonical_buf = [0x01, value as u8, (value >> 8) as u8];
+        let digest_buf = crate::element::blake3_digest_str(&canonical_buf);
         Self {
             value,
             glyph_buf: [
@@ -175,6 +187,8 @@ impl WordAddress {
                 0xA0,
                 0x80 + hi4,
             ],
+            canonical_buf,
+            digest_buf,
         }
     }
 
@@ -199,43 +213,42 @@ impl uor_foundation::kernel::schema::Datum<HoloPrimitives> for WordDatum {
         self.value as u64
     }
 
-    fn quantum(&self) -> u64 {
+    fn witt_length(&self) -> u64 {
         16
     }
 
+    /// Per ADR-052: stratum is the ring-level index k. Q1 → 1.
     fn stratum(&self) -> u64 {
-        self.value.count_ones() as u64
+        1
     }
 
+    /// Per ADR-052: spectrum is the underlying ring value cast to u64.
     fn spectrum(&self) -> u64 {
         self.value as u64
     }
 
-    type Address = WordAddress;
+    type Element = WordAddress;
 
-    fn glyph(&self) -> &Self::Address {
+    fn element(&self) -> &Self::Element {
         &self.address
     }
 }
 
-impl uor_foundation::kernel::address::Address<HoloPrimitives> for WordAddress {
-    fn glyph(&self) -> &str {
-        self.as_str()
-    }
-
+impl uor_foundation::kernel::address::Element<HoloPrimitives> for WordAddress {
     fn length(&self) -> u64 {
         3
     }
 
     fn addresses(&self) -> &str {
-        ""
-    }
-
-    fn digest(&self) -> &str {
         self.as_str()
     }
 
-    fn quantum(&self) -> u64 {
+    fn digest(&self) -> &str {
+        // SAFETY: digest_buf is ASCII (`blake3:` + lowercase hex).
+        unsafe { core::str::from_utf8_unchecked(&self.digest_buf) }
+    }
+
+    fn witt_length(&self) -> u64 {
         16
     }
 
@@ -245,8 +258,8 @@ impl uor_foundation::kernel::address::Address<HoloPrimitives> for WordAddress {
     }
 
     #[inline]
-    fn canonical_bytes(&self) -> &str {
-        self.as_str()
+    fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_buf
     }
 }
 
@@ -342,7 +355,7 @@ mod tests {
 
     #[test]
     fn default_is_zero() {
-        assert_eq!(WordDatum::default(), WordDatum::ZERO);
+        assert_eq!(WordDatum::default(), WordDatum::zero());
     }
 
     #[test]
@@ -358,19 +371,17 @@ mod tests {
         use uor_foundation::kernel::schema::Datum;
         let d = WordDatum::new(1000);
         assert_eq!(Datum::<HoloPrimitives>::value(&d), 1000);
-        assert_eq!(Datum::<HoloPrimitives>::quantum(&d), 16);
-        assert_eq!(
-            Datum::<HoloPrimitives>::stratum(&d),
-            1000u16.count_ones() as u64
-        );
+        assert_eq!(Datum::<HoloPrimitives>::witt_length(&d), 16);
+        // Per ADR-052: stratum is the ring-level index k. Q1 → 1.
+        assert_eq!(Datum::<HoloPrimitives>::stratum(&d), 1);
     }
 
     #[test]
     fn address_trait_impl() {
-        use uor_foundation::kernel::address::Address;
+        use uor_foundation::kernel::address::Element;
         let a = WordAddress::from_word(1000);
-        assert_eq!(Address::<HoloPrimitives>::length(&a), 3);
-        assert_eq!(Address::<HoloPrimitives>::quantum(&a), 16);
+        assert_eq!(Element::<HoloPrimitives>::length(&a), 3);
+        assert_eq!(Element::<HoloPrimitives>::witt_length(&a), 16);
     }
 
     #[test]

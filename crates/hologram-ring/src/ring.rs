@@ -115,7 +115,7 @@ mod uor_impls {
             // return a reference that lives long enough via Box::leak in a once_cell.
 
             impl uor_foundation::kernel::schema::Ring<PrismPrimitives> for PrismRing<$Q> {
-                fn ring_quantum(&self) -> u64 {
+                fn ring_witt_length(&self) -> u64 {
                     $bits
                 }
                 fn modulus(&self) -> u64 {
@@ -135,7 +135,7 @@ mod uor_impls {
                 fn complement(&self) -> &Self::Involution {
                     &$bnot_static
                 }
-                fn at_quantum_level(&self) -> uor_foundation::enums::QuantumLevel {
+                fn at_witt_level(&self) -> uor_foundation::WittLevel {
                     $uor_level
                 }
             }
@@ -197,7 +197,7 @@ mod uor_impls {
         1u8,
         8,
         0,
-        uor_foundation::enums::QuantumLevel::Q0,
+        uor_foundation::WittLevel::W8,
         256,
         1,
         true,
@@ -216,7 +216,7 @@ mod uor_impls {
         1u16,
         16,
         1,
-        uor_foundation::enums::QuantumLevel::Q1,
+        uor_foundation::WittLevel::W16,
         65536,
         2,
         true,
@@ -235,7 +235,7 @@ mod uor_impls {
         1u32,
         32,
         3,
-        uor_foundation::enums::QuantumLevel::Q2,
+        uor_foundation::WittLevel::W24,
         4_294_967_296,
         4,
         false,
@@ -254,7 +254,7 @@ mod uor_impls {
         1u64,
         64,
         7,
-        uor_foundation::enums::QuantumLevel::Q3,
+        uor_foundation::WittLevel::W32,
         0,
         8,
         false,
@@ -273,7 +273,7 @@ mod uor_impls {
         1u128,
         128,
         15,
-        uor_foundation::enums::QuantumLevel::new(15),
+        uor_foundation::WittLevel::new(128),
         0,
         1,
         true,

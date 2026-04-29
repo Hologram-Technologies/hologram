@@ -6,7 +6,7 @@ use hologram_ring::datum::Datum;
 use hologram_ring::ring::PrismRing;
 use hologram_ring::{Involution, PrimOp, Q0, Q1, Q3, Q7};
 use uor_foundation::enums::GeometricCharacter;
-use uor_foundation::kernel::address::Address as UorAddress;
+use uor_foundation::kernel::address::Element as UorAddress;
 use uor_foundation::kernel::division::{
     AlgebraAssociator, AlgebraCommutator, CayleyDicksonConstruction, NormedDivisionAlgebra,
 };
@@ -21,16 +21,18 @@ use uor_foundation::kernel::schema::{Datum as UorDatum, Ring};
 fn datum_value_q0() {
     let d = Datum::<Q0>::new(42u8);
     assert_eq!(UorDatum::value(&d), 42);
-    assert_eq!(UorDatum::quantum(&d), 8);
-    assert_eq!(UorDatum::stratum(&d), 42u8.count_ones() as u64);
+    assert_eq!(UorDatum::witt_length(&d), 8);
+    // Per ADR-052: stratum is the ring-level index k. Q0 → 0.
+    assert_eq!(UorDatum::stratum(&d), 0);
 }
 
 #[test]
 fn datum_value_q3() {
     let d = Datum::<Q3>::new(0xDEAD_BEEFu32);
     assert_eq!(UorDatum::value(&d), 0xDEAD_BEEF);
-    assert_eq!(UorDatum::quantum(&d), 32);
-    assert_eq!(UorDatum::stratum(&d), 0xDEAD_BEEFu32.count_ones() as u64);
+    assert_eq!(UorDatum::witt_length(&d), 32);
+    // Per ADR-052: stratum is the ring-level index k. Q3 → 3.
+    assert_eq!(UorDatum::stratum(&d), 3);
 }
 
 #[test]
@@ -46,20 +48,20 @@ fn datum_spectrum_q0() {
 #[test]
 fn datum_address_q0() {
     let d = Datum::<Q0>::new(42u8);
-    let addr = UorDatum::glyph(&d);
-    let glyph = UorAddress::glyph(addr);
+    let addr = UorDatum::element(&d);
+    let glyph = UorAddress::addresses(addr);
     assert!(!glyph.is_empty(), "address glyph should be non-empty");
     assert_eq!(UorAddress::length(addr), 2); // ceil(8/6) = 2 Braille chars
-    assert_eq!(UorAddress::quantum(addr), 8);
+    assert_eq!(UorAddress::witt_length(addr), 8);
     assert_eq!(UorAddress::digest_algorithm(addr), "blake3");
 }
 
 #[test]
 fn datum_address_q3() {
     let d = Datum::<Q3>::new(1000u32);
-    let addr = UorDatum::glyph(&d);
+    let addr = UorDatum::element(&d);
     assert_eq!(UorAddress::length(addr), 6); // ceil(32/6) = 6
-    assert_eq!(UorAddress::quantum(addr), 32);
+    assert_eq!(UorAddress::witt_length(addr), 32);
 }
 
 // ── Ring ──────────────────────────────────────────────────────────────────
@@ -67,19 +69,16 @@ fn datum_address_q3() {
 #[test]
 fn ring_q0() {
     let r = PrismRing::<Q0>::new();
-    assert_eq!(Ring::ring_quantum(&r), 8);
+    assert_eq!(Ring::ring_witt_length(&r), 8);
     assert_eq!(Ring::modulus(&r), 256);
     assert_eq!(UorDatum::value(Ring::generator(&r)), 1);
-    assert_eq!(
-        Ring::at_quantum_level(&r),
-        uor_foundation::enums::QuantumLevel::Q0
-    );
+    assert_eq!(Ring::at_witt_level(&r), uor_foundation::WittLevel::W8);
 }
 
 #[test]
 fn ring_q3() {
     let r = PrismRing::<Q3>::new();
-    assert_eq!(Ring::ring_quantum(&r), 32);
+    assert_eq!(Ring::ring_witt_length(&r), 32);
     assert_eq!(Ring::modulus(&r), 4_294_967_296);
     assert_eq!(UorDatum::value(Ring::generator(&r)), 1);
 }
@@ -87,7 +86,7 @@ fn ring_q3() {
 #[test]
 fn ring_q7() {
     let r = PrismRing::<Q7>::new();
-    assert_eq!(Ring::ring_quantum(&r), 64);
+    assert_eq!(Ring::ring_witt_length(&r), 64);
     // modulus overflows u64 for Q7 → returns 0 to signal this
     assert_eq!(Ring::modulus(&r), 0);
 }
@@ -241,7 +240,7 @@ fn primop_operation_traits() {
 fn algebra_commutator_markers_implemented() {
     fn assert_impl<P, T>()
     where
-        P: uor_foundation::Primitives,
+        P: uor_foundation::HostTypes,
         T: AlgebraCommutator<P>,
     {
     }
@@ -253,7 +252,7 @@ fn algebra_commutator_markers_implemented() {
 fn algebra_associator_markers_implemented() {
     fn assert_impl<P, T>()
     where
-        P: uor_foundation::Primitives,
+        P: uor_foundation::HostTypes,
         T: AlgebraAssociator<P>,
     {
     }

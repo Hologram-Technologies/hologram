@@ -118,7 +118,7 @@ fn bench_triple_ring(c: &mut Criterion) {
     });
     group.bench_function("ring_quantum", |b| {
         use uor_foundation::kernel::schema::Ring;
-        b.iter(|| black_box(TripleRing).ring_quantum())
+        b.iter(|| black_box(TripleRing).ring_witt_length())
     });
     group.bench_function("neg_q2", |b| {
         b.iter(|| arith_q2::neg_q2(black_box(0x00AB_CDEF)))

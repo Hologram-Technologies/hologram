@@ -2,7 +2,8 @@
 
 use crate::q2::{arith, datum::TripleDatum};
 use crate::HoloPrimitives;
-use uor_foundation::enums::{GeometricCharacter, QuantumLevel};
+use uor_foundation::enums::GeometricCharacter;
+use uor_foundation::WittLevel as QuantumLevel;
 
 /// The ring Z/2^24Z at quantum level 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,12 +38,16 @@ impl TripleRing {
     }
 }
 
-static GENERATOR: TripleDatum = TripleDatum::PI1;
+use std::sync::OnceLock;
+fn generator_triple() -> &'static TripleDatum {
+    static G: OnceLock<TripleDatum> = OnceLock::new();
+    G.get_or_init(TripleDatum::pi1)
+}
 static NEG_INV: TripleInvolution = TripleInvolution::Neg;
 static BNOT_INV: TripleInvolution = TripleInvolution::Bnot;
 
 impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for TripleRing {
-    fn ring_quantum(&self) -> u64 {
+    fn ring_witt_length(&self) -> u64 {
         Self::QUANTUM
     }
 
@@ -53,7 +58,7 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for TripleRing {
     type Datum = TripleDatum;
 
     fn generator(&self) -> &Self::Datum {
-        &GENERATOR
+        generator_triple()
     }
 
     type Involution = TripleInvolution;
@@ -66,8 +71,8 @@ impl uor_foundation::kernel::schema::Ring<HoloPrimitives> for TripleRing {
         &BNOT_INV
     }
 
-    fn at_quantum_level(&self) -> QuantumLevel {
-        QuantumLevel::Q2
+    fn at_witt_level(&self) -> QuantumLevel {
+        QuantumLevel::W24
     }
 }
 
@@ -118,6 +123,10 @@ impl uor_foundation::kernel::op::Operation<HoloPrimitives> for TripleInvolution 
             Self::Neg => "neg",
             Self::Bnot => "bnot",
         }
+    }
+
+    fn is_ring_op(&self) -> bool {
+        true
     }
 }
 
@@ -214,9 +223,9 @@ mod tests {
     fn ring_quantum_and_modulus() {
         use uor_foundation::kernel::schema::Ring;
         let r = TripleRing;
-        assert_eq!(r.ring_quantum(), 24);
+        assert_eq!(r.ring_witt_length(), 24);
         assert_eq!(r.modulus(), 0x01_000000);
-        assert_eq!(r.at_quantum_level(), QuantumLevel::Q2);
+        assert_eq!(r.at_witt_level(), QuantumLevel::W24);
     }
 
     #[test]

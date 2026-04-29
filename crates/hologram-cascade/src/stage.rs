@@ -8,7 +8,7 @@
 
 use hologram_graph::fusion::FusionStats;
 use hologram_graph::graph::node::NodeId;
-use uor_foundation::QuantumLevel;
+use uor_foundation::WittLevel as QuantumLevel;
 
 use crate::liveness::LivenessInterval;
 use crate::qedl::{EncodingId, QedlBoundary};
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn state_budget_tracking() {
-        let mut state = CascadeState::from_unit([0u8; 32], QuantumLevel::Q0, 10.0);
+        let mut state = CascadeState::from_unit([0u8; 32], QuantumLevel::W8, 10.0);
         assert!(!state.budget_exceeded());
         assert_eq!(state.budget_remaining(), 10.0);
 
