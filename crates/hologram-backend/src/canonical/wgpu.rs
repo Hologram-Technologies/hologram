@@ -27,13 +27,140 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use hologram_transform::{
-    AddCall, AddGradCall, AddRmsNormCall, AddRmsNormGradCall, BinaryCall, CanonicalBackend,
-    ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall, GroupNormCall,
-    InstanceNormGradCall, KernelCall, LayerNormGradCall, MatMulCall, MatMulGradACall,
-    MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall, Pool2dKind, ReduceCall,
-    ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan, SoftmaxCall, SoftmaxGradCall,
-    SoftmaxGradKind, SubGradCall, UnaryCall, UnaryKind,
+    AddCall, AddGradCall, AddRmsNormCall, AddRmsNormGradCall, BackendWorkspace, BinaryCall,
+    CanonicalBackend, ConcatCall, Conv2dCall, ConvTransposeCall, ExecError, GlobalAvgPoolCall,
+    GroupNormCall, InstanceNormGradCall, KernelCall, LayerNormGradCall, MatMulCall,
+    MatMulGradACall, MatMulGradBCall, NegGradCall, NormFullCall, NormScaleCall, Pool2dCall,
+    Pool2dKind, ReduceCall, ReduceKind, ReshapeCall, RmsNormGradCall, SliceCall, SlotSpan,
+    SoftmaxCall, SoftmaxGradCall, SoftmaxGradKind, SubGradCall, UnaryCall, UnaryKind,
 };
+
+/// Device-resident workspace for `WgpuBackend` per ADR-051.
+///
+/// Owns a single `wgpu::Buffer` of `capacity * 4` bytes. `write_span`
+/// uploads via `Queue::write_buffer` (no staging copy on the host
+/// side); `read_span` allocates a temporary staging buffer, issues a
+/// copy command, maps the staging buffer, and reads the slice back.
+///
+/// Today's `WgpuBackend::dispatch_resident` (added in ADR-051 step 2)
+/// downloads the full workspace, runs the existing per-call
+/// upload/download path, and uploads the result. That's no faster
+/// than the legacy `dispatch(&mut [f32], …)` route; the per-arm
+/// migration in ADR-051 step 3 binds the workspace buffer directly so
+/// dispatches never round-trip through the host.
+pub struct WgpuWorkspace {
+    /// The single device-resident buffer. Sized at `capacity_elements
+    /// * 4` bytes.
+    buffer: wgpu::Buffer,
+    /// Element capacity, in `f32` slots.
+    capacity_elements: usize,
+    /// Cloned device handle. Needed by `read_span` to allocate the
+    /// staging buffer and submit the copy/map commands without holding
+    /// a borrow back to `WgpuBackend`.
+    device: wgpu::Device,
+    /// Cloned queue handle. Needed for `write_buffer` uploads and to
+    /// submit the readback command encoder.
+    queue: wgpu::Queue,
+}
+
+impl WgpuWorkspace {
+    /// Allocate a fresh device buffer sized for the plan.
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity_elements: usize) -> Self {
+        let size_bytes = (capacity_elements * 4).max(4) as u64;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hologram-wgpu-workspace"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            buffer,
+            capacity_elements,
+            device: device.clone(),
+            queue: queue.clone(),
+        }
+    }
+
+    /// Borrow the device buffer for bind-group construction in
+    /// `dispatch_resident` arms (used after the per-arm migration).
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+}
+
+impl BackendWorkspace for WgpuWorkspace {
+    fn capacity(&self) -> usize {
+        self.capacity_elements
+    }
+
+    fn write_span(&mut self, span: SlotSpan, data: &[f32]) -> Result<(), ExecError> {
+        if data.len() != span.len {
+            return Err(ExecError::Backend(format!(
+                "WgpuWorkspace::write_span: data.len()={} != span.len={}",
+                data.len(),
+                span.len
+            )));
+        }
+        let end = span.offset + span.len;
+        if end > self.capacity_elements {
+            return Err(ExecError::WorkspaceMismatch {
+                expected: end,
+                actual: self.capacity_elements,
+            });
+        }
+        let byte_offset = (span.offset * 4) as u64;
+        self.queue
+            .write_buffer(&self.buffer, byte_offset, bytemuck::cast_slice(data));
+        // write_buffer is queued; readers see it after the next submit.
+        // For correctness across read_span calls below we submit empty.
+        self.queue.submit(std::iter::empty());
+        Ok(())
+    }
+
+    fn read_span(&self, span: SlotSpan) -> Result<Vec<f32>, ExecError> {
+        let end = span.offset + span.len;
+        if end > self.capacity_elements {
+            return Err(ExecError::WorkspaceMismatch {
+                expected: end,
+                actual: self.capacity_elements,
+            });
+        }
+        let bytes = (span.len * 4) as u64;
+        if bytes == 0 {
+            return Ok(Vec::new());
+        }
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hologram-wgpu-workspace-readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("hologram-wgpu-readback-enc"),
+            });
+        encoder.copy_buffer_to_buffer(&self.buffer, (span.offset * 4) as u64, &staging, 0, bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|e| ExecError::Backend(format!("readback channel: {e}")))?
+            .map_err(|e| ExecError::Backend(format!("buffer map: {e:?}")))?;
+        let mapped = slice.get_mapped_range();
+        let out: Vec<f32> = bytemuck::cast_slice(&mapped).to_vec();
+        drop(mapped);
+        staging.unmap();
+        Ok(out)
+    }
+}
 
 /// WebGPU canonical backend.
 pub struct WgpuBackend {
@@ -447,17 +574,37 @@ impl WgpuBackend {
 }
 
 impl CanonicalBackend for WgpuBackend {
-    // ADR-051 step 1: WgpuBackend opts into the trait machinery using
-    // CpuWorkspace as the workspace type for now (the per-call upload/
-    // download path keeps working). A device-resident WgpuWorkspace is
-    // the natural follow-up commit; this skeleton lets every other
-    // CanonicalBackend trait bound compile against the new shape.
-    type Workspace = hologram_transform::backend::CpuWorkspace;
+    // ADR-051 step 2: device-resident workspace landed. dispatch_resident
+    // currently downloads → runs the legacy per-call dispatch on host →
+    // uploads. Step 3 migrates each dispatch arm to bind the workspace
+    // buffer directly so per-call transfers go away.
+    type Workspace = WgpuWorkspace;
 
     fn alloc_workspace(&self, total_elements: usize) -> Result<Self::Workspace, ExecError> {
-        Ok(hologram_transform::backend::CpuWorkspace::with_capacity(
+        Ok(WgpuWorkspace::new(
+            &self.device,
+            &self.queue,
             total_elements,
         ))
+    }
+
+    fn dispatch_resident(
+        &mut self,
+        ws: &mut Self::Workspace,
+        call: &KernelCall,
+    ) -> Result<(), ExecError> {
+        // Slow-path bridge: round-trip the workspace through the host
+        // and run the existing per-call dispatch path. Kept simple so
+        // the per-arm migration (step 3) is the only place actual
+        // device-resident dispatch lands.
+        let full = SlotSpan {
+            offset: 0,
+            len: ws.capacity(),
+        };
+        let mut host = ws.read_span(full)?;
+        self.dispatch(&mut host, call)?;
+        ws.write_span(full, &host)?;
+        Ok(())
     }
 
     fn dispatch(&mut self, storage: &mut [f32], call: &KernelCall) -> Result<(), ExecError> {

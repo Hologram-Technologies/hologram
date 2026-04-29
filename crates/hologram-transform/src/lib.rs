@@ -35,7 +35,10 @@ pub mod plan;
 pub mod planner;
 
 pub use address::{AddressRef, LayoutId, NodeId, RegionId, TensorId, DEFAULT_LAYOUT};
-pub use backend::{kernel_call_name, CanonicalBackend, CpuBackend, TraceBackend, TraceEntry};
+pub use backend::{
+    kernel_call_name, BackendWorkspace, CanonicalBackend, CpuBackend, CpuWorkspace, TraceBackend,
+    TraceEntry,
+};
 pub use buffer::BufferSet;
 pub use chain::{
     AddInputs, AddRmsNormInputs, Conv2dInputs, MatMulInputs, NormFullInputs, NormScaleInputs,
