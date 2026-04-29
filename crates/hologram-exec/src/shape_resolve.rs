@@ -1,13 +1,23 @@
-//! Runtime shape resolution for TapeKernel dispatch.
+//! Runtime shape resolution for TapeKernel dispatch — v2 archive compat.
 //!
 //! Ops bake dimension parameters (size, k, m, n, input_h, input_w) at compile
 //! time. When runtime tensor sizes differ from compiled sizes (variable-length
 //! sequences, different spatial resolutions), these baked values are stale.
 //!
-//! This module provides pure functions that resolve baked dimensions using
-//! runtime `TensorMeta` from the `BufferArena`. Each function falls back to
-//! the baked value when runtime metadata is unavailable, preserving backward
-//! compatibility with archives that lack shape metadata.
+//! Per ADR-053, v3 archives carry full shape metadata that the loader
+//! pre-seeds into the [`crate::buffer::BufferArena`]'s `ShapeRegistry`
+//! at archive load time (see `seed_arena` in `mmap/mod.rs`). Dispatch
+//! reads shapes directly from the registry via `shape_*(idx)` helpers —
+//! no fallback needed.
+//!
+//! This module remains as the **v2 compatibility fallback**: archives
+//! produced before v3 (without shape coverage) still load via
+//! [`hologram_archive::HoloHeader::needs_v2_shape_compat`], and the
+//! `unwrap_or_else` branches in `kernel_dispatch.rs` invoke these
+//! resolvers as a last-resort heuristic. v3 archives never hit them.
+//!
+//! When v2 read support is dropped (a future ADR), this module + every
+//! `unwrap_or_else` call site can be deleted in one mechanical sweep.
 
 use hologram_core::op::TensorMeta;
 use smallvec::SmallVec;
