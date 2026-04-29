@@ -37,6 +37,10 @@ pub struct HoloWriter {
     /// The caller is responsible for page-aligning tensors within the weight
     /// blob before calling `set_weights()` (see `page_align_weight_blob`).
     tensor_page_aligned: bool,
+    /// Deferred validation error from a fluent `set_graph*` call. Surfaced
+    /// at `build()` time per ADR-053 — v3 archives must carry shape coverage,
+    /// but the builder API is `-> Self` so the error is stashed here.
+    deferred_error: Option<crate::error::ArchiveError>,
 }
 
 impl Default for HoloWriter {
@@ -60,13 +64,22 @@ impl HoloWriter {
             compress_weights: false,
             compress_graph: false,
             tensor_page_aligned: false,
+            deferred_error: None,
         }
     }
 
     /// Set the graph from a live `Graph` (serialized via rkyv).
+    ///
+    /// Per ADR-053, validates v3 shape coverage before serialization. If
+    /// the graph is missing required shapes, the error is deferred to
+    /// `build()` so the fluent API stays `-> Self`.
     #[must_use]
     pub fn set_graph(mut self, graph: &hologram_graph::Graph) -> Self {
         let sg = SerializedGraph::from_graph(graph);
+        if let Err(e) = sg.validate_shape_coverage() {
+            self.deferred_error = Some(e);
+            return self;
+        }
         self.graph_input_names = sg.input_names.clone();
         self.graph_output_names = sg.output_names.clone();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg)
@@ -92,6 +105,10 @@ impl HoloWriter {
     ) -> (Self, Vec<u8>) {
         let (sg, external_weights) =
             SerializedGraph::from_graph_externalize_constants(graph, size_threshold);
+        if let Err(e) = sg.validate_shape_coverage() {
+            self.deferred_error = Some(e);
+            return (self, external_weights);
+        }
         self.graph_input_names = sg.input_names.clone();
         self.graph_output_names = sg.output_names.clone();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sg)
@@ -198,6 +215,9 @@ impl HoloWriter {
     /// explicitly added, a default one is generated with a single "main"
     /// layer using `LayerEntrypoint::Graph`.
     pub fn build(mut self) -> ArchiveResult<Vec<u8>> {
+        if let Some(e) = self.deferred_error.take() {
+            return Err(e);
+        }
         self.ensure_layer_header();
         let graph_data = self.graph_bytes.unwrap_or_default();
         let weight_data = self.weight_bytes.unwrap_or_default();
@@ -277,6 +297,9 @@ impl HoloWriter {
     /// weights. Falls back to in-memory weights from `set_weights()` if no
     /// file source was set.
     pub fn build_to_file(mut self, output_path: &std::path::Path) -> ArchiveResult<()> {
+        if let Some(e) = self.deferred_error.take() {
+            return Err(e);
+        }
         self.ensure_layer_header();
         let graph_data = self.graph_bytes.unwrap_or_default();
 

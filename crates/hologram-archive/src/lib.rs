@@ -56,6 +56,10 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            // ADR-053: v3 archives require node_shapes coverage for
+            // every non-Input/non-Output/non-Constant node. Relu at
+            // index 1 is the only non-exempt node.
+            .set_node_shape(1, vec![4])
             .node_with_inputs(GraphOp::Output, &[1])
             .build();
 

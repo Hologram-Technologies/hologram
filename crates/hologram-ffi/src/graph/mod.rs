@@ -149,6 +149,31 @@ pub extern "C" fn hologram_graph_builder_edge(
     FfiStatus::Ok as i32
 }
 
+/// Set the N-D output shape for a node by builder index.
+///
+/// Per ADR-053, v3 archives require shape coverage for every
+/// dispatch-producing node. Callers building graphs through this
+/// FFI must populate shapes before compilation.
+#[no_mangle]
+pub extern "C" fn hologram_graph_builder_set_node_shape(
+    builder: *mut FfiGraphBuilder,
+    node_index: usize,
+    shape_ptr: *const usize,
+    shape_len: usize,
+) -> i32 {
+    let Some(b) = borrow_handle_mut(builder) else {
+        return FfiStatus::NullPointer as i32;
+    };
+    let shape = read_usize_slice(shape_ptr, shape_len).to_vec();
+    if let Some(&id) = b.index_to_id.get(node_index) {
+        b.graph.set_node_shape(id, shape);
+        FfiStatus::Ok as i32
+    } else {
+        set_last_error(format!("node index {node_index} out of range"));
+        FfiStatus::InvalidArgument as i32
+    }
+}
+
 /// Add a named output referencing a builder index.
 #[no_mangle]
 pub extern "C" fn hologram_graph_builder_output(

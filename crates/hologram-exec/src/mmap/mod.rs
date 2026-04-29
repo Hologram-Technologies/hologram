@@ -746,6 +746,7 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![3])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("y", 2)
             .build();
@@ -770,7 +771,9 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+            .set_node_shape(1, vec![4])
             .node_with_inputs(GraphOp::Float(FloatOp::Neg), &[1])
+            .set_node_shape(2, vec![4])
             .node_with_inputs(GraphOp::Output, &[2])
             .output("y", 3)
             .build();
@@ -802,6 +805,7 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Float(FloatOp::Softmax { size: 4 }), &[0])
+            .set_node_shape(1, vec![4])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("y", 2)
             .build();
@@ -842,6 +846,10 @@ mod tests {
             .input("a")
             .node_from_graph_input(GraphOp::Input, 0)
             .matmul_lut_4bit(ConstantData::Bytes(qw_bytes), &[0])
+            // matmul_lut_4bit pushes only the matmul node to the builder
+            // index list (the constant is referenced directly by id).
+            // matmul output is [m, n] with m=2 from the [2*k] activations.
+            .set_node_shape(1, vec![2, n])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("c", 2)
             .build();
@@ -881,6 +889,7 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("y", 2)
             .build();
@@ -921,6 +930,7 @@ mod tests {
                 },
                 &[0],
             )
+            .set_node_shape(1, vec![3])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("y", 2)
             .build();
@@ -954,6 +964,7 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Float(FloatOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             // NOTE: no .output("y", 2) call!
             .build();

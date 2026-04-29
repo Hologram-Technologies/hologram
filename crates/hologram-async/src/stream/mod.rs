@@ -61,7 +61,10 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            // ADR-053: Relu/Sigmoid need shape coverage for v3.
+            .set_node_shape(1, vec![3])
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[1])
+            .set_node_shape(2, vec![3])
             .node_with_inputs(GraphOp::Output, &[2])
             .output("y", 3)
             .build();

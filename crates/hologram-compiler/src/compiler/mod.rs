@@ -373,10 +373,16 @@ mod tests {
     use hologram_graph::constant::ConstantData;
     use hologram_graph::graph::GraphOp;
 
+    // ADR-053: v3 archives require node_shapes coverage for every
+    // non-Input/non-Output/non-Constant node. The compiler doesn't yet
+    // synthesize shapes during lowering (Sprint 33 Phase 4 introduced
+    // direct reads from the runtime ShapeRegistry); test fixtures
+    // populate them explicitly to satisfy the v3 contract.
     fn linear_chain() -> Graph {
         GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .build()
     }
@@ -385,8 +391,11 @@ mod tests {
         GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(2, vec![1])
             .node_with_inputs(GraphOp::Prim(PrimOp::Add), &[1, 2])
+            .set_node_shape(3, vec![1])
             .node_with_inputs(GraphOp::Output, &[3])
             .build()
     }
@@ -420,7 +429,9 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[1])
+            .set_node_shape(2, vec![1])
             .node_with_inputs(GraphOp::Output, &[2])
             .build();
         let out = CompilerBuilder::new(g).fuse(true).build().unwrap();
@@ -432,7 +443,9 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[1])
+            .set_node_shape(2, vec![1])
             .node_with_inputs(GraphOp::Output, &[2])
             .build();
         let out = CompilerBuilder::new(g).fuse(false).build().unwrap();
@@ -442,11 +455,14 @@ mod tests {
     #[test]
     fn compile_with_constants() {
         let g = GraphBuilder::new()
-            .constant(ConstantData::Bytes(vec![42]))
+            .constant_with_shape(ConstantData::Bytes(vec![42]), vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .build();
-        let out = compile(g).unwrap();
+        // Fusion would constant-fold Relu(42) → new ConstantId(1) without
+        // a shape entry. Disable fusion until the folder populates shapes.
+        let out = CompilerBuilder::new(g).fuse(false).build().unwrap();
         assert!(!out.archive.is_empty());
     }
 
@@ -482,9 +498,13 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(2, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Tanh), &[0])
+            .set_node_shape(3, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Exp), &[0])
+            .set_node_shape(4, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .node_with_inputs(GraphOp::Output, &[2])
             .node_with_inputs(GraphOp::Output, &[3])
@@ -497,8 +517,9 @@ mod tests {
     #[test]
     fn fusion_stats_propagated() {
         let g = GraphBuilder::new()
-            .constant(ConstantData::Bytes(vec![10]))
+            .constant_with_shape(ConstantData::Bytes(vec![10]), vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .build();
         let out = compile(g).unwrap();
@@ -522,7 +543,9 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Sigmoid), &[0])
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[1])
+            .set_node_shape(2, vec![1])
             .node_with_inputs(GraphOp::Output, &[2])
             .build();
         let out = CompilerBuilder::new(g).build().unwrap();
@@ -540,6 +563,8 @@ mod tests {
         g.add_edge(inp, relu);
         g.add_edge(relu, out);
         g.add_output("y", out);
+        // ADR-053: Relu requires shape coverage for v3 archives.
+        g.set_node_shape(relu, vec![1]);
         let output = compile(g).unwrap();
         assert!(!output.archive.is_empty());
     }

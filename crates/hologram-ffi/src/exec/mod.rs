@@ -214,6 +214,9 @@ mod tests {
         hologram_graph_builder_node_from_input(b, 0, 0, 0);
         let inputs = [0usize];
         hologram_graph_builder_node_with_inputs(b, 3, 0, inputs.as_ptr(), 1); // Lut(Sigmoid)
+                                                                              // ADR-053: Sigmoid (idx 1) gets [1] for v3 shape coverage.
+        let shape = [1usize];
+        hologram_graph_builder_set_node_shape(b, 1, shape.as_ptr(), shape.len());
         let inputs2 = [1usize];
         hologram_graph_builder_node_with_inputs(b, 1, 0, inputs2.as_ptr(), 1); // Output
         let name_y = CString::new("y").unwrap();

@@ -64,6 +64,10 @@ pub fn try_fold_constant(graph: &mut Graph, id: NodeId) -> bool {
     };
 
     let cid = graph.add_constant(ConstantData::Bytes(vec![result]));
+    // ADR-053: v3 archives require constant_shapes coverage. The folded
+    // constant is a single byte; record its shape so the writer's
+    // validation pass accepts it.
+    graph.set_constant_shape(cid, vec![1]);
     graph.replace_op(id, GraphOp::Constant(cid));
     true
 }

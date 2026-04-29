@@ -421,6 +421,8 @@ mod tests {
         let g = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            // ADR-053: Relu (idx 1) requires shape coverage for v3.
+            .set_node_shape(1, vec![4])
             .node_with_inputs(GraphOp::Output, &[1])
             .build();
 

@@ -42,7 +42,46 @@ pub fn lower_to_graph(unit: &HoloCompileUnit) -> CompileResult<Graph> {
     edge::connect(&mut graph, root_node, output_id, 0);
     graph.add_output("result", output_id);
 
+    // ADR-053: v3 archives require shape coverage on every
+    // non-Input/non-Output/non-Constant node and on every referenced
+    // constant. The term lowering produces scalar Q0/Q1/Q2/Q3 values
+    // — every node yields a single ring element, shape `[1]`. Populate
+    // here in one pass rather than at each construction site.
+    populate_scalar_shapes(&mut graph);
+
     Ok(graph)
+}
+
+/// Walk every node and constant in the graph and assign a default
+/// `[1]` shape where one is missing. Used by the term-lowering path
+/// where every value is a scalar ring element.
+fn populate_scalar_shapes(graph: &mut Graph) {
+    use hologram_graph::graph::node::NodeId;
+
+    let node_ids: Vec<NodeId> = graph.nodes().map(|n| n.id).collect();
+    let constant_ids: Vec<_> = node_ids
+        .iter()
+        .filter_map(|&id| match graph.get(id).map(|n| &n.op) {
+            Some(GraphOp::Constant(cid)) => Some(*cid),
+            _ => None,
+        })
+        .collect();
+
+    for id in node_ids {
+        let needs_shape = match graph.get(id).map(|n| &n.op) {
+            Some(GraphOp::Input | GraphOp::Output | GraphOp::Constant(_)) => false,
+            Some(_) => graph.node_shapes().get(&id).is_none(),
+            None => false,
+        };
+        if needs_shape {
+            graph.set_node_shape(id, vec![1]);
+        }
+    }
+    for cid in constant_ids {
+        if !graph.constant_shapes().contains_key(&cid) {
+            graph.set_constant_shape(cid, vec![1]);
+        }
+    }
 }
 
 /// Recursively lower a single term, memoizing in `node_map`.

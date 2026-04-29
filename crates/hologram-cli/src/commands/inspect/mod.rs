@@ -140,6 +140,8 @@ mod tests {
             .input("x")
             .node_from_graph_input(GraphOp::Input, 0)
             .node_with_inputs(GraphOp::Lut(LutOp::Relu), &[0])
+            // ADR-053: Relu (idx 1) requires shape coverage for v3 archives.
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("y", 2)
             .build();

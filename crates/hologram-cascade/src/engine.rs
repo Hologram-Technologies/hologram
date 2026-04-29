@@ -667,6 +667,8 @@ mod tests {
         let graph = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Prim(PrimOp::Neg), &[0])
+            // ADR-053: Neg (idx 1) requires shape coverage for v3 archives.
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("result", 2)
             .input("x")
@@ -700,6 +702,8 @@ mod tests {
         let graph = GraphBuilder::new()
             .node(GraphOp::Input)
             .node_with_inputs(GraphOp::Prim(PrimOp::Neg), &[0])
+            // ADR-053: Neg (idx 1) requires shape coverage for v3 archives.
+            .set_node_shape(1, vec![1])
             .node_with_inputs(GraphOp::Output, &[1])
             .output("result", 2)
             .input("x")
