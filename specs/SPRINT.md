@@ -442,7 +442,11 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   requires an archive-format ADR mandating shape metadata in every
   archive (so the fallback chain can be removed) — currently legacy
   archives still hit it.
-- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 (pending model artefacts)
+- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 — **blocked
+  on model artefacts**. The dispatch path (Phase 4.1/4.2 direct shape
+  reads) is in place; this phase is purely an end-to-end correctness
+  check that needs the TinyLlama weight + tokenizer files to run.
+  Re-open when artefacts land in the test-fixtures bucket.
 
 ### Phase 5: Propagate to hologram-backend
 - [x] **5.1**: Wire `infer_output_shape` into `execute_on_backend` (parallel
@@ -564,6 +568,26 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 
 ### Phase 6: WebGPU Kernel Parity (wasm GPU path)
 - [x] **6.2**: Softmax + RmsNorm already existed; GroupNorm WGSL shader added
+
+### Deferred until benchmarks (2026-04-28)
+
+The four open items below are perf knobs without a measured baseline.
+Implementing them speculatively risks shipping complexity for no win.
+Each is parked until the corresponding measurement exists:
+
+- **3.3 Per-thread Psumbook scratch** — needs a contended-cache
+  benchmark on multi-thread LUT-GEMM showing the lock is the
+  bottleneck. Today's `RwLock` may already be invisible.
+- **4.2 Adaptive sparse_v threshold** — needs a sweep across model
+  sparsity profiles; current static threshold is fine for the
+  models we've measured.
+- **4.3 Activation checkpointing validation** — needs an end-to-end
+  training-recompute test to confirm `checkpoint_map` populates
+  correctly. Inference path doesn't exercise it.
+- **5.2 Workspace buffer reuse in arena** — Sprint 31 already wires
+  this for the executor; this 5.2 entry is the *compile-time*
+  variant and overlaps. Re-evaluate after Sprint 31 lands peak-mem
+  profiling (Phase 3.2).
 
 ---
 
