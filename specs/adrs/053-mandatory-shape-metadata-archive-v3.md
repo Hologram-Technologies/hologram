@@ -1,7 +1,7 @@
 # ADR-053: Mandatory Shape Metadata in Archive Format v3
 
-**Status:** Proposed
-**Date:** 2026-04-28
+**Status:** Accepted
+**Date:** 2026-04-28 (accepted 2026-04-29)
 **Deciders:** Ari (project lead)
 **Related:** ADR-001 (BLAKE3 archive checksums, format v2), Sprint 33 Phase 4.3 (shape_resolve.rs deletion)
 

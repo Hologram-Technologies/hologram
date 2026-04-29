@@ -1,7 +1,7 @@
 # ADR-051: Canonical Backend Workspace Residency
 
-**Status:** Proposed
-**Date:** 2026-04-28
+**Status:** Accepted
+**Date:** 2026-04-28 (accepted 2026-04-29)
 **Deciders:** Ari (project lead)
 **Related:** ADR-043 (LUT-Addressed Transform Chains), ADR-050 (Canonical-as-Semantic-Contract), PR #6 (canonical wgpu backend landing)
 

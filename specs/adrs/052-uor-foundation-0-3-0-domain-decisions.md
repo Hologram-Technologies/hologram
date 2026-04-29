@@ -1,7 +1,7 @@
 # ADR-052: uor-foundation 0.3.0 Domain Decisions
 
-**Status:** Proposed
-**Date:** 2026-04-28
+**Status:** Accepted
+**Date:** 2026-04-28 (accepted 2026-04-29)
 **Deciders:** Ari (project lead)
 **Related:** ADR-001 (BLAKE3 archive checksums), Plan 074 (uor-foundation 0.3.0 upgrade)
 
