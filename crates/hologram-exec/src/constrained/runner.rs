@@ -20,7 +20,7 @@ use crate::tape::EnumTape;
 /// the weight cache across calls. Enforces memory limits per the profile.
 ///
 /// When `weight_policy` is `BoundedWindow`, the runner uses per-instruction
-/// weight window ensure/evict via [`EnumTape::execute_with_weight_window`].
+/// weight window ensure/evict via `EnumTape::execute_with_weight_window`.
 /// Other policies use the standard `execute_direct` path.
 pub struct ConstrainedRunner<'a> {
     tape: &'a EnumTape,
