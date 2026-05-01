@@ -254,11 +254,13 @@ impl WgpuBackend {
             label: Some("unary.binds.layout"),
             entries: &[storage_binding(0, false), storage_binding(1, false)],
         });
+        // ADR-051 step 3: input + output both read_write so the
+        // resident path can bind workspace buffer windows for both.
         let reduce_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("reduce.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
+                    storage_binding(0, false),
                     storage_binding(1, false),
                     uniform_binding(2),
                 ],
@@ -643,6 +645,9 @@ impl CanonicalBackend for WgpuBackend {
                 }
                 // Unmigrated unary kind — fall through to the slow path.
             }
+            KernelCall::Reduce(c, kind) => return self.run_reduce_resident(ws, c, *kind),
+            KernelCall::Softmax(c) => return self.run_softmax_resident(ws, c, "softmax"),
+            KernelCall::LogSoftmax(c) => return self.run_softmax_resident(ws, c, "log_softmax"),
             _ => {}
         }
         // Fallback: round-trip the workspace through the host and run
@@ -984,6 +989,180 @@ impl WgpuBackend {
             rows,
             &mut storage[call.output.offset..call.output.offset + rows],
         )
+    }
+
+    /// ADR-051 step 3: device-resident Reduce dispatch.
+    ///
+    /// Binds workspace buffer windows for input (rows × size) and
+    /// output (rows). The `size` uniform is built fresh each call —
+    /// this is small (4 bytes) and the executor batches reductions at
+    /// plan-build time, so the marginal cost is negligible.
+    fn run_reduce_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &ReduceCall,
+        kind: ReduceKind,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        if size == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Reduce input length not divisible by size".into(),
+            ));
+        }
+        let rows = call.input.len / size;
+        if call.output.len != rows {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Reduce output rows mismatch".into(),
+            ));
+        }
+        let op = reduce_pipeline_key(kind);
+        let pipeline = self
+            .reduce_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown reduce op {op}")))?;
+
+        use wgpu::util::DeviceExt;
+        let params = [size as u32];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("reduce.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let out_bytes = (rows * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("reduce.binds.resident"),
+            layout: &self.reduce_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(out_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("reduce.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("reduce.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident Softmax / LogSoftmax dispatch.
+    /// One thread per row; same uniform-size pattern as reduce.
+    fn run_softmax_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &SoftmaxCall,
+        op: &'static str,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        if size == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Softmax input length not divisible by size".into(),
+            ));
+        }
+        if call.output.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Softmax output length must equal input length".into(),
+            ));
+        }
+        let pipeline = self
+            .softmax_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown softmax op {op}")))?;
+        let rows = call.input.len / size;
+
+        use wgpu::util::DeviceExt;
+        let params = [size as u32];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("softmax.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bytes = (call.input.len * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("softmax.binds.resident"),
+            layout: &self.reduce_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("softmax.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("softmax.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 
     fn dispatch_softmax(
@@ -3648,7 +3827,7 @@ const POOL_MAX_WGSL: &str = r#"struct PoolParams {
     stride_h: u32, stride_w: u32,
     pad_h: u32, pad_w: u32,
 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: PoolParams;
 
@@ -3689,7 +3868,7 @@ const POOL_AVG_WGSL: &str = r#"struct PoolParams {
     stride_h: u32, stride_w: u32,
     pad_h: u32, pad_w: u32,
 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: PoolParams;
 
@@ -3728,7 +3907,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const GLOBAL_AVG_POOL_WGSL: &str = r#"struct Params { plane: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
@@ -3948,7 +4127,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /// Softmax forward: numerically stable three-pass row-wise softmax.
 /// One thread per row; sequential fold over `params.size` elements.
 const SOFTMAX_WGSL: &str = r#"struct Params { size: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
@@ -3981,7 +4160,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /// Log-softmax forward: same structure as softmax but the final pass
 /// writes `(x - m) - log(sum)` instead of `exp(x - m) / sum`.
 const LOG_SOFTMAX_WGSL: &str = r#"struct Params { size: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
@@ -4032,7 +4211,7 @@ const REDUCE_OPS: &[(&str, &str, &str, &str)] = &[
 fn reduce_shader_source(init: &str, fold: &str, finish: &str) -> String {
     format!(
         r#"struct Params {{ size: u32 }};
-@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
 

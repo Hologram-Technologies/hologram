@@ -691,6 +691,127 @@ fn wgpu_sub_grad_subtracts_from_db_and_adds_to_da() {
 }
 
 #[test]
+/// ADR-051 step 3: reduce + softmax / log-softmax on the device-resident
+/// workspace.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_reduce_softmax_resident_path_matches_cpu_reference() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    let in_n = 64;
+    let out_n = 8;
+    let row_size = 8;
+
+    // Reduce family.
+    for kind in [
+        ReduceKind::Sum,
+        ReduceKind::Mean,
+        ReduceKind::Max,
+        ReduceKind::Min,
+        ReduceKind::Prod,
+    ] {
+        let call = KernelCall::Reduce(
+            ReduceCall {
+                input: SlotSpan {
+                    offset: 0,
+                    len: in_n,
+                },
+                output: SlotSpan {
+                    offset: in_n,
+                    len: out_n,
+                },
+                size: row_size,
+            },
+            kind,
+        );
+        let xs: Vec<f32> = (0..in_n).map(|i| 0.5 + (i as f32) * 0.012).collect();
+
+        let mut ws = gpu.alloc_workspace(in_n + out_n).expect("alloc workspace");
+        ws.write_span(
+            SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            &xs,
+        )
+        .expect("write input");
+        gpu.dispatch_resident(&mut ws, &call)
+            .expect("resident dispatch");
+        let gpu_out = ws
+            .read_span(SlotSpan {
+                offset: in_n,
+                len: out_n,
+            })
+            .expect("read output");
+
+        let mut storage = vec![0.0_f32; in_n + out_n];
+        storage[..in_n].copy_from_slice(&xs);
+        cpu.dispatch(&mut storage, &call).expect("cpu dispatch");
+        let cpu_out = &storage[in_n..in_n + out_n];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-3_f32.max(c.abs() * 1e-3),
+                "Reduce {kind:?} resident-vs-cpu diverged at row {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+
+    // Softmax + LogSoftmax.
+    for op_label in ["Softmax", "LogSoftmax"] {
+        let sc = SoftmaxCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            output: SlotSpan {
+                offset: in_n,
+                len: in_n,
+            },
+            size: row_size,
+        };
+        let call = if op_label == "Softmax" {
+            KernelCall::Softmax(sc)
+        } else {
+            KernelCall::LogSoftmax(sc)
+        };
+        let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 1.0).collect();
+
+        let mut ws = gpu.alloc_workspace(2 * in_n).expect("alloc workspace");
+        ws.write_span(
+            SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            &xs,
+        )
+        .expect("write input");
+        gpu.dispatch_resident(&mut ws, &call)
+            .expect("resident dispatch");
+        let gpu_out = ws
+            .read_span(SlotSpan {
+                offset: in_n,
+                len: in_n,
+            })
+            .expect("read output");
+
+        let mut storage = vec![0.0_f32; 2 * in_n];
+        storage[..in_n].copy_from_slice(&xs);
+        cpu.dispatch(&mut storage, &call).expect("cpu dispatch");
+        let cpu_out = &storage[in_n..2 * in_n];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-5_f32.max(c.abs() * 1e-5),
+                "{op_label} resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_reduce_family_matches_cpu_reference() {
     // 8 rows of size 8 → 8 outputs.
