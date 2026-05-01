@@ -266,11 +266,13 @@ impl WgpuBackend {
                 ],
             });
         // Norm-with-scale layout: input, weight, output, params.
+        // ADR-051 step 3: all storage bindings read_write so the
+        // resident path can bind workspace-buffer windows.
         let norm2_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("norm2.binds.layout"),
             entries: &[
-                storage_binding(0, true),
-                storage_binding(1, true),
+                storage_binding(0, false),
+                storage_binding(1, false),
                 storage_binding(2, false),
                 uniform_binding(3),
             ],
@@ -364,12 +366,14 @@ impl WgpuBackend {
         // Norm-with-3-inputs layout: covers LayerNorm (input, weight,
         // bias) and AddRmsNorm (residual, input, weight). Kernels
         // assign meanings to the bindings; the layout is shape-only.
+        // ADR-051 step 3: all storage bindings read_write so the
+        // resident path can bind workspace-buffer windows.
         let norm3_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("norm3.binds.layout"),
             entries: &[
-                storage_binding(0, true),
-                storage_binding(1, true),
-                storage_binding(2, true),
+                storage_binding(0, false),
+                storage_binding(1, false),
+                storage_binding(2, false),
                 storage_binding(3, false),
                 uniform_binding(4),
             ],
@@ -648,6 +652,16 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::Reduce(c, kind) => return self.run_reduce_resident(ws, c, *kind),
             KernelCall::Softmax(c) => return self.run_softmax_resident(ws, c, "softmax"),
             KernelCall::LogSoftmax(c) => return self.run_softmax_resident(ws, c, "log_softmax"),
+            KernelCall::Pool2d(c, kind) => return self.run_pool2d_resident(ws, c, *kind),
+            KernelCall::GlobalAvgPool(c) => return self.run_global_avg_pool_resident(ws, c),
+            KernelCall::RmsNorm(c) => return self.run_norm_scale_resident(ws, c, "rms_norm"),
+            KernelCall::InstanceNorm(c) => {
+                return self.run_norm_scale_resident(ws, c, "instance_norm")
+            }
+            KernelCall::LayerNorm(c) => return self.run_norm_full_resident(ws, c, "layer_norm"),
+            KernelCall::AddRmsNorm(c) => return self.run_add_rms_norm_resident(ws, c),
+            // GroupNorm reuses `layer_norm` pipeline but with `size = group_elements`
+            // — leaving on the slow path until it gets a custom resident helper.
             _ => {}
         }
         // Fallback: round-trip the workspace through the host and run
@@ -1393,6 +1407,289 @@ impl WgpuBackend {
             rows.div_ceil(64) as u32,
             &mut storage[call.output.offset..call.output.offset + call.input.len],
         )
+    }
+
+    /// ADR-051 step 3: device-resident NormScale dispatch (RmsNorm /
+    /// InstanceNorm). Binds workspace windows for input + weight +
+    /// output via `BufferBinding` offsets — no per-call uploads.
+    fn run_norm_scale_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &NormScaleCall,
+        op: &'static str,
+    ) -> Result<(), ExecError> {
+        let size = call.size as usize;
+        if size == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if call.input.len != call.output.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm output length must equal input length".into(),
+            ));
+        }
+        if !call.input.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm input length not divisible by size".into(),
+            ));
+        }
+        if call.weight.len != size {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm weight length must equal size".into(),
+            ));
+        }
+        let pipeline = self
+            .norm_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown norm op {op}")))?;
+        let rows = call.input.len / size;
+        let params_buf = self.upload_norm_params(call.size, call.epsilon);
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (size * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("norm2.binds.resident"),
+            layout: &self.norm2_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "norm2.resident",
+            pipeline,
+            &bind_group,
+            rows.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident NormFull dispatch (LayerNorm
+    /// + AddRmsNorm — both use 4 storage bindings + uniform).
+    fn run_norm_full_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &NormFullCall,
+        op: &'static str,
+    ) -> Result<(), ExecError> {
+        let size = call.size as usize;
+        if size == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if call.input.len != call.output.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm output length must equal input length".into(),
+            ));
+        }
+        if !call.input.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm input length not divisible by size".into(),
+            ));
+        }
+        if call.weight.len != size || call.bias.len != size {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm weight/bias length must equal size".into(),
+            ));
+        }
+        let pipeline = self
+            .norm_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown norm op {op}")))?;
+        let rows = call.input.len / size;
+        let params_buf = self.upload_norm_params(call.size, call.epsilon);
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (size * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("norm3.binds.resident"),
+            layout: &self.norm3_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.bias.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "norm3.resident",
+            pipeline,
+            &bind_group,
+            rows.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident AddRmsNorm dispatch.
+    /// Bindings: residual, input, weight, output, params (per
+    /// `AddRmsNormCall` field order).
+    fn run_add_rms_norm_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &AddRmsNormCall,
+    ) -> Result<(), ExecError> {
+        let size = call.size as usize;
+        if size == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if call.input.len != call.output.len || call.input.len != call.residual.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNorm residual/input/output spans must match".into(),
+            ));
+        }
+        if !call.input.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNorm input length not divisible by size".into(),
+            ));
+        }
+        if call.weight.len != size {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNorm weight length must equal size".into(),
+            ));
+        }
+        let pipeline = self
+            .norm_pipelines
+            .get("add_rms_norm")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing add_rms_norm".into()))?;
+        let rows = call.input.len / size;
+        let params_buf = self.upload_norm_params(call.size, call.epsilon);
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (size * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("add_rms_norm.binds.resident"),
+            layout: &self.norm3_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.residual.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "add_rms_norm.resident",
+            pipeline,
+            &bind_group,
+            rows.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    /// Encode a single compute pass and submit. Used by all
+    /// `run_*_resident` helpers — the resident path doesn't need a
+    /// staging-buffer copy-back, so the encode/submit reduces to a
+    /// few lines.
+    fn encode_and_submit(
+        &self,
+        label: &str,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        workgroups_x: u32,
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.dispatch_workgroups(workgroups_x, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
     }
 
     fn dispatch_group_norm(
@@ -2638,6 +2935,158 @@ impl WgpuBackend {
             workgroups,
             &mut storage[call.output.offset..call.output.offset + total_out],
         )
+    }
+
+    /// ADR-051 step 3: device-resident Pool2d dispatch.
+    fn run_pool2d_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &Pool2dCall,
+        kind: Pool2dKind,
+    ) -> Result<(), ExecError> {
+        let total_out =
+            call.n as usize * call.c as usize * call.h_out as usize * call.w_out as usize;
+        if total_out == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Pool2d output length inconsistent with N*C*H_out*W_out".into(),
+            ));
+        }
+        let op = match kind {
+            Pool2dKind::Max => "pool_max",
+            Pool2dKind::Avg => "pool_avg",
+        };
+        let pipeline = self
+            .pool_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing pool op {op}")))?;
+        let params_buf = self.upload_pool_params(call);
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let out_bytes = (total_out * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pool.binds.resident"),
+            layout: &self.reduce_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(out_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("pool.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("pool.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(total_out.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident GlobalAvgPool dispatch.
+    fn run_global_avg_pool_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &GlobalAvgPoolCall,
+    ) -> Result<(), ExecError> {
+        let total_out = call.n as usize * call.c as usize;
+        let plane = call.h as usize * call.w as usize;
+        if total_out == 0 || plane == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out || call.input.len != total_out * plane {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GlobalAvgPool span lengths inconsistent with shape".into(),
+            ));
+        }
+        let pipeline = self
+            .pool_pipelines
+            .get("global_avg_pool")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing global_avg_pool".into()))?;
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 1] = [plane as u32];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("global_avg.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let out_bytes = (total_out * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("global_avg.binds.resident"),
+            layout: &self.reduce_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(out_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("global_avg.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("global_avg.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(total_out.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 
     /// Pack the 12 fields of `Pool2dCall` (excluding spans) into a
@@ -4012,8 +4461,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // correctly. One thread per row; sequential fold over `size` elements.
 
 const RMS_NORM_WGSL: &str = r#"struct Params { size: u32, epsilon: f32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -4036,8 +4485,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const INSTANCE_NORM_WGSL: &str = r#"struct Params { size: u32, epsilon: f32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -4065,9 +4514,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const LAYER_NORM_WGSL: &str = r#"struct Params { size: u32, epsilon: f32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 @group(0) @binding(4) var<uniform> params: Params;
 
@@ -4098,9 +4547,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /// params (4). Matches `AddRmsNormCall { residual, input, weight }`
 /// field order.
 const ADD_RMS_NORM_WGSL: &str = r#"struct Params { size: u32, epsilon: f32 };
-@group(0) @binding(0) var<storage, read> residual: array<f32>;
-@group(0) @binding(1) var<storage, read> input: array<f32>;
-@group(0) @binding(2) var<storage, read> weight: array<f32>;
+@group(0) @binding(0) var<storage, read_write> residual: array<f32>;
+@group(0) @binding(1) var<storage, read_write> input: array<f32>;
+@group(0) @binding(2) var<storage, read_write> weight: array<f32>;
 @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 @group(0) @binding(4) var<uniform> params: Params;
 

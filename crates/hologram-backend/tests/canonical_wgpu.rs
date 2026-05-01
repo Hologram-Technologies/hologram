@@ -947,6 +947,247 @@ fn wgpu_softmax_matches_cpu_reference() {
     }
 }
 
+/// ADR-051 step 3: norm family on the device-resident workspace.
+/// Covers RmsNorm, InstanceNorm, LayerNorm, AddRmsNorm. Each variant
+/// is dispatched via WgpuBackend::dispatch_resident against a real
+/// WgpuWorkspace and compared to CpuBackend bit-for-bit.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_norm_resident_path_matches_cpu_reference() {
+    use hologram_transform::{
+        AddRmsNormCall, BackendWorkspace, CanonicalBackend, NormFullCall, NormScaleCall,
+    };
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    // wgpu requires storage-buffer offsets to be 256-byte-aligned (64
+    // f32 elements). Lay out spans on 64-element boundaries.
+    const STRIDE: usize = 64;
+    let row_size = 8_u32;
+    let rows = 8_usize;
+    let in_n = (row_size as usize) * rows; // 64
+    let size = row_size as usize; // 8
+    let eps_bits = 1e-5_f32.to_bits();
+
+    // RmsNorm + InstanceNorm: NormScaleCall { input, weight, output }.
+    for op in ["rms_norm", "instance_norm"] {
+        // input @ 0, weight @ STRIDE (1 stride later), output @ 2*STRIDE.
+        let call_inner = NormScaleCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: STRIDE,
+                len: size,
+            },
+            output: SlotSpan {
+                offset: 2 * STRIDE,
+                len: in_n,
+            },
+            size: row_size,
+            epsilon: eps_bits,
+        };
+        let call = match op {
+            "rms_norm" => KernelCall::RmsNorm(call_inner),
+            "instance_norm" => KernelCall::InstanceNorm(call_inner),
+            _ => unreachable!(),
+        };
+        let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 1.0).collect();
+        let ws_data: Vec<f32> = (0..size).map(|i| 1.0 + 0.01 * i as f32).collect();
+        // Workspace large enough to hold 3 strides of 64 elements each.
+        let cap = 3 * STRIDE;
+
+        let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+        ws.write_span(
+            SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            &xs,
+        )
+        .unwrap();
+        ws.write_span(
+            SlotSpan {
+                offset: STRIDE,
+                len: size,
+            },
+            &ws_data,
+        )
+        .unwrap();
+        gpu.dispatch_resident(&mut ws, &call).unwrap();
+        let gpu_out = ws
+            .read_span(SlotSpan {
+                offset: 2 * STRIDE,
+                len: in_n,
+            })
+            .unwrap();
+
+        let mut storage = vec![0.0_f32; cap];
+        storage[..in_n].copy_from_slice(&xs);
+        storage[STRIDE..STRIDE + size].copy_from_slice(&ws_data);
+        cpu.dispatch(&mut storage, &call).unwrap();
+        let cpu_out = &storage[2 * STRIDE..2 * STRIDE + in_n];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+                "{op} resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+
+    // LayerNorm: NormFullCall { input, weight, bias, output }. 4 spans.
+    {
+        let call = KernelCall::LayerNorm(NormFullCall {
+            input: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: STRIDE,
+                len: size,
+            },
+            bias: SlotSpan {
+                offset: 2 * STRIDE,
+                len: size,
+            },
+            output: SlotSpan {
+                offset: 3 * STRIDE,
+                len: in_n,
+            },
+            size: row_size,
+            epsilon: eps_bits,
+        });
+        let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 1.0).collect();
+        let ws_data: Vec<f32> = (0..size).map(|i| 1.0 + 0.01 * i as f32).collect();
+        let bs: Vec<f32> = (0..size).map(|i| -0.05 + 0.005 * i as f32).collect();
+        let cap = 4 * STRIDE;
+
+        let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+        ws.write_span(
+            SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            &xs,
+        )
+        .unwrap();
+        ws.write_span(
+            SlotSpan {
+                offset: STRIDE,
+                len: size,
+            },
+            &ws_data,
+        )
+        .unwrap();
+        ws.write_span(
+            SlotSpan {
+                offset: 2 * STRIDE,
+                len: size,
+            },
+            &bs,
+        )
+        .unwrap();
+        gpu.dispatch_resident(&mut ws, &call).unwrap();
+        let gpu_out = ws
+            .read_span(SlotSpan {
+                offset: 3 * STRIDE,
+                len: in_n,
+            })
+            .unwrap();
+
+        let mut storage = vec![0.0_f32; cap];
+        storage[..in_n].copy_from_slice(&xs);
+        storage[STRIDE..STRIDE + size].copy_from_slice(&ws_data);
+        storage[2 * STRIDE..2 * STRIDE + size].copy_from_slice(&bs);
+        cpu.dispatch(&mut storage, &call).unwrap();
+        let cpu_out = &storage[3 * STRIDE..3 * STRIDE + in_n];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+                "layer_norm resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+
+    // AddRmsNorm: AddRmsNormCall { residual, input, weight, output }.
+    {
+        let call = KernelCall::AddRmsNorm(AddRmsNormCall {
+            residual: SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            input: SlotSpan {
+                offset: STRIDE,
+                len: in_n,
+            },
+            weight: SlotSpan {
+                offset: 2 * STRIDE,
+                len: size,
+            },
+            output: SlotSpan {
+                offset: 3 * STRIDE,
+                len: in_n,
+            },
+            size: row_size,
+            epsilon: eps_bits,
+        });
+        let res: Vec<f32> = (0..in_n).map(|i| 0.02 * i as f32).collect();
+        let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 1.0).collect();
+        let ws_data: Vec<f32> = (0..size).map(|i| 1.0 + 0.01 * i as f32).collect();
+        let cap = 4 * STRIDE;
+
+        let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+        ws.write_span(
+            SlotSpan {
+                offset: 0,
+                len: in_n,
+            },
+            &res,
+        )
+        .unwrap();
+        ws.write_span(
+            SlotSpan {
+                offset: STRIDE,
+                len: in_n,
+            },
+            &xs,
+        )
+        .unwrap();
+        ws.write_span(
+            SlotSpan {
+                offset: 2 * STRIDE,
+                len: size,
+            },
+            &ws_data,
+        )
+        .unwrap();
+        gpu.dispatch_resident(&mut ws, &call).unwrap();
+        let gpu_out = ws
+            .read_span(SlotSpan {
+                offset: 3 * STRIDE,
+                len: in_n,
+            })
+            .unwrap();
+
+        let mut storage = vec![0.0_f32; cap];
+        storage[..in_n].copy_from_slice(&res);
+        storage[STRIDE..STRIDE + in_n].copy_from_slice(&xs);
+        storage[2 * STRIDE..2 * STRIDE + size].copy_from_slice(&ws_data);
+        cpu.dispatch(&mut storage, &call).unwrap();
+        let cpu_out = &storage[3 * STRIDE..3 * STRIDE + in_n];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            assert!(
+                (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+                "add_rms_norm resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_norm_family_matches_cpu_reference() {
