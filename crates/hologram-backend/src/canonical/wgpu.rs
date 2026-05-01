@@ -355,12 +355,15 @@ impl WgpuBackend {
         // ConvParams. Bias is always bound (a length-`c_out` zero
         // buffer when the call carries no bias) so the bind layout
         // can stay shape-fixed.
+        // ADR-051 step 3: all storage bindings read_write so the
+        // resident path can bind workspace buffer windows for
+        // input/weight/bias/output in one dispatch.
         let conv_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("conv.binds.layout"),
             entries: &[
-                storage_binding(0, true),
-                storage_binding(1, true),
-                storage_binding(2, true),
+                storage_binding(0, false),
+                storage_binding(1, false),
+                storage_binding(2, false),
                 storage_binding(3, false),
                 uniform_binding(4),
             ],
@@ -665,8 +668,11 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::MatMul(c) => return self.run_matmul_resident(ws, c),
             KernelCall::MatMulGradA(c) => return self.run_matmul_grad_a_resident(ws, c),
             KernelCall::MatMulGradB(c) => return self.run_matmul_grad_b_resident(ws, c),
-            // GroupNorm reuses `layer_norm` pipeline but with `size = group_elements`
-            // — leaving on the slow path until it gets a custom resident helper.
+            KernelCall::Conv2d(c) => return self.run_conv2d_resident(ws, c),
+            // GroupNorm, ConvTranspose2d, Attention, grad arms, and
+            // data-movement arms (Slice/Concat/Reshape/Transpose/...)
+            // remain on the slow round-trip path until they get
+            // dedicated resident helpers.
             _ => {}
         }
         // Fallback: round-trip the workspace through the host and run
@@ -3246,6 +3252,125 @@ impl WgpuBackend {
         )
     }
 
+    /// ADR-051 step 3: device-resident Conv2d dispatch.
+    ///
+    /// Binds workspace windows for input/weight/bias/output. Bias is
+    /// optional in `Conv2dCall` (zero-length); when absent we
+    /// synthesise a c_out-length zero buffer for the bind group (this
+    /// is per-call, so the small allocation is fine).
+    fn run_conv2d_resident(&self, ws: &WgpuWorkspace, call: &Conv2dCall) -> Result<(), ExecError> {
+        let total_out =
+            call.n as usize * call.c_out as usize * call.h_out as usize * call.w_out as usize;
+        if total_out == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d output length inconsistent with N*C_out*H_out*W_out".into(),
+            ));
+        }
+        let group = call.group.max(1);
+        if !call.c_in.is_multiple_of(group) || !call.c_out.is_multiple_of(group) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d c_in / c_out must divide evenly by group".into(),
+            ));
+        }
+        let pipeline = self
+            .conv_pipelines
+            .get("conv2d")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing conv2d pipeline".into()))?;
+        let params_buf = self.upload_conv_params(
+            call.n,
+            call.c_in,
+            call.c_out,
+            call.h_in,
+            call.w_in,
+            call.h_out,
+            call.w_out,
+            call.kernel_h,
+            call.kernel_w,
+            call.stride_h,
+            call.stride_w,
+            call.pad_h,
+            call.pad_w,
+            call.dilation_h,
+            call.dilation_w,
+            group,
+        );
+
+        // Bias may be zero-length in the call; synthesise a c_out-zero
+        // buffer when absent so the bind layout still gets a binding.
+        let zero_bias_buf = if call.bias.len == 0 {
+            Some(self.upload(&vec![0.0_f32; call.c_out as usize], "conv.bias.zero"))
+        } else if call.bias.len == call.c_out as usize {
+            None
+        } else {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Conv2d bias length must be 0 or c_out".into(),
+            ));
+        };
+
+        let buffer = ws.buffer();
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (call.weight.len * 4) as u64;
+        let out_bytes = (total_out * 4) as u64;
+        let bias_resource: wgpu::BindingResource = if let Some(ref zb) = zero_bias_buf {
+            zb.as_entire_binding()
+        } else {
+            let bias_bytes = (call.c_out as usize * 4) as u64;
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.bias.offset * 4) as u64,
+                size: wgpu::BufferSize::new(bias_bytes),
+            })
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("conv.binds.resident"),
+            layout: &self.conv_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bias_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(out_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "conv2d.resident",
+            pipeline,
+            &bind_group,
+            total_out.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
     /// ADR-051 step 3: device-resident MatMul + MatMulGradA/B dispatch.
     /// All three share a single layout (a, b, c, params) where
     /// "a/b/c" are role-renamed for forward vs grad — see the WGSL
@@ -3867,9 +3992,9 @@ const CONV2D_WGSL: &str = r#"struct ConvParams {
     dilation_h: u32, dilation_w: u32,
     group: u32,
 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 @group(0) @binding(4) var<uniform> params: ConvParams;
 
@@ -4346,9 +4471,9 @@ const CONV_TRANSPOSE_2D_WGSL: &str = r#"struct ConvParams {
     dilation_h: u32, dilation_w: u32,
     group: u32,
 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 @group(0) @binding(4) var<uniform> params: ConvParams;
 

@@ -1907,6 +1907,119 @@ fn wgpu_global_avg_pool_matches_cpu_reference() {
     assert!(res.is_match(), "wgpu GlobalAvgPool diverged: {:?}", res);
 }
 
+/// ADR-051 step 3: Conv2d on the device-resident workspace. Same
+/// input shape as `wgpu_conv2d_matches_cpu_reference`.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_conv2d_resident_path_matches_cpu_reference() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    const STRIDE: usize = 64;
+    let n = 1_u32;
+    let c_in = 2_u32;
+    let c_out = 3_u32;
+    let h_in = 4_u32;
+    let w_in = 4_u32;
+    let h_out = 4_u32;
+    let w_out = 4_u32;
+    let kernel_h = 3_u32;
+    let kernel_w = 3_u32;
+    let in_n = (n * c_in * h_in * w_in) as usize; // 32
+    let weight_n = (c_out * c_in * kernel_h * kernel_w) as usize; // 54
+    let bias_n = c_out as usize; // 3
+    let out_n = (n * c_out * h_out * w_out) as usize; // 48
+
+    let call = KernelCall::Conv2d(Conv2dCall {
+        input: SlotSpan {
+            offset: 0,
+            len: in_n,
+        },
+        weight: SlotSpan {
+            offset: STRIDE,
+            len: weight_n,
+        },
+        bias: SlotSpan {
+            offset: 2 * STRIDE,
+            len: bias_n,
+        },
+        output: SlotSpan {
+            offset: 3 * STRIDE,
+            len: out_n,
+        },
+        n,
+        c_in,
+        c_out,
+        h_in,
+        w_in,
+        h_out,
+        w_out,
+        kernel_h,
+        kernel_w,
+        stride_h: 1,
+        stride_w: 1,
+        pad_h: 1,
+        pad_w: 1,
+        dilation_h: 1,
+        dilation_w: 1,
+        group: 1,
+    });
+    let xs: Vec<f32> = (0..in_n).map(|i| 0.05 * i as f32 - 0.5).collect();
+    let ws_data: Vec<f32> = (0..weight_n)
+        .map(|i| ((i as f32) * 0.07).cos() * 0.3)
+        .collect();
+    let bs: Vec<f32> = (0..bias_n).map(|i| 0.1 * i as f32).collect();
+    let cap = 4 * STRIDE;
+
+    let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+    ws.write_span(
+        SlotSpan {
+            offset: 0,
+            len: in_n,
+        },
+        &xs,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: STRIDE,
+            len: weight_n,
+        },
+        &ws_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: 2 * STRIDE,
+            len: bias_n,
+        },
+        &bs,
+    )
+    .unwrap();
+    gpu.dispatch_resident(&mut ws, &call).unwrap();
+    let gpu_out = ws
+        .read_span(SlotSpan {
+            offset: 3 * STRIDE,
+            len: out_n,
+        })
+        .unwrap();
+
+    let mut storage = vec![0.0_f32; cap];
+    storage[..in_n].copy_from_slice(&xs);
+    storage[STRIDE..STRIDE + weight_n].copy_from_slice(&ws_data);
+    storage[2 * STRIDE..2 * STRIDE + bias_n].copy_from_slice(&bs);
+    cpu.dispatch(&mut storage, &call).unwrap();
+    let cpu_out = &storage[3 * STRIDE..3 * STRIDE + out_n];
+
+    for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+        assert!(
+            (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+            "conv2d resident-vs-cpu diverged at {i}: gpu={g} cpu={c}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_conv2d_matches_cpu_reference() {
