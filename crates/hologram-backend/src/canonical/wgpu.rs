@@ -295,13 +295,16 @@ impl WgpuBackend {
         // RmsNormGrad / InstanceNormGrad: input + weight + dy + dx
         // (rw, accumulating) + dw (rw, accumulating) + uniform. Both
         // grads share the math signature (no bias).
+        // ADR-051 step 3: all storage bindings read_write so the
+        // resident path can bind workspace windows for input/weight/dy
+        // alongside dx/dw within one dispatch.
         let norm_grad2_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("norm_grad2.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
-                    storage_binding(2, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
+                    storage_binding(2, false),
                     storage_binding(3, false),
                     storage_binding(4, false),
                     uniform_binding(5),
@@ -313,9 +316,9 @@ impl WgpuBackend {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("norm_grad3.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
-                    storage_binding(2, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
+                    storage_binding(2, false),
                     storage_binding(3, false),
                     storage_binding(4, false),
                     storage_binding(5, false),
@@ -329,8 +332,8 @@ impl WgpuBackend {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("softmax_grad.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
                     storage_binding(2, false),
                     uniform_binding(3),
                 ],
@@ -341,10 +344,10 @@ impl WgpuBackend {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("norm_grad_addrms.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
-                    storage_binding(2, true),
-                    storage_binding(3, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
+                    storage_binding(2, false),
+                    storage_binding(3, false),
                     storage_binding(4, false),
                     storage_binding(5, false),
                     storage_binding(6, false),
@@ -648,6 +651,9 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::And(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "and"),
             KernelCall::Or(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "or"),
             KernelCall::Xor(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "xor"),
+            KernelCall::FusedSwiGlu(c) => {
+                return self.run_binary_resident(ws, c.a, c.b, c.c, "swiglu")
+            }
             KernelCall::Unary(c, kind) => {
                 if let Some(op) = unary_pipeline_key(*kind) {
                     return self.run_unary_resident(ws, c.input, c.output, op);
@@ -671,6 +677,40 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::Conv2d(c) => return self.run_conv2d_resident(ws, c),
             KernelCall::ConvTranspose2d(c) => return self.run_conv_transpose_2d_resident(ws, c),
             KernelCall::GroupNorm(c) => return self.run_group_norm_resident(ws, c),
+            KernelCall::Reshape(c) => return self.run_reshape_resident(ws, c),
+            KernelCall::Slice(c) => return self.run_slice_resident(ws, c),
+            KernelCall::Concat(c) => return self.run_concat_resident(ws, c),
+            KernelCall::SoftmaxGrad(c, kind) => {
+                return self.run_softmax_grad_resident(ws, c, *kind);
+            }
+            KernelCall::RmsNormGrad(c) => {
+                return self.run_norm_grad2_resident(
+                    ws,
+                    c.input,
+                    c.weight,
+                    c.dy,
+                    c.dx,
+                    c.dw,
+                    c.size,
+                    c.epsilon,
+                    "rms_norm_grad_dx",
+                    "rms_norm_grad_dw",
+                );
+            }
+            KernelCall::InstanceNormGrad(c) => {
+                return self.run_norm_grad2_resident(
+                    ws,
+                    c.input,
+                    c.weight,
+                    c.dy,
+                    c.dx,
+                    c.dw,
+                    c.size,
+                    c.epsilon,
+                    "instance_norm_grad_dx",
+                    "instance_norm_grad_dw",
+                );
+            }
             // Attention, conv-grad, grad arms, and data-movement arms
             // (Slice/Concat/Reshape/Transpose/...) remain on the slow
             // round-trip path until they get dedicated resident helpers.
@@ -2011,6 +2051,93 @@ impl WgpuBackend {
         )
     }
 
+    /// ADR-051 step 3: device-resident SoftmaxGrad / LogSoftmaxGrad.
+    /// Bindings: forward output, dC, dA (rw, accumulating), params.
+    fn run_softmax_grad_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &SoftmaxGradCall,
+        kind: SoftmaxGradKind,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        if size == 0 || call.output.len == 0 || call.da.len == 0 {
+            return Ok(());
+        }
+        if !call.output.len.is_multiple_of(size) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: SoftmaxGrad output length not divisible by size".into(),
+            ));
+        }
+        if call.da.len != call.output.len || call.dc.len != call.output.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: SoftmaxGrad span sizes inconsistent".into(),
+            ));
+        }
+        let rows = call.output.len / size;
+        let op = match kind {
+            SoftmaxGradKind::Softmax => "softmax_grad",
+            SoftmaxGradKind::LogSoftmax => "log_softmax_grad",
+        };
+        let pipeline = self
+            .norm_grad_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing {op}")))?;
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 1] = [size as u32];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("softmax_grad.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bytes = (call.output.len * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("softmax_grad.binds.resident"),
+            layout: &self.softmax_grad_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.dc.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.da.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "softmax_grad.resident",
+            pipeline,
+            &bind_group,
+            rows.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
     fn dispatch_softmax_grad(
         &self,
         storage: &mut [f32],
@@ -2507,6 +2634,175 @@ impl WgpuBackend {
     /// Runs two passes in one command encoder: pass 1 computes `dx`
     /// per row, pass 2 computes `dw` per column-element.
     #[allow(clippy::too_many_arguments)]
+    /// ADR-051 step 3: device-resident `run_norm_grad2` — RmsNormGrad
+    /// + InstanceNormGrad share this 5-storage layout. Two passes
+    /// (dx + dw) recorded in one encoder; both pipelines share the
+    /// bind group so the same workspace bindings cover both passes.
+    /// dx and dw are accumulating — workspace contents are read-
+    /// modify-written in place by the WGSL.
+    #[allow(clippy::too_many_arguments)]
+    fn run_norm_grad2_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        input: SlotSpan,
+        weight: SlotSpan,
+        dy: SlotSpan,
+        dx: SlotSpan,
+        dw: SlotSpan,
+        size: u32,
+        epsilon_bits: u32,
+        dx_op: &'static str,
+        dw_op: &'static str,
+    ) -> Result<(), ExecError> {
+        let size_us = size as usize;
+        if size_us == 0 || input.len == 0 {
+            return Ok(());
+        }
+        if !input.len.is_multiple_of(size_us) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad input length not divisible by size".into(),
+            ));
+        }
+        let rows = input.len / size_us;
+        if dx.len != 0 && dx.len != input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad dx length must equal input length".into(),
+            ));
+        }
+        if dw.len != 0 && dw.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad dw length must equal size".into(),
+            ));
+        }
+        if dy.len != input.len || weight.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: norm grad span sizes inconsistent".into(),
+            ));
+        }
+        // Synthesise a zero-buffer for dx/dw when the call carries
+        // zero-length spans (means "accumulator not used by this
+        // call"). Tiny per-call alloc.
+        let zero_dx = if dx.len == 0 {
+            Some(self.upload(&vec![0.0_f32; input.len], "norm_grad.dx.zero"))
+        } else {
+            None
+        };
+        let zero_dw = if dw.len == 0 {
+            Some(self.upload(&vec![0.0_f32; size_us], "norm_grad.dw.zero"))
+        } else {
+            None
+        };
+        let dx_pipeline = self
+            .norm_grad_pipelines
+            .get(dx_op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing pipeline {dx_op}")))?;
+        let dw_pipeline = self
+            .norm_grad_pipelines
+            .get(dw_op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: missing pipeline {dw_op}")))?;
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 4] = [size, epsilon_bits, rows as u32, 0];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("norm_grad.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let buffer = ws.buffer();
+        let in_bytes = (input.len * 4) as u64;
+        let w_bytes = (size_us * 4) as u64;
+        let dx_resource: wgpu::BindingResource = if let Some(ref z) = zero_dx {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (dx.offset * 4) as u64,
+                size: wgpu::BufferSize::new(in_bytes),
+            })
+        };
+        let dw_resource: wgpu::BindingResource = if let Some(ref z) = zero_dw {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (dw.offset * 4) as u64,
+                size: wgpu::BufferSize::new(w_bytes),
+            })
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("norm_grad.binds.resident"),
+            layout: &self.norm_grad2_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (dy.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dx_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dw_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        // Two passes (dx + dw) sharing the bind group, recorded in one
+        // encoder for a single submit.
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("norm_grad.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("norm_grad.dx"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dx_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("norm_grad.dw"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dw_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(size_us.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
     fn run_norm_grad2(
         &self,
         storage: &mut [f32],
@@ -3887,6 +4183,135 @@ impl WgpuBackend {
         Ok(())
     }
 
+    /// ADR-051 step 3: device-resident Reshape — straight buffer copy.
+    /// `copy_buffer_to_buffer` requires 4-byte-aligned offsets, which
+    /// every `SlotSpan` already satisfies (spans are u32-element-
+    /// counted). No workgroup dispatch needed.
+    fn run_reshape_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &ReshapeCall,
+    ) -> Result<(), ExecError> {
+        let n = call.input.len;
+        if n == 0 {
+            return Ok(());
+        }
+        if call.output.len != n {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Reshape call has mismatched span lengths".into(),
+            ));
+        }
+        if call.input.offset == call.output.offset {
+            return Ok(());
+        }
+        let bytes = (n * 4) as u64;
+        let buffer = ws.buffer();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("reshape.resident"),
+            });
+        encoder.copy_buffer_to_buffer(
+            buffer,
+            (call.input.offset * 4) as u64,
+            buffer,
+            (call.output.offset * 4) as u64,
+            bytes,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident Slice — per-row buffer copies.
+    fn run_slice_resident(&self, ws: &WgpuWorkspace, call: &SliceCall) -> Result<(), ExecError> {
+        let axis = call.axis_size as usize;
+        if axis == 0 {
+            return Ok(());
+        }
+        let start = call.start as usize;
+        let end = call.end as usize;
+        if end < start || end > axis {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Slice [start, end) out of range".into(),
+            ));
+        }
+        let out_row = end - start;
+        if out_row == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(axis) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Slice input length not divisible by axis_size".into(),
+            ));
+        }
+        let rows = call.input.len / axis;
+        let buffer = ws.buffer();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("slice.resident"),
+            });
+        let row_bytes = (out_row * 4) as u64;
+        for r in 0..rows {
+            let src_off = ((call.input.offset + r * axis + start) * 4) as u64;
+            let dst_off = ((call.output.offset + r * out_row) * 4) as u64;
+            encoder.copy_buffer_to_buffer(buffer, src_off, buffer, dst_off, row_bytes);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident Concat — two per-row copies.
+    fn run_concat_resident(&self, ws: &WgpuWorkspace, call: &ConcatCall) -> Result<(), ExecError> {
+        let sa = call.size_a as usize;
+        let sb = call.size_b as usize;
+        if sa == 0 && sb == 0 {
+            return Ok(());
+        }
+        if !call.a.len.is_multiple_of(sa.max(1)) || !call.b.len.is_multiple_of(sb.max(1)) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Concat operand length not divisible by its size".into(),
+            ));
+        }
+        let rows_a = call.a.len.checked_div(sa).unwrap_or(0);
+        let rows_b = call.b.len.checked_div(sb).unwrap_or(0);
+        if rows_a != rows_b {
+            return Err(ExecError::Backend(
+                "WgpuBackend: Concat row counts differ".into(),
+            ));
+        }
+        let row_out = sa + sb;
+        let buffer = ws.buffer();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("concat.resident"),
+            });
+        for r in 0..rows_a {
+            let dst_row = call.output.offset + r * row_out;
+            if sa > 0 {
+                encoder.copy_buffer_to_buffer(
+                    buffer,
+                    ((call.a.offset + r * sa) * 4) as u64,
+                    buffer,
+                    (dst_row * 4) as u64,
+                    (sa * 4) as u64,
+                );
+            }
+            if sb > 0 {
+                encoder.copy_buffer_to_buffer(
+                    buffer,
+                    ((call.b.offset + r * sb) * 4) as u64,
+                    buffer,
+                    ((dst_row + sa) * 4) as u64,
+                    (sb * 4) as u64,
+                );
+            }
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
     fn dispatch_concat(storage: &mut [f32], call: &ConcatCall) -> Result<(), ExecError> {
         let sa = call.size_a as usize;
         let sb = call.size_b as usize;
@@ -4274,9 +4699,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // dw(4,rw) params(5,uniform). Params: { size, epsilon, rows, _ }.
 
 const RMS_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
@@ -4309,9 +4734,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const RMS_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
@@ -4338,9 +4763,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const INSTANCE_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
@@ -4384,9 +4809,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const INSTANCE_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
@@ -4428,9 +4853,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // params(6,uniform). Params: { size, epsilon, rows, _ }.
 
 const LAYER_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<storage, read_write> db: array<f32>;
@@ -4475,9 +4900,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const LAYER_NORM_GRAD_DW_DB_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> input: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dx: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dw: array<f32>;
 @group(0) @binding(5) var<storage, read_write> db: array<f32>;
@@ -4526,10 +4951,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // rows, _ }.
 
 const ADD_RMS_NORM_GRAD_DX_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> residual: array<f32>;
-@group(0) @binding(1) var<storage, read> input: array<f32>;
-@group(0) @binding(2) var<storage, read> weight: array<f32>;
-@group(0) @binding(3) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> residual: array<f32>;
+@group(0) @binding(1) var<storage, read_write> input: array<f32>;
+@group(0) @binding(2) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(4) var<storage, read_write> d_residual: array<f32>;
 @group(0) @binding(5) var<storage, read_write> d_input: array<f32>;
 @group(0) @binding(6) var<storage, read_write> dw: array<f32>;
@@ -4566,10 +4991,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const ADD_RMS_NORM_GRAD_DW_WGSL: &str = r#"struct Params { size: u32, epsilon: f32, rows: u32, _pad: u32 };
-@group(0) @binding(0) var<storage, read> residual: array<f32>;
-@group(0) @binding(1) var<storage, read> input: array<f32>;
-@group(0) @binding(2) var<storage, read> weight: array<f32>;
-@group(0) @binding(3) var<storage, read> dy: array<f32>;
+@group(0) @binding(0) var<storage, read_write> residual: array<f32>;
+@group(0) @binding(1) var<storage, read_write> input: array<f32>;
+@group(0) @binding(2) var<storage, read_write> weight: array<f32>;
+@group(0) @binding(3) var<storage, read_write> dy: array<f32>;
 @group(0) @binding(4) var<storage, read_write> d_residual: array<f32>;
 @group(0) @binding(5) var<storage, read_write> d_input: array<f32>;
 @group(0) @binding(6) var<storage, read_write> dw: array<f32>;
@@ -4607,8 +5032,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // LogSoftmax: dA[r,j] += dC[r,j] − exp(out[r,j]) · Σ_k(dC[r,k])
 
 const SOFTMAX_GRAD_WGSL: &str = r#"struct Params { size: u32 };
-@group(0) @binding(0) var<storage, read> output: array<f32>;
-@group(0) @binding(1) var<storage, read> dc: array<f32>;
+@group(0) @binding(0) var<storage, read_write> output: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dc: array<f32>;
 @group(0) @binding(2) var<storage, read_write> da: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -4630,8 +5055,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const LOG_SOFTMAX_GRAD_WGSL: &str = r#"struct Params { size: u32 };
-@group(0) @binding(0) var<storage, read> output: array<f32>;
-@group(0) @binding(1) var<storage, read> dc: array<f32>;
+@group(0) @binding(0) var<storage, read_write> output: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dc: array<f32>;
 @group(0) @binding(2) var<storage, read_write> da: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
