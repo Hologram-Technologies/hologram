@@ -231,12 +231,19 @@ impl WgpuBackend {
             .await
             .map_err(|e| ExecError::Backend(format!("wgpu: device request failed: {e}")))?;
 
+        // ADR-051 step 3: all three binary bindings are declared as
+        // read_write at the layout level so the resident path can bind
+        // the same workspace buffer at three offsets within a single
+        // dispatch (wgpu's usage-scope rule rejects mixing read-only
+        // and read-write usages of the same buffer in one pass). The
+        // shader-level `var<storage, read>` qualifier still enforces
+        // immutability for inputs at the WGSL access level.
         let binary_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("binary.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
                     storage_binding(2, false),
                 ],
             });
@@ -593,10 +600,44 @@ impl CanonicalBackend for WgpuBackend {
         ws: &mut Self::Workspace,
         call: &KernelCall,
     ) -> Result<(), ExecError> {
-        // Slow-path bridge: round-trip the workspace through the host
-        // and run the existing per-call dispatch path. Kept simple so
-        // the per-arm migration (step 3) is the only place actual
-        // device-resident dispatch lands.
+        // ADR-051 step 3: per-arm device-resident dispatch.
+        //
+        // Migrated arms bind the workspace buffer directly via
+        // `BufferBinding`s for the call's slot spans — zero per-call
+        // upload/download cost. Unmigrated arms fall through to the
+        // legacy round-trip (download → host dispatch → upload).
+        //
+        // The binary family is migrated first since all 17 variants
+        // share `run_binary_resident`. Unary, reduce, softmax, norm,
+        // matmul, conv, attention, and grad arms migrate in follow-up
+        // commits.
+        match call {
+            KernelCall::Add(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "add"),
+            KernelCall::Sub(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "sub"),
+            KernelCall::Mul(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "mul"),
+            KernelCall::Div(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "div"),
+            KernelCall::Min(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "min"),
+            KernelCall::Max(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "max"),
+            KernelCall::Pow(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "pow"),
+            KernelCall::Mod(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "mod"),
+            KernelCall::Equal(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "equal"),
+            KernelCall::Less(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "less"),
+            KernelCall::LessOrEqual(c) => {
+                return self.run_binary_resident(ws, c.a, c.b, c.c, "less_or_equal")
+            }
+            KernelCall::Greater(c) => {
+                return self.run_binary_resident(ws, c.a, c.b, c.c, "greater")
+            }
+            KernelCall::GreaterOrEqual(c) => {
+                return self.run_binary_resident(ws, c.a, c.b, c.c, "greater_or_equal")
+            }
+            KernelCall::And(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "and"),
+            KernelCall::Or(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "or"),
+            KernelCall::Xor(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "xor"),
+            _ => {}
+        }
+        // Fallback: round-trip the workspace through the host and run
+        // the existing per-call dispatch path for unmigrated arms.
         let full = SlotSpan {
             offset: 0,
             len: ws.capacity(),
@@ -779,6 +820,88 @@ impl WgpuBackend {
             n,
             &mut storage[c.offset..c.offset + n],
         )
+    }
+
+    /// ADR-051 step 3: device-resident binary dispatch.
+    ///
+    /// Binds windows of the workspace buffer for the a/b/c spans
+    /// directly — no per-call upload/download. Result stays on the
+    /// device until the executor's [`BackendWorkspace::read_span`]
+    /// pulls it back at a plan boundary.
+    fn run_binary_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        a: SlotSpan,
+        b: SlotSpan,
+        c: SlotSpan,
+        op: &'static str,
+    ) -> Result<(), ExecError> {
+        let n = a.len;
+        if n == 0 {
+            return Ok(());
+        }
+        if b.len != n || c.len != n {
+            return Err(ExecError::Backend(format!(
+                "WgpuBackend: {op} call has mismatched span lengths"
+            )));
+        }
+        let pipeline = self
+            .binary_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown binary op {op}")))?;
+
+        let bytes = (n * 4) as u64;
+        let a_off = (a.offset * 4) as u64;
+        let b_off = (b.offset * 4) as u64;
+        let c_off = (c.offset * 4) as u64;
+        let buffer = ws.buffer();
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("binary.binds.resident"),
+            layout: &self.binary_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: a_off,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: b_off,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: c_off,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("binary.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("binary.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(n.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 
     fn dispatch_reduce(
@@ -3922,9 +4045,13 @@ const UNARY_OPS: &[(&str, &str)] = &[
 ];
 
 fn binary_shader_source(op_expr: &str) -> String {
+    // ADR-051 step 3: all three bindings declared `read_write` so the
+    // layout permits binding the same workspace buffer at multiple
+    // offsets in one dispatch (wgpu's usage-scope rule). The shader
+    // still treats `a` and `b` as input-only (no writes).
     format!(
-        r#"@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
+        r#"@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> b: array<f32>;
 @group(0) @binding(2) var<storage, read_write> c: array<f32>;
 
 @compute @workgroup_size(64)

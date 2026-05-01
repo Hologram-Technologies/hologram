@@ -85,6 +85,95 @@ fn run_unary(plan: &CompiledPlan, gpu: &mut WgpuBackend, seed: impl Fn(usize) ->
     assert!(res.is_match(), "wgpu unary diverged: {:?}", res);
 }
 
+/// ADR-051 step 3: every binary arm goes through the resident path
+/// (no per-call upload/download). This test runs Add + the full binary
+/// family via `dispatch_resident` against a `WgpuWorkspace` and
+/// asserts the output matches the CPU reference exactly. If the
+/// resident bind-group setup is broken, this test catches it before
+/// the slow-path fallback hides the regression.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_binary_resident_path_matches_cpu_reference() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    let bc = BinaryCall {
+        a: SlotSpan { offset: 0, len: N },
+        b: SlotSpan { offset: N, len: N },
+        c: SlotSpan {
+            offset: 2 * N,
+            len: N,
+        },
+    };
+
+    let cases: &[(&str, KernelCall, fn(usize) -> f32)] = &[
+        (
+            "Add",
+            KernelCall::Add(AddCall {
+                a: bc.a,
+                b: bc.b,
+                c: bc.c,
+            }),
+            |i| 0.07 * i as f32 + 0.3,
+        ),
+        ("Sub", KernelCall::Sub(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Mul", KernelCall::Mul(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Min", KernelCall::Min(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Max", KernelCall::Max(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Equal", KernelCall::Equal(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Less", KernelCall::Less(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Greater", KernelCall::Greater(bc), |i| {
+            0.07 * i as f32 + 0.3
+        }),
+        ("And", KernelCall::And(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Or", KernelCall::Or(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Xor", KernelCall::Xor(bc), |i| 0.07 * i as f32 + 0.3),
+        ("Div", KernelCall::Div(bc), |i| 0.07 * i as f32 + 1.0),
+        ("Mod", KernelCall::Mod(bc), |i| 0.07 * i as f32 + 1.0),
+        ("Pow", KernelCall::Pow(bc), |_| 2.0),
+    ];
+
+    for (name, call, seed_b) in cases {
+        eprintln!("checking resident binary op: {name}");
+        let a: Vec<f32> = (0..N).map(|i| 0.1 * i as f32 - 1.0).collect();
+        let b: Vec<f32> = (0..N).map(seed_b).collect();
+
+        // Resident path on GPU.
+        let mut ws = gpu.alloc_workspace(3 * N).expect("alloc workspace");
+        ws.write_span(SlotSpan { offset: 0, len: N }, &a)
+            .expect("write a");
+        ws.write_span(SlotSpan { offset: N, len: N }, &b)
+            .expect("write b");
+        gpu.dispatch_resident(&mut ws, call)
+            .expect("resident dispatch");
+        let gpu_c = ws
+            .read_span(SlotSpan {
+                offset: 2 * N,
+                len: N,
+            })
+            .expect("read c");
+
+        // CPU reference for the same call.
+        let mut storage = vec![0.0_f32; 3 * N];
+        storage[..N].copy_from_slice(&a);
+        storage[N..2 * N].copy_from_slice(&b);
+        cpu.dispatch(&mut storage, call).expect("cpu dispatch");
+        let cpu_c = &storage[2 * N..3 * N];
+
+        for (i, (&g, &c)) in gpu_c.iter().zip(cpu_c.iter()).enumerate() {
+            // Bitwise-equal for finite-only ops; float tolerance for arithmetic.
+            if !c.is_finite() && !g.is_finite() {
+                continue;
+            }
+            assert!(
+                (g - c).abs() <= 1e-5_f32.max(c.abs() * 1e-5),
+                "{name} resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_add_matches_cpu_reference() {
