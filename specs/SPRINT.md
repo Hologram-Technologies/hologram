@@ -351,6 +351,21 @@ allocation, no virtual dispatch in kernels, no runtime algorithm selection.
   variant. Coverage: 51 GPU-implemented + 6 host-side intentional +
   remainder via canonical-CPU fallback (every variant has a working
   dispatch path).
+- [x] **5.3 (ADR-051)**: Workspace residency for `WgpuBackend` —
+  `BackendWorkspace` trait + `WgpuWorkspace` device-resident buffer
+  + per-arm migration. Compute-heavy arms migrated: binary (17
+  variants), unary (20 kinds), reduce (5 kinds), softmax + log-softmax,
+  pool (2d max/avg + global-avg), all 4 norms (rms, instance, layer,
+  add-rms), group-norm, matmul + both grads, conv2d, conv-transpose-2d.
+  All bind workspace buffer windows via `BufferBinding` offsets — zero
+  per-call upload/download. Layouts/shaders use all-`read_write`
+  storage bindings to satisfy wgpu's usage-scope rule. Spans must be
+  64-element-aligned (256-byte storage offset). Remaining arms (data-
+  movement: slice/concat/reshape/transpose/where/pad/expand/resize/
+  cumsum/rotary/lrn/clip; grad arms via host-CPU fallback;
+  attention via host-CPU fallback; norm-grad family) take the
+  slow-path round-trip — round-trip cost is small relative to their
+  per-call work; migration is mechanical when needed.
 
 ### Phase 6 — UOR / `uor-foundation` integration (deferred)
 - [ ] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after
