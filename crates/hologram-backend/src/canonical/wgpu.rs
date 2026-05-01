@@ -247,9 +247,12 @@ impl WgpuBackend {
                     storage_binding(2, false),
                 ],
             });
+        // ADR-051 step 3: input + output marked read_write so the
+        // resident path can bind the workspace buffer at both offsets
+        // within one dispatch (wgpu usage-scope rule).
         let unary_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("unary.binds.layout"),
-            entries: &[storage_binding(0, true), storage_binding(1, false)],
+            entries: &[storage_binding(0, false), storage_binding(1, false)],
         });
         let reduce_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -634,6 +637,12 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::And(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "and"),
             KernelCall::Or(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "or"),
             KernelCall::Xor(c) => return self.run_binary_resident(ws, c.a, c.b, c.c, "xor"),
+            KernelCall::Unary(c, kind) => {
+                if let Some(op) = unary_pipeline_key(*kind) {
+                    return self.run_unary_resident(ws, c.input, c.output, op);
+                }
+                // Unmigrated unary kind — fall through to the slow path.
+            }
             _ => {}
         }
         // Fallback: round-trip the workspace through the host and run
@@ -2851,6 +2860,76 @@ impl WgpuBackend {
         )
     }
 
+    /// ADR-051 step 3: device-resident unary dispatch.
+    ///
+    /// Binds workspace buffer windows for src and dst spans directly —
+    /// no per-call upload/download. Result stays on device until the
+    /// executor's `BackendWorkspace::read_span` pulls it back at a
+    /// plan boundary.
+    fn run_unary_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        src: SlotSpan,
+        dst: SlotSpan,
+        op: &'static str,
+    ) -> Result<(), ExecError> {
+        let n = src.len;
+        if n == 0 {
+            return Ok(());
+        }
+        if dst.len != n {
+            return Err(ExecError::Backend(format!(
+                "WgpuBackend: {op} call has mismatched span lengths"
+            )));
+        }
+        let pipeline = self
+            .unary_pipelines
+            .get(op)
+            .ok_or_else(|| ExecError::Backend(format!("WgpuBackend: unknown unary op {op}")))?;
+
+        let bytes = (n * 4) as u64;
+        let buffer = ws.buffer();
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("unary.binds.resident"),
+            layout: &self.unary_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (src.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (dst.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(bytes),
+                    }),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("unary.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("unary.resident.pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(n.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
     fn dispatch_and_read(
         &self,
         pipeline: &wgpu::ComputePipeline,
@@ -4068,8 +4147,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 }
 
 fn unary_shader_source(op_expr: &str) -> String {
+    // ADR-051 step 3: input also declared `read_write` so the layout
+    // permits the same workspace buffer at both offsets in one
+    // dispatch. The shader still treats `input` as read-only at the
+    // access level.
     format!(
-        r#"@group(0) @binding(0) var<storage, read> input: array<f32>;
+        r#"@group(0) @binding(0) var<storage, read_write> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> output: array<f32>;
 
 @compute @workgroup_size(64)

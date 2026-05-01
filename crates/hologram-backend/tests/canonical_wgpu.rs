@@ -174,6 +174,74 @@ fn wgpu_binary_resident_path_matches_cpu_reference() {
     }
 }
 
+/// ADR-051 step 3: unary family on the device-resident workspace.
+/// Mirrors the binary resident-path test for coverage.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_unary_resident_path_matches_cpu_reference() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    let uc = UnaryCall {
+        input: SlotSpan { offset: 0, len: N },
+        output: SlotSpan { offset: N, len: N },
+    };
+    type Seed = fn(usize) -> f32;
+    let cases: &[(UnaryKind, Seed)] = &[
+        (UnaryKind::Neg, neg_seed),
+        (UnaryKind::Relu, neg_seed),
+        (UnaryKind::Sigmoid, neg_seed),
+        (UnaryKind::Tanh, neg_seed),
+        (UnaryKind::Exp, neg_seed),
+        (UnaryKind::Abs, neg_seed),
+        (UnaryKind::Sin, neg_seed),
+        (UnaryKind::Cos, neg_seed),
+        (UnaryKind::Sign, neg_seed),
+        (UnaryKind::Silu, neg_seed),
+        (UnaryKind::Floor, neg_seed),
+        (UnaryKind::Ceil, neg_seed),
+        (UnaryKind::Round, neg_seed),
+        (UnaryKind::Log, pos_seed),
+        (UnaryKind::Sqrt, pos_seed),
+        (UnaryKind::Reciprocal, pos_seed),
+        (UnaryKind::Gelu, neg_seed),
+        (UnaryKind::Erf, neg_seed),
+        (UnaryKind::Not, ternary_seed),
+        (UnaryKind::IsNaN, neg_seed),
+    ];
+
+    for (kind, seed) in cases {
+        eprintln!("checking resident unary kind: {kind:?}");
+        let xs: Vec<f32> = (0..N).map(seed).collect();
+        let call = KernelCall::Unary(uc, *kind);
+
+        let mut ws = gpu.alloc_workspace(2 * N).expect("alloc workspace");
+        ws.write_span(SlotSpan { offset: 0, len: N }, &xs)
+            .expect("write input");
+        gpu.dispatch_resident(&mut ws, &call)
+            .expect("resident dispatch");
+        let gpu_out = ws
+            .read_span(SlotSpan { offset: N, len: N })
+            .expect("read output");
+
+        let mut storage = vec![0.0_f32; 2 * N];
+        storage[..N].copy_from_slice(&xs);
+        cpu.dispatch(&mut storage, &call).expect("cpu dispatch");
+        let cpu_out = &storage[N..2 * N];
+
+        for (i, (&g, &c)) in gpu_out.iter().zip(cpu_out.iter()).enumerate() {
+            if !c.is_finite() && !g.is_finite() {
+                continue;
+            }
+            assert!(
+                (g - c).abs() <= 1e-5_f32.max(c.abs() * 1e-5),
+                "{kind:?} resident-vs-cpu diverged at index {i}: gpu={g} cpu={c}"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_add_matches_cpu_reference() {
