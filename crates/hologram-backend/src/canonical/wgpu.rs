@@ -277,15 +277,17 @@ impl WgpuBackend {
                 uniform_binding(3),
             ],
         });
-        // MatMul + both grad variants: two storage-read inputs, one
-        // storage-read_write target (overwrite for forward, accumulate
-        // for grad), one uniform `Params { m, k, n }`.
+        // MatMul + both grad variants: two storage inputs (a, b),
+        // one storage target (overwrite for forward, accumulate for
+        // grad), one uniform `Params { m, k, n }`. ADR-051 step 3:
+        // all storage bindings declared read_write so the resident
+        // path can bind workspace windows for all three.
         let matmul_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("matmul.binds.layout"),
                 entries: &[
-                    storage_binding(0, true),
-                    storage_binding(1, true),
+                    storage_binding(0, false),
+                    storage_binding(1, false),
                     storage_binding(2, false),
                     uniform_binding(3),
                 ],
@@ -660,6 +662,9 @@ impl CanonicalBackend for WgpuBackend {
             }
             KernelCall::LayerNorm(c) => return self.run_norm_full_resident(ws, c, "layer_norm"),
             KernelCall::AddRmsNorm(c) => return self.run_add_rms_norm_resident(ws, c),
+            KernelCall::MatMul(c) => return self.run_matmul_resident(ws, c),
+            KernelCall::MatMulGradA(c) => return self.run_matmul_grad_a_resident(ws, c),
+            KernelCall::MatMulGradB(c) => return self.run_matmul_grad_b_resident(ws, c),
             // GroupNorm reuses `layer_norm` pipeline but with `size = group_elements`
             // — leaving on the slow path until it gets a custom resident helper.
             _ => {}
@@ -3241,6 +3246,143 @@ impl WgpuBackend {
         )
     }
 
+    /// ADR-051 step 3: device-resident MatMul + MatMulGradA/B dispatch.
+    /// All three share a single layout (a, b, c, params) where
+    /// "a/b/c" are role-renamed for forward vs grad — see the WGSL
+    /// shaders for which span maps to which role. Forward overwrites
+    /// `c`; grad arms accumulate into `da` / `db`, which works
+    /// naturally on the resident buffer (no separate upload_rw needed).
+    fn run_matmul_resident_inner(
+        &self,
+        ws: &WgpuWorkspace,
+        slot_a: SlotSpan,
+        slot_b: SlotSpan,
+        slot_c: SlotSpan,
+        m: usize,
+        k: usize,
+        n: usize,
+        pipeline_name: &'static str,
+        out_total: usize,
+    ) -> Result<(), ExecError> {
+        let pipeline = self.matmul_pipelines.get(pipeline_name).ok_or_else(|| {
+            ExecError::Backend(format!("WgpuBackend: missing {pipeline_name} pipeline"))
+        })?;
+        let params_buf = self.upload_matmul_params(m, k, n);
+
+        let buffer = ws.buffer();
+        let a_bytes = (slot_a.len * 4) as u64;
+        let b_bytes = (slot_b.len * 4) as u64;
+        let c_bytes = (slot_c.len * 4) as u64;
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("matmul.binds.resident"),
+            layout: &self.matmul_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (slot_a.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(a_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (slot_b.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(b_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (slot_c.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(c_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "matmul.resident",
+            pipeline,
+            &bind_group,
+            out_total.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    fn run_matmul_resident(&self, ws: &WgpuWorkspace, call: &MatMulCall) -> Result<(), ExecError> {
+        let (m, k, n) = (call.m, call.k, call.n);
+        if m == 0 || k == 0 || n == 0 {
+            return Ok(());
+        }
+        if call.a.len != m * k || call.b.len != k * n || call.c.len != m * n {
+            return Err(ExecError::Backend(
+                "WgpuBackend: MatMul span lengths inconsistent with (m, k, n)".into(),
+            ));
+        }
+        self.run_matmul_resident_inner(ws, call.a, call.b, call.c, m, k, n, "matmul", m * n)
+    }
+
+    fn run_matmul_grad_a_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &MatMulGradACall,
+    ) -> Result<(), ExecError> {
+        let (m, k, n) = (call.m, call.k, call.n);
+        if m == 0 || k == 0 || n == 0 || call.da.len == 0 {
+            return Ok(());
+        }
+        if call.dc.len != m * n || call.b.len != k * n || call.da.len != m * k {
+            return Err(ExecError::Backend(
+                "WgpuBackend: MatMulGradA span lengths inconsistent with (m, k, n)".into(),
+            ));
+        }
+        self.run_matmul_resident_inner(
+            ws,
+            call.dc,
+            call.b,
+            call.da,
+            m,
+            k,
+            n,
+            "matmul_grad_a",
+            m * k,
+        )
+    }
+
+    fn run_matmul_grad_b_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &MatMulGradBCall,
+    ) -> Result<(), ExecError> {
+        let (m, k, n) = (call.m, call.k, call.n);
+        if m == 0 || k == 0 || n == 0 || call.db.len == 0 {
+            return Ok(());
+        }
+        if call.a.len != m * k || call.dc.len != m * n || call.db.len != k * n {
+            return Err(ExecError::Backend(
+                "WgpuBackend: MatMulGradB span lengths inconsistent with (m, k, n)".into(),
+            ));
+        }
+        self.run_matmul_resident_inner(
+            ws,
+            call.a,
+            call.dc,
+            call.db,
+            m,
+            k,
+            n,
+            "matmul_grad_b",
+            k * n,
+        )
+    }
+
     fn matmul_bind_group(
         &self,
         a: &wgpu::Buffer,
@@ -4388,8 +4530,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // MatMulGradB (accum):   dB[k,n] += Σ_m A[m,k] * dC[m,n]
 
 const MATMUL_WGSL: &str = r#"struct Params { m: u32, k: u32, n: u32 };
-@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> b: array<f32>;
 @group(0) @binding(2) var<storage, read_write> c: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -4410,8 +4552,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const MATMUL_GRAD_A_WGSL: &str = r#"struct Params { m: u32, k: u32, n: u32 };
-@group(0) @binding(0) var<storage, read> dc: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(0) var<storage, read_write> dc: array<f32>;
+@group(0) @binding(1) var<storage, read_write> b: array<f32>;
 @group(0) @binding(2) var<storage, read_write> da: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -4432,8 +4574,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const MATMUL_GRAD_B_WGSL: &str = r#"struct Params { m: u32, k: u32, n: u32 };
-@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> dc: array<f32>;
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dc: array<f32>;
 @group(0) @binding(2) var<storage, read_write> db: array<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
 

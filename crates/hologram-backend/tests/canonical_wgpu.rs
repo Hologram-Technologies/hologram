@@ -1374,6 +1374,220 @@ fn seed_norm_inputs(buf: &mut hologram_transform::BufferSet, in_n: usize, row_si
     );
 }
 
+/// ADR-051 step 3: MatMul + MatMulGradA + MatMulGradB on the
+/// device-resident workspace. Exercises forward + both grad arms
+/// against a CpuBackend reference.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_matmul_resident_path_matches_cpu_reference() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let mut cpu = CpuBackend::new();
+    // wgpu requires storage-buffer offsets to be 64-element-aligned
+    // (256 bytes). Lay out spans on STRIDE boundaries.
+    const STRIDE: usize = 64;
+    let m = 4_usize;
+    let k = 3_usize;
+    let n = 5_usize;
+    // Forward: a (m*k = 12), b (k*n = 15), c (m*n = 20).
+    let a_data: Vec<f32> = (0..m * k).map(|i| 0.1 * i as f32 + 1.0).collect();
+    let b_data: Vec<f32> = (0..k * n).map(|i| 0.05 * i as f32 - 0.5).collect();
+
+    let cap = 4 * STRIDE;
+    let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+    ws.write_span(
+        SlotSpan {
+            offset: 0,
+            len: m * k,
+        },
+        &a_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: STRIDE,
+            len: k * n,
+        },
+        &b_data,
+    )
+    .unwrap();
+
+    let call = KernelCall::MatMul(MatMulCall {
+        a: SlotSpan {
+            offset: 0,
+            len: m * k,
+        },
+        b: SlotSpan {
+            offset: STRIDE,
+            len: k * n,
+        },
+        c: SlotSpan {
+            offset: 2 * STRIDE,
+            len: m * n,
+        },
+        m,
+        k,
+        n,
+    });
+    gpu.dispatch_resident(&mut ws, &call).unwrap();
+    let gpu_c = ws
+        .read_span(SlotSpan {
+            offset: 2 * STRIDE,
+            len: m * n,
+        })
+        .unwrap();
+
+    let mut storage = vec![0.0_f32; cap];
+    storage[..m * k].copy_from_slice(&a_data);
+    storage[STRIDE..STRIDE + k * n].copy_from_slice(&b_data);
+    cpu.dispatch(&mut storage, &call).unwrap();
+    let cpu_c = &storage[2 * STRIDE..2 * STRIDE + m * n];
+
+    for (i, (&g, &c)) in gpu_c.iter().zip(cpu_c.iter()).enumerate() {
+        assert!(
+            (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+            "matmul resident-vs-cpu diverged at {i}: gpu={g} cpu={c}"
+        );
+    }
+
+    // GradA: dc (m*n = 20), b (k*n = 15), da (m*k = 12). Accumulates
+    // — so seed da with non-zero to exercise the read-modify-write.
+    let dc_data: Vec<f32> = (0..m * n).map(|i| 0.02 * i as f32).collect();
+    let da_seed: Vec<f32> = (0..m * k).map(|i| 0.01 * i as f32 + 0.1).collect();
+    let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+    ws.write_span(
+        SlotSpan {
+            offset: 0,
+            len: m * n,
+        },
+        &dc_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: STRIDE,
+            len: k * n,
+        },
+        &b_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: 2 * STRIDE,
+            len: m * k,
+        },
+        &da_seed,
+    )
+    .unwrap();
+
+    let call = KernelCall::MatMulGradA(MatMulGradACall {
+        dc: SlotSpan {
+            offset: 0,
+            len: m * n,
+        },
+        b: SlotSpan {
+            offset: STRIDE,
+            len: k * n,
+        },
+        da: SlotSpan {
+            offset: 2 * STRIDE,
+            len: m * k,
+        },
+        m,
+        k,
+        n,
+    });
+    gpu.dispatch_resident(&mut ws, &call).unwrap();
+    let gpu_da = ws
+        .read_span(SlotSpan {
+            offset: 2 * STRIDE,
+            len: m * k,
+        })
+        .unwrap();
+
+    let mut storage = vec![0.0_f32; cap];
+    storage[..m * n].copy_from_slice(&dc_data);
+    storage[STRIDE..STRIDE + k * n].copy_from_slice(&b_data);
+    storage[2 * STRIDE..2 * STRIDE + m * k].copy_from_slice(&da_seed);
+    cpu.dispatch(&mut storage, &call).unwrap();
+    let cpu_da = &storage[2 * STRIDE..2 * STRIDE + m * k];
+
+    for (i, (&g, &c)) in gpu_da.iter().zip(cpu_da.iter()).enumerate() {
+        assert!(
+            (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+            "matmul_grad_a resident-vs-cpu diverged at {i}: gpu={g} cpu={c}"
+        );
+    }
+
+    // GradB: a (m*k = 12), dc (m*n = 20), db (k*n = 15).
+    let db_seed: Vec<f32> = (0..k * n).map(|i| 0.01 * i as f32 + 0.05).collect();
+    let mut ws = gpu.alloc_workspace(cap).expect("alloc");
+    ws.write_span(
+        SlotSpan {
+            offset: 0,
+            len: m * k,
+        },
+        &a_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: STRIDE,
+            len: m * n,
+        },
+        &dc_data,
+    )
+    .unwrap();
+    ws.write_span(
+        SlotSpan {
+            offset: 2 * STRIDE,
+            len: k * n,
+        },
+        &db_seed,
+    )
+    .unwrap();
+
+    let call = KernelCall::MatMulGradB(MatMulGradBCall {
+        a: SlotSpan {
+            offset: 0,
+            len: m * k,
+        },
+        dc: SlotSpan {
+            offset: STRIDE,
+            len: m * n,
+        },
+        db: SlotSpan {
+            offset: 2 * STRIDE,
+            len: k * n,
+        },
+        m,
+        k,
+        n,
+    });
+    gpu.dispatch_resident(&mut ws, &call).unwrap();
+    let gpu_db = ws
+        .read_span(SlotSpan {
+            offset: 2 * STRIDE,
+            len: k * n,
+        })
+        .unwrap();
+
+    let mut storage = vec![0.0_f32; cap];
+    storage[..m * k].copy_from_slice(&a_data);
+    storage[STRIDE..STRIDE + m * n].copy_from_slice(&dc_data);
+    storage[2 * STRIDE..2 * STRIDE + k * n].copy_from_slice(&db_seed);
+    cpu.dispatch(&mut storage, &call).unwrap();
+    let cpu_db = &storage[2 * STRIDE..2 * STRIDE + k * n];
+
+    for (i, (&g, &c)) in gpu_db.iter().zip(cpu_db.iter()).enumerate() {
+        assert!(
+            (g - c).abs() <= 1e-4_f32.max(c.abs() * 1e-4),
+            "matmul_grad_b resident-vs-cpu diverged at {i}: gpu={g} cpu={c}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
 fn wgpu_matmul_matches_cpu_reference() {
