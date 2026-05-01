@@ -669,10 +669,11 @@ impl CanonicalBackend for WgpuBackend {
             KernelCall::MatMulGradA(c) => return self.run_matmul_grad_a_resident(ws, c),
             KernelCall::MatMulGradB(c) => return self.run_matmul_grad_b_resident(ws, c),
             KernelCall::Conv2d(c) => return self.run_conv2d_resident(ws, c),
-            // GroupNorm, ConvTranspose2d, Attention, grad arms, and
-            // data-movement arms (Slice/Concat/Reshape/Transpose/...)
-            // remain on the slow round-trip path until they get
-            // dedicated resident helpers.
+            KernelCall::ConvTranspose2d(c) => return self.run_conv_transpose_2d_resident(ws, c),
+            KernelCall::GroupNorm(c) => return self.run_group_norm_resident(ws, c),
+            // Attention, conv-grad, grad arms, and data-movement arms
+            // (Slice/Concat/Reshape/Transpose/...) remain on the slow
+            // round-trip path until they get dedicated resident helpers.
             _ => {}
         }
         // Fallback: round-trip the workspace through the host and run
@@ -3367,6 +3368,217 @@ impl WgpuBackend {
             pipeline,
             &bind_group,
             total_out.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident ConvTranspose2d dispatch.
+    /// Same layout / uniform shape as Conv2d; only the pipeline
+    /// changes. Bias-zero-buffer trick reused.
+    fn run_conv_transpose_2d_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &ConvTransposeCall,
+    ) -> Result<(), ExecError> {
+        let total_out =
+            call.n as usize * call.c_out as usize * call.h_out as usize * call.w_out as usize;
+        if total_out == 0 {
+            return Ok(());
+        }
+        if call.output.len != total_out {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d output length inconsistent with shape".into(),
+            ));
+        }
+        let group = call.group.max(1);
+        if !call.c_in.is_multiple_of(group) || !call.c_out.is_multiple_of(group) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d c_in / c_out must divide evenly by group".into(),
+            ));
+        }
+        if call.stride_h == 0 || call.stride_w == 0 {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d strides must be > 0".into(),
+            ));
+        }
+        let pipeline = self
+            .conv_pipelines
+            .get("conv_transpose_2d")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing conv_transpose_2d pipeline".into())
+            })?;
+        let params_buf = self.upload_conv_params(
+            call.n,
+            call.c_in,
+            call.c_out,
+            call.h_in,
+            call.w_in,
+            call.h_out,
+            call.w_out,
+            call.kernel_h,
+            call.kernel_w,
+            call.stride_h,
+            call.stride_w,
+            call.pad_h,
+            call.pad_w,
+            call.dilation_h,
+            call.dilation_w,
+            group,
+        );
+        let zero_bias_buf = if call.bias.len == 0 {
+            Some(self.upload(&vec![0.0_f32; call.c_out as usize], "conv_t.bias.zero"))
+        } else if call.bias.len == call.c_out as usize {
+            None
+        } else {
+            return Err(ExecError::Backend(
+                "WgpuBackend: ConvTranspose2d bias length must be 0 or c_out".into(),
+            ));
+        };
+        let buffer = ws.buffer();
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (call.weight.len * 4) as u64;
+        let out_bytes = (total_out * 4) as u64;
+        let bias_resource: wgpu::BindingResource = if let Some(ref zb) = zero_bias_buf {
+            zb.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.bias.offset * 4) as u64,
+                size: wgpu::BufferSize::new((call.c_out as usize * 4) as u64),
+            })
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("conv_t.binds.resident"),
+            layout: &self.conv_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bias_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(out_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "conv_t.resident",
+            pipeline,
+            &bind_group,
+            total_out.div_ceil(64) as u32,
+        );
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident GroupNorm dispatch. Reuses the
+    /// `layer_norm` pipeline with `size = group_elements`. Same
+    /// `norm3_bind_layout` as LayerNorm; the role of binding 2 is
+    /// "bias" for GroupNorm and is always present.
+    fn run_group_norm_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &GroupNormCall,
+    ) -> Result<(), ExecError> {
+        let groups = call.num_groups;
+        if groups == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(groups as usize) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm input length not divisible by num_groups".into(),
+            ));
+        }
+        let group_elements = call.input.len / groups as usize;
+        if call.weight.len != group_elements || call.bias.len != group_elements {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm weight/bias length must equal group_elements".into(),
+            ));
+        }
+        if call.output.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: GroupNorm output length must equal input length".into(),
+            ));
+        }
+        let pipeline = self
+            .norm_pipelines
+            .get("layer_norm")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing layer_norm pipeline".into()))?;
+        let params_buf = self.upload_norm_params(group_elements as u32, call.epsilon);
+
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (group_elements * 4) as u64;
+        let buffer = ws.buffer();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("group_norm.binds.resident"),
+            layout: &self.norm3_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.bias.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.output.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.encode_and_submit(
+            "group_norm.resident",
+            pipeline,
+            &bind_group,
+            (groups as usize).div_ceil(64) as u32,
         );
         Ok(())
     }
