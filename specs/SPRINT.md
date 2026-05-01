@@ -353,19 +353,27 @@ allocation, no virtual dispatch in kernels, no runtime algorithm selection.
   dispatch path).
 - [x] **5.3 (ADR-051)**: Workspace residency for `WgpuBackend` —
   `BackendWorkspace` trait + `WgpuWorkspace` device-resident buffer
-  + per-arm migration. Compute-heavy arms migrated: binary (17
-  variants), unary (20 kinds), reduce (5 kinds), softmax + log-softmax,
-  pool (2d max/avg + global-avg), all 4 norms (rms, instance, layer,
-  add-rms), group-norm, matmul + both grads, conv2d, conv-transpose-2d.
-  All bind workspace buffer windows via `BufferBinding` offsets — zero
+  + per-arm migration. **Every wgpu-backed arm now runs device-
+  resident**: binary (17 variants + fused-swiglu), unary (20 kinds),
+  reduce (5 kinds), softmax + log-softmax, pool (2d max/avg + global-
+  avg), all 4 norms (rms, instance, layer, add-rms), group-norm,
+  matmul + both grads, conv2d, conv-transpose-2d, reshape, slice,
+  concat, softmax-grad + log-softmax-grad, rms-norm-grad,
+  instance-norm-grad, layer-norm-grad, add-rms-norm-grad. All bind
+  workspace buffer windows via `BufferBinding` offsets — zero
   per-call upload/download. Layouts/shaders use all-`read_write`
   storage bindings to satisfy wgpu's usage-scope rule. Spans must be
-  64-element-aligned (256-byte storage offset). Remaining arms (data-
-  movement: slice/concat/reshape/transpose/where/pad/expand/resize/
-  cumsum/rotary/lrn/clip; grad arms via host-CPU fallback;
-  attention via host-CPU fallback; norm-grad family) take the
-  slow-path round-trip — round-trip cost is small relative to their
-  per-call work; migration is mechanical when needed.
+  64-element-aligned (256-byte storage offset).
+
+  Remaining arms route through `host_cpu_fallback` because no wgpu
+  shader exists for them: Attention/AttentionGrad, Gemm, Transpose/
+  TransposeGrad, Pad/Expand/Resize{Nearest,Linear}/CumSum/
+  RotaryEmbedding/Where/Lrn/Clip, MulGrad/DivGrad/PowGrad/MinMaxGrad/
+  UnaryGrad/ConcatGrad/SliceGrad/ReduceGrad family (Reduce/ReduceArg/
+  ReduceProd)/Pool2dGrad/GlobalAvgPoolGrad/FusedSwiGluGrad/
+  GroupNormGrad/Conv2dGrad/ConvTranspose2dGrad. These take the slow
+  round-trip path; promotion to device requires writing the WGSL
+  shader first and is a per-arm decision blocked on benchmarks.
 
 ### Phase 6 — UOR / `uor-foundation` integration (deferred)
 - [ ] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after

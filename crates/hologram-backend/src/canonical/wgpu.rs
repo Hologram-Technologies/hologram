@@ -711,6 +711,8 @@ impl CanonicalBackend for WgpuBackend {
                     "instance_norm_grad_dw",
                 );
             }
+            KernelCall::LayerNormGrad(c) => return self.run_layer_norm_grad_resident(ws, c),
+            KernelCall::AddRmsNormGrad(c) => return self.run_add_rms_norm_grad_resident(ws, c),
             // Attention, conv-grad, grad arms, and data-movement arms
             // (Slice/Concat/Reshape/Transpose/...) remain on the slow
             // round-trip path until they get dedicated resident helpers.
@@ -2239,6 +2241,184 @@ impl WgpuBackend {
         Ok(())
     }
 
+    /// ADR-051 step 3: device-resident LayerNormGrad. 6-storage layout
+    /// (input, weight, dy, dx, dw, db). Two passes (dx + dw_db) sharing
+    /// one bind group, single submit.
+    fn run_layer_norm_grad_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &LayerNormGradCall,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        let size_us = size as usize;
+        if size_us == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if !call.input.len.is_multiple_of(size_us) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: LayerNormGrad input length not divisible by size".into(),
+            ));
+        }
+        let rows = call.input.len / size_us;
+        if call.dx.len != 0 && call.dx.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: LayerNormGrad dx length must equal input length".into(),
+            ));
+        }
+        if (call.dw.len != 0 && call.dw.len != size_us)
+            || (call.db.len != 0 && call.db.len != size_us)
+        {
+            return Err(ExecError::Backend(
+                "WgpuBackend: LayerNormGrad dw/db length must equal size".into(),
+            ));
+        }
+        if call.dy.len != call.input.len || call.weight.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: LayerNormGrad span sizes inconsistent".into(),
+            ));
+        }
+        let dx_pipe = self
+            .norm_grad_pipelines
+            .get("layer_norm_grad_dx")
+            .ok_or_else(|| ExecError::Backend("WgpuBackend: missing layer_norm_grad_dx".into()))?;
+        let dw_db_pipe = self
+            .norm_grad_pipelines
+            .get("layer_norm_grad_dw_db")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing layer_norm_grad_dw_db".into())
+            })?;
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 4] = [size, call.epsilon, rows as u32, 0];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("ln_grad.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        // Synthesise zero buffers for absent dx/dw/db spans so the
+        // bind layout has all slots filled.
+        let zero_dx = if call.dx.len == 0 {
+            Some(self.upload(&vec![0.0_f32; call.input.len], "ln_grad.dx.zero"))
+        } else {
+            None
+        };
+        let zero_dw = if call.dw.len == 0 {
+            Some(self.upload(&vec![0.0_f32; size_us], "ln_grad.dw.zero"))
+        } else {
+            None
+        };
+        let zero_db = if call.db.len == 0 {
+            Some(self.upload(&vec![0.0_f32; size_us], "ln_grad.db.zero"))
+        } else {
+            None
+        };
+
+        let buffer = ws.buffer();
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (size_us * 4) as u64;
+        let dx_resource: wgpu::BindingResource = if let Some(ref z) = zero_dx {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.dx.offset * 4) as u64,
+                size: wgpu::BufferSize::new(in_bytes),
+            })
+        };
+        let dw_resource: wgpu::BindingResource = if let Some(ref z) = zero_dw {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.dw.offset * 4) as u64,
+                size: wgpu::BufferSize::new(w_bytes),
+            })
+        };
+        let db_resource: wgpu::BindingResource = if let Some(ref z) = zero_db {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.db.offset * 4) as u64,
+                size: wgpu::BufferSize::new(w_bytes),
+            })
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ln_grad.binds.resident"),
+            layout: &self.norm_grad3_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.dy.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dx_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dw_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: db_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ln_grad.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("ln_grad.dx"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dx_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("ln_grad.dw_db"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dw_db_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(size_us.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
     fn dispatch_layer_norm_grad(
         &self,
         storage: &mut [f32],
@@ -2421,6 +2601,202 @@ impl WgpuBackend {
             let out = read_back(&self.device, &db_staging, size_us).map_err(ExecError::Backend)?;
             storage[call.db.offset..call.db.offset + size_us].copy_from_slice(&out);
         }
+        Ok(())
+    }
+
+    /// ADR-051 step 3: device-resident AddRmsNormGrad. 7-storage layout
+    /// (residual, input, weight, dy, d_residual, d_input, dw). Two
+    /// passes (dx + dw) recorded in one encoder.
+    fn run_add_rms_norm_grad_resident(
+        &self,
+        ws: &WgpuWorkspace,
+        call: &AddRmsNormGradCall,
+    ) -> Result<(), ExecError> {
+        let size = call.size;
+        let size_us = size as usize;
+        if size_us == 0 || call.input.len == 0 {
+            return Ok(());
+        }
+        if call.residual.len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad residual length must equal input length".into(),
+            ));
+        }
+        if !call.input.len.is_multiple_of(size_us) {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad input length not divisible by size".into(),
+            ));
+        }
+        let rows = call.input.len / size_us;
+        let dr_len = call.d_residual.len;
+        let di_len = call.d_input.len;
+        if dr_len != 0 && dr_len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad d_residual length must equal input length".into(),
+            ));
+        }
+        if di_len != 0 && di_len != call.input.len {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad d_input length must equal input length".into(),
+            ));
+        }
+        if call.dw.len != 0 && call.dw.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad dw length must equal size".into(),
+            ));
+        }
+        if call.dy.len != call.input.len || call.weight.len != size_us {
+            return Err(ExecError::Backend(
+                "WgpuBackend: AddRmsNormGrad span sizes inconsistent".into(),
+            ));
+        }
+        let dx_pipe = self
+            .norm_grad_pipelines
+            .get("add_rms_norm_grad_dx")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing add_rms_norm_grad_dx".into())
+            })?;
+        let dw_pipe = self
+            .norm_grad_pipelines
+            .get("add_rms_norm_grad_dw")
+            .ok_or_else(|| {
+                ExecError::Backend("WgpuBackend: missing add_rms_norm_grad_dw".into())
+            })?;
+
+        use wgpu::util::DeviceExt;
+        let params: [u32; 4] = [size, call.epsilon, rows as u32, 0];
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("addrms_grad.params.resident"),
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let zero_dr = if dr_len == 0 {
+            Some(self.upload(&vec![0.0_f32; call.input.len], "addrms_grad.dr.zero"))
+        } else {
+            None
+        };
+        let zero_di = if di_len == 0 {
+            Some(self.upload(&vec![0.0_f32; call.input.len], "addrms_grad.di.zero"))
+        } else {
+            None
+        };
+        let zero_dw = if call.dw.len == 0 {
+            Some(self.upload(&vec![0.0_f32; size_us], "addrms_grad.dw.zero"))
+        } else {
+            None
+        };
+
+        let buffer = ws.buffer();
+        let in_bytes = (call.input.len * 4) as u64;
+        let w_bytes = (size_us * 4) as u64;
+        let dr_resource: wgpu::BindingResource = if let Some(ref z) = zero_dr {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.d_residual.offset * 4) as u64,
+                size: wgpu::BufferSize::new(in_bytes),
+            })
+        };
+        let di_resource: wgpu::BindingResource = if let Some(ref z) = zero_di {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.d_input.offset * 4) as u64,
+                size: wgpu::BufferSize::new(in_bytes),
+            })
+        };
+        let dw_resource: wgpu::BindingResource = if let Some(ref z) = zero_dw {
+            z.as_entire_binding()
+        } else {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: (call.dw.offset * 4) as u64,
+                size: wgpu::BufferSize::new(w_bytes),
+            })
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("addrms_grad.binds.resident"),
+            layout: &self.norm_grad_addrms_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.residual.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.input.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.weight.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(w_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: (call.dy.offset * 4) as u64,
+                        size: wgpu::BufferSize::new(in_bytes),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dr_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: di_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: dw_resource,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("addrms_grad.resident"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("addrms_grad.dx"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dx_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(rows.div_ceil(64) as u32, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("addrms_grad.dw"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(dw_pipe);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(size_us.div_ceil(64) as u32, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
         Ok(())
     }
 
