@@ -37,10 +37,15 @@ use hologram_transform::{
 
 /// Device-resident workspace for `WgpuBackend` per ADR-051.
 ///
-/// Owns a single `wgpu::Buffer` of `capacity * 4` bytes. `write_span`
-/// uploads via `Queue::write_buffer` (no staging copy on the host
-/// side); `read_span` allocates a temporary staging buffer, issues a
-/// copy command, maps the staging buffer, and reads the slice back.
+/// Owns a single `wgpu::Buffer` of `capacity * 4` bytes plus a
+/// reusable staging buffer for readback. `write_span` uploads via
+/// `Queue::write_buffer` (no staging copy on the host side);
+/// `read_span` issues a copy command into the cached staging buffer,
+/// maps it, and reads the slice back.
+///
+/// The staging buffer is sized for the full workspace and reused
+/// across every `read_span` call, so we don't pay buffer-allocation
+/// cost per readback.
 ///
 /// Today's `WgpuBackend::dispatch_resident` (added in ADR-051 step 2)
 /// downloads the full workspace, runs the existing per-call
@@ -52,11 +57,15 @@ pub struct WgpuWorkspace {
     /// The single device-resident buffer. Sized at `capacity_elements
     /// * 4` bytes.
     buffer: wgpu::Buffer,
+    /// Pre-allocated staging buffer for readback. Sized to match
+    /// `buffer`, so any `read_span` fits without re-allocation.
+    /// Reused across `read_span` calls — `unmap` after each read
+    /// returns it to a writable state.
+    staging: wgpu::Buffer,
     /// Element capacity, in `f32` slots.
     capacity_elements: usize,
-    /// Cloned device handle. Needed by `read_span` to allocate the
-    /// staging buffer and submit the copy/map commands without holding
-    /// a borrow back to `WgpuBackend`.
+    /// Cloned device handle. Needed by `read_span` to submit the
+    /// copy/map commands without holding a borrow back to `WgpuBackend`.
     device: wgpu::Device,
     /// Cloned queue handle. Needed for `write_buffer` uploads and to
     /// submit the readback command encoder.
@@ -75,8 +84,15 @@ impl WgpuWorkspace {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hologram-wgpu-workspace-staging"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             buffer,
+            staging,
             capacity_elements,
             device: device.clone(),
             queue: queue.clone(),
@@ -113,9 +129,11 @@ impl BackendWorkspace for WgpuWorkspace {
         let byte_offset = (span.offset * 4) as u64;
         self.queue
             .write_buffer(&self.buffer, byte_offset, bytemuck::cast_slice(data));
-        // write_buffer is queued; readers see it after the next submit.
-        // For correctness across read_span calls below we submit empty.
-        self.queue.submit(std::iter::empty());
+        // No explicit submit needed: `Queue::write_buffer` is queued
+        // and is flushed before the commands of the next submission.
+        // Every consumer (`dispatch_resident`, `dispatch`, `read_span`)
+        // performs its own submit, so the write becomes visible at
+        // the right point without a per-write empty submit.
         Ok(())
     }
 
@@ -131,21 +149,24 @@ impl BackendWorkspace for WgpuWorkspace {
         if bytes == 0 {
             return Ok(Vec::new());
         }
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("hologram-wgpu-workspace-readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Reuse the workspace's pre-allocated staging buffer. The
+        // staging buffer is sized for the full workspace, so any
+        // span fits at offset 0.
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("hologram-wgpu-readback-enc"),
             });
-        encoder.copy_buffer_to_buffer(&self.buffer, (span.offset * 4) as u64, &staging, 0, bytes);
+        encoder.copy_buffer_to_buffer(
+            &self.buffer,
+            (span.offset * 4) as u64,
+            &self.staging,
+            0,
+            bytes,
+        );
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let slice = staging.slice(..);
+        let slice = self.staging.slice(0..bytes);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
@@ -157,7 +178,7 @@ impl BackendWorkspace for WgpuWorkspace {
         let mapped = slice.get_mapped_range();
         let out: Vec<f32> = bytemuck::cast_slice(&mapped).to_vec();
         drop(mapped);
-        staging.unmap();
+        self.staging.unmap();
         Ok(out)
     }
 }
