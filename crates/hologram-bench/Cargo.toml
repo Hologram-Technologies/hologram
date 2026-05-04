@@ -15,8 +15,17 @@ hologram-compiler = { workspace = true }
 hologram-cascade = { workspace = true }
 hologram-async = { workspace = true }
 hologram-ffi = { workspace = true }
+hologram-backend = { workspace = true, optional = true, features = ["webgpu"] }
+hologram-transform = { workspace = true, optional = true }
 rkyv = { workspace = true }
 tokio = { workspace = true }
+
+[features]
+default = []
+# Enables benchmarks that exercise the WebGPU canonical backend
+# (resident-workspace vs round-trip dispatch). Requires a working
+# Vulkan/Metal/DX12 adapter at run time.
+webgpu = ["dep:hologram-backend", "dep:hologram-transform"]
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -101,3 +110,8 @@ harness = false
 [[bench]]
 name = "cascade"
 harness = false
+
+[[bench]]
+name = "wgpu_resident"
+harness = false
+required-features = ["webgpu"]
