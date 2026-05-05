@@ -2728,3 +2728,78 @@ fn wgpu_attention_via_cpu_fallback_matches_reference() {
         res
     );
 }
+
+/// Batched `run_resident` should produce identical results to walking
+/// the same calls one at a time via `dispatch_resident`. Exercises the
+/// shared-encoder batching, the bind-group cache (3 calls share the
+/// same shape), the uniform cache (matmul reuses `(m,k,n)`), and the
+/// async readback. Regressions in any of those would surface here as
+/// either a numeric divergence or a panic.
+#[test]
+#[ignore = "requires a working wgpu adapter (Vulkan/Metal/DX12)"]
+fn wgpu_run_resident_batched_chain_matches_per_call() {
+    use hologram_transform::{BackendWorkspace, CanonicalBackend};
+
+    let mut gpu = WgpuBackend::new().expect("wgpu init");
+    let n: usize = 256;
+
+    // Two-op chain: c = a + b; d = c * a (reused span).
+    let stride = n;
+    let a_span = SlotSpan { offset: 0, len: n };
+    let b_span = SlotSpan {
+        offset: stride,
+        len: n,
+    };
+    let c_span = SlotSpan {
+        offset: 2 * stride,
+        len: n,
+    };
+    let d_span = SlotSpan {
+        offset: 3 * stride,
+        len: n,
+    };
+    let calls = vec![
+        KernelCall::Add(AddCall {
+            a: a_span,
+            b: b_span,
+            c: c_span,
+        }),
+        KernelCall::Mul(BinaryCall {
+            a: c_span,
+            b: a_span,
+            c: d_span,
+        }),
+    ];
+
+    let a_data: Vec<f32> = (0..n).map(|i| 0.1 * i as f32 - 1.0).collect();
+    let b_data: Vec<f32> = (0..n).map(|i| 0.05 * i as f32 + 0.25).collect();
+
+    // Path 1: per-call dispatch_resident.
+    let mut ws1 = gpu.alloc_workspace(4 * stride).expect("alloc ws1");
+    ws1.write_span(a_span, &a_data).unwrap();
+    ws1.write_span(b_span, &b_data).unwrap();
+    for call in &calls {
+        gpu.dispatch_resident(&mut ws1, call).unwrap();
+    }
+    let per_call_d = ws1.read_span(d_span).unwrap();
+
+    // Path 2: batched run_resident (single submit).
+    let mut ws2 = gpu.alloc_workspace(4 * stride).expect("alloc ws2");
+    ws2.write_span(a_span, &a_data).unwrap();
+    ws2.write_span(b_span, &b_data).unwrap();
+    gpu.run_resident(&mut ws2, &calls).unwrap();
+    let batched_d = ws2.read_span(d_span).unwrap();
+
+    assert_eq!(
+        per_call_d, batched_d,
+        "batched run_resident diverged from per-call dispatch_resident"
+    );
+
+    // Path 3: async readback should yield the same bytes.
+    let fut = ws2.read_span_async(d_span);
+    let async_d = pollster::block_on(fut).unwrap();
+    assert_eq!(
+        per_call_d, async_d,
+        "async read_span diverged from sync read_span"
+    );
+}
