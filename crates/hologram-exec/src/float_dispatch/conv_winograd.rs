@@ -201,6 +201,23 @@ fn compute_winograd_weight_transform(
 
 // ── Winograd F(2,3) for 3×3 stride=1 convolutions ──────────────────────────
 
+/// Inputs for [`conv2d_winograd_f23`]. Bundles the call's tensor
+/// shape so the helper stays under `clippy::too_many_arguments`. Built
+/// from the broader Conv2d call by [`WinogradF23Call::new`].
+pub(super) struct WinogradF23Call<'a> {
+    pub data: &'a [f32],
+    pub weight: &'a [f32],
+    pub bias: Option<&'a [f32]>,
+    pub n: usize,
+    pub ic: usize,
+    pub h_in: usize,
+    pub w_in: usize,
+    pub oc: usize,
+    pub h_out: usize,
+    pub w_out: usize,
+    pub group: usize,
+}
+
 /// Winograd F(2,3) convolution for 3×3 kernels with stride=1, dilation=1.
 ///
 /// Reduces multiplications from 9 to 4 per 2×2 output tile (2.25× theoretical).
@@ -211,25 +228,21 @@ fn compute_winograd_weight_transform(
 ///   G  (weight, 4×3):  [[1,0,0],[½,½,½],[½,-½,½],[0,0,1]]
 ///   B^T (input, 4×4):  [[1,0,-1,0],[0,1,1,0],[0,-1,1,0],[0,1,0,-1]]
 ///   A^T (output, 2×4): [[1,1,1,0],[0,1,-1,-1]]
-#[allow(
-    clippy::too_many_arguments,
-    clippy::identity_op,
-    clippy::erasing_op,
-    clippy::manual_div_ceil
-)]
-pub(super) fn conv2d_winograd_f23(
-    data: &[f32],
-    weight: &[f32],
-    bias: Option<&[f32]>,
-    n: usize,
-    ic: usize,
-    h_in: usize,
-    w_in: usize,
-    oc: usize,
-    h_out: usize,
-    w_out: usize,
-    group: usize,
-) -> Vec<f32> {
+#[allow(clippy::identity_op, clippy::erasing_op, clippy::manual_div_ceil)]
+pub(super) fn conv2d_winograd_f23(call: WinogradF23Call<'_>) -> Vec<f32> {
+    let WinogradF23Call {
+        data,
+        weight,
+        bias,
+        n,
+        ic,
+        h_in,
+        w_in,
+        oc,
+        h_out,
+        w_out,
+        group,
+    } = call;
     let oc_per_group = oc / group.max(1);
     let ic_per_group = ic / group.max(1);
     let spatial_out = h_out * w_out;

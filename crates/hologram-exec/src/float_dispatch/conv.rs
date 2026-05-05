@@ -1,5 +1,5 @@
 pub(crate) use super::conv_transpose::{dispatch_conv_transpose, ConvTransposeOutputPad};
-use super::conv_winograd::{conv2d_depthwise, conv2d_winograd_f23};
+use super::conv_winograd::{conv2d_depthwise, conv2d_winograd_f23, WinogradF23Call};
 use super::helpers::*;
 use crate::error::ExecResult;
 
@@ -319,9 +319,19 @@ fn conv2d_core(call: Conv2dCoreCall<'_>) -> Vec<f32> {
         && pw == 1
         && ic_per_group >= 16
     {
-        return conv2d_winograd_f23(
-            data, weight, bias, n, ic, h_in, w_in, oc, h_out, w_out, group,
-        );
+        return conv2d_winograd_f23(WinogradF23Call {
+            data,
+            weight,
+            bias,
+            n,
+            ic,
+            h_in,
+            w_in,
+            oc,
+            h_out,
+            w_out,
+            group,
+        });
     }
 
     let mut out = vec![0.0f32; n * oc * spatial_out];

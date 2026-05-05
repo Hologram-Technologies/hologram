@@ -162,14 +162,16 @@ pub fn dispatch_pool2d(storage: &mut [f32], call: &Pool2dCall, kind: Pool2dKind)
                 for ow in 0..w_out {
                     let (acc, count) = window_fold(
                         storage,
-                        call.input.offset + ni * chw_in + ci * h_in * w_in,
-                        h_in,
-                        w_in,
-                        oh as isize * sh as isize - ph,
-                        ow as isize * sw as isize - pw,
-                        kh,
-                        kw,
-                        kind,
+                        WindowFoldArgs {
+                            plane_off: call.input.offset + ni * chw_in + ci * h_in * w_in,
+                            h_in,
+                            w_in,
+                            h_start: oh as isize * sh as isize - ph,
+                            w_start: ow as isize * sw as isize - pw,
+                            kh,
+                            kw,
+                            kind,
+                        },
                     );
                     let idx =
                         call.output.offset + ni * chw_out + ci * h_out * w_out + oh * w_out + ow;
@@ -189,10 +191,11 @@ pub fn dispatch_pool2d(storage: &mut [f32], call: &Pool2dCall, kind: Pool2dKind)
     }
 }
 
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn window_fold(
-    storage: &[f32],
+/// Arguments to [`window_fold`]. Bundled into one struct so the
+/// helper stays under `clippy::too_many_arguments`. All fields are
+/// per-window — the outer pool dispatch fills these in for every
+/// `(n, c, oh, ow)` quadruple.
+struct WindowFoldArgs {
     plane_off: usize,
     h_in: usize,
     w_in: usize,
@@ -201,7 +204,20 @@ fn window_fold(
     kh: usize,
     kw: usize,
     kind: Pool2dKind,
-) -> (f32, usize) {
+}
+
+#[inline]
+fn window_fold(storage: &[f32], args: WindowFoldArgs) -> (f32, usize) {
+    let WindowFoldArgs {
+        plane_off,
+        h_in,
+        w_in,
+        h_start,
+        w_start,
+        kh,
+        kw,
+        kind,
+    } = args;
     let mut acc = match kind {
         Pool2dKind::Max => f32::NEG_INFINITY,
         Pool2dKind::Avg => 0.0,
