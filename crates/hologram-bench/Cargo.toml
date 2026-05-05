@@ -123,3 +123,7 @@ required-features = ["webgpu"]
 [[bench]]
 name = "decode_step"
 harness = false
+
+[[bench]]
+name = "chain_builder"
+harness = false
