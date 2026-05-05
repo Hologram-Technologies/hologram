@@ -8,6 +8,12 @@ description = "Canonical semantic operation model for Hologram"
 [dependencies]
 libm = { workspace = true }
 rkyv = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [features]
 default = []
+# Enables threaded inner loops in compute-heavy kernels (matmul forward
+# and grad_b). Off by default — keeps the canonical CPU portable to
+# wasm and other no-std-thread targets. Backends/benches that want the
+# speedup opt in.
+parallel = ["dep:rayon"]

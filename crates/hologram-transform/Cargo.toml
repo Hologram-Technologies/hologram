@@ -16,3 +16,6 @@ libm = { workspace = true }
 
 [features]
 default = []
+# Forward `hologram-ops/parallel` so downstream crates can enable
+# threaded matmul without depending on `hologram-ops` directly.
+parallel = ["hologram-ops/parallel"]

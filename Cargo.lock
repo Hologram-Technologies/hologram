@@ -856,6 +856,7 @@ name = "hologram-ops"
 version = "0.4.1"
 dependencies = [
  "libm",
+ "rayon",
  "rkyv",
 ]
 
