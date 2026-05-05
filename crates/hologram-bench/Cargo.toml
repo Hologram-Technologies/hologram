@@ -16,16 +16,20 @@ hologram-cascade = { workspace = true }
 hologram-async = { workspace = true }
 hologram-ffi = { workspace = true }
 hologram-backend = { workspace = true, optional = true, features = ["webgpu"] }
-hologram-transform = { workspace = true, optional = true }
+hologram-transform = { workspace = true }
 rkyv = { workspace = true }
 tokio = { workspace = true }
 
 [features]
 default = []
 # Enables benchmarks that exercise the WebGPU canonical backend
-# (resident-workspace vs round-trip dispatch). Requires a working
-# Vulkan/Metal/DX12 adapter at run time.
-webgpu = ["dep:hologram-backend", "dep:hologram-transform"]
+# (resident-workspace vs round-trip dispatch, decode-step against CPU).
+# Requires a working Vulkan/Metal/DX12 adapter at run time.
+webgpu = ["dep:hologram-backend"]
+# Enables the parallel CPU matmul (rayon over output rows / GEMV
+# columns). Only worth turning on for shapes large enough to amortise
+# thread-launch overhead — the matmul kernel size-gates internally.
+parallel = ["hologram-transform/parallel"]
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -115,3 +119,7 @@ harness = false
 name = "wgpu_resident"
 harness = false
 required-features = ["webgpu"]
+
+[[bench]]
+name = "decode_step"
+harness = false
