@@ -100,6 +100,25 @@ impl TransformChain {
         TransformChainBuilder::default()
     }
 
+    /// Start a new chain builder pre-reserved for `n_ops` operations.
+    /// Avoids the geometric `Vec` growth on `chain.tensors` /
+    /// `chain.nodes` for chains of known size — measurable on
+    /// build-time benchmarks for chains of ≥ 64 ops. Pass `0` to get
+    /// the same behaviour as [`Self::builder`].
+    #[inline]
+    #[must_use]
+    pub fn builder_with_capacity(n_ops: usize) -> TransformChainBuilder {
+        TransformChainBuilder {
+            chain: TransformChain {
+                // Each op typically allocates one new tensor (the
+                // output) on top of the inputs; reserve ~`n_ops + 4`
+                // for the typical "1-2 inputs feed N ops" pattern.
+                tensors: Vec::with_capacity(n_ops + 4),
+                nodes: Vec::with_capacity(n_ops),
+            },
+        }
+    }
+
     /// Look up a tensor by id. Returns `None` if the id is out of range.
     #[inline]
     #[must_use]
@@ -388,6 +407,157 @@ impl TransformChainBuilder {
     pub fn push_matmul_forward_only(&mut self, ins: MatMulInputs) -> Result<NodeId, PlanError> {
         let attrs = self.matmul_attrs_from(&ins)?;
         Ok(self.push_node(SemanticOp::MatMul(attrs), &[ins.a, ins.b], &[ins.c], false))
+    }
+
+    /// Generic op append: validates arity, infers output shape, allocates
+    /// the output tensor, and emits a node — all without the caller
+    /// having to pre-allocate the output or call a per-op `push_*`.
+    ///
+    /// Returns the new output tensor's id. The `op` is rehydrated where
+    /// needed (e.g. `SemanticOp::MatMul(MatMulAttrs::default())` → the
+    /// returned node carries `MatMulAttrs { m, k, n }` derived from
+    /// input shapes).
+    ///
+    /// Backward rules attach iff the op declares one (`op.backward()`
+    /// is `Some`); the existing `_forward_only` per-op methods stay if
+    /// you need to opt out, but `push_op` defaults to "if there's a
+    /// rule, use it" — matches what users expect when sketching a
+    /// graph.
+    ///
+    /// Currently supports the elementwise binary/unary families plus
+    /// `MatMul`, `Softmax`, `LogSoftmax`, `RmsNorm`, `LayerNorm`,
+    /// `InstanceNorm`, `GroupNorm`, `AddRmsNorm`, `FusedSwiGlu`. Other
+    /// ops (Conv2d, Reshape, Slice, Concat, Reduce, Pool, Pad, Resize,
+    /// Lrn, ConvTranspose2d, Gemm, Expand, RotaryEmbedding, Attention,
+    /// Where, Clip, CumSum) need explicit attrs / output shape that
+    /// can't be inferred from inputs alone — keep using their per-op
+    /// `push_*` helpers until generic shape inference covers them.
+    pub fn push_op(&mut self, op: SemanticOp, inputs: &[TensorId]) -> Result<TensorId, PlanError> {
+        use hologram_ops::OpCategory;
+
+        let arity = op.arity() as usize;
+        if inputs.len() != arity {
+            return Err(PlanError::ArityMismatch {
+                op: op.name(),
+                expected: arity,
+                actual: inputs.len(),
+            });
+        }
+
+        // Inlined shape inference + grad-flag accumulation, walked
+        // once over `inputs`. Previously this lived in
+        // `infer_output_shape` with an intermediate
+        // `SmallVec<[&[usize]; 4]>` of borrowed shapes; collapsing it
+        // here drops the intermediate and lets the compiler keep the
+        // tensor lookups, validation, and shape clone in a single
+        // pass. Variant-level dispatch survives only where category
+        // is too coarse (LinearAlgebra: MatMul vs Gemm; Reduction:
+        // Softmax vs ReduceX).
+        let (op, out_dims, any_grad) = match op.category() {
+            // Elementwise / Fused: all input shapes must match;
+            // output shape = input[0] shape.
+            OpCategory::Elementwise | OpCategory::Fused => {
+                let (t0, mut any_grad) = self.lookup(inputs[0])?;
+                let s0 = t0.dims.as_slice();
+                for &id in &inputs[1..] {
+                    let (ti, ti_grad) = self.lookup(id)?;
+                    if ti.dims.as_slice() != s0 {
+                        return Err(PlanError::ShapeMismatch {
+                            op: op.name(),
+                            detail: "elementwise op requires identical input shapes",
+                        });
+                    }
+                    any_grad |= ti_grad;
+                }
+                (op, t0.dims.clone(), any_grad)
+            }
+
+            // Norms: input 0 carries the data shape; other inputs are
+            // parameters whose shapes don't constrain the output.
+            OpCategory::Normalisation => {
+                let (t0, mut any_grad) = self.lookup(inputs[0])?;
+                for &id in &inputs[1..] {
+                    let (_, ti_grad) = self.lookup(id)?;
+                    any_grad |= ti_grad;
+                }
+                (op, t0.dims.clone(), any_grad)
+            }
+
+            // Linear algebra: only MatMul is fully shape-derivable.
+            OpCategory::LinearAlgebra => match op {
+                SemanticOp::MatMul(_) => {
+                    let (a, a_grad) = self.lookup(inputs[0])?;
+                    let (b, b_grad) = self.lookup(inputs[1])?;
+                    if a.dims.len() != 2 || b.dims.len() != 2 || a.dims[1] != b.dims[0] {
+                        return Err(PlanError::ShapeMismatch {
+                            op: "matmul",
+                            detail: "expected A=[m,k], B=[k,n]",
+                        });
+                    }
+                    let attrs = MatMulAttrs {
+                        m: a.dims[0] as u32,
+                        k: a.dims[1] as u32,
+                        n: b.dims[1] as u32,
+                    };
+                    let mut out_dims = SmallVec::new();
+                    out_dims.push(a.dims[0]);
+                    out_dims.push(b.dims[1]);
+                    (SemanticOp::MatMul(attrs), out_dims, a_grad || b_grad)
+                }
+                _ => return Err(PlanError::UnsupportedOp(op.name())),
+            },
+
+            // Reduction: Softmax/LogSoftmax preserve shape; ReduceX
+            // collapses an axis that needs explicit attrs.
+            OpCategory::Reduction => match op {
+                SemanticOp::Softmax(_) | SemanticOp::LogSoftmax(_) => {
+                    let (t0, any_grad) = self.lookup(inputs[0])?;
+                    (op, t0.dims.clone(), any_grad)
+                }
+                _ => return Err(PlanError::UnsupportedOp(op.name())),
+            },
+
+            // Layout / Shape / Convolution need explicit attrs that
+            // can't be derived from inputs alone — keep their per-op
+            // builders.
+            OpCategory::Layout | OpCategory::Convolution | OpCategory::Shape => {
+                return Err(PlanError::UnsupportedOp(op.name()));
+            }
+        };
+
+        // Construct the output tensor by moving `out_dims` in (vs.
+        // `add_tensor`'s re-clone via `SmallVec::from_slice`).
+        let out = TensorId(self.chain.tensors.len() as u32);
+        self.chain.tensors.push(Tensor {
+            id: out,
+            dims: out_dims,
+            requires_grad: any_grad,
+        });
+
+        let input_refs: SmallVec<[AddressRef; 4]> =
+            inputs.iter().map(|id| AddressRef::of(*id)).collect();
+        let id = NodeId(self.chain.nodes.len() as u32);
+        self.chain.nodes.push(TransformNode {
+            id,
+            op,
+            inputs: input_refs,
+            outputs: SmallVec::from_slice(&[AddressRef::of(out)]),
+            backward: op.backward(),
+        });
+        Ok(out)
+    }
+
+    /// Helper for `push_op`: fetch a tensor by id, returning a
+    /// reference plus its `requires_grad` flag in one shot. Removes
+    /// the duplicate field access at every input.
+    #[inline]
+    fn lookup(&self, id: TensorId) -> Result<(&Tensor, bool), PlanError> {
+        let t = self
+            .chain
+            .tensors
+            .get(id.0 as usize)
+            .ok_or(PlanError::UnknownTensor(id.0))?;
+        Ok((t, t.requires_grad))
     }
 
     fn matmul_attrs_from(&self, ins: &MatMulInputs) -> Result<MatMulAttrs, PlanError> {
