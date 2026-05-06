@@ -23,9 +23,19 @@ mod float_kernels;
 /// `ActiveCpuBounds` resolves at compile time per `target_arch` / `target_feature`,
 /// so the inner-loop kernels select the widest available SIMD width without
 /// runtime branching.
-#[derive(Debug, Clone, Copy)]
+///
+/// `Clone`/`Copy` are implemented manually rather than derived so that
+/// they don't pick up an unwanted `W: Clone` bound — the only field is
+/// `PhantomData<W>`, so the marker is always trivially copyable.
+#[derive(Debug)]
 pub struct CpuBackend<W: Workspace> {
     _ws: PhantomData<W>,
+}
+
+impl<W: Workspace> Copy for CpuBackend<W> {}
+impl<W: Workspace> Clone for CpuBackend<W> {
+    #[inline]
+    fn clone(&self) -> Self { *self }
 }
 
 impl<W: Workspace> CpuBackend<W> {

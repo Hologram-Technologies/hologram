@@ -128,7 +128,69 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::RotaryEmbedding(c) | KernelCall::Clip(c) | KernelCall::Lrn(c)
             | KernelCall::UnaryGrad(c)
             => unary_w8(c, ws, identity_byte),
+
+        // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
+        KernelCall::Dequantize(c) => dequantize(c, ws),
     }
+}
+
+/// Dequantize a packed-integer buffer (INT8 or INT4) into a dense float
+/// buffer using `output = (q − zero_point) · scale`.
+fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), BackendError> {
+    use crate::cpu::dtype::*;
+    let n = c.element_count as usize;
+    let in_bytes_needed = match c.quant_dtype {
+        DTYPE_I4 => n.div_ceil(2),
+        DTYPE_I8 => n,
+        _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
+    };
+    let inp = ws.read(c.input).get(..in_bytes_needed)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
+        .to_vec();
+    let scale = f32::from_bits(c.scale_bits);
+    let zp = c.zero_point;
+
+    // Compute the dequantized f32 value for element index `i`.
+    let dequant_at = |i: usize| -> f32 {
+        let q: i32 = match c.quant_dtype {
+            DTYPE_I8 => (inp[i] as i8) as i32,
+            DTYPE_I4 => {
+                // Two nibbles per byte; low nibble is element 2k, high
+                // nibble is element 2k+1. Sign-extend each 4-bit value.
+                let byte = inp[i / 2];
+                let nib = if i.is_multiple_of(2) { byte & 0x0F } else { byte >> 4 };
+                let v = nib as i32;
+                if v >= 8 { v - 16 } else { v }
+            }
+            _ => 0,
+        };
+        (q - zp) as f32 * scale
+    };
+
+    let out = ws.write(c.output);
+    let bytes_per_out = match c.dtype {
+        DTYPE_F32 => 4,
+        DTYPE_BF16 | DTYPE_F16 => 2,
+        DTYPE_F64 => 8,
+        _ => return Err(BackendError::SlotOutOfRange(c.output.slot)),
+    };
+    if out.len() < n * bytes_per_out {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for i in 0..n {
+        let v = dequant_at(i);
+        match c.dtype {
+            DTYPE_F32 => write_f32(out, i, v),
+            DTYPE_BF16 => write_bf16(out, i, v),
+            DTYPE_F16 => write_f16(out, i, v),
+            DTYPE_F64 => {
+                let bytes = (v as f64).to_le_bytes();
+                out[i * 8..i * 8 + 8].copy_from_slice(&bytes);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 #[inline]

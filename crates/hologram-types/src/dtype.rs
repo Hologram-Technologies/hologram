@@ -46,6 +46,7 @@ declare_dtype!(DTypeF64,  "https://hologram.uor.foundation/type/dtype/f64",  64,
 declare_dtype!(DTypeI64,  "https://hologram.uor.foundation/type/dtype/i64",  64, DTypeKind::SignedInt);
 declare_dtype!(DTypeI32,  "https://hologram.uor.foundation/type/dtype/i32",  32, DTypeKind::SignedInt);
 declare_dtype!(DTypeI8,   "https://hologram.uor.foundation/type/dtype/i8",    8, DTypeKind::SignedInt);
+declare_dtype!(DTypeI4,   "https://hologram.uor.foundation/type/dtype/i4",    4, DTypeKind::SignedInt);
 declare_dtype!(DTypeU64,  "https://hologram.uor.foundation/type/dtype/u64",  64, DTypeKind::UnsignedInt);
 declare_dtype!(DTypeU8,   "https://hologram.uor.foundation/type/dtype/u8",    8, DTypeKind::UnsignedInt);
 declare_dtype!(DTypeBool, "https://hologram.uor.foundation/type/dtype/bool",  1, DTypeKind::Bool);

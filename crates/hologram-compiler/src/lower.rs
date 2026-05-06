@@ -3,10 +3,119 @@
 use hologram_backend::{
     KernelCall, BufferRef, UnaryCall, BinaryCall, MatMulCall, GemmCall,
     Conv2dCall, NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall,
+    AttentionCall, WhereCall, DequantizeCall,
 };
-use hologram_graph::OpKind;
+use hologram_graph::{Graph, Node, OpKind, InputSource};
 use crate::error::CompileError;
+
+/// Op-specific shape parameters resolved from the graph.
+///
+/// Built by `ShapeArgs::from_graph(&graph, &node)` at compile time.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ShapeArgs {
+    // MatMul / Gemm
+    pub m: u32, pub k: u32, pub n: u32,
+
+    // Conv2d
+    pub batch: u32, pub channels_in: u32, pub channels_out: u32,
+    pub h_in: u32, pub w_in: u32,
+    pub h_out: u32, pub w_out: u32,
+    pub k_h: u32, pub k_w: u32,
+    pub stride_h: u32, pub stride_w: u32,
+    pub pad_h: u32, pub pad_w: u32,
+
+    // Norm / softmax
+    pub feature: u32,
+
+    // Pooling (batch + channels share the conv2d fields)
+
+    // Attention
+    pub heads: u32, pub seq: u32, pub head_dim: u32,
+
+    // Reduction
+    pub axis_count: u32,
+    pub keepdims: bool,
+}
+
+impl ShapeArgs {
+    /// Resolve op-specific shape parameters from a graph node's inputs and
+    /// output shape descriptors.
+    pub fn from_graph(graph: &Graph, node: &Node) -> Self {
+        let reg = graph.shape_registry();
+        let out = reg.get(node.output_shape).cloned();
+        let in_shape = |idx: usize| -> Option<hologram_graph::ShapeDescriptor> {
+            node.inputs.get(idx).and_then(|src| match *src {
+                InputSource::Node(hologram_graph::NodeId(id)) => {
+                    graph.nodes().get(id as usize)
+                        .and_then(|n| reg.get(n.output_shape).cloned())
+                }
+                _ => None,
+            })
+        };
+        let in0 = in_shape(0);
+        let in1 = in_shape(1);
+
+        let mut a = Self::default();
+
+        // MatMul / Gemm: A is rank-2 [M, K]; B is rank-2 [K, N]; out is [M, N].
+        if let (Some(a_s), Some(b_s)) = (&in0, &in1) {
+            if a_s.rank >= 2 && b_s.rank >= 2 {
+                a.m = a_s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.k = a_s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.n = b_s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+
+        // Conv2d / Pool: input X is rank-4 [batch, ch_in, h_in, w_in];
+        //                weight W is rank-4 [ch_out, ch_in, k_h, k_w];
+        //                output is rank-4 [batch, ch_out, h_out, w_out].
+        if let Some(x) = &in0 {
+            if x.rank >= 4 {
+                a.batch = x.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.channels_in = x.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.h_in = x.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.w_in = x.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+        if let Some(w) = &in1 {
+            if w.rank >= 4 {
+                a.channels_out = w.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.k_h = w.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.k_w = w.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+        if let Some(o) = &out {
+            if o.rank >= 4 {
+                a.h_out = o.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.w_out = o.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+
+        // Default conv stride / padding (1, 0). Future work: thread these
+        // through node attributes.
+        a.stride_h = 1; a.stride_w = 1;
+
+        // Norm / softmax: derive batch + feature from the input rank-2
+        // [batch, feature] when MatMul wasn't applicable.
+        if let Some(s) = &in0 {
+            if s.rank == 2 {
+                if a.m == 0 { a.batch = s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32; }
+                a.feature = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+
+        // Attention: input rank-4 [batch, heads, seq, head_dim].
+        if let Some(s) = &in0 {
+            if s.rank == 4 && a.batch != 0 {
+                a.heads = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.seq = s.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.head_dim = s.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+
+        a
+    }
+}
 
 /// Resolved per-node lowering inputs.
 pub struct LoweredNode {
@@ -15,7 +124,26 @@ pub struct LoweredNode {
     pub output: BufferRef,
     pub element_count: u32,
     pub witt_bits: u16,
+    /// Output dtype for compute ops; for quantization ops this is the
+    /// destination float dtype (the quant_dtype lives in `quant`).
     pub dtype: u8,
+    pub shape: ShapeArgs,
+    /// Quantization parameters (spec X-5). Default is "no quantization";
+    /// the K::Dequantize arm reads these fields.
+    pub quant: QuantParams,
+}
+
+/// Per-tensor quantization parameters (spec X-5). The compiler sets
+/// these on the node that consumes a quantized weight (or, in fused
+/// matmul-with-dequant, the matmul itself).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct QuantParams {
+    /// Source quantized dtype: `DTYPE_I8` (2) or `DTYPE_I4` (10).
+    pub quant_dtype: u8,
+    /// `f32::to_bits` of the per-tensor scale.
+    pub scale_bits: u32,
+    /// Symmetric zero-point.
+    pub zero_point: i32,
 }
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
@@ -23,6 +151,7 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
     let inp0 = || node.inputs.first().copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
     let inp1 = || node.inputs.get(1).copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
     let inp2 = || node.inputs.get(2).copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
+    let s = &node.shape;
     let unary = UnaryCall {
         input: inp0(),
         output: node.output,
@@ -44,50 +173,54 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         cond: inp0(), a: inp1(), b: inp2(), output: node.output,
         element_count: node.element_count, dtype: node.dtype,
     };
-    let zero_norm = NormCall {
+    let norm_call = NormCall {
         x: inp0(), gamma: inp1(), beta: inp2(),
         residual: NormCall::NO_RESIDUAL,
         output: node.output,
-        batch: 0, feature: 0, epsilon_bits: 0, dtype: node.dtype,
+        batch: s.batch, feature: s.feature, epsilon_bits: 0, dtype: node.dtype,
     };
     let add_rms_norm_call = NormCall {
         x: inp0(), gamma: inp1(), beta: NormCall::NO_RESIDUAL,
         residual: inp2(),
         output: node.output,
-        batch: 0, feature: 0, epsilon_bits: 0, dtype: node.dtype,
+        batch: s.batch, feature: s.feature, epsilon_bits: 0, dtype: node.dtype,
     };
-    let zero_reduce = ReduceCall {
+    let reduce_call = ReduceCall {
         input: inp0(), output: node.output,
-        element_count: node.element_count, axis_count: 0, keepdims: false,
-        dtype: node.dtype,
+        element_count: node.element_count, axis_count: s.axis_count,
+        keepdims: s.keepdims, dtype: node.dtype,
     };
-    let zero_softmax = SoftmaxCall {
+    let softmax_call = SoftmaxCall {
         input: inp0(), output: node.output,
-        batch: 0, feature: 0, dtype: node.dtype,
+        batch: s.batch.max(1), feature: s.feature, dtype: node.dtype,
     };
-    let zero_pool = PoolCall {
+    let pool_call = PoolCall {
         x: inp0(), output: node.output,
-        batch: 0, channels: 0, h_in: 0, w_in: 0, h_out: 0, w_out: 0,
-        k_h: 0, k_w: 0, stride_h: 1, stride_w: 1, dtype: node.dtype,
+        batch: s.batch, channels: s.channels_in,
+        h_in: s.h_in, w_in: s.w_in, h_out: s.h_out, w_out: s.w_out,
+        k_h: s.k_h, k_w: s.k_w,
+        stride_h: s.stride_h, stride_w: s.stride_w, dtype: node.dtype,
     };
-    let zero_matmul = MatMulCall {
+    let matmul_call = MatMulCall {
         a: inp0(), b: inp1(), output: node.output,
-        m: 0, k: 0, n: 0, dtype: node.dtype,
+        m: s.m, k: s.k, n: s.n, dtype: node.dtype,
     };
-    let zero_gemm = GemmCall {
+    let gemm_call = GemmCall {
         a: inp0(), b: inp1(), c: inp2(), output: node.output,
-        m: 0, k: 0, n: 0, alpha_bits: 0, beta_bits: 0, dtype: node.dtype,
+        m: s.m, k: s.k, n: s.n, alpha_bits: 0, beta_bits: 0, dtype: node.dtype,
     };
-    let zero_conv = Conv2dCall {
+    let conv_call = Conv2dCall {
         x: inp0(), w: inp1(), output: node.output,
-        batch: 0, channels_in: 0, channels_out: 0,
-        h_in: 0, w_in: 0, h_out: 0, w_out: 0,
-        k_h: 0, k_w: 0, stride_h: 1, stride_w: 1,
-        pad_h: 0, pad_w: 0, dtype: node.dtype,
+        batch: s.batch, channels_in: s.channels_in, channels_out: s.channels_out,
+        h_in: s.h_in, w_in: s.w_in, h_out: s.h_out, w_out: s.w_out,
+        k_h: s.k_h, k_w: s.k_w,
+        stride_h: s.stride_h, stride_w: s.stride_w,
+        pad_h: s.pad_h, pad_w: s.pad_w, dtype: node.dtype,
     };
-    let zero_attn = AttentionCall {
+    let attn_call = AttentionCall {
         q: inp0(), k: inp1(), v: inp2(), output: node.output,
-        batch: 0, heads: 0, seq: 0, head_dim: 0, dtype: node.dtype,
+        batch: s.batch, heads: s.heads, seq: s.seq, head_dim: s.head_dim,
+        dtype: node.dtype,
     };
 
     Ok(match node.kind {
@@ -120,59 +253,59 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::Greater => KernelCall::Greater(binary),
         K::GreaterOrEqual => KernelCall::GreaterOrEqual(binary),
 
-        K::MatMul => KernelCall::MatMul(zero_matmul),
-        K::Gemm => KernelCall::Gemm(zero_gemm),
-        K::Conv2d => KernelCall::Conv2d(zero_conv),
-        K::ConvTranspose2d => KernelCall::ConvTranspose2d(zero_conv),
+        K::MatMul => KernelCall::MatMul(matmul_call),
+        K::Gemm => KernelCall::Gemm(gemm_call),
+        K::Conv2d => KernelCall::Conv2d(conv_call),
+        K::ConvTranspose2d => KernelCall::ConvTranspose2d(conv_call),
 
-        K::LayerNorm => KernelCall::LayerNorm(zero_norm),
-        K::RmsNorm => KernelCall::RmsNorm(zero_norm),
-        K::GroupNorm => KernelCall::GroupNorm(zero_norm),
-        K::InstanceNorm => KernelCall::InstanceNorm(zero_norm),
+        K::LayerNorm => KernelCall::LayerNorm(norm_call),
+        K::RmsNorm => KernelCall::RmsNorm(norm_call),
+        K::GroupNorm => KernelCall::GroupNorm(norm_call),
+        K::InstanceNorm => KernelCall::InstanceNorm(norm_call),
         K::AddRmsNorm => KernelCall::AddRmsNorm(add_rms_norm_call),
 
-        K::ReduceSum => KernelCall::ReduceSum(zero_reduce),
-        K::ReduceMean => KernelCall::ReduceMean(zero_reduce),
-        K::ReduceProd => KernelCall::ReduceProd(zero_reduce),
-        K::ReduceMin => KernelCall::ReduceMin(zero_reduce),
-        K::ReduceMax => KernelCall::ReduceMax(zero_reduce),
+        K::ReduceSum => KernelCall::ReduceSum(reduce_call),
+        K::ReduceMean => KernelCall::ReduceMean(reduce_call),
+        K::ReduceProd => KernelCall::ReduceProd(reduce_call),
+        K::ReduceMin => KernelCall::ReduceMin(reduce_call),
+        K::ReduceMax => KernelCall::ReduceMax(reduce_call),
 
         K::Reshape => KernelCall::Reshape(layout),
         K::Transpose => KernelCall::Transpose(layout),
         K::Concat => KernelCall::Concat(layout),
         K::Slice => KernelCall::Slice(layout),
 
-        K::Softmax => KernelCall::Softmax(zero_softmax),
-        K::LogSoftmax => KernelCall::LogSoftmax(zero_softmax),
+        K::Softmax => KernelCall::Softmax(softmax_call),
+        K::LogSoftmax => KernelCall::LogSoftmax(softmax_call),
 
-        K::MaxPool2d => KernelCall::MaxPool2d(zero_pool),
-        K::AvgPool2d => KernelCall::AvgPool2d(zero_pool),
-        K::GlobalAvgPool => KernelCall::GlobalAvgPool(zero_pool),
+        K::MaxPool2d => KernelCall::MaxPool2d(pool_call),
+        K::AvgPool2d => KernelCall::AvgPool2d(pool_call),
+        K::GlobalAvgPool => KernelCall::GlobalAvgPool(pool_call),
 
-        K::Attention => KernelCall::Attention(zero_attn),
-        K::FusedSwiGlu => KernelCall::FusedSwiGlu(zero_matmul),
+        K::Attention => KernelCall::Attention(attn_call),
+        K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
 
         K::Pad => KernelCall::Pad(layout), K::Expand => KernelCall::Expand(layout),
         K::Resize => KernelCall::Resize(layout),
-        K::CumSum => KernelCall::CumSum(zero_reduce),
+        K::CumSum => KernelCall::CumSum(reduce_call),
         K::RotaryEmbedding => KernelCall::RotaryEmbedding(unary),
         K::Clip => KernelCall::Clip(unary),
         K::Lrn => KernelCall::Lrn(unary),
         K::Where => KernelCall::Where(where_call),
 
         // Backward
-        K::MatMulGradA => KernelCall::MatMulGradA(zero_matmul),
-        K::MatMulGradB => KernelCall::MatMulGradB(zero_matmul),
-        K::Conv2dGradX => KernelCall::Conv2dGradX(zero_conv),
-        K::Conv2dGradW => KernelCall::Conv2dGradW(zero_conv),
-        K::SoftmaxGrad => KernelCall::SoftmaxGrad(zero_softmax),
-        K::LogSoftmaxGrad => KernelCall::LogSoftmaxGrad(zero_softmax),
-        K::LayerNormGrad => KernelCall::LayerNormGrad(zero_norm),
-        K::RmsNormGrad => KernelCall::RmsNormGrad(zero_norm),
-        K::GroupNormGrad => KernelCall::GroupNormGrad(zero_norm),
-        K::ReduceSumGrad => KernelCall::ReduceSumGrad(zero_reduce),
-        K::ReduceMeanGrad => KernelCall::ReduceMeanGrad(zero_reduce),
-        K::ReduceProdGrad => KernelCall::ReduceProdGrad(zero_reduce),
+        K::MatMulGradA => KernelCall::MatMulGradA(matmul_call),
+        K::MatMulGradB => KernelCall::MatMulGradB(matmul_call),
+        K::Conv2dGradX => KernelCall::Conv2dGradX(conv_call),
+        K::Conv2dGradW => KernelCall::Conv2dGradW(conv_call),
+        K::SoftmaxGrad => KernelCall::SoftmaxGrad(softmax_call),
+        K::LogSoftmaxGrad => KernelCall::LogSoftmaxGrad(softmax_call),
+        K::LayerNormGrad => KernelCall::LayerNormGrad(norm_call),
+        K::RmsNormGrad => KernelCall::RmsNormGrad(norm_call),
+        K::GroupNormGrad => KernelCall::GroupNormGrad(norm_call),
+        K::ReduceSumGrad => KernelCall::ReduceSumGrad(reduce_call),
+        K::ReduceMeanGrad => KernelCall::ReduceMeanGrad(reduce_call),
+        K::ReduceProdGrad => KernelCall::ReduceProdGrad(reduce_call),
         K::SubGrad => KernelCall::SubGrad(binary),
         K::MulGrad => KernelCall::MulGrad(binary),
         K::DivGrad => KernelCall::DivGrad(binary),
@@ -181,11 +314,22 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::MaxGrad => KernelCall::MaxGrad(binary),
         K::ConcatGrad => KernelCall::ConcatGrad(layout),
         K::SliceGrad => KernelCall::SliceGrad(layout),
-        K::AvgPool2dGrad => KernelCall::AvgPool2dGrad(zero_pool),
-        K::GlobalAvgPoolGrad => KernelCall::GlobalAvgPoolGrad(zero_pool),
+        K::AvgPool2dGrad => KernelCall::AvgPool2dGrad(pool_call),
+        K::GlobalAvgPoolGrad => KernelCall::GlobalAvgPoolGrad(pool_call),
         K::PadGrad => KernelCall::PadGrad(layout),
-        K::AttentionGrad => KernelCall::AttentionGrad(zero_attn),
-        K::FusedSwiGluGrad => KernelCall::FusedSwiGluGrad(zero_matmul),
+        K::AttentionGrad => KernelCall::AttentionGrad(attn_call),
+        K::FusedSwiGluGrad => KernelCall::FusedSwiGluGrad(matmul_call),
         K::UnaryGrad => KernelCall::UnaryGrad(unary),
+
+        // Quantization (spec X-5).
+        K::Dequantize => KernelCall::Dequantize(DequantizeCall {
+            input: inp0(),
+            output: node.output,
+            element_count: node.element_count,
+            quant_dtype: node.quant.quant_dtype,
+            dtype: node.dtype,
+            scale_bits: node.quant.scale_bits,
+            zero_point: node.quant.zero_point,
+        }),
     })
 }

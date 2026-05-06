@@ -10,7 +10,7 @@ use hologram_backend::{
     KernelCall, BufferRef,
     UnaryCall, BinaryCall, MatMulCall, GemmCall, Conv2dCall,
     NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall,
+    AttentionCall, WhereCall, DequantizeCall,
 };
 
 const D_NEG: u16 = 1;
@@ -61,6 +61,7 @@ const D_CCG: u16 = 97; const D_SLG: u16 = 98;
 const D_AVPG: u16 = 99; const D_GAPG: u16 = 100;
 const D_PADG: u16 = 101; const D_ATNG: u16 = 102; const D_FSWGG: u16 = 103;
 const D_UNG: u16 = 104;
+const D_DEQ: u16 = 105;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -190,6 +191,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         K::AttentionGrad(c) => { put_u16(out, D_ATNG); put_attn(out, c); }
         K::FusedSwiGluGrad(c) => { put_u16(out, D_FSWGG); put_matmul(out, c); }
         K::UnaryGrad(c) => { put_u16(out, D_UNG); put_unary(out, c); }
+        K::Dequantize(c) => { put_u16(out, D_DEQ); put_dequantize(out, c); }
     }
 }
 
@@ -262,4 +264,12 @@ fn put_attn(out: &mut Vec<u8>, c: &AttentionCall) {
 fn put_where(out: &mut Vec<u8>, c: &WhereCall) {
     put_buf(out, c.cond); put_buf(out, c.a); put_buf(out, c.b); put_buf(out, c.output);
     put_u32(out, c.element_count); put_u8(out, c.dtype);
+}
+fn put_dequantize(out: &mut Vec<u8>, c: &DequantizeCall) {
+    put_buf(out, c.input); put_buf(out, c.output);
+    put_u32(out, c.element_count);
+    put_u8(out, c.quant_dtype);
+    put_u8(out, c.dtype);
+    put_u32(out, c.scale_bits);
+    put_u32(out, c.zero_point as u32);
 }

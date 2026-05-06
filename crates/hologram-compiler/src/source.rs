@@ -92,24 +92,45 @@ pub fn parse(source: &str) -> Result<Graph, CompileError> {
     Ok(graph)
 }
 
+/// Parse a snake-case op name into an `OpKind`. Drives off
+/// `OpKind::name()`, the canonical name table — adding an op kind to the
+/// catalog automatically makes it parseable here, with no per-op entry
+/// required.
 fn parse_op_kind(name: &str) -> Option<hologram_graph::OpKind> {
     use hologram_graph::OpKind as K;
-    Some(match name {
-        "neg" => K::Neg, "bnot" => K::Bnot, "succ" => K::Succ, "pred" => K::Pred,
-        "add" => K::Add, "sub" => K::Sub, "mul" => K::Mul,
-        "xor" => K::Xor, "and" => K::And, "or" => K::Or,
-        "relu" => K::Relu, "sigmoid" => K::Sigmoid, "tanh" => K::Tanh,
-        "gelu" => K::Gelu, "silu" => K::Silu,
-        "exp" => K::Exp, "log" => K::Log, "sqrt" => K::Sqrt,
-        "matmul" => K::MatMul, "gemm" => K::Gemm,
-        "softmax" => K::Softmax, "log_softmax" => K::LogSoftmax,
-        "layer_norm" => K::LayerNorm, "rms_norm" => K::RmsNorm,
-        "reduce_sum" => K::ReduceSum, "reduce_mean" => K::ReduceMean,
-        "reshape" => K::Reshape, "transpose" => K::Transpose,
-        "concat" => K::Concat, "slice" => K::Slice,
-        "attention" => K::Attention, "fused_swiglu" => K::FusedSwiGlu,
-        "max_pool_2d" => K::MaxPool2d, "avg_pool_2d" => K::AvgPool2d,
-        "global_avg_pool" => K::GlobalAvgPool,
-        _ => return None,
-    })
+    const ALL: &[K] = &[
+        K::Neg, K::Bnot, K::Succ, K::Pred,
+        K::Add, K::Sub, K::Mul, K::Xor, K::And, K::Or,
+        K::Relu, K::Sigmoid, K::Tanh, K::Gelu, K::Silu, K::Elu, K::Selu,
+        K::Exp, K::Log, K::Log1p, K::Sqrt, K::Reciprocal,
+        K::Sin, K::Cos, K::Tan, K::Asin, K::Acos, K::Atan,
+        K::Ceil, K::Floor, K::Round, K::Erf,
+        K::IsNaN, K::Sign, K::Abs,
+        K::Div, K::Pow, K::Mod, K::Min, K::Max,
+        K::Equal, K::Less, K::LessOrEqual, K::Greater, K::GreaterOrEqual,
+        K::MatMul, K::Gemm,
+        K::Conv2d, K::ConvTranspose2d,
+        K::LayerNorm, K::RmsNorm, K::GroupNorm, K::InstanceNorm, K::AddRmsNorm,
+        K::ReduceSum, K::ReduceMean, K::ReduceProd, K::ReduceMin, K::ReduceMax,
+        K::Reshape, K::Transpose, K::Concat, K::Slice,
+        K::Softmax, K::LogSoftmax,
+        K::MaxPool2d, K::AvgPool2d, K::GlobalAvgPool,
+        K::Attention, K::FusedSwiGlu,
+        K::Pad, K::Expand, K::Resize, K::CumSum, K::RotaryEmbedding,
+        K::Clip, K::Lrn, K::Where,
+        K::MatMulGradA, K::MatMulGradB,
+        K::Conv2dGradX, K::Conv2dGradW,
+        K::SoftmaxGrad, K::LogSoftmaxGrad,
+        K::LayerNormGrad, K::RmsNormGrad, K::GroupNormGrad,
+        K::ReduceSumGrad, K::ReduceMeanGrad, K::ReduceProdGrad,
+        K::SubGrad, K::MulGrad, K::DivGrad, K::PowGrad,
+        K::MinGrad, K::MaxGrad,
+        K::ConcatGrad, K::SliceGrad,
+        K::AvgPool2dGrad, K::GlobalAvgPoolGrad,
+        K::PadGrad,
+        K::AttentionGrad, K::FusedSwiGluGrad,
+        K::UnaryGrad,
+        K::Dequantize,
+    ];
+    ALL.iter().copied().find(|k| k.name() == name)
 }

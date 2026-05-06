@@ -1,14 +1,10 @@
 //! Layout ops (spec V.3): no-compute address relabels.
 //!
-//! Per spec V.3, layout ops emit a single `Term::Variable` referencing a
+//! Per V.3, layout ops emit a single `Term::Variable` referencing a
 //! remapped binding produced by the compiler's address resolver — no
 //! `Application` nodes are emitted. The Validated certificate confirms
-//! the bijection.
-//!
-//! Per O-4 (open), if upstream rejects empty Term trees, layout ops fall
-//! back to a trivial `Application(And, [x, all_ones])` no-op. The current
-//! implementation emits a single `Variable` reference; the compiler may
-//! upgrade to the trivial-application form if needed.
+//! the bijection (the compiler exempts these from `run_completeness`'s
+//! algebraic-content checks via `OpKind::is_layout_only`).
 
 use core::marker::PhantomData;
 use uor_foundation::enforcement::TermArena;
@@ -16,6 +12,16 @@ use uor_foundation::WittLevel;
 use uor_foundation::HostBounds;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use crate::emit::{push_variable, EmitResult};
+
+/// Free emitter for any layout op. Pushes a single `Term::Variable` that
+/// references the relabel binding.
+pub fn emit_layout_relabel<const CAP: usize>(
+    arena: &mut TermArena<CAP>,
+    _level: WittLevel,
+    remapped_var_index: u32,
+) -> EmitResult {
+    push_variable(arena, remapped_var_index)
+}
 
 macro_rules! declare_layout {
     ($name:ident, $iri_suffix:literal, [$($g:ident),*]) => {
@@ -37,10 +43,10 @@ macro_rules! declare_layout {
 
             pub fn emit_term<const CAP: usize>(
                 arena: &mut TermArena<CAP>,
-                _level: WittLevel,
+                level: WittLevel,
                 remapped_var_index: u32,
             ) -> EmitResult {
-                push_variable(arena, remapped_var_index)
+                emit_layout_relabel(arena, level, remapped_var_index)
             }
         }
     };

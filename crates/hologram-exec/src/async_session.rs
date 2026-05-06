@@ -1,9 +1,8 @@
 //! Async wrapper (folded from `hologram-async`, spec II.1 "deleted").
 
-use hologram_backend::Backend;
-use crate::buffer::{BufferArena, InputBuffer, OutputBuffer};
+use crate::buffer::{InputBuffer, OutputBuffer};
 use crate::error::ExecError;
-use crate::session::InferenceSession;
+use crate::session::{InferenceSession, SessionBackend};
 
 /// Async wrapper around `InferenceSession::execute`.
 ///
@@ -12,12 +11,9 @@ use crate::session::InferenceSession;
 /// without blocking. It awaits zero work today — the body runs to
 /// completion synchronously — but returning a future keeps the call site
 /// in async context.
-pub async fn execute_async<B>(
+pub async fn execute_async<B: SessionBackend>(
     session: &mut InferenceSession<B>,
     inputs: &[InputBuffer<'_>],
-) -> Result<Vec<OutputBuffer>, ExecError>
-where
-    B: Backend<WS = BufferArena>,
-{
+) -> Result<Vec<OutputBuffer>, ExecError> {
     session.execute(inputs)
 }

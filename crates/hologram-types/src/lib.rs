@@ -20,7 +20,7 @@ pub mod witness;
 pub use dtype::{
     DType, DTypeKind,
     DTypeF32, DTypeF16, DTypeBf16, DTypeF64,
-    DTypeI64, DTypeI32, DTypeI8, DTypeU64, DTypeU8, DTypeBool,
+    DTypeI64, DTypeI32, DTypeI8, DTypeI4, DTypeU64, DTypeU8, DTypeBool,
 };
 pub use shape::{
     Dim, DimSymbolic,

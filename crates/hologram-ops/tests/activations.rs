@@ -1,7 +1,7 @@
 //! ActivationFn impl smoke tests.
 
 use hologram_ops::activations::{Relu, Sigmoid, Tanh, Gelu, Silu};
-use hologram_ops::lut::{ActivationFn, build_w8_lut_runtime};
+use hologram_ops::lut::{ActivationFn, build_w8_lut};
 
 #[test]
 fn relu_is_identity_unsigned() {
@@ -34,7 +34,7 @@ fn gelu_silu_compile() {
 
 #[test]
 fn lut_construction() {
-    let lut = build_w8_lut_runtime::<Relu>();
+    let lut = build_w8_lut::<Relu>();
     for (i, &v) in lut.iter().enumerate() {
         assert_eq!(v, i as u8);
     }

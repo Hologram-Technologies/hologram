@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
-use crate::node::{Node, NodeId, GraphOp, InputSource};
+use crate::node::{Node, NodeId, InputSource, QuantAttrs};
 use crate::constant::ConstantStore;
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
@@ -16,6 +16,9 @@ pub struct Graph {
     constants: ConstantStore,
     shape_registry: ShapeRegistry,
     schedule: Option<Schedule>,
+    /// Sparse per-node quantization attributes (spec X-5). Keyed on
+    /// `NodeId.0`. Empty for graphs with no quantized weights.
+    quant_attrs: Vec<(NodeId, QuantAttrs)>,
 }
 
 impl Graph {
@@ -53,6 +56,23 @@ impl Graph {
     pub fn schedule(&self) -> Option<&Schedule> { self.schedule.as_ref() }
     pub fn set_schedule(&mut self, sched: Schedule) { self.schedule = Some(sched); }
 
+    /// Attach quantization parameters to a node (spec X-5). The node's
+    /// op is expected to be `OpKind::Dequantize`; the compiler reads
+    /// these into `LoweredNode.quant` during lowering.
+    pub fn set_quant_attrs(&mut self, id: NodeId, attrs: QuantAttrs) {
+        if let Some(slot) = self.quant_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.quant_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve quantization parameters for a node, or `None` if the node
+    /// has no quantization metadata.
+    pub fn quant_attrs(&self, id: NodeId) -> Option<QuantAttrs> {
+        self.quant_attrs.iter().find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
     /// Topological-sort + level-grouping schedule construction.
     pub fn compute_schedule(&mut self) {
         let n = self.nodes.len();
@@ -88,12 +108,3 @@ impl Graph {
     }
 }
 
-/// Builder convenience: a node carrying just a `GraphOp` and inputs.
-pub fn node(op: GraphOp, inputs: SmallVec<[InputSource; 4]>) -> Node {
-    Node {
-        op,
-        inputs,
-        output_dtype: crate::registry::DTypeId(0),
-        output_shape: crate::registry::ShapeId(0),
-    }
-}

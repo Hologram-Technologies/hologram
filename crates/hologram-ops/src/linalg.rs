@@ -1,24 +1,59 @@
 //! Linear algebra ops (spec V.3): MatMul, Gemm.
+//!
+//! V.3 tree shape (MatMul):
+//! ```text
+//! Recurse over (i,j) ∈ [0,M)×[0,N)
+//!   base:  Literal { 0, level }
+//!   step:  Application(Add, [acc,
+//!            Recurse over k ∈ [0,K)
+//!              base:  Literal { 0, level }
+//!              step:  Application(Add, [acc,
+//!                       Application(Mul, [a[i,k], b[k,j]])])])
+//! ```
 
 use core::marker::PhantomData;
 use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
 use uor_foundation::HostBounds;
 use uor_foundation::pipeline::ConstrainedTypeShape;
-use crate::emit::{push_application, push_recurse, push_literal, EmitResult};
 
-/// MatMul iso: (Tensor[M,K], Tensor[K,N]) → Tensor[M,N].
-///
-/// Term tree (spec V.3 sketch):
-/// ```text
-/// Recurse over (i,j) ∈ [0,M)×[0,N)
-///   base:  Literal { 0, level }
-///   step:  Application(Add, [acc,
-///            Recurse over k ∈ [0,K)
-///              base:  Literal { 0, level }
-///              step:  Application(Add, [acc,
-///                       Application(Mul, [a[i,k], b[k,j]])])])
-/// ```
+use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
+
+/// Free emitter for MatMul. Captures the V.3 nested-Recurse tree.
+pub fn emit_matmul<const CAP: usize>(
+    arena: &mut TermArena<CAP>,
+    level: WittLevel,
+    a_var: u32,
+    b_var: u32,
+) -> EmitResult {
+    // Inner k-recursion: acc += a * b
+    let zero    = push_literal(arena, 0, level)?;
+    let mul_ab  = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
+    let _ = b_var; // arg slot occupied by the contiguous variable already pushed
+    let inner_step = push_application(arena, PrimitiveOp::Add, mul_ab, 2)?;
+    let inner = push_recurse(arena, zero, zero, inner_step)?;
+    // Outer (i,j) recursion: acc += inner
+    let outer_step = push_application(arena, PrimitiveOp::Add, inner, 2)?;
+    push_recurse(arena, zero, zero, outer_step)
+}
+
+/// Free emitter for Gemm: α·MatMul(A,B) + β·C.
+pub fn emit_gemm<const CAP: usize>(
+    arena: &mut TermArena<CAP>,
+    level: WittLevel,
+    a_var: u32,
+    b_var: u32,
+    c_var: u32,
+) -> EmitResult {
+    let _ = (b_var, c_var);
+    let zero      = push_literal(arena, 0, level)?;
+    let mul_ab    = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
+    let inner_acc = push_application(arena, PrimitiveOp::Add, mul_ab, 2)?;
+    let inner     = push_recurse(arena, zero, zero, inner_acc)?;
+    let scaled    = push_application(arena, PrimitiveOp::Mul, inner, 2)?;
+    push_application(arena, PrimitiveOp::Add, scaled, 2)
+}
+
 pub struct MatMulOp<const M: u64, const K: u64, const N: u64, D, B>(PhantomData<(D, B)>)
 where
     D: ConstrainedTypeShape,
@@ -39,22 +74,13 @@ where D: ConstrainedTypeShape, B: HostBounds,
     pub fn emit_term<const CAP: usize>(
         arena: &mut TermArena<CAP>,
         level: WittLevel,
-        a_var_idx: u32,
-        b_var_idx: u32,
+        a_var: u32,
+        b_var: u32,
     ) -> EmitResult {
-        // Bottom-up: zero base, mul application, add accumulator, recurse.
-        let zero = push_literal(arena, 0, level)?;
-        let mul  = push_application(arena, PrimitiveOp::Mul, a_var_idx, 2)?;
-        let _    = b_var_idx; // referenced positionally via args layout
-        let add  = push_application(arena, PrimitiveOp::Add, zero, 2)?;
-        // Inner k recursion
-        let inner = push_recurse(arena, zero, zero, mul)?;
-        // Outer (i,j) recursion
-        push_recurse(arena, zero, inner, add)
+        emit_matmul(arena, level, a_var, b_var)
     }
 }
 
-/// Gemm iso: α·MatMul(A,B) + β·C.
 pub struct GemmOp<const M: u64, const K: u64, const N: u64, D, B>(PhantomData<(D, B)>)
 where D: ConstrainedTypeShape, B: HostBounds;
 
@@ -73,13 +99,10 @@ where D: ConstrainedTypeShape, B: HostBounds,
     pub fn emit_term<const CAP: usize>(
         arena: &mut TermArena<CAP>,
         level: WittLevel,
-        a_var_idx: u32,
-        _b_var_idx: u32,
-        _c_var_idx: u32,
+        a_var: u32,
+        b_var: u32,
+        c_var: u32,
     ) -> EmitResult {
-        let zero = push_literal(arena, 0, level)?;
-        let mul  = push_application(arena, PrimitiveOp::Mul, a_var_idx, 2)?;
-        let add  = push_application(arena, PrimitiveOp::Add, mul, 2)?;
-        push_recurse(arena, zero, mul, add)
+        emit_gemm(arena, level, a_var, b_var, c_var)
     }
 }

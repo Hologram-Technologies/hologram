@@ -1,25 +1,44 @@
 //! `InferenceSession` (spec VIII.1).
 
-use hologram_archive::{HoloLoader, format::SectionKind, decoder, decode_ports, PortDescriptor, schedule_codec};
+use hologram_archive::{
+    HoloLoader, format::SectionKind, decoder, decode_ports, PortDescriptor,
+    constant_codec, decode_exec_plan, decode_weights, WeightFingerprint,
+};
 use hologram_backend::{Backend, KernelCall};
 use crate::buffer::{BufferArena, InputBuffer, OutputBuffer, SlotSpan};
 use crate::error::ExecError;
 use crate::executor::Executor;
 
-pub struct InferenceSession<B: Backend<WS = BufferArena>> {
+pub struct InferenceSession<B: SessionBackend> {
+    /// Compiled kernel calls in topological order (compiler emits them
+    /// per `compute_schedule` levels, flattened).
     kernel_calls: Vec<KernelCall>,
-    /// Topological levels (parallel-executable groups). Each entry is a
-    /// list of indices into `kernel_calls`. When absent (no schedule in
-    /// the archive), the executor walks `kernel_calls` flat in archive
-    /// order — which is itself topological per spec VII.2.
-    schedule_levels: Option<Vec<Vec<usize>>>,
+    /// Per-level kernel-call indices (spec VIII.2). Each entry holds
+    /// indices into `kernel_calls`; the executor walks levels in order,
+    /// parallelizing within a level when the backend permits.
+    exec_plan: Vec<Vec<u32>>,
     inputs: Vec<PortDescriptor>,
     outputs: Vec<PortDescriptor>,
     workspace: BufferArena,
     backend: B,
 }
 
-impl<B: Backend<WS = BufferArena>> InferenceSession<B> {
+/// Backend bounds required for `InferenceSession` execute. Without the
+/// `parallel` feature, plain `Backend<WS = BufferArena>` suffices. With
+/// the feature on, the backend must be `Clone + Send + Sync` so that
+/// per-thread copies can dispatch concurrently against disjoint slots
+/// in the same schedule level.
+#[cfg(not(feature = "parallel"))]
+pub trait SessionBackend: Backend<WS = BufferArena> {}
+#[cfg(not(feature = "parallel"))]
+impl<B: Backend<WS = BufferArena>> SessionBackend for B {}
+
+#[cfg(feature = "parallel")]
+pub trait SessionBackend: Backend<WS = BufferArena> + Clone + Send + Sync {}
+#[cfg(feature = "parallel")]
+impl<B: Backend<WS = BufferArena> + Clone + Send + Sync> SessionBackend for B {}
+
+impl<B: SessionBackend> InferenceSession<B> {
     /// Load and prepare an `.holo` archive for execution.
     pub fn load(bytes: &[u8], backend: B) -> Result<Self, ExecError> {
         let plan = HoloLoader::from_bytes(bytes)?.into_plan()?;
@@ -40,70 +59,125 @@ impl<B: Backend<WS = BufferArena>> InferenceSession<B> {
             .map_err(ExecError::Archive)?
             .unwrap_or_default();
 
-        // Decode schedule levels (parallel-execution groups), if present,
-        // and project NodeId → kernel_call index.
-        let schedule_levels = match plan.section(SectionKind::Schedule).ok() {
-            Some(sched_bytes) => {
-                let raw = schedule_codec::decode(sched_bytes)
-                    .map_err(ExecError::Archive)?;
-                // Each NodeId in the raw schedule needs to map to a
-                // kernel-call index. Compiler emits kernel calls in
-                // schedule order, so kernel_call[i] corresponds to the
-                // i-th compute-only node in the topological walk. We
-                // build that mapping by iterating the raw schedule's
-                // node-id sequence and filtering ids that produced a kernel.
-                let mut id_to_call_idx: Vec<Option<usize>> = Vec::new();
-                let mut next_idx = 0usize;
-                for level in &raw {
-                    for &id in level {
-                        let i = id as usize;
-                        if id_to_call_idx.len() <= i {
-                            id_to_call_idx.resize(i + 1, None);
-                        }
-                        // Heuristic: assume every scheduled node corresponds
-                        // to a kernel call slot. Input/Output/Constant nodes
-                        // are scheduled too but don't produce kernel calls;
-                        // we skip ids that exceed the kernel_calls length.
-                        if next_idx < kernel_calls.len() {
-                            id_to_call_idx[i] = Some(next_idx);
-                            next_idx += 1;
-                        }
-                    }
-                }
-                let mut levels: Vec<Vec<usize>> = Vec::with_capacity(raw.len());
-                for level in &raw {
-                    let mut out_level = Vec::with_capacity(level.len());
-                    for &id in level {
-                        if let Some(Some(idx)) = id_to_call_idx.get(id as usize) {
-                            out_level.push(*idx);
-                        }
-                    }
-                    if !out_level.is_empty() { levels.push(out_level); }
-                }
-                if levels.is_empty() { None } else { Some(levels) }
-            }
-            None => None,
+        // Decode the per-level kernel-call schedule (spec VIII.2). If the
+        // archive omits an `ExecPlan`, fall back to a single level holding
+        // every call (sequential execution).
+        let exec_plan: Vec<Vec<u32>> = plan
+            .section(SectionKind::ExecPlan)
+            .ok()
+            .map(decode_exec_plan)
+            .transpose()
+            .map_err(ExecError::Archive)?
+            .unwrap_or_else(|| vec![(0..kernel_calls.len() as u32).collect()]);
+
+        // Constants are pre-fill payloads that the runtime writes into
+        // designated workspace slots before any kernel dispatches.
+        // Each entry is either inline bytes or a content-addressed
+        // reference into the `Weights` section (spec X.3 + X-7).
+        let constant_entries: Vec<constant_codec::ConstantEntry> = plan
+            .section(SectionKind::Constants)
+            .ok()
+            .map(constant_codec::decode)
+            .transpose()
+            .map_err(ExecError::Archive)?
+            .unwrap_or_default();
+
+        // Decode the WeightStore so constant references can resolve.
+        // Missing section is fine — only inline-only graphs hit that path.
+        let weight_store = plan
+            .section(SectionKind::Weights)
+            .ok()
+            .map(decode_weights)
+            .transpose()
+            .map_err(ExecError::Archive)?;
+
+        // Provision workspace with **per-slot** byte sizes (spec VIII.3).
+        //
+        // Earlier revisions sized every slot at the maximum byte count
+        // across all references. That makes total memory `slot_count *
+        // max_size`, which scales catastrophically when one tensor is
+        // GB-sized and the rest are KB-sized. The corrected layout
+        // computes a per-slot size from the largest *referencing* call
+        // (kernel BufferRef.length, port byte count, or constant body),
+        // and lays slots out at cumulative offsets — total memory is
+        // `Σ size_i` rather than `n · max_size_i`. This is a hard
+        // requirement for trillion-parameter / UHD streaming workloads
+        // (spec X-7).
+        let mut slot_count: usize = 0;
+        let bump = |sc: &mut usize, slot: u32| {
+            let need = (slot as usize).saturating_add(1);
+            if need > *sc { *sc = need; }
         };
-
-        // Provision workspace large enough for every distinct slot referenced
-        // by any KernelCall edge or input/output port.
-        let max_kernel_slot = kernel_calls.iter().flat_map(buffers).map(|b| b.slot).max().unwrap_or(0);
-        let max_kernel_size: u32 = kernel_calls.iter().flat_map(buffers).map(|b| b.length).max().unwrap_or(64);
-        let max_port_slot = inputs.iter().chain(outputs.iter()).map(|p| p.slot).max().unwrap_or(0);
-        let max_port_size: u32 = inputs.iter().chain(outputs.iter()).map(|p| p.element_count).max().unwrap_or(0);
-        let max_slot = max_kernel_slot.max(max_port_slot);
-        let max_size = max_kernel_size.max(max_port_size).max(64);
-        let slot_count = (max_slot + 1) as usize;
-        let mut slots = Vec::with_capacity(slot_count);
-        for i in 0..slot_count {
-            slots.push(SlotSpan {
-                offset: i as u32 * max_size,
-                length: max_size,
-            });
+        for b in kernel_calls.iter().flat_map(buffers) {
+            if b.slot != u32::MAX { bump(&mut slot_count, b.slot); }
         }
-        let workspace = BufferArena::with_capacity(slot_count * max_size as usize, slots);
+        for p in inputs.iter().chain(outputs.iter()) {
+            bump(&mut slot_count, p.slot);
+        }
+        for e in constant_entries.iter() {
+            bump(&mut slot_count, e.slot);
+        }
 
-        Ok(Self { kernel_calls, schedule_levels, inputs, outputs, workspace, backend })
+        let mut sizes: Vec<u32> = vec![0u32; slot_count];
+        for b in kernel_calls.iter().flat_map(buffers) {
+            if b.slot != u32::MAX {
+                let s = &mut sizes[b.slot as usize];
+                if b.length > *s { *s = b.length; }
+            }
+        }
+        for p in inputs.iter().chain(outputs.iter()) {
+            let bytes_per = port_bytes_per_element(p.dtype) as u32;
+            let n = p.element_count.saturating_mul(bytes_per);
+            let s = &mut sizes[p.slot as usize];
+            if n > *s { *s = n; }
+        }
+        for e in constant_entries.iter() {
+            // Inline bodies report their length directly; references
+            // resolve through the WeightStore for sizing.
+            let n: u32 = if e.by_reference {
+                weight_store.as_ref()
+                    .and_then(|s| s.get(WeightFingerprint(e.fingerprint)))
+                    .map(|b| b.len() as u32)
+                    .unwrap_or(0)
+            } else {
+                e.bytes.len() as u32
+            };
+            let s = &mut sizes[e.slot as usize];
+            if n > *s { *s = n; }
+        }
+        // Floor each slot at 64 bytes so kernels that compute their own
+        // strides always have headroom.
+        for s in sizes.iter_mut() { if *s < 64 { *s = 64; } }
+
+        let mut slots = Vec::with_capacity(slot_count);
+        let mut total: usize = 0;
+        for &len in &sizes {
+            slots.push(SlotSpan {
+                offset: total as u32,
+                length: len,
+            });
+            total = total.saturating_add(len as usize);
+        }
+        let mut workspace = BufferArena::with_capacity(total, slots);
+
+        // Pre-fill workspace slots with each constant's bytes. For
+        // inline entries the bytes are local; for content-addressed
+        // references the bytes come from the WeightStore (spec X.3).
+        for entry in &constant_entries {
+            let body: &[u8] = if entry.by_reference {
+                weight_store.as_ref()
+                    .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
+                    .unwrap_or(&[])
+            } else {
+                &entry.bytes
+            };
+            if let Some(dst) = workspace.write_slot(entry.slot as usize) {
+                let n = body.len().min(dst.len());
+                dst[..n].copy_from_slice(&body[..n]);
+            }
+        }
+
+        Ok(Self { kernel_calls, exec_plan, inputs, outputs, workspace, backend })
     }
 
     /// Execute one inference pass. `inputs` are written into the workspace
@@ -113,38 +187,37 @@ impl<B: Backend<WS = BufferArena>> InferenceSession<B> {
         if inputs.len() != self.inputs.len() {
             return Err(ExecError::InputMismatch);
         }
-        // Materialize inputs into workspace slots.
+        // Materialize inputs into workspace slots. `port.element_count`
+        // is in elements; convert to bytes via the port's dtype before
+        // copying.
         for (port, buf) in self.inputs.iter().zip(inputs.iter()) {
-            let n = port.element_count as usize;
+            let bytes_per = port_bytes_per_element(port.dtype);
+            let n_bytes = (port.element_count as usize).saturating_mul(bytes_per);
             let dst = self.workspace.write_slot(port.slot as usize)
                 .ok_or(ExecError::InputMismatch)?;
-            let take = n.min(buf.bytes.len()).min(dst.len());
+            let take = n_bytes.min(buf.bytes.len()).min(dst.len());
             dst[..take].copy_from_slice(&buf.bytes[..take]);
-            for byte in dst.iter_mut().take(n).skip(take) { *byte = 0; }
+            // Zero-pad any tail of the input region the caller didn't fill.
+            let tail_end = n_bytes.min(dst.len());
+            for byte in dst[take..tail_end].iter_mut() { *byte = 0; }
         }
 
-        // Walk the schedule level-by-level when present (spec VIII.2);
-        // fall back to flat dispatch when the archive carries no schedule.
-        if let Some(levels) = &self.schedule_levels {
-            for level in levels {
-                for &i in level {
-                    if let Some(call) = self.kernel_calls.get(i) {
-                        self.backend.dispatch(call, &mut self.workspace)
-                            .map_err(|_| ExecError::Backend)?;
-                    }
-                }
-            }
-        } else {
-            Executor::run(&mut self.backend, &self.kernel_calls, &mut self.workspace)?;
-        }
+        run_session_levels(
+            &mut self.backend,
+            &self.kernel_calls,
+            &self.exec_plan,
+            &mut self.workspace,
+        )?;
 
-        // Collect outputs from workspace slots.
+        // Collect outputs from workspace slots; `port.element_count *
+        // bytes_per_element(dtype)` is the byte count to emit.
         let mut out = Vec::with_capacity(self.outputs.len());
         for port in &self.outputs {
-            let n = port.element_count as usize;
+            let bytes_per = port_bytes_per_element(port.dtype);
+            let n_bytes = (port.element_count as usize).saturating_mul(bytes_per);
             let bytes = self.workspace.read_slot(port.slot as usize)
                 .ok_or(ExecError::WorkspaceExhausted)?
-                .iter().take(n).copied().collect();
+                .iter().take(n_bytes).copied().collect();
             out.push(OutputBuffer { bytes });
         }
         Ok(out)
@@ -153,8 +226,36 @@ impl<B: Backend<WS = BufferArena>> InferenceSession<B> {
     pub fn kernel_count(&self) -> usize { self.kernel_calls.len() }
     pub fn input_count(&self) -> usize { self.inputs.len() }
     pub fn output_count(&self) -> usize { self.outputs.len() }
+    pub fn schedule_levels(&self) -> usize { self.exec_plan.len() }
+}
+
+/// Bridge between `InferenceSession::execute` and `Executor::run_levels`.
+/// `SessionBackend` already carries the right bounds per feature flag.
+fn run_session_levels<B: SessionBackend>(
+    backend: &mut B,
+    calls: &[KernelCall],
+    exec_plan: &[Vec<u32>],
+    workspace: &mut BufferArena,
+) -> Result<(), ExecError> {
+    Executor::run_levels(backend, calls, exec_plan, workspace)
+}
+
+impl<B: SessionBackend> InferenceSession<B> {
     pub fn workspace(&self) -> &BufferArena { &self.workspace }
     pub fn workspace_mut(&mut self) -> &mut BufferArena { &mut self.workspace }
+}
+
+/// Bytes-per-element for a port descriptor's dtype tag (mirrors
+/// `hologram_backend::cpu::dtype` constants but kept local to avoid an
+/// upward dependency from exec on the backend's internal module).
+const fn port_bytes_per_element(dtype: u8) -> usize {
+    match dtype {
+        0..=2 => 1,            // BOOL, U8, I8
+        6 | 7 => 2,            // F16, BF16
+        4 | 8 => 4,            // I32, F32
+        3 | 5 | 9 => 8,        // U64, I64, F64
+        _ => 1,
+    }
 }
 
 fn buffers(call: &KernelCall) -> Vec<hologram_backend::BufferRef> {
@@ -214,5 +315,7 @@ fn buffers(call: &KernelCall) -> Vec<hologram_backend::BufferRef> {
             => vec![c.q, c.k, c.v, c.output],
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
+
+        K::Dequantize(c) => vec![c.input, c.output],
     }
 }

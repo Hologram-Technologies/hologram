@@ -16,6 +16,11 @@ pub enum SectionKind {
     Metadata = 8,
     Inputs = 9,
     Outputs = 10,
+    Constants = 11,
+    /// Per-level kernel-call indices (spec VIII.2). Mirrors `Schedule`
+    /// but indexes `kernel_calls[]` directly so the executor can walk
+    /// levels in parallel without re-resolving NodeIds.
+    ExecPlan = 12,
 }
 
 #[derive(Debug, Clone, Copy)]

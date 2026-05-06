@@ -44,3 +44,19 @@ pub struct Node {
     pub output_dtype: DTypeId,
     pub output_shape: ShapeId,
 }
+
+/// Per-tensor quantization attributes (spec X-5). Symmetric INT8/INT4
+/// scheme: `dequantized = (q − zero_point) · scale`. Stored on
+/// `Graph::quant_attrs` keyed by `NodeId` rather than inlined into
+/// `Node` so that ordinary nodes pay no per-instance overhead.
+/// Per-channel quantization is a future extension layered as multiple
+/// `QuantAttrs` keyed on the channel axis.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QuantAttrs {
+    /// Source quantized dtype (DTypeI8 or DTypeI4 numeric tag).
+    pub quant_dtype: u8,
+    /// `f32::to_bits` of the per-tensor scale.
+    pub scale_bits: u32,
+    /// Symmetric zero-point.
+    pub zero_point: i32,
+}

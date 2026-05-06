@@ -1,0 +1,112 @@
+//! Dispatch coverage (spec V.3 + I-1): every `OpKind` variant emits a
+//! non-empty Term tree whose `Term::Application::operator` is restricted
+//! to the closed 10-PrimitiveOp set.
+
+use hologram_ops::{emit_op_term, OpKind};
+use uor_foundation::enforcement::{TermArena, Term};
+use uor_foundation::{PrimitiveOp, WittLevel};
+
+fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
+    for slot in arena.as_slice().iter().flatten() {
+        if let Term::Application { operator, .. } = slot {
+            // PrimitiveOp is exhaustively closed (spec I-1); this match
+            // statically attests the operator is one of the 10 variants.
+            match *operator {
+                PrimitiveOp::Neg | PrimitiveOp::Bnot
+                | PrimitiveOp::Succ | PrimitiveOp::Pred
+                | PrimitiveOp::Add | PrimitiveOp::Sub | PrimitiveOp::Mul
+                | PrimitiveOp::Xor | PrimitiveOp::And | PrimitiveOp::Or => {}
+            }
+        }
+    }
+}
+
+fn try_emit(kind: OpKind) -> bool {
+    let mut arena: TermArena<256> = TermArena::new();
+    let arity = kind.primary_arity();
+    let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
+    for i in 1..arity {
+        arena.push(Term::Variable { name_index: i as u32 }).expect("vi");
+    }
+    let res = emit_op_term(kind, &mut arena, WittLevel::W32, v0);
+    assert_closed_primitive_set(&arena);
+    res.is_some()
+}
+
+const ALL_OP_KINDS: &[OpKind] = &[
+    OpKind::Neg, OpKind::Bnot, OpKind::Succ, OpKind::Pred,
+    OpKind::Add, OpKind::Sub, OpKind::Mul, OpKind::Xor, OpKind::And, OpKind::Or,
+    OpKind::Relu, OpKind::Sigmoid, OpKind::Tanh, OpKind::Gelu, OpKind::Silu,
+    OpKind::Elu, OpKind::Selu,
+    OpKind::Exp, OpKind::Log, OpKind::Log1p, OpKind::Sqrt, OpKind::Reciprocal,
+    OpKind::Sin, OpKind::Cos, OpKind::Tan, OpKind::Asin, OpKind::Acos, OpKind::Atan,
+    OpKind::Ceil, OpKind::Floor, OpKind::Round, OpKind::Erf,
+    OpKind::IsNaN, OpKind::Sign, OpKind::Abs,
+    OpKind::Div, OpKind::Pow, OpKind::Mod, OpKind::Min, OpKind::Max,
+    OpKind::Equal, OpKind::Less, OpKind::LessOrEqual, OpKind::Greater, OpKind::GreaterOrEqual,
+    OpKind::MatMul, OpKind::Gemm,
+    OpKind::Conv2d, OpKind::ConvTranspose2d,
+    OpKind::LayerNorm, OpKind::RmsNorm, OpKind::GroupNorm, OpKind::InstanceNorm,
+    OpKind::AddRmsNorm,
+    OpKind::ReduceSum, OpKind::ReduceMean, OpKind::ReduceProd,
+    OpKind::ReduceMin, OpKind::ReduceMax,
+    OpKind::Reshape, OpKind::Transpose, OpKind::Concat, OpKind::Slice,
+    OpKind::Softmax, OpKind::LogSoftmax,
+    OpKind::MaxPool2d, OpKind::AvgPool2d, OpKind::GlobalAvgPool,
+    OpKind::Attention, OpKind::FusedSwiGlu,
+    OpKind::Pad, OpKind::Expand, OpKind::Resize,
+    OpKind::CumSum, OpKind::RotaryEmbedding, OpKind::Clip, OpKind::Lrn, OpKind::Where,
+    OpKind::MatMulGradA, OpKind::MatMulGradB,
+    OpKind::Conv2dGradX, OpKind::Conv2dGradW,
+    OpKind::SoftmaxGrad, OpKind::LogSoftmaxGrad,
+    OpKind::LayerNormGrad, OpKind::RmsNormGrad, OpKind::GroupNormGrad,
+    OpKind::ReduceSumGrad, OpKind::ReduceMeanGrad, OpKind::ReduceProdGrad,
+    OpKind::SubGrad, OpKind::MulGrad, OpKind::DivGrad, OpKind::PowGrad,
+    OpKind::MinGrad, OpKind::MaxGrad,
+    OpKind::ConcatGrad, OpKind::SliceGrad,
+    OpKind::AvgPool2dGrad, OpKind::GlobalAvgPoolGrad,
+    OpKind::PadGrad,
+    OpKind::AttentionGrad, OpKind::FusedSwiGluGrad,
+    OpKind::UnaryGrad,
+    OpKind::Dequantize,
+];
+
+#[test]
+fn every_op_kind_dispatches_to_a_well_formed_tree() {
+    for &kind in ALL_OP_KINDS {
+        assert!(try_emit(kind), "emit_op_term failed for {:?}", kind);
+    }
+}
+
+#[test]
+fn op_kind_catalog_size_matches_spec() {
+    // Locks the catalog cardinality across spec V.3 (forward 64-op set) +
+    // V.4 (26 backward markers) + a small pool of utility/structured
+    // variants whose dispatch is exercised here. Adjust if and only if
+    // the spec catalog is intentionally extended.
+    assert_eq!(ALL_OP_KINDS.len(), 105);
+}
+
+#[test]
+fn every_op_emit_fits_in_declared_cap() {
+    // Spec V.5: each op declares an arena CAP. The emitted Term tree
+    // must fit within that CAP. Drives a fresh arena per op, populates
+    // arity variables, calls dispatch, and asserts the slot count
+    // stays at or below `OpKind::cap()`.
+    for &kind in ALL_OP_KINDS {
+        let mut arena: TermArena<256> = TermArena::new();
+        let arity = kind.primary_arity();
+        let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
+        for i in 1..arity {
+            arena.push(Term::Variable { name_index: i as u32 }).expect("vi");
+        }
+        let pre = arena.as_slice().iter().filter(|s| s.is_some()).count();
+        let _ = hologram_ops::emit_op_term(kind, &mut arena, WittLevel::W32, v0)
+            .unwrap_or_else(|| panic!("emit_op_term failed for {:?}", kind));
+        let post = arena.as_slice().iter().filter(|s| s.is_some()).count();
+        let used = post - pre;
+        let cap = kind.cap();
+        assert!(used <= cap,
+            "{:?} emitted {} term slots, exceeds declared CAP {}", kind, used, cap);
+    }
+}

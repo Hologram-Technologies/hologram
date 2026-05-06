@@ -20,7 +20,17 @@ tokio            = { workspace = true, optional = true }
 hologram-compiler = { workspace = true }
 hologram-graph    = { workspace = true }
 uor-foundation    = { workspace = true }
+smallvec          = { workspace = true }
 
 [features]
 default = []
 async = ["dep:tokio"]
+# Architectural surface for parallel-within-level dispatch (spec VIII.2).
+# The exec plan emits per-level kernel-call indices; the executor walks
+# each level. Sound parallelism within a level requires splitting the
+# workspace into disjoint per-call mutable fragments — out of scope
+# here, since `Backend::dispatch` consumes `&mut Workspace`. GPU
+# backends parallelize internally via their command queues. Enabling
+# the feature tightens the `SessionBackend` bounds with `Clone + Send
+# + Sync` so a future per-slot-disaggregated executor can require them.
+parallel = []

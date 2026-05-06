@@ -5,14 +5,18 @@
 
 use hashbrown::HashMap;
 use hologram_archive::certificate_codec::CertificateRecord;
-use hologram_backend::KernelCall;
 use uor_foundation::enforcement::ContentFingerprint;
 
+/// Cached value for a (op_kind, witt_level, backend) triple.
+///
+/// The certificate record is content-addressed by *type and Witt level*,
+/// not by per-node slot wiring. Different graph nodes with the same op
+/// kind share certificate records but each emits a distinct `KernelCall`
+/// (different slots, byte lengths, shape parameters); the kernel call is
+/// therefore not cached — only the certificate.
 #[derive(Debug, Clone)]
 pub struct CachedCertificate {
-    /// Per-node certificate record (witt_bits + width_bytes + fingerprint).
     pub record: CertificateRecord,
-    pub kernel_call: KernelCall,
 }
 
 #[derive(Default)]

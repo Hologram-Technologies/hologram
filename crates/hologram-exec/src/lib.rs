@@ -10,5 +10,5 @@ pub mod async_session;
 
 pub use buffer::{BufferArena, SlotSpan, InputBuffer, OutputBuffer};
 pub use executor::Executor;
-pub use session::InferenceSession;
+pub use session::{InferenceSession, SessionBackend};
 pub use error::ExecError;

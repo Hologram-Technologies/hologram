@@ -51,23 +51,45 @@ impl BufferArena {
 }
 
 impl Workspace for BufferArena {
+    /// Read up to `buf.length` bytes from `buf.slot`, starting at
+    /// `buf.offset` *within* that slot. When `buf.length` is zero, return
+    /// the slot's full contents — kernels that compute their own byte
+    /// count from `element_count + dtype` can index into the returned
+    /// slice without being constrained by the BufferRef's stale length.
     fn read(&self, buf: BufferRef) -> &[u8] {
-        let start = buf.offset as usize;
-        let end = start + buf.length as usize;
-        match (self.slots.get(buf.slot as usize), end <= self.storage.len()) {
-            (Some(_), true) => &self.storage[start..end],
-            _ => &[],
-        }
+        let slot = match self.slots.get(buf.slot as usize) {
+            Some(s) => s,
+            None => return &[],
+        };
+        let slot_start = slot.offset as usize;
+        let slot_end = slot_start + slot.length as usize;
+        if slot_end > self.storage.len() { return &[]; }
+        let inner_start = slot_start + buf.offset as usize;
+        let inner_end = if buf.length == 0 {
+            slot_end
+        } else {
+            (inner_start + buf.length as usize).min(slot_end)
+        };
+        if inner_end > self.storage.len() || inner_start > inner_end { return &[]; }
+        &self.storage[inner_start..inner_end]
     }
 
     fn write(&mut self, buf: BufferRef) -> &mut [u8] {
-        let start = buf.offset as usize;
-        let end = start + buf.length as usize;
-        if end <= self.storage.len() {
-            &mut self.storage[start..end]
+        let slot = match self.slots.get(buf.slot as usize) {
+            Some(s) => *s,
+            None => return &mut [],
+        };
+        let slot_start = slot.offset as usize;
+        let slot_end = slot_start + slot.length as usize;
+        if slot_end > self.storage.len() { return &mut []; }
+        let inner_start = slot_start + buf.offset as usize;
+        let inner_end = if buf.length == 0 {
+            slot_end
         } else {
-            &mut []
-        }
+            (inner_start + buf.length as usize).min(slot_end)
+        };
+        if inner_end > self.storage.len() || inner_start > inner_end { return &mut []; }
+        &mut self.storage[inner_start..inner_end]
     }
 }
 

@@ -40,3 +40,22 @@ pub fn compile(
 ) -> Result<CompilationOutput, CompileError> {
     Compiler::new(graph, target, level).compile()
 }
+
+/// Compile a forward graph with an attached backward subgraph
+/// (spec V.4 / ADR-043). Backward is *planned* — gradient nodes are
+/// appended to `graph` ahead of time, then the augmented graph is
+/// compiled normally. Returns the gradient `NodeId`s alongside the
+/// compiled archive.
+pub fn compile_with_backward(
+    mut graph: hologram_graph::Graph,
+    output_id: hologram_graph::NodeId,
+    target: BackendKind,
+    level: uor_foundation::WittLevel,
+) -> Result<(CompilationOutput, alloc::vec::Vec<hologram_graph::NodeId>), CompileError> {
+    let input_grads = hologram_graph::append_backward(&mut graph, output_id)
+        .map_err(|_| CompileError::CompletenessFailure)?;
+    let output = Compiler::new(graph, target, level).compile()?;
+    Ok((output, input_grads))
+}
+
+extern crate alloc;

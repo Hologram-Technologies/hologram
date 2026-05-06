@@ -42,9 +42,3 @@ pub fn build_w16_lut<F: ActivationFn>() -> Box<[u16; 65_536]> {
     t
 }
 
-/// Backwards-compat alias retained for any in-tree callers that pre-date
-/// the rename. New callers should use `build_w8_lut`.
-#[doc(hidden)]
-pub fn build_w8_lut_runtime<F: ActivationFn>() -> [u8; 256] {
-    build_w8_lut::<F>()
-}

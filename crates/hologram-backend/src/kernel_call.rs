@@ -142,6 +142,31 @@ pub struct WhereCall {
     pub dtype: u8,
 }
 
+/// Dequantize kernel payload (spec X-5). Reads `element_count` quantized
+/// values from `input` (interpreted per `quant_dtype` — `DTYPE_I8` or
+/// `DTYPE_I4`), applies `output = (q − zero_point) · scale`, and writes
+/// the result into `output` at `dtype` (typically `DTYPE_F32` or
+/// `DTYPE_BF16`).
+///
+/// `scale_bits` and `zero_point` are passed by value rather than via a
+/// separate buffer since they are per-tensor scalars resolved at compile
+/// time. Per-channel quantization (one scale per output channel) is left
+/// for a future fused matmul-with-dequant kernel.
+#[derive(Debug, Clone, Copy)]
+pub struct DequantizeCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub element_count: u32,
+    /// Source quantized dtype: `DTYPE_I8` or `DTYPE_I4`.
+    pub quant_dtype: u8,
+    /// Destination float dtype: `DTYPE_F32`, `DTYPE_BF16`, etc.
+    pub dtype: u8,
+    /// `f32::to_bits` of the per-tensor scale.
+    pub scale_bits: u32,
+    /// Symmetric zero-point (i32, conventional INT8/INT4 range).
+    pub zero_point: i32,
+}
+
 /// Closed kernel-call surface. One variant per OpKind.
 #[derive(Debug, Clone, Copy)]
 pub enum KernelCall {
@@ -212,4 +237,7 @@ pub enum KernelCall {
     AttentionGrad(AttentionCall),
     FusedSwiGluGrad(MatMulCall),
     UnaryGrad(UnaryCall),
+
+    // Quantization (spec X-5)
+    Dequantize(DequantizeCall),
 }

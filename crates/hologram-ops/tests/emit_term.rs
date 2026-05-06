@@ -125,7 +125,9 @@ fn norm_emit_is_well_formed() {
     type Op = LayerNormOp<S, DTypeF32, HologramHostBoundsCpu>;
     let mut arena: TermArena<128> = TermArena::new();
     let v0 = arena.push(Term::Variable { name_index: 0 }).unwrap();
-    Op::emit_term(&mut arena, WittLevel::W8, v0).unwrap();
+    let v1 = arena.push(Term::Variable { name_index: 1 }).unwrap();
+    let v2 = arena.push(Term::Variable { name_index: 2 }).unwrap();
+    Op::emit_term(&mut arena, WittLevel::W8, v0, v1, v2).unwrap();
     assert_closed_under_primitives(&arena);
 }
 

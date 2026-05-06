@@ -14,15 +14,33 @@ pub const DTYPE_F16:  u8 = 6;
 pub const DTYPE_BF16: u8 = 7;
 pub const DTYPE_F32:  u8 = 8;
 pub const DTYPE_F64:  u8 = 9;
+/// Packed signed 4-bit integer (two values per byte). Used by quantized
+/// weight payloads — see spec X-5 / ADR-054 Quantization addendum.
+/// `bytes_per_element` returns the integer 0; ceil-division by 2 is
+/// applied at the kernel boundary. The compiler treats the storage
+/// length explicitly to avoid the 0-bytes-per-element pitfall.
+pub const DTYPE_I4:   u8 = 10;
 
-/// Bytes per element for a given dtype tag.
+/// Bytes per element for a given dtype tag. Sub-byte dtypes
+/// (`DTYPE_I4`) report `0`; callers compute storage size as
+/// `(element_count + 1) / 2` for I4.
 pub const fn bytes_per_element(dtype: u8) -> usize {
     match dtype {
         DTYPE_BOOL | DTYPE_U8 | DTYPE_I8 => 1,
         DTYPE_F16 | DTYPE_BF16 => 2,
         DTYPE_I32 | DTYPE_F32 => 4,
         DTYPE_U64 | DTYPE_I64 | DTYPE_F64 => 8,
+        DTYPE_I4 => 0, // sub-byte; storage = ceil(n/2)
         _ => 1,
+    }
+}
+
+/// Storage bytes for an `n`-element buffer of the given dtype, accounting
+/// for sub-byte packing (I4 → ceil(n/2)).
+pub const fn storage_bytes(dtype: u8, element_count: u32) -> u32 {
+    match dtype {
+        DTYPE_I4 => element_count.div_ceil(2),
+        _ => element_count * (bytes_per_element(dtype) as u32),
     }
 }
 

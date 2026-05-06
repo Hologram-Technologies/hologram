@@ -13,6 +13,7 @@
 
 pub mod kind;
 pub mod emit;
+pub mod dispatch;
 pub mod reference;
 pub mod lut;
 pub mod activations;
@@ -31,6 +32,8 @@ pub mod pooling;
 pub mod structured;
 pub mod utility;
 pub mod backward;
+pub mod quantization;
 
 pub use kind::OpKind;
+pub use dispatch::emit_op_term;
 pub use reference::{ReferenceEvaluator, EvalError, ScalarEvaluatorU64};

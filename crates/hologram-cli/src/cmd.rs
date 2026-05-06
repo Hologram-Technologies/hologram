@@ -40,6 +40,14 @@ pub enum Command {
         #[arg(long)]
         archive: std::path::PathBuf,
     },
+    /// Micro-bench: run an archive `iterations` times against zero inputs and
+    /// report wall-clock per iteration. Useful for quick A/B comparisons.
+    Bench {
+        #[arg(long)]
+        archive: std::path::PathBuf,
+        #[arg(long, default_value_t = 100)]
+        iterations: u32,
+    },
 }
 
 pub fn run(cli: Cli) -> Result<(), CompileError> {
@@ -93,9 +101,49 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
                 .map_err(CompileError::Archive)?
                 .into_plan()
                 .map_err(CompileError::Archive)?;
+            println!("archive: {} bytes", bytes.len());
             for s in plan.sections() {
-                println!("section {:?} @ {} ({} bytes)", s.kind, s.offset, s.length);
+                println!("  section {:?} @ {} ({} bytes)", s.kind, s.offset, s.length);
             }
+            // Decode + show kernel-call and exec-plan structure.
+            if let Ok(calls_section) = plan.section(hologram_archive::format::SectionKind::KernelCalls) {
+                if let Ok(calls) = hologram_archive::decoder::decode_calls(calls_section) {
+                    println!("kernel_calls: {}", calls.len());
+                }
+            }
+            if let Ok(exec_section) = plan.section(hologram_archive::format::SectionKind::ExecPlan) {
+                if let Ok(plan) = hologram_archive::decode_exec_plan(exec_section) {
+                    println!("exec_plan: {} levels, max_width={}",
+                        plan.len(), plan.iter().map(|l| l.len()).max().unwrap_or(0));
+                }
+            }
+            Ok(())
+        }
+        Command::Bench { archive, iterations } => {
+            let bytes = std::fs::read(&archive)
+                .map_err(|_| CompileError::SourceParse("read archive"))?;
+            let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
+                hologram_backend::CpuBackend::new();
+            let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
+                .map_err(|_| CompileError::SourceParse("load archive"))?;
+            let zeros = vec![0u8; 4096];
+            let inputs: Vec<hologram_exec::InputBuffer> = (0..session.input_count())
+                .map(|_| hologram_exec::InputBuffer { bytes: &zeros })
+                .collect();
+            // Warmup.
+            let _ = session.execute(&inputs);
+            let start = std::time::Instant::now();
+            for _ in 0..iterations {
+                session.execute(&inputs)
+                    .map_err(|_| CompileError::SourceParse("execute"))?;
+            }
+            let elapsed = start.elapsed();
+            let per = elapsed / iterations.max(1);
+            println!(
+                "bench: {} iterations in {:?} ({:?}/iter, {} kernel calls, {} schedule levels)",
+                iterations, elapsed, per,
+                session.kernel_count(), session.schedule_levels(),
+            );
             Ok(())
         }
     }

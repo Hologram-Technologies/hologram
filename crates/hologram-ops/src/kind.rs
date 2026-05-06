@@ -48,6 +48,9 @@ pub enum OpKind {
     // Utility
     Pad, Expand, Resize, CumSum, RotaryEmbedding, Clip, Lrn, Where,
 
+    // Quantization (spec X-5)
+    Dequantize,
+
     // Backward variants (spec V.4) — one per differentiable op.
     MatMulGradA, MatMulGradB,
     Conv2dGradX, Conv2dGradW,
@@ -100,6 +103,7 @@ impl OpKind {
             Pad => "pad", Expand => "expand", Resize => "resize",
             CumSum => "cumsum", RotaryEmbedding => "rotary_embedding",
             Clip => "clip", Lrn => "lrn", Where => "where",
+            Dequantize => "dequantize",
             MatMulGradA => "matmul_grad_a", MatMulGradB => "matmul_grad_b",
             Conv2dGradX => "conv2d_grad_x", Conv2dGradW => "conv2d_grad_w",
             SoftmaxGrad => "softmax_grad", LogSoftmaxGrad => "log_softmax_grad",
@@ -181,6 +185,7 @@ impl OpKind {
 
             K::Clip => P::And,
             K::Where => P::Or,
+            K::Dequantize => P::Mul,
 
             // Layout (no-compute) — anchor at the identity-equivalent And.
             K::Reshape | K::Transpose | K::Concat | K::Slice
@@ -194,6 +199,104 @@ impl OpKind {
                 | K::AttentionGrad | K::FusedSwiGluGrad | K::UnaryGrad => P::Mul,
             K::LogSoftmaxGrad | K::SubGrad => P::Sub,
             K::MinGrad | K::MaxGrad => P::And,
+        }
+    }
+
+    /// The corresponding gradient `OpKind` for this forward op (spec V.4 /
+    /// ADR-043). Returns `None` if the op is non-differentiable, or if its
+    /// gradient is the identity (Add / Sub / direct PrimitiveOp wrappers /
+    /// layout ops where the dual is itself a layout op).
+    pub const fn primary_grad(self) -> Option<OpKind> {
+        use OpKind as K;
+        match self {
+            K::MatMul         => Some(K::MatMulGradA),
+            K::Conv2d         => Some(K::Conv2dGradX),
+            K::Softmax        => Some(K::SoftmaxGrad),
+            K::LogSoftmax     => Some(K::LogSoftmaxGrad),
+            K::LayerNorm      => Some(K::LayerNormGrad),
+            K::RmsNorm        => Some(K::RmsNormGrad),
+            K::GroupNorm      => Some(K::GroupNormGrad),
+            K::ReduceSum      => Some(K::ReduceSumGrad),
+            K::ReduceMean     => Some(K::ReduceMeanGrad),
+            K::ReduceProd     => Some(K::ReduceProdGrad),
+            K::Sub            => Some(K::SubGrad),
+            K::Mul            => Some(K::MulGrad),
+            K::Div            => Some(K::DivGrad),
+            K::Pow            => Some(K::PowGrad),
+            K::Min            => Some(K::MinGrad),
+            K::Max            => Some(K::MaxGrad),
+            K::Concat         => Some(K::ConcatGrad),
+            K::Slice          => Some(K::SliceGrad),
+            K::AvgPool2d      => Some(K::AvgPool2dGrad),
+            K::GlobalAvgPool  => Some(K::GlobalAvgPoolGrad),
+            K::Pad            => Some(K::PadGrad),
+            K::Attention      => Some(K::AttentionGrad),
+            K::FusedSwiGlu    => Some(K::FusedSwiGluGrad),
+            // All elementwise unary activations share UnaryGrad.
+            K::Relu | K::Sigmoid | K::Tanh | K::Gelu | K::Silu | K::Elu | K::Selu
+                | K::Exp | K::Log | K::Log1p | K::Sqrt | K::Reciprocal
+                | K::Sin | K::Cos | K::Tan | K::Asin | K::Acos | K::Atan
+                | K::Ceil | K::Floor | K::Round | K::Erf
+                | K::IsNaN | K::Sign | K::Abs => Some(K::UnaryGrad),
+            // Identity / non-differentiable.
+            _ => None,
+        }
+    }
+
+    /// Maximum Term-arena slot count this op's `emit_term` may occupy
+    /// (spec V.5). The compiler-side arena is sized at the maximum CAP
+    /// across the catalog (currently 96 for `Attention`); this function
+    /// exposes the per-op upper bound for verification tests
+    /// (`tests/dispatch_coverage.rs`).
+    pub const fn cap(self) -> usize {
+        use OpKind as K;
+        match self {
+            K::Neg | K::Bnot | K::Succ | K::Pred
+                | K::Add | K::Sub | K::Mul | K::Xor | K::And | K::Or => 4,
+
+            K::Reshape | K::Transpose | K::Concat | K::Slice
+                | K::Pad | K::Expand => 2,
+
+            K::Equal | K::Less | K::LessOrEqual | K::Greater | K::GreaterOrEqual
+                | K::Mod | K::Min | K::Max | K::IsNaN | K::Sign | K::Abs => 16,
+
+            K::ReduceSum | K::ReduceMean | K::ReduceProd
+                | K::ReduceMin | K::ReduceMax
+                | K::ReduceSumGrad | K::ReduceMeanGrad | K::ReduceProdGrad
+                | K::SubGrad | K::MulGrad
+                | K::MinGrad | K::MaxGrad
+                | K::ConcatGrad | K::SliceGrad | K::PadGrad
+                | K::Clip | K::Where => 16,
+
+            K::Relu | K::Sigmoid | K::Tanh | K::Silu
+                | K::Elu | K::Selu
+                | K::Ceil | K::Floor | K::Round
+                | K::Softmax | K::LogSoftmax
+                | K::SoftmaxGrad | K::LogSoftmaxGrad
+                | K::MaxPool2d | K::AvgPool2d | K::GlobalAvgPool
+                | K::AvgPool2dGrad | K::GlobalAvgPoolGrad
+                | K::CumSum | K::Resize
+                | K::Div
+                | K::MatMul | K::Gemm
+                | K::MatMulGradA | K::MatMulGradB
+                | K::UnaryGrad | K::DivGrad => 32,
+
+            K::Gelu
+                | K::Exp | K::Log | K::Log1p | K::Sqrt | K::Reciprocal
+                | K::Sin | K::Cos | K::Tan | K::Asin | K::Acos | K::Atan
+                | K::Erf
+                | K::Pow | K::PowGrad
+                | K::Conv2d | K::ConvTranspose2d
+                | K::Conv2dGradX | K::Conv2dGradW
+                | K::LayerNorm | K::RmsNorm | K::GroupNorm
+                | K::InstanceNorm | K::AddRmsNorm
+                | K::LayerNormGrad | K::RmsNormGrad | K::GroupNormGrad
+                | K::FusedSwiGlu | K::FusedSwiGluGrad
+                | K::Lrn | K::RotaryEmbedding => 64,
+
+            K::Attention | K::AttentionGrad => 96,
+
+            K::Dequantize => 8,
         }
     }
 
@@ -216,7 +319,8 @@ impl OpKind {
                 | K::SoftmaxGrad | K::LogSoftmaxGrad
                 | K::ReduceSumGrad | K::ReduceMeanGrad | K::ReduceProdGrad
                 | K::AvgPool2dGrad | K::GlobalAvgPoolGrad
-                | K::SliceGrad | K::PadGrad | K::UnaryGrad => 1,
+                | K::SliceGrad | K::PadGrad | K::UnaryGrad
+                | K::Dequantize => 1,
 
             // Binary forms.
             K::Add | K::Sub | K::Mul | K::Xor | K::And | K::Or

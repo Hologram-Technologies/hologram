@@ -4,7 +4,7 @@ use hologram_backend::{
     KernelCall, BufferRef,
     UnaryCall, BinaryCall, MatMulCall, GemmCall, Conv2dCall,
     NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall,
+    AttentionCall, WhereCall, DequantizeCall,
 };
 use crate::error::ArchiveError;
 
@@ -168,6 +168,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         102 => K::AttentionGrad(read_attn(cur)?),
         103 => K::FusedSwiGluGrad(read_matmul(cur)?),
         104 => K::UnaryGrad(read_unary(cur)?),
+        105 => K::Dequantize(read_dequantize(cur)?),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })
 }
@@ -255,5 +256,13 @@ fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
     Ok(WhereCall {
         cond: c.buf()?, a: c.buf()?, b: c.buf()?, output: c.buf()?,
         element_count: c.u32()?, dtype: c.u8()?,
+    })
+}
+fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
+    Ok(DequantizeCall {
+        input: c.buf()?, output: c.buf()?,
+        element_count: c.u32()?,
+        quant_dtype: c.u8()?, dtype: c.u8()?,
+        scale_bits: c.u32()?, zero_point: c.u32()? as i32,
     })
 }
