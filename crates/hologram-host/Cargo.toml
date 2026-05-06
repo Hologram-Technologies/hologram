@@ -1,0 +1,18 @@
+[package]
+name = "hologram-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Hologram substitution-axis impls (HostTypes / HostBounds / Hasher) per backend."
+
+[dependencies]
+uor-foundation = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+blake3 = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+std = ["blake3/std"]

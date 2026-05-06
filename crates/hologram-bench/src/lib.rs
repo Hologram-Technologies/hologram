@@ -1,1 +1,1 @@
-//! Criterion benchmarks for hologram.
+//! Hologram benchmarks support library. Bench binaries live in `benches/`.

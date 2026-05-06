@@ -3,32 +3,24 @@ name = "hologram-exec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "KV-lookup execution engine with parallel level scheduling"
+authors.workspace = true
+description = "Hologram runtime executor: InferenceSession + Executor + BufferArena."
 
 [dependencies]
-hologram-core = { workspace = true }
-hologram-graph = { workspace = true }
-hologram-ops = { workspace = true }
-hologram-backend = { path = "../hologram-backend" }
-hologram-shape = { path = "../hologram-shape" }
-hologram-ring = { workspace = true, features = ["std"] }
+hologram-host    = { workspace = true }
+hologram-backend = { workspace = true }
 hologram-archive = { workspace = true }
-rkyv = { workspace = true }
-bytemuck = { workspace = true }
-smallvec = { workspace = true }
-tracing = "0.1"
-parking_lot = { workspace = true }
+hologram-graph   = { workspace = true }
+thiserror        = { workspace = true }
+parking_lot      = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true, optional = true }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[dependencies.rayon]
-workspace = true
-optional = true
+[dev-dependencies]
+hologram-compiler = { workspace = true }
+hologram-graph    = { workspace = true }
+uor-foundation    = { workspace = true }
 
 [features]
-default = ["std"]
-std = ["hologram-archive/std"]
-parallel = ["rayon"]
-accelerate = []
-profile = []
+default = []
+async = ["dep:tokio"]

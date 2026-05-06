@@ -1,143 +1,59 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [
+    "crates/hologram-host",
+    "crates/hologram-types",
+    "crates/hologram-ops",
+    "crates/hologram-graph",
+    "crates/hologram-compiler",
+    "crates/hologram-exec",
+    "crates/hologram-backend",
+    "crates/hologram-archive",
+    "crates/hologram-cli",
+    "crates/hologram-ffi",
+    "crates/hologram-bench",
+]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 
 [workspace.dependencies]
-# Internal crates
-hologram-core = { path = "crates/hologram-core", default-features = false }
-hologram-graph = { path = "crates/hologram-graph" }
-hologram-archive = { path = "crates/hologram-archive" }
-hologram-exec = { path = "crates/hologram-exec" }
-hologram-backend = { path = "crates/hologram-backend" }
+hologram-host     = { path = "crates/hologram-host", default-features = false }
+hologram-types    = { path = "crates/hologram-types", default-features = false }
+hologram-ops      = { path = "crates/hologram-ops", default-features = false }
+hologram-graph    = { path = "crates/hologram-graph", default-features = false }
 hologram-compiler = { path = "crates/hologram-compiler" }
-hologram-async = { path = "crates/hologram-async" }
-hologram-cli = { path = "crates/hologram-cli" }
-hologram-ffi = { path = "crates/hologram-ffi" }
-# Cascade
-hologram-cascade = { path = "crates/hologram-cascade" }
-# Compression
-hologram-compression = { path = "crates/hologram-compression" }
-# LUT-addressed transformation / mutation chains (ADR-043)
-hologram-transform = { path = "crates/hologram-transform" }
-hologram-ops = { path = "crates/hologram-ops" }
+hologram-exec     = { path = "crates/hologram-exec" }
+hologram-backend  = { path = "crates/hologram-backend" }
+hologram-archive  = { path = "crates/hologram-archive" }
 
-# Ring foundation (parametric ring algebra)
-hologram-ring = { path = "crates/hologram-ring", default-features = false }
+uor-foundation = "0.3.1"
 
-
-
-# UOR Foundation
-uor-foundation = "0.1.4"
-
-# Serialization (rkyv only)
-rkyv = { version = "0.8", features = ["tinyvec-1"] }
-bytemuck = { version = "1.14", features = ["derive"] }
-
-# Parallelism
-rayon = "1.8"
+blake3      = { version = "1.5", default-features = false }
+rkyv        = { version = "0.8", features = ["tinyvec-1"] }
+bytemuck    = { version = "1.14", features = ["derive"] }
+smallvec    = "1.13"
+tinyvec     = "1.6"
+rayon       = "1.8"
 parking_lot = "0.12"
-
-# Archive support
-memmap2 = "0.9"
-blake3 = "1"
-
-# Data structures
-smallvec = "1.13"
-tinyvec = { version = "1.10", features = ["alloc"] }
-
-# Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
-clap = { version = "4", features = ["derive"] }
-
-# Serialization / config
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-
-# Math (no_std transcendental functions)
-libm = "0.2"
-
-# Benchmarking
-criterion = "0.5"
-
-# FFI
-wasm-bindgen = "0.2"
-
-# GPU (optional)
-wgpu = "23"
-pollster = "0.4"
-
-
-[package]
-name = "hologram"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "O(1) compute acceleration via pre-computed lookup tables"
-
-[[bin]]
-name = "hologram"
-path = "src/main.rs"
-required-features = ["cli"]
-
-[[test]]
-name = "e2e"
-required-features = ["ffi"]
-
-[dependencies]
-# Always included: core execution stack
-hologram-core = { workspace = true }
-hologram-graph = { workspace = true }
-hologram-archive = { workspace = true }
-hologram-exec = { workspace = true }
-hologram-backend = { workspace = true }
-hologram-ops = { workspace = true }
-rkyv = { workspace = true }
-bytemuck = { workspace = true }
-serde = { workspace = true, optional = true }
-toml = { workspace = true, optional = true }
-
-# Optional: compilation pipeline
-hologram-compiler = { workspace = true, optional = true }
-
-# Optional: async execution wrappers (requires tokio)
-hologram-async = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-
-# Optional: C ABI + WASM bindings
-hologram-ffi = { workspace = true, optional = true }
-
-# Optional: command-line interface
-hologram-cli = { workspace = true, optional = true }
-
-[features]
-default = ["std", "simd", "parallel", "compiler", "accelerate"]
-full = ["default", "async", "ffi", "cli"]
-
-std = ["hologram-core/std", "hologram-exec/std"]
-simd = ["hologram-core/simd"]
-parallel = ["hologram-exec/parallel", "hologram-graph/parallel", "hologram-archive/parallel", "hologram-compiler?/parallel"]
-accelerate = ["hologram-exec/accelerate"]
-profile = ["hologram-exec/profile"]
-
-compiler = ["dep:hologram-compiler"]
-async = ["dep:hologram-async", "dep:tokio"]
-ffi = ["dep:hologram-ffi"]
-cli = ["dep:hologram-cli", "dep:tokio", "dep:serde", "dep:toml"]
-wasm = ["ffi", "hologram-ffi/wasm"]
-
-# Keep debug symbols but optimize enough for usable LLM inference (~10-50x faster).
-[profile.dev]
-opt-level = 2
+thiserror   = "2"
+clap        = { version = "4", features = ["derive"] }
+tokio       = { version = "1", features = ["rt-multi-thread", "macros"] }
+wgpu        = "24"
+pollster    = "0.4"
+criterion   = { version = "0.5", features = ["html_reports"] }
+libm        = "0.2"
+memmap2     = "0.9"
+tracing     = "0.1"
+hashbrown   = "0.15"
 
 [profile.release]
-opt-level = 3
-strip = true
 lto = true
 codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+debug = true

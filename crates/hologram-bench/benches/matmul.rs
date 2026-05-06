@@ -1,48 +1,89 @@
-//! Criterion benchmarks for float matmul across sizes.
+//! MatMul kernel benchmark (spec XII.4).
 //!
-//! Sweeps M×K×N to measure crossover points between micro-kernel,
-//! BLAS (Accelerate), and GPU (Metal) paths.
+//! Exercises the CPU matmul kernel at byte-domain (W8) and f32 widths.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hologram_exec::float_dispatch::dispatch_matmul;
+use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use hologram_backend::{
+    CpuBackend, Backend, KernelCall, BufferRef, MatMulCall, Workspace,
+};
+use hologram_backend::cpu::dtype::DTYPE_F32;
 
-fn bench_matmul_sizes(c: &mut Criterion) {
-    let mut group = c.benchmark_group("matmul_sweep");
-
-    // Common transformer sizes: (M, K, N)
-    // M = batch*seq (small for decode, large for prefill)
-    // K = hidden_dim, N = hidden_dim or vocab_size
-    let sizes: &[(usize, usize, usize)] = &[
-        (1, 64, 64),        // tiny
-        (1, 256, 256),      // small projection
-        (1, 2048, 2048),    // LLaMA decode step (single token)
-        (4, 2048, 2048),    // small batch decode
-        (32, 128, 128),     // attention Q@K^T (32 heads, seq=128)
-        (128, 2048, 2048),  // prefill projection
-        (1, 2048, 8192),    // FFN up-projection (decode)
-        (1, 4096, 4096),    // large decode (L2 stress)
-        (128, 4096, 11008), // LLaMA-2 7B FFN prefill (L2 stress)
-    ];
-
-    for &(m, k, n) in sizes {
-        let a_data: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.001).collect();
-        let b_data: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.001).collect();
-        let a_bytes: Vec<u8> = a_data.iter().flat_map(|v| v.to_le_bytes()).collect();
-        let b_bytes: Vec<u8> = b_data.iter().flat_map(|v| v.to_le_bytes()).collect();
-
-        group.bench_with_input(
-            BenchmarkId::new("dispatch_matmul", format!("{m}x{k}x{n}")),
-            &(m, k, n),
-            |bench, &(m, k, n)| {
-                bench.iter(|| {
-                    dispatch_matmul(black_box(&[&a_bytes[..], &b_bytes[..]]), m, k, n).unwrap()
-                });
-            },
-        );
+struct Ws { slots: Vec<Vec<u8>> }
+impl Workspace for Ws {
+    fn read(&self, b: BufferRef) -> &[u8] { &self.slots[b.slot as usize] }
+    fn write(&mut self, b: BufferRef) -> &mut [u8] {
+        let i = b.slot as usize;
+        let len = self.slots[i].len();
+        &mut self.slots[i][..len]
     }
-
-    group.finish();
 }
 
-criterion_group!(benches, bench_matmul_sizes);
+fn ref_buf(slot: u32) -> BufferRef { BufferRef { slot, offset: 0, length: 0 } }
+
+fn bench_matmul_w8_64(c: &mut Criterion) {
+    c.bench_function("matmul_w8_64x64x64", |b| {
+        let n = 64usize;
+        let mut ws = Ws { slots: vec![
+            vec![1u8; n * n], vec![1u8; n * n], vec![0u8; n * n],
+        ]};
+        let mut backend: CpuBackend<Ws> = CpuBackend::new();
+        let call = KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
+            m: 64, k: 64, n: 64, dtype: 0,
+        });
+        b.iter(|| {
+            backend.dispatch(black_box(&call), &mut ws).unwrap();
+        });
+    });
+}
+
+fn bench_matmul_f32_64(c: &mut Criterion) {
+    c.bench_function("matmul_f32_64x64x64", |bench| {
+        let n = 64usize;
+        let mut a_bytes = vec![0u8; n * n * 4];
+        let mut b_bytes = vec![0u8; n * n * 4];
+        for i in 0..n * n {
+            let v = ((i as f32) * 0.001).to_le_bytes();
+            a_bytes[i * 4..i * 4 + 4].copy_from_slice(&v);
+            b_bytes[i * 4..i * 4 + 4].copy_from_slice(&v);
+        }
+        let mut ws = Ws { slots: vec![
+            a_bytes, b_bytes, vec![0u8; n * n * 4],
+        ]};
+        let mut backend: CpuBackend<Ws> = CpuBackend::new();
+        let call = KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
+            m: 64, k: 64, n: 64, dtype: DTYPE_F32,
+        });
+        bench.iter(|| {
+            backend.dispatch(black_box(&call), &mut ws).unwrap();
+        });
+    });
+}
+
+fn bench_matmul_f32_128(c: &mut Criterion) {
+    c.bench_function("matmul_f32_128x128x128", |bench| {
+        let n = 128usize;
+        let mut a_bytes = vec![0u8; n * n * 4];
+        let mut b_bytes = vec![0u8; n * n * 4];
+        for i in 0..n * n {
+            let v = ((i as f32) * 0.001).to_le_bytes();
+            a_bytes[i * 4..i * 4 + 4].copy_from_slice(&v);
+            b_bytes[i * 4..i * 4 + 4].copy_from_slice(&v);
+        }
+        let mut ws = Ws { slots: vec![
+            a_bytes, b_bytes, vec![0u8; n * n * 4],
+        ]};
+        let mut backend: CpuBackend<Ws> = CpuBackend::new();
+        let call = KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
+            m: 128, k: 128, n: 128, dtype: DTYPE_F32,
+        });
+        bench.iter(|| {
+            backend.dispatch(black_box(&call), &mut ws).unwrap();
+        });
+    });
+}
+
+criterion_group!(benches, bench_matmul_w8_64, bench_matmul_f32_64, bench_matmul_f32_128);
 criterion_main!(benches);

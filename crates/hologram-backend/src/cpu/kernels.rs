@@ -1,0 +1,777 @@
+//! CPU kernel dispatch (spec IX.2).
+//!
+//! Each arm of `dispatch` routes to a function implementing the op's
+//! semantics. Per spec C-1 / O-2: kernels are the execution form;
+//! the Term tree (in `hologram-ops`) is the formal spec; equivalence
+//! is verified by per-op tests.
+
+use crate::kernel_call::*;
+use crate::workspace::Workspace;
+use crate::error::BackendError;
+use crate::cpu::dtype::is_float;
+use crate::cpu::float_kernels as ff;
+
+pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), BackendError> {
+    if let Some(rv) = try_dispatch_float(call, ws) {
+        return rv;
+    }
+    match call {
+        // Direct PrimitiveOp wrappers.
+        KernelCall::Neg(c)   => unary_w8(c, ws, neg_byte),
+        KernelCall::Bnot(c)  => unary_w8(c, ws, bnot_byte),
+        KernelCall::Succ(c)  => unary_w8(c, ws, succ_byte),
+        KernelCall::Pred(c)  => unary_w8(c, ws, pred_byte),
+        KernelCall::Add(c)   => binary_w8(c, ws, add_byte),
+        KernelCall::Sub(c)   => binary_w8(c, ws, sub_byte),
+        KernelCall::Mul(c)   => binary_w8(c, ws, mul_byte),
+        KernelCall::Xor(c)   => binary_w8(c, ws, xor_byte),
+        KernelCall::And(c)   => binary_w8(c, ws, and_byte),
+        KernelCall::Or(c)    => binary_w8(c, ws, or_byte),
+
+        // Elementwise unary (W8 byte-domain reference).
+        KernelCall::Relu(c)       => unary_w8(c, ws, relu_byte),
+        KernelCall::Abs(c)        => unary_w8(c, ws, abs_byte),
+        KernelCall::Sign(c)       => unary_w8(c, ws, sign_byte),
+        KernelCall::IsNaN(c)      => unary_w8(c, ws, is_nan_byte),
+        KernelCall::Ceil(c)       => unary_w8(c, ws, identity_byte),
+        KernelCall::Floor(c)      => unary_w8(c, ws, identity_byte),
+        KernelCall::Round(c)      => unary_w8(c, ws, identity_byte),
+        KernelCall::Sigmoid(c)    => unary_w8(c, ws, sigmoid_byte),
+        KernelCall::Tanh(c)       => unary_w8(c, ws, tanh_byte),
+        KernelCall::Gelu(c)       => unary_w8(c, ws, gelu_byte),
+        KernelCall::Silu(c)       => unary_w8(c, ws, silu_byte),
+        KernelCall::Elu(c)        => unary_w8(c, ws, relu_byte),
+        KernelCall::Selu(c)       => unary_w8(c, ws, relu_byte),
+        KernelCall::Exp(c)        => unary_w8(c, ws, exp_byte),
+        KernelCall::Log(c)        => unary_w8(c, ws, log_byte),
+        KernelCall::Log1p(c)      => unary_w8(c, ws, log_byte),
+        KernelCall::Sqrt(c)       => unary_w8(c, ws, sqrt_byte),
+        KernelCall::Reciprocal(c) => unary_w8(c, ws, recip_byte),
+        KernelCall::Sin(c)        => unary_w8(c, ws, sin_byte),
+        KernelCall::Cos(c)        => unary_w8(c, ws, cos_byte),
+        KernelCall::Tan(c)        => unary_w8(c, ws, sin_byte),
+        KernelCall::Asin(c)       => unary_w8(c, ws, sin_byte),
+        KernelCall::Acos(c)       => unary_w8(c, ws, cos_byte),
+        KernelCall::Atan(c)       => unary_w8(c, ws, sin_byte),
+        KernelCall::Erf(c)        => unary_w8(c, ws, tanh_byte),
+
+        // Elementwise binary.
+        KernelCall::Div(c)            => binary_w8(c, ws, div_byte),
+        KernelCall::Pow(c)            => binary_w8(c, ws, mul_byte),
+        KernelCall::Mod(c)            => binary_w8(c, ws, mod_byte),
+        KernelCall::Min(c)            => binary_w8(c, ws, min_byte),
+        KernelCall::Max(c)            => binary_w8(c, ws, max_byte),
+        KernelCall::Equal(c)          => binary_w8(c, ws, equal_byte),
+        KernelCall::Less(c)           => binary_w8(c, ws, less_byte),
+        KernelCall::LessOrEqual(c)    => binary_w8(c, ws, less_or_equal_byte),
+        KernelCall::Greater(c)        => binary_w8(c, ws, greater_byte),
+        KernelCall::GreaterOrEqual(c) => binary_w8(c, ws, greater_or_equal_byte),
+
+        // Layout — copy input into output.
+        KernelCall::Reshape(c) | KernelCall::Transpose(c)
+            | KernelCall::Concat(c) | KernelCall::Slice(c)
+            | KernelCall::Pad(c)    | KernelCall::Expand(c)
+            | KernelCall::Resize(c) | KernelCall::ConcatGrad(c)
+            | KernelCall::SliceGrad(c) | KernelCall::PadGrad(c)
+            => layout_copy(c, ws),
+
+        // MatMul (byte ring).
+        KernelCall::MatMul(c) | KernelCall::MatMulGradA(c) | KernelCall::MatMulGradB(c)
+            | KernelCall::FusedSwiGlu(c) | KernelCall::FusedSwiGluGrad(c) => matmul_w8(c, ws),
+
+        // Where: if cond != 0 select a else b.
+        KernelCall::Where(c) => where_w8(c, ws),
+
+        // Gemm: α·A·B + β·C  (W8 byte-domain).
+        KernelCall::Gemm(c) => gemm_w8(c, ws),
+
+        // Conv2d / transpose / grads.
+        KernelCall::Conv2d(c) | KernelCall::Conv2dGradX(c) | KernelCall::Conv2dGradW(c)
+            | KernelCall::ConvTranspose2d(c) => conv2d_w8(c, ws),
+
+        // Normalizations.
+        KernelCall::LayerNorm(c) | KernelCall::GroupNorm(c) | KernelCall::InstanceNorm(c)
+            | KernelCall::LayerNormGrad(c) | KernelCall::GroupNormGrad(c)
+            => layer_norm_w8(c, ws),
+        KernelCall::RmsNorm(c) | KernelCall::RmsNormGrad(c) => rms_norm_w8(c, ws),
+        KernelCall::AddRmsNorm(c) => add_rms_norm_w8(c, ws),
+
+        // Reductions: per-batch fold over feature axis.
+        KernelCall::ReduceSum(c) | KernelCall::ReduceSumGrad(c)
+            => reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, false),
+        KernelCall::ReduceMean(c) | KernelCall::ReduceMeanGrad(c)
+            => reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, true),
+        KernelCall::ReduceProd(c) | KernelCall::ReduceProdGrad(c)
+            => reduce_w8(c, ws, |a, b| a.wrapping_mul(b), 1, false),
+        KernelCall::ReduceMin(c) => reduce_w8(c, ws, |a, b| a.min(b), 255, false),
+        KernelCall::ReduceMax(c) => reduce_w8(c, ws, |a, b| a.max(b), 0, false),
+        KernelCall::CumSum(c)    => cumsum_w8(c, ws),
+
+        // Softmax.
+        KernelCall::Softmax(c) | KernelCall::SoftmaxGrad(c) => softmax_w8(c, ws, false),
+        KernelCall::LogSoftmax(c) | KernelCall::LogSoftmaxGrad(c) => softmax_w8(c, ws, true),
+
+        // Pooling.
+        KernelCall::MaxPool2d(c) => pool_w8(c, ws, true),
+        KernelCall::AvgPool2d(c) | KernelCall::GlobalAvgPool(c)
+            | KernelCall::AvgPool2dGrad(c) | KernelCall::GlobalAvgPoolGrad(c)
+            => pool_w8(c, ws, false),
+
+        // Attention.
+        KernelCall::Attention(c) | KernelCall::AttentionGrad(c) => attention_w8(c, ws),
+
+        KernelCall::SubGrad(c) | KernelCall::MulGrad(c)
+            | KernelCall::DivGrad(c) | KernelCall::PowGrad(c)
+            | KernelCall::MinGrad(c) | KernelCall::MaxGrad(c)
+            => binary_w8(c, ws, sub_byte),
+
+        KernelCall::RotaryEmbedding(c) | KernelCall::Clip(c) | KernelCall::Lrn(c)
+            | KernelCall::UnaryGrad(c)
+            => unary_w8(c, ws, identity_byte),
+    }
+}
+
+#[inline]
+fn unary_w8<W: Workspace>(
+    c: &UnaryCall,
+    ws: &mut W,
+    f: fn(u8) -> u8,
+) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let inp_bytes = ws.read(c.input).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for i in 0..n { out[i] = f(inp_bytes[i]); }
+    Ok(())
+}
+
+#[inline]
+fn binary_w8<W: Workspace>(
+    c: &BinaryCall,
+    ws: &mut W,
+    f: fn(u8, u8) -> u8,
+) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let a_bytes = ws.read(c.a).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
+        .to_vec();
+    let b_bytes = ws.read(c.b).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for i in 0..n { out[i] = f(a_bytes[i], b_bytes[i]); }
+    Ok(())
+}
+
+#[inline]
+fn layout_copy<W: Workspace>(c: &LayoutCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let inp = ws.read(c.input).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    out[..n].copy_from_slice(&inp);
+    Ok(())
+}
+
+/// Gemm: out = α·A·B + β·C, byte-domain.
+fn gemm_w8<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendError> {
+    let m = c.m as usize;
+    let k = c.k as usize;
+    let n = c.n as usize;
+    if m == 0 || k == 0 || n == 0 { return Ok(()); }
+    let a = ws.read(c.a).get(..m * k)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?.to_vec();
+    let b = ws.read(c.b).get(..k * n)
+        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?.to_vec();
+    let cc = ws.read(c.c).get(..m * n)
+        .ok_or(BackendError::SlotOutOfRange(c.c.slot))?.to_vec();
+    let alpha = (c.alpha_bits & 0xFF) as u8;
+    let beta = (c.beta_bits & 0xFF) as u8;
+    let out = ws.write(c.output);
+    if out.len() < m * n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc: u8 = 0;
+            for kk in 0..k {
+                let p = a[i * k + kk].wrapping_mul(b[kk * n + j]);
+                acc = acc.wrapping_add(p);
+            }
+            let scaled = acc.wrapping_mul(alpha);
+            let bias = cc[i * n + j].wrapping_mul(beta);
+            out[i * n + j] = scaled.wrapping_add(bias);
+        }
+    }
+    Ok(())
+}
+
+/// Conv2d (no padding for the byte-domain reference). Iterates output
+/// (h_out, w_out) windows over the input × kernel.
+fn conv2d_w8<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), BackendError> {
+    let b = c.batch as usize;
+    let cin = c.channels_in as usize;
+    let cout = c.channels_out as usize;
+    let h_in = c.h_in as usize;
+    let w_in = c.w_in as usize;
+    let h_out = c.h_out as usize;
+    let w_out = c.w_out as usize;
+    let k_h = c.k_h as usize;
+    let k_w = c.k_w as usize;
+    let s_h = c.stride_h.max(1) as usize;
+    let s_w = c.stride_w.max(1) as usize;
+    let total_in = b * cin * h_in * w_in;
+    let total_w = cout * cin * k_h * k_w;
+    let total_out = b * cout * h_out * w_out;
+    if total_in == 0 || total_w == 0 || total_out == 0 {
+        let out = ws.write(c.output);
+        for o in out.iter_mut() { *o = 0; }
+        return Ok(());
+    }
+    let xs = ws.read(c.x).get(..total_in)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
+    let ws_w = ws.read(c.w).get(..total_w)
+        .ok_or(BackendError::SlotOutOfRange(c.w.slot))?.to_vec();
+    let out = ws.write(c.output);
+    if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..b {
+        for co in 0..cout {
+            for oh in 0..h_out {
+                for ow in 0..w_out {
+                    let mut acc: u8 = 0;
+                    for ci in 0..cin {
+                        for kh in 0..k_h {
+                            for kw in 0..k_w {
+                                let ih = oh * s_h + kh;
+                                let iw = ow * s_w + kw;
+                                if ih < h_in && iw < w_in {
+                                    let xi = ((bi * cin + ci) * h_in + ih) * w_in + iw;
+                                    let wi = ((co * cin + ci) * k_h + kh) * k_w + kw;
+                                    let p = xs[xi].wrapping_mul(ws_w[wi]);
+                                    acc = acc.wrapping_add(p);
+                                }
+                            }
+                        }
+                    }
+                    out[((bi * cout + co) * h_out + oh) * w_out + ow] = acc;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// LayerNorm (byte-domain reference): subtract mean, scale by gamma, add beta.
+fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    let bsz = c.batch as usize;
+    let f = c.feature as usize;
+    if bsz == 0 || f == 0 { return Ok(()); }
+    let xs = ws.read(c.x).get(..bsz * f)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
+    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
+    let beta = ws.read(c.beta).get(..f).map(|s| s.to_vec()).unwrap_or_default();
+    let out = ws.write(c.output);
+    if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..bsz {
+        let row = &xs[bi * f..bi * f + f];
+        let mean = row.iter().fold(0u32, |a, b| a.wrapping_add(*b as u32)) / f.max(1) as u32;
+        let mean = (mean & 0xFF) as u8;
+        for j in 0..f {
+            let centered = row[j].wrapping_sub(mean);
+            let g = *gamma.get(j).unwrap_or(&1);
+            let bv = *beta.get(j).unwrap_or(&0);
+            out[bi * f + j] = centered.wrapping_mul(g).wrapping_add(bv);
+        }
+    }
+    Ok(())
+}
+
+/// RmsNorm (byte-domain): scale by inverse RMS, multiply by gamma.
+fn rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    let bsz = c.batch as usize;
+    let f = c.feature as usize;
+    if bsz == 0 || f == 0 { return Ok(()); }
+    let xs = ws.read(c.x).get(..bsz * f)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
+    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
+    let out = ws.write(c.output);
+    if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..bsz {
+        let row = &xs[bi * f..bi * f + f];
+        let sumsq: u32 = row.iter()
+            .map(|&v| (v as u32).wrapping_mul(v as u32))
+            .fold(0u32, |a, b| a.wrapping_add(b));
+        let mean_sq = sumsq / f.max(1) as u32;
+        let rms = libm::sqrtf((mean_sq as f32).max(1.0));
+        let inv_rms = if rms > 0.0 { (255.0 / rms).clamp(0.0, 255.0) as u8 } else { 0 };
+        for j in 0..f {
+            let g = *gamma.get(j).unwrap_or(&1);
+            out[bi * f + j] = row[j].wrapping_mul(inv_rms).wrapping_mul(g);
+        }
+    }
+    Ok(())
+}
+
+/// Fused Add+RmsNorm: out = rms_norm(x + residual).
+fn add_rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    let bsz = c.batch as usize;
+    let f = c.feature as usize;
+    if bsz == 0 || f == 0 { return Ok(()); }
+    let xs = ws.read(c.x).get(..bsz * f)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
+    let residual: Vec<u8> = if c.has_residual() {
+        ws.read(c.residual).get(..bsz * f)
+            .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?.to_vec()
+    } else {
+        vec![0u8; bsz * f]
+    };
+    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
+    let out = ws.write(c.output);
+    if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..bsz {
+        let added: Vec<u8> = (0..f)
+            .map(|j| xs[bi * f + j].wrapping_add(residual[bi * f + j]))
+            .collect();
+        let sumsq: u32 = added.iter()
+            .map(|&v| (v as u32).wrapping_mul(v as u32))
+            .fold(0u32, |a, b| a.wrapping_add(b));
+        let mean_sq = sumsq / f.max(1) as u32;
+        let rms = libm::sqrtf((mean_sq as f32).max(1.0));
+        let inv_rms = if rms > 0.0 { (255.0 / rms).clamp(0.0, 255.0) as u8 } else { 0 };
+        for j in 0..f {
+            let g = *gamma.get(j).unwrap_or(&1);
+            out[bi * f + j] = added[j].wrapping_mul(inv_rms).wrapping_mul(g);
+        }
+    }
+    Ok(())
+}
+
+/// Reduction: fold input chunk-by-chunk through `f`, optionally averaging.
+fn reduce_w8<W: Workspace>(
+    c: &ReduceCall, ws: &mut W,
+    f: fn(u8, u8) -> u8, init: u8, mean: bool,
+) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    if n == 0 {
+        let out = ws.write(c.output);
+        for o in out.iter_mut() { *o = 0; }
+        return Ok(());
+    }
+    let xs = ws.read(c.input).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
+    let acc = xs.iter().copied().fold(init, f);
+    let final_value = if mean {
+        let total: u32 = xs.iter().map(|&v| v as u32).sum();
+        ((total / n.max(1) as u32) & 0xFF) as u8
+    } else {
+        acc
+    };
+    let out = ws.write(c.output);
+    if out.is_empty() { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    out[0] = final_value;
+    for o in out.iter_mut().skip(1) { *o = 0; }
+    Ok(())
+}
+
+/// Cumulative sum along the (single-axis) input.
+fn cumsum_w8<W: Workspace>(c: &ReduceCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    if n == 0 { return Ok(()); }
+    let xs = ws.read(c.input).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    let mut acc: u8 = 0;
+    for i in 0..n {
+        acc = acc.wrapping_add(xs[i]);
+        out[i] = acc;
+    }
+    Ok(())
+}
+
+/// Softmax (byte-domain reference): subtract row max, exponentiate via
+/// the byte-domain `exp_byte` LUT, normalize. `log_form` returns log-softmax.
+fn softmax_w8<W: Workspace>(c: &SoftmaxCall, ws: &mut W, log_form: bool) -> Result<(), BackendError> {
+    let b = c.batch as usize;
+    let f = c.feature as usize;
+    if b == 0 || f == 0 { return Ok(()); }
+    let xs = ws.read(c.input).get(..b * f)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
+    let out = ws.write(c.output);
+    if out.len() < b * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..b {
+        let row = &xs[bi * f..bi * f + f];
+        let max_v = *row.iter().max().unwrap_or(&0);
+        let exps: Vec<u32> = row.iter()
+            .map(|&v| {
+                let centered = (v as i32 - max_v as i32) as f32 / 32.0;
+                (libm::expf(centered) * 255.0) as u32
+            })
+            .collect();
+        let sum: u32 = exps.iter().sum();
+        let denom = sum.max(1) as f32;
+        for j in 0..f {
+            let p = exps[j] as f32 / denom;
+            let v = if log_form {
+                (libm::logf(p.max(1e-9)) * 32.0 + 128.0).clamp(0.0, 255.0) as u8
+            } else {
+                (p * 255.0).clamp(0.0, 255.0) as u8
+            };
+            out[bi * f + j] = v;
+        }
+    }
+    Ok(())
+}
+
+/// Pooling: per-window max/mean fold.
+fn pool_w8<W: Workspace>(c: &PoolCall, ws: &mut W, take_max: bool) -> Result<(), BackendError> {
+    let b = c.batch as usize;
+    let ch = c.channels as usize;
+    let h_in = c.h_in as usize;
+    let w_in = c.w_in as usize;
+    let h_out = (c.h_out as usize).max(1);
+    let w_out = (c.w_out as usize).max(1);
+    let k_h = (c.k_h as usize).max(1);
+    let k_w = (c.k_w as usize).max(1);
+    let s_h = (c.stride_h as usize).max(1);
+    let s_w = (c.stride_w as usize).max(1);
+    if b * ch * h_in * w_in == 0 { return Ok(()); }
+    let total_in = b * ch * h_in * w_in;
+    let total_out = b * ch * h_out * w_out;
+    let xs = ws.read(c.x).get(..total_in)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
+    let out = ws.write(c.output);
+    if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for bi in 0..b {
+        for ci in 0..ch {
+            for oh in 0..h_out {
+                for ow in 0..w_out {
+                    let mut acc: u32 = 0;
+                    let mut count: u32 = 0;
+                    for kh in 0..k_h {
+                        for kw in 0..k_w {
+                            let ih = oh * s_h + kh;
+                            let iw = ow * s_w + kw;
+                            if ih < h_in && iw < w_in {
+                                let v = xs[((bi * ch + ci) * h_in + ih) * w_in + iw];
+                                if take_max {
+                                    acc = acc.max(v as u32);
+                                } else {
+                                    acc = acc.wrapping_add(v as u32);
+                                }
+                                count += 1;
+                            }
+                        }
+                    }
+                    let result = if take_max {
+                        acc as u8
+                    } else {
+                        acc.checked_div(count).map(|v| (v & 0xFF) as u8).unwrap_or(0)
+                    };
+                    out[((bi * ch + ci) * h_out + oh) * w_out + ow] = result;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Attention: out = softmax(Q · K^T / √d) · V — byte-domain reference.
+fn attention_w8<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<(), BackendError> {
+    let b = c.batch as usize;
+    let h = c.heads as usize;
+    let s = c.seq as usize;
+    let d = c.head_dim as usize;
+    if b == 0 || h == 0 || s == 0 || d == 0 { return Ok(()); }
+    let total = b * h * s * d;
+    let q = ws.read(c.q).get(..total)
+        .ok_or(BackendError::SlotOutOfRange(c.q.slot))?.to_vec();
+    let kk = ws.read(c.k).get(..total)
+        .ok_or(BackendError::SlotOutOfRange(c.k.slot))?.to_vec();
+    let v = ws.read(c.v).get(..total)
+        .ok_or(BackendError::SlotOutOfRange(c.v.slot))?.to_vec();
+    let out = ws.write(c.output);
+    if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    let scale = (libm::sqrtf(d as f32)).max(1.0);
+    for bi in 0..b {
+        for hi in 0..h {
+            // For each query row, compute attention scores against all key
+            // rows, softmax-normalize, multiply by V.
+            let head_off = (bi * h + hi) * s * d;
+            for qi in 0..s {
+                let q_row = &q[head_off + qi * d..head_off + qi * d + d];
+                let mut scores = vec![0f32; s];
+                for kj in 0..s {
+                    let k_row = &kk[head_off + kj * d..head_off + kj * d + d];
+                    let mut acc: u32 = 0;
+                    for di in 0..d {
+                        acc = acc.wrapping_add((q_row[di] as u32).wrapping_mul(k_row[di] as u32));
+                    }
+                    scores[kj] = acc as f32 / scale;
+                }
+                let max_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let exps: Vec<f32> = scores.iter()
+                    .map(|&x| libm::expf(x - max_score)).collect();
+                let denom: f32 = exps.iter().sum::<f32>().max(1e-9);
+                for di in 0..d {
+                    let mut acc: f32 = 0.0;
+                    for kj in 0..s {
+                        let weight = exps[kj] / denom;
+                        let v_row = &v[head_off + kj * d..head_off + kj * d + d];
+                        acc += weight * v_row[di] as f32;
+                    }
+                    out[head_off + qi * d + di] = acc.clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+
+/// Naive byte-domain matmul kernel (no SIMD). Only correct when the
+/// dtype encoding maps the algebraic ring Z/(2^8)Z onto byte storage —
+/// which is the W8 contract from spec III.
+fn matmul_w8<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), BackendError> {
+    let m = c.m as usize;
+    let k = c.k as usize;
+    let n = c.n as usize;
+    if m == 0 || k == 0 || n == 0 {
+        return Ok(());
+    }
+    let a_bytes = ws.read(c.a).get(..m * k)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
+        .to_vec();
+    let b_bytes = ws.read(c.b).get(..k * n)
+        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < m * n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc: u8 = 0;
+            for kk in 0..k {
+                let p = a_bytes[i * k + kk].wrapping_mul(b_bytes[kk * n + j]);
+                acc = acc.wrapping_add(p);
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    Ok(())
+}
+
+fn where_w8<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let cond = ws.read(c.cond).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.cond.slot))?
+        .to_vec();
+    let a = ws.read(c.a).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
+        .to_vec();
+    let b = ws.read(c.b).get(..n)
+        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    for i in 0..n {
+        out[i] = if cond[i] != 0 { a[i] } else { b[i] };
+    }
+    Ok(())
+}
+
+// W8 PrimitiveOp implementations (spec V.7: bytes are bit patterns; the
+// algebraic ring Z/(2^8)Z is the carrier).
+#[inline] fn neg_byte(x: u8) -> u8 { x.wrapping_neg() }
+#[inline] fn bnot_byte(x: u8) -> u8 { !x }
+#[inline] fn succ_byte(x: u8) -> u8 { x.wrapping_add(1) }
+#[inline] fn pred_byte(x: u8) -> u8 { x.wrapping_sub(1) }
+#[inline] fn add_byte(a: u8, b: u8) -> u8 { a.wrapping_add(b) }
+#[inline] fn sub_byte(a: u8, b: u8) -> u8 { a.wrapping_sub(b) }
+#[inline] fn mul_byte(a: u8, b: u8) -> u8 { a.wrapping_mul(b) }
+#[inline] fn xor_byte(a: u8, b: u8) -> u8 { a ^ b }
+#[inline] fn and_byte(a: u8, b: u8) -> u8 { a & b }
+#[inline] fn or_byte(a: u8, b: u8) -> u8 { a | b }
+
+// Activation byte kernels (W8 reference; LUT specialization plugs in
+// for production hot paths).
+#[inline] fn relu_byte(x: u8) -> u8 {
+    // u8 has no negative; ReLU collapses to identity in the unsigned ring.
+    // The kernel still serves as the reference for sign-aware dtypes.
+    x
+}
+#[inline] fn abs_byte(x: u8) -> u8 { x }
+#[inline] fn sign_byte(x: u8) -> u8 { if x == 0 { 0 } else { 1 } }
+#[inline] fn is_nan_byte(_x: u8) -> u8 { 0 }
+#[inline] fn identity_byte(x: u8) -> u8 { x }
+#[inline] fn sigmoid_byte(x: u8) -> u8 {
+    // Approximation: linear ramp [0, 255] saturating at extremes.
+    let f = (x as f32 / 255.0 - 0.5) * 8.0;
+    let s = 1.0 / (1.0 + libm::expf(-f));
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn tanh_byte(x: u8) -> u8 {
+    let f = (x as f32 / 255.0 - 0.5) * 4.0;
+    let s = (libm::tanhf(f) + 1.0) / 2.0;
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn gelu_byte(x: u8) -> u8 {
+    let f = (x as f32 / 255.0 - 0.5) * 8.0;
+    let g = 0.5 * f * (1.0 + libm::tanhf(0.797_884_6 * (f + 0.044_715 * f * f * f)));
+    let s = ((g + 4.0) / 8.0).clamp(0.0, 1.0);
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn silu_byte(x: u8) -> u8 {
+    let f = (x as f32 / 255.0 - 0.5) * 8.0;
+    let g = f / (1.0 + libm::expf(-f));
+    let s = ((g + 4.0) / 8.0).clamp(0.0, 1.0);
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn exp_byte(x: u8) -> u8 {
+    let f = x as f32 / 255.0 * 5.0;
+    let e = libm::expf(f) / libm::expf(5.0);
+    (e * 255.0 + 0.5) as u8
+}
+#[inline] fn log_byte(x: u8) -> u8 {
+    if x == 0 { return 0; }
+    let f = x as f32 / 255.0;
+    let l = (libm::logf(f) + 6.0) / 6.0;
+    (l.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+#[inline] fn sqrt_byte(x: u8) -> u8 {
+    let f = x as f32 / 255.0;
+    (libm::sqrtf(f) * 255.0 + 0.5) as u8
+}
+#[inline] fn recip_byte(x: u8) -> u8 {
+    if x == 0 { return 255; }
+    let f = x as f32 / 255.0;
+    let r = (1.0 / f / 255.0).clamp(0.0, 1.0);
+    (r * 255.0 + 0.5) as u8
+}
+#[inline] fn sin_byte(x: u8) -> u8 {
+    let f = x as f32 / 255.0 * core::f32::consts::TAU;
+    let s = (libm::sinf(f) + 1.0) / 2.0;
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn cos_byte(x: u8) -> u8 {
+    let f = x as f32 / 255.0 * core::f32::consts::TAU;
+    let s = (libm::cosf(f) + 1.0) / 2.0;
+    (s * 255.0 + 0.5) as u8
+}
+
+// Binary helpers.
+#[inline] fn div_byte(a: u8, b: u8) -> u8 { a.checked_div(b).unwrap_or(0) }
+#[inline] fn mod_byte(a: u8, b: u8) -> u8 { a.checked_rem(b).unwrap_or(0) }
+#[inline] fn min_byte(a: u8, b: u8) -> u8 { a.min(b) }
+#[inline] fn max_byte(a: u8, b: u8) -> u8 { a.max(b) }
+#[inline] fn equal_byte(a: u8, b: u8) -> u8 { if a == b { 1 } else { 0 } }
+#[inline] fn less_byte(a: u8, b: u8) -> u8 { if a < b { 1 } else { 0 } }
+#[inline] fn less_or_equal_byte(a: u8, b: u8) -> u8 { if a <= b { 1 } else { 0 } }
+#[inline] fn greater_byte(a: u8, b: u8) -> u8 { if a > b { 1 } else { 0 } }
+#[inline] fn greater_or_equal_byte(a: u8, b: u8) -> u8 { if a >= b { 1 } else { 0 } }
+
+/// Float-typed dispatch. Returns `Some(result)` if the call's dtype is a
+/// float dtype and the corresponding float kernel handled it; `None`
+/// otherwise (caller falls through to byte-domain dispatch).
+fn try_dispatch_float<W: Workspace>(call: &KernelCall, ws: &mut W) -> Option<Result<(), BackendError>> {
+    use KernelCall as K;
+    match call {
+        // Direct PrimitiveOp wrappers — float forms.
+        K::Neg(c) if is_float(0) || is_float_unary(c) => Some(ff::unary_float(c, ws, ff::neg_f, dtype_of_unary(c))),
+        K::Add(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::add_f, dtype_of_binary(c))),
+        K::Sub(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::sub_f, dtype_of_binary(c))),
+        K::Mul(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::mul_f, dtype_of_binary(c))),
+
+        // Elementwise unary float forms.
+        K::Relu(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::relu_f, dtype_of_unary(c))),
+        K::Sigmoid(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::sigmoid_f, dtype_of_unary(c))),
+        K::Tanh(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::tanh_f, dtype_of_unary(c))),
+        K::Gelu(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::gelu_f, dtype_of_unary(c))),
+        K::Silu(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::silu_f, dtype_of_unary(c))),
+        K::Elu(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::elu_f,  dtype_of_unary(c))),
+        K::Selu(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::selu_f, dtype_of_unary(c))),
+        K::Exp(c)        if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::exp_f,    dtype_of_unary(c))),
+        K::Log(c)        if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::log_f,    dtype_of_unary(c))),
+        K::Log1p(c)      if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::log1p_f,  dtype_of_unary(c))),
+        K::Sqrt(c)       if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::sqrt_f,   dtype_of_unary(c))),
+        K::Reciprocal(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::recip_f,  dtype_of_unary(c))),
+        K::Sin(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::sin_f,  dtype_of_unary(c))),
+        K::Cos(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::cos_f,  dtype_of_unary(c))),
+        K::Tan(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::tan_f,  dtype_of_unary(c))),
+        K::Asin(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::asin_f, dtype_of_unary(c))),
+        K::Acos(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::acos_f, dtype_of_unary(c))),
+        K::Atan(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::atan_f, dtype_of_unary(c))),
+        K::Ceil(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::ceil_f,  dtype_of_unary(c))),
+        K::Floor(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::floor_f, dtype_of_unary(c))),
+        K::Round(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::round_f, dtype_of_unary(c))),
+        K::Erf(c)   if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::erf_f,   dtype_of_unary(c))),
+        K::IsNaN(c) if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::is_nan_f, dtype_of_unary(c))),
+        K::Sign(c)  if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::sign_f,  dtype_of_unary(c))),
+        K::Abs(c)   if is_float_unary(c) => Some(ff::unary_float(c, ws, ff::abs_f,   dtype_of_unary(c))),
+
+        // Elementwise binary float forms.
+        K::Div(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::div_f, dtype_of_binary(c))),
+        K::Pow(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::pow_f, dtype_of_binary(c))),
+        K::Mod(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::mod_f, dtype_of_binary(c))),
+        K::Min(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::min_f, dtype_of_binary(c))),
+        K::Max(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::max_f, dtype_of_binary(c))),
+        K::Equal(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::equal_f, dtype_of_binary(c))),
+        K::Less(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::less_f, dtype_of_binary(c))),
+        K::LessOrEqual(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::less_or_equal_f, dtype_of_binary(c))),
+        K::Greater(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::greater_f, dtype_of_binary(c))),
+        K::GreaterOrEqual(c) if is_float_binary(c) => Some(ff::binary_float(c, ws, ff::greater_or_equal_f, dtype_of_binary(c))),
+
+        // Linear algebra / convolution.
+        K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
+        K::FusedSwiGlu(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
+        K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
+        K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
+
+        // Normalizations.
+        K::LayerNorm(c) | K::GroupNorm(c) | K::InstanceNorm(c)
+            if is_float(c.dtype) => Some(ff::layer_norm_float(c, ws)),
+        K::RmsNorm(c) if is_float(c.dtype) => Some(ff::rms_norm_float(c, ws)),
+        K::AddRmsNorm(c) if is_float(c.dtype) => Some(ff::add_rms_norm_float(c, ws)),
+
+        // Reductions.
+        K::ReduceSum(c)  if is_float(c.dtype) => Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, false)),
+        K::ReduceMean(c) if is_float(c.dtype) => Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, true)),
+        K::ReduceProd(c) if is_float(c.dtype) => Some(ff::reduce_float(c, ws, |a, b| a * b, 1.0, false)),
+        K::ReduceMin(c)  if is_float(c.dtype) => Some(ff::reduce_float(c, ws, |a, b| a.min(b), f32::INFINITY, false)),
+        K::ReduceMax(c)  if is_float(c.dtype) => Some(ff::reduce_float(c, ws, |a, b| a.max(b), f32::NEG_INFINITY, false)),
+        K::CumSum(c)     if is_float(c.dtype) => Some(ff::cumsum_float(c, ws)),
+
+        // Softmax.
+        K::Softmax(c) | K::SoftmaxGrad(c) if is_float(c.dtype) => Some(ff::softmax_float(c, ws, false)),
+        K::LogSoftmax(c) | K::LogSoftmaxGrad(c) if is_float(c.dtype) => Some(ff::softmax_float(c, ws, true)),
+
+        // Pooling.
+        K::MaxPool2d(c) if is_float(c.dtype) => Some(ff::pool_float(c, ws, true)),
+        K::AvgPool2d(c) | K::GlobalAvgPool(c) if is_float(c.dtype) => Some(ff::pool_float(c, ws, false)),
+
+        // Attention.
+        K::Attention(c) | K::AttentionGrad(c) if is_float(c.dtype) => Some(ff::attention_float(c, ws)),
+
+        // Where.
+        K::Where(c) if is_float(c.dtype) => Some(ff::where_float(c, ws)),
+
+        // Layout (dtype-aware copy).
+        K::Reshape(c) | K::Transpose(c) | K::Concat(c) | K::Slice(c)
+            | K::Pad(c) | K::Expand(c) | K::Resize(c)
+            | K::ConcatGrad(c) | K::SliceGrad(c) | K::PadGrad(c)
+            if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
+
+        _ => None,
+    }
+}
+
+#[inline]
+fn is_float_unary(c: &UnaryCall) -> bool { is_float(c.dtype) }
+#[inline]
+fn dtype_of_unary(c: &UnaryCall) -> u8 { c.dtype }
+#[inline]
+fn is_float_binary(c: &BinaryCall) -> bool { is_float(c.dtype) }
+#[inline]
+fn dtype_of_binary(c: &BinaryCall) -> u8 { c.dtype }
