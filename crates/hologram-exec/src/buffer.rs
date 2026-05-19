@@ -194,31 +194,26 @@ impl BufferArena {
         write: BufferRef,
     ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
         let (w_start, w_end) = self.buf_range(write)?;
-        let mut read_ranges = Vec::with_capacity(reads.len());
+        // SAFETY: each read range is disjoint from `[w_start, w_end)` by
+        // the explicit check below, and shared `&[u8]` aliasing among
+        // reads is permitted. The mutable write slice has unique access
+        // to its range. Lifetimes are tied to `&'a mut self`.
+        let base_const = self.storage.as_slice().as_ptr();
+        let base_mut = self.storage.as_mut_slice().as_mut_ptr();
+        let mut read_slices: Vec<&'a [u8]> = Vec::with_capacity(reads.len());
         for r in reads {
             let (rs, re) = self.buf_range(*r)?;
-            // Reject overlap with the write range.
             if rs < w_end && w_start < re {
                 return None;
             }
-            read_ranges.push((rs, re));
+            unsafe {
+                read_slices.push(core::slice::from_raw_parts(base_const.add(rs), re - rs));
+            }
         }
-        // SAFETY: All `read_ranges` are disjoint from `[w_start, w_end)`
-        // by the check above, and disjoint between themselves is fine
-        // since they're all `&[u8]` (shared aliasing is permitted). The
-        // mutable write slice has unique access to its range. Lifetimes
-        // are tied to `&'a mut self`.
-        unsafe {
-            let base_const = self.storage.as_slice().as_ptr();
-            let base_mut = self.storage.as_mut_slice().as_mut_ptr();
-            let read_slices: Vec<&'a [u8]> = read_ranges
-                .into_iter()
-                .map(|(s, e)| core::slice::from_raw_parts(base_const.add(s), e - s))
-                .collect();
-            let write_slice =
-                core::slice::from_raw_parts_mut(base_mut.add(w_start), w_end - w_start);
-            Some((read_slices, write_slice))
-        }
+        let write_slice = unsafe {
+            core::slice::from_raw_parts_mut(base_mut.add(w_start), w_end - w_start)
+        };
+        Some((read_slices, write_slice))
     }
 }
 

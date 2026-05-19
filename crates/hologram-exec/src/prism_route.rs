@@ -6,14 +6,26 @@
 //!
 //! `InferenceSession::execute_attested` wraps the same compute and
 //! additionally routes a `Grounded<Digest<32>>` attestation through
-//! `prism::pipeline::run` per wiki ADR-022 D5. The attestation is
-//! produced by the canonical prism reduction-stage sequence
-//! (preflight feasibility, budget solvency, package coherence,
-//! dispatch coverage, timing) and carries a content fingerprint over
-//! the session's compile unit. The compute happens in hologram's
-//! axis impls (see `hologram_backend::prism_axes`); the prism
-//! pipeline supplies the verification + sealing surface per the wiki
-//! cost-model commitment (TC-03).
+//! `prism::pipeline::run` per wiki ADR-022 D5. Two attestation
+//! surfaces are returned and serve distinct purposes:
+//!
+//! 1. `prism_attestation: Grounded<Digest<32>>` — prism's sealed
+//!    witness that the inference unit was admitted by the canonical
+//!    reduction-stage sequence (preflight feasibility, budget
+//!    solvency, package coherence, dispatch coverage, timing). Its
+//!    `content_fingerprint()` is folded over the unit's TYPE-SHAPE
+//!    (witt level, budget, result-type IRI, constraints) per the
+//!    prism API contract (`fold_unit_digest`); it is identical for
+//!    any two sessions with the same shape.
+//! 2. `archive_fingerprint: [u8; 32]` — hologram's canonical 32-byte
+//!    BLAKE3 footer fingerprint over the `.holo` archive's bytes
+//!    (spec X.1, routed through `prism::crypto::Blake3Hasher`). This
+//!    is the per-content anchor; it differs between any two distinct
+//!    archives.
+//!
+//! Consumers that need "this prism-admitted unit, of this content"
+//! pair the two — together they form hologram's TC-03 commitment
+//! (the wiki cost-model's content-anchored attestation).
 
 use prism::crypto::Digest;
 use prism::operation::Term;
@@ -31,10 +43,10 @@ use crate::error::ExecError;
 use crate::session::{InferenceSession, SessionBackend};
 
 /// Static root term consumed by `pipeline::run` — a single W32 literal.
-/// The actual compute happens in hologram's executor before
-/// `pipeline::run` is invoked; this static `Term` slice is the
-/// minimal-content carrier the prism pipeline requires to anchor a
-/// `CompileUnit` for content-fingerprint emission.
+/// Prism's `pipeline::run` folds only the unit's type-shape fields into
+/// the `Grounded` content fingerprint (witt + budget + IRI + constraints +
+/// kind); the root_term is structural metadata for resolvers, not digest
+/// input. The per-content anchor is `AttestedExecution::archive_fingerprint`.
 static ROUTE_TERMS: &[Term] = &[literal_u64(0, WittLevel::W32)];
 
 /// Static verification-domain set for the attestation unit. Hologram
@@ -42,15 +54,25 @@ static ROUTE_TERMS: &[Term] = &[literal_u64(0, WittLevel::W32)];
 /// fold-rule per ADR-050).
 static ROUTE_DOMAINS: &[VerificationDomain] = &[VerificationDomain::Algebraic];
 
-/// One execution's compute outputs paired with the
-/// `Grounded<Digest<32>>` attestation prism emits over the
-/// inference unit's compile-time content fingerprint.
+/// One execution's compute outputs paired with the two attestation
+/// surfaces: prism's sealed shape-witness and hologram's content anchor.
+/// Together they form the TC-03 content-anchored attestation per the
+/// wiki cost-model.
 pub struct AttestedExecution {
     /// The compute results — identical to what `execute()` returns.
     pub outputs: Vec<OutputBuffer>,
-    /// The prism-emitted attestation carrying the canonical content
-    /// fingerprint over the inference unit's `CompileUnit` shape.
-    pub attestation: Grounded<Digest<32>>,
+    /// Prism's sealed `Grounded<Digest<32>>` witness that the inference
+    /// unit was admitted by the canonical reduction-stage sequence. Its
+    /// `content_fingerprint()` is folded over the unit's TYPE-SHAPE
+    /// (witt + budget + result-type IRI + constraints); identical for
+    /// any two sessions with the same shape.
+    pub prism_attestation: Grounded<Digest<32>>,
+    /// Hologram's per-content anchor: the archive's canonical 32-byte
+    /// BLAKE3 footer fingerprint (spec X.1, computed via the prism
+    /// `Blake3Hasher`). Differs between any two distinct archives —
+    /// this is the field that anchors the attestation to "this
+    /// specific model" rather than "any model of this shape".
+    pub archive_fingerprint: [u8; 32],
 }
 
 impl<B: SessionBackend> InferenceSession<B> {
@@ -77,9 +99,10 @@ impl<B: SessionBackend> InferenceSession<B> {
         // output slots through the schedule walker).
         let outputs = self.execute(inputs)?;
 
-        // Build the attestation unit. Hologram's witt level is the
-        // backend's `WITT_LEVEL_MAX_BITS` ceiling; the budget is sized
-        // for one inference pass.
+        // Build the attestation unit. Witt-level ceiling = W32 (matches
+        // the route literal); thermodynamic budget is sized for one
+        // inference pass. Result type is hologram's canonical
+        // `Digest<32>` from `prism::crypto`.
         let unit = CompileUnitBuilder::new()
             .root_term(ROUTE_TERMS)
             .witt_level_ceiling(WittLevel::W32)
@@ -90,12 +113,22 @@ impl<B: SessionBackend> InferenceSession<B> {
             .map_err(|sv| ExecError::Pipeline(PipelineFailure::ShapeViolation { report: sv }))?;
 
         // Route through prism::pipeline::run. The reduction-stage
-        // sequence runs preflight checks + content-fingerprint
-        // emission; `Grounded<Digest<32>>` attests the unit's shape.
-        let attestation = prism_pipeline::run::<Digest<32>, _, HologramHasher>(unit)
+        // sequence runs preflight checks + emits a sealed
+        // `Grounded<Digest<32>>` whose `content_fingerprint()` is
+        // folded over the unit's TYPE-SHAPE (witt + budget + IRI +
+        // constraints) — identical for every session with the same
+        // shape, per prism's `fold_unit_digest` contract.
+        let prism_attestation = prism_pipeline::run::<Digest<32>, _, HologramHasher>(unit)
             .map_err(ExecError::Pipeline)?;
 
-        Ok(AttestedExecution { outputs, attestation })
+        // Pair the prism witness with hologram's per-content anchor.
+        // Consumers verify "this prism-admitted shape" AND "of this
+        // archive's content" together (TC-03).
+        Ok(AttestedExecution {
+            outputs,
+            prism_attestation,
+            archive_fingerprint: self.archive_fingerprint(),
+        })
     }
 }
 

@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
-use crate::node::{Node, NodeId, InputSource, QuantAttrs};
+use crate::node::{Node, NodeId, InputSource, QuantAttrs, ConvAttrs};
 use crate::constant::ConstantStore;
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
@@ -19,6 +19,11 @@ pub struct Graph {
     /// Sparse per-node quantization attributes (spec X-5). Keyed on
     /// `NodeId.0`. Empty for graphs with no quantized weights.
     quant_attrs: Vec<(NodeId, QuantAttrs)>,
+    /// Sparse per-node convolution attributes (stride/pad/dilation).
+    /// Empty for graphs whose conv nodes use the default
+    /// `(stride = 1, pad = 0)`. Same sparse-table layout as
+    /// `quant_attrs` so ordinary nodes pay no per-instance overhead.
+    conv_attrs: Vec<(NodeId, ConvAttrs)>,
 }
 
 impl Graph {
@@ -71,6 +76,23 @@ impl Graph {
     /// has no quantization metadata.
     pub fn quant_attrs(&self, id: NodeId) -> Option<QuantAttrs> {
         self.quant_attrs.iter().find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
+    /// Attach convolution attributes (stride/padding) to a node. Only
+    /// meaningful for `Conv2d` / `ConvTranspose2d` ops; other ops
+    /// ignore the entry.
+    pub fn set_conv_attrs(&mut self, id: NodeId, attrs: ConvAttrs) {
+        if let Some(slot) = self.conv_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.conv_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve convolution attributes for a node, or `None` if the node
+    /// uses defaults.
+    pub fn conv_attrs(&self, id: NodeId) -> Option<ConvAttrs> {
+        self.conv_attrs.iter().find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
     /// Topological-sort + level-grouping schedule construction.

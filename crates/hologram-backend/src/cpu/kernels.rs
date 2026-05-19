@@ -49,11 +49,11 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Reciprocal(c) => unary_w8(c, ws, recip_byte),
         KernelCall::Sin(c)        => unary_w8(c, ws, sin_byte),
         KernelCall::Cos(c)        => unary_w8(c, ws, cos_byte),
-        KernelCall::Tan(c)        => unary_w8(c, ws, sin_byte),
-        KernelCall::Asin(c)       => unary_w8(c, ws, sin_byte),
-        KernelCall::Acos(c)       => unary_w8(c, ws, cos_byte),
-        KernelCall::Atan(c)       => unary_w8(c, ws, sin_byte),
-        KernelCall::Erf(c)        => unary_w8(c, ws, tanh_byte),
+        KernelCall::Tan(c)        => unary_w8(c, ws, tan_byte),
+        KernelCall::Asin(c)       => unary_w8(c, ws, asin_byte),
+        KernelCall::Acos(c)       => unary_w8(c, ws, acos_byte),
+        KernelCall::Atan(c)       => unary_w8(c, ws, atan_byte),
+        KernelCall::Erf(c)        => unary_w8(c, ws, erf_byte),
 
         // Elementwise binary.
         KernelCall::Div(c)            => binary_w8(c, ws, div_byte),
@@ -241,15 +241,13 @@ fn gemm_w8<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendError> {
     let k = c.k as usize;
     let n = c.n as usize;
     if m == 0 || k == 0 || n == 0 { return Ok(()); }
-    let a = ws.read(c.a).get(..m * k)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?.to_vec();
-    let b = ws.read(c.b).get(..k * n)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?.to_vec();
-    let cc = ws.read(c.c).get(..m * n)
-        .ok_or(BackendError::SlotOutOfRange(c.c.slot))?.to_vec();
     let alpha = (c.alpha_bits & 0xFF) as u8;
     let beta = (c.beta_bits & 0xFF) as u8;
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.a, c.b, c.c], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let a = reads[0].get(..m * k).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[1].get(..k * n).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
+    let cc = reads[2].get(..m * n).ok_or(BackendError::SlotOutOfRange(c.c.slot))?;
     if out.len() < m * n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for i in 0..m {
         for j in 0..n {
@@ -283,16 +281,14 @@ fn conv2d_w8<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), BackendErro
     let total_in = b * cin * h_in * w_in;
     let total_w = cout * cin * k_h * k_w;
     let total_out = b * cout * h_out * w_out;
+    let (reads, out) = ws.split_borrow(&[c.x, c.w], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     if total_in == 0 || total_w == 0 || total_out == 0 {
-        let out = ws.write(c.output);
         for o in out.iter_mut() { *o = 0; }
         return Ok(());
     }
-    let xs = ws.read(c.x).get(..total_in)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
-    let ws_w = ws.read(c.w).get(..total_w)
-        .ok_or(BackendError::SlotOutOfRange(c.w.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let xs = reads[0].get(..total_in).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let ws_w = reads[1].get(..total_w).ok_or(BackendError::SlotOutOfRange(c.w.slot))?;
     if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..b {
         for co in 0..cout {
@@ -326,11 +322,11 @@ fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendEr
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 { return Ok(()); }
-    let xs = ws.read(c.x).get(..bsz * f)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
-    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
-    let beta = ws.read(c.beta).get(..f).map(|s| s.to_vec()).unwrap_or_default();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.x, c.gamma, c.beta], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..bsz * f).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..f).unwrap_or(&[]);
+    let beta = reads[2].get(..f).unwrap_or(&[]);
     if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
         let row = &xs[bi * f..bi * f + f];
@@ -351,10 +347,10 @@ fn rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendErro
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 { return Ok(()); }
-    let xs = ws.read(c.x).get(..bsz * f)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
-    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.x, c.gamma], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..bsz * f).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..f).unwrap_or(&[]);
     if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
         let row = &xs[bi * f..bi * f + f];
@@ -377,30 +373,35 @@ fn add_rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Backend
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 { return Ok(()); }
-    let xs = ws.read(c.x).get(..bsz * f)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
-    let residual: Vec<u8> = if c.has_residual() {
-        ws.read(c.residual).get(..bsz * f)
-            .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?.to_vec()
+    let has_residual = c.has_residual();
+    let (reads, out) = if has_residual {
+        ws.split_borrow(&[c.x, c.residual, c.gamma], c.output)
     } else {
-        vec![0u8; bsz * f]
-    };
-    let gamma = ws.read(c.gamma).get(..f).map(|s| s.to_vec()).unwrap_or_default();
-    let out = ws.write(c.output);
+        ws.split_borrow(&[c.x, c.gamma], c.output)
+    }.ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..bsz * f).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let residual: Option<&[u8]> = if has_residual {
+        Some(reads[1].get(..bsz * f).ok_or(BackendError::SlotOutOfRange(c.residual.slot))?)
+    } else { None };
+    let gamma_idx = if has_residual { 2 } else { 1 };
+    let gamma = reads[gamma_idx].get(..f).unwrap_or(&[]);
     if out.len() < bsz * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
-        let added: Vec<u8> = (0..f)
-            .map(|j| xs[bi * f + j].wrapping_add(residual[bi * f + j]))
-            .collect();
-        let sumsq: u32 = added.iter()
-            .map(|&v| (v as u32).wrapping_mul(v as u32))
-            .fold(0u32, |a, b| a.wrapping_add(b));
+        let row_off = bi * f;
+        let added_j = |j: usize| -> u8 {
+            xs[row_off + j].wrapping_add(residual.map(|r| r[row_off + j]).unwrap_or(0))
+        };
+        let mut sumsq: u32 = 0;
+        for j in 0..f {
+            let v = added_j(j) as u32;
+            sumsq = sumsq.wrapping_add(v.wrapping_mul(v));
+        }
         let mean_sq = sumsq / f.max(1) as u32;
         let rms = libm::sqrtf((mean_sq as f32).max(1.0));
         let inv_rms = if rms > 0.0 { (255.0 / rms).clamp(0.0, 255.0) as u8 } else { 0 };
         for j in 0..f {
             let g = *gamma.get(j).unwrap_or(&1);
-            out[bi * f + j] = added[j].wrapping_mul(inv_rms).wrapping_mul(g);
+            out[row_off + j] = added_j(j).wrapping_mul(inv_rms).wrapping_mul(g);
         }
     }
     Ok(())
@@ -412,13 +413,13 @@ fn reduce_w8<W: Workspace>(
     f: fn(u8, u8) -> u8, init: u8, mean: bool,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     if n == 0 {
-        let out = ws.write(c.output);
         for o in out.iter_mut() { *o = 0; }
         return Ok(());
     }
-    let xs = ws.read(c.input).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
+    let xs = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     let acc = xs.iter().copied().fold(init, f);
     let final_value = if mean {
         let total: u32 = xs.iter().map(|&v| v as u32).sum();
@@ -426,7 +427,6 @@ fn reduce_w8<W: Workspace>(
     } else {
         acc
     };
-    let out = ws.write(c.output);
     if out.is_empty() { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     out[0] = final_value;
     for o in out.iter_mut().skip(1) { *o = 0; }
@@ -437,9 +437,9 @@ fn reduce_w8<W: Workspace>(
 fn cumsum_w8<W: Workspace>(c: &ReduceCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     if n == 0 { return Ok(()); }
-    let xs = ws.read(c.input).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     let mut acc: u8 = 0;
     for i in 0..n {
@@ -455,9 +455,9 @@ fn softmax_w8<W: Workspace>(c: &SoftmaxCall, ws: &mut W, log_form: bool) -> Resu
     let b = c.batch as usize;
     let f = c.feature as usize;
     if b == 0 || f == 0 { return Ok(()); }
-    let xs = ws.read(c.input).get(..b * f)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..b * f).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < b * f { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..b {
         let row = &xs[bi * f..bi * f + f];
@@ -498,9 +498,9 @@ fn pool_w8<W: Workspace>(c: &PoolCall, ws: &mut W, take_max: bool) -> Result<(),
     if b * ch * h_in * w_in == 0 { return Ok(()); }
     let total_in = b * ch * h_in * w_in;
     let total_out = b * ch * h_out * w_out;
-    let xs = ws.read(c.x).get(..total_in)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.x], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total_in).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
     if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..b {
         for ci in 0..ch {
@@ -544,41 +544,42 @@ fn attention_w8<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<(), Backe
     let d = c.head_dim as usize;
     if b == 0 || h == 0 || s == 0 || d == 0 { return Ok(()); }
     let total = b * h * s * d;
-    let q = ws.read(c.q).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.q.slot))?.to_vec();
-    let kk = ws.read(c.k).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.k.slot))?.to_vec();
-    let v = ws.read(c.v).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.v.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.q, c.k, c.v], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let q = reads[0].get(..total).ok_or(BackendError::SlotOutOfRange(c.q.slot))?;
+    let kk = reads[1].get(..total).ok_or(BackendError::SlotOutOfRange(c.k.slot))?;
+    let v = reads[2].get(..total).ok_or(BackendError::SlotOutOfRange(c.v.slot))?;
     if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     let scale = (libm::sqrtf(d as f32)).max(1.0);
+    let mut scores: Vec<f32> = Vec::with_capacity(s);
     for bi in 0..b {
         for hi in 0..h {
-            // For each query row, compute attention scores against all key
-            // rows, softmax-normalize, multiply by V.
             let head_off = (bi * h + hi) * s * d;
             for qi in 0..s {
                 let q_row = &q[head_off + qi * d..head_off + qi * d + d];
-                let mut scores = vec![0f32; s];
+                scores.clear();
+                let mut max_score = f32::NEG_INFINITY;
                 for kj in 0..s {
                     let k_row = &kk[head_off + kj * d..head_off + kj * d + d];
                     let mut acc: u32 = 0;
                     for di in 0..d {
                         acc = acc.wrapping_add((q_row[di] as u32).wrapping_mul(k_row[di] as u32));
                     }
-                    scores[kj] = acc as f32 / scale;
+                    let sc = acc as f32 / scale;
+                    if sc > max_score { max_score = sc; }
+                    scores.push(sc);
                 }
-                let max_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                let exps: Vec<f32> = scores.iter()
-                    .map(|&x| libm::expf(x - max_score)).collect();
-                let denom: f32 = exps.iter().sum::<f32>().max(1e-9);
+                let mut sum = 0f32;
+                for sc in scores.iter_mut() {
+                    *sc = libm::expf(*sc - max_score);
+                    sum += *sc;
+                }
+                let denom = sum.max(1e-9);
                 for di in 0..d {
                     let mut acc: f32 = 0.0;
-                    for kj in 0..s {
-                        let weight = exps[kj] / denom;
+                    for (kj, &e) in scores.iter().enumerate() {
                         let v_row = &v[head_off + kj * d..head_off + kj * d + d];
-                        acc += weight * v_row[di] as f32;
+                        acc += (e / denom) * v_row[di] as f32;
                     }
                     out[head_off + qi * d + di] = acc.clamp(0.0, 255.0) as u8;
                 }
@@ -599,13 +600,10 @@ fn matmul_w8<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), BackendErro
     if m == 0 || k == 0 || n == 0 {
         return Ok(());
     }
-    let a_bytes = ws.read(c.a).get(..m * k)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b_bytes = ws.read(c.b).get(..k * n)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let a_bytes = reads[0].get(..m * k).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b_bytes = reads[1].get(..k * n).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < m * n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for i in 0..m {
         for j in 0..n {
@@ -622,16 +620,11 @@ fn matmul_w8<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), BackendErro
 
 fn where_w8<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let cond = ws.read(c.cond).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.cond.slot))?
-        .to_vec();
-    let a = ws.read(c.a).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b = ws.read(c.b).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.cond, c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let cond = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.cond.slot))?;
+    let a = reads[1].get(..n).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[2].get(..n).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for i in 0..n {
         out[i] = if cond[i] != 0 { a[i] } else { b[i] };
@@ -708,6 +701,7 @@ fn where_w8<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError>
     (r * 255.0 + 0.5) as u8
 }
 #[inline] fn sin_byte(x: u8) -> u8 {
+    // [0, 255] → [0, τ] → sin → [-1, 1] → [0, 1] → [0, 255].
     let f = x as f32 / 255.0 * core::f32::consts::TAU;
     let s = (libm::sinf(f) + 1.0) / 2.0;
     (s * 255.0 + 0.5) as u8
@@ -716,6 +710,38 @@ fn where_w8<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError>
     let f = x as f32 / 255.0 * core::f32::consts::TAU;
     let s = (libm::cosf(f) + 1.0) / 2.0;
     (s * 255.0 + 0.5) as u8
+}
+#[inline] fn tan_byte(x: u8) -> u8 {
+    // tan has poles at ±π/2; clamp the saturating result to keep the
+    // byte encoding well-defined across the full input domain.
+    let f = x as f32 / 255.0 * core::f32::consts::TAU;
+    let t = libm::tanf(f).clamp(-8.0, 8.0);
+    let s = (t / 16.0 + 0.5).clamp(0.0, 1.0);
+    (s * 255.0 + 0.5) as u8
+}
+#[inline] fn asin_byte(x: u8) -> u8 {
+    // [0, 255] → [-1, 1] → asin → [-π/2, π/2] → [0, 1] → [0, 255].
+    let f = (x as f32 / 127.5 - 1.0).clamp(-1.0, 1.0);
+    let s = libm::asinf(f) / core::f32::consts::PI + 0.5;
+    (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+#[inline] fn acos_byte(x: u8) -> u8 {
+    // [0, 255] → [-1, 1] → acos → [0, π] → [0, 1] → [0, 255].
+    let f = (x as f32 / 127.5 - 1.0).clamp(-1.0, 1.0);
+    let s = libm::acosf(f) / core::f32::consts::PI;
+    (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+#[inline] fn atan_byte(x: u8) -> u8 {
+    // [0, 255] → [-4, 4] → atan → [-π/2, π/2] → [0, 1] → [0, 255].
+    let f = x as f32 / 31.875 - 4.0;
+    let s = libm::atanf(f) / core::f32::consts::PI + 0.5;
+    (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+#[inline] fn erf_byte(x: u8) -> u8 {
+    // [0, 255] → [-3, 3] → erf → [-1, 1] → [0, 1] → [0, 255].
+    let f = x as f32 / 42.5 - 3.0;
+    let s = (libm::erff(f) + 1.0) / 2.0;
+    (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
 // Binary helpers.

@@ -28,6 +28,12 @@ impl<'a> LoadedPlan<'a> {
 
 pub struct HoloLoader<'a> {
     bytes: &'a [u8],
+    /// 32-byte BLAKE3 footer fingerprint over `bytes[..len-32]`, captured
+    /// at verification time. This is the archive's canonical content
+    /// fingerprint per spec X.1 — `execute_attested` routes it through
+    /// prism's pipeline as the W256 literal anchoring the
+    /// `Grounded<Digest<32>>` attestation.
+    fingerprint: [u8; 32],
 }
 
 impl<'a> HoloLoader<'a> {
@@ -61,7 +67,7 @@ impl<'a> HoloLoader<'a> {
             return Err(ArchiveError::ChecksumMismatch);
         }
 
-        Ok(Self { bytes })
+        Ok(Self { bytes, fingerprint: actual })
     }
 
     /// Construct a loader without footer verification. For tests and tools
@@ -74,8 +80,17 @@ impl<'a> HoloLoader<'a> {
             let mut m = [0u8; 4]; m.copy_from_slice(&bytes[..4]);
             return Err(ArchiveError::BadMagic(m));
         }
-        Ok(Self { bytes })
+        let footer_start = bytes.len() - 32;
+        let fingerprint: [u8; 32] = bytes[footer_start..].try_into()
+            .map_err(|_| ArchiveError::Truncated { needed: bytes.len(), actual: bytes.len() })?;
+        Ok(Self { bytes, fingerprint })
     }
+
+    /// Return the archive's canonical 32-byte content fingerprint
+    /// (the verified BLAKE3 footer, spec X.1). This is the anchor
+    /// `execute_attested` routes through prism::pipeline::run.
+    #[inline]
+    pub fn fingerprint(&self) -> [u8; 32] { self.fingerprint }
 
     pub fn into_plan(self) -> Result<LoadedPlan<'a>, ArchiveError> {
         let _flags = u16::from_le_bytes([self.bytes[6], self.bytes[7]]);

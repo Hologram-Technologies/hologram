@@ -105,6 +105,38 @@ pub unsafe extern "C" fn hologram_session_kernel_count(handle: c_int) -> c_int {
     with_session(handle, |s| s.kernel_count() as c_int)
 }
 
+/// Byte length the i-th declared output port will produce, or -1 on error.
+/// Callers use this to pre-size their output buffers before
+/// `hologram_session_execute`. Returns 0 (not -1) when `i` is in range
+/// but the port has zero element count.
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_output_byte_len(
+    handle: c_int,
+    i: usize,
+) -> c_int {
+    with_session(handle, |s| {
+        if i >= s.output_count() { -1 } else { s.output_byte_len(i) as c_int }
+    })
+}
+
+/// Copy the archive's canonical 32-byte BLAKE3 content fingerprint
+/// (spec X.1) into `out` (must point to at least 32 writable bytes).
+/// Returns 0 on success or -1 on error. This is the per-content anchor
+/// that distinguishes one model from another — pair with the prism
+/// attestation surface when auditing.
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_archive_fingerprint(
+    handle: c_int,
+    out: *mut c_uchar,
+) -> c_int {
+    if out.is_null() { return -1; }
+    with_session(handle, |s| {
+        let fp = s.archive_fingerprint();
+        std::slice::from_raw_parts_mut(out, 32).copy_from_slice(&fp);
+        0
+    })
+}
+
 /// Execute a session against caller-provided input buffers, writing each
 /// declared output port's bytes into the matching `out_ptrs[i]` (capacity
 /// `out_caps[i]`). Returns 0 on success or -1 on error.

@@ -5,7 +5,7 @@ use hologram_backend::{
     Conv2dCall, NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
     AttentionCall, WhereCall, DequantizeCall,
 };
-use hologram_graph::{Graph, Node, OpKind, InputSource};
+use hologram_graph::{Graph, Node, NodeId, OpKind, InputSource};
 use crate::error::CompileError;
 
 /// Op-specific shape parameters resolved from the graph.
@@ -39,8 +39,10 @@ pub struct ShapeArgs {
 
 impl ShapeArgs {
     /// Resolve op-specific shape parameters from a graph node's inputs and
-    /// output shape descriptors.
-    pub fn from_graph(graph: &Graph, node: &Node) -> Self {
+    /// output shape descriptors. `node_id` is consulted for sparse-keyed
+    /// per-node attributes (`Graph::conv_attrs`, etc.); pass the node's
+    /// own id.
+    pub fn from_graph(graph: &Graph, node_id: NodeId, node: &Node) -> Self {
         let reg = graph.shape_registry();
         let out = reg.get(node.output_shape).cloned();
         let in_shape = |idx: usize| -> Option<hologram_graph::ShapeDescriptor> {
@@ -91,9 +93,13 @@ impl ShapeArgs {
             }
         }
 
-        // Default conv stride / padding (1, 0). Future work: thread these
-        // through node attributes.
-        a.stride_h = 1; a.stride_w = 1;
+        // Convolution stride / padding: take per-node `ConvAttrs` if
+        // attached; otherwise default to `(stride = 1, pad = 0)`.
+        let conv = graph.conv_attrs(node_id).unwrap_or_default();
+        a.stride_h = conv.stride_h.max(1);
+        a.stride_w = conv.stride_w.max(1);
+        a.pad_h = conv.pad_h;
+        a.pad_w = conv.pad_w;
 
         // Norm / softmax: derive batch + feature from the input rank-2
         // [batch, feature] when MatMul wasn't applicable.

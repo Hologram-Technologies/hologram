@@ -144,7 +144,11 @@ impl Compiler {
             let arity = kind.primary_arity() as usize;
             let bindings: &[Binding] = &VAR_BINDINGS[..arity.min(VAR_BINDINGS.len())];
             let domains: &[VerificationDomain] = &[VerificationDomain::Algebraic];
-            let _validated_unit = compile_pipeline::build_unit(&PerNodeUnit {
+            // build_unit returns `Validated<CompileUnit>`; we only need
+            // its side-effect (validation `?` propagates shape errors).
+            // The per-node certificate captured below is the persistent
+            // archive artifact; the unit itself does not survive.
+            compile_pipeline::build_unit(&PerNodeUnit {
                 root_term: &term_vec,
                 bindings,
                 witt_level: self.level,
@@ -200,7 +204,7 @@ impl Compiler {
                 element_count,
                 witt_bits: self.level.witt_length() as u16,
                 dtype,
-                shape: lower::ShapeArgs::from_graph(&self.graph, node),
+                shape: lower::ShapeArgs::from_graph(&self.graph, hologram_graph::NodeId(idx as u32), node),
                 quant: lower::QuantParams {
                     quant_dtype: quant_attrs.quant_dtype,
                     scale_bits: quant_attrs.scale_bits,

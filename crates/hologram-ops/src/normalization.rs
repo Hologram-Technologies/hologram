@@ -17,14 +17,22 @@ fn emit_norm_body<const CAP: usize>(
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
-    // Bottom-up sketch of LayerNorm structure:
-    //   mean    = Recurse(step = Add(acc, x))
+    // Structural fold-skeleton for the LayerNorm family. Prism's
+    // PrimitiveOp set is the algebraic-ring closure (Add/Sub/Mul/Div/
+    // Pow/…); it omits Sqrt as a primitive, so the reciprocal-std
+    // factor enters as a Pow node (var^(-1/2)) at runtime. The
+    // semantic walk is:
+    //   mean    = Recurse(step = Add(acc, x))           — Σ x / n
     //   centred = Sub(x, mean)
     //   sq      = Mul(centred, centred)
-    //   var     = Recurse(step = Add(acc, sq))
-    //   rstd    = Mul (placeholder for 1/Sqrt(var + eps))
+    //   var     = Recurse(step = Add(acc, sq))          — Σ (x−μ)² / n
+    //   rstd    = Pow(var, −1/2)                        — 1 / √var
     //   norm    = Mul(centred, rstd)
     //   out     = Add(Mul(norm, gamma), beta)
+    // The runtime CPU/GPU kernels in `float_kernels` implement the
+    // closed-form math directly (with the `eps` regularizer); the
+    // Term tree above is the structural witness prism's validation
+    // walks (it is not catamorphically evaluated at runtime).
     let zero     = push_literal(arena, 0, level)?;
     let mean_step = push_application(arena, PrimitiveOp::Add, x_var, 2)?;
     let mean      = push_recurse(arena, zero, zero, mean_step)?;
@@ -32,7 +40,7 @@ fn emit_norm_body<const CAP: usize>(
     let sq        = push_application(arena, PrimitiveOp::Mul, centred, 2)?;
     let var_step  = push_application(arena, PrimitiveOp::Add, sq, 2)?;
     let var       = push_recurse(arena, zero, zero, var_step)?;
-    let rstd      = push_application(arena, PrimitiveOp::Mul, var, 2)?;
+    let rstd      = push_application(arena, PrimitiveOp::Pow, var, 2)?;
     let norm      = push_application(arena, PrimitiveOp::Mul, rstd, 2)?;
     let scaled    = push_application(arena, PrimitiveOp::Mul, norm, 2)?;
     push_application(arena, PrimitiveOp::Add, scaled, 2)
@@ -55,11 +63,12 @@ pub fn emit_rms_norm<const CAP: usize>(
     _gamma_var: u32,
     _beta_var: u32,
 ) -> EmitResult {
+    // Skeleton: rms² = Σ x² / n; rstd = (rms²)^(-1/2); out = x · rstd · gamma.
     let zero      = push_literal(arena, 0, level)?;
     let sq        = push_application(arena, PrimitiveOp::Mul, x_var, 2)?;
     let rms_step  = push_application(arena, PrimitiveOp::Add, sq, 2)?;
     let rms       = push_recurse(arena, zero, zero, rms_step)?;
-    let rstd      = push_application(arena, PrimitiveOp::Mul, rms, 2)?;
+    let rstd      = push_application(arena, PrimitiveOp::Pow, rms, 2)?;
     push_application(arena, PrimitiveOp::Mul, rstd, 2)
 }
 
@@ -96,7 +105,7 @@ pub fn emit_add_rms_norm<const CAP: usize>(
     let sq        = push_application(arena, PrimitiveOp::Mul, added, 2)?;
     let rms_step  = push_application(arena, PrimitiveOp::Add, sq, 2)?;
     let rms       = push_recurse(arena, zero, zero, rms_step)?;
-    let rstd      = push_application(arena, PrimitiveOp::Mul, rms, 2)?;
+    let rstd      = push_application(arena, PrimitiveOp::Pow, rms, 2)?;
     push_application(arena, PrimitiveOp::Mul, rstd, 2)
 }
 

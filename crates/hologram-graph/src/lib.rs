@@ -16,7 +16,7 @@ pub mod constant;
 pub mod backward;
 
 pub use graph::Graph;
-pub use node::{Node, NodeId, GraphOp, InputSource, ConstantId, QuantAttrs};
+pub use node::{Node, NodeId, GraphOp, InputSource, ConstantId, QuantAttrs, ConvAttrs};
 pub use schedule::Schedule;
 pub use registry::{ShapeRegistry, ShapeId, DTypeId, ShapeDescriptor};
 pub use constant::ConstantStore;

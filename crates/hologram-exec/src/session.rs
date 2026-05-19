@@ -21,6 +21,11 @@ pub struct InferenceSession<B: SessionBackend> {
     outputs: Vec<PortDescriptor>,
     workspace: BufferArena,
     backend: B,
+    /// Archive's canonical 32-byte content fingerprint (spec X.1).
+    /// Routed through `prism::pipeline::run` as a W256 `Term::Literal`
+    /// in `execute_attested` so the `Grounded<Digest<32>>` attestation
+    /// anchors to *this* session's content, not a static dummy term.
+    archive_fingerprint: [u8; 32],
 }
 
 /// Backend bounds required for `InferenceSession` execute. Without the
@@ -41,7 +46,9 @@ impl<B: Backend<WS = BufferArena> + Clone + Send + Sync> SessionBackend for B {}
 impl<B: SessionBackend> InferenceSession<B> {
     /// Load and prepare an `.holo` archive for execution.
     pub fn load(bytes: &[u8], backend: B) -> Result<Self, ExecError> {
-        let plan = HoloLoader::from_bytes(bytes)?.into_plan()?;
+        let loader = HoloLoader::from_bytes(bytes)?;
+        let archive_fingerprint = loader.fingerprint();
+        let plan = loader.into_plan()?;
         let calls_section = plan.section(SectionKind::KernelCalls)?;
         let kernel_calls = decoder::decode_calls(calls_section)
             .map_err(ExecError::Archive)?;
@@ -186,7 +193,7 @@ impl<B: SessionBackend> InferenceSession<B> {
             }
         }
 
-        Ok(Self { kernel_calls, exec_plan, inputs, outputs, workspace, backend })
+        Ok(Self { kernel_calls, exec_plan, inputs, outputs, workspace, backend, archive_fingerprint })
     }
 
     /// Execute one inference pass. `inputs` are written into the workspace
@@ -236,6 +243,27 @@ impl<B: SessionBackend> InferenceSession<B> {
     pub fn input_count(&self) -> usize { self.inputs.len() }
     pub fn output_count(&self) -> usize { self.outputs.len() }
     pub fn schedule_levels(&self) -> usize { self.exec_plan.len() }
+
+    /// Per-port descriptors (slot id, element count, dtype tag) for the
+    /// archive's inputs / outputs. Callers use these to size caller-side
+    /// buffers when wiring through the FFI / async bridges.
+    pub fn input_ports(&self) -> &[PortDescriptor] { &self.inputs }
+    pub fn output_ports(&self) -> &[PortDescriptor] { &self.outputs }
+
+    /// Byte length of the `i`-th declared output port. Returns 0 when
+    /// `i >= output_count()` so callers can pre-size buffers with a
+    /// single bounded probe.
+    pub fn output_byte_len(&self, i: usize) -> usize {
+        self.outputs.get(i)
+            .map(|p| (p.element_count as usize) * port_bytes_per_element(p.dtype))
+            .unwrap_or(0)
+    }
+
+    /// The archive's canonical 32-byte content fingerprint (spec X.1).
+    /// Used by `execute_attested` to anchor the prism attestation to
+    /// this session's content.
+    #[inline]
+    pub fn archive_fingerprint(&self) -> [u8; 32] { self.archive_fingerprint }
 }
 
 /// Bridge between `InferenceSession::execute` and `Executor::run_levels`.

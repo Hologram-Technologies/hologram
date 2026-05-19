@@ -31,6 +31,12 @@ impl ShapeDescriptor {
         Self { rank: 2, dims, dims_overflow: None }
     }
 
+    pub fn rank4(d0: u64, d1: u64, d2: u64, d3: u64) -> Self {
+        let mut dims = [0u64; 8];
+        dims[0] = d0; dims[1] = d1; dims[2] = d2; dims[3] = d3;
+        Self { rank: 4, dims, dims_overflow: None }
+    }
+
     pub fn dim(&self, i: usize) -> Option<u64> {
         if i < self.rank as usize {
             if i < 8 {

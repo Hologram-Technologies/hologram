@@ -94,7 +94,7 @@ fn attested_execute_emits_compute_outputs_and_grounded_attestation() {
     let input = vec![-2.0f32, -1.0, 1.0, 2.0];
     let bytes = f32_to_le(&input);
 
-    let AttestedExecution { outputs, attestation } = session
+    let AttestedExecution { outputs, prism_attestation, archive_fingerprint } = session
         .execute_attested(&[InputBuffer { bytes: &bytes }])
         .expect("attested execution succeeds");
 
@@ -102,12 +102,15 @@ fn attested_execute_emits_compute_outputs_and_grounded_attestation() {
     let result = le_to_f32(&outputs[0].bytes);
     assert_eq!(result, vec![0.0, 0.0, 1.0, 2.0]);
 
-    // The prism-emitted attestation is a Grounded<Digest<32>> — the
-    // accessor surface is sealed, but content_fingerprint() is public.
-    let fp = attestation.content_fingerprint();
-    // Fingerprint carries at least one byte (the BLAKE3 width
-    // routed through hologram's canonical Hasher<32> selection).
+    // The prism witness is a sealed Grounded<Digest<32>>; its
+    // content_fingerprint() is folded over the unit's TYPE-SHAPE.
+    let fp = prism_attestation.content_fingerprint();
     assert!(!fp.as_bytes().is_empty());
+
+    // The archive fingerprint is hologram's per-content anchor. It is
+    // a 32-byte BLAKE3 digest over the archive bytes (spec X.1) — and
+    // it is non-trivial (not all-zero) for any real archive.
+    assert_ne!(archive_fingerprint, [0u8; 32]);
 }
 
 #[test]
@@ -123,9 +126,72 @@ fn attested_execute_is_deterministic_across_invocations() {
 
     // Compute outputs identical.
     assert_eq!(a.outputs[0].bytes, b.outputs[0].bytes);
-    // The Grounded<T> attestation is sealed but its content fingerprint
-    // is publicly readable; identical CompileUnits yield identical
-    // fingerprints (the canonical attestation determinism per ADR-001).
-    assert_eq!(a.attestation.content_fingerprint().as_bytes(),
-               b.attestation.content_fingerprint().as_bytes());
+    // Identical CompileUnits yield identical prism attestation
+    // fingerprints (canonical determinism per ADR-001).
+    assert_eq!(a.prism_attestation.content_fingerprint().as_bytes(),
+               b.prism_attestation.content_fingerprint().as_bytes());
+    // Identical archives yield identical content anchors.
+    assert_eq!(a.archive_fingerprint, b.archive_fingerprint);
+}
+
+#[test]
+fn attested_execute_anchors_to_archive_fingerprint() {
+    // Two graphs with different op kinds produce two different archives
+    // (different footer fingerprints). The `archive_fingerprint` field
+    // on `AttestedExecution` MUST differ — this is hologram's per-content
+    // anchor, distinct from prism's type-shape fingerprint.
+    //
+    // Prism's `Grounded.content_fingerprint()` is folded only over the
+    // unit's TYPE-SHAPE (witt + budget + IRI + constraints) per
+    // `fold_unit_digest`, so two sessions with the same shape but
+    // different content yield identical prism fingerprints — the
+    // content anchor lives on hologram's side of the pair.
+
+    fn build_session_op(op: OpKind) -> InferenceSession<CpuBackend<BufferArena>> {
+        let mut graph = Graph::new();
+        let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+        let x = graph.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: shape,
+        });
+        graph.add_input(x);
+        let r = graph.add_node(Node {
+            op: GraphOp::Op(op),
+            inputs: SmallVec::from_iter([InputSource::Node(x)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: shape,
+        });
+        let out = graph.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(r)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: shape,
+        });
+        graph.add_output(out);
+        let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+        InferenceSession::load(&compiled.archive, CpuBackend::<BufferArena>::new()).unwrap()
+    }
+
+    let mut relu = build_session_op(OpKind::Relu);
+    let mut sigmoid = build_session_op(OpKind::Sigmoid);
+
+    // Archive fingerprints differ (different op kinds → different
+    // kernel-call payloads → different footer).
+    assert_ne!(relu.archive_fingerprint(), sigmoid.archive_fingerprint());
+
+    let bytes = f32_to_le(&[0.5f32, 1.5, 2.5, 3.5]);
+    let a = relu.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
+    let b = sigmoid.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
+
+    // The per-content anchors differ — TC-03's content-anchoring
+    // commitment holds.
+    assert_ne!(a.archive_fingerprint, b.archive_fingerprint);
+    // The prism witnesses' shape-fingerprints are identical because
+    // both sessions admit the same `CompileUnit` shape (W32 + same
+    // budget + same result-type IRI + same constraints). This is by
+    // prism's design — verify the documented separation of concerns.
+    assert_eq!(a.prism_attestation.content_fingerprint().as_bytes(),
+               b.prism_attestation.content_fingerprint().as_bytes());
 }

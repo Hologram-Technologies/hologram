@@ -25,6 +25,7 @@ use smallvec::SmallVec;
 
 use crate::{Graph, NodeId, GraphOp, InputSource};
 use crate::node::Node;
+use crate::constant::ConstantEntry;
 use crate::registry::DTypeId;
 use hologram_ops::OpKind;
 
@@ -144,12 +145,37 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId)
     }
 
     // Per-input gradients: one entry per `Graph::inputs`. If a graph input
-    // never reached the seed gradient (disconnected), use the seed itself
-    // as a stand-in zero-gradient placeholder.
-    let input_grads: Vec<NodeId> = graph.inputs().iter().map(|nid| {
-        let i = nid.0 as usize;
-        node_grads.get(i).copied().flatten().unwrap_or(seed_id)
-    }).collect();
+    // never reached the seed gradient (disconnected from the output), its
+    // gradient is genuinely zero — emit a fresh zero-constant node rather
+    // than reusing the seed (which carries dL/dy ≠ 0 in general). Lazily
+    // created and shared across all disconnected inputs.
+    let mut zero_grad_id: Option<NodeId> = None;
+    let input_ids: Vec<NodeId> = graph.inputs().to_vec();
+    let input_grads: Vec<NodeId> = input_ids
+        .into_iter()
+        .map(|nid| {
+            let i = nid.0 as usize;
+            if let Some(Some(g)) = node_grads.get(i).copied() {
+                return g;
+            }
+            if let Some(g) = zero_grad_id {
+                return g;
+            }
+            let zero_const_id = graph.constants_mut().insert(ConstantEntry {
+                bytes: alloc::vec::Vec::new(),
+                dtype: output_dtype,
+                shape: output_shape,
+            });
+            let id = graph.add_node(Node {
+                op: GraphOp::Constant(zero_const_id),
+                inputs: SmallVec::new(),
+                output_dtype,
+                output_shape,
+            });
+            zero_grad_id = Some(id);
+            id
+        })
+        .collect();
 
     Ok(input_grads)
 }

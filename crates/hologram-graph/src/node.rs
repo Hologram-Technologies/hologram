@@ -60,3 +60,21 @@ pub struct QuantAttrs {
     /// Symmetric zero-point.
     pub zero_point: i32,
 }
+
+/// Per-node convolution attributes (stride / padding / dilation).
+/// Stored sparsely on `Graph::conv_attrs` keyed by `NodeId` so the
+/// common case (default `stride = (1, 1)`, no padding) costs nothing.
+/// The compiler threads these into `LoweredNode.shape` during lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConvAttrs {
+    pub stride_h: u32,
+    pub stride_w: u32,
+    pub pad_h: u32,
+    pub pad_w: u32,
+}
+
+impl Default for ConvAttrs {
+    fn default() -> Self {
+        Self { stride_h: 1, stride_w: 1, pad_h: 0, pad_w: 0 }
+    }
+}
