@@ -1,16 +1,31 @@
-//! Hologram substitution-axis impls per spec Part III.
+//! Hologram substitution-axis selections per spec Part III.
 //!
-//! Provides the three-axis selection (HostTypes / HostBounds / Hasher) for
-//! the canonical hologram backends. `ActiveCpuBounds` resolves at compile
-//! time to the strongest CPU bounds available on the build target.
+//! Hologram is a Prism application (wiki ADR-031): it imports the
+//! canonical substitution axes through the prism façade rather than
+//! reimplementing them. Two of the three axes are upstream-canonical:
+//!
+//! - `HologramHostTypes` is a type alias for [`uor_foundation::DefaultHostTypes`].
+//! - `HologramHasher` is a type alias for [`prism::crypto::Blake3Hasher`] —
+//!   the prism-crypto standard-library Layer-3 `HashAxis` impl that
+//!   simultaneously satisfies the `Hasher<32>` content-addressing trait
+//!   (wiki ADR-031, ADR-055).
+//!
+//! Only `HostBounds` is hologram-specific: each backend pins
+//! `WITT_LEVEL_MAX_BITS` to its natural register width and the remaining
+//! ADR-037 capacity bounds are sized for trillion-param + UHD streaming.
 
 #![no_std]
 
-mod types;
-mod bounds;
-mod hasher;
+// Anchor the Prism standard-library façade and SDK so the dep tree
+// records them at hologram-host (the substitution-axis layer). Per
+// wiki ADR-031, hologram is a Prism application; downstream hologram
+// crates reach axis declarations, verb declarations, and SDK macros
+// through these re-exports.
+pub use prism;
+pub use uor_foundation_sdk as sdk;
 
-pub use types::HologramHostTypes;
+mod bounds;
+
 pub use bounds::{
     HologramHostBoundsCpu,
     HologramHostBoundsAvx2,
@@ -19,7 +34,19 @@ pub use bounds::{
     HologramHostBoundsMetal,
     HologramHostBoundsWgpu,
 };
-pub use hasher::HologramHasher;
+
+/// Hologram's `HostTypes` selection. Aliased to upstream's canonical
+/// `DefaultHostTypes` — hologram has no need for non-default Decimal /
+/// HostString / WitnessBytes representations (spec III.1).
+pub type HologramHostTypes = uor_foundation::DefaultHostTypes;
+
+/// Hologram's canonical `Hasher<32>` selection. Aliased to
+/// `prism::crypto::Blake3Hasher` — the prism-crypto Layer-3 BLAKE3
+/// `HashAxis` impl (wiki ADR-031). Reaches `Hasher<32>` via the
+/// upstream `Hasher` trait impl on `Blake3Hasher`, and `HashAxis` via
+/// the same type — so a hologram-built `AxisTuple` admits this hasher
+/// at the canonical first axis position.
+pub type HologramHasher = prism::crypto::Blake3Hasher;
 
 /// Active CPU bounds for this build. Resolves at compile time:
 /// AVX-512 ▸ AVX2 ▸ NEON ▸ scalar.

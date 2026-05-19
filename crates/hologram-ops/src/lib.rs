@@ -18,6 +18,7 @@ pub mod reference;
 pub mod lut;
 pub mod activations;
 pub mod grounding;
+pub mod axes;
 
 pub mod direct;
 pub mod elementwise_unary;

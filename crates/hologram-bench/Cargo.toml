@@ -15,7 +15,7 @@ hologram-compiler = { workspace = true }
 hologram-exec     = { workspace = true }
 hologram-backend  = { workspace = true }
 hologram-archive  = { workspace = true }
-uor-foundation    = { workspace = true }
+uor-prism         = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

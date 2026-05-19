@@ -144,9 +144,10 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
         DTYPE_I8 => n,
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     };
-    let inp = ws.read(c.input).get(..in_bytes_needed)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0].get(..in_bytes_needed)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
 
@@ -167,7 +168,6 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
         (q - zp) as f32 * scale
     };
 
-    let out = ws.write(c.output);
     let bytes_per_out = match c.dtype {
         DTYPE_F32 => 4,
         DTYPE_BF16 | DTYPE_F16 => 2,
@@ -200,12 +200,11 @@ fn unary_w8<W: Workspace>(
     f: fn(u8) -> u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let inp_bytes = ws.read(c.input).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
-    for i in 0..n { out[i] = f(inp_bytes[i]); }
+    for i in 0..n { out[i] = f(inp[i]); }
     Ok(())
 }
 
@@ -216,27 +215,23 @@ fn binary_w8<W: Workspace>(
     f: fn(u8, u8) -> u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let a_bytes = ws.read(c.a).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b_bytes = ws.read(c.b).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let a = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[1].get(..n).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
-    for i in 0..n { out[i] = f(a_bytes[i], b_bytes[i]); }
+    for i in 0..n { out[i] = f(a[i], b[i]); }
     Ok(())
 }
 
 #[inline]
 fn layout_copy<W: Workspace>(c: &LayoutCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let inp = ws.read(c.input).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
-    out[..n].copy_from_slice(&inp);
+    out[..n].copy_from_slice(inp);
     Ok(())
 }
 

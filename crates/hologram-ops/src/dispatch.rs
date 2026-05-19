@@ -10,7 +10,7 @@
 //! `(args_start + i)` as needed.
 
 use uor_foundation::enforcement::TermArena;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 use crate::emit::EmitResult;
 use crate::kind::OpKind;

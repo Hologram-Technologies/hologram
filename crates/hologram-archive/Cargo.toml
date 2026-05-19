@@ -7,11 +7,15 @@ authors.workspace = true
 description = "Hologram .holo archive format (kernel calls + certificates + weights + schedule)."
 
 [dependencies]
+# Archive footer + weight fingerprints route through prism's
+# canonical Blake3 HashAxis impl (via hologram-host's `HologramHasher`)
+# rather than calling `blake3::hash` directly. Per wiki ADR-031
+# hologram consumes its content-addressing primitive from
+# prism-crypto; the archive layer holds no direct blake3 dependency.
 hologram-graph    = { workspace = true }
 hologram-backend  = { workspace = true }
 hologram-host     = { workspace = true }
-uor-foundation    = { workspace = true }
-blake3            = { workspace = true }
+uor-prism         = { workspace = true }
 bytemuck          = { workspace = true }
 thiserror         = { workspace = true }
 memmap2           = { workspace = true, optional = true }
@@ -21,5 +25,5 @@ hologram-backend = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["dep:memmap2", "blake3/std"]
+std = ["dep:memmap2"]
 compression = []

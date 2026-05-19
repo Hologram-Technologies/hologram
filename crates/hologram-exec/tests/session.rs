@@ -3,7 +3,7 @@
 use hologram_compiler::{compile_from_source, BackendKind};
 use hologram_backend::CpuBackend;
 use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 #[test]
 fn round_trip_compile_load_execute() {

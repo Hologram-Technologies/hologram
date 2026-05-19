@@ -15,14 +15,27 @@ fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
                 PrimitiveOp::Neg | PrimitiveOp::Bnot
                 | PrimitiveOp::Succ | PrimitiveOp::Pred
                 | PrimitiveOp::Add | PrimitiveOp::Sub | PrimitiveOp::Mul
-                | PrimitiveOp::Xor | PrimitiveOp::And | PrimitiveOp::Or => {}
+                | PrimitiveOp::Xor | PrimitiveOp::And | PrimitiveOp::Or
+                | PrimitiveOp::Le | PrimitiveOp::Lt
+                | PrimitiveOp::Ge | PrimitiveOp::Gt
+                | PrimitiveOp::Concat
+                | PrimitiveOp::Div | PrimitiveOp::Mod | PrimitiveOp::Pow => {}
             }
         }
     }
 }
 
 fn try_emit(kind: OpKind) -> bool {
-    let mut arena: TermArena<256> = TermArena::new();
+    // Box the arena: `TermArena<256>` holds 256 × `Option<Term>` where
+    // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+    // upstream 0.4.15. On-stack instantiation in a loop blows the
+    // default thread stack.
+    // Arena CAP picked to cover the largest hologram op marker (Attention
+    // at CAP = 96 per spec V.5) plus headroom for the per-arity variable
+    // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
+    // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+    // upstream 0.4.15) below the default thread stack ceiling.
+    let mut arena: TermArena<128> = TermArena::new();
     let arity = kind.primary_arity();
     let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
     for i in 1..arity {
@@ -94,7 +107,16 @@ fn every_op_emit_fits_in_declared_cap() {
     // arity variables, calls dispatch, and asserts the slot count
     // stays at or below `OpKind::cap()`.
     for &kind in ALL_OP_KINDS {
-        let mut arena: TermArena<256> = TermArena::new();
+        // Box the arena: `TermArena<256>` holds 256 × `Option<Term>` where
+    // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+    // upstream 0.4.15. On-stack instantiation in a loop blows the
+    // default thread stack.
+    // Arena CAP picked to cover the largest hologram op marker (Attention
+    // at CAP = 96 per spec V.5) plus headroom for the per-arity variable
+    // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
+    // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+    // upstream 0.4.15) below the default thread stack ceiling.
+    let mut arena: TermArena<128> = TermArena::new();
         let arity = kind.primary_arity();
         let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
         for i in 1..arity {

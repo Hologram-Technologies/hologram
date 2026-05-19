@@ -141,8 +141,13 @@ impl HoloWriter {
             out.extend_from_slice(body);
         }
 
-        // Footer: BLAKE3 over all preceding bytes.
-        let footer: [u8; 32] = blake3::hash(&out).into();
+        // Footer: 32-byte content fingerprint over all preceding bytes,
+        // computed through hologram's canonical `Hasher<32>` selection
+        // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
+        use prism::vocabulary::Hasher;
+        let footer: [u8; 32] = hologram_host::HologramHasher::initial()
+            .fold_bytes(&out)
+            .finalize();
         out.write_all(&footer).map_err(|_| ArchiveError::Io("footer write"))?;
 
         Ok(out)

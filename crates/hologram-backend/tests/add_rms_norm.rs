@@ -16,6 +16,22 @@ impl Workspace for Ws {
         let len = self.slots[i].len();
         &mut self.slots[i][..len]
     }
+    fn split_borrow<'a>(
+        &'a mut self,
+        reads: &[BufferRef],
+        write: BufferRef,
+    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
+        let w = write.slot as usize;
+        if reads.iter().any(|r| r.slot != u32::MAX && r.slot as usize == w) { return None; }
+        let (lo, hi) = self.slots.split_at_mut(w);
+        let (wbuf, hi_rest) = hi.split_first_mut()?;
+        let rs = reads.iter().map(|r| -> &[u8] {
+            if r.slot == u32::MAX { return &[]; }
+            let i = r.slot as usize;
+            if i < w { &lo[i][..] } else { &hi_rest[i - w - 1][..] }
+        }).collect();
+        Some((rs, wbuf.as_mut_slice()))
+    }
 }
 
 fn buf(slot: u32) -> BufferRef { BufferRef { slot, offset: 0, length: 0 } }

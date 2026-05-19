@@ -4,7 +4,7 @@
 
 use hologram_compiler::{Compiler, BackendKind};
 use hologram_graph::Graph;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 #[test]
 fn empty_graph_compiles() {

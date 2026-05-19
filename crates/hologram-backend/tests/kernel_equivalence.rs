@@ -12,8 +12,8 @@ use hologram_backend::{
     UnaryCall, BinaryCall, Workspace,
 };
 use hologram_ops::{ScalarEvaluatorU64, ReferenceEvaluator};
-use uor_foundation::PrimitiveOp;
-use uor_foundation::enforcement::{TermArena, Term, TermList};
+use prism::operation::PrimitiveOp;
+use prism::operation::{TermArena, Term, TermList};
 
 struct Ws { slots: Vec<Vec<u8>> }
 impl Workspace for Ws {
@@ -23,11 +23,29 @@ impl Workspace for Ws {
         let len = self.slots[i].len();
         &mut self.slots[i][..len]
     }
+    fn split_borrow<'a>(
+        &'a mut self,
+        reads: &[BufferRef],
+        write: BufferRef,
+    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
+        // Test workspace has one Vec<u8> per slot, so disjoint slot
+        // indices yield disjoint borrows. Split the outer Vec at the
+        // write slot to satisfy the borrow checker.
+        let w_slot = write.slot as usize;
+        if reads.iter().any(|r| r.slot as usize == w_slot) { return None; }
+        let (w_lo, w_hi) = self.slots.split_at_mut(w_slot);
+        let (write_slot, w_hi_rest) = w_hi.split_first_mut()?;
+        let read_slices: Vec<&[u8]> = reads.iter().map(|r| {
+            let i = r.slot as usize;
+            if i < w_slot { &w_lo[i][..] } else { &w_hi_rest[i - w_slot - 1][..] }
+        }).collect();
+        Some((read_slices, write_slot.as_mut_slice()))
+    }
 }
 fn buf(slot: u32, len: u32) -> BufferRef { BufferRef { slot, offset: 0, length: len } }
 
 fn eval_unary_term(prim: PrimitiveOp, x: u64) -> u64 {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: Box<TermArena<8>> = Box::new(TermArena::new());
     let v = arena.push(Term::Variable { name_index: 0 }).unwrap();
     let root = arena.push(Term::Application {
         operator: prim, args: TermList { start: v, len: 1 },
@@ -36,7 +54,7 @@ fn eval_unary_term(prim: PrimitiveOp, x: u64) -> u64 {
 }
 
 fn eval_binary_term(prim: PrimitiveOp, a: u64, b: u64) -> u64 {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: Box<TermArena<8>> = Box::new(TermArena::new());
     let av = arena.push(Term::Variable { name_index: 0 }).unwrap();
     arena.push(Term::Variable { name_index: 1 }).unwrap();
     let root = arena.push(Term::Application {

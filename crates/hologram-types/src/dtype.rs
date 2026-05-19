@@ -21,6 +21,14 @@ pub enum DTypeKind {
     Bool,
 }
 
+/// `2^bits` for a dtype's bit-width, saturating at `u64::MAX` for widths
+/// ≥ 64. Used to populate `ConstrainedTypeShape::CYCLE_SIZE` per
+/// ADR-032: the number of distinct residues representable in this
+/// dtype's Witt level.
+const fn cycle_size_for_bits(bits: u32) -> u64 {
+    if bits >= 64 { u64::MAX } else { 1u64 << bits }
+}
+
 macro_rules! declare_dtype {
     ($ty:ident, $iri:literal, $bw:expr, $kind:expr) => {
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -30,6 +38,7 @@ macro_rules! declare_dtype {
             const IRI: &'static str = $iri;
             const SITE_COUNT: usize = 1;
             const CONSTRAINTS: &'static [ConstraintRef] = &[];
+            const CYCLE_SIZE: u64 = cycle_size_for_bits($bw);
         }
 
         impl DType for $ty {

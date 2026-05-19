@@ -4,15 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Hologram substitution-axis impls (HostTypes / HostBounds / Hasher) per backend."
+description = "Hologram substitution-axis selections (HostTypes / HostBounds / HashAxis) via the Prism façade."
 
 [dependencies]
-uor-foundation = { workspace = true }
-blake3 = { workspace = true }
-
-[dev-dependencies]
-blake3 = { workspace = true, features = ["std"] }
+# Hologram is a Prism application (wiki ADR-031): the substitution-axis
+# selections (HostTypes, HostBounds, Hasher / HashAxis) are imported
+# through the prism façade plus the substrate. uor-foundation-sdk is
+# pulled in so downstream hologram crates can reach the axis! / verb! /
+# prism_model! macros without re-listing the dep.
+uor-foundation     = { workspace = true }
+uor-foundation-sdk = { workspace = true }
+uor-prism          = { workspace = true }
 
 [features]
 default = []
-std = ["blake3/std"]
+std = []

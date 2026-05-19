@@ -1,13 +1,26 @@
-//! BLAKE3-deduped weight store (spec X.3).
+//! BLAKE3-deduped weight store (spec X.3 + wiki ADR-031).
+//!
+//! The content-addressing hash routes through hologram's canonical
+//! `Hasher<32>` selection — `hologram_host::HologramHasher`, which is
+//! a re-export of `prism::crypto::Blake3Hasher`. No direct dependency
+//! on the `blake3` crate; per ADR-031 hologram consumes its
+//! content-addressing primitive from prism-crypto.
 
 use std::collections::HashMap;
+use prism::vocabulary::Hasher;
+use hologram_host::HologramHasher;
 
+/// 32-byte content fingerprint over a weight body. Computed via
+/// prism-crypto's Blake3 `HashAxis` impl (the canonical hologram
+/// hasher selection per spec III.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WeightFingerprint(pub [u8; 32]);
 
 impl WeightFingerprint {
+    /// Compute the fingerprint of a byte sequence via the canonical
+    /// hasher (`prism::crypto::Blake3Hasher` through `Hasher<32>`).
     pub fn of(bytes: &[u8]) -> Self {
-        Self(blake3::hash(bytes).into())
+        Self(HologramHasher::initial().fold_bytes(bytes).finalize())
     }
 }
 

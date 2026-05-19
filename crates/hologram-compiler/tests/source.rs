@@ -2,7 +2,7 @@
 
 use hologram_compiler::compile_from_source;
 use hologram_compiler::BackendKind;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 #[test]
 fn parses_minimal_graph() {

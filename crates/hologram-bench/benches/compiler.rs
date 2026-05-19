@@ -3,7 +3,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use hologram_compiler::{Compiler, BackendKind};
 use hologram_graph::Graph;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 fn bench_compile(c: &mut Criterion) {
     c.bench_function("compile_empty_graph", |b| {

@@ -148,6 +148,15 @@ impl<B: SessionBackend> InferenceSession<B> {
         // Floor each slot at 64 bytes so kernels that compute their own
         // strides always have headroom.
         for s in sizes.iter_mut() { if *s < 64 { *s = 64; } }
+        // Round each slot to a 64-byte boundary. The arena's backing
+        // storage is 64-byte aligned (see `BufferArena::AlignedBytes`),
+        // and rounding individual slot lengths up to multiples of 64
+        // keeps the cumulative `offset` of every slot 64-byte aligned —
+        // which in turn lets `bytemuck::cast_slice::<u8, f32>` succeed
+        // zero-copy on every slot. Without this, mid-arena slots can
+        // sit at odd 4-byte boundaries and force the elementwise
+        // fallback path. 64 bytes is the AVX-512 / cache-line width.
+        for s in sizes.iter_mut() { *s = s.next_multiple_of(64); }
 
         let mut slots = Vec::with_capacity(slot_count);
         let mut total: usize = 0;

@@ -14,7 +14,7 @@ use hologram_backend::CpuBackend;
 use hologram_compiler::{Compiler, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 type Session = InferenceSession<CpuBackend<BufferArena>>;
 

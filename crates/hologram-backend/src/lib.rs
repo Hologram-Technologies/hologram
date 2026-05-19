@@ -8,6 +8,7 @@ pub mod kernel_call;
 pub mod backend;
 pub mod workspace;
 pub mod error;
+pub mod prism_axes;
 
 #[cfg(feature = "cpu")]
 pub mod cpu;
@@ -29,3 +30,14 @@ pub use error::BackendError;
 
 #[cfg(feature = "cpu")]
 pub use cpu::CpuBackend;
+
+// Prism-canonical axis impls: hologram's f32 CPU kernels reachable
+// through the prism-tensor `TensorAxis` / `ActivationAxis` interface
+// per wiki ADR-031.
+pub use prism_axes::{
+    HologramF32MatmulSquare,
+    HologramF32Tensor4x4Matmul, HologramF32Tensor8x8Matmul, HologramF32Tensor16x16Matmul,
+    HologramF32VectorActivation,
+    HologramF32VectorActivation16, HologramF32VectorActivation64, HologramF32VectorActivation256,
+    HOLOGRAM_MAX_TENSOR_DIM, HOLOGRAM_MAX_ACTIVATION_LEN,
+};

@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use hologram_compiler::{Compiler, BackendKind};
 use hologram_compiler::error::CompileError;
 use hologram_graph::Graph;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 #[derive(Parser, Debug)]
 #[command(name = "hologram", version)]

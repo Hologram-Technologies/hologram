@@ -30,9 +30,10 @@ hologram-exec     = { path = "crates/hologram-exec" }
 hologram-backend  = { path = "crates/hologram-backend" }
 hologram-archive  = { path = "crates/hologram-archive" }
 
-uor-foundation = "0.3.1"
+uor-foundation     = "0.4.15"
+uor-foundation-sdk = "0.4.15"
+uor-prism          = "0.1.3"
 
-blake3      = { version = "1.5", default-features = false }
 rkyv        = { version = "0.8", features = ["tinyvec-1"] }
 bytemuck    = { version = "1.14", features = ["derive"] }
 smallvec    = "1.13"

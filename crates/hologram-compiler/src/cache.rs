@@ -5,7 +5,7 @@
 
 use hashbrown::HashMap;
 use hologram_archive::certificate_codec::CertificateRecord;
-use uor_foundation::enforcement::ContentFingerprint;
+use prism::vocabulary::ContentFingerprint;
 
 /// Cached value for a (op_kind, witt_level, backend) triple.
 ///

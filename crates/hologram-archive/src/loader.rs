@@ -46,9 +46,15 @@ impl<'a> HoloLoader<'a> {
             return Err(ArchiveError::UnsupportedVersion(ver));
         }
 
-        // Footer verification: bytes[len-32..] must equal BLAKE3(bytes[..len-32]).
+        // Footer verification: bytes[len-32..] must equal the 32-byte
+        // content fingerprint over bytes[..len-32], computed through
+        // hologram's canonical `Hasher<32>` selection
+        // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
+        use prism::vocabulary::Hasher;
         let footer_start = bytes.len() - 32;
-        let expected: [u8; 32] = blake3::hash(&bytes[..footer_start]).into();
+        let expected: [u8; 32] = hologram_host::HologramHasher::initial()
+            .fold_bytes(&bytes[..footer_start])
+            .finalize();
         let actual: [u8; 32] = bytes[footer_start..].try_into()
             .map_err(|_| ArchiveError::Truncated { needed: bytes.len(), actual: bytes.len() })?;
         if expected != actual {

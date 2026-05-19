@@ -8,7 +8,7 @@
 
 use core::marker::PhantomData;
 use uor_foundation::enforcement::TermArena;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 use uor_foundation::HostBounds;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use crate::emit::{push_variable, EmitResult};

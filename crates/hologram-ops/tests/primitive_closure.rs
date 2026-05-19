@@ -9,7 +9,7 @@ use hologram_ops::direct::*;
 use hologram_ops::elementwise_unary::*;
 use hologram_ops::elementwise_binary::*;
 use hologram_ops::reduction::*;
-use uor_foundation::PrimitiveOp;
+use prism::operation::PrimitiveOp;
 
 #[test]
 fn direct_ops_carry_their_primitive() {

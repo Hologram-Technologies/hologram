@@ -8,7 +8,7 @@ use criterion::{criterion_group, criterion_main, Criterion, black_box};
 use hologram_compiler::{compile_from_source, BackendKind};
 use hologram_backend::CpuBackend;
 use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 const DECODE_STEP_SOURCE: &str = r"
 input q

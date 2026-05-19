@@ -78,7 +78,7 @@ fn eval_node<const CAP: usize>(
     bindings: &[u64],
 ) -> Result<u64, EvalError> {
     match fetch(arena, index)? {
-        Term::Literal { value, .. } => Ok(*value),
+        Term::Literal { value, .. } => Ok(term_value_to_u64(value)),
         Term::Variable { name_index } => {
             bindings.get(*name_index as usize).copied()
                 .ok_or(EvalError::UnresolvedBinding)
@@ -155,6 +155,12 @@ fn eval_node<const CAP: usize>(
             }
             Ok(acc)
         }
+        // Substrate-level Term variants that hologram's emitters do not
+        // produce (AxisInvocation, ProjectField, FirstAdmit, and the
+        // remaining ADR-029/033/034/057-introduced forms). The reference
+        // evaluator surfaces them as `ArityMismatch` — encountering one
+        // in a hologram-emitted tree is a regression.
+        _ => Err(EvalError::ArityMismatch),
     }
 }
 
@@ -173,6 +179,19 @@ fn apply_primitive(op: PrimitiveOp, args: &[u64]) -> Result<u64, EvalError> {
         (PrimitiveOp::Or,  2) => Ok(args[0] | args[1]),
         _ => Err(EvalError::ArityMismatch),
     }
+}
+
+/// Convert a `TermValue` byte buffer back into the `u64` it was packed
+/// from via `pipeline::literal_u64` / `TermValue::from_u64_be`. The
+/// buffer holds the value's bytes in big-endian order at its declared
+/// width; widths > 8 truncate to the low 8 bytes.
+#[inline]
+fn term_value_to_u64(v: &uor_foundation::pipeline::TermValue) -> u64 {
+    let bytes = v.bytes();
+    let take = bytes.len().min(8);
+    let mut padded = [0u8; 8];
+    padded[8 - take..].copy_from_slice(&bytes[bytes.len() - take..]);
+    u64::from_be_bytes(padded)
 }
 
 #[inline]

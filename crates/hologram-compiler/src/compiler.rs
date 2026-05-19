@@ -17,9 +17,11 @@ use hologram_archive::constant_codec::ConstantEntry;
 use hologram_backend::{KernelCall, BufferRef};
 use hologram_graph::{Graph, GraphOp};
 use hologram_host::HologramHasher;
-use uor_foundation::WittLevel;
-use uor_foundation::enforcement::{Hasher, Term, TermArena, Binding};
-use uor_foundation::enums::VerificationDomain;
+use prism::operation::{Term, TermArena};
+use prism::vocabulary::{Hasher, VerificationDomain, WittLevel};
+// `Binding` is foundation-only (not in prism::operation's curated
+// surface as of 0.1.3); reach it through prism's substrate re-export.
+use prism::uor_foundation::enforcement::Binding;
 use crate::cache::{CertificateCache, CachedCertificate};
 use crate::error::CompileError;
 use crate::lower::{self, LoweredNode};
@@ -354,12 +356,16 @@ const VAR_BINDINGS: &[Binding] = &[
 fn build_node_arena(
     kind: hologram_graph::OpKind,
     level: WittLevel,
-) -> Result<TermArena<128>, CompileError> {
-    let mut arena: TermArena<128> = TermArena::new();
+) -> Result<Box<TermArena<128>>, CompileError> {
+    // Heap-allocate the arena: `TermArena<128>` is a 128-slot array of
+    // `Option<Term>` and each `Term::Literal` carries a 4 KiB
+    // `TermValue` byte buffer (`DefaultHostBounds::TERM_VALUE_MAX_BYTES`
+    // in `uor-foundation 0.4.15`). On-stack instantiation in a deep
+    // compile loop overflows the default thread stack; boxing keeps the
+    // arena on the heap while preserving the value-type ownership story.
+    let mut arena: Box<TermArena<128>> = Box::new(TermArena::new());
     let arity = kind.primary_arity();
 
-    // Push one Variable term per argument (contiguously) — operands the
-    // op's emitter references by absolute arena index.
     let args_start = arena.push(Term::Variable { name_index: 0 })
         .ok_or(CompileError::ArenaOverflow("variable 0"))?;
     for i in 1..arity {
@@ -367,7 +373,6 @@ fn build_node_arena(
             .ok_or(CompileError::ArenaOverflow("variable"))?;
     }
 
-    // Dispatch to the marker's emit_term per V.3.
     hologram_ops::emit_op_term(kind, &mut arena, level, args_start)
         .ok_or(CompileError::ArenaOverflow("op emitter"))?;
 

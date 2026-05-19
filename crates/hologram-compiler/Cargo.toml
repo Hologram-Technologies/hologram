@@ -14,7 +14,7 @@ hologram-host     = { workspace = true }
 hologram-types    = { workspace = true }
 hologram-ops      = { workspace = true }
 uor-foundation    = { workspace = true }
-blake3            = { workspace = true, features = ["std"] }
+uor-prism         = { workspace = true }
 hashbrown         = { workspace = true }
 thiserror         = { workspace = true }
 smallvec          = { workspace = true }

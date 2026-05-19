@@ -1,61 +1,115 @@
-//! SIMD vectorized paths for hot-loop float kernels.
+//! Runtime-dispatched SIMD for hot-loop f32 kernels.
 //!
-//! Each `simd_*` function picks the widest SIMD path the build target enables
-//! (AVX-512 ▸ AVX2 ▸ NEON ▸ scalar). Per spec III.2 / I-6, the active CPU
-//! backend pins `WITT_LEVEL_MAX_BITS` to its register width — the SIMD
-//! kernels lay out work to match that bit width.
+//! The previous design was strictly cfg-gated — `target_feature =
+//! "avx512f"` had to be active at build time for the AVX-512 path to
+//! be reachable. That made a stock `cargo build --release` binary use
+//! the scalar fallback on machines that fully support AVX-512.
+//!
+//! This module compiles **all** SIMD paths unconditionally on x86-64
+//! (each one tagged with `#[target_feature(enable = "...")]`) and
+//! picks the widest available at first call via `std::is_x86_feature_detected!`,
+//! caching the choice in a `OnceLock`-resolved function pointer. The
+//! first call costs one CPUID; subsequent calls dispatch through a
+//! single indirect jump — about one cycle of overhead on modern x86.
+//!
+//! Per spec III.2 / I-6 each backend's `HostBounds::WITT_LEVEL_MAX_BITS`
+//! still names its natural register width — the runtime path just
+//! also handles the case where the **build target's** floor is below
+//! the **host machine's** ceiling.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-/// SIMD-vectorized f32 add: `out[i] = a[i] + b[i]` for `i in 0..n`.
+use core::sync::atomic::{AtomicU8, Ordering};
+
+/// SIMD path the runtime dispatcher selected. Cached after first
+/// detection. Values: 0 = unresolved, 1 = scalar, 2 = AVX2+FMA,
+/// 3 = AVX-512F, 4 = NEON.
+static SIMD_PATH: AtomicU8 = AtomicU8::new(0);
+
 #[inline]
-pub fn simd_f32_add(a: &[f32], b: &[f32], out: &mut [f32]) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe { return avx512::add_f32(a, b, out); }
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    unsafe { return avx2::add_f32(a, b, out); }
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    unsafe { return neon::add_f32(a, b, out); }
-    scalar::add_f32(a, b, out)
+fn resolve_path() -> u8 {
+    let cached = SIMD_PATH.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached;
+    }
+    let chosen = detect_path();
+    SIMD_PATH.store(chosen, Ordering::Relaxed);
+    chosen
 }
 
-/// SIMD-vectorized f32 multiply: `out[i] = a[i] * b[i]`.
+fn detect_path() -> u8 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx512f") {
+            return 3;
+        }
+        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
+            return 2;
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        return 4;
+    }
+    1
+}
+
+/// SIMD-vectorized f32 add: `out[i] = a[i] + b[i]`.
+#[inline]
+pub fn simd_f32_add(a: &[f32], b: &[f32], out: &mut [f32]) {
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::add_f32_avx512(a, b, out) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::add_f32_avx2(a, b, out) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::add_f32_neon(a, b, out) },
+        _ => scalar::add_f32(a, b, out),
+    }
+}
+
+/// SIMD-vectorized f32 multiply.
 #[inline]
 pub fn simd_f32_mul(a: &[f32], b: &[f32], out: &mut [f32]) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe { return avx512::mul_f32(a, b, out); }
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    unsafe { return avx2::mul_f32(a, b, out); }
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    unsafe { return neon::mul_f32(a, b, out); }
-    scalar::mul_f32(a, b, out)
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::mul_f32_avx512(a, b, out) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::mul_f32_avx2(a, b, out) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::mul_f32_neon(a, b, out) },
+        _ => scalar::mul_f32(a, b, out),
+    }
 }
 
 /// SIMD-vectorized f32 fused multiply-add: `out[i] += a[i] * b[i]`.
 #[inline]
 pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe { return avx512::fmadd_f32(a, b, out); }
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    unsafe { return avx2::fmadd_f32(a, b, out); }
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    unsafe { return neon::fmadd_f32(a, b, out); }
-    scalar::fmadd_f32(a, b, out)
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::fmadd_f32_avx512(a, b, out) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::fmadd_f32_avx2(a, b, out) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::fmadd_f32_neon(a, b, out) },
+        _ => scalar::fmadd_f32(a, b, out),
+    }
 }
 
 /// SIMD-vectorized f32 dot product.
 #[inline]
 pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe { return avx512::dot_f32(a, b); }
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    unsafe { return avx2::dot_f32(a, b); }
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    unsafe { return neon::dot_f32(a, b); }
-    scalar::dot_f32(a, b)
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::dot_f32_avx512(a, b) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::dot_f32_avx2(a, b) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::dot_f32_neon(a, b) },
+        _ => scalar::dot_f32(a, b),
+    }
 }
 
-/// Scalar reference implementations (always available).
 mod scalar {
     pub fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
@@ -77,198 +131,306 @@ mod scalar {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-mod avx2 {
+#[cfg(target_arch = "x86_64")]
+mod x86 {
     use core::arch::x86_64::*;
-    pub unsafe fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+
+    // ─── AVX2 + FMA path ──────────────────────────────────────────
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn add_f32_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 8;
         for k in 0..chunks {
             let va = _mm256_loadu_ps(a.as_ptr().add(k * 8));
             let vb = _mm256_loadu_ps(b.as_ptr().add(k * 8));
-            let vo = _mm256_add_ps(va, vb);
-            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), vo);
+            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), _mm256_add_ps(va, vb));
         }
         for i in chunks * 8..n { out[i] = a[i] + b[i]; }
     }
-    pub unsafe fn mul_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn mul_f32_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 8;
         for k in 0..chunks {
             let va = _mm256_loadu_ps(a.as_ptr().add(k * 8));
             let vb = _mm256_loadu_ps(b.as_ptr().add(k * 8));
-            let vo = _mm256_mul_ps(va, vb);
-            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), vo);
+            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), _mm256_mul_ps(va, vb));
         }
         for i in chunks * 8..n { out[i] = a[i] * b[i]; }
     }
-    pub unsafe fn fmadd_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn fmadd_f32_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 8;
         for k in 0..chunks {
             let va = _mm256_loadu_ps(a.as_ptr().add(k * 8));
             let vb = _mm256_loadu_ps(b.as_ptr().add(k * 8));
             let vc = _mm256_loadu_ps(out.as_ptr().add(k * 8));
-            #[cfg(target_feature = "fma")]
-            let vo = _mm256_fmadd_ps(va, vb, vc);
-            #[cfg(not(target_feature = "fma"))]
-            let vo = _mm256_add_ps(_mm256_mul_ps(va, vb), vc);
-            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), vo);
+            _mm256_storeu_ps(out.as_mut_ptr().add(k * 8), _mm256_fmadd_ps(va, vb, vc));
         }
         for i in chunks * 8..n { out[i] = a[i].mul_add(b[i], out[i]); }
     }
-    pub unsafe fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len().min(b.len());
-        let chunks = n / 8;
-        let mut acc = _mm256_setzero_ps();
+        // Unroll across four independent accumulators so the OOO core can
+        // keep the FMA units saturated (latency 4-5 cycles, throughput 1
+        // per cycle on Zen 4 / Sapphire Rapids).
+        let chunks = n / 32;
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+        let mut acc2 = _mm256_setzero_ps();
+        let mut acc3 = _mm256_setzero_ps();
         for k in 0..chunks {
-            let va = _mm256_loadu_ps(a.as_ptr().add(k * 8));
-            let vb = _mm256_loadu_ps(b.as_ptr().add(k * 8));
-            #[cfg(target_feature = "fma")]
-            { acc = _mm256_fmadd_ps(va, vb, acc); }
-            #[cfg(not(target_feature = "fma"))]
-            { acc = _mm256_add_ps(acc, _mm256_mul_ps(va, vb)); }
+            let off = k * 32;
+            let a0 = _mm256_loadu_ps(a.as_ptr().add(off));
+            let a1 = _mm256_loadu_ps(a.as_ptr().add(off + 8));
+            let a2 = _mm256_loadu_ps(a.as_ptr().add(off + 16));
+            let a3 = _mm256_loadu_ps(a.as_ptr().add(off + 24));
+            let b0 = _mm256_loadu_ps(b.as_ptr().add(off));
+            let b1 = _mm256_loadu_ps(b.as_ptr().add(off + 8));
+            let b2 = _mm256_loadu_ps(b.as_ptr().add(off + 16));
+            let b3 = _mm256_loadu_ps(b.as_ptr().add(off + 24));
+            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
+            acc1 = _mm256_fmadd_ps(a1, b1, acc1);
+            acc2 = _mm256_fmadd_ps(a2, b2, acc2);
+            acc3 = _mm256_fmadd_ps(a3, b3, acc3);
         }
+        let acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
         let mut buf = [0f32; 8];
         _mm256_storeu_ps(buf.as_mut_ptr(), acc);
         let mut total: f32 = buf.iter().sum();
-        for i in chunks * 8..n { total += a[i] * b[i]; }
+        // Tail: 8-wide chunks.
+        let tail_chunks = (n - chunks * 32) / 8;
+        for k in 0..tail_chunks {
+            let off = chunks * 32 + k * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(off));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(off));
+            let v = _mm256_mul_ps(va, vb);
+            _mm256_storeu_ps(buf.as_mut_ptr(), v);
+            total += buf.iter().sum::<f32>();
+        }
+        // Final scalar tail.
+        let done = chunks * 32 + tail_chunks * 8;
+        for i in done..n { total += a[i] * b[i]; }
         total
     }
-}
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-#[allow(dead_code)]
-mod avx2 {
-    pub unsafe fn add_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn mul_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn fmadd_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn dot_f32(_a: &[f32], _b: &[f32]) -> f32 { unreachable!() }
-}
+    // ─── AVX-512 path ─────────────────────────────────────────────
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-mod avx512 {
-    use core::arch::x86_64::*;
-    pub unsafe fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn add_f32_avx512(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 16;
         for k in 0..chunks {
             let va = _mm512_loadu_ps(a.as_ptr().add(k * 16));
             let vb = _mm512_loadu_ps(b.as_ptr().add(k * 16));
-            let vo = _mm512_add_ps(va, vb);
-            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), vo);
+            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), _mm512_add_ps(va, vb));
         }
         for i in chunks * 16..n { out[i] = a[i] + b[i]; }
     }
-    pub unsafe fn mul_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn mul_f32_avx512(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 16;
         for k in 0..chunks {
             let va = _mm512_loadu_ps(a.as_ptr().add(k * 16));
             let vb = _mm512_loadu_ps(b.as_ptr().add(k * 16));
-            let vo = _mm512_mul_ps(va, vb);
-            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), vo);
+            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), _mm512_mul_ps(va, vb));
         }
         for i in chunks * 16..n { out[i] = a[i] * b[i]; }
     }
-    pub unsafe fn fmadd_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn fmadd_f32_avx512(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 16;
         for k in 0..chunks {
             let va = _mm512_loadu_ps(a.as_ptr().add(k * 16));
             let vb = _mm512_loadu_ps(b.as_ptr().add(k * 16));
             let vc = _mm512_loadu_ps(out.as_ptr().add(k * 16));
-            let vo = _mm512_fmadd_ps(va, vb, vc);
-            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), vo);
+            _mm512_storeu_ps(out.as_mut_ptr().add(k * 16), _mm512_fmadd_ps(va, vb, vc));
         }
         for i in chunks * 16..n { out[i] = a[i].mul_add(b[i], out[i]); }
     }
-    pub unsafe fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn dot_f32_avx512(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len().min(b.len());
-        let chunks = n / 16;
-        let mut acc = _mm512_setzero_ps();
+        let chunks = n / 64;
+        // Four 512-bit accumulators (1024 bits / 64 lanes per iter).
+        let mut acc0 = _mm512_setzero_ps();
+        let mut acc1 = _mm512_setzero_ps();
+        let mut acc2 = _mm512_setzero_ps();
+        let mut acc3 = _mm512_setzero_ps();
         for k in 0..chunks {
-            let va = _mm512_loadu_ps(a.as_ptr().add(k * 16));
-            let vb = _mm512_loadu_ps(b.as_ptr().add(k * 16));
-            acc = _mm512_fmadd_ps(va, vb, acc);
+            let off = k * 64;
+            let a0 = _mm512_loadu_ps(a.as_ptr().add(off));
+            let a1 = _mm512_loadu_ps(a.as_ptr().add(off + 16));
+            let a2 = _mm512_loadu_ps(a.as_ptr().add(off + 32));
+            let a3 = _mm512_loadu_ps(a.as_ptr().add(off + 48));
+            let b0 = _mm512_loadu_ps(b.as_ptr().add(off));
+            let b1 = _mm512_loadu_ps(b.as_ptr().add(off + 16));
+            let b2 = _mm512_loadu_ps(b.as_ptr().add(off + 32));
+            let b3 = _mm512_loadu_ps(b.as_ptr().add(off + 48));
+            acc0 = _mm512_fmadd_ps(a0, b0, acc0);
+            acc1 = _mm512_fmadd_ps(a1, b1, acc1);
+            acc2 = _mm512_fmadd_ps(a2, b2, acc2);
+            acc3 = _mm512_fmadd_ps(a3, b3, acc3);
         }
-        let total = _mm512_reduce_add_ps(acc);
-        let mut tail = 0f32;
-        for i in chunks * 16..n { tail += a[i] * b[i]; }
-        total + tail
+        let acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
+        let mut total = _mm512_reduce_add_ps(acc);
+        // 16-wide tail.
+        let tail_chunks = (n - chunks * 64) / 16;
+        for k in 0..tail_chunks {
+            let off = chunks * 64 + k * 16;
+            let va = _mm512_loadu_ps(a.as_ptr().add(off));
+            let vb = _mm512_loadu_ps(b.as_ptr().add(off));
+            total += _mm512_reduce_add_ps(_mm512_mul_ps(va, vb));
+        }
+        let done = chunks * 64 + tail_chunks * 16;
+        for i in done..n { total += a[i] * b[i]; }
+        total
     }
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-#[allow(dead_code)]
-mod avx512 {
-    pub unsafe fn add_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn mul_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn fmadd_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn dot_f32(_a: &[f32], _b: &[f32]) -> f32 { unreachable!() }
-}
-
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-mod neon {
+#[cfg(target_arch = "aarch64")]
+mod aarch {
     use core::arch::aarch64::*;
-    pub unsafe fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[target_feature(enable = "neon")]
+    pub unsafe fn add_f32_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 4;
         for k in 0..chunks {
             let va = vld1q_f32(a.as_ptr().add(k * 4));
             let vb = vld1q_f32(b.as_ptr().add(k * 4));
-            let vo = vaddq_f32(va, vb);
-            vst1q_f32(out.as_mut_ptr().add(k * 4), vo);
+            vst1q_f32(out.as_mut_ptr().add(k * 4), vaddq_f32(va, vb));
         }
         for i in chunks * 4..n { out[i] = a[i] + b[i]; }
     }
-    pub unsafe fn mul_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[target_feature(enable = "neon")]
+    pub unsafe fn mul_f32_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 4;
         for k in 0..chunks {
             let va = vld1q_f32(a.as_ptr().add(k * 4));
             let vb = vld1q_f32(b.as_ptr().add(k * 4));
-            let vo = vmulq_f32(va, vb);
-            vst1q_f32(out.as_mut_ptr().add(k * 4), vo);
+            vst1q_f32(out.as_mut_ptr().add(k * 4), vmulq_f32(va, vb));
         }
         for i in chunks * 4..n { out[i] = a[i] * b[i]; }
     }
-    pub unsafe fn fmadd_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[target_feature(enable = "neon")]
+    pub unsafe fn fmadd_f32_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         let chunks = n / 4;
         for k in 0..chunks {
             let va = vld1q_f32(a.as_ptr().add(k * 4));
             let vb = vld1q_f32(b.as_ptr().add(k * 4));
             let vc = vld1q_f32(out.as_ptr().add(k * 4));
-            let vo = vfmaq_f32(vc, va, vb);
-            vst1q_f32(out.as_mut_ptr().add(k * 4), vo);
+            vst1q_f32(out.as_mut_ptr().add(k * 4), vfmaq_f32(vc, va, vb));
         }
         for i in chunks * 4..n { out[i] = a[i].mul_add(b[i], out[i]); }
     }
-    pub unsafe fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+    #[target_feature(enable = "neon")]
+    pub unsafe fn dot_f32_neon(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len().min(b.len());
-        let chunks = n / 4;
-        let mut acc = vdupq_n_f32(0.0);
+        let chunks = n / 16;
+        let mut acc0 = vdupq_n_f32(0.0);
+        let mut acc1 = vdupq_n_f32(0.0);
+        let mut acc2 = vdupq_n_f32(0.0);
+        let mut acc3 = vdupq_n_f32(0.0);
         for k in 0..chunks {
-            let va = vld1q_f32(a.as_ptr().add(k * 4));
-            let vb = vld1q_f32(b.as_ptr().add(k * 4));
-            acc = vfmaq_f32(acc, va, vb);
+            let off = k * 16;
+            let a0 = vld1q_f32(a.as_ptr().add(off));
+            let a1 = vld1q_f32(a.as_ptr().add(off + 4));
+            let a2 = vld1q_f32(a.as_ptr().add(off + 8));
+            let a3 = vld1q_f32(a.as_ptr().add(off + 12));
+            let b0 = vld1q_f32(b.as_ptr().add(off));
+            let b1 = vld1q_f32(b.as_ptr().add(off + 4));
+            let b2 = vld1q_f32(b.as_ptr().add(off + 8));
+            let b3 = vld1q_f32(b.as_ptr().add(off + 12));
+            acc0 = vfmaq_f32(acc0, a0, b0);
+            acc1 = vfmaq_f32(acc1, a1, b1);
+            acc2 = vfmaq_f32(acc2, a2, b2);
+            acc3 = vfmaq_f32(acc3, a3, b3);
         }
-        let lanes = [vgetq_lane_f32(acc, 0), vgetq_lane_f32(acc, 1),
-                     vgetq_lane_f32(acc, 2), vgetq_lane_f32(acc, 3)];
+        let acc01 = vaddq_f32(acc0, acc1);
+        let acc23 = vaddq_f32(acc2, acc3);
+        let acc = vaddq_f32(acc01, acc23);
+        let lanes = [
+            vgetq_lane_f32(acc, 0), vgetq_lane_f32(acc, 1),
+            vgetq_lane_f32(acc, 2), vgetq_lane_f32(acc, 3),
+        ];
         let mut total: f32 = lanes.iter().sum();
-        for i in chunks * 4..n { total += a[i] * b[i]; }
+        for i in chunks * 16..n { total += a[i] * b[i]; }
         total
     }
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-#[allow(dead_code)]
-mod neon {
-    pub unsafe fn add_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn mul_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn fmadd_f32(_a: &[f32], _b: &[f32], _o: &mut [f32]) { unreachable!() }
-    pub unsafe fn dot_f32(_a: &[f32], _b: &[f32]) -> f32 { unreachable!() }
+// ─── Blocked-tile f32 matmul (cache-aware) ─────────────────────────
+
+/// Cache-aware blocked f32 matmul: `out = A * B`.
+///
+/// `A` is row-major `M × K`; `B` is row-major `K × N`; output is
+/// row-major `M × N`. Operates over zero-copy `&[f32]` / `&mut [f32]`
+/// views (caller supplies these from `bytemuck::cast_slice` over the
+/// arena's aligned byte buffers).
+///
+/// **Cost model**: blocks are sized so that one row-strip of A
+/// (`BM × BK`), one column-strip of B (`BK × BN`), and one tile of
+/// the output (`BM × BN`) all fit in L1 cache. The inner kernel
+/// streams through `simd_f32_dot` per output cell so the SIMD path
+/// already chosen by `resolve_path()` carries through.
+///
+/// For square `N × N × N` matmul the asymptotic cost is `N³`
+/// multiply-adds; the blocked layout reduces L1 misses from `Θ(N³)`
+/// (naïve) to `Θ(N³ / B)` where `B` is the block dimension — a
+/// constant-factor win that compounds with SIMD lane width to give
+/// near-peak GFLOPS on the host's natural register width.
+pub fn matmul_f32_blocked(
+    a: &[f32], b: &[f32], out: &mut [f32],
+    m: usize, k: usize, n: usize,
+    bt_scratch: &mut Vec<f32>,
+) {
+    if m == 0 || k == 0 || n == 0 { return; }
+    // Block size: 64 covers a 64×64 L1-resident tile in 16 KiB
+    // (64 × 64 × 4 bytes) — fits comfortably under the 32 KiB
+    // x86-64 L1d cap with headroom for instructions + stack.
+    const BS: usize = 64;
+
+    // Pre-transpose B into a column-major scratch so each inner-loop
+    // dot product reads contiguous memory.
+    bt_scratch.clear();
+    bt_scratch.resize(k * n, 0.0);
+    for kk in 0..k {
+        for j in 0..n {
+            bt_scratch[j * k + kk] = b[kk * n + j];
+        }
+    }
+
+    let mut ii = 0;
+    while ii < m {
+        let i_end = (ii + BS).min(m);
+        let mut jj = 0;
+        while jj < n {
+            let j_end = (jj + BS).min(n);
+            for i in ii..i_end {
+                let row = &a[i * k..i * k + k];
+                let out_row = &mut out[i * n..i * n + n];
+                for j in jj..j_end {
+                    let col = &bt_scratch[j * k..j * k + k];
+                    out_row[j] = simd_f32_dot(row, col);
+                }
+            }
+            jj += BS;
+        }
+        ii += BS;
+    }
 }
 
 #[cfg(test)]
@@ -305,5 +467,44 @@ mod tests {
             let want = 10.0 + a[i] * b[i];
             assert!((out[i] - want).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn blocked_matmul_matches_naive() {
+        // 17 × 19 × 23 — odd sizes exercise the tail handling.
+        let m = 17usize; let k = 19usize; let n = 23usize;
+        let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.001).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.001 + 1.0).collect();
+        let mut bt_scratch = Vec::new();
+        let mut got = vec![0f32; m * n];
+        matmul_f32_blocked(&a, &b, &mut got, m, k, n, &mut bt_scratch);
+
+        let mut want = vec![0f32; m * n];
+        for i in 0..m {
+            for j in 0..n {
+                let mut s = 0f32;
+                for kk in 0..k { s += a[i * k + kk] * b[kk * n + j]; }
+                want[i * n + j] = s;
+            }
+        }
+        for i in 0..m * n {
+            assert!((got[i] - want[i]).abs() < 1e-3, "diff at {i}: got {} want {}", got[i], want[i]);
+        }
+    }
+
+    #[test]
+    fn blocked_matmul_handles_large_dims() {
+        // 128 × 128 × 128 — exercises the inter-block stride.
+        let n = 128usize;
+        let a: Vec<f32> = (0..n * n).map(|i| ((i % 31) as f32) * 0.01).collect();
+        let b: Vec<f32> = (0..n * n).map(|i| ((i % 17) as f32) * 0.01).collect();
+        let mut bt_scratch = Vec::new();
+        let mut got = vec![0f32; n * n];
+        matmul_f32_blocked(&a, &b, &mut got, n, n, n, &mut bt_scratch);
+        // Sanity: corner element matches a manual dot.
+        let row0 = &a[0..n];
+        let col0: Vec<f32> = (0..n).map(|kk| b[kk * n]).collect();
+        let want00: f32 = row0.iter().zip(col0.iter()).map(|(x, y)| x * y).sum();
+        assert!((got[0] - want00).abs() < 1e-2);
     }
 }

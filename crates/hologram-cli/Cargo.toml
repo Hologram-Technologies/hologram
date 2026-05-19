@@ -18,4 +18,6 @@ hologram-archive  = { workspace = true }
 hologram-graph    = { workspace = true }
 hologram-host     = { workspace = true }
 clap              = { workspace = true }
-uor-foundation    = { workspace = true }
+# Hologram's CLI is an application-author surface; it consumes the
+# prism façade per wiki ADR-031.
+uor-prism         = { workspace = true }

@@ -1,11 +1,19 @@
-//! Shape declarations (spec IV.5).
+//! Hologram-specific shape markers (spec IV.5).
+//!
+//! Hologram contributes only `Dim<N>` (a single static dimension) and
+//! `Shape1` / `Shape2` (rank-1 / rank-2 wrappers) — the small shapes
+//! the graph IR's per-node dtype-and-shape resolver consumes. Higher
+//! ranks and matrix/vector shape carriers come from prism-tensor's
+//! `MatrixShape<R, C, E>` and `VectorShape<N, E>` per wiki ADR-031
+//! (re-exported from this crate's `lib.rs`).
 
 use core::marker::PhantomData;
 use uor_foundation::pipeline::{ConstrainedTypeShape, ConstraintRef, AFFINE_MAX_COEFFS};
 
 /// A static dimension carrying a known size N.
 ///
-/// Affine constraint asserts `1·site_0 = N`.
+/// Affine constraint asserts `1·site_0 = N`. Per ADR-032 the
+/// dimension admits N distinct index residues.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dim<const N: u64>;
 
@@ -25,20 +33,11 @@ impl<const N: u64> ConstrainedTypeShape for Dim<N> {
             bias: N as i64,
         },
     ];
+    const CYCLE_SIZE: u64 = N;
 }
 
-/// A symbolic dimension. No `Affine` pinning; resolved at graph-build time.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DimSymbolic<const ID: u64>;
-
-impl<const ID: u64> ConstrainedTypeShape for DimSymbolic<ID> {
-    const IRI: &'static str = "https://hologram.uor.foundation/type/shape/dim_symbolic";
-    const SITE_COUNT: usize = 1;
-    const CONSTRAINTS: &'static [ConstraintRef] = &[];
-}
-
-/// Rank-N shape markers. `SITES` is the aggregate site count, supplied by
-/// the caller per spec IV.3 (stable const generics).
+/// Rank-1 / rank-2 shape markers. `SITES` is the aggregate site count,
+/// supplied by the caller per spec IV.3 (stable const generics).
 macro_rules! declare_shape {
     ($name:ident, $iri:literal, [$($d:ident),+]) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,25 +54,10 @@ macro_rules! declare_shape {
             const IRI: &'static str = $iri;
             const SITE_COUNT: usize = SITES;
             const CONSTRAINTS: &'static [ConstraintRef] = &[];
+            const CYCLE_SIZE: u64 = 1;
         }
     };
 }
 
 declare_shape!(Shape1, "https://hologram.uor.foundation/type/shape/rank1", [D0]);
 declare_shape!(Shape2, "https://hologram.uor.foundation/type/shape/rank2", [D0, D1]);
-declare_shape!(Shape3, "https://hologram.uor.foundation/type/shape/rank3", [D0, D1, D2]);
-declare_shape!(Shape4, "https://hologram.uor.foundation/type/shape/rank4", [D0, D1, D2, D3]);
-declare_shape!(Shape5, "https://hologram.uor.foundation/type/shape/rank5", [D0, D1, D2, D3, D4]);
-declare_shape!(Shape6, "https://hologram.uor.foundation/type/shape/rank6", [D0, D1, D2, D3, D4, D5]);
-declare_shape!(Shape7, "https://hologram.uor.foundation/type/shape/rank7", [D0, D1, D2, D3, D4, D5, D6]);
-declare_shape!(Shape8, "https://hologram.uor.foundation/type/shape/rank8", [D0, D1, D2, D3, D4, D5, D6, D7]);
-
-/// Heap variant for rank > 8. `SITES` is the aggregate; `RANK` is the rank.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ShapeArray<const RANK: usize, const SITES: usize>;
-
-impl<const RANK: usize, const SITES: usize> ConstrainedTypeShape for ShapeArray<RANK, SITES> {
-    const IRI: &'static str = "https://hologram.uor.foundation/type/shape/array";
-    const SITE_COUNT: usize = SITES;
-    const CONSTRAINTS: &'static [ConstraintRef] = &[];
-}

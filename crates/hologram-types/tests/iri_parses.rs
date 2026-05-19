@@ -1,4 +1,7 @@
-//! Spec XII.3: every dtype/shape/tensor declaration produces a parseable IRI.
+//! Spec XII.3: every dtype / shape marker hologram contributes produces
+//! a parseable IRI under the hologram namespace, and the canonical
+//! prism shape carriers reach hologram callers through this crate's
+//! re-exports.
 
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use hologram_types::*;
@@ -37,6 +40,16 @@ fn dim_constraint_is_affine() {
 }
 
 #[test]
-fn fingerprint_is_32_sites() {
-    assert_eq!(<Fingerprint as ConstrainedTypeShape>::SITE_COUNT, 32);
+fn prism_matrix_shape_reachable_through_hologram_types() {
+    // Smoke: the prism-tensor MatrixShape is re-exported from this
+    // crate's surface and resolves as a ConstrainedTypeShape with
+    // `SITE_COUNT = R*C*E`.
+    type M = MatrixShape<4, 4, 1>;
+    assert_eq!(<M as ConstrainedTypeShape>::SITE_COUNT, 16);
+}
+
+#[test]
+fn prism_digest_reachable_through_hologram_types() {
+    type D32 = Digest<32>;
+    assert_eq!(<D32 as ConstrainedTypeShape>::SITE_COUNT, 32);
 }

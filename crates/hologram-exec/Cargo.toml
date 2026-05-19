@@ -11,6 +11,8 @@ hologram-host    = { workspace = true }
 hologram-backend = { workspace = true }
 hologram-archive = { workspace = true }
 hologram-graph   = { workspace = true }
+uor-foundation   = { workspace = true }
+uor-prism        = { workspace = true }
 thiserror        = { workspace = true }
 parking_lot      = { workspace = true }
 tracing          = { workspace = true }

@@ -14,19 +14,41 @@ fn elem_size(dtype: u8) -> usize { bytes_per_element(dtype) }
 #[inline]
 fn elem_count_to_bytes(n: usize, dtype: u8) -> usize { n * elem_size(dtype) }
 
+// Thread-local scratch for matmul's pre-transposed B. Amortizes the
+// `vec![0f32; k * n]` allocation across kernel invocations on the same
+// thread — for trillion-parameter inference loops this is the
+// difference between O(calls) allocations and O(1).
+std::thread_local! {
+    static MATMUL_BT_SCRATCH: core::cell::RefCell<Vec<f32>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
 pub fn unary_float<W: Workspace>(
     c: &UnaryCall, ws: &mut W,
     f: fn(f32) -> f32, dtype: u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = elem_count_to_bytes(n, dtype);
-    let inp = ws.read(c.input).get(..bytes)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    // Zero-copy split-borrow + bytemuck cast (no fallback). Every
+    // `Workspace` consumed by hologram's CPU compute must supply
+    // `split_borrow`; the test `Ws` impls above and `BufferArena`
+    // both do. Eliminates the `.to_vec()` clones the previous design
+    // used to dodge the borrow checker.
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    let inp = reads[0].get(..bytes).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < bytes { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if dtype == DTYPE_F32 {
+        if let (Ok(i32s), Ok(o32s)) = (
+            bytemuck::try_cast_slice::<u8, f32>(&inp[..bytes]),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..bytes]),
+        ) {
+            for i in 0..n { o32s[i] = f(i32s[i]); }
+            return Ok(());
+        }
+    }
     for i in 0..n {
-        let v = read_float(&inp, i, dtype);
+        let v = read_float(inp, i, dtype);
         write_float(out, i, f(v), dtype);
     }
     Ok(())
@@ -38,17 +60,24 @@ pub fn binary_float<W: Workspace>(
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = elem_count_to_bytes(n, dtype);
-    let a = ws.read(c.a).get(..bytes)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b = ws.read(c.b).get(..bytes)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let a = reads[0].get(..bytes).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[1].get(..bytes).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < bytes { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if dtype == DTYPE_F32 {
+        if let (Ok(a32), Ok(b32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(&a[..bytes]),
+            bytemuck::try_cast_slice::<u8, f32>(&b[..bytes]),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..bytes]),
+        ) {
+            for i in 0..n { o32[i] = f(a32[i], b32[i]); }
+            return Ok(());
+        }
+    }
     for i in 0..n {
-        let va = read_float(&a, i, dtype);
-        let vb = read_float(&b, i, dtype);
+        let va = read_float(a, i, dtype);
+        let vb = read_float(b, i, dtype);
         write_float(out, i, f(va, vb), dtype);
     }
     Ok(())
@@ -61,42 +90,40 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     if m == 0 || k == 0 || n == 0 { return Ok(()); }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let a = ws.read(c.a).get(..m * k * es)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b = ws.read(c.b).get(..k * n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+
+    // Zero-copy split-borrow + bytemuck f32 view + blocked-tile +
+    // runtime-SIMD path. The transposed-B scratch is thread-local so
+    // back-to-back matmul calls on the same thread don't re-allocate.
+    let (reads, out) = ws.split_borrow(&[c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let a = reads[0].get(..m * k * es).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[1].get(..k * n * es).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < m * n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
 
-    // Fast path: f32 dtype → SIMD dot via simd_f32_dot.
     if dt == DTYPE_F32 {
-        let a32: Vec<f32> = (0..m * k).map(|i| read_f32(&a, i)).collect();
-        let b32: Vec<f32> = (0..k * n).map(|i| read_f32(&b, i)).collect();
-        let mut bt = vec![0f32; k * n];
-        for kk in 0..k {
-            for j in 0..n {
-                bt[j * k + kk] = b32[kk * n + j];
-            }
+        if let (Ok(a32), Ok(b32), Ok(out32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(a),
+            bytemuck::try_cast_slice::<u8, f32>(b),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+        ) {
+            MATMUL_BT_SCRATCH.with(|cell| {
+                let mut scratch = cell.borrow_mut();
+                crate::cpu::simd::matmul_f32_blocked(
+                    a32, b32, out32, m, k, n, &mut scratch,
+                );
+            });
+            return Ok(());
         }
-        for i in 0..m {
-            let row = &a32[i * k..i * k + k];
-            for j in 0..n {
-                let col = &bt[j * k..j * k + k];
-                let acc = crate::cpu::simd::simd_f32_dot(row, col);
-                write_f32(out, i * n + j, acc);
-            }
-        }
-        return Ok(());
     }
 
+    // Non-f32 dtypes (bf16, f16, f64): per-element codec. The split-
+    // borrow still gives zero-copy `&[u8]` views.
     for i in 0..m {
         for j in 0..n {
             let mut acc = 0f32;
             for kk in 0..k {
-                let av = read_float(&a, i * k + kk, dt);
-                let bv = read_float(&b, kk * n + j, dt);
+                let av = read_float(a, i * k + kk, dt);
+                let bv = read_float(b, kk * n + j, dt);
                 acc += av * bv;
             }
             write_float(out, i * n + j, acc, dt);
@@ -112,26 +139,39 @@ pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendE
     if m == 0 || k == 0 || n == 0 { return Ok(()); }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let a = ws.read(c.a).get(..m * k * es)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
-        .to_vec();
-    let b = ws.read(c.b).get(..k * n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
-        .to_vec();
-    let cc = ws.read(c.c).get(..m * n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.c.slot))?
-        .to_vec();
     let alpha = f32::from_bits(c.alpha_bits as u32);
     let beta = f32::from_bits(c.beta_bits as u32);
-    let out = ws.write(c.output);
+
+    let (reads, out) = ws.split_borrow(&[c.a, c.b, c.c], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let a = reads[0].get(..m * k * es).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[1].get(..k * n * es).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
+    let cc = reads[2].get(..m * n * es).ok_or(BackendError::SlotOutOfRange(c.c.slot))?;
     if out.len() < m * n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+
+    if dt == DTYPE_F32 {
+        if let (Ok(a32), Ok(b32), Ok(c32), Ok(out32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(a),
+            bytemuck::try_cast_slice::<u8, f32>(b),
+            bytemuck::try_cast_slice::<u8, f32>(cc),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+        ) {
+            MATMUL_BT_SCRATCH.with(|cell| {
+                let mut bt = cell.borrow_mut();
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, &mut bt);
+            });
+            for i in 0..m * n { out32[i] = alpha * out32[i] + beta * c32[i]; }
+            return Ok(());
+        }
+    }
+
     for i in 0..m {
         for j in 0..n {
             let mut acc = 0f32;
             for kk in 0..k {
-                acc += read_float(&a, i * k + kk, dt) * read_float(&b, kk * n + j, dt);
+                acc += read_float(a, i * k + kk, dt) * read_float(b, kk * n + j, dt);
             }
-            let bias = read_float(&cc, i * n + j, dt) * beta;
+            let bias = read_float(cc, i * n + j, dt) * beta;
             write_float(out, i * n + j, alpha * acc + bias, dt);
         }
     }
@@ -155,18 +195,14 @@ pub fn conv2d_float<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), Back
     let total_in = b * cin * h_in * w_in * es;
     let total_w = cout * cin * k_h * k_w * es;
     let total_out = b * cout * h_out * w_out * es;
+    let (reads, out) = ws.split_borrow(&[c.x, c.w], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     if total_in == 0 || total_w == 0 || total_out == 0 {
-        let out = ws.write(c.output);
         for o in out.iter_mut() { *o = 0; }
         return Ok(());
     }
-    let xs = ws.read(c.x).get(..total_in)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?
-        .to_vec();
-    let ws_w = ws.read(c.w).get(..total_w)
-        .ok_or(BackendError::SlotOutOfRange(c.w.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let xs = reads[0].get(..total_in).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let ws_w = reads[1].get(..total_w).ok_or(BackendError::SlotOutOfRange(c.w.slot))?;
     if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..b {
         for co in 0..cout {
@@ -181,7 +217,7 @@ pub fn conv2d_float<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), Back
                                 if ih < h_in && iw < w_in {
                                     let xi = ((bi * cin + ci) * h_in + ih) * w_in + iw;
                                     let wi = ((co * cin + ci) * k_h + kh) * k_w + kw;
-                                    acc += read_float(&xs, xi, dt) * read_float(&ws_w, wi, dt);
+                                    acc += read_float(xs, xi, dt) * read_float(ws_w, wi, dt);
                                 }
                             }
                         }
@@ -202,30 +238,30 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let dt = c.dtype;
     let es = elem_size(dt);
     let total = bsz * f * es;
-    let xs = ws.read(c.x).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?
-        .to_vec();
-    let gamma = ws.read(c.gamma).get(..f * es).map(|s| s.to_vec()).unwrap_or_default();
-    let beta = ws.read(c.beta).get(..f * es).map(|s| s.to_vec()).unwrap_or_default();
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
-    let out = ws.write(c.output);
+
+    let (reads, out) = ws.split_borrow(&[c.x, c.gamma, c.beta], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..f * es).unwrap_or(&[]);
+    let beta = reads[2].get(..f * es).unwrap_or(&[]);
     if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut mean = 0f32;
-        for j in 0..f { mean += read_float(&xs, row_off + j, dt); }
+        for j in 0..f { mean += read_float(xs, row_off + j, dt); }
         mean /= f as f32;
         let mut var = 0f32;
         for j in 0..f {
-            let d = read_float(&xs, row_off + j, dt) - mean;
+            let d = read_float(xs, row_off + j, dt) - mean;
             var += d * d;
         }
         var /= f as f32;
         let inv_std = 1.0 / libm::sqrtf(var + eps);
         for j in 0..f {
-            let g = if !gamma.is_empty() { read_float(&gamma, j, dt) } else { 1.0 };
-            let bv = if !beta.is_empty() { read_float(&beta, j, dt) } else { 0.0 };
-            let v = (read_float(&xs, row_off + j, dt) - mean) * inv_std * g + bv;
+            let g = if !gamma.is_empty() { read_float(gamma, j, dt) } else { 1.0 };
+            let bv = if !beta.is_empty() { read_float(beta, j, dt) } else { 0.0 };
+            let v = (read_float(xs, row_off + j, dt) - mean) * inv_std * g + bv;
             write_float(out, row_off + j, v, dt);
         }
     }
@@ -239,32 +275,34 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
     let dt = c.dtype;
     let es = elem_size(dt);
     let total = bsz * f * es;
-    let xs = ws.read(c.x).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?
-        .to_vec();
-    let residual: Vec<u8> = if c.has_residual() {
-        ws.read(c.residual).get(..total)
-            .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?
-            .to_vec()
-    } else {
-        vec![0u8; total]
-    };
-    let gamma = ws.read(c.gamma).get(..f * es).map(|s| s.to_vec()).unwrap_or_default();
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
-    let out = ws.write(c.output);
+    let has_residual = c.has_residual();
+
+    let (reads, out) = if has_residual {
+        ws.split_borrow(&[c.x, c.residual, c.gamma], c.output)
+    } else {
+        ws.split_borrow(&[c.x, c.gamma], c.output)
+    }.ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let residual = if has_residual {
+        Some(reads[1].get(..total).ok_or(BackendError::SlotOutOfRange(c.residual.slot))?)
+    } else { None };
+    let gamma_idx = if has_residual { 2 } else { 1 };
+    let gamma = reads[gamma_idx].get(..f * es).unwrap_or(&[]);
     if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
         let row_off = bi * f;
-        let mut added: Vec<f32> = Vec::with_capacity(f);
         let mut sumsq = 0f32;
         for j in 0..f {
-            let v = read_float(&xs, row_off + j, dt) + read_float(&residual, row_off + j, dt);
-            added.push(v);
+            let v = read_float(xs, row_off + j, dt)
+                + residual.map(|r| read_float(r, row_off + j, dt)).unwrap_or(0.0);
             sumsq += v * v;
         }
         let inv_rms = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
-        for (j, &v) in added.iter().enumerate() {
-            let g = if !gamma.is_empty() { read_float(&gamma, j, dt) } else { 1.0 };
+        for j in 0..f {
+            let v = read_float(xs, row_off + j, dt)
+                + residual.map(|r| read_float(r, row_off + j, dt)).unwrap_or(0.0);
+            let g = if !gamma.is_empty() { read_float(gamma, j, dt) } else { 1.0 };
             write_float(out, row_off + j, v * inv_rms * g, dt);
         }
     }
@@ -278,24 +316,23 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
     let dt = c.dtype;
     let es = elem_size(dt);
     let total = bsz * f * es;
-    let xs = ws.read(c.x).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?
-        .to_vec();
-    let gamma = ws.read(c.gamma).get(..f * es).map(|s| s.to_vec()).unwrap_or_default();
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.x, c.gamma], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..f * es).unwrap_or(&[]);
     if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut sumsq = 0f32;
         for j in 0..f {
-            let v = read_float(&xs, row_off + j, dt);
+            let v = read_float(xs, row_off + j, dt);
             sumsq += v * v;
         }
         let inv_rms = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
         for j in 0..f {
-            let g = if !gamma.is_empty() { read_float(&gamma, j, dt) } else { 1.0 };
-            let v = read_float(&xs, row_off + j, dt) * inv_rms * g;
+            let g = if !gamma.is_empty() { read_float(gamma, j, dt) } else { 1.0 };
+            let v = read_float(xs, row_off + j, dt) * inv_rms * g;
             write_float(out, row_off + j, v, dt);
         }
     }
@@ -309,32 +346,39 @@ pub fn softmax_float<W: Workspace>(c: &SoftmaxCall, ws: &mut W, log_form: bool) 
     let dt = c.dtype;
     let es = elem_size(dt);
     let total = b * f * es;
-    let xs = ws.read(c.input).get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < total { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
-    for bi in 0..b {
-        let row_off = bi * f;
-        let mut max_v = f32::NEG_INFINITY;
-        for j in 0..f { max_v = max_v.max(read_float(&xs, row_off + j, dt)); }
-        let mut exps: Vec<f32> = Vec::with_capacity(f);
-        let mut sum = 0f32;
-        for j in 0..f {
-            let e = libm::expf(read_float(&xs, row_off + j, dt) - max_v);
-            sum += e;
-            exps.push(e);
+
+    // Reuse the thread-local matmul scratch as a per-row exp buffer.
+    // Reset between rows; never reallocates after the first call of
+    // matching feature size.
+    MATMUL_BT_SCRATCH.with(|cell| {
+        let mut exps = cell.borrow_mut();
+        for bi in 0..b {
+            let row_off = bi * f;
+            let mut max_v = f32::NEG_INFINITY;
+            for j in 0..f { max_v = max_v.max(read_float(xs, row_off + j, dt)); }
+            exps.clear();
+            exps.reserve(f);
+            let mut sum = 0f32;
+            for j in 0..f {
+                let e = libm::expf(read_float(xs, row_off + j, dt) - max_v);
+                sum += e;
+                exps.push(e);
+            }
+            let log_sum = libm::logf(sum.max(1e-30)) + max_v;
+            for (j, &e) in exps.iter().enumerate() {
+                let v = if log_form {
+                    read_float(xs, row_off + j, dt) - log_sum
+                } else {
+                    e / sum.max(1e-30)
+                };
+                write_float(out, row_off + j, v, dt);
+            }
         }
-        let log_sum = libm::logf(sum.max(1e-30)) + max_v;
-        for (j, &e) in exps.iter().enumerate() {
-            let v = if log_form {
-                read_float(&xs, row_off + j, dt) - log_sum
-            } else {
-                e / sum.max(1e-30)
-            };
-            write_float(out, row_off + j, v, dt);
-        }
-    }
+    });
     Ok(())
 }
 
@@ -346,16 +390,15 @@ pub fn reduce_float<W: Workspace>(
     if n == 0 { return Ok(()); }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let xs = ws.read(c.input).get(..n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..n * es).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    if out.len() < es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     let mut acc = init;
     for i in 0..n {
-        acc = f(acc, read_float(&xs, i, dt));
+        acc = f(acc, read_float(xs, i, dt));
     }
     if mean { acc /= n as f32; }
-    let out = ws.write(c.output);
-    if out.len() < es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     write_float(out, 0, acc, dt);
     for o in out.iter_mut().skip(es) { *o = 0; }
     Ok(())
@@ -366,14 +409,13 @@ pub fn cumsum_float<W: Workspace>(c: &ReduceCall, ws: &mut W) -> Result<(), Back
     if n == 0 { return Ok(()); }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let xs = ws.read(c.input).get(..n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..n * es).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     let mut acc = 0f32;
     for i in 0..n {
-        acc += read_float(&xs, i, dt);
+        acc += read_float(xs, i, dt);
         write_float(out, i, acc, dt);
     }
     Ok(())
@@ -395,10 +437,9 @@ pub fn pool_float<W: Workspace>(c: &PoolCall, ws: &mut W, take_max: bool) -> Res
     let es = elem_size(dt);
     let total_in = b * ch * h_in * w_in * es;
     let total_out = b * ch * h_out * w_out * es;
-    let xs = ws.read(c.x).get(..total_in)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?
-        .to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.x], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0].get(..total_in).ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
     if out.len() < total_out { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for bi in 0..b {
         for ci in 0..ch {
@@ -411,7 +452,7 @@ pub fn pool_float<W: Workspace>(c: &PoolCall, ws: &mut W, take_max: bool) -> Res
                             let ih = oh * s_h + kh;
                             let iw = ow * s_w + kw;
                             if ih < h_in && iw < w_in {
-                                let v = read_float(&xs, ((bi * ch + ci) * h_in + ih) * w_in + iw, dt);
+                                let v = read_float(xs, ((bi * ch + ci) * h_in + ih) * w_in + iw, dt);
                                 if take_max { acc = acc.max(v); } else { acc += v; }
                                 count += 1;
                             }
@@ -436,46 +477,49 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     let dt = c.dtype;
     let es = elem_size(dt);
     let total = b * h * s * d;
-    let q = ws.read(c.q).get(..total * es)
-        .ok_or(BackendError::SlotOutOfRange(c.q.slot))?.to_vec();
-    let kk = ws.read(c.k).get(..total * es)
-        .ok_or(BackendError::SlotOutOfRange(c.k.slot))?.to_vec();
-    let v = ws.read(c.v).get(..total * es)
-        .ok_or(BackendError::SlotOutOfRange(c.v.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.q, c.k, c.v], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let q = reads[0].get(..total * es).ok_or(BackendError::SlotOutOfRange(c.q.slot))?;
+    let kk = reads[1].get(..total * es).ok_or(BackendError::SlotOutOfRange(c.k.slot))?;
+    let v = reads[2].get(..total * es).ok_or(BackendError::SlotOutOfRange(c.v.slot))?;
     if out.len() < total * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     let scale = libm::sqrtf(d as f32).max(1.0);
-    for bi in 0..b {
-        for hi in 0..h {
-            let head_off = (bi * h + hi) * s * d;
-            for qi in 0..s {
-                let mut scores = vec![0f32; s];
-                for (kj, score) in scores.iter_mut().enumerate() {
-                    let mut acc = 0f32;
+
+    // Per-row score buffer reused across all (b, h, q) iterations.
+    MATMUL_BT_SCRATCH.with(|cell| {
+        let mut scores = cell.borrow_mut();
+        for bi in 0..b {
+            for hi in 0..h {
+                let head_off = (bi * h + hi) * s * d;
+                for qi in 0..s {
+                    scores.clear();
+                    scores.resize(s, 0.0);
+                    for (kj, score) in scores.iter_mut().enumerate() {
+                        let mut acc = 0f32;
+                        for di in 0..d {
+                            acc += read_float(q, head_off + qi * d + di, dt)
+                                 * read_float(kk, head_off + kj * d + di, dt);
+                        }
+                        *score = acc / scale;
+                    }
+                    let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut sum = 0f32;
+                    for sc in scores.iter_mut() {
+                        *sc = libm::expf(*sc - max_s);
+                        sum += *sc;
+                    }
+                    let denom = sum.max(1e-30);
                     for di in 0..d {
-                        acc += read_float(&q, head_off + qi * d + di, dt)
-                             * read_float(&kk, head_off + kj * d + di, dt);
+                        let mut acc = 0f32;
+                        for (kj, &sc) in scores.iter().enumerate() {
+                            acc += (sc / denom) * read_float(v, head_off + kj * d + di, dt);
+                        }
+                        write_float(out, head_off + qi * d + di, acc, dt);
                     }
-                    *score = acc / scale;
-                }
-                let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                let mut sum = 0f32;
-                for sc in scores.iter_mut() {
-                    *sc = libm::expf(*sc - max_s);
-                    sum += *sc;
-                }
-                let denom = sum.max(1e-30);
-                for di in 0..d {
-                    let mut acc = 0f32;
-                    for (kj, &sc) in scores.iter().enumerate() {
-                        acc += (sc / denom)
-                             * read_float(&v, head_off + kj * d + di, dt);
-                    }
-                    write_float(out, head_off + qi * d + di, acc, dt);
                 }
             }
         }
-    }
+    });
     Ok(())
 }
 
@@ -483,17 +527,15 @@ pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), Backen
     let n = c.element_count as usize;
     let dt = c.dtype;
     let es = elem_size(dt);
-    let cond = ws.read(c.cond).get(..n)
-        .ok_or(BackendError::SlotOutOfRange(c.cond.slot))?.to_vec();
-    let a = ws.read(c.a).get(..n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?.to_vec();
-    let b = ws.read(c.b).get(..n * es)
-        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.cond, c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let cond = reads[0].get(..n).ok_or(BackendError::SlotOutOfRange(c.cond.slot))?;
+    let a = reads[1].get(..n * es).ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let b = reads[2].get(..n * es).ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
     for i in 0..n {
         let pick_a = cond.get(i).copied().unwrap_or(0) != 0;
-        let v = if pick_a { read_float(&a, i, dt) } else { read_float(&b, i, dt) };
+        let v = if pick_a { read_float(a, i, dt) } else { read_float(b, i, dt) };
         write_float(out, i, v, dt);
     }
     Ok(())
@@ -502,11 +544,12 @@ pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), Backen
 pub fn layout_float<W: Workspace>(c: &LayoutCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = elem_count_to_bytes(n, c.dtype);
-    let inp = ws.read(c.input).get(..bytes)
-        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?.to_vec();
-    let out = ws.write(c.output);
+    let (reads, out) = ws.split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0].get(..bytes).ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < bytes { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
-    out[..bytes].copy_from_slice(&inp);
+    // Zero-copy byte copy — `copy_from_slice` is one `memcpy`.
+    out[..bytes].copy_from_slice(inp);
     Ok(())
 }
 

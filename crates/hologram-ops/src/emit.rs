@@ -5,20 +5,23 @@
 //! operator vocabulary is `PrimitiveOp` (the closed 10).
 
 use uor_foundation::enforcement::{Term, TermArena, TermList};
+use uor_foundation::pipeline::literal_u64;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 /// Result of an emitter: index of the root node in the arena, or `None`
 /// if the arena overflowed.
 pub type EmitResult = Option<u32>;
 
-/// Push a single literal, return its index.
+/// Push a single literal, return its index. Per ADR-051 the literal's
+/// value is packed into a `TermValue` byte sequence at the declared
+/// Witt level's byte width via `pipeline::literal_u64`.
 #[inline]
 pub fn push_literal<const CAP: usize>(
     arena: &mut TermArena<CAP>,
     value: u64,
     level: WittLevel,
 ) -> EmitResult {
-    arena.push(Term::Literal { value, level })
+    arena.push(literal_u64(value, level))
 }
 
 /// Push a variable reference, return its index.

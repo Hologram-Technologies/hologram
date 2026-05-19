@@ -10,12 +10,14 @@ description = "Hologram C ABI + WASM bindings."
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Hologram's C ABI is an application-author surface; it imports the
+# prism façade per wiki ADR-031 rather than the substrate directly.
 hologram-compiler = { workspace = true }
 hologram-exec     = { workspace = true }
 hologram-archive  = { workspace = true }
 hologram-backend  = { workspace = true }
 hologram-graph    = { workspace = true }
-uor-foundation    = { workspace = true }
+uor-prism         = { workspace = true }
 
 [features]
 default = []

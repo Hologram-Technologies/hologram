@@ -1,26 +1,15 @@
-//! Spec XII.3: HologramHasher produces BLAKE3-equivalent output.
+//! Smoke-test the prism Blake3 hasher as hologram's canonical
+//! `Hasher<32>` selection (spec III.3, wiki ADR-031). The full
+//! standard-vector conformance suite lives in `prism-crypto`'s
+//! `tests/conformance.rs`; this file checks only the integration
+//! surface — hologram-host re-exports `prism::crypto::Blake3Hasher`
+//! as `HologramHasher` and the `Hasher<32>` trait surface resolves.
 
-use uor_foundation::enforcement::Hasher;
+use prism::vocabulary::Hasher;
 use hologram_host::HologramHasher;
 
 #[test]
-fn blake3_known_vector_empty() {
-    let h = HologramHasher::initial();
-    let out = h.finalize();
-    let expected: [u8; 32] = blake3::hash(&[]).into();
-    assert_eq!(out, expected);
-}
-
-#[test]
-fn blake3_known_vector_abc() {
-    let h = HologramHasher::initial().fold_bytes(b"abc");
-    let out = h.finalize();
-    let expected: [u8; 32] = blake3::hash(b"abc").into();
-    assert_eq!(out, expected);
-}
-
-#[test]
-fn fold_byte_is_associative_with_fold_bytes() {
+fn fold_byte_associative_with_fold_bytes() {
     let by_byte = HologramHasher::initial()
         .fold_byte(b'a').fold_byte(b'b').fold_byte(b'c').finalize();
     let by_slice = HologramHasher::initial().fold_bytes(b"abc").finalize();
@@ -30,4 +19,11 @@ fn fold_byte_is_associative_with_fold_bytes() {
 #[test]
 fn output_bytes_is_32() {
     assert_eq!(<HologramHasher as Hasher<32>>::OUTPUT_BYTES, 32);
+}
+
+#[test]
+fn empty_input_is_deterministic() {
+    let a = HologramHasher::initial().finalize();
+    let b = HologramHasher::initial().finalize();
+    assert_eq!(a, b);
 }

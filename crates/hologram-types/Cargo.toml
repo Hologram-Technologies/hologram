@@ -7,6 +7,10 @@ authors.workspace = true
 description = "Hologram domain type vocabulary as ConstrainedTypeShape declarations."
 
 [dependencies]
+# Prism standard-library surface: re-exports `MatrixShape`,
+# `VectorShape`, `Digest` so hologram callers reach the canonical
+# shape carriers through `hologram_types::*`.
+uor-prism      = { workspace = true }
 uor-foundation = { workspace = true }
 hologram-host  = { workspace = true }
 

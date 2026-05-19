@@ -13,7 +13,7 @@ use hologram_graph::{Graph, GraphOp, InputSource, OpKind, QuantAttrs};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
 use smallvec::SmallVec;
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 const DTYPE_F32: u8 = 8;
 const DTYPE_I8: u8 = 2;

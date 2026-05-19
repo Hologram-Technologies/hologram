@@ -1,23 +1,29 @@
-//! Upstream pipeline integration (spec VII.2 steps 4-6).
+//! Prism pipeline integration (spec VII.2 steps 4-6, wiki ADR-031).
 //!
-//! Builds a per-node `CompileUnit`, validates it, and runs
-//! `pipeline::run_tower_completeness` to produce a
-//! `Validated<LiftChainCertificate>`.
+//! Builds a per-node `CompileUnit`, validates it via prism's
+//! `CompileUnitBuilder`, and runs `pipeline::run_tower_completeness`
+//! to produce a `Validated<LiftChainCertificate>`. Every imported
+//! type reaches hologram through the prism façade (`prism::pipeline`,
+//! `prism::seal`, `prism::operation`, `prism::vocabulary`); the
+//! direct foundation namespace is referenced only for items the
+//! prism crate has not yet curated (such as the
+//! `pipeline::run_tower_completeness` free function).
 
-use uor_foundation::WittLevel;
-use uor_foundation::enforcement::{
-    CompileUnit, CompileUnitBuilder, Term, Validated,
-    GenericImpossibilityWitness, LiftChainCertificate,
+use prism::operation::Term;
+use prism::pipeline::ConstrainedTypeShape;
+use prism::seal::Validated;
+use prism::uor_foundation::enforcement::{
+    Binding, CompileUnit, CompileUnitBuilder, GenericImpossibilityWitness, LiftChainCertificate,
 };
-use uor_foundation::enums::VerificationDomain;
-use uor_foundation::pipeline as upstream_pipeline;
+use prism::uor_foundation::pipeline as upstream_pipeline;
+use prism::vocabulary::{VerificationDomain, WittLevel};
 use hologram_host::HologramHasher;
 use crate::error::CompileError;
 
 /// Per-node compile-unit construction inputs.
 pub struct PerNodeUnit<'a> {
     pub root_term: &'a [Term],
-    pub bindings: &'a [uor_foundation::enforcement::Binding],
+    pub bindings: &'a [Binding],
     pub witt_level: WittLevel,
     pub budget: u64,
     pub target_domains: &'a [VerificationDomain],
@@ -47,10 +53,11 @@ pub fn build_unit<'a>(input: &PerNodeUnit<'a>) -> Result<Validated<CompileUnit<'
 /// per-op IRIs flow through the certificate-cache key, not through this type.
 struct RuntimeResultType;
 
-impl uor_foundation::pipeline::ConstrainedTypeShape for RuntimeResultType {
+impl ConstrainedTypeShape for RuntimeResultType {
     const IRI: &'static str = "https://hologram.uor.foundation/type/tensor";
     const SITE_COUNT: usize = 0;
-    const CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef] = &[];
+    const CONSTRAINTS: &'static [prism::pipeline::ConstraintRef] = &[];
+    const CYCLE_SIZE: u64 = 1;
 }
 
 /// Run `pipeline::run_tower_completeness` against the result type at the

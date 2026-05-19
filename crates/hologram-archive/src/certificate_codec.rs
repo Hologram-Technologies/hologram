@@ -7,7 +7,8 @@
 //!
 //! The encoding is per-node; the section concatenates count (u32) + entries.
 
-use uor_foundation::enforcement::{Validated, LiftChainCertificate};
+use prism::seal::Validated;
+use prism::uor_foundation::enforcement::LiftChainCertificate;
 use crate::error::ArchiveError;
 
 /// One node's certificate in serialized form.

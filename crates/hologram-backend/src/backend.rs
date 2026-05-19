@@ -1,6 +1,6 @@
 //! `Backend` trait (spec IX.1).
 
-use uor_foundation::HostBounds;
+use prism::vocabulary::HostBounds;
 use crate::kernel_call::KernelCall;
 use crate::workspace::Workspace;
 use crate::error::BackendError;
