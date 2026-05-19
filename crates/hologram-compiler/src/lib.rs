@@ -1,42 +1,61 @@
-//! Compilation pipeline: cascade-backed compilation to .holo archive.
+//! Hologram compiler (spec Part VII).
 //!
-//! All compilation routes through the 7-stage cascade engine with
-//! certificate memoization. Entry points:
-//!
-//! - `compile(graph)` — compile a raw Graph (wraps in synthetic CompileUnit)
-//! - `compile_from_source(source, ...)` — compile from UOR term language text
-//! - `CompilerBuilder` — configurable compilation with shared certificate stores
-//!
-//! Additionally provides:
-//! - **term_parser**: UOR term language → arena-allocated term graph
-//! - **preflight**: CompileUnit admission (shape validation, CS_6, CS_7)
-//! - **term_lower**: CompileUnit → Graph lowering
+//! Per-node CompileUnit pipeline:
+//!   1. Lookup op marker for node.op_kind.
+//!   2. Resolve concrete shape/dtype/host-bounds generics.
+//!   3. Emit Term tree into TermArena.
+//!   4. Build CompileUnit via CompileUnitBuilder.
+//!   5. Validate (CompileUnitBuilder::validate).
+//!   6. Run completeness (pipeline::run_tower_completeness).
+//!   7. Cache by ContentFingerprint<32>.
+//!   8. Lower to backend KernelCall.
+//!   9. Emit (kernel_call, certificate, fingerprint) into archive.
 
+pub mod cache;
 pub mod compiler;
 pub mod error;
-pub mod preflight;
-pub mod term_lower;
-pub mod term_parser;
+pub mod lower;
+pub mod pipeline;
+pub mod source;
 
-pub use compiler::{
-    compile, unit_from_graph, unit_from_graph_with, CascadeInfo, CompilationOutput,
-    CompilationStats, CompilerBuilder,
-};
-pub use error::{CompileError, CompileResult};
-pub use hologram_cascade::certificate::CertificateStore;
+pub use cache::{CachedCertificate, CertificateCache};
+pub use compiler::{BackendKind, CompilationOutput, CompilationStats, Compiler};
+pub use error::CompileError;
 
-use uor_foundation::enums::VerificationDomain;
-use uor_foundation::QuantumLevel;
-
-/// Compile from UOR term language source text.
-///
-/// Convenience wrapper around `CompilerBuilder::from_source(...).build()`.
+/// Convenience: parse UOR source -> Graph -> compile.
 pub fn compile_from_source(
     source: &str,
-    quantum_level: QuantumLevel,
-    thermodynamic_budget: f64,
-    target_domains: &[VerificationDomain],
-) -> CompileResult<CompilationOutput> {
-    CompilerBuilder::from_source(source, quantum_level, thermodynamic_budget, target_domains)
-        .build()
+    level: uor_foundation::WittLevel,
+    target: BackendKind,
+) -> Result<CompilationOutput, CompileError> {
+    let graph = source::parse(source)?;
+    Compiler::new(graph, target, level).compile()
 }
+
+/// Convenience: compile a pre-built graph.
+pub fn compile(
+    graph: hologram_graph::Graph,
+    target: BackendKind,
+    level: uor_foundation::WittLevel,
+) -> Result<CompilationOutput, CompileError> {
+    Compiler::new(graph, target, level).compile()
+}
+
+/// Compile a forward graph with an attached backward subgraph
+/// (spec V.4 / ADR-043). Backward is *planned* — gradient nodes are
+/// appended to `graph` ahead of time, then the augmented graph is
+/// compiled normally. Returns the gradient `NodeId`s alongside the
+/// compiled archive.
+pub fn compile_with_backward(
+    mut graph: hologram_graph::Graph,
+    output_id: hologram_graph::NodeId,
+    target: BackendKind,
+    level: uor_foundation::WittLevel,
+) -> Result<(CompilationOutput, alloc::vec::Vec<hologram_graph::NodeId>), CompileError> {
+    let input_grads = hologram_graph::append_backward(&mut graph, output_id)
+        .map_err(|_| CompileError::CompletenessFailure)?;
+    let output = Compiler::new(graph, target, level).compile()?;
+    Ok((output, input_grads))
+}
+
+extern crate alloc;
