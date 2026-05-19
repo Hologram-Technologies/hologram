@@ -146,6 +146,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # blake3 (transitive via uor-prism-crypto -> prism::crypto::Blake3Hasher)
+      # turns on NEON assembly when the target is aarch64 and needs an
+      # aarch64-linux-gnu cross-cc to compile the C wrapper. ubuntu-latest
+      # ships gcc-aarch64-linux-gnu in apt — wire it through via
+      # CARGO_TARGET_<TARGET>_LINKER + CC_<target> so the cc crate picks
+      # it up. wasm32 builds compile blake3's portable path and need no
+      # additional toolchain.
+      - name: Install aarch64 cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
