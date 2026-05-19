@@ -122,22 +122,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Job 8: Cross-compilation targets (WASM, aarch64)
-  # Cross-compilation targets (wasm32, aarch64).
-  #
-  # The no_std crates form the portable core that must build for every
-  # supported target. std-only crates (hologram-backend / -exec /
-  # -compiler / -ffi / -cli / -bench / -archive) depend on libc / threads
-  # / mmap and are intentionally NOT cross-targeted; their CI coverage
-  # is the matrix-`test` job.
   cross-targets:
     name: Cross (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - wasm32-unknown-unknown
-          - aarch64-unknown-linux-gnu
+        include:
+          - target: wasm32-unknown-unknown
+            packages: "-p hologram-core"
+            features: "--no-default-features"
+          - target: wasm32-unknown-unknown
+            packages: "-p hologram-core"
+            features: ""
+          - target: aarch64-unknown-linux-gnu
+            packages: "-p hologram-core"
+            features: ""
     steps:
       - uses: actions/checkout@v6
 
@@ -146,34 +146,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # blake3 (transitive via uor-prism-crypto -> prism::crypto::Blake3Hasher)
-      # turns on NEON assembly when the target is aarch64 and needs an
-      # aarch64-linux-gnu cross-cc to compile the C wrapper. ubuntu-latest
-      # ships gcc-aarch64-linux-gnu in apt — wire it through via
-      # CARGO_TARGET_<TARGET>_LINKER + CC_<target> so the cc crate picks
-      # it up. wasm32 builds compile blake3's portable path and need no
-      # additional toolchain.
-      - name: Install aarch64 cross toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
           key: cross-${{ matrix.target }}
 
-      - name: Check no_std core
-        run: |
-          cargo check --target ${{ matrix.target }} \
-            -p hologram-types \
-            -p hologram-host \
-            -p hologram-ops \
-            -p hologram-graph
+      - name: Check build
+        run: cargo check ${{ matrix.packages }} --target ${{ matrix.target }} ${{ matrix.features }}
 
   # Job 8: Verify all quality gates passed
   ci-success:

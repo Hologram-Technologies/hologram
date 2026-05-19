@@ -3,36 +3,32 @@ name = "hologram-exec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-description = "Hologram runtime executor: InferenceSession + Executor + BufferArena."
+description = "KV-lookup execution engine with parallel level scheduling"
 
 [dependencies]
-hologram-host    = { workspace = true }
-hologram-backend = { workspace = true }
+hologram-core = { workspace = true }
+hologram-graph = { workspace = true }
+hologram-ops = { workspace = true }
+hologram-backend = { path = "../hologram-backend" }
+hologram-shape = { path = "../hologram-shape" }
+hologram-ring = { workspace = true, features = ["std"] }
 hologram-archive = { workspace = true }
-hologram-graph   = { workspace = true }
-uor-foundation   = { workspace = true }
-uor-prism        = { workspace = true }
-thiserror        = { workspace = true }
-parking_lot      = { workspace = true }
-tracing          = { workspace = true }
-tokio            = { workspace = true, optional = true }
+rkyv = { workspace = true }
+bytemuck = { workspace = true }
+smallvec = { workspace = true }
+tracing = "0.1"
+parking_lot = { workspace = true }
 
-[dev-dependencies]
-hologram-compiler = { workspace = true }
-hologram-graph    = { workspace = true }
-uor-foundation    = { workspace = true }
-smallvec          = { workspace = true }
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dependencies.rayon]
+workspace = true
+optional = true
 
 [features]
-default = []
-async = ["dep:tokio"]
-# Architectural surface for parallel-within-level dispatch (spec VIII.2).
-# The exec plan emits per-level kernel-call indices; the executor walks
-# each level. Sound parallelism within a level requires splitting the
-# workspace into disjoint per-call mutable fragments — out of scope
-# here, since `Backend::dispatch` consumes `&mut Workspace`. GPU
-# backends parallelize internally via their command queues. Enabling
-# the feature tightens the `SessionBackend` bounds with `Clone + Send
-# + Sync` so a future per-slot-disaggregated executor can require them.
-parallel = []
+default = ["std"]
+std = ["hologram-archive/std"]
+parallel = ["rayon"]
+accelerate = []
+profile = []

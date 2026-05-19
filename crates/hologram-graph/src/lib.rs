@@ -1,24 +1,23 @@
-//! Hologram graph IR (spec Part VI).
+//! Expression graph, subgraph composition, fusion engine, and parallel scheduling.
 //!
-//! Arena-based DAG of nodes; each `Node` carries an `OpKind` (closed
-//! catalog from `hologram-ops::OpKind`) plus its inputs and dtype/shape
-//! metadata. The single `GraphOp` enum unifies all dispatch.
+//! Provides a single unified `Graph` type (replacing v1's dual OperationGraph/CompileGraph),
+//! subgraph templates with flatten/instantiation, single-pass fusion, and dependency-aware
+//! parallel level scheduling.
 
-#![no_std]
-
-extern crate alloc;
-
-pub mod backward;
+pub mod builder;
 pub mod constant;
+pub mod error;
+pub mod fusion;
 pub mod graph;
-pub mod node;
-pub mod registry;
 pub mod schedule;
+pub mod subgraph;
 
-pub use backward::{append_backward, BackwardError};
-pub use constant::ConstantStore;
-pub use graph::Graph;
-pub use hologram_ops::OpKind;
-pub use node::{ConstantId, ConvAttrs, GraphOp, InputSource, Node, NodeId, QuantAttrs};
-pub use registry::{DTypeId, ShapeDescriptor, ShapeId, ShapeRegistry};
-pub use schedule::Schedule;
+// Convenience re-exports
+pub use builder::GraphBuilder;
+pub use constant::{ConstantData, ConstantId, ConstantStore};
+pub use error::{GraphError, GraphResult};
+pub use fusion::{fuse, FusionStats};
+pub use graph::node::NodeId;
+pub use graph::{CustomOpId, Graph, GraphOp, SubgraphId};
+pub use schedule::ExecutionSchedule;
+pub use subgraph::SubgraphDef;

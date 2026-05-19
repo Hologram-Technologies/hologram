@@ -1,0 +1,24 @@
+[package]
+name = "hologram-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core LUT tables, views, ring, encoding for O(1) computation"
+
+[dependencies]
+uor-foundation = { workspace = true }
+hologram-ring = { workspace = true, features = ["std", "serialize"] }
+bytemuck = { workspace = true }
+libm = { workspace = true }
+# rkyv is optional: only enabled when the 'serialize' feature is on.
+# This allows wasm32/embedded builds to compile without rkyv's std-only deps.
+rkyv = { version = "0.8", default-features = false, optional = true }
+
+[features]
+default = ["std"]
+std = ["serialize", "rkyv/std", "rkyv/bytecheck"]
+serialize = ["dep:rkyv", "rkyv/alloc", "rkyv/bytecheck"]
+simd = [] # SIMD dispatch is compile-time detected; flag reserved for future gating
+# Flag reserved for future no_alloc term arenas; referenced by term/arena.rs
+# cfg-gated blocks. Not yet wired into actual allocation-free paths.
+no_alloc = []

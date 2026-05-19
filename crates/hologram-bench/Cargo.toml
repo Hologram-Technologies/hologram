@@ -3,25 +3,92 @@ name = "hologram-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-description = "Hologram criterion benchmarks."
+description = "Criterion benchmarks for hologram"
 
 [dependencies]
-hologram-host     = { workspace = true }
-hologram-types    = { workspace = true }
-hologram-ops      = { workspace = true }
-hologram-graph    = { workspace = true }
+uor-foundation = { workspace = true }
+hologram-core = { workspace = true }
+hologram-graph = { workspace = true }
+hologram-archive = { workspace = true }
+hologram-exec = { workspace = true }
 hologram-compiler = { workspace = true }
-hologram-exec     = { workspace = true }
-hologram-backend  = { workspace = true }
-hologram-archive  = { workspace = true }
-uor-prism         = { workspace = true }
+hologram-cascade = { workspace = true }
+hologram-async = { workspace = true }
+hologram-ffi = { workspace = true }
+hologram-backend = { workspace = true, optional = true, features = ["webgpu"] }
+hologram-transform = { workspace = true }
+rkyv = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+# Enables benchmarks that exercise the WebGPU canonical backend
+# (resident-workspace vs round-trip dispatch, decode-step against CPU).
+# Requires a working Vulkan/Metal/DX12 adapter at run time.
+webgpu = ["dep:hologram-backend"]
+# Enables the parallel CPU matmul (rayon over output rows / GEMV
+# columns). Only worth turning on for shapes large enough to amortise
+# thread-launch overhead — the matmul kernel size-gates internally.
+parallel = ["hologram-transform/parallel"]
 
 [dev-dependencies]
 criterion = { workspace = true }
+blake3 = { workspace = true }
 
 [[bench]]
-name = "decode_step"
+name = "lut"
+harness = false
+
+[[bench]]
+name = "view"
+harness = false
+
+[[bench]]
+name = "kv_dispatch"
+harness = false
+
+[[bench]]
+name = "executor"
+harness = false
+
+[[bench]]
+name = "archive"
+harness = false
+
+[[bench]]
+name = "fusion"
+harness = false
+
+[[bench]]
+name = "q1"
+harness = false
+
+[[bench]]
+name = "lut_gemm"
+harness = false
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[[bench]]
+name = "ffi"
+harness = false
+
+[[bench]]
+name = "async_exec"
+harness = false
+
+[[bench]]
+name = "async_stream"
+harness = false
+
+[[bench]]
+name = "calculator"
+harness = false
+
+[[bench]]
+name = "softmax"
 harness = false
 
 [[bench]]
@@ -29,5 +96,34 @@ name = "matmul"
 harness = false
 
 [[bench]]
-name = "compiler"
+name = "epilogue_fusion"
+harness = false
+
+[[bench]]
+name = "kv_cache"
+harness = false
+
+[[bench]]
+name = "term_parse"
+harness = false
+
+[[bench]]
+name = "preflight"
+harness = false
+
+[[bench]]
+name = "cascade"
+harness = false
+
+[[bench]]
+name = "wgpu_resident"
+harness = false
+required-features = ["webgpu"]
+
+[[bench]]
+name = "decode_step"
+harness = false
+
+[[bench]]
+name = "chain_builder"
 harness = false

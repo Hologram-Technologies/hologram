@@ -3,19 +3,17 @@ name = "hologram-ops"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-description = "Hologram operation markers + Term-tree emitters + reference evaluators."
+description = "Canonical semantic operation model for Hologram"
 
 [dependencies]
-uor-foundation     = { workspace = true }
-uor-foundation-sdk = { workspace = true }
-uor-prism          = { workspace = true }
-hologram-host      = { workspace = true }
-hologram-types     = { workspace = true }
-libm               = { workspace = true }
-
-[dev-dependencies]
-hologram-host  = { workspace = true }
+libm = { workspace = true }
+rkyv = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [features]
 default = []
+# Enables threaded inner loops in compute-heavy kernels (matmul forward
+# and grad_b). Off by default — keeps the canonical CPU portable to
+# wasm and other no-std-thread targets. Backends/benches that want the
+# speedup opt in.
+parallel = ["dep:rayon"]

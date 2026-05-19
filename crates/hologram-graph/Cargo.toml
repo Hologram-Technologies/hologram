@@ -3,13 +3,15 @@ name = "hologram-graph"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-description = "Hologram graph IR (arena-based DAG, schedule, registries)."
+description = "Expression graph, subgraphs, fusion engine, parallel scheduling"
 
 [dependencies]
-hologram-ops   = { workspace = true }
-hologram-types = { workspace = true }
-smallvec       = { workspace = true }
+hologram-core = { workspace = true, features = ["std"] }
+hologram-ops = { workspace = true }
+rkyv = { workspace = true }
+smallvec = { workspace = true }
+tinyvec = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [features]
-default = []
+parallel = ["dep:rayon"]

@@ -1,0 +1,1978 @@
+use super::helpers::*;
+use super::matmul_dequant::{
+    matmul_dequant_q4_0, matmul_dequant_q6_k, Q4_0_BLOCK_BYTES, Q4_0_BLOCK_VALUES,
+    Q6_K_BLOCK_BYTES, Q6_K_BLOCK_VALUES,
+};
+use crate::buffer::OutputBuffer;
+use crate::error::{ExecError, ExecResult};
+use hologram_core::op::FloatOp;
+
+/// Parameters for a GEMM (General Matrix Multiply) operation:
+/// `C = alpha * op(A) * op(B) + beta * C`
+#[derive(Debug, Clone, Copy)]
+pub struct GemmParams {
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+    pub alpha: f32,
+    pub beta: f32,
+    pub trans_a: bool,
+    pub trans_b: bool,
+}
+
+#[cfg(all(feature = "accelerate", target_os = "macos"))]
+pub(crate) mod blas {
+    use super::GemmParams;
+
+    #[allow(non_camel_case_types)]
+    type cblas_int = i32;
+
+    const CBLAS_ROW_MAJOR: cblas_int = 101;
+    const CBLAS_NO_TRANS: cblas_int = 111;
+    const CBLAS_TRANS: cblas_int = 112;
+
+    extern "C" {
+        fn cblas_sgemm(
+            order: cblas_int,
+            trans_a: cblas_int,
+            trans_b: cblas_int,
+            m: cblas_int,
+            n: cblas_int,
+            k: cblas_int,
+            alpha: f32,
+            a: *const f32,
+            lda: cblas_int,
+            b: *const f32,
+            ldb: cblas_int,
+            beta: f32,
+            c: *mut f32,
+            ldc: cblas_int,
+        );
+    }
+
+    /// BLAS sgemm: C = A * B (row-major, no transpose).
+    pub fn sgemm(m: usize, n: usize, k: usize, a: &[f32], b: &[f32], c: &mut [f32]) {
+        sgemm_full(
+            GemmParams {
+                m,
+                n,
+                k,
+                alpha: 1.0,
+                beta: 0.0,
+                trans_a: false,
+                trans_b: false,
+            },
+            a,
+            b,
+            c,
+        );
+    }
+
+    /// BLAS sgemm: C = alpha * op(A) * op(B) + beta * C (row-major).
+    pub fn sgemm_full(p: GemmParams, a: &[f32], b: &[f32], c: &mut [f32]) {
+        let ta = if p.trans_a {
+            CBLAS_TRANS
+        } else {
+            CBLAS_NO_TRANS
+        };
+        let tb = if p.trans_b {
+            CBLAS_TRANS
+        } else {
+            CBLAS_NO_TRANS
+        };
+        let lda = if p.trans_a {
+            p.m as cblas_int
+        } else {
+            p.k as cblas_int
+        };
+        let ldb = if p.trans_b {
+            p.k as cblas_int
+        } else {
+            p.n as cblas_int
+        };
+        unsafe {
+            cblas_sgemm(
+                CBLAS_ROW_MAJOR,
+                ta,
+                tb,
+                p.m as cblas_int,
+                p.n as cblas_int,
+                p.k as cblas_int,
+                p.alpha,
+                a.as_ptr(),
+                lda,
+                b.as_ptr(),
+                ldb,
+                p.beta,
+                c.as_mut_ptr(),
+                p.n as cblas_int,
+            );
+        }
+    }
+}
+
+/// Dispatch a MatMul using runtime-aware shape inference.
+///
+/// The compiled `k` (inner dimension) is used as a hint. When it cannot
+/// cleanly divide both inputs, we attempt to infer k from the compiled `n`
+/// and `m` hints, or from common factors between the two buffer lengths.
+pub fn dispatch_matmul(inputs: &[&[u8]], m: usize, k: usize, n: usize) -> ExecResult<Vec<u8>> {
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+
+    let actual_k = infer_matmul_k(k, m, n, a.len(), b.len())?;
+
+    // Detect batched matmul: when compiled m and n are non-zero and the total
+    // elements exceed m*k (for A) or k*n (for B), there are batch dimensions.
+    let mk = m.max(1) * actual_k;
+    let kn = actual_k * n.max(1);
+
+    let (batch, actual_m, actual_n) = if m > 0
+        && n > 0
+        && mk > 0
+        && kn > 0
+        && a.len() > mk
+        && a.len().is_multiple_of(mk)
+        && (b.len().is_multiple_of(kn) || b.len() == kn)
+    {
+        // Batched: A has batch leading dims, B may be batched or broadcast.
+        let batch_a = a.len() / mk;
+        let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+            b.len() / kn
+        } else {
+            1
+        };
+        if batch_a == batch_b || batch_b == 1 {
+            (batch_a, m, n)
+        } else {
+            // Batch mismatch — fall back to flat 2D.
+            (1, a.len() / actual_k, b.len() / actual_k)
+        }
+    } else {
+        // Flat 2D matmul (no batch dims or m/n unknown).
+        (1, a.len() / actual_k, b.len() / actual_k)
+    };
+
+    let out_size = batch * actual_m * actual_n;
+
+    let mut out = vec![0.0f32; out_size];
+
+    if batch == 1 {
+        // Single (possibly flattened) 2D matmul.
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm(actual_m, actual_n, actual_k, &a, &b, &mut out);
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            matmul_k_outer(&a, &b, &mut out, actual_m, actual_k, actual_n);
+        }
+    } else {
+        // Batched matmul: compute one [m, k] × [k, n] per batch.
+        let a_stride = actual_m * actual_k;
+        let b_stride = if b.len() == kn {
+            0
+        } else {
+            actual_k * actual_n
+        };
+        let o_stride = actual_m * actual_n;
+
+        let do_batch = |i: usize, o_slice: &mut [f32]| {
+            let a_slice = &a[i * a_stride..(i + 1) * a_stride];
+            let b_slice = if b_stride > 0 {
+                &b[i * b_stride..(i + 1) * b_stride]
+            } else {
+                &b[..kn]
+            };
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        if batch >= 2 {
+            use rayon::prelude::*;
+            out.par_chunks_mut(o_stride)
+                .enumerate()
+                .for_each(|(i, o_slice)| do_batch(i, o_slice));
+        } else {
+            do_batch(0, &mut out);
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        for i in 0..batch {
+            do_batch(i, &mut out[i * o_stride..(i + 1) * o_stride]);
+        }
+    }
+
+    Ok(f32_vec_to_bytes(out))
+}
+
+/// MatMul writing directly into a pre-allocated output buffer (zero intermediate Vec).
+/// Infer actual (m, k, n) dimensions from compiled values and runtime buffer sizes.
+///
+/// When the runtime buffer has fewer elements than compiled m*k (variable-length
+/// execution like decode with 1 token instead of 2048), adapts m to match the
+/// actual buffer size. For batched matmul, preserves m and detects batch count.
+pub(crate) fn infer_matmul_dims(
+    compiled_m: usize,
+    compiled_k: usize,
+    compiled_n: usize,
+    a_elems: usize,
+    b_elems: usize,
+) -> (usize, usize, usize) {
+    let actual_k =
+        infer_matmul_k(compiled_k, compiled_m, compiled_n, a_elems, b_elems).unwrap_or(compiled_k);
+
+    let mk = compiled_m.max(1) * actual_k;
+    let kn = actual_k * compiled_n.max(1);
+
+    if compiled_m > 0
+        && compiled_n > 0
+        && mk > 0
+        && kn > 0
+        && a_elems > mk
+        && a_elems.is_multiple_of(mk)
+        && (b_elems.is_multiple_of(kn) || b_elems == kn)
+    {
+        // Batched case: keep compiled m and n, batch is implicit.
+        (compiled_m, actual_k, compiled_n)
+    } else if actual_k > 0 {
+        // Non-batched: infer m from buffer size.
+        let actual_m = a_elems.checked_div(actual_k).unwrap_or(0);
+        let actual_n = if b_elems >= actual_k {
+            b_elems.checked_div(actual_k).unwrap_or(compiled_n)
+        } else {
+            compiled_n
+        };
+        (actual_m, actual_k, actual_n)
+    } else {
+        (compiled_m, compiled_k, compiled_n)
+    }
+}
+
+/// NEON f32 vecmat: out[j] = Σ_l a[l] * b[l*n + j], for M=1 decode.
+///
+/// Processes 16 output columns per iteration (4 × vfmaq_f32). K-unrolled by 4
+/// for instruction-level parallelism. Avoids BLAS function call overhead which
+/// is significant for M=1 vecmat (~0.02ms per call × 111 calls = 2.2ms).
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
+pub(crate) fn vecmat_neon(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
+    use std::arch::aarch64::*;
+
+    let n16 = n - (n % 16);
+    let k4 = k - (k % 4);
+
+    unsafe {
+        // Process 16 output columns at a time.
+        let mut j = 0usize;
+        while j < n16 {
+            let mut acc0 = vdupq_n_f32(0.0);
+            let mut acc1 = vdupq_n_f32(0.0);
+            let mut acc2 = vdupq_n_f32(0.0);
+            let mut acc3 = vdupq_n_f32(0.0);
+
+            // K-unrolled by 4.
+            let mut l = 0usize;
+            while l < k4 {
+                macro_rules! k_step {
+                    ($ll:expr) => {
+                        let av = vdupq_n_f32(*a.get_unchecked($ll));
+                        let bp = b.as_ptr().add($ll * n + j);
+                        acc0 = vfmaq_f32(acc0, av, vld1q_f32(bp));
+                        acc1 = vfmaq_f32(acc1, av, vld1q_f32(bp.add(4)));
+                        acc2 = vfmaq_f32(acc2, av, vld1q_f32(bp.add(8)));
+                        acc3 = vfmaq_f32(acc3, av, vld1q_f32(bp.add(12)));
+                    };
+                }
+                k_step!(l);
+                k_step!(l + 1);
+                k_step!(l + 2);
+                k_step!(l + 3);
+                l += 4;
+            }
+            // K remainder.
+            while l < k {
+                let av = vdupq_n_f32(*a.get_unchecked(l));
+                let bp = b.as_ptr().add(l * n + j);
+                acc0 = vfmaq_f32(acc0, av, vld1q_f32(bp));
+                acc1 = vfmaq_f32(acc1, av, vld1q_f32(bp.add(4)));
+                acc2 = vfmaq_f32(acc2, av, vld1q_f32(bp.add(8)));
+                acc3 = vfmaq_f32(acc3, av, vld1q_f32(bp.add(12)));
+                l += 1;
+            }
+
+            let op = out.as_mut_ptr().add(j);
+            vst1q_f32(op, acc0);
+            vst1q_f32(op.add(4), acc1);
+            vst1q_f32(op.add(8), acc2);
+            vst1q_f32(op.add(12), acc3);
+            j += 16;
+        }
+
+        // Remainder columns (< 16).
+        for jj in j..n {
+            let mut sum = 0.0f32;
+            for l in 0..k {
+                sum += *a.get_unchecked(l) * *b.get_unchecked(l * n + jj);
+            }
+            *out.get_unchecked_mut(jj) = sum;
+        }
+    }
+}
+
+pub fn dispatch_matmul_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    out_buf: &mut OutputBuffer,
+) -> ExecResult<()> {
+    // ── Fast path: when m, k, n are all known and consistent with input sizes,
+    // skip infer_matmul_k and batch detection entirely.
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    if m > 0 && k > 0 && n > 0 {
+        let a_expected = m * k * 4;
+        let b_expected = k * n * 4;
+        if inputs[0].len() == a_expected && inputs[1].len() == b_expected {
+            // Direct zero-copy BLAS call — no Cow, no inference, no batch detection.
+            // AMX hardware is faster than software NEON even for M=1 vecmat.
+            let a: &[f32] = bytemuck::cast_slice(inputs[0]);
+            let b: &[f32] = bytemuck::cast_slice(inputs[1]);
+            let out = alloc_f32_in(out_buf, m * n);
+            blas::sgemm(m, n, k, a, b, out);
+            return Ok(());
+        }
+    }
+
+    // ── General path: infer dimensions, detect batching, handle misalignment.
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+
+    let actual_k = infer_matmul_k(k, m, n, a.len(), b.len())?;
+
+    // Detect batched matmul (same logic as dispatch_matmul).
+    let mk = m.max(1) * actual_k;
+    let kn = actual_k * n.max(1);
+
+    let (batch, actual_m, actual_n) = if m > 0
+        && n > 0
+        && mk > 0
+        && kn > 0
+        && a.len() > mk
+        && a.len().is_multiple_of(mk)
+        && (b.len().is_multiple_of(kn) || b.len() == kn)
+    {
+        let batch_a = a.len() / mk;
+        let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+            b.len() / kn
+        } else {
+            1
+        };
+        if batch_a == batch_b || batch_b == 1 {
+            (batch_a, m, n)
+        } else {
+            (1, a.len() / actual_k, b.len() / actual_k)
+        }
+    } else {
+        (1, a.len() / actual_k, b.len() / actual_k)
+    };
+
+    let out_size = batch * actual_m * actual_n;
+
+    let out = alloc_f32_in(out_buf, out_size);
+
+    if batch == 1 {
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm(actual_m, actual_n, actual_k, &a, &b, out);
+        }
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            matmul_k_outer(&a, &b, out, actual_m, actual_k, actual_n);
+        }
+    } else {
+        let a_stride = actual_m * actual_k;
+        let b_stride = if b.len() == kn {
+            0
+        } else {
+            actual_k * actual_n
+        };
+        let o_stride = actual_m * actual_n;
+
+        let do_batch = |i: usize, o_slice: &mut [f32]| {
+            let a_slice = &a[i * a_stride..(i + 1) * a_stride];
+            let b_slice = if b_stride > 0 {
+                &b[i * b_stride..(i + 1) * b_stride]
+            } else {
+                &b[..kn]
+            };
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            {
+                blas::sgemm(actual_m, actual_n, actual_k, a_slice, b_slice, o_slice);
+            }
+            #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+            {
+                matmul_k_outer(a_slice, b_slice, o_slice, actual_m, actual_k, actual_n);
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        if batch >= 2 {
+            use rayon::prelude::*;
+            out.par_chunks_mut(o_stride)
+                .enumerate()
+                .for_each(|(i, o_slice)| do_batch(i, o_slice));
+        } else {
+            do_batch(0, out);
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        for i in 0..batch {
+            do_batch(i, &mut out[i * o_stride..(i + 1) * o_stride]);
+        }
+    }
+
+    Ok(())
+}
+
+/// Batched matmul: A[batch, M, K] × B[batch, K, N] → C[batch, M, N].
+///
+/// Each batch independently computes a 2D matrix multiply. This is required
+/// for multi-head attention where Q@K^T operates per-head.
+///
+/// Returns `(output_bytes, output_shape)`.
+pub fn dispatch_batched_matmul(
+    inputs: &[&[u8]],
+    a_shape: &[usize],
+    b_shape: &[usize],
+) -> ExecResult<(Vec<u8>, Vec<usize>)> {
+    let a = cast_f32(inputs[0])?;
+    let b = cast_f32(inputs[1])?;
+
+    // Last 2 dims are the matrix dims; everything before is batch.
+    let mat_m = a_shape[a_shape.len() - 2];
+    let mat_k = a_shape[a_shape.len() - 1];
+    let mat_n = b_shape[b_shape.len() - 1];
+
+    let batch: usize = a_shape[..a_shape.len() - 2]
+        .iter()
+        .copied()
+        .product::<usize>()
+        .max(1);
+
+    let a_stride = mat_m * mat_k;
+    let b_stride = mat_k * mat_n;
+    let c_stride = mat_m * mat_n;
+
+    // Support broadcast: 2-D B (shared weight) reuses the same matrix for
+    // every batch slice. b_batch_count=1 means b_off stays at 0 each iteration.
+    let b_batch_count = b.len().checked_div(b_stride).unwrap_or(1).max(1);
+
+    // Validate sizes.
+    if batch * a_stride > a.len() || b_stride > b.len() {
+        return Err(ExecError::ShapeMismatch {
+            expected: format!(
+                "batched matmul: batch={batch} A=[{mat_m},{mat_k}] B=[{mat_k},{mat_n}]"
+            ),
+            actual: format!("a_len={}, b_len={}", a.len(), b.len()),
+        });
+    }
+
+    let out_size = batch * c_stride;
+
+    let mut out = vec![0.0f32; out_size];
+
+    let do_batch = |bat: usize, c_slice: &mut [f32]| {
+        let a_off = bat * a_stride;
+        let b_off = (bat % b_batch_count) * b_stride;
+        let a_slice = &a[a_off..a_off + a_stride];
+        let b_slice = &b[b_off..b_off + b_stride];
+
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm(mat_m, mat_n, mat_k, a_slice, b_slice, c_slice);
+        }
+
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            matmul_k_outer(a_slice, b_slice, c_slice, mat_m, mat_k, mat_n);
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    if batch >= 2 {
+        use rayon::prelude::*;
+        out.par_chunks_mut(c_stride)
+            .enumerate()
+            .for_each(|(bat, c_slice)| do_batch(bat, c_slice));
+    } else {
+        do_batch(0, &mut out);
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    for bat in 0..batch {
+        do_batch(bat, &mut out[bat * c_stride..(bat + 1) * c_stride]);
+    }
+
+    // Output shape: A's batch dims + [M, N]
+    let mut out_shape = a_shape[..a_shape.len() - 1].to_vec();
+    out_shape.push(mat_n);
+
+    Ok((f32_vec_to_bytes(out), out_shape))
+}
+
+/// Infer the shared inner dimension `k` for MatMul A[M,K] × B[K,N].
+///
+/// Uses compiled k/m/n as hints. When compiled k is wrong (doesn't divide
+/// both inputs), tries to infer k from compiled n (B's last dim, typically
+/// concrete for weight matrices) or from common factors.
+/// Validate a k candidate: must divide both inputs and not produce an absurdly
+/// large output (guards against k=1 or erroneous small values).
+#[inline]
+fn try_k(k: usize, a_len: usize, b_len: usize) -> Option<usize> {
+    if k == 0 || !a_len.is_multiple_of(k) || !b_len.is_multiple_of(k) {
+        return None;
+    }
+    let m_cand = a_len / k;
+    let n_cand = b_len / k;
+    if m_cand.saturating_mul(n_cand) < 256 * 1024 * 1024 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn infer_matmul_k(
+    compiled_k: usize,
+    compiled_m: usize,
+    compiled_n: usize,
+    a_len: usize,
+    b_len: usize,
+) -> ExecResult<usize> {
+    // Primary: compiled k is high-confidence — no output-size guard needed.
+    if compiled_k > 1 && a_len.is_multiple_of(compiled_k) && b_len.is_multiple_of(compiled_k) {
+        return Ok(compiled_k);
+    }
+
+    // Build candidate list in priority order; validate each with try_k.
+    let g = gcd(a_len, b_len);
+    let candidates = [
+        // k = b_len / n: weight's last dim is usually concrete.
+        if compiled_n > 1 && b_len.is_multiple_of(compiled_n) {
+            b_len / compiled_n
+        } else {
+            0
+        },
+        // k = a_len / m: activation's last dim.
+        if compiled_m > 1 && a_len.is_multiple_of(compiled_m) {
+            a_len / compiled_m
+        } else {
+            0
+        },
+        // compiled_n as k: square weight matrix case.
+        compiled_n,
+        // GCD: largest shared dimension.
+        g,
+        // GCD sub-divisor when GCD is too large: round down to compiled_n multiple.
+        if compiled_n > 1 && g.is_multiple_of(compiled_n) {
+            g / compiled_n * compiled_n
+        } else {
+            0
+        },
+        // Last resort: compiled_k including k=1 (guarded against huge output).
+        compiled_k,
+    ];
+    for k in candidates {
+        if let Some(k) = try_k(k, a_len, b_len) {
+            return Ok(k);
+        }
+    }
+
+    Err(ExecError::ShapeMismatch {
+        expected: format!(
+            "matmul k dividing both inputs (compiled k={compiled_k}, m={compiled_m}, n={compiled_n})"
+        ),
+        actual: format!("a={a_len}, b={b_len}"),
+    })
+}
+
+pub(crate) fn dispatch_gemm(inputs: &[&[u8]], p: GemmParams, quant_b: u8) -> ExecResult<Vec<u8>> {
+    // ── Fast path: fused Q4_0 dequant-matmul ──────────────────────────
+    // Skip the full dequantization when B is Q4_0, not transposed, and
+    // dimensions align to block boundaries.  This avoids materializing
+    // the entire K×N f32 weight matrix.
+    if quant_b == 1 && !p.trans_b && !p.trans_a && p.alpha == 1.0 && p.beta == 0.0 {
+        let b_q4 = inputs[1];
+        let expected_f32_count = b_q4.len() / Q4_0_BLOCK_BYTES * Q4_0_BLOCK_VALUES;
+        let k = p.k;
+        if k > 0 && expected_f32_count > 0 {
+            let n = expected_f32_count / k;
+            let a = cast_f32(inputs[0])?;
+            let m = a.len().checked_div(k).unwrap_or(0);
+            if n.is_multiple_of(Q4_0_BLOCK_VALUES) && m > 0 && n > 0 {
+                let mut out = vec![0.0f32; m * n];
+                matmul_dequant_q4_0(&a, b_q4, &mut out, m, k, n);
+                return Ok(f32_vec_to_bytes(out));
+            }
+        }
+    }
+
+    // ── Fast path: fused Q6_K dequant-matmul ──────────────────────────
+    if quant_b == 3 && !p.trans_b && !p.trans_a && p.alpha == 1.0 && p.beta == 0.0 {
+        let b_q6k = inputs[1];
+        let expected_f32_count = b_q6k.len() / Q6_K_BLOCK_BYTES * Q6_K_BLOCK_VALUES;
+        let k = p.k;
+        if k > 0 && expected_f32_count > 0 {
+            let n = expected_f32_count / k;
+            let a = cast_f32(inputs[0])?;
+            let m = a.len().checked_div(k).unwrap_or(0);
+            if n.is_multiple_of(Q6_K_BLOCK_VALUES) && m > 0 && n > 0 {
+                let mut out = vec![0.0f32; m * n];
+                matmul_dequant_q6_k(&a, b_q6k, &mut out, m, k, n);
+                return Ok(f32_vec_to_bytes(out));
+            }
+        }
+    }
+
+    // ── General path: dequantize B, then standard matmul ──────────────
+    let a = cast_f32(inputs[0])?;
+    let b = super::cast::decode_weights(inputs[1], quant_b)?;
+    let c: std::borrow::Cow<'_, [f32]> = if inputs.len() > 2 {
+        cast_f32(inputs[2])?
+    } else {
+        std::borrow::Cow::Owned(vec![])
+    };
+    // Derive m, n, and batch from actual inputs.
+    let k = p.k;
+    let flat_n = b.len().checked_div(k).unwrap_or(0);
+    let flat_m = a.len().checked_div(k).unwrap_or(0);
+
+    // Detect batched Gemm: if compiled m/n are set and total elements exceed
+    // m*k / k*n, there are batch dimensions (e.g., 4D multi-head attention).
+    let (batch, m, n) = if p.m > 0 && p.n > 0 && k > 0 {
+        let mk = p.m * k;
+        let kn = k * p.n;
+        if mk > 0 && kn > 0 && a.len() > mk && a.len().is_multiple_of(mk) {
+            let batch_a = a.len() / mk;
+            let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+                b.len() / kn
+            } else {
+                1
+            };
+            if batch_a == batch_b || batch_b == 1 {
+                (batch_a, p.m, p.n)
+            } else {
+                (1, flat_m, flat_n)
+            }
+        } else {
+            (1, flat_m, flat_n)
+        }
+    } else {
+        (1, flat_m, flat_n)
+    };
+
+    let mut out = vec![0.0f32; batch * m * n];
+
+    let mk = m * k;
+    let kn = k * n;
+    let mn = m * n;
+
+    // B may be broadcast (batch_b=1) across all batches of A.
+    let batch_b = if b.len() > kn && b.len().is_multiple_of(kn) {
+        b.len() / kn
+    } else {
+        1
+    };
+
+    for bi in 0..batch {
+        let a_off = bi * mk;
+        let b_off = if batch_b > 1 { bi * kn } else { 0 };
+        let o_off = bi * mn;
+        let a_slice = &a[a_off..a_off + mk];
+        let b_slice = &b[b_off..b_off + kn];
+        let out_slice = &mut out[o_off..o_off + mn];
+
+        // Copy bias (C) into output — BLAS computes C := alpha*A*B + beta*C in-place.
+        if p.beta != 0.0 {
+            for (idx, o) in out_slice.iter_mut().enumerate() {
+                *o = if idx < c.len() { c[idx] } else { 0.0 };
+            }
+        }
+
+        #[cfg(all(feature = "accelerate", target_os = "macos"))]
+        {
+            blas::sgemm_full(GemmParams { m, n, k, ..p }, a_slice, b_slice, out_slice);
+        }
+
+        #[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+        {
+            let a_rm = if p.trans_a {
+                std::borrow::Cow::Owned(transpose_f32(a_slice, k, m))
+            } else {
+                std::borrow::Cow::Borrowed(a_slice)
+            };
+            let b_rm = if p.trans_b {
+                std::borrow::Cow::Owned(transpose_f32(b_slice, n, k))
+            } else {
+                std::borrow::Cow::Borrowed(b_slice)
+            };
+
+            matmul_k_outer(&a_rm, &b_rm, out_slice, m, k, n);
+
+            if p.alpha != 1.0 || p.beta != 0.0 {
+                for (idx, o) in out_slice.iter_mut().enumerate() {
+                    let c_val = if idx < c.len() { c[idx] } else { 0.0 };
+                    *o = p.alpha * *o + p.beta * c_val;
+                }
+            }
+        }
+    }
+
+    Ok(f32_vec_to_bytes(out))
+}
+
+// ── Shared matmul kernel ────────────────────────────────────────────────
+
+// Minimum M-tile rows to justify rayon threads (thread overhead threshold).
+// Lowered from 8 to 2 (M >= 8): rayon overhead is ~5µs, a single M=8 GEMM
+// with K=4096, N=4096 takes ~1ms — 0.5% overhead is acceptable.
+#[allow(dead_code)]
+pub(super) const PAR_M_TILE_THRESHOLD: usize = 2;
+
+/// Wrapper to send a raw `*mut f32` across rayon threads.
+/// SAFETY: callers must guarantee non-overlapping writes per thread.
+#[derive(Clone, Copy)]
+pub(super) struct SendPtr(pub(super) *mut f32);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+
+/// K-dimension block size for L2 cache blocking. A KC×NR panel (256×8 = 8 KB)
+/// fits in L1; a KC×N panel for N=2048 (2 MB) fits in L2.
+pub(super) const KC: usize = 256;
+
+/// Micro-kernel: accumulate A[i..i+MR, k_start..k_end] × B[k_start..k_end, j..j+NR]
+/// Tile coordinates + K/N strides for an inner matmul micro-kernel.
+///
+/// Used by both the strided and dequant micro-kernels so the 9-argument
+/// positional explosion collapses into two logical things: the A/B/acc
+/// buffers (passed separately because they have distinct lifetimes and
+/// mutability) and this layout struct.
+///
+/// Build with [`MicroKernelStridedLayout::new`] (required: `i`, `j`,
+/// `k_start`, `k_end`, `k_stride`, `n`). All fields are required — there
+/// are no sensible defaults for these geometry parameters — so this
+/// struct has no `with_*` setters; the builder pattern is provided by
+/// the named-field `new` constructor and the struct-level `Debug`/`Copy`
+/// derives.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MicroKernelStridedLayout {
+    /// Starting row of the output tile.
+    pub i: usize,
+    /// Starting column of the output tile.
+    pub j: usize,
+    /// Inclusive start of the K reduction range.
+    pub k_start: usize,
+    /// Exclusive end of the K reduction range.
+    pub k_end: usize,
+    /// Row-stride of A (usually equal to K for contiguous A).
+    pub k_stride: usize,
+    /// Row-stride of B (usually equal to N).
+    pub n: usize,
+}
+
+impl MicroKernelStridedLayout {
+    #[inline(always)]
+    pub fn new(
+        i: usize,
+        j: usize,
+        k_start: usize,
+        k_end: usize,
+        k_stride: usize,
+        n: usize,
+    ) -> Self {
+        Self {
+            i,
+            j,
+            k_start,
+            k_end,
+            k_stride,
+            n,
+        }
+    }
+}
+
+/// Compute MR×NR output tile of C += A @ B, reading from strided A and B
+/// into `acc`. The accumulator is NOT zeroed — caller manages initialization.
+///
+/// Dispatches to SIMD on supported platforms for the primary 4×8 tile.
+#[inline(always)]
+fn micro_kernel<const MR: usize, const NR: usize>(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [[f32; NR]; MR],
+    layout: MicroKernelStridedLayout,
+) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
+    #[cfg(target_arch = "aarch64")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_strided_neon(a, b, acc.as_mut_ptr().cast(), layout);
+        }
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe {
+            micro_kernel_strided_avx2(a, b, acc.as_mut_ptr().cast(), layout);
+        }
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_strided_wasm32(a, b, acc.as_mut_ptr().cast(), layout);
+        }
+        return;
+    }
+
+    for p in k_start..k_end {
+        let b_off = p * n + j;
+        for ii in 0..MR {
+            let a_val = a[(i + ii) * k_stride + p];
+            for jj in 0..NR {
+                acc[ii][jj] += a_val * b[b_off + jj];
+            }
+        }
+    }
+}
+
+/// NEON strided micro-kernel: B at stride N (not packed).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn micro_kernel_strided_neon(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    layout: MicroKernelStridedLayout,
+) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
+    use std::arch::aarch64::*;
+
+    let mut acc0_lo = vld1q_f32(acc_ptr);
+    let mut acc0_hi = vld1q_f32(acc_ptr.add(4));
+    let mut acc1_lo = vld1q_f32(acc_ptr.add(8));
+    let mut acc1_hi = vld1q_f32(acc_ptr.add(12));
+    let mut acc2_lo = vld1q_f32(acc_ptr.add(16));
+    let mut acc2_hi = vld1q_f32(acc_ptr.add(20));
+    let mut acc3_lo = vld1q_f32(acc_ptr.add(24));
+    let mut acc3_hi = vld1q_f32(acc_ptr.add(28));
+
+    for p in k_start..k_end {
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+
+        let a0 = vdupq_n_f32(*a.get_unchecked(i * k_stride + p));
+        let a1 = vdupq_n_f32(*a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = vdupq_n_f32(*a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = vdupq_n_f32(*a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0_lo = vfmaq_f32(acc0_lo, a0, b_lo);
+        acc0_hi = vfmaq_f32(acc0_hi, a0, b_hi);
+        acc1_lo = vfmaq_f32(acc1_lo, a1, b_lo);
+        acc1_hi = vfmaq_f32(acc1_hi, a1, b_hi);
+        acc2_lo = vfmaq_f32(acc2_lo, a2, b_lo);
+        acc2_hi = vfmaq_f32(acc2_hi, a2, b_hi);
+        acc3_lo = vfmaq_f32(acc3_lo, a3, b_lo);
+        acc3_hi = vfmaq_f32(acc3_hi, a3, b_hi);
+    }
+
+    vst1q_f32(acc_ptr, acc0_lo);
+    vst1q_f32(acc_ptr.add(4), acc0_hi);
+    vst1q_f32(acc_ptr.add(8), acc1_lo);
+    vst1q_f32(acc_ptr.add(12), acc1_hi);
+    vst1q_f32(acc_ptr.add(16), acc2_lo);
+    vst1q_f32(acc_ptr.add(20), acc2_hi);
+    vst1q_f32(acc_ptr.add(24), acc3_lo);
+    vst1q_f32(acc_ptr.add(28), acc3_hi);
+}
+
+/// AVX2+FMA strided micro-kernel: B at stride N (not packed).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+unsafe fn micro_kernel_strided_avx2(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    layout: MicroKernelStridedLayout,
+) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let mut acc0 = _mm256_loadu_ps(acc_ptr);
+    let mut acc1 = _mm256_loadu_ps(acc_ptr.add(8));
+    let mut acc2 = _mm256_loadu_ps(acc_ptr.add(16));
+    let mut acc3 = _mm256_loadu_ps(acc_ptr.add(24));
+
+    for p in k_start..k_end {
+        let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
+
+        let a0 = _mm256_broadcast_ss(a.get_unchecked(i * k_stride + p));
+        let a1 = _mm256_broadcast_ss(a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = _mm256_broadcast_ss(a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = _mm256_broadcast_ss(a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
+        acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
+        acc2 = _mm256_fmadd_ps(a2, b_vec, acc2);
+        acc3 = _mm256_fmadd_ps(a3, b_vec, acc3);
+    }
+
+    _mm256_storeu_ps(acc_ptr, acc0);
+    _mm256_storeu_ps(acc_ptr.add(8), acc1);
+    _mm256_storeu_ps(acc_ptr.add(16), acc2);
+    _mm256_storeu_ps(acc_ptr.add(24), acc3);
+}
+
+/// wasm32 SIMD128 strided micro-kernel: B at stride N (not packed).
+/// Processes the 4×8 tile as two 4×4 halves using 128-bit SIMD.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+unsafe fn micro_kernel_strided_wasm32(
+    a: &[f32],
+    b: &[f32],
+    acc_ptr: *mut f32,
+    layout: MicroKernelStridedLayout,
+) {
+    let MicroKernelStridedLayout {
+        i,
+        j,
+        k_start,
+        k_end,
+        k_stride,
+        n,
+    } = layout;
+    use std::arch::wasm32::*;
+
+    let mut acc0_lo = v128_load(acc_ptr as *const v128);
+    let mut acc0_hi = v128_load(acc_ptr.add(4) as *const v128);
+    let mut acc1_lo = v128_load(acc_ptr.add(8) as *const v128);
+    let mut acc1_hi = v128_load(acc_ptr.add(12) as *const v128);
+    let mut acc2_lo = v128_load(acc_ptr.add(16) as *const v128);
+    let mut acc2_hi = v128_load(acc_ptr.add(20) as *const v128);
+    let mut acc3_lo = v128_load(acc_ptr.add(24) as *const v128);
+    let mut acc3_hi = v128_load(acc_ptr.add(28) as *const v128);
+
+    for p in k_start..k_end {
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+
+        let a0 = f32x4_splat(*a.get_unchecked(i * k_stride + p));
+        let a1 = f32x4_splat(*a.get_unchecked((i + 1) * k_stride + p));
+        let a2 = f32x4_splat(*a.get_unchecked((i + 2) * k_stride + p));
+        let a3 = f32x4_splat(*a.get_unchecked((i + 3) * k_stride + p));
+
+        acc0_lo = f32x4_add(acc0_lo, f32x4_mul(a0, b_lo));
+        acc0_hi = f32x4_add(acc0_hi, f32x4_mul(a0, b_hi));
+        acc1_lo = f32x4_add(acc1_lo, f32x4_mul(a1, b_lo));
+        acc1_hi = f32x4_add(acc1_hi, f32x4_mul(a1, b_hi));
+        acc2_lo = f32x4_add(acc2_lo, f32x4_mul(a2, b_lo));
+        acc2_hi = f32x4_add(acc2_hi, f32x4_mul(a2, b_hi));
+        acc3_lo = f32x4_add(acc3_lo, f32x4_mul(a3, b_lo));
+        acc3_hi = f32x4_add(acc3_hi, f32x4_mul(a3, b_hi));
+    }
+
+    v128_store(acc_ptr as *mut v128, acc0_lo);
+    v128_store(acc_ptr.add(4) as *mut v128, acc0_hi);
+    v128_store(acc_ptr.add(8) as *mut v128, acc1_lo);
+    v128_store(acc_ptr.add(12) as *mut v128, acc1_hi);
+    v128_store(acc_ptr.add(16) as *mut v128, acc2_lo);
+    v128_store(acc_ptr.add(20) as *mut v128, acc2_hi);
+    v128_store(acc_ptr.add(24) as *mut v128, acc3_lo);
+    v128_store(acc_ptr.add(28) as *mut v128, acc3_hi);
+}
+
+/// Micro-kernel operating on a packed (contiguous) B panel. The panel is
+/// laid out as `packed_b[p * NR + jj]` with stride NR, eliminating strided
+/// access to the original B matrix (stride N, which wastes cache lines when
+/// N is large).
+///
+/// Dispatches to SIMD-optimized variants on supported platforms when MR and NR
+/// match the SIMD tile size (MR=4, NR=8).
+#[inline(always)]
+pub(super) fn micro_kernel_packed<const MR: usize, const NR: usize>(
+    a: &[f32],
+    packed_b: &[f32],
+    acc: &mut [[f32; NR]; MR],
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    // NEON fast path for the primary 4×8 tile on aarch64.
+    #[cfg(target_arch = "aarch64")]
+    if MR == 4 && NR == 8 {
+        // SAFETY: aarch64 always has NEON. acc layout matches f32×32.
+        unsafe {
+            micro_kernel_packed_neon(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
+    // AVX2+FMA fast path for the primary 4×8 tile on x86_64.
+    #[cfg(target_arch = "x86_64")]
+    if MR == 4 && NR == 8 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        // SAFETY: feature detection passed. acc layout matches f32×32.
+        unsafe {
+            micro_kernel_packed_avx2(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
+    // wasm32 SIMD128 path: process 4×8 as two 4×4 halves.
+    #[cfg(target_arch = "wasm32")]
+    if MR == 4 && NR == 8 {
+        unsafe {
+            micro_kernel_packed_wasm32(
+                a,
+                packed_b,
+                acc.as_mut_ptr().cast(),
+                i,
+                k_start,
+                k_end,
+                k_stride,
+            );
+        }
+        return;
+    }
+
+    // Scalar fallback (also used for smaller tile sizes like MR=2, MR=1).
+    micro_kernel_packed_scalar::<MR, NR>(a, packed_b, acc, i, k_start, k_end, k_stride);
+}
+
+/// wasm32 SIMD128 micro-kernel for the 4×8 packed tile.
+///
+/// wasm SIMD128 has 128-bit vectors (4 floats), so the 8-wide NR is processed
+/// as two 4-wide halves. Uses `f32x4_mul` + `f32x4_add` (no FMA on wasm128).
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+unsafe fn micro_kernel_packed_wasm32(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    use std::arch::wasm32::*;
+
+    // Load 8 accumulators: 4 rows × (lo 4 cols, hi 4 cols).
+    let mut acc0_lo = v128_load(acc_ptr as *const v128);
+    let mut acc0_hi = v128_load(acc_ptr.add(4) as *const v128);
+    let mut acc1_lo = v128_load(acc_ptr.add(8) as *const v128);
+    let mut acc1_hi = v128_load(acc_ptr.add(12) as *const v128);
+    let mut acc2_lo = v128_load(acc_ptr.add(16) as *const v128);
+    let mut acc2_hi = v128_load(acc_ptr.add(20) as *const v128);
+    let mut acc3_lo = v128_load(acc_ptr.add(24) as *const v128);
+    let mut acc3_hi = v128_load(acc_ptr.add(28) as *const v128);
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_ptr = packed_b.as_ptr().add(p * 8);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+
+        let a0 = f32x4_splat(*a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = f32x4_splat(*a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = f32x4_splat(*a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = f32x4_splat(*a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0_lo = f32x4_add(acc0_lo, f32x4_mul(a0, b_lo));
+        acc0_hi = f32x4_add(acc0_hi, f32x4_mul(a0, b_hi));
+        acc1_lo = f32x4_add(acc1_lo, f32x4_mul(a1, b_lo));
+        acc1_hi = f32x4_add(acc1_hi, f32x4_mul(a1, b_hi));
+        acc2_lo = f32x4_add(acc2_lo, f32x4_mul(a2, b_lo));
+        acc2_hi = f32x4_add(acc2_hi, f32x4_mul(a2, b_hi));
+        acc3_lo = f32x4_add(acc3_lo, f32x4_mul(a3, b_lo));
+        acc3_hi = f32x4_add(acc3_hi, f32x4_mul(a3, b_hi));
+    }
+
+    v128_store(acc_ptr as *mut v128, acc0_lo);
+    v128_store(acc_ptr.add(4) as *mut v128, acc0_hi);
+    v128_store(acc_ptr.add(8) as *mut v128, acc1_lo);
+    v128_store(acc_ptr.add(12) as *mut v128, acc1_hi);
+    v128_store(acc_ptr.add(16) as *mut v128, acc2_lo);
+    v128_store(acc_ptr.add(20) as *mut v128, acc2_hi);
+    v128_store(acc_ptr.add(24) as *mut v128, acc3_lo);
+    v128_store(acc_ptr.add(28) as *mut v128, acc3_hi);
+}
+
+/// Scalar micro-kernel — portable fallback.
+#[inline(always)]
+fn micro_kernel_packed_scalar<const MR: usize, const NR: usize>(
+    a: &[f32],
+    packed_b: &[f32],
+    acc: &mut [[f32; NR]; MR],
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_off = p * NR;
+        for ii in 0..MR {
+            let a_val = a[(i + ii) * k_stride + k_start + p];
+            for jj in 0..NR {
+                acc[ii][jj] += a_val * packed_b[b_off + jj];
+            }
+        }
+    }
+}
+
+// ── SIMD micro-kernels ────────────────────────────────────────────────
+
+/// NEON micro-kernel for the 4×8 packed tile on aarch64.
+///
+/// Uses 8 `float32x4` accumulators (2 per row, covering 8 columns).
+/// `vfmaq_f32` fuses multiply-add into one instruction.
+/// `acc_ptr` points to a `[[f32; 8]; 4]` (32 contiguous f32s).
+///
+/// SAFETY: caller must ensure aarch64 target and valid acc pointer.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn micro_kernel_packed_neon(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    use std::arch::aarch64::*;
+
+    // Load 8 accumulators: 4 rows × (lo 4 cols, hi 4 cols).
+    let mut acc0_lo = vld1q_f32(acc_ptr);
+    let mut acc0_hi = vld1q_f32(acc_ptr.add(4));
+    let mut acc1_lo = vld1q_f32(acc_ptr.add(8));
+    let mut acc1_hi = vld1q_f32(acc_ptr.add(12));
+    let mut acc2_lo = vld1q_f32(acc_ptr.add(16));
+    let mut acc2_hi = vld1q_f32(acc_ptr.add(20));
+    let mut acc3_lo = vld1q_f32(acc_ptr.add(24));
+    let mut acc3_hi = vld1q_f32(acc_ptr.add(28));
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_ptr = packed_b.as_ptr().add(p * 8);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+
+        let a0 = vdupq_n_f32(*a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = vdupq_n_f32(*a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = vdupq_n_f32(*a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = vdupq_n_f32(*a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0_lo = vfmaq_f32(acc0_lo, a0, b_lo);
+        acc0_hi = vfmaq_f32(acc0_hi, a0, b_hi);
+        acc1_lo = vfmaq_f32(acc1_lo, a1, b_lo);
+        acc1_hi = vfmaq_f32(acc1_hi, a1, b_hi);
+        acc2_lo = vfmaq_f32(acc2_lo, a2, b_lo);
+        acc2_hi = vfmaq_f32(acc2_hi, a2, b_hi);
+        acc3_lo = vfmaq_f32(acc3_lo, a3, b_lo);
+        acc3_hi = vfmaq_f32(acc3_hi, a3, b_hi);
+    }
+
+    // Store accumulators back.
+    vst1q_f32(acc_ptr, acc0_lo);
+    vst1q_f32(acc_ptr.add(4), acc0_hi);
+    vst1q_f32(acc_ptr.add(8), acc1_lo);
+    vst1q_f32(acc_ptr.add(12), acc1_hi);
+    vst1q_f32(acc_ptr.add(16), acc2_lo);
+    vst1q_f32(acc_ptr.add(20), acc2_hi);
+    vst1q_f32(acc_ptr.add(24), acc3_lo);
+    vst1q_f32(acc_ptr.add(28), acc3_hi);
+}
+
+/// AVX2+FMA micro-kernel for the 4×8 packed tile on x86_64.
+///
+/// Uses 4 `__m256` accumulators (one per row, 8 f32 each).
+/// `_mm256_fmadd_ps` fuses multiply-add into one instruction.
+///
+/// SAFETY: caller must ensure AVX2+FMA support and valid acc pointer.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+unsafe fn micro_kernel_packed_avx2(
+    a: &[f32],
+    packed_b: &[f32],
+    acc_ptr: *mut f32,
+    i: usize,
+    k_start: usize,
+    k_end: usize,
+    k_stride: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let mut acc0 = _mm256_loadu_ps(acc_ptr);
+    let mut acc1 = _mm256_loadu_ps(acc_ptr.add(8));
+    let mut acc2 = _mm256_loadu_ps(acc_ptr.add(16));
+    let mut acc3 = _mm256_loadu_ps(acc_ptr.add(24));
+
+    let kc_len = k_end - k_start;
+    for p in 0..kc_len {
+        let b_vec = _mm256_loadu_ps(packed_b.as_ptr().add(p * 8));
+
+        let a0 = _mm256_broadcast_ss(a.get_unchecked(i * k_stride + k_start + p));
+        let a1 = _mm256_broadcast_ss(a.get_unchecked((i + 1) * k_stride + k_start + p));
+        let a2 = _mm256_broadcast_ss(a.get_unchecked((i + 2) * k_stride + k_start + p));
+        let a3 = _mm256_broadcast_ss(a.get_unchecked((i + 3) * k_stride + k_start + p));
+
+        acc0 = _mm256_fmadd_ps(a0, b_vec, acc0);
+        acc1 = _mm256_fmadd_ps(a1, b_vec, acc1);
+        acc2 = _mm256_fmadd_ps(a2, b_vec, acc2);
+        acc3 = _mm256_fmadd_ps(a3, b_vec, acc3);
+    }
+
+    _mm256_storeu_ps(acc_ptr, acc0);
+    _mm256_storeu_ps(acc_ptr.add(8), acc1);
+    _mm256_storeu_ps(acc_ptr.add(16), acc2);
+    _mm256_storeu_ps(acc_ptr.add(24), acc3);
+}
+
+/// Pack B[k_start..k_end, j..j+NR] into a contiguous NR-strided buffer.
+/// Cost: one sequential copy of KC×NR floats (~8 KB for KC=256, NR=8).
+#[inline]
+fn pack_b_panel<const NR: usize>(
+    b: &[f32],
+    packed: &mut [f32],
+    k_start: usize,
+    k_end: usize,
+    j: usize,
+    n: usize,
+) {
+    for p in 0..(k_end - k_start) {
+        let src_off = (k_start + p) * n + j;
+        let dst_off = p * NR;
+        packed[dst_off..dst_off + NR].copy_from_slice(&b[src_off..src_off + NR]);
+    }
+}
+
+/// Cache-friendly register-blocked matmul with L2 cache blocking:
+/// C[m,n] += A[m,k] × B[k,n].
+///
+/// Uses Goto/BLIS-style loop ordering with shared B-panel packing:
+/// for each K-block and N-tile, pack B once into a shared buffer, then
+/// fan out all M-tiles over the same packed panel (parallel or sequential).
+/// This eliminates redundant B-panel packing across M-tiles — previously
+/// each M-tile packed independently, duplicating work m_tiles× per N-tile.
+///
+/// Processes MR×NR output tiles (4×8) in registers. Falls back to scalar
+/// k-outer for remainder rows/columns that don't fill a complete tile.
+#[inline]
+#[cfg_attr(all(feature = "accelerate", target_os = "macos"), allow(dead_code))]
+pub(crate) fn matmul_k_outer(a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize) {
+    // M=1 fast path: dedicated vector-matrix multiply with strided SIMD.
+    if m == 1 {
+        vecmat_mul(a, b, out, k, n);
+        return;
+    }
+
+    const MR: usize = 4;
+    const NR: usize = 8;
+
+    let m_tiles = m / MR;
+    let n_tiles = n / NR;
+    let m_rem = m % MR;
+    let n_rem = n % NR;
+
+    // Whether B-panel packing is worthwhile: only when multiple M-tile rows
+    // reuse the same packed panel (amortizes the copy cost).
+    let use_packing = m_tiles > 1;
+
+    // Shared packed B panel: KC × NR = 256 × 8 = 8 KB.
+    // Packed once per (K-block, N-tile), shared read-only across all M-tiles.
+    let mut packed_b = [0.0f32; KC * NR];
+
+    // Process one M-tile against the pre-packed B panel for a single (jt, kc) block.
+    // Accumulates into the output buffer directly.
+    let process_m_tile_kc =
+        |it: usize, j: usize, kc_start: usize, kc_end: usize, packed: &[f32], out_ptr: SendPtr| {
+            let out_ptr = out_ptr.0;
+            let i = it * MR;
+            let mut acc = [[0.0f32; NR]; MR];
+            // Load existing accumulator from output (for K-block accumulation).
+            if kc_start > 0 {
+                for (ii, acc_row) in acc.iter_mut().enumerate() {
+                    let off = (i + ii) * n + j;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(out_ptr.add(off), acc_row.as_mut_ptr(), NR);
+                    }
+                }
+            }
+            if use_packing {
+                let kc_len = kc_end - kc_start;
+                micro_kernel_packed::<MR, NR>(
+                    a,
+                    &packed[..kc_len * NR],
+                    &mut acc,
+                    i,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            } else {
+                micro_kernel::<MR, NR>(
+                    a,
+                    b,
+                    &mut acc,
+                    MicroKernelStridedLayout::new(i, j, kc_start, kc_end, k, n),
+                );
+            }
+            // Store accumulator back to output.
+            for (ii, acc_row) in acc.iter().enumerate() {
+                let off = (i + ii) * n + j;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(acc_row.as_ptr(), out_ptr.add(off), NR);
+                }
+            }
+        };
+
+    // ── Main tiled body ──────────────────────────────────────────────────
+    // Loop order: K-block → N-tile → pack B once → all M-tiles.
+    let out_ptr = SendPtr(out.as_mut_ptr());
+
+    #[cfg(feature = "parallel")]
+    if m_tiles >= PAR_M_TILE_THRESHOLD {
+        use rayon::prelude::*;
+        let n_threads = rayon::current_num_threads();
+        let duty = m_tiles.div_ceil(n_threads);
+
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for jt in 0..n_tiles {
+                let j = jt * NR;
+                if use_packing {
+                    let kc_len = kc_end - kc_start;
+                    pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                }
+                let packed_ref = &packed_b[..];
+                // SAFETY: each M-tile writes exclusively to non-overlapping output rows.
+                (0..m_tiles)
+                    .into_par_iter()
+                    .with_min_len(duty)
+                    .for_each(|it| process_m_tile_kc(it, j, kc_start, kc_end, packed_ref, out_ptr));
+            }
+        }
+
+        // Remainder columns (sequential — not worth packing for < NR columns).
+        if n_rem > 0 {
+            for it in 0..m_tiles {
+                m_tile_n_remainder(
+                    a,
+                    b,
+                    out_ptr,
+                    MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+                );
+            }
+        }
+        // Remainder rows.
+        if m_rem > 0 {
+            let i = m_tiles * MR;
+            m_remainder_tiled(
+                a,
+                b,
+                out,
+                MatmulRemainderLayout::new(i, k, n, n_tiles, n_rem).with_m_rem(m_rem),
+            );
+        }
+        return;
+    }
+
+    // Sequential path: same shared-pack loop without rayon.
+    for kc_start in (0..k).step_by(KC) {
+        let kc_end = (kc_start + KC).min(k);
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            if use_packing {
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+            }
+            for it in 0..m_tiles {
+                process_m_tile_kc(it, j, kc_start, kc_end, &packed_b, out_ptr);
+            }
+        }
+    }
+
+    // Remainder columns.
+    if n_rem > 0 {
+        for it in 0..m_tiles {
+            m_tile_n_remainder(
+                a,
+                b,
+                out_ptr,
+                MatmulRemainderLayout::new(it * MR, k, n, n_tiles, n_rem),
+            );
+        }
+    }
+    // Remainder rows.
+    if m_rem > 0 {
+        let i = m_tiles * MR;
+        m_remainder_tiled(
+            a,
+            b,
+            out,
+            MatmulRemainderLayout::new(i, k, n, n_tiles, n_rem).with_m_rem(m_rem),
+        );
+    }
+}
+
+/// Layout for the M/N-remainder matmul helpers.
+///
+/// Groups the row index, K dim, N dim, and the n-tile split so functions
+/// like [`m_tile_n_remainder`], [`m_remainder_tiled`], and the dequant
+/// strip helpers in `matmul_dequant` stay under the argument limit.
+/// All functions share the same underlying shape.
+///
+/// Build with [`MatmulRemainderLayout::new`] (all fields required — there
+/// are no meaningful defaults for geometry params).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MatmulRemainderLayout {
+    /// Starting M row for the helper to process.
+    pub i: usize,
+    /// Remaining rows (used only by [`m_remainder_tiled`], ignored elsewhere).
+    pub m_rem: usize,
+    /// K dimension.
+    pub k: usize,
+    /// N dimension.
+    pub n: usize,
+    /// Number of complete N-tiles processed by the main kernel.
+    pub n_tiles: usize,
+    /// Leftover N columns after the last complete tile.
+    pub n_rem: usize,
+}
+
+impl MatmulRemainderLayout {
+    #[inline(always)]
+    pub fn new(i: usize, k: usize, n: usize, n_tiles: usize, n_rem: usize) -> Self {
+        Self {
+            i,
+            m_rem: 0,
+            k,
+            n,
+            n_tiles,
+            n_rem,
+        }
+    }
+
+    #[inline(always)]
+    pub fn with_m_rem(mut self, m_rem: usize) -> Self {
+        self.m_rem = m_rem;
+        self
+    }
+}
+
+/// Process remainder N columns (< NR) for a single M-tile. Not packed.
+fn m_tile_n_remainder(a: &[f32], b: &[f32], out_ptr: SendPtr, layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem: _,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
+    const MR: usize = 4;
+    let out_ptr = out_ptr.0;
+    let j = n_tiles * 8;
+    let mut j_off = 0;
+    if n_rem >= 4 {
+        let mut acc = [[0.0f32; 4]; MR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            micro_kernel::<MR, 4>(
+                a,
+                b,
+                &mut acc,
+                MicroKernelStridedLayout::new(i, j, kc_start, kc_end, k, n),
+            );
+        }
+        for (ii, acc_row) in acc.iter().enumerate() {
+            for (jj, &v) in acc_row.iter().enumerate() {
+                unsafe { *out_ptr.add((i + ii) * n + j + jj) = v };
+            }
+        }
+        j_off = 4;
+    }
+    for jj in j_off..n_rem {
+        let mut acc = [0.0f32; MR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                for (ii, a_acc) in acc.iter_mut().enumerate() {
+                    *a_acc += a[(i + ii) * k + p] * b[p * n + j + jj];
+                }
+            }
+        }
+        for (ii, &a_acc) in acc.iter().enumerate() {
+            unsafe { *out_ptr.add((i + ii) * n + j + jj) = a_acc };
+        }
+    }
+}
+
+// ── Tiled M-remainder ─────────────────────────────────────────────────
+//
+// Process the last m_rem (< MR=4) rows using smaller micro-kernel tiles
+// instead of a scalar per-row k-outer loop.  This enables NR-wide
+// vectorization for the remainder rows.
+
+/// Process `m_rem` remainder rows starting at row `i`, using MR=2 and MR=1
+/// micro-kernel tiles with KC blocking and B-panel packing.
+fn m_remainder_tiled(a: &[f32], b: &[f32], out: &mut [f32], layout: MatmulRemainderLayout) {
+    let MatmulRemainderLayout {
+        i,
+        m_rem,
+        k,
+        n,
+        n_tiles,
+        n_rem,
+    } = layout;
+    const NR: usize = 8;
+    let mut packed_b = [0.0f32; KC * NR];
+    let mut row = i;
+    let mut remaining = m_rem;
+
+    // Process pairs of rows with MR=2.
+    while remaining >= 2 {
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            let mut acc = [[0.0f32; NR]; 2];
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                micro_kernel_packed::<2, NR>(
+                    a,
+                    &packed_b[..kc_len * NR],
+                    &mut acc,
+                    row,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            }
+            for (ii, acc_row) in acc.iter().enumerate() {
+                let off = (row + ii) * n + j;
+                out[off..off + NR].copy_from_slice(acc_row);
+            }
+        }
+        // N-remainder for these rows.
+        if n_rem > 0 {
+            let j = n_tiles * NR;
+            for jj in 0..n_rem {
+                let mut acc = [0.0f32; 2];
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    for p in kc_start..kc_end {
+                        let b_val = b[p * n + j + jj];
+                        for (ii, a_acc) in acc.iter_mut().enumerate() {
+                            *a_acc += a[(row + ii) * k + p] * b_val;
+                        }
+                    }
+                }
+                for (ii, &a_acc) in acc.iter().enumerate() {
+                    out[(row + ii) * n + j + jj] = a_acc;
+                }
+            }
+        }
+        row += 2;
+        remaining -= 2;
+    }
+
+    // Process last single row with MR=1 (NR-wide vectorization still applies).
+    if remaining == 1 {
+        for jt in 0..n_tiles {
+            let j = jt * NR;
+            let mut acc = [[0.0f32; NR]; 1];
+            for kc_start in (0..k).step_by(KC) {
+                let kc_end = (kc_start + KC).min(k);
+                let kc_len = kc_end - kc_start;
+                pack_b_panel::<NR>(b, &mut packed_b[..kc_len * NR], kc_start, kc_end, j, n);
+                micro_kernel_packed::<1, NR>(
+                    a,
+                    &packed_b[..kc_len * NR],
+                    &mut acc,
+                    row,
+                    kc_start,
+                    kc_end,
+                    k,
+                );
+            }
+            let off = row * n + j;
+            out[off..off + NR].copy_from_slice(&acc[0]);
+        }
+        // N-remainder.
+        if n_rem > 0 {
+            let j = n_tiles * NR;
+            for jj in 0..n_rem {
+                let mut acc = 0.0f32;
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    for p in kc_start..kc_end {
+                        acc += a[row * k + p] * b[p * n + j + jj];
+                    }
+                }
+                out[row * n + j + jj] = acc;
+            }
+        }
+    }
+}
+
+// ── Specialized M=1 vector-matrix multiply ────────────────────────────
+//
+// When M=1, the matmul is a vector-matrix multiply: out[j] = Σ_k a[k]*B[k,j].
+// Avoids B-panel packing (single-use: packing overhead > benefit) and instead
+// reads B in strided layout with SIMD, using KC blocking for cache locality.
+
+/// Minimum N-tiles to justify rayon parallelism for vecmat_mul.
+/// 16 N-tiles = 128 output columns. Each tile does KC×NR FMA ops.
+#[cfg(feature = "parallel")]
+const PAR_N_TILE_THRESHOLD: usize = 16;
+
+/// Vector-matrix multiply: a[1×K] × B[K×N] → out[1×N].
+///
+/// Uses NR=8-wide SIMD tiles across N with KC blocking along K.
+/// No B-panel packing — each B element is read once, so packing cost isn't
+/// amortized. Strided SIMD loads are fast because KC×N panels fit in L2.
+///
+/// When N is large enough (>= PAR_N_TILE_THRESHOLD tiles), parallelizes
+/// over N-tiles with rayon. Each thread gets a contiguous chunk of N-tiles,
+/// writing to non-overlapping output columns.
+#[allow(clippy::needless_range_loop)]
+fn vecmat_mul(a: &[f32], b: &[f32], out: &mut [f32], k: usize, n: usize) {
+    const NR: usize = 8;
+    let n_tiles = n / NR;
+    let n_rem = n % NR;
+
+    #[cfg(feature = "parallel")]
+    if n_tiles >= PAR_N_TILE_THRESHOLD {
+        use rayon::prelude::*;
+        // Partition output into NR-wide chunks. Each chunk is one N-tile.
+        // par_chunks_mut gives each thread a contiguous &mut [f32] of NR elements.
+        out[..n_tiles * NR]
+            .par_chunks_mut(NR)
+            .enumerate()
+            .for_each(|(jt, out_chunk)| {
+                let j = jt * NR;
+                let mut acc = [0.0f32; NR];
+                for kc_start in (0..k).step_by(KC) {
+                    let kc_end = (kc_start + KC).min(k);
+                    vecmat_kernel_nr8(a, b, &mut acc, j, kc_start, kc_end, n);
+                }
+                out_chunk.copy_from_slice(&acc);
+            });
+
+        // Remainder columns (sequential — < NR columns, not worth threading).
+        if n_rem > 0 {
+            vecmat_n_remainder(a, b, out, k, n, n_tiles, n_rem);
+        }
+        return;
+    }
+
+    // Sequential path.
+    for jt in 0..n_tiles {
+        let j = jt * NR;
+        let mut acc = [0.0f32; NR];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            vecmat_kernel_nr8(a, b, &mut acc, j, kc_start, kc_end, n);
+        }
+        out[j..j + NR].copy_from_slice(&acc);
+    }
+
+    if n_rem > 0 {
+        vecmat_n_remainder(a, b, out, k, n, n_tiles, n_rem);
+    }
+}
+
+/// Process remainder N columns (< NR) for vecmat_mul.
+fn vecmat_n_remainder(
+    a: &[f32],
+    b: &[f32],
+    out: &mut [f32],
+    k: usize,
+    n: usize,
+    n_tiles: usize,
+    n_rem: usize,
+) {
+    let j = n_tiles * 8;
+    let mut j_off = 0;
+    if n_rem >= 4 {
+        let mut acc = [0.0f32; 4];
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                let a_val = a[p];
+                for jj in 0..4 {
+                    acc[jj] += a_val * b[p * n + j + jj];
+                }
+            }
+        }
+        out[j..j + 4].copy_from_slice(&acc);
+        j_off = 4;
+    }
+    for jj in j_off..n_rem {
+        let mut acc = 0.0f32;
+        for kc_start in (0..k).step_by(KC) {
+            let kc_end = (kc_start + KC).min(k);
+            for p in kc_start..kc_end {
+                acc += a[p] * b[p * n + j + jj];
+            }
+        }
+        out[j + jj] = acc;
+    }
+}
+
+/// Inner kernel for vecmat_mul: accumulate a[k_start..k_end] × B[k_start..k_end, j..j+8].
+///
+/// Dispatches to NEON/AVX2 on supported platforms for 8-wide SIMD FMA.
+#[inline(always)]
+#[allow(unreachable_code)]
+fn vecmat_kernel_nr8(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { vecmat_kernel_nr8_neon(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        unsafe { vecmat_kernel_nr8_avx2(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        unsafe { vecmat_kernel_nr8_wasm32(a, b, acc, j, k_start, k_end, n) };
+        return;
+    }
+
+    // Scalar fallback — index pattern matches SIMD kernels for readability.
+    #[allow(clippy::needless_range_loop)]
+    for p in k_start..k_end {
+        let a_val = a[p];
+        let b_off = p * n + j;
+        for jj in 0..8 {
+            acc[jj] += a_val * b[b_off + jj];
+        }
+    }
+}
+
+/// wasm32 SIMD128 vecmat kernel: 8-wide as two 4-wide halves.
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+unsafe fn vecmat_kernel_nr8_wasm32(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::wasm32::*;
+
+    let mut acc_lo = v128_load(acc.as_ptr() as *const v128);
+    let mut acc_hi = v128_load(acc.as_ptr().add(4) as *const v128);
+
+    for p in k_start..k_end {
+        let a_val = f32x4_splat(*a.get_unchecked(p));
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = v128_load(b_ptr as *const v128);
+        let b_hi = v128_load(b_ptr.add(4) as *const v128);
+        acc_lo = f32x4_add(acc_lo, f32x4_mul(a_val, b_lo));
+        acc_hi = f32x4_add(acc_hi, f32x4_mul(a_val, b_hi));
+    }
+
+    v128_store(acc.as_mut_ptr() as *mut v128, acc_lo);
+    v128_store(acc.as_mut_ptr().add(4) as *mut v128, acc_hi);
+}
+
+/// NEON vecmat kernel: 8-wide FMA on strided B rows.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn vecmat_kernel_nr8_neon(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::aarch64::*;
+
+    let mut acc_lo = vld1q_f32(acc.as_ptr());
+    let mut acc_hi = vld1q_f32(acc.as_ptr().add(4));
+
+    for p in k_start..k_end {
+        let a_val = vdupq_n_f32(*a.get_unchecked(p));
+        let b_ptr = b.as_ptr().add(p * n + j);
+        let b_lo = vld1q_f32(b_ptr);
+        let b_hi = vld1q_f32(b_ptr.add(4));
+        acc_lo = vfmaq_f32(acc_lo, a_val, b_lo);
+        acc_hi = vfmaq_f32(acc_hi, a_val, b_hi);
+    }
+
+    vst1q_f32(acc.as_mut_ptr(), acc_lo);
+    vst1q_f32(acc.as_mut_ptr().add(4), acc_hi);
+}
+
+/// AVX2+FMA vecmat kernel: 8-wide FMA on strided B rows.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+#[inline]
+unsafe fn vecmat_kernel_nr8_avx2(
+    a: &[f32],
+    b: &[f32],
+    acc: &mut [f32; 8],
+    j: usize,
+    k_start: usize,
+    k_end: usize,
+    n: usize,
+) {
+    use std::arch::x86_64::*;
+
+    let mut vacc = _mm256_loadu_ps(acc.as_ptr());
+
+    for p in k_start..k_end {
+        let a_val = _mm256_broadcast_ss(a.get_unchecked(p));
+        let b_vec = _mm256_loadu_ps(b.as_ptr().add(p * n + j));
+        vacc = _mm256_fmadd_ps(a_val, b_vec, vacc);
+    }
+
+    _mm256_storeu_ps(acc.as_mut_ptr(), vacc);
+}
+
+// ── Epilogue fusion: matmul + activation ─────────────────────────────
+
+/// Fused matmul + activation dispatch. Runs the standard vectorized matmul
+/// kernel, then applies activation as a tight post-pass on the output buffer.
+///
+/// This preserves autovectorization of both the matmul inner loop and the
+/// activation loop, while eliminating one arena slot allocation + one tape
+/// instruction dispatch vs the unfused path.
+pub fn dispatch_matmul_activation_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    activation: &FloatOp,
+    out_buf: &mut OutputBuffer,
+) -> ExecResult<()> {
+    // Run the standard matmul (fully vectorized, cache-friendly).
+    dispatch_matmul_into(inputs, m, k, n, out_buf)?;
+
+    // Epilogue: apply activation in-place on the just-written output.
+    // Data is cache-hot. Tight scalar loop — no arena overhead.
+    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf) {
+        for v in floats.iter_mut() {
+            *v = activation.apply_unary(*v);
+        }
+    }
+
+    Ok(())
+}
+
+/// Fused matmul + bias + activation dispatch. Runs the standard matmul,
+/// then applies bias addition and activation in a single pass over the
+/// cache-hot output. Eliminates both intermediate buffers that the
+/// unfused MatMul → Add(bias) → Activation path requires.
+pub fn dispatch_matmul_bias_activation_into(
+    inputs: &[&[u8]],
+    m: usize,
+    k: usize,
+    n: usize,
+    bias: &[f32],
+    activation: &FloatOp,
+    out_buf: &mut OutputBuffer,
+) -> ExecResult<()> {
+    // Standard matmul (fully vectorized, cache-friendly).
+    dispatch_matmul_into(inputs, m, k, n, out_buf)?;
+
+    // Fused epilogue: bias + activation in one pass.
+    // Data is cache-hot from the matmul write.
+    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(out_buf) {
+        let bias_len = bias.len();
+        if bias_len > 0 {
+            for row in floats.chunks_mut(bias_len) {
+                for (j, v) in row.iter_mut().enumerate() {
+                    *v = activation.apply_unary(*v + bias[j]);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────
