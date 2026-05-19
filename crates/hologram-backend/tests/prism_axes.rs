@@ -8,12 +8,9 @@
 //! - The `AxisExtension::dispatch_kernel` routing (companion-macro-
 //!   emitted) reaches both kernels by their numeric id.
 
-use prism::tensor::{ActivationAxis, TensorAxis};
+use hologram_backend::{HologramF32Tensor4x4Matmul, HologramF32VectorActivation16};
 use prism::pipeline::AxisExtension;
-use hologram_backend::{
-    HologramF32Tensor4x4Matmul,
-    HologramF32VectorActivation16,
-};
+use prism::tensor::{ActivationAxis, TensorAxis};
 
 fn write_f32_row(bytes: &mut [u8], row: &[f32]) {
     for (i, v) in row.iter().enumerate() {
@@ -46,7 +43,9 @@ fn tensor_axis_matmul_resolves_on_hologram_marker() {
     let n = <HologramF32Tensor4x4Matmul as TensorAxis>::matmul(&input, &mut out).unwrap();
     assert_eq!(n, mat_bytes);
     let c = read_f32_row(&out, N * N);
-    let expected: Vec<f32> = (0..N * N).map(|i| if i / N == i % N { 1.0 } else { 0.0 }).collect();
+    let expected: Vec<f32> = (0..N * N)
+        .map(|i| if i / N == i % N { 1.0 } else { 0.0 })
+        .collect();
     assert_eq!(c, expected);
 }
 
@@ -107,9 +106,8 @@ fn axis_extension_dispatch_routes_through_kernel_ids() {
 
     let mut out = vec![0u8; mat_bytes];
     // TensorAxis has one method (matmul) → KERNEL_MATMUL = 0.
-    let n = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(
-        0, &input, &mut out,
-    ).unwrap();
+    let n = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(0, &input, &mut out)
+        .unwrap();
     assert_eq!(n, mat_bytes);
     let c = read_f32_row(&out, N * N);
     assert!((c[0] - 6.0).abs() < 1e-6);
@@ -117,8 +115,6 @@ fn axis_extension_dispatch_routes_through_kernel_ids() {
 
     // An out-of-range kernel id returns ShapeViolation rather than
     // panicking — verifies the companion macro's default catch-all.
-    let oor = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(
-        99, &input, &mut out,
-    );
+    let oor = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(99, &input, &mut out);
     assert!(oor.is_err());
 }

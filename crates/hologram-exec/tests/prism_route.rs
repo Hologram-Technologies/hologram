@@ -5,14 +5,14 @@
 //! emitted through `prism::pipeline::run`. The attestation's content
 //! fingerprint is deterministic for a fixed inference unit.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer, AttestedExecution};
-use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{AttestedExecution, BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use smallvec::SmallVec;
+use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -20,7 +20,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -60,7 +61,9 @@ trait GraphOpExt {
     fn into_op_kind(self) -> Option<OpKind>;
 }
 impl GraphOpExt for GraphOp {
-    fn into_op_kind(self) -> Option<OpKind> { None }
+    fn into_op_kind(self) -> Option<OpKind> {
+        None
+    }
 }
 
 #[test]
@@ -94,7 +97,11 @@ fn attested_execute_emits_compute_outputs_and_grounded_attestation() {
     let input = vec![-2.0f32, -1.0, 1.0, 2.0];
     let bytes = f32_to_le(&input);
 
-    let AttestedExecution { outputs, prism_attestation, archive_fingerprint } = session
+    let AttestedExecution {
+        outputs,
+        prism_attestation,
+        archive_fingerprint,
+    } = session
         .execute_attested(&[InputBuffer { bytes: &bytes }])
         .expect("attested execution succeeds");
 
@@ -121,15 +128,21 @@ fn attested_execute_is_deterministic_across_invocations() {
     let input = vec![1.0f32, 2.0, 3.0, 4.0];
     let bytes = f32_to_le(&input);
 
-    let a = session1.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
-    let b = session2.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
+    let a = session1
+        .execute_attested(&[InputBuffer { bytes: &bytes }])
+        .unwrap();
+    let b = session2
+        .execute_attested(&[InputBuffer { bytes: &bytes }])
+        .unwrap();
 
     // Compute outputs identical.
     assert_eq!(a.outputs[0].bytes, b.outputs[0].bytes);
     // Identical CompileUnits yield identical prism attestation
     // fingerprints (canonical determinism per ADR-001).
-    assert_eq!(a.prism_attestation.content_fingerprint().as_bytes(),
-               b.prism_attestation.content_fingerprint().as_bytes());
+    assert_eq!(
+        a.prism_attestation.content_fingerprint().as_bytes(),
+        b.prism_attestation.content_fingerprint().as_bytes()
+    );
     // Identical archives yield identical content anchors.
     assert_eq!(a.archive_fingerprint, b.archive_fingerprint);
 }
@@ -182,8 +195,12 @@ fn attested_execute_anchors_to_archive_fingerprint() {
     assert_ne!(relu.archive_fingerprint(), sigmoid.archive_fingerprint());
 
     let bytes = f32_to_le(&[0.5f32, 1.5, 2.5, 3.5]);
-    let a = relu.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
-    let b = sigmoid.execute_attested(&[InputBuffer { bytes: &bytes }]).unwrap();
+    let a = relu
+        .execute_attested(&[InputBuffer { bytes: &bytes }])
+        .unwrap();
+    let b = sigmoid
+        .execute_attested(&[InputBuffer { bytes: &bytes }])
+        .unwrap();
 
     // The per-content anchors differ — TC-03's content-anchoring
     // commitment holds.
@@ -192,6 +209,8 @@ fn attested_execute_anchors_to_archive_fingerprint() {
     // both sessions admit the same `CompileUnit` shape (W32 + same
     // budget + same result-type IRI + same constraints). This is by
     // prism's design — verify the documented separation of concerns.
-    assert_eq!(a.prism_attestation.content_fingerprint().as_bytes(),
-               b.prism_attestation.content_fingerprint().as_bytes());
+    assert_eq!(
+        a.prism_attestation.content_fingerprint().as_bytes(),
+        b.prism_attestation.content_fingerprint().as_bytes()
+    );
 }

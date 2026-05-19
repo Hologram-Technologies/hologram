@@ -5,21 +5,21 @@
 //! IEEE-754 native kernels.
 
 pub const DTYPE_BOOL: u8 = 0;
-pub const DTYPE_U8:   u8 = 1;
-pub const DTYPE_I8:   u8 = 2;
-pub const DTYPE_U64:  u8 = 3;
-pub const DTYPE_I32:  u8 = 4;
-pub const DTYPE_I64:  u8 = 5;
-pub const DTYPE_F16:  u8 = 6;
+pub const DTYPE_U8: u8 = 1;
+pub const DTYPE_I8: u8 = 2;
+pub const DTYPE_U64: u8 = 3;
+pub const DTYPE_I32: u8 = 4;
+pub const DTYPE_I64: u8 = 5;
+pub const DTYPE_F16: u8 = 6;
 pub const DTYPE_BF16: u8 = 7;
-pub const DTYPE_F32:  u8 = 8;
-pub const DTYPE_F64:  u8 = 9;
+pub const DTYPE_F32: u8 = 8;
+pub const DTYPE_F64: u8 = 9;
 /// Packed signed 4-bit integer (two values per byte). Used by quantized
 /// weight payloads — see spec X-5 / ADR-054 Quantization addendum.
 /// `bytes_per_element` returns the integer 0; ceil-division by 2 is
 /// applied at the kernel boundary. The compiler treats the storage
 /// length explicitly to avoid the 0-bytes-per-element pitfall.
-pub const DTYPE_I4:   u8 = 10;
+pub const DTYPE_I4: u8 = 10;
 
 /// Bytes per element for a given dtype tag. Sub-byte dtypes
 /// (`DTYPE_I4`) report `0`; callers compute storage size as
@@ -126,7 +126,9 @@ fn f32_to_f16(v: f32) -> u16 {
         return (sign << 15) | (0x1f << 10);
     }
     if new_exp <= 0 {
-        if new_exp < -10 { return sign << 15; }
+        if new_exp < -10 {
+            return sign << 15;
+        }
         let m = mant | 0x800000;
         let shift = (1 - new_exp) as u32 + 13;
         let rounded = (m + (1 << (shift - 1))) >> shift;

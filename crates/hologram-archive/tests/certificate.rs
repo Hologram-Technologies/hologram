@@ -1,6 +1,6 @@
 //! Spec X.1 Certificates section codec tests.
 
-use hologram_archive::certificate_codec::{encode, decode, CertificateRecord};
+use hologram_archive::certificate_codec::{decode, encode, CertificateRecord};
 
 #[test]
 fn empty_round_trip() {

@@ -41,4 +41,3 @@ pub fn build_w16_lut<F: ActivationFn>() -> Box<[u16; 65_536]> {
     }
     t
 }
-

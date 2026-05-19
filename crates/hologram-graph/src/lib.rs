@@ -8,17 +8,17 @@
 
 extern crate alloc;
 
+pub mod backward;
+pub mod constant;
 pub mod graph;
 pub mod node;
-pub mod schedule;
 pub mod registry;
-pub mod constant;
-pub mod backward;
+pub mod schedule;
 
-pub use graph::Graph;
-pub use node::{Node, NodeId, GraphOp, InputSource, ConstantId, QuantAttrs, ConvAttrs};
-pub use schedule::Schedule;
-pub use registry::{ShapeRegistry, ShapeId, DTypeId, ShapeDescriptor};
-pub use constant::ConstantStore;
 pub use backward::{append_backward, BackwardError};
+pub use constant::ConstantStore;
+pub use graph::Graph;
 pub use hologram_ops::OpKind;
+pub use node::{ConstantId, ConvAttrs, GraphOp, InputSource, Node, NodeId, QuantAttrs};
+pub use registry::{DTypeId, ShapeDescriptor, ShapeId, ShapeRegistry};
+pub use schedule::Schedule;

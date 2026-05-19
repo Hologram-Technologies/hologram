@@ -5,13 +5,16 @@
 //! surface — hologram-host re-exports `prism::crypto::Blake3Hasher`
 //! as `HologramHasher` and the `Hasher<32>` trait surface resolves.
 
-use prism::vocabulary::Hasher;
 use hologram_host::HologramHasher;
+use prism::vocabulary::Hasher;
 
 #[test]
 fn fold_byte_associative_with_fold_bytes() {
     let by_byte = HologramHasher::initial()
-        .fold_byte(b'a').fold_byte(b'b').fold_byte(b'c').finalize();
+        .fold_byte(b'a')
+        .fold_byte(b'b')
+        .fold_byte(b'c')
+        .finalize();
     let by_slice = HologramHasher::initial().fold_bytes(b"abc").finalize();
     assert_eq!(by_byte, by_slice);
 }

@@ -4,16 +4,16 @@
 //! Constructs graphs programmatically (not through the line parser) to
 //! exercise the shape-resolution and dtype-aware byte-sizing paths.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use hologram_graph::{
-    Graph, GraphOp, InputSource, OpKind,
-    registry::{DTypeId, ShapeDescriptor},
-};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
-use smallvec::SmallVec;
+use hologram_graph::{
+    registry::{DTypeId, ShapeDescriptor},
+    Graph, GraphOp, InputSource, OpKind,
+};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -22,7 +22,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
 }
 
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -66,7 +67,11 @@ fn unary_relu_f32_real_data() {
     assert_eq!(session.output_count(), 1);
 
     let input_bytes = f32_to_le(&[-3.0, -1.0, 0.0, 0.5, 1.0, 2.0, 5.0, -7.0]);
-    let outputs = session.execute(&[InputBuffer { bytes: &input_bytes }]).unwrap();
+    let outputs = session
+        .execute(&[InputBuffer {
+            bytes: &input_bytes,
+        }])
+        .unwrap();
 
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0].bytes.len(), 8 * 4);
@@ -79,9 +84,15 @@ fn unary_relu_f32_real_data() {
 fn matmul_f32_real_data() {
     // Graph: input_a, input_b -> matmul -> output
     let mut graph = Graph::new();
-    let shape_a = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
-    let shape_b = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(3, 2));
-    let shape_out = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 2));
+    let shape_a = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 3));
+    let shape_b = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(3, 2));
+    let shape_out = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 2));
 
     let a = graph.add_node(Node {
         op: GraphOp::Input,
@@ -122,10 +133,12 @@ fn matmul_f32_real_data() {
     // A·B = [[58, 64], [139, 154]]  (2x2)
     let a_bytes = f32_to_le(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     let b_bytes = f32_to_le(&[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
-    let outputs = session.execute(&[
-        InputBuffer { bytes: &a_bytes },
-        InputBuffer { bytes: &b_bytes },
-    ]).unwrap();
+    let outputs = session
+        .execute(&[
+            InputBuffer { bytes: &a_bytes },
+            InputBuffer { bytes: &b_bytes },
+        ])
+        .unwrap();
 
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0].bytes.len(), 4 * 4);
@@ -182,10 +195,12 @@ fn binary_add_f32_real_data() {
 
     let a_bytes = f32_to_le(&[1.0, 2.0, 3.0, 4.0]);
     let b_bytes = f32_to_le(&[10.0, 20.0, 30.0, 40.0]);
-    let outputs = session.execute(&[
-        InputBuffer { bytes: &a_bytes },
-        InputBuffer { bytes: &b_bytes },
-    ]).unwrap();
+    let outputs = session
+        .execute(&[
+            InputBuffer { bytes: &a_bytes },
+            InputBuffer { bytes: &b_bytes },
+        ])
+        .unwrap();
 
     assert_eq!(outputs.len(), 1);
     let result = le_to_f32(&outputs[0].bytes);

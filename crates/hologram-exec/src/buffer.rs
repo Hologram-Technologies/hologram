@@ -59,8 +59,7 @@ impl AlignedBytes {
             let layout = core::alloc::Layout::from_size_align(cap, ARENA_ALIGN)
                 .expect("layout: cap > 0 and align is a power of two");
             let raw = alloc::alloc::alloc_zeroed(layout);
-            let ptr = NonNull::new(raw)
-                .unwrap_or_else(|| alloc::alloc::handle_alloc_error(layout));
+            let ptr = NonNull::new(raw).unwrap_or_else(|| alloc::alloc::handle_alloc_error(layout));
             Self { ptr, len, cap }
         }
     }
@@ -210,9 +209,8 @@ impl BufferArena {
                 read_slices.push(core::slice::from_raw_parts(base_const.add(rs), re - rs));
             }
         }
-        let write_slice = unsafe {
-            core::slice::from_raw_parts_mut(base_mut.add(w_start), w_end - w_start)
-        };
+        let write_slice =
+            unsafe { core::slice::from_raw_parts_mut(base_mut.add(w_start), w_end - w_start) };
         Some((read_slices, write_slice))
     }
 }

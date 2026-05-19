@@ -1,11 +1,11 @@
 //! Archive writer (spec X.2).
 
-use std::io::Write;
+use crate::error::ArchiveError;
+use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
+use crate::weight::WeightStore;
 use hologram_backend::KernelCall;
 use hologram_graph::{Schedule, ShapeRegistry};
-use crate::format::{MAGIC, FORMAT_VERSION, SectionKind, SectionRef};
-use crate::weight::WeightStore;
-use crate::error::ArchiveError;
+use std::io::Write;
 
 /// Single input/output port descriptor: which workspace slot the runtime
 /// fills (input) or reads (output), and how many bytes it carries.
@@ -33,7 +33,9 @@ pub struct HoloWriter {
 }
 
 impl HoloWriter {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn set_kernel_calls(&mut self, calls: Vec<KernelCall>) {
         self.kernel_calls = calls;
@@ -103,7 +105,10 @@ impl HoloWriter {
             payloads.push((SectionKind::Outputs, encode_ports(&self.outputs)));
         }
         if !self.constants.is_empty() {
-            payloads.push((SectionKind::Constants, crate::constant_codec::encode(&self.constants)));
+            payloads.push((
+                SectionKind::Constants,
+                crate::constant_codec::encode(&self.constants),
+            ));
         }
         if !self.exec_plan.is_empty() {
             payloads.push((SectionKind::ExecPlan, encode_exec_plan(&self.exec_plan)));
@@ -148,7 +153,8 @@ impl HoloWriter {
         let footer: [u8; 32] = hologram_host::HologramHasher::initial()
             .fold_bytes(&out)
             .finalize();
-        out.write_all(&footer).map_err(|_| ArchiveError::Io("footer write"))?;
+        out.write_all(&footer)
+            .map_err(|_| ArchiveError::Io("footer write"))?;
 
         Ok(out)
     }
@@ -172,14 +178,20 @@ fn encode_ports(ports: &[PortDescriptor]) -> Vec<u8> {
 /// Decode a `PortDescriptor` slice from a section payload.
 pub fn decode_ports(bytes: &[u8]) -> Result<Vec<PortDescriptor>, ArchiveError> {
     if bytes.len() < 4 {
-        return Err(ArchiveError::Truncated { needed: 4, actual: bytes.len() });
+        return Err(ArchiveError::Truncated {
+            needed: 4,
+            actual: bytes.len(),
+        });
     }
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut out = Vec::with_capacity(count);
     let mut cursor = 4usize;
     for _ in 0..count {
         if cursor + 9 > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cursor + 9, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cursor + 9,
+                actual: bytes.len(),
+            });
         }
         let slot = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         cursor += 4;
@@ -187,7 +199,11 @@ pub fn decode_ports(bytes: &[u8]) -> Result<Vec<PortDescriptor>, ArchiveError> {
         cursor += 4;
         let dtype = bytes[cursor];
         cursor += 1;
-        out.push(PortDescriptor { slot, element_count, dtype });
+        out.push(PortDescriptor {
+            slot,
+            element_count,
+            dtype,
+        });
     }
     Ok(out)
 }
@@ -210,24 +226,35 @@ fn encode_exec_plan(levels: &[Vec<u32>]) -> Vec<u8> {
 /// Decode per-level kernel-call indices.
 pub fn decode_exec_plan(bytes: &[u8]) -> Result<Vec<Vec<u32>>, ArchiveError> {
     if bytes.len() < 4 {
-        return Err(ArchiveError::Truncated { needed: 4, actual: bytes.len() });
+        return Err(ArchiveError::Truncated {
+            needed: 4,
+            actual: bytes.len(),
+        });
     }
     let level_count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut levels = Vec::with_capacity(level_count);
     let mut cursor = 4usize;
     for _ in 0..level_count {
         if cursor + 4 > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cursor + 4, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cursor + 4,
+                actual: bytes.len(),
+            });
         }
         let n = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
         cursor += 4;
         let needed = cursor + n * 4;
         if needed > bytes.len() {
-            return Err(ArchiveError::Truncated { needed, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed,
+                actual: bytes.len(),
+            });
         }
         let mut level = Vec::with_capacity(n);
         for _ in 0..n {
-            level.push(u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()));
+            level.push(u32::from_le_bytes(
+                bytes[cursor..cursor + 4].try_into().unwrap(),
+            ));
             cursor += 4;
         }
         levels.push(level);
@@ -262,16 +289,22 @@ fn encode_weights(weights: &WeightStore) -> Vec<u8> {
 /// `encode_weights`. Used by the runtime to resolve content-addressed
 /// constant references at session load (spec X.3).
 pub fn decode_weights(bytes: &[u8]) -> Result<crate::weight::WeightStore, ArchiveError> {
-    use crate::weight::{WeightStore, WeightFingerprint};
+    use crate::weight::{WeightFingerprint, WeightStore};
     if bytes.len() < 4 {
-        return Err(ArchiveError::Truncated { needed: 4, actual: bytes.len() });
+        return Err(ArchiveError::Truncated {
+            needed: 4,
+            actual: bytes.len(),
+        });
     }
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut store = WeightStore::new();
     let mut cur = 4usize;
     for _ in 0..count {
         if cur + 32 + 8 > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cur + 40, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cur + 40,
+                actual: bytes.len(),
+            });
         }
         let mut fp = [0u8; 32];
         fp.copy_from_slice(&bytes[cur..cur + 32]);
@@ -279,7 +312,10 @@ pub fn decode_weights(bytes: &[u8]) -> Result<crate::weight::WeightStore, Archiv
         let len = u64::from_le_bytes(bytes[cur..cur + 8].try_into().unwrap()) as usize;
         cur += 8;
         if cur + len > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cur + len, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cur + len,
+                actual: bytes.len(),
+            });
         }
         let body = bytes[cur..cur + len].to_vec();
         cur += len;
@@ -303,7 +339,11 @@ fn encode_shape_registry(reg: &ShapeRegistry) -> Vec<u8> {
                 out.extend_from_slice(&d.dims[k].to_le_bytes());
             }
             // overflow length
-            let overflow = d.dims_overflow.as_ref().map(|v| v.len() as u32).unwrap_or(0);
+            let overflow = d
+                .dims_overflow
+                .as_ref()
+                .map(|v| v.len() as u32)
+                .unwrap_or(0);
             out.extend_from_slice(&overflow.to_le_bytes());
             if let Some(over) = &d.dims_overflow {
                 for &x in over.iter() {

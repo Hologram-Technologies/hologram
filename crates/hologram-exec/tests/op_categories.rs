@@ -1,15 +1,15 @@
 //! End-to-end coverage across op categories with real f32 data.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
-    Graph, GraphOp, InputSource, OpKind,
     node::Node,
     registry::{DTypeId, ShapeDescriptor},
+    Graph, GraphOp, InputSource, OpKind,
 };
-use smallvec::SmallVec;
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -17,7 +17,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -132,10 +133,16 @@ fn div_f32() {
     let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
-    let outputs = session.execute(&[
-        InputBuffer { bytes: &f32_to_le(&[10.0, 20.0, 5.0]) },
-        InputBuffer { bytes: &f32_to_le(&[2.0, 4.0, 5.0]) },
-    ]).unwrap();
+    let outputs = session
+        .execute(&[
+            InputBuffer {
+                bytes: &f32_to_le(&[10.0, 20.0, 5.0]),
+            },
+            InputBuffer {
+                bytes: &f32_to_le(&[2.0, 4.0, 5.0]),
+            },
+        ])
+        .unwrap();
     assert_eq!(le_to_f32(&outputs[0].bytes), vec![5.0, 5.0, 1.0]);
 }
 
@@ -173,18 +180,28 @@ fn min_max_f32() {
     let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
-    let outputs = session.execute(&[
-        InputBuffer { bytes: &f32_to_le(&[1.0, 5.0, 3.0, -2.0]) },
-        InputBuffer { bytes: &f32_to_le(&[3.0, 2.0, 3.0, -1.0]) },
-    ]).unwrap();
+    let outputs = session
+        .execute(&[
+            InputBuffer {
+                bytes: &f32_to_le(&[1.0, 5.0, 3.0, -2.0]),
+            },
+            InputBuffer {
+                bytes: &f32_to_le(&[3.0, 2.0, 3.0, -1.0]),
+            },
+        ])
+        .unwrap();
     assert_eq!(le_to_f32(&outputs[0].bytes), vec![1.0, 2.0, 3.0, -2.0]);
 }
 
 #[test]
 fn reshape_f32_passes_through() {
     let mut graph = Graph::new();
-    let shape_in = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
-    let shape_out = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(3, 2));
+    let shape_in = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 3));
+    let shape_out = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(3, 2));
     let x = graph.add_node(Node {
         op: GraphOp::Input,
         inputs: SmallVec::new(),
@@ -209,8 +226,10 @@ fn reshape_f32_passes_through() {
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
     let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-    let outputs = session.execute(&[
-        InputBuffer { bytes: &f32_to_le(&input) },
-    ]).unwrap();
+    let outputs = session
+        .execute(&[InputBuffer {
+            bytes: &f32_to_le(&input),
+        }])
+        .unwrap();
     assert_eq!(le_to_f32(&outputs[0].bytes), input);
 }

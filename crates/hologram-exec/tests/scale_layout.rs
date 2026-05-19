@@ -4,14 +4,14 @@
 //! sizes, not with `slot_count * max_size`. A regression here would
 //! make trillion-parameter / UHD-streaming workloads infeasible.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena};
-use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use smallvec::SmallVec;
+use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -22,7 +22,9 @@ fn workspace_total_is_sum_not_product() {
     // allocate 4 × 16 KiB = 64 KiB; new layout allocates ~16 KiB + 3·256
     // (the 64-byte floor on small slots).
     let mut graph = Graph::new();
-    let big_shape   = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4096));
+    let big_shape = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(4096));
     let small_shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
 
     let big_in = graph.add_node(Node {
@@ -85,8 +87,11 @@ fn workspace_total_is_sum_not_product() {
     // slots × 64 B floor ≈ 33 KiB. Old layout would have been
     // 7 × 16 KiB = 112 KiB. Threshold is generous (64 KiB) to allow
     // future schedule-aware liveness compaction without a flake.
-    assert!(cap < 64 * 1024,
-        "workspace capacity {} bytes too large — per-slot sizing regressed", cap);
+    assert!(
+        cap < 64 * 1024,
+        "workspace capacity {} bytes too large — per-slot sizing regressed",
+        cap
+    );
 }
 
 #[test]
@@ -96,7 +101,9 @@ fn one_giant_tensor_doesnt_explode_workspace() {
     // The workspace should be approximately 1 MiB, NOT n_slots * 1 MiB.
     let mut graph = Graph::new();
     let big_n: u64 = 256 * 1024; // 1 MiB at f32
-    let big = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(big_n));
+    let big = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(big_n));
     let small = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
 
     let x = graph.add_node(Node {
@@ -151,7 +158,11 @@ fn one_giant_tensor_doesnt_explode_workspace() {
     // Big-tensor pathway holds 2 slots × 1 MiB = 2 MiB. Small ops add
     // ~7 × 64 B ≈ 448 B. Old layout would have been ~9 × 1 MiB = 9 MiB.
     let big_bytes = (big_n as usize) * 4;
-    assert!(cap < (big_bytes * 4),
+    assert!(
+        cap < (big_bytes * 4),
         "workspace ({} bytes) exceeds 4× the big-tensor footprint ({}); \
-         per-slot scaling regressed", cap, big_bytes);
+         per-slot scaling regressed",
+        cap,
+        big_bytes
+    );
 }

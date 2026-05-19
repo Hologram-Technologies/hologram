@@ -1,11 +1,13 @@
 //! Utility ops (spec V.3).
 
+use crate::emit::{
+    push_application, push_literal, push_match, push_recurse, push_variable, EmitResult,
+};
 use core::marker::PhantomData;
 use uor_foundation::enforcement::TermArena;
-use uor_foundation::{PrimitiveOp, WittLevel};
-use uor_foundation::HostBounds;
 use uor_foundation::pipeline::ConstrainedTypeShape;
-use crate::emit::{push_application, push_literal, push_recurse, push_match, push_variable, EmitResult};
+use uor_foundation::HostBounds;
+use uor_foundation::{PrimitiveOp, WittLevel};
 
 /// Layout-style utility (Pad / Expand): single-Variable relabel, no compute.
 pub fn emit_layout_relabel<const CAP: usize>(
@@ -23,7 +25,7 @@ pub fn emit_resize<const CAP: usize>(
     x_var: u32,
 ) -> EmitResult {
     let zero = push_literal(arena, 0, level)?;
-    let mul  = push_application(arena, PrimitiveOp::Mul, x_var, 2)?;
+    let mul = push_application(arena, PrimitiveOp::Mul, x_var, 2)?;
     let step = push_application(arena, PrimitiveOp::Add, mul, 2)?;
     push_recurse(arena, zero, zero, step)
 }
@@ -68,9 +70,9 @@ pub fn emit_lrn<const CAP: usize>(
     x_var: u32,
 ) -> EmitResult {
     let zero = push_literal(arena, 0, level)?;
-    let sq   = push_application(arena, PrimitiveOp::Mul, x_var, 2)?;
+    let sq = push_application(arena, PrimitiveOp::Mul, x_var, 2)?;
     let step = push_application(arena, PrimitiveOp::Add, sq, 2)?;
-    let sum  = push_recurse(arena, zero, zero, step)?;
+    let sum = push_recurse(arena, zero, zero, step)?;
     let recip = push_application(arena, PrimitiveOp::Mul, sum, 2)?;
     push_application(arena, PrimitiveOp::Mul, recip, 2)
 }
@@ -147,24 +149,43 @@ macro_rules! declare_util_layout {
     };
 }
 
-declare_util_layout!(PadOp,    "pad",    [Sin, Pad]);
+declare_util_layout!(PadOp, "pad", [Sin, Pad]);
 declare_util_layout!(ExpandOp, "expand", [Sin, Sout]);
 
-declare_util_compute!(ResizeOp,          "resize",           32, emit_resize,           [Sin, Sout]);
-declare_util_compute!(CumSumOp,          "cumsum",           32, emit_cumsum,           [S, Axis]);
-declare_util_compute!(RotaryEmbeddingOp, "rotary_embedding", 64, emit_rotary_embedding, [S]);
-declare_util_compute!(ClipOp,            "clip",             16, emit_clip,             [S, Lo, Hi]);
-declare_util_compute!(LrnOp,             "lrn",              64, emit_lrn,              [S]);
+declare_util_compute!(ResizeOp, "resize", 32, emit_resize, [Sin, Sout]);
+declare_util_compute!(CumSumOp, "cumsum", 32, emit_cumsum, [S, Axis]);
+declare_util_compute!(
+    RotaryEmbeddingOp,
+    "rotary_embedding",
+    64,
+    emit_rotary_embedding,
+    [S]
+);
+declare_util_compute!(ClipOp, "clip", 16, emit_clip, [S, Lo, Hi]);
+declare_util_compute!(LrnOp, "lrn", 64, emit_lrn, [S]);
 
 pub struct WhereOp<S, D, B>(PhantomData<(S, D, B)>)
-where S: ConstrainedTypeShape, D: ConstrainedTypeShape, B: HostBounds;
+where
+    S: ConstrainedTypeShape,
+    D: ConstrainedTypeShape,
+    B: HostBounds;
 
 impl<S, D, B> Default for WhereOp<S, D, B>
-where S: ConstrainedTypeShape, D: ConstrainedTypeShape, B: HostBounds,
-{ fn default() -> Self { Self(PhantomData) } }
+where
+    S: ConstrainedTypeShape,
+    D: ConstrainedTypeShape,
+    B: HostBounds,
+{
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 impl<S, D, B> WhereOp<S, D, B>
-where S: ConstrainedTypeShape, D: ConstrainedTypeShape, B: HostBounds,
+where
+    S: ConstrainedTypeShape,
+    D: ConstrainedTypeShape,
+    B: HostBounds,
 {
     pub const IRI: &'static str = "https://hologram.uor.foundation/op/utility/where";
     pub const CAP: usize = 16;

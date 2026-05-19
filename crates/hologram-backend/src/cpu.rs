@@ -6,17 +6,17 @@
 //! Equivalence is verified by per-op reference-evaluator tests
 //! (per spec VII.3).
 
-use core::marker::PhantomData;
-use hologram_host::ActiveCpuBounds;
 use crate::backend::Backend;
+use crate::error::BackendError;
 use crate::kernel_call::KernelCall;
 use crate::workspace::Workspace;
-use crate::error::BackendError;
+use core::marker::PhantomData;
+use hologram_host::ActiveCpuBounds;
 
 pub mod dtype;
-pub mod simd;
-mod kernels;
 mod float_kernels;
+mod kernels;
+pub mod simd;
 
 /// CPU backend parameterized over the runtime workspace shape.
 ///
@@ -35,7 +35,9 @@ pub struct CpuBackend<W: Workspace> {
 impl<W: Workspace> Copy for CpuBackend<W> {}
 impl<W: Workspace> Clone for CpuBackend<W> {
     #[inline]
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<W: Workspace> CpuBackend<W> {
@@ -45,7 +47,9 @@ impl<W: Workspace> CpuBackend<W> {
 }
 
 impl<W: Workspace> Default for CpuBackend<W> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<W: Workspace> Backend for CpuBackend<W> {

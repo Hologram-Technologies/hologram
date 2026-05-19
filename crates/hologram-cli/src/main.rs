@@ -1,5 +1,5 @@
 use clap::Parser;
-use hologram_cli::cmd::{Cli, run};
+use hologram_cli::cmd::{run, Cli};
 
 fn main() {
     let cli = Cli::parse();

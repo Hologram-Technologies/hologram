@@ -1,6 +1,6 @@
 //! Spec X.1 footer-verification tests.
 
-use hologram_archive::{HoloWriter, HoloLoader, ArchiveError};
+use hologram_archive::{ArchiveError, HoloLoader, HoloWriter};
 
 fn build_minimal_archive() -> Vec<u8> {
     HoloWriter::new().finish().unwrap()

@@ -28,9 +28,8 @@ pub mod dtype;
 pub mod shape;
 
 pub use dtype::{
-    DType, DTypeKind,
-    DTypeF32, DTypeF16, DTypeBf16, DTypeF64,
-    DTypeI64, DTypeI32, DTypeI8, DTypeI4, DTypeU64, DTypeU8, DTypeBool,
+    DType, DTypeBf16, DTypeBool, DTypeF16, DTypeF32, DTypeF64, DTypeI32, DTypeI4, DTypeI64,
+    DTypeI8, DTypeKind, DTypeU64, DTypeU8,
 };
 pub use shape::{Dim, Shape1, Shape2};
 

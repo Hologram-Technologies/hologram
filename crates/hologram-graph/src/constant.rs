@@ -1,8 +1,8 @@
 //! Inline constant store.
 
-use alloc::vec::Vec;
 use crate::node::ConstantId;
 use crate::registry::{DTypeId, ShapeId};
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
 pub struct ConstantEntry {
@@ -17,7 +17,9 @@ pub struct ConstantStore {
 }
 
 impl ConstantStore {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn insert(&mut self, entry: ConstantEntry) -> ConstantId {
         let id = ConstantId(self.entries.len() as u32);
@@ -29,6 +31,10 @@ impl ConstantStore {
         self.entries.get(id.0 as usize)
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }

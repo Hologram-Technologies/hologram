@@ -26,13 +26,11 @@ const fn dim_coefficients() -> [i64; AFFINE_MAX_COEFFS] {
 impl<const N: u64> ConstrainedTypeShape for Dim<N> {
     const IRI: &'static str = "https://hologram.uor.foundation/type/shape/dim";
     const SITE_COUNT: usize = 1;
-    const CONSTRAINTS: &'static [ConstraintRef] = &[
-        ConstraintRef::Affine {
-            coefficients: dim_coefficients(),
-            coefficient_count: 1,
-            bias: N as i64,
-        },
-    ];
+    const CONSTRAINTS: &'static [ConstraintRef] = &[ConstraintRef::Affine {
+        coefficients: dim_coefficients(),
+        coefficient_count: 1,
+        bias: N as i64,
+    }];
     const CYCLE_SIZE: u64 = N;
 }
 
@@ -59,5 +57,13 @@ macro_rules! declare_shape {
     };
 }
 
-declare_shape!(Shape1, "https://hologram.uor.foundation/type/shape/rank1", [D0]);
-declare_shape!(Shape2, "https://hologram.uor.foundation/type/shape/rank2", [D0, D1]);
+declare_shape!(
+    Shape1,
+    "https://hologram.uor.foundation/type/shape/rank1",
+    [D0]
+);
+declare_shape!(
+    Shape2,
+    "https://hologram.uor.foundation/type/shape/rank2",
+    [D0, D1]
+);

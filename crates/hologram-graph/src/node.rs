@@ -1,7 +1,7 @@
 //! Node + GraphOp definitions (spec VI.1, VI.2).
 
-use smallvec::SmallVec;
 use crate::registry::{DTypeId, ShapeId};
+use smallvec::SmallVec;
 
 /// Stable opaque handle. The compiler may also stamp a generation tag on
 /// these for use-after-free protection; here the index is sufficient since
@@ -75,6 +75,11 @@ pub struct ConvAttrs {
 
 impl Default for ConvAttrs {
     fn default() -> Self {
-        Self { stride_h: 1, stride_w: 1, pad_h: 0, pad_w: 0 }
+        Self {
+            stride_h: 1,
+            stride_w: 1,
+            pad_h: 0,
+            pad_w: 0,
+        }
     }
 }

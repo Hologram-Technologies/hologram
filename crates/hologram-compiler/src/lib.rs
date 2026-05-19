@@ -11,15 +11,15 @@
 //!   8. Lower to backend KernelCall.
 //!   9. Emit (kernel_call, certificate, fingerprint) into archive.
 
-pub mod compiler;
 pub mod cache;
+pub mod compiler;
+pub mod error;
 pub mod lower;
 pub mod pipeline;
 pub mod source;
-pub mod error;
 
-pub use compiler::{Compiler, BackendKind, CompilationOutput, CompilationStats};
-pub use cache::{CertificateCache, CachedCertificate};
+pub use cache::{CachedCertificate, CertificateCache};
+pub use compiler::{BackendKind, CompilationOutput, CompilationStats, Compiler};
 pub use error::CompileError;
 
 /// Convenience: parse UOR source -> Graph -> compile.

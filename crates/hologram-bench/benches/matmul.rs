@@ -6,13 +6,15 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hologram_backend::cpu::dtype::DTYPE_F32;
-use hologram_backend::{
-    Backend, BufferRef, CpuBackend, KernelCall, MatMulCall,
-};
+use hologram_backend::{Backend, BufferRef, CpuBackend, KernelCall, MatMulCall};
 use hologram_exec::{BufferArena, SlotSpan};
 
 fn ref_buf(slot: u32) -> BufferRef {
-    BufferRef { slot, offset: 0, length: 0 }
+    BufferRef {
+        slot,
+        offset: 0,
+        length: 0,
+    }
 }
 
 /// Build a 3-slot `BufferArena` (A, B, output) with `slot_bytes`
@@ -22,9 +24,18 @@ fn ref_buf(slot: u32) -> BufferRef {
 fn make_arena(slot_bytes: usize) -> BufferArena {
     let rounded = slot_bytes.next_multiple_of(64);
     let slots = vec![
-        SlotSpan { offset: 0, length: rounded as u32 },
-        SlotSpan { offset: rounded as u32, length: rounded as u32 },
-        SlotSpan { offset: 2 * rounded as u32, length: rounded as u32 },
+        SlotSpan {
+            offset: 0,
+            length: rounded as u32,
+        },
+        SlotSpan {
+            offset: rounded as u32,
+            length: rounded as u32,
+        },
+        SlotSpan {
+            offset: 2 * rounded as u32,
+            length: rounded as u32,
+        },
     ];
     BufferArena::with_capacity(3 * rounded, slots)
 }
@@ -45,12 +56,19 @@ fn bench_matmul_w8_64(c: &mut Criterion) {
         // Seed A, B with all-ones bytes.
         for slot in 0..2 {
             let buf = ws.write_slot(slot).expect("slot in range");
-            for byte in buf.iter_mut().take(n * n) { *byte = 1; }
+            for byte in buf.iter_mut().take(n * n) {
+                *byte = 1;
+            }
         }
         let mut backend: CpuBackend<BufferArena> = CpuBackend::new();
         let call = KernelCall::MatMul(MatMulCall {
-            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
-            m: 64, k: 64, n: 64, dtype: 0,
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 64,
+            k: 64,
+            n: 64,
+            dtype: 0,
         });
         b.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -66,8 +84,13 @@ fn bench_matmul_f32_64(c: &mut Criterion) {
         seed_f32(&mut ws, 1, n * n);
         let mut backend: CpuBackend<BufferArena> = CpuBackend::new();
         let call = KernelCall::MatMul(MatMulCall {
-            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
-            m: 64, k: 64, n: 64, dtype: DTYPE_F32,
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 64,
+            k: 64,
+            n: 64,
+            dtype: DTYPE_F32,
         });
         bench.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -83,8 +106,13 @@ fn bench_matmul_f32_128(c: &mut Criterion) {
         seed_f32(&mut ws, 1, n * n);
         let mut backend: CpuBackend<BufferArena> = CpuBackend::new();
         let call = KernelCall::MatMul(MatMulCall {
-            a: ref_buf(0), b: ref_buf(1), output: ref_buf(2),
-            m: 128, k: 128, n: 128, dtype: DTYPE_F32,
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 128,
+            k: 128,
+            n: 128,
+            dtype: DTYPE_F32,
         });
         bench.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -92,5 +120,10 @@ fn bench_matmul_f32_128(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_matmul_w8_64, bench_matmul_f32_64, bench_matmul_f32_128);
+criterion_group!(
+    benches,
+    bench_matmul_w8_64,
+    bench_matmul_f32_64,
+    bench_matmul_f32_128
+);
 criterion_main!(benches);

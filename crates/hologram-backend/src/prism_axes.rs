@@ -23,10 +23,7 @@
 
 use prism::pipeline::ShapeViolation;
 use prism::tensor::{ActivationAxis, TensorAxis};
-use prism_tensor::{
-    axis_extension_impl_for_activation_axis,
-    axis_extension_impl_for_tensor_axis,
-};
+use prism_tensor::{axis_extension_impl_for_activation_axis, axis_extension_impl_for_tensor_axis};
 
 /// Maximum square dimension supported by `HologramF32MatmulSquare`.
 /// Mirrors prism-tensor's `MAX_TENSOR_DIM = 16` so external callers
@@ -50,7 +47,12 @@ fn shape_violation(constraint_iri: &'static str) -> ShapeViolation {
 
 #[inline]
 fn read_f32(bytes: &[u8], i: usize) -> f32 {
-    f32::from_le_bytes([bytes[4 * i], bytes[4 * i + 1], bytes[4 * i + 2], bytes[4 * i + 3]])
+    f32::from_le_bytes([
+        bytes[4 * i],
+        bytes[4 * i + 1],
+        bytes[4 * i + 2],
+        bytes[4 * i + 3],
+    ])
 }
 
 #[inline]

@@ -35,8 +35,8 @@ use prism::vocabulary::{CompileUnitBuilder, VerificationDomain, WittLevel};
 // `literal_u64` is a foundation-only helper (not curated through
 // `prism::operation`); reach it via `prism`'s façade re-export of
 // the substrate crate to keep the dep tree single-rooted.
-use prism::uor_foundation::pipeline::literal_u64;
 use hologram_host::HologramHasher;
+use prism::uor_foundation::pipeline::literal_u64;
 
 use crate::buffer::{InputBuffer, OutputBuffer};
 use crate::error::ExecError;
@@ -131,4 +131,3 @@ impl<B: SessionBackend> InferenceSession<B> {
         })
     }
 }
-

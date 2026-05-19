@@ -1,12 +1,10 @@
 //! Decoder counterpart to `kernel_codec::encode_calls`.
 
-use hologram_backend::{
-    KernelCall, BufferRef,
-    UnaryCall, BinaryCall, MatMulCall, GemmCall, Conv2dCall,
-    NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall, DequantizeCall,
-};
 use crate::error::ArchiveError;
+use hologram_backend::{
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
+    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, WhereCall,
+};
 
 /// Cursor over a section payload.
 struct Cursor<'a> {
@@ -15,11 +13,18 @@ struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self { Self { bytes, pos: 0 } }
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
     fn need(&self, n: usize) -> Result<(), ArchiveError> {
         if self.pos + n > self.bytes.len() {
-            Err(ArchiveError::Truncated { needed: self.pos + n, actual: self.bytes.len() })
-        } else { Ok(()) }
+            Err(ArchiveError::Truncated {
+                needed: self.pos + n,
+                actual: self.bytes.len(),
+            })
+        } else {
+            Ok(())
+        }
     }
     fn u8(&mut self) -> Result<u8, ArchiveError> {
         self.need(1)?;
@@ -29,24 +34,28 @@ impl<'a> Cursor<'a> {
     }
     fn u16(&mut self) -> Result<u16, ArchiveError> {
         self.need(2)?;
-        let v = u16::from_le_bytes([self.bytes[self.pos], self.bytes[self.pos+1]]);
+        let v = u16::from_le_bytes([self.bytes[self.pos], self.bytes[self.pos + 1]]);
         self.pos += 2;
         Ok(v)
     }
     fn u32(&mut self) -> Result<u32, ArchiveError> {
         self.need(4)?;
-        let v = u32::from_le_bytes(self.bytes[self.pos..self.pos+4].try_into().unwrap());
+        let v = u32::from_le_bytes(self.bytes[self.pos..self.pos + 4].try_into().unwrap());
         self.pos += 4;
         Ok(v)
     }
     fn u64(&mut self) -> Result<u64, ArchiveError> {
         self.need(8)?;
-        let v = u64::from_le_bytes(self.bytes[self.pos..self.pos+8].try_into().unwrap());
+        let v = u64::from_le_bytes(self.bytes[self.pos..self.pos + 8].try_into().unwrap());
         self.pos += 8;
         Ok(v)
     }
     fn buf(&mut self) -> Result<BufferRef, ArchiveError> {
-        Ok(BufferRef { slot: self.u32()?, offset: self.u32()?, length: self.u32()? })
+        Ok(BufferRef {
+            slot: self.u32()?,
+            offset: self.u32()?,
+            length: self.u32()?,
+        })
     }
 }
 
@@ -175,94 +184,157 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
 
 fn read_unary(c: &mut Cursor<'_>) -> Result<UnaryCall, ArchiveError> {
     Ok(UnaryCall {
-        input: c.buf()?, output: c.buf()?,
-        element_count: c.u32()?, witt_bits: c.u16()?, dtype: c.u8()?,
+        input: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u32()?,
+        witt_bits: c.u16()?,
+        dtype: c.u8()?,
     })
 }
 fn read_binary(c: &mut Cursor<'_>) -> Result<BinaryCall, ArchiveError> {
     Ok(BinaryCall {
-        a: c.buf()?, b: c.buf()?, output: c.buf()?,
-        element_count: c.u32()?, witt_bits: c.u16()?, dtype: c.u8()?,
+        a: c.buf()?,
+        b: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u32()?,
+        witt_bits: c.u16()?,
+        dtype: c.u8()?,
     })
 }
 fn read_matmul(c: &mut Cursor<'_>) -> Result<MatMulCall, ArchiveError> {
     Ok(MatMulCall {
-        a: c.buf()?, b: c.buf()?, output: c.buf()?,
-        m: c.u32()?, k: c.u32()?, n: c.u32()?, dtype: c.u8()?,
+        a: c.buf()?,
+        b: c.buf()?,
+        output: c.buf()?,
+        m: c.u32()?,
+        k: c.u32()?,
+        n: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_gemm(c: &mut Cursor<'_>) -> Result<GemmCall, ArchiveError> {
     Ok(GemmCall {
-        a: c.buf()?, b: c.buf()?, c: c.buf()?, output: c.buf()?,
-        m: c.u32()?, k: c.u32()?, n: c.u32()?,
-        alpha_bits: c.u64()?, beta_bits: c.u64()?, dtype: c.u8()?,
+        a: c.buf()?,
+        b: c.buf()?,
+        c: c.buf()?,
+        output: c.buf()?,
+        m: c.u32()?,
+        k: c.u32()?,
+        n: c.u32()?,
+        alpha_bits: c.u64()?,
+        beta_bits: c.u64()?,
+        dtype: c.u8()?,
     })
 }
 fn read_conv(c: &mut Cursor<'_>) -> Result<Conv2dCall, ArchiveError> {
     Ok(Conv2dCall {
-        x: c.buf()?, w: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, channels_in: c.u32()?, channels_out: c.u32()?,
-        h_in: c.u32()?, w_in: c.u32()?, h_out: c.u32()?, w_out: c.u32()?,
-        k_h: c.u32()?, k_w: c.u32()?,
-        stride_h: c.u32()?, stride_w: c.u32()?,
-        pad_h: c.u32()?, pad_w: c.u32()?, dtype: c.u8()?,
+        x: c.buf()?,
+        w: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        channels_in: c.u32()?,
+        channels_out: c.u32()?,
+        h_in: c.u32()?,
+        w_in: c.u32()?,
+        h_out: c.u32()?,
+        w_out: c.u32()?,
+        k_h: c.u32()?,
+        k_w: c.u32()?,
+        stride_h: c.u32()?,
+        stride_w: c.u32()?,
+        pad_h: c.u32()?,
+        pad_w: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_norm(c: &mut Cursor<'_>) -> Result<NormCall, ArchiveError> {
     Ok(NormCall {
-        x: c.buf()?, gamma: c.buf()?, beta: c.buf()?,
-        residual: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, feature: c.u32()?,
-        epsilon_bits: c.u64()?, dtype: c.u8()?,
+        x: c.buf()?,
+        gamma: c.buf()?,
+        beta: c.buf()?,
+        residual: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        feature: c.u32()?,
+        epsilon_bits: c.u64()?,
+        dtype: c.u8()?,
     })
 }
 fn read_reduce(c: &mut Cursor<'_>) -> Result<ReduceCall, ArchiveError> {
     Ok(ReduceCall {
-        input: c.buf()?, output: c.buf()?,
-        element_count: c.u32()?, axis_count: c.u32()?,
-        keepdims: c.u8()? != 0, dtype: c.u8()?,
+        input: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u32()?,
+        axis_count: c.u32()?,
+        keepdims: c.u8()? != 0,
+        dtype: c.u8()?,
     })
 }
 fn read_layout(c: &mut Cursor<'_>) -> Result<LayoutCall, ArchiveError> {
     Ok(LayoutCall {
-        input: c.buf()?, output: c.buf()?,
-        element_count: c.u32()?, dtype: c.u8()?,
+        input: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_softmax(c: &mut Cursor<'_>) -> Result<SoftmaxCall, ArchiveError> {
     Ok(SoftmaxCall {
-        input: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, feature: c.u32()?, dtype: c.u8()?,
+        input: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        feature: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_pool(c: &mut Cursor<'_>) -> Result<PoolCall, ArchiveError> {
     Ok(PoolCall {
-        x: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, channels: c.u32()?,
-        h_in: c.u32()?, w_in: c.u32()?,
-        h_out: c.u32()?, w_out: c.u32()?,
-        k_h: c.u32()?, k_w: c.u32()?,
-        stride_h: c.u32()?, stride_w: c.u32()?, dtype: c.u8()?,
+        x: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        channels: c.u32()?,
+        h_in: c.u32()?,
+        w_in: c.u32()?,
+        h_out: c.u32()?,
+        w_out: c.u32()?,
+        k_h: c.u32()?,
+        k_w: c.u32()?,
+        stride_h: c.u32()?,
+        stride_w: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_attn(c: &mut Cursor<'_>) -> Result<AttentionCall, ArchiveError> {
     Ok(AttentionCall {
-        q: c.buf()?, k: c.buf()?, v: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, heads: c.u32()?, seq: c.u32()?, head_dim: c.u32()?,
+        q: c.buf()?,
+        k: c.buf()?,
+        v: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        heads: c.u32()?,
+        seq: c.u32()?,
+        head_dim: c.u32()?,
         dtype: c.u8()?,
     })
 }
 fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
     Ok(WhereCall {
-        cond: c.buf()?, a: c.buf()?, b: c.buf()?, output: c.buf()?,
-        element_count: c.u32()?, dtype: c.u8()?,
+        cond: c.buf()?,
+        a: c.buf()?,
+        b: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
     Ok(DequantizeCall {
-        input: c.buf()?, output: c.buf()?,
+        input: c.buf()?,
+        output: c.buf()?,
         element_count: c.u32()?,
-        quant_dtype: c.u8()?, dtype: c.u8()?,
-        scale_bits: c.u32()?, zero_point: c.u32()? as i32,
+        quant_dtype: c.u8()?,
+        dtype: c.u8()?,
+        scale_bits: c.u32()?,
+        zero_point: c.u32()? as i32,
     })
 }

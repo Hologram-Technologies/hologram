@@ -5,16 +5,15 @@
 //! `PrimitiveOp` set — the only operator type `Term::Application::operator`
 //! accepts) plus the IRI scheme from spec IV.2.
 
-use hologram_ops::{
-    direct::*, elementwise_unary::*, elementwise_binary::*,
-    linalg::*, conv::*, normalization::*, reduction::*,
-    layout::*, activation_reduce::*, pooling::*, structured::*,
-    utility::*, backward::*,
-};
-use uor_foundation::HostBounds;
-use uor_foundation::pipeline::ConstrainedTypeShape;
 use hologram_host::HologramHostBoundsCpu;
-use hologram_types::{Dim, Shape1, Shape2, DTypeF32};
+use hologram_ops::{
+    activation_reduce::*, backward::*, conv::*, direct::*, elementwise_binary::*,
+    elementwise_unary::*, layout::*, linalg::*, normalization::*, pooling::*, reduction::*,
+    structured::*, utility::*,
+};
+use hologram_types::{DTypeF32, Dim, Shape1, Shape2};
+use uor_foundation::pipeline::ConstrainedTypeShape;
+use uor_foundation::HostBounds;
 
 const PREFIX: &str = "https://hologram.uor.foundation/op/";
 

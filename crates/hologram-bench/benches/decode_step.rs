@@ -4,10 +4,10 @@
 //! matmul → layer_norm → relu) and times one decode step end-to-end through
 //! the full pipeline (compile → archive → load → execute).
 
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
-use hologram_compiler::{compile_from_source, BackendKind};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
+use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
 const DECODE_STEP_SOURCE: &str = r"
@@ -29,7 +29,8 @@ fn bench_compile(c: &mut Criterion) {
                 black_box(DECODE_STEP_SOURCE),
                 WittLevel::W32,
                 BackendKind::Cpu,
-            ).unwrap();
+            )
+            .unwrap();
             black_box(out);
         });
     });

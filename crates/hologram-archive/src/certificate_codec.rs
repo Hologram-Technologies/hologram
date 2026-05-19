@@ -7,9 +7,9 @@
 //!
 //! The encoding is per-node; the section concatenates count (u32) + entries.
 
+use crate::error::ArchiveError;
 use prism::seal::Validated;
 use prism::uor_foundation::enforcement::LiftChainCertificate;
-use crate::error::ArchiveError;
 
 /// One node's certificate in serialized form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +46,10 @@ pub fn encode(records: &[CertificateRecord]) -> Vec<u8> {
 /// Decode the blob written by `encode`.
 pub fn decode(bytes: &[u8]) -> Result<Vec<CertificateRecord>, ArchiveError> {
     if bytes.len() < 4 {
-        return Err(ArchiveError::Truncated { needed: 4, actual: bytes.len() });
+        return Err(ArchiveError::Truncated {
+            needed: 4,
+            actual: bytes.len(),
+        });
     }
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut out = Vec::with_capacity(count);
@@ -54,7 +57,10 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<CertificateRecord>, ArchiveError> {
     let mut cursor = 4usize;
     for _ in 0..count {
         if cursor + entry_size > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cursor + entry_size, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cursor + entry_size,
+                actual: bytes.len(),
+            });
         }
         let witt_bits = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap());
         cursor += 2;
@@ -62,7 +68,11 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<CertificateRecord>, ArchiveError> {
         cursor += 1;
         let fingerprint: [u8; 32] = bytes[cursor..cursor + 32].try_into().unwrap();
         cursor += 32;
-        out.push(CertificateRecord { witt_bits, width_bytes, fingerprint });
+        out.push(CertificateRecord {
+            witt_bits,
+            width_bytes,
+            fingerprint,
+        });
     }
     Ok(out)
 }

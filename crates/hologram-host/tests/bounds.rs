@@ -1,7 +1,7 @@
 //! Spec XII.3: every HostBounds impl satisfies WITT_LEVEL_MAX_BITS = expected register width.
 
-use uor_foundation::HostBounds;
 use hologram_host::*;
+use uor_foundation::HostBounds;
 
 #[test]
 fn cpu_scalar_is_w64() {

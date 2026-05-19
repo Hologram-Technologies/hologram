@@ -122,22 +122,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Job 8: Cross-compilation targets (WASM, aarch64)
+  # Cross-compilation targets (wasm32, aarch64).
+  #
+  # The no_std crates form the portable core that must build for every
+  # supported target. std-only crates (hologram-backend / -exec /
+  # -compiler / -ffi / -cli / -bench / -archive) depend on libc / threads
+  # / mmap and are intentionally NOT cross-targeted; their CI coverage
+  # is the matrix-`test` job.
   cross-targets:
     name: Cross (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: wasm32-unknown-unknown
-            packages: "-p hologram-core"
-            features: "--no-default-features"
-          - target: wasm32-unknown-unknown
-            packages: "-p hologram-core"
-            features: ""
-          - target: aarch64-unknown-linux-gnu
-            packages: "-p hologram-core"
-            features: ""
+        target:
+          - wasm32-unknown-unknown
+          - aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v6
 
@@ -152,8 +152,13 @@ jobs:
           cache-on-failure: true
           key: cross-${{ matrix.target }}
 
-      - name: Check build
-        run: cargo check ${{ matrix.packages }} --target ${{ matrix.target }} ${{ matrix.features }}
+      - name: Check no_std core
+        run: |
+          cargo check --target ${{ matrix.target }} \
+            -p hologram-types \
+            -p hologram-host \
+            -p hologram-ops \
+            -p hologram-graph
 
   # Job 8: Verify all quality gates passed
   ci-success:

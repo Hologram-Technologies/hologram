@@ -1,12 +1,11 @@
 //! OpKind -> KernelCall lowering (spec VII.2 step 8 + IX.1).
 
-use hologram_backend::{
-    KernelCall, BufferRef, UnaryCall, BinaryCall, MatMulCall, GemmCall,
-    Conv2dCall, NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall, DequantizeCall,
-};
-use hologram_graph::{Graph, Node, NodeId, OpKind, InputSource};
 use crate::error::CompileError;
+use hologram_backend::{
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
+    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, WhereCall,
+};
+use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
 /// Op-specific shape parameters resolved from the graph.
 ///
@@ -14,15 +13,24 @@ use crate::error::CompileError;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ShapeArgs {
     // MatMul / Gemm
-    pub m: u32, pub k: u32, pub n: u32,
+    pub m: u32,
+    pub k: u32,
+    pub n: u32,
 
     // Conv2d
-    pub batch: u32, pub channels_in: u32, pub channels_out: u32,
-    pub h_in: u32, pub w_in: u32,
-    pub h_out: u32, pub w_out: u32,
-    pub k_h: u32, pub k_w: u32,
-    pub stride_h: u32, pub stride_w: u32,
-    pub pad_h: u32, pub pad_w: u32,
+    pub batch: u32,
+    pub channels_in: u32,
+    pub channels_out: u32,
+    pub h_in: u32,
+    pub w_in: u32,
+    pub h_out: u32,
+    pub w_out: u32,
+    pub k_h: u32,
+    pub k_w: u32,
+    pub stride_h: u32,
+    pub stride_w: u32,
+    pub pad_h: u32,
+    pub pad_w: u32,
 
     // Norm / softmax
     pub feature: u32,
@@ -30,7 +38,9 @@ pub struct ShapeArgs {
     // Pooling (batch + channels share the conv2d fields)
 
     // Attention
-    pub heads: u32, pub seq: u32, pub head_dim: u32,
+    pub heads: u32,
+    pub seq: u32,
+    pub head_dim: u32,
 
     // Reduction
     pub axis_count: u32,
@@ -47,10 +57,10 @@ impl ShapeArgs {
         let out = reg.get(node.output_shape).cloned();
         let in_shape = |idx: usize| -> Option<hologram_graph::ShapeDescriptor> {
             node.inputs.get(idx).and_then(|src| match *src {
-                InputSource::Node(hologram_graph::NodeId(id)) => {
-                    graph.nodes().get(id as usize)
-                        .and_then(|n| reg.get(n.output_shape).cloned())
-                }
+                InputSource::Node(hologram_graph::NodeId(id)) => graph
+                    .nodes()
+                    .get(id as usize)
+                    .and_then(|n| reg.get(n.output_shape).cloned()),
                 _ => None,
             })
         };
@@ -105,7 +115,9 @@ impl ShapeArgs {
         // [batch, feature] when MatMul wasn't applicable.
         if let Some(s) = &in0 {
             if s.rank == 2 {
-                if a.m == 0 { a.batch = s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32; }
+                if a.m == 0 {
+                    a.batch = s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                }
                 a.feature = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
             }
         }
@@ -154,9 +166,27 @@ pub struct QuantParams {
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
     use OpKind as K;
-    let inp0 = || node.inputs.first().copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
-    let inp1 = || node.inputs.get(1).copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
-    let inp2 = || node.inputs.get(2).copied().unwrap_or(BufferRef { slot: 0, offset: 0, length: 0 });
+    let inp0 = || {
+        node.inputs.first().copied().unwrap_or(BufferRef {
+            slot: 0,
+            offset: 0,
+            length: 0,
+        })
+    };
+    let inp1 = || {
+        node.inputs.get(1).copied().unwrap_or(BufferRef {
+            slot: 0,
+            offset: 0,
+            length: 0,
+        })
+    };
+    let inp2 = || {
+        node.inputs.get(2).copied().unwrap_or(BufferRef {
+            slot: 0,
+            offset: 0,
+            length: 0,
+        })
+    };
     let s = &node.shape;
     let unary = UnaryCall {
         input: inp0(),
@@ -166,95 +196,176 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         dtype: node.dtype,
     };
     let binary = BinaryCall {
-        a: inp0(), b: inp1(), output: node.output,
+        a: inp0(),
+        b: inp1(),
+        output: node.output,
         element_count: node.element_count,
         witt_bits: node.witt_bits,
         dtype: node.dtype,
     };
     let layout = LayoutCall {
-        input: inp0(), output: node.output,
-        element_count: node.element_count, dtype: node.dtype,
+        input: inp0(),
+        output: node.output,
+        element_count: node.element_count,
+        dtype: node.dtype,
     };
     let where_call = WhereCall {
-        cond: inp0(), a: inp1(), b: inp2(), output: node.output,
-        element_count: node.element_count, dtype: node.dtype,
+        cond: inp0(),
+        a: inp1(),
+        b: inp2(),
+        output: node.output,
+        element_count: node.element_count,
+        dtype: node.dtype,
     };
     let norm_call = NormCall {
-        x: inp0(), gamma: inp1(), beta: inp2(),
+        x: inp0(),
+        gamma: inp1(),
+        beta: inp2(),
         residual: NormCall::NO_RESIDUAL,
         output: node.output,
-        batch: s.batch, feature: s.feature, epsilon_bits: 0, dtype: node.dtype,
+        batch: s.batch,
+        feature: s.feature,
+        epsilon_bits: 0,
+        dtype: node.dtype,
     };
     let add_rms_norm_call = NormCall {
-        x: inp0(), gamma: inp1(), beta: NormCall::NO_RESIDUAL,
+        x: inp0(),
+        gamma: inp1(),
+        beta: NormCall::NO_RESIDUAL,
         residual: inp2(),
         output: node.output,
-        batch: s.batch, feature: s.feature, epsilon_bits: 0, dtype: node.dtype,
+        batch: s.batch,
+        feature: s.feature,
+        epsilon_bits: 0,
+        dtype: node.dtype,
     };
     let reduce_call = ReduceCall {
-        input: inp0(), output: node.output,
-        element_count: node.element_count, axis_count: s.axis_count,
-        keepdims: s.keepdims, dtype: node.dtype,
+        input: inp0(),
+        output: node.output,
+        element_count: node.element_count,
+        axis_count: s.axis_count,
+        keepdims: s.keepdims,
+        dtype: node.dtype,
     };
     let softmax_call = SoftmaxCall {
-        input: inp0(), output: node.output,
-        batch: s.batch.max(1), feature: s.feature, dtype: node.dtype,
+        input: inp0(),
+        output: node.output,
+        batch: s.batch.max(1),
+        feature: s.feature,
+        dtype: node.dtype,
     };
     let pool_call = PoolCall {
-        x: inp0(), output: node.output,
-        batch: s.batch, channels: s.channels_in,
-        h_in: s.h_in, w_in: s.w_in, h_out: s.h_out, w_out: s.w_out,
-        k_h: s.k_h, k_w: s.k_w,
-        stride_h: s.stride_h, stride_w: s.stride_w, dtype: node.dtype,
+        x: inp0(),
+        output: node.output,
+        batch: s.batch,
+        channels: s.channels_in,
+        h_in: s.h_in,
+        w_in: s.w_in,
+        h_out: s.h_out,
+        w_out: s.w_out,
+        k_h: s.k_h,
+        k_w: s.k_w,
+        stride_h: s.stride_h,
+        stride_w: s.stride_w,
+        dtype: node.dtype,
     };
     let matmul_call = MatMulCall {
-        a: inp0(), b: inp1(), output: node.output,
-        m: s.m, k: s.k, n: s.n, dtype: node.dtype,
+        a: inp0(),
+        b: inp1(),
+        output: node.output,
+        m: s.m,
+        k: s.k,
+        n: s.n,
+        dtype: node.dtype,
     };
     let gemm_call = GemmCall {
-        a: inp0(), b: inp1(), c: inp2(), output: node.output,
-        m: s.m, k: s.k, n: s.n, alpha_bits: 0, beta_bits: 0, dtype: node.dtype,
+        a: inp0(),
+        b: inp1(),
+        c: inp2(),
+        output: node.output,
+        m: s.m,
+        k: s.k,
+        n: s.n,
+        alpha_bits: 0,
+        beta_bits: 0,
+        dtype: node.dtype,
     };
     let conv_call = Conv2dCall {
-        x: inp0(), w: inp1(), output: node.output,
-        batch: s.batch, channels_in: s.channels_in, channels_out: s.channels_out,
-        h_in: s.h_in, w_in: s.w_in, h_out: s.h_out, w_out: s.w_out,
-        k_h: s.k_h, k_w: s.k_w,
-        stride_h: s.stride_h, stride_w: s.stride_w,
-        pad_h: s.pad_h, pad_w: s.pad_w, dtype: node.dtype,
+        x: inp0(),
+        w: inp1(),
+        output: node.output,
+        batch: s.batch,
+        channels_in: s.channels_in,
+        channels_out: s.channels_out,
+        h_in: s.h_in,
+        w_in: s.w_in,
+        h_out: s.h_out,
+        w_out: s.w_out,
+        k_h: s.k_h,
+        k_w: s.k_w,
+        stride_h: s.stride_h,
+        stride_w: s.stride_w,
+        pad_h: s.pad_h,
+        pad_w: s.pad_w,
+        dtype: node.dtype,
     };
     let attn_call = AttentionCall {
-        q: inp0(), k: inp1(), v: inp2(), output: node.output,
-        batch: s.batch, heads: s.heads, seq: s.seq, head_dim: s.head_dim,
+        q: inp0(),
+        k: inp1(),
+        v: inp2(),
+        output: node.output,
+        batch: s.batch,
+        heads: s.heads,
+        seq: s.seq,
+        head_dim: s.head_dim,
         dtype: node.dtype,
     };
 
     Ok(match node.kind {
-        K::Neg => KernelCall::Neg(unary),  K::Bnot => KernelCall::Bnot(unary),
-        K::Succ => KernelCall::Succ(unary), K::Pred => KernelCall::Pred(unary),
-        K::Add => KernelCall::Add(binary), K::Sub => KernelCall::Sub(binary),
-        K::Mul => KernelCall::Mul(binary), K::Xor => KernelCall::Xor(binary),
-        K::And => KernelCall::And(binary), K::Or  => KernelCall::Or(binary),
+        K::Neg => KernelCall::Neg(unary),
+        K::Bnot => KernelCall::Bnot(unary),
+        K::Succ => KernelCall::Succ(unary),
+        K::Pred => KernelCall::Pred(unary),
+        K::Add => KernelCall::Add(binary),
+        K::Sub => KernelCall::Sub(binary),
+        K::Mul => KernelCall::Mul(binary),
+        K::Xor => KernelCall::Xor(binary),
+        K::And => KernelCall::And(binary),
+        K::Or => KernelCall::Or(binary),
 
-        K::Relu => KernelCall::Relu(unary), K::Sigmoid => KernelCall::Sigmoid(unary),
-        K::Tanh => KernelCall::Tanh(unary), K::Gelu => KernelCall::Gelu(unary),
-        K::Silu => KernelCall::Silu(unary), K::Elu => KernelCall::Elu(unary),
+        K::Relu => KernelCall::Relu(unary),
+        K::Sigmoid => KernelCall::Sigmoid(unary),
+        K::Tanh => KernelCall::Tanh(unary),
+        K::Gelu => KernelCall::Gelu(unary),
+        K::Silu => KernelCall::Silu(unary),
+        K::Elu => KernelCall::Elu(unary),
         K::Selu => KernelCall::Selu(unary),
-        K::Exp => KernelCall::Exp(unary), K::Log => KernelCall::Log(unary),
-        K::Log1p => KernelCall::Log1p(unary), K::Sqrt => KernelCall::Sqrt(unary),
+        K::Exp => KernelCall::Exp(unary),
+        K::Log => KernelCall::Log(unary),
+        K::Log1p => KernelCall::Log1p(unary),
+        K::Sqrt => KernelCall::Sqrt(unary),
         K::Reciprocal => KernelCall::Reciprocal(unary),
-        K::Sin => KernelCall::Sin(unary), K::Cos => KernelCall::Cos(unary),
-        K::Tan => KernelCall::Tan(unary), K::Asin => KernelCall::Asin(unary),
-        K::Acos => KernelCall::Acos(unary), K::Atan => KernelCall::Atan(unary),
-        K::Ceil => KernelCall::Ceil(unary), K::Floor => KernelCall::Floor(unary),
-        K::Round => KernelCall::Round(unary), K::Erf => KernelCall::Erf(unary),
-        K::IsNaN => KernelCall::IsNaN(unary), K::Sign => KernelCall::Sign(unary),
+        K::Sin => KernelCall::Sin(unary),
+        K::Cos => KernelCall::Cos(unary),
+        K::Tan => KernelCall::Tan(unary),
+        K::Asin => KernelCall::Asin(unary),
+        K::Acos => KernelCall::Acos(unary),
+        K::Atan => KernelCall::Atan(unary),
+        K::Ceil => KernelCall::Ceil(unary),
+        K::Floor => KernelCall::Floor(unary),
+        K::Round => KernelCall::Round(unary),
+        K::Erf => KernelCall::Erf(unary),
+        K::IsNaN => KernelCall::IsNaN(unary),
+        K::Sign => KernelCall::Sign(unary),
         K::Abs => KernelCall::Abs(unary),
 
-        K::Div => KernelCall::Div(binary), K::Pow => KernelCall::Pow(binary),
-        K::Mod => KernelCall::Mod(binary), K::Min => KernelCall::Min(binary),
+        K::Div => KernelCall::Div(binary),
+        K::Pow => KernelCall::Pow(binary),
+        K::Mod => KernelCall::Mod(binary),
+        K::Min => KernelCall::Min(binary),
         K::Max => KernelCall::Max(binary),
-        K::Equal => KernelCall::Equal(binary), K::Less => KernelCall::Less(binary),
+        K::Equal => KernelCall::Equal(binary),
+        K::Less => KernelCall::Less(binary),
         K::LessOrEqual => KernelCall::LessOrEqual(binary),
         K::Greater => KernelCall::Greater(binary),
         K::GreaterOrEqual => KernelCall::GreaterOrEqual(binary),
@@ -291,7 +402,8 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::Attention => KernelCall::Attention(attn_call),
         K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
 
-        K::Pad => KernelCall::Pad(layout), K::Expand => KernelCall::Expand(layout),
+        K::Pad => KernelCall::Pad(layout),
+        K::Expand => KernelCall::Expand(layout),
         K::Resize => KernelCall::Resize(layout),
         K::CumSum => KernelCall::CumSum(reduce_call),
         K::RotaryEmbedding => KernelCall::RotaryEmbedding(unary),

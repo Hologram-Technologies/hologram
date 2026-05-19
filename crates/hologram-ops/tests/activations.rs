@@ -1,7 +1,7 @@
 //! ActivationFn impl smoke tests.
 
-use hologram_ops::activations::{Relu, Sigmoid, Tanh, Gelu, Silu};
-use hologram_ops::lut::{ActivationFn, build_w8_lut};
+use hologram_ops::activations::{Gelu, Relu, Sigmoid, Silu, Tanh};
+use hologram_ops::lut::{build_w8_lut, ActivationFn};
 
 #[test]
 fn relu_is_identity_unsigned() {

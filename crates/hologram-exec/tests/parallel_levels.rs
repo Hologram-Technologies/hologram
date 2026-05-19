@@ -3,14 +3,14 @@
 
 #![cfg(feature = "parallel")]
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use smallvec::SmallVec;
+use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -18,7 +18,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }

@@ -26,10 +26,7 @@ pub fn push_literal<const CAP: usize>(
 
 /// Push a variable reference, return its index.
 #[inline]
-pub fn push_variable<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
-    name_index: u32,
-) -> EmitResult {
+pub fn push_variable<const CAP: usize>(arena: &mut TermArena<CAP>, name_index: u32) -> EmitResult {
     arena.push(Term::Variable { name_index })
 }
 
@@ -44,7 +41,10 @@ pub fn push_application<const CAP: usize>(
 ) -> EmitResult {
     arena.push(Term::Application {
         operator: op,
-        args: TermList { start: args_start, len: args_len },
+        args: TermList {
+            start: args_start,
+            len: args_len,
+        },
     })
 }
 
@@ -55,7 +55,10 @@ pub fn push_lift<const CAP: usize>(
     operand_index: u32,
     target: WittLevel,
 ) -> EmitResult {
-    arena.push(Term::Lift { operand_index, target })
+    arena.push(Term::Lift {
+        operand_index,
+        target,
+    })
 }
 
 /// Push a `Project` (canonical surjection W_m → W_n, m > n).
@@ -65,7 +68,10 @@ pub fn push_project<const CAP: usize>(
     operand_index: u32,
     target: WittLevel,
 ) -> EmitResult {
-    arena.push(Term::Project { operand_index, target })
+    arena.push(Term::Project {
+        operand_index,
+        target,
+    })
 }
 
 /// Push a `Recurse` (bounded recursion with descent measure).
@@ -76,7 +82,11 @@ pub fn push_recurse<const CAP: usize>(
     base_index: u32,
     step_index: u32,
 ) -> EmitResult {
-    arena.push(Term::Recurse { measure_index, base_index, step_index })
+    arena.push(Term::Recurse {
+        measure_index,
+        base_index,
+        step_index,
+    })
 }
 
 /// Push a `Match` (pattern dispatch).
@@ -89,7 +99,10 @@ pub fn push_match<const CAP: usize>(
 ) -> EmitResult {
     arena.push(Term::Match {
         scrutinee_index,
-        arms: TermList { start: arms_start, len: arms_len },
+        arms: TermList {
+            start: arms_start,
+            len: arms_len,
+        },
     })
 }
 
@@ -100,7 +113,10 @@ pub fn push_unfold<const CAP: usize>(
     seed_index: u32,
     step_index: u32,
 ) -> EmitResult {
-    arena.push(Term::Unfold { seed_index, step_index })
+    arena.push(Term::Unfold {
+        seed_index,
+        step_index,
+    })
 }
 
 /// Push a `Try`.
@@ -110,7 +126,10 @@ pub fn push_try<const CAP: usize>(
     body_index: u32,
     handler_index: u32,
 ) -> EmitResult {
-    arena.push(Term::Try { body_index, handler_index })
+    arena.push(Term::Try {
+        body_index,
+        handler_index,
+    })
 }
 
 /// Build a binary `Application(op, [a, b])` where `a` and `b` are already

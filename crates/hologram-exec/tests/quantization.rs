@@ -6,21 +6,22 @@
 //! Both compile to a `KernelCall::Dequantize` and execute through the
 //! CPU dequant kernel, producing F32 output bytes.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use hologram_graph::{Graph, GraphOp, InputSource, OpKind, QuantAttrs};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use smallvec::SmallVec;
+use hologram_graph::{Graph, GraphOp, InputSource, OpKind, QuantAttrs};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 const DTYPE_I8: u8 = 2;
 const DTYPE_I4: u8 = 10;
 
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -44,11 +45,14 @@ fn dequantize_int8_round_trip() {
         output_dtype: DTypeId(DTYPE_F32),
         output_shape: shape,
     });
-    graph.set_quant_attrs(dq, QuantAttrs {
-        quant_dtype: DTYPE_I8,
-        scale_bits: 0.5f32.to_bits(),
-        zero_point: 0,
-    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.5f32.to_bits(),
+            zero_point: 0,
+        },
+    );
     let out = graph.add_node(Node {
         op: GraphOp::Output,
         inputs: SmallVec::from_iter([InputSource::Node(dq)]),
@@ -94,11 +98,14 @@ fn dequantize_int4_packed_unpacks_correctly() {
         output_dtype: DTypeId(DTYPE_F32),
         output_shape: shape,
     });
-    graph.set_quant_attrs(dq, QuantAttrs {
-        quant_dtype: DTYPE_I4,
-        scale_bits: 1.0f32.to_bits(),
-        zero_point: 0,
-    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I4,
+            scale_bits: 1.0f32.to_bits(),
+            zero_point: 0,
+        },
+    );
     let out = graph.add_node(Node {
         op: GraphOp::Output,
         inputs: SmallVec::from_iter([InputSource::Node(dq)]),
@@ -114,8 +121,8 @@ fn dequantize_int4_packed_unpacks_correctly() {
     let outputs = session.execute(&[InputBuffer { bytes: &q_bytes }]).unwrap();
     let result = le_to_f32(&outputs[0].bytes);
     assert!((result[0] - (-2.0)).abs() < 1e-6, "el0 got {}", result[0]);
-    assert!((result[1] - 1.0).abs() < 1e-6,    "el1 got {}", result[1]);
-    assert!((result[2] - 0.0).abs() < 1e-6,    "el2 got {}", result[2]);
+    assert!((result[1] - 1.0).abs() < 1e-6, "el1 got {}", result[1]);
+    assert!((result[2] - 0.0).abs() < 1e-6, "el2 got {}", result[2]);
     assert!((result[3] - (-1.0)).abs() < 1e-6, "el3 got {}", result[3]);
 }
 
@@ -138,11 +145,14 @@ fn dequantize_int8_with_nonzero_zero_point() {
         output_dtype: DTypeId(DTYPE_F32),
         output_shape: shape,
     });
-    graph.set_quant_attrs(dq, QuantAttrs {
-        quant_dtype: DTYPE_I8,
-        scale_bits: 0.25f32.to_bits(),
-        zero_point: 5,
-    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.25f32.to_bits(),
+            zero_point: 5,
+        },
+    );
     let out = graph.add_node(Node {
         op: GraphOp::Output,
         inputs: SmallVec::from_iter([InputSource::Node(dq)]),

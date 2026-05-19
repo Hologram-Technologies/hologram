@@ -2,18 +2,16 @@
 //! whose `Term::Application::operator` is restricted to the closed
 //! `PrimitiveOp` set (spec I-1).
 
-use uor_foundation::enforcement::{TermArena, Term};
-use uor_foundation::{PrimitiveOp, WittLevel, HostBounds};
-use uor_foundation::pipeline::ConstrainedTypeShape;
 use hologram_host::HologramHostBoundsCpu;
-use hologram_types::{Dim, Shape1, Shape2, DTypeF32};
+use hologram_types::{DTypeF32, Dim, Shape1, Shape2};
+use uor_foundation::enforcement::{Term, TermArena};
+use uor_foundation::pipeline::ConstrainedTypeShape;
+use uor_foundation::{HostBounds, PrimitiveOp, WittLevel};
 
 use hologram_ops::{
-    direct::*, elementwise_unary::*, elementwise_binary::*,
-    reduction::*, layout::*, backward::*,
-    linalg::*, conv::*, normalization::*,
-    activation_reduce::*, pooling::*, structured::*,
-    utility::*,
+    activation_reduce::*, backward::*, conv::*, direct::*, elementwise_binary::*,
+    elementwise_unary::*, layout::*, linalg::*, normalization::*, pooling::*, reduction::*,
+    structured::*, utility::*,
 };
 
 /// Walk an arena and assert every `Term::Application::operator` is one of
@@ -30,14 +28,24 @@ fn assert_closed_under_primitives<const CAP: usize>(arena: &TermArena<CAP>) {
                 // modular exponentiation, byte concatenation). The exhaustive
                 // arm asserts every `Term::Application` operator hologram emits
                 // is one of these — no extra-substrate operator slips in.
-                PrimitiveOp::Neg | PrimitiveOp::Bnot
-                | PrimitiveOp::Succ | PrimitiveOp::Pred
-                | PrimitiveOp::Add | PrimitiveOp::Sub | PrimitiveOp::Mul
-                | PrimitiveOp::Xor | PrimitiveOp::And | PrimitiveOp::Or
-                | PrimitiveOp::Le | PrimitiveOp::Lt
-                | PrimitiveOp::Ge | PrimitiveOp::Gt
+                PrimitiveOp::Neg
+                | PrimitiveOp::Bnot
+                | PrimitiveOp::Succ
+                | PrimitiveOp::Pred
+                | PrimitiveOp::Add
+                | PrimitiveOp::Sub
+                | PrimitiveOp::Mul
+                | PrimitiveOp::Xor
+                | PrimitiveOp::And
+                | PrimitiveOp::Or
+                | PrimitiveOp::Le
+                | PrimitiveOp::Lt
+                | PrimitiveOp::Ge
+                | PrimitiveOp::Gt
                 | PrimitiveOp::Concat
-                | PrimitiveOp::Div | PrimitiveOp::Mod | PrimitiveOp::Pow => {}
+                | PrimitiveOp::Div
+                | PrimitiveOp::Mod
+                | PrimitiveOp::Pow => {}
             }
         }
     }
@@ -97,7 +105,12 @@ fn reduction_emit_is_well_formed() {
 
 #[test]
 fn layout_emit_is_single_variable() {
-    type Op = ReshapeOp<Shape2<Dim<8>, Dim<8>, 2>, Shape2<Dim<16>, Dim<4>, 2>, DTypeF32, HologramHostBoundsCpu>;
+    type Op = ReshapeOp<
+        Shape2<Dim<8>, Dim<8>, 2>,
+        Shape2<Dim<16>, Dim<4>, 2>,
+        DTypeF32,
+        HologramHostBoundsCpu,
+    >;
     let mut arena: Box<TermArena<8>> = Box::new(TermArena::new());
     Op::emit_term(&mut arena, WittLevel::W8, 0).unwrap();
     // Layout ops emit only Variable nodes (no Application).

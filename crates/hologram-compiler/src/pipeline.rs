@@ -9,6 +9,8 @@
 //! prism crate has not yet curated (such as the
 //! `pipeline::run_tower_completeness` free function).
 
+use crate::error::CompileError;
+use hologram_host::HologramHasher;
 use prism::operation::Term;
 use prism::pipeline::ConstrainedTypeShape;
 use prism::seal::Validated;
@@ -17,8 +19,6 @@ use prism::uor_foundation::enforcement::{
 };
 use prism::uor_foundation::pipeline as upstream_pipeline;
 use prism::vocabulary::{VerificationDomain, WittLevel};
-use hologram_host::HologramHasher;
-use crate::error::CompileError;
 
 /// Per-node compile-unit construction inputs.
 pub struct PerNodeUnit<'a> {

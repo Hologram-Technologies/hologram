@@ -3,8 +3,8 @@
 //! prism shape carriers reach hologram callers through this crate's
 //! re-exports.
 
-use uor_foundation::pipeline::ConstrainedTypeShape;
 use hologram_types::*;
+use uor_foundation::pipeline::ConstrainedTypeShape;
 
 #[test]
 fn dtype_iris_under_namespace() {

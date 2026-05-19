@@ -6,7 +6,7 @@
 
 use core::marker::PhantomData;
 use uor_foundation::enforcement::{
-    BinaryGroundingMap, Grounding, GroundingProgram, GroundedCoord, combinators,
+    combinators, BinaryGroundingMap, GroundedCoord, Grounding, GroundingProgram,
 };
 
 /// Parses one element of a model weight from raw bytes into a `GroundedCoord`.
@@ -14,7 +14,9 @@ use uor_foundation::enforcement::{
 pub struct WeightLoaderGrounding<D, B>(PhantomData<(D, B)>);
 
 impl<D, B> Default for WeightLoaderGrounding<D, B> {
-    fn default() -> Self { Self(PhantomData) }
+    fn default() -> Self {
+        Self(PhantomData)
+    }
 }
 
 impl<D, B> Grounding for WeightLoaderGrounding<D, B>
@@ -35,7 +37,9 @@ where
 pub struct ConstantGrounding<D, B>(PhantomData<(D, B)>);
 
 impl<D, B> Default for ConstantGrounding<D, B> {
-    fn default() -> Self { Self(PhantomData) }
+    fn default() -> Self {
+        Self(PhantomData)
+    }
 }
 
 impl<D, B> Grounding for ConstantGrounding<D, B>

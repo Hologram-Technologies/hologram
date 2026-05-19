@@ -6,23 +6,23 @@
 //! sanity check confirming op markers are reachable at compile time.
 
 use hologram_ops::direct::*;
-use hologram_ops::elementwise_unary::*;
 use hologram_ops::elementwise_binary::*;
+use hologram_ops::elementwise_unary::*;
 use hologram_ops::reduction::*;
 use prism::operation::PrimitiveOp;
 
 #[test]
 fn direct_ops_carry_their_primitive() {
-    assert_eq!(NegOp::PRIMITIVE,  PrimitiveOp::Neg);
+    assert_eq!(NegOp::PRIMITIVE, PrimitiveOp::Neg);
     assert_eq!(BnotOp::PRIMITIVE, PrimitiveOp::Bnot);
     assert_eq!(SuccOp::PRIMITIVE, PrimitiveOp::Succ);
     assert_eq!(PredOp::PRIMITIVE, PrimitiveOp::Pred);
-    assert_eq!(AddOp::PRIMITIVE,  PrimitiveOp::Add);
-    assert_eq!(SubOp::PRIMITIVE,  PrimitiveOp::Sub);
-    assert_eq!(MulOp::PRIMITIVE,  PrimitiveOp::Mul);
-    assert_eq!(XorOp::PRIMITIVE,  PrimitiveOp::Xor);
-    assert_eq!(AndOp::PRIMITIVE,  PrimitiveOp::And);
-    assert_eq!(OrOp::PRIMITIVE,   PrimitiveOp::Or);
+    assert_eq!(AddOp::PRIMITIVE, PrimitiveOp::Add);
+    assert_eq!(SubOp::PRIMITIVE, PrimitiveOp::Sub);
+    assert_eq!(MulOp::PRIMITIVE, PrimitiveOp::Mul);
+    assert_eq!(XorOp::PRIMITIVE, PrimitiveOp::Xor);
+    assert_eq!(AndOp::PRIMITIVE, PrimitiveOp::And);
+    assert_eq!(OrOp::PRIMITIVE, PrimitiveOp::Or);
 }
 
 #[test]
@@ -41,10 +41,10 @@ fn binary_iris_under_namespace() {
 
 #[test]
 fn reduction_iris_under_namespace() {
+    use hologram_host::HologramHostBoundsCpu;
+    use hologram_types::{DTypeF32, Dim, Shape1};
     use uor_foundation::pipeline::ConstrainedTypeShape;
     use uor_foundation::HostBounds;
-    use hologram_host::HologramHostBoundsCpu;
-    use hologram_types::{Dim, Shape1, DTypeF32};
 
     type S = Shape1<Dim<128>, 1>;
     type Axes = Shape1<Dim<0>, 1>;

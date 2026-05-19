@@ -6,9 +6,9 @@
 //! on the `blake3` crate; per ADR-031 hologram consumes its
 //! content-addressing primitive from prism-crypto.
 
-use std::collections::HashMap;
-use prism::vocabulary::Hasher;
 use hologram_host::HologramHasher;
+use prism::vocabulary::Hasher;
+use std::collections::HashMap;
 
 /// 32-byte content fingerprint over a weight body. Computed via
 /// prism-crypto's Blake3 `HashAxis` impl (the canonical hologram
@@ -31,7 +31,9 @@ pub struct WeightStore {
 }
 
 impl WeightStore {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Insert weight bytes; returns the dedup key. Duplicate bodies share storage.
     pub fn insert(&mut self, bytes: Vec<u8>) -> WeightFingerprint {
@@ -48,6 +50,10 @@ impl WeightStore {
         self.bodies.iter()
     }
 
-    pub fn len(&self) -> usize { self.bodies.len() }
-    pub fn is_empty(&self) -> bool { self.bodies.is_empty() }
+    pub fn len(&self) -> usize {
+        self.bodies.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.bodies.is_empty()
+    }
 }

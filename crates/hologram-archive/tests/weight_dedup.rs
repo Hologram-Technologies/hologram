@@ -1,7 +1,7 @@
 //! Weight content-addressing (spec X.3): identical bodies share storage,
 //! distinct bodies are keyed by separate BLAKE3 fingerprints.
 
-use hologram_archive::{WeightStore, WeightFingerprint};
+use hologram_archive::{WeightFingerprint, WeightStore};
 
 #[test]
 fn identical_bytes_share_storage() {

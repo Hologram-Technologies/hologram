@@ -42,10 +42,7 @@ pub trait ReferenceEvaluator {
 
 /// Helper: fetch a term at index, error on out-of-bounds.
 #[inline]
-pub fn fetch<const CAP: usize>(
-    arena: &TermArena<CAP>,
-    index: u32,
-) -> Result<&Term, EvalError> {
+pub fn fetch<const CAP: usize>(arena: &TermArena<CAP>, index: u32) -> Result<&Term, EvalError> {
     arena.get(index).ok_or(EvalError::InvalidIndex)
 }
 
@@ -79,10 +76,10 @@ fn eval_node<const CAP: usize>(
 ) -> Result<u64, EvalError> {
     match fetch(arena, index)? {
         Term::Literal { value, .. } => Ok(term_value_to_u64(value)),
-        Term::Variable { name_index } => {
-            bindings.get(*name_index as usize).copied()
-                .ok_or(EvalError::UnresolvedBinding)
-        }
+        Term::Variable { name_index } => bindings
+            .get(*name_index as usize)
+            .copied()
+            .ok_or(EvalError::UnresolvedBinding),
         Term::Application { operator, args } => {
             let mut argv: Vec<u64> = Vec::with_capacity(args.len as usize);
             for k in 0..args.len {
@@ -90,15 +87,24 @@ fn eval_node<const CAP: usize>(
             }
             apply_primitive(*operator, &argv)
         }
-        Term::Lift { operand_index, target } => {
+        Term::Lift {
+            operand_index,
+            target,
+        } => {
             let v = eval_node(arena, *operand_index, bindings)?;
             Ok(truncate_to_witt(v, target.witt_length()))
         }
-        Term::Project { operand_index, target } => {
+        Term::Project {
+            operand_index,
+            target,
+        } => {
             let v = eval_node(arena, *operand_index, bindings)?;
             Ok(truncate_to_witt(v, target.witt_length()))
         }
-        Term::Match { scrutinee_index, arms } => {
+        Term::Match {
+            scrutinee_index,
+            arms,
+        } => {
             // Simple match: pick the first arm whose evaluation equals the
             // scrutinee value. If none match, pick the last arm as default.
             let scrut_val = eval_node(arena, *scrutinee_index, bindings)?;
@@ -114,14 +120,21 @@ fn eval_node<const CAP: usize>(
             // Default arm.
             eval_node(arena, arms.start + arms.len - 1, bindings)
         }
-        Term::Try { body_index, handler_index } => {
+        Term::Try {
+            body_index,
+            handler_index,
+        } => {
             // Evaluate body; on EvalError fallback to handler.
             match eval_node(arena, *body_index, bindings) {
                 Ok(v) => Ok(v),
                 Err(_) => eval_node(arena, *handler_index, bindings),
             }
         }
-        Term::Recurse { measure_index, base_index, step_index } => {
+        Term::Recurse {
+            measure_index,
+            base_index,
+            step_index,
+        } => {
             // Bounded recursion: descent measure must strictly decrease.
             // We bound iteration by the initial measure value plus a safety
             // ceiling to prevent runaway evaluation on malformed measures.
@@ -140,7 +153,10 @@ fn eval_node<const CAP: usize>(
             }
             Ok(acc)
         }
-        Term::Unfold { seed_index, step_index } => {
+        Term::Unfold {
+            seed_index,
+            step_index,
+        } => {
             // Stream construction by unfold: produce a sequence by repeatedly
             // applying `step` to the seed, accumulating into an XOR fold.
             // Bounded by `MAX_RECURSE_ITERATIONS`.
@@ -149,7 +165,9 @@ fn eval_node<const CAP: usize>(
             let mut state = seed;
             for _ in 0..MAX_RECURSE_ITERATIONS {
                 let next = eval_node(arena, *step_index, bindings)?;
-                if next == state { break; }
+                if next == state {
+                    break;
+                }
                 acc ^= next;
                 state = next;
             }
@@ -176,7 +194,7 @@ fn apply_primitive(op: PrimitiveOp, args: &[u64]) -> Result<u64, EvalError> {
         (PrimitiveOp::Mul, 2) => Ok(args[0].wrapping_mul(args[1])),
         (PrimitiveOp::Xor, 2) => Ok(args[0] ^ args[1]),
         (PrimitiveOp::And, 2) => Ok(args[0] & args[1]),
-        (PrimitiveOp::Or,  2) => Ok(args[0] | args[1]),
+        (PrimitiveOp::Or, 2) => Ok(args[0] | args[1]),
         _ => Err(EvalError::ArityMismatch),
     }
 }
@@ -196,9 +214,11 @@ fn term_value_to_u64(v: &uor_foundation::pipeline::TermValue) -> u64 {
 
 #[inline]
 fn truncate_to_witt(v: u64, witt: u32) -> u64 {
-    if witt >= 64 { v }
-    else if witt == 0 { 0 }
-    else {
+    if witt >= 64 {
+        v
+    } else if witt == 0 {
+        0
+    } else {
         let mask = (1u64 << witt).wrapping_sub(1);
         v & mask
     }

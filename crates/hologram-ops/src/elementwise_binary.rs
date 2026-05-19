@@ -3,9 +3,9 @@
 //! Add/Sub/Mul/Xor/And/Or live in `direct.rs`; this module covers
 //! Div, Pow, Mod, Min, Max, and the comparison family.
 
+use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
-use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 
 /// Div: Newton-Raphson 1/y, multiplied by x. Bounded Recurse over Mul+Sub.
 pub fn emit_div<const CAP: usize>(
@@ -14,7 +14,7 @@ pub fn emit_div<const CAP: usize>(
     a_var: u32,
 ) -> EmitResult {
     let zero = push_literal(arena, 0, level)?;
-    let mul  = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
+    let mul = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
     let step = push_application(arena, PrimitiveOp::Sub, mul, 2)?;
     let recip = push_recurse(arena, zero, zero, step)?;
     push_application(arena, PrimitiveOp::Mul, recip, 2)
@@ -27,8 +27,8 @@ pub fn emit_pow<const CAP: usize>(
     a_var: u32,
 ) -> EmitResult {
     let zero = push_literal(arena, 0, level)?;
-    let log  = push_application(arena, PrimitiveOp::Mul, a_var, 1)?;
-    let mul  = push_application(arena, PrimitiveOp::Mul, log, 2)?;
+    let log = push_application(arena, PrimitiveOp::Mul, a_var, 1)?;
+    let mul = push_application(arena, PrimitiveOp::Mul, log, 2)?;
     let step = push_application(arena, PrimitiveOp::Add, mul, 2)?;
     push_recurse(arena, zero, zero, step)
 }
@@ -87,10 +87,8 @@ macro_rules! declare_binary {
         pub struct $name;
 
         impl $name {
-            pub const IRI: &'static str = concat!(
-                "https://hologram.uor.foundation/op/binary/",
-                $iri_suffix,
-            );
+            pub const IRI: &'static str =
+                concat!("https://hologram.uor.foundation/op/binary/", $iri_suffix,);
             pub const CAP: usize = $cap;
             pub const PRIMARY_OP: PrimitiveOp = $primary;
             pub const ARITY: u8 = 2;
@@ -112,8 +110,20 @@ declare_binary!(ModOp, "mod", 16, PrimitiveOp::Sub, emit_mod);
 declare_binary!(MinOp, "min", 16, PrimitiveOp::Sub, emit_min);
 declare_binary!(MaxOp, "max", 16, PrimitiveOp::Sub, emit_max);
 
-declare_binary!(EqualOp,          "equal",            16, PrimitiveOp::Xor, emit_equal);
-declare_binary!(LessOp,           "less",             16, PrimitiveOp::Sub, emit_compare);
-declare_binary!(LessOrEqualOp,    "less_or_equal",    16, PrimitiveOp::Sub, emit_compare);
-declare_binary!(GreaterOp,        "greater",          16, PrimitiveOp::Sub, emit_compare);
-declare_binary!(GreaterOrEqualOp, "greater_or_equal", 16, PrimitiveOp::Sub, emit_compare);
+declare_binary!(EqualOp, "equal", 16, PrimitiveOp::Xor, emit_equal);
+declare_binary!(LessOp, "less", 16, PrimitiveOp::Sub, emit_compare);
+declare_binary!(
+    LessOrEqualOp,
+    "less_or_equal",
+    16,
+    PrimitiveOp::Sub,
+    emit_compare
+);
+declare_binary!(GreaterOp, "greater", 16, PrimitiveOp::Sub, emit_compare);
+declare_binary!(
+    GreaterOrEqualOp,
+    "greater_or_equal",
+    16,
+    PrimitiveOp::Sub,
+    emit_compare
+);

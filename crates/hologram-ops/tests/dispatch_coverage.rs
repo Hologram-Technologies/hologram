@@ -3,7 +3,7 @@
 //! to the closed 10-PrimitiveOp set.
 
 use hologram_ops::{emit_op_term, OpKind};
-use uor_foundation::enforcement::{TermArena, Term};
+use uor_foundation::enforcement::{Term, TermArena};
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
@@ -12,14 +12,24 @@ fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
             // PrimitiveOp is exhaustively closed (spec I-1); this match
             // statically attests the operator is one of the 10 variants.
             match *operator {
-                PrimitiveOp::Neg | PrimitiveOp::Bnot
-                | PrimitiveOp::Succ | PrimitiveOp::Pred
-                | PrimitiveOp::Add | PrimitiveOp::Sub | PrimitiveOp::Mul
-                | PrimitiveOp::Xor | PrimitiveOp::And | PrimitiveOp::Or
-                | PrimitiveOp::Le | PrimitiveOp::Lt
-                | PrimitiveOp::Ge | PrimitiveOp::Gt
+                PrimitiveOp::Neg
+                | PrimitiveOp::Bnot
+                | PrimitiveOp::Succ
+                | PrimitiveOp::Pred
+                | PrimitiveOp::Add
+                | PrimitiveOp::Sub
+                | PrimitiveOp::Mul
+                | PrimitiveOp::Xor
+                | PrimitiveOp::And
+                | PrimitiveOp::Or
+                | PrimitiveOp::Le
+                | PrimitiveOp::Lt
+                | PrimitiveOp::Ge
+                | PrimitiveOp::Gt
                 | PrimitiveOp::Concat
-                | PrimitiveOp::Div | PrimitiveOp::Mod | PrimitiveOp::Pow => {}
+                | PrimitiveOp::Div
+                | PrimitiveOp::Mod
+                | PrimitiveOp::Pow => {}
             }
         }
     }
@@ -39,7 +49,11 @@ fn try_emit(kind: OpKind) -> bool {
     let arity = kind.primary_arity();
     let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
     for i in 1..arity {
-        arena.push(Term::Variable { name_index: i as u32 }).expect("vi");
+        arena
+            .push(Term::Variable {
+                name_index: i as u32,
+            })
+            .expect("vi");
     }
     let res = emit_op_term(kind, &mut arena, WittLevel::W32, v0);
     assert_closed_primitive_set(&arena);
@@ -47,39 +61,109 @@ fn try_emit(kind: OpKind) -> bool {
 }
 
 const ALL_OP_KINDS: &[OpKind] = &[
-    OpKind::Neg, OpKind::Bnot, OpKind::Succ, OpKind::Pred,
-    OpKind::Add, OpKind::Sub, OpKind::Mul, OpKind::Xor, OpKind::And, OpKind::Or,
-    OpKind::Relu, OpKind::Sigmoid, OpKind::Tanh, OpKind::Gelu, OpKind::Silu,
-    OpKind::Elu, OpKind::Selu,
-    OpKind::Exp, OpKind::Log, OpKind::Log1p, OpKind::Sqrt, OpKind::Reciprocal,
-    OpKind::Sin, OpKind::Cos, OpKind::Tan, OpKind::Asin, OpKind::Acos, OpKind::Atan,
-    OpKind::Ceil, OpKind::Floor, OpKind::Round, OpKind::Erf,
-    OpKind::IsNaN, OpKind::Sign, OpKind::Abs,
-    OpKind::Div, OpKind::Pow, OpKind::Mod, OpKind::Min, OpKind::Max,
-    OpKind::Equal, OpKind::Less, OpKind::LessOrEqual, OpKind::Greater, OpKind::GreaterOrEqual,
-    OpKind::MatMul, OpKind::Gemm,
-    OpKind::Conv2d, OpKind::ConvTranspose2d,
-    OpKind::LayerNorm, OpKind::RmsNorm, OpKind::GroupNorm, OpKind::InstanceNorm,
+    OpKind::Neg,
+    OpKind::Bnot,
+    OpKind::Succ,
+    OpKind::Pred,
+    OpKind::Add,
+    OpKind::Sub,
+    OpKind::Mul,
+    OpKind::Xor,
+    OpKind::And,
+    OpKind::Or,
+    OpKind::Relu,
+    OpKind::Sigmoid,
+    OpKind::Tanh,
+    OpKind::Gelu,
+    OpKind::Silu,
+    OpKind::Elu,
+    OpKind::Selu,
+    OpKind::Exp,
+    OpKind::Log,
+    OpKind::Log1p,
+    OpKind::Sqrt,
+    OpKind::Reciprocal,
+    OpKind::Sin,
+    OpKind::Cos,
+    OpKind::Tan,
+    OpKind::Asin,
+    OpKind::Acos,
+    OpKind::Atan,
+    OpKind::Ceil,
+    OpKind::Floor,
+    OpKind::Round,
+    OpKind::Erf,
+    OpKind::IsNaN,
+    OpKind::Sign,
+    OpKind::Abs,
+    OpKind::Div,
+    OpKind::Pow,
+    OpKind::Mod,
+    OpKind::Min,
+    OpKind::Max,
+    OpKind::Equal,
+    OpKind::Less,
+    OpKind::LessOrEqual,
+    OpKind::Greater,
+    OpKind::GreaterOrEqual,
+    OpKind::MatMul,
+    OpKind::Gemm,
+    OpKind::Conv2d,
+    OpKind::ConvTranspose2d,
+    OpKind::LayerNorm,
+    OpKind::RmsNorm,
+    OpKind::GroupNorm,
+    OpKind::InstanceNorm,
     OpKind::AddRmsNorm,
-    OpKind::ReduceSum, OpKind::ReduceMean, OpKind::ReduceProd,
-    OpKind::ReduceMin, OpKind::ReduceMax,
-    OpKind::Reshape, OpKind::Transpose, OpKind::Concat, OpKind::Slice,
-    OpKind::Softmax, OpKind::LogSoftmax,
-    OpKind::MaxPool2d, OpKind::AvgPool2d, OpKind::GlobalAvgPool,
-    OpKind::Attention, OpKind::FusedSwiGlu,
-    OpKind::Pad, OpKind::Expand, OpKind::Resize,
-    OpKind::CumSum, OpKind::RotaryEmbedding, OpKind::Clip, OpKind::Lrn, OpKind::Where,
-    OpKind::MatMulGradA, OpKind::MatMulGradB,
-    OpKind::Conv2dGradX, OpKind::Conv2dGradW,
-    OpKind::SoftmaxGrad, OpKind::LogSoftmaxGrad,
-    OpKind::LayerNormGrad, OpKind::RmsNormGrad, OpKind::GroupNormGrad,
-    OpKind::ReduceSumGrad, OpKind::ReduceMeanGrad, OpKind::ReduceProdGrad,
-    OpKind::SubGrad, OpKind::MulGrad, OpKind::DivGrad, OpKind::PowGrad,
-    OpKind::MinGrad, OpKind::MaxGrad,
-    OpKind::ConcatGrad, OpKind::SliceGrad,
-    OpKind::AvgPool2dGrad, OpKind::GlobalAvgPoolGrad,
+    OpKind::ReduceSum,
+    OpKind::ReduceMean,
+    OpKind::ReduceProd,
+    OpKind::ReduceMin,
+    OpKind::ReduceMax,
+    OpKind::Reshape,
+    OpKind::Transpose,
+    OpKind::Concat,
+    OpKind::Slice,
+    OpKind::Softmax,
+    OpKind::LogSoftmax,
+    OpKind::MaxPool2d,
+    OpKind::AvgPool2d,
+    OpKind::GlobalAvgPool,
+    OpKind::Attention,
+    OpKind::FusedSwiGlu,
+    OpKind::Pad,
+    OpKind::Expand,
+    OpKind::Resize,
+    OpKind::CumSum,
+    OpKind::RotaryEmbedding,
+    OpKind::Clip,
+    OpKind::Lrn,
+    OpKind::Where,
+    OpKind::MatMulGradA,
+    OpKind::MatMulGradB,
+    OpKind::Conv2dGradX,
+    OpKind::Conv2dGradW,
+    OpKind::SoftmaxGrad,
+    OpKind::LogSoftmaxGrad,
+    OpKind::LayerNormGrad,
+    OpKind::RmsNormGrad,
+    OpKind::GroupNormGrad,
+    OpKind::ReduceSumGrad,
+    OpKind::ReduceMeanGrad,
+    OpKind::ReduceProdGrad,
+    OpKind::SubGrad,
+    OpKind::MulGrad,
+    OpKind::DivGrad,
+    OpKind::PowGrad,
+    OpKind::MinGrad,
+    OpKind::MaxGrad,
+    OpKind::ConcatGrad,
+    OpKind::SliceGrad,
+    OpKind::AvgPool2dGrad,
+    OpKind::GlobalAvgPoolGrad,
     OpKind::PadGrad,
-    OpKind::AttentionGrad, OpKind::FusedSwiGluGrad,
+    OpKind::AttentionGrad,
+    OpKind::FusedSwiGluGrad,
     OpKind::UnaryGrad,
     OpKind::Dequantize,
 ];
@@ -108,19 +192,23 @@ fn every_op_emit_fits_in_declared_cap() {
     // stays at or below `OpKind::cap()`.
     for &kind in ALL_OP_KINDS {
         // Box the arena: `TermArena<256>` holds 256 × `Option<Term>` where
-    // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
-    // upstream 0.4.15. On-stack instantiation in a loop blows the
-    // default thread stack.
-    // Arena CAP picked to cover the largest hologram op marker (Attention
-    // at CAP = 96 per spec V.5) plus headroom for the per-arity variable
-    // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
-    // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
-    // upstream 0.4.15) below the default thread stack ceiling.
-    let mut arena: TermArena<128> = TermArena::new();
+        // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+        // upstream 0.4.15. On-stack instantiation in a loop blows the
+        // default thread stack.
+        // Arena CAP picked to cover the largest hologram op marker (Attention
+        // at CAP = 96 per spec V.5) plus headroom for the per-arity variable
+        // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
+        // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
+        // upstream 0.4.15) below the default thread stack ceiling.
+        let mut arena: TermArena<128> = TermArena::new();
         let arity = kind.primary_arity();
         let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
         for i in 1..arity {
-            arena.push(Term::Variable { name_index: i as u32 }).expect("vi");
+            arena
+                .push(Term::Variable {
+                    name_index: i as u32,
+                })
+                .expect("vi");
         }
         let pre = arena.as_slice().iter().filter(|s| s.is_some()).count();
         let _ = hologram_ops::emit_op_term(kind, &mut arena, WittLevel::W32, v0)
@@ -128,7 +216,12 @@ fn every_op_emit_fits_in_declared_cap() {
         let post = arena.as_slice().iter().filter(|s| s.is_some()).count();
         let used = post - pre;
         let cap = kind.cap();
-        assert!(used <= cap,
-            "{:?} emitted {} term slots, exceeds declared CAP {}", kind, used, cap);
+        assert!(
+            used <= cap,
+            "{:?} emitted {} term slots, exceeds declared CAP {}",
+            kind,
+            used,
+            cap
+        );
     }
 }

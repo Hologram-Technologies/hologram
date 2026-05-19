@@ -19,9 +19,9 @@
 
 use core::marker::PhantomData;
 use uor_foundation::enforcement::TermArena;
-use uor_foundation::{PrimitiveOp, WittLevel};
-use uor_foundation::HostBounds;
 use uor_foundation::pipeline::ConstrainedTypeShape;
+use uor_foundation::HostBounds;
+use uor_foundation::{PrimitiveOp, WittLevel};
 
 use crate::emit::{push_application, EmitResult};
 
@@ -53,7 +53,9 @@ where
     Td: ConstrainedTypeShape,
     B: HostBounds,
 {
-    fn default() -> Self { Self(PhantomData) }
+    fn default() -> Self {
+        Self(PhantomData)
+    }
 }
 
 impl<S, Qd, Td, B> DequantizeOp<S, Qd, Td, B>

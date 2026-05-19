@@ -23,10 +23,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
 
-use crate::{Graph, NodeId, GraphOp, InputSource};
-use crate::node::Node;
 use crate::constant::ConstantEntry;
+use crate::node::Node;
 use crate::registry::DTypeId;
+use crate::{Graph, GraphOp, InputSource, NodeId};
 use hologram_ops::OpKind;
 
 /// Errors that can arise during backward emission.
@@ -45,11 +45,10 @@ pub enum BackwardError {
 /// The seed gradient is a constant-ones node added to the graph; the
 /// caller may overwrite that constant via `Graph::constants_mut` before
 /// compilation if a different upstream gradient is desired.
-pub fn append_backward(graph: &mut Graph, output_id: NodeId)
-    -> Result<Vec<NodeId>, BackwardError>
-{
+pub fn append_backward(graph: &mut Graph, output_id: NodeId) -> Result<Vec<NodeId>, BackwardError> {
     let n_forward = graph.node_count();
-    let output_node = graph.get(output_id)
+    let output_node = graph
+        .get(output_id)
         .ok_or(BackwardError::OutputMissing(output_id))?;
     let output_dtype = output_node.output_dtype;
     let output_shape = output_node.output_shape;
@@ -77,7 +76,10 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId)
             Some(g) => g,
             None => continue, // node doesn't reach the seed gradient
         };
-        let node = match graph.nodes().get(i) { Some(n) => n.clone(), None => continue };
+        let node = match graph.nodes().get(i) {
+            Some(n) => n.clone(),
+            None => continue,
+        };
         let kind = match node.op {
             GraphOp::Op(k) => k,
             // Inputs/Outputs/Constants are leaves: no backward emitted.
@@ -98,7 +100,8 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId)
                         let mut grad_inputs: SmallVec<[InputSource; 4]> = SmallVec::new();
                         grad_inputs.push(InputSource::Node(upstream_grad));
                         grad_inputs.push(InputSource::Node(NodeId(input_id)));
-                        let in_node = graph.get(NodeId(input_id))
+                        let in_node = graph
+                            .get(NodeId(input_id))
                             .map(|n| (n.output_dtype, n.output_shape))
                             .unwrap_or((DTypeId(0), output_shape));
                         graph.add_node(Node {
@@ -121,7 +124,8 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId)
                     match node_grads[idx] {
                         Some(prev) => {
                             // Sum: a new Add node combining prev and new.
-                            let in_node = graph.get(NodeId(input_id))
+                            let in_node = graph
+                                .get(NodeId(input_id))
                                 .map(|n| (n.output_dtype, n.output_shape))
                                 .unwrap_or((DTypeId(0), output_shape));
                             let mut sum_inputs: SmallVec<[InputSource; 4]> = SmallVec::new();

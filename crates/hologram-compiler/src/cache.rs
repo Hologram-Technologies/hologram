@@ -25,7 +25,9 @@ pub struct CertificateCache {
 }
 
 impl CertificateCache {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn get(&self, fp: &ContentFingerprint<32>) -> Option<&CachedCertificate> {
         self.map.get(fp.as_bytes())
@@ -35,8 +37,12 @@ impl CertificateCache {
         self.map.insert(*fp.as_bytes(), cached);
     }
 
-    pub fn len(&self) -> usize { self.map.len() }
-    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 
     /// Lookup by raw 32-byte fingerprint key.
     pub fn get_raw(&self, key: &[u8; 32]) -> Option<&CachedCertificate> {

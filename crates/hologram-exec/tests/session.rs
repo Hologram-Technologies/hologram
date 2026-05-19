@@ -1,8 +1,8 @@
 //! End-to-end: compile a graph, load it as a session, execute it.
 
-use hologram_compiler::{compile_from_source, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
+use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
 #[test]
@@ -32,7 +32,8 @@ fn empty_archive_loads_executes() {
         hologram_graph::Graph::new(),
         BackendKind::Cpu,
         WittLevel::W32,
-    ).unwrap();
+    )
+    .unwrap();
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&out.archive, backend).unwrap();
     let _ = session.execute(&[]).unwrap();

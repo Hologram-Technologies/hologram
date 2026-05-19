@@ -38,12 +38,24 @@ pub struct ConstantEntry {
 impl ConstantEntry {
     /// Construct an inlined entry.
     pub fn inline(slot: u32, dtype: u8, bytes: Vec<u8>) -> Self {
-        Self { slot, dtype, bytes, fingerprint: [0u8; 32], by_reference: false }
+        Self {
+            slot,
+            dtype,
+            bytes,
+            fingerprint: [0u8; 32],
+            by_reference: false,
+        }
     }
 
     /// Construct a reference entry resolved from `Weights` at session load.
     pub fn reference(slot: u32, dtype: u8, fingerprint: [u8; 32]) -> Self {
-        Self { slot, dtype, bytes: Vec::new(), fingerprint, by_reference: true }
+        Self {
+            slot,
+            dtype,
+            bytes: Vec::new(),
+            fingerprint,
+            by_reference: true,
+        }
     }
 }
 
@@ -52,8 +64,15 @@ const TAG_REFERENCE: u8 = 1;
 
 pub fn encode(entries: &[ConstantEntry]) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        4 + entries.iter()
-            .map(|e| if e.by_reference { 1 + 4 + 1 + 32 } else { 1 + 4 + 1 + 4 + e.bytes.len() })
+        4 + entries
+            .iter()
+            .map(|e| {
+                if e.by_reference {
+                    1 + 4 + 1 + 32
+                } else {
+                    1 + 4 + 1 + 4 + e.bytes.len()
+                }
+            })
             .sum::<usize>(),
     );
     out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
@@ -76,19 +95,28 @@ pub fn encode(entries: &[ConstantEntry]) -> Vec<u8> {
 
 pub fn decode(bytes: &[u8]) -> Result<Vec<ConstantEntry>, ArchiveError> {
     if bytes.len() < 4 {
-        return Err(ArchiveError::Truncated { needed: 4, actual: bytes.len() });
+        return Err(ArchiveError::Truncated {
+            needed: 4,
+            actual: bytes.len(),
+        });
     }
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut out = Vec::with_capacity(count);
     let mut cur = 4usize;
     for _ in 0..count {
         if cur + 1 > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cur + 1, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cur + 1,
+                actual: bytes.len(),
+            });
         }
         let tag = bytes[cur];
         cur += 1;
         if cur + 4 + 1 > bytes.len() {
-            return Err(ArchiveError::Truncated { needed: cur + 5, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: cur + 5,
+                actual: bytes.len(),
+            });
         }
         let slot = u32::from_le_bytes(bytes[cur..cur + 4].try_into().unwrap());
         cur += 4;
@@ -97,12 +125,18 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<ConstantEntry>, ArchiveError> {
         match tag {
             TAG_INLINE => {
                 if cur + 4 > bytes.len() {
-                    return Err(ArchiveError::Truncated { needed: cur + 4, actual: bytes.len() });
+                    return Err(ArchiveError::Truncated {
+                        needed: cur + 4,
+                        actual: bytes.len(),
+                    });
                 }
                 let len = u32::from_le_bytes(bytes[cur..cur + 4].try_into().unwrap()) as usize;
                 cur += 4;
                 if cur + len > bytes.len() {
-                    return Err(ArchiveError::Truncated { needed: cur + len, actual: bytes.len() });
+                    return Err(ArchiveError::Truncated {
+                        needed: cur + len,
+                        actual: bytes.len(),
+                    });
                 }
                 let body = bytes[cur..cur + len].to_vec();
                 cur += len;
@@ -110,7 +144,10 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<ConstantEntry>, ArchiveError> {
             }
             TAG_REFERENCE => {
                 if cur + 32 > bytes.len() {
-                    return Err(ArchiveError::Truncated { needed: cur + 32, actual: bytes.len() });
+                    return Err(ArchiveError::Truncated {
+                        needed: cur + 32,
+                        actual: bytes.len(),
+                    });
                 }
                 let mut fp = [0u8; 32];
                 fp.copy_from_slice(&bytes[cur..cur + 32]);

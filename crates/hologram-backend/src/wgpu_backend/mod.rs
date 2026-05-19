@@ -12,12 +12,12 @@ use core::marker::PhantomData;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hologram_host::HologramHostBoundsWgpu;
 use crate::backend::Backend;
+use crate::cpu::dtype::is_float;
+use crate::error::BackendError;
 use crate::kernel_call::*;
 use crate::workspace::Workspace;
-use crate::error::BackendError;
-use crate::cpu::dtype::is_float;
+use hologram_host::HologramHostBoundsWgpu;
 
 const SHADERS: &str = include_str!("shaders.wgsl");
 
@@ -91,8 +91,12 @@ impl WgpuContext {
 
         let mut pipelines = HashMap::new();
         for entry in [
-            "add_f32", "sub_f32", "mul_f32",
-            "relu_f32", "sigmoid_f32", "tanh_f32",
+            "add_f32",
+            "sub_f32",
+            "mul_f32",
+            "relu_f32",
+            "sigmoid_f32",
+            "tanh_f32",
             "matmul_f32",
         ] {
             let p = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -106,7 +110,12 @@ impl WgpuContext {
             pipelines.insert(entry, p);
         }
 
-        Ok(Self { device, queue, pipelines, bind_group_layout: bgl })
+        Ok(Self {
+            device,
+            queue,
+            pipelines,
+            bind_group_layout: bgl,
+        })
     }
 }
 
@@ -140,7 +149,10 @@ pub struct WgpuBackend<W: Workspace> {
 
 impl<W: Workspace> WgpuBackend<W> {
     pub fn new() -> Result<Self, BackendError> {
-        Ok(Self { ctx: WgpuContext::new()?, _ws: PhantomData })
+        Ok(Self {
+            ctx: WgpuContext::new()?,
+            _ws: PhantomData,
+        })
     }
 
     fn dispatch_compute(
@@ -191,18 +203,34 @@ impl<W: Workspace> WgpuBackend<W> {
             mapped_at_creation: false,
         });
 
-        if !a.is_empty() { queue.write_buffer(&a_buf, 0, a); }
-        if !b.is_empty() { queue.write_buffer(&b_buf, 0, b); }
+        if !a.is_empty() {
+            queue.write_buffer(&a_buf, 0, a);
+        }
+        if !b.is_empty() {
+            queue.write_buffer(&b_buf, 0, b);
+        }
         queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hologram-bg"),
             layout: &self.ctx.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: a_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: b_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: params_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -223,7 +251,9 @@ impl<W: Workspace> WgpuBackend<W> {
 
         let slice = staging.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| { let _ = sender.send(r); });
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = sender.send(r);
+        });
         let _ = device.poll(wgpu::Maintain::Wait);
         let _ = receiver.recv();
         let bytes: Vec<u8> = slice.get_mapped_range().to_vec();
@@ -255,14 +285,24 @@ impl<W: Workspace> Backend for WgpuBackend<W> {
 }
 
 fn run_unary<W: Workspace>(
-    be: &WgpuBackend<W>, ws: &mut W, c: &UnaryCall, entry: &'static str,
+    be: &WgpuBackend<W>,
+    ws: &mut W,
+    c: &UnaryCall,
+    entry: &'static str,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = n * 4;
-    let a = ws.read(c.input).get(..bytes)
+    let a = ws
+        .read(c.input)
+        .get(..bytes)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
         .to_vec();
-    let params = Params { n: n as u32, m: 0, k: 0, pad0: 0 };
+    let params = Params {
+        n: n as u32,
+        m: 0,
+        k: 0,
+        pad0: 0,
+    };
     let groups = ((n as u32).div_ceil(64), 1, 1);
     let out_bytes = be.dispatch_compute(entry, &a, &[], bytes, params, groups);
     let out = ws.write(c.output);
@@ -272,17 +312,29 @@ fn run_unary<W: Workspace>(
 }
 
 fn run_binary<W: Workspace>(
-    be: &WgpuBackend<W>, ws: &mut W, c: &BinaryCall, entry: &'static str,
+    be: &WgpuBackend<W>,
+    ws: &mut W,
+    c: &BinaryCall,
+    entry: &'static str,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = n * 4;
-    let a = ws.read(c.a).get(..bytes)
+    let a = ws
+        .read(c.a)
+        .get(..bytes)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
         .to_vec();
-    let b = ws.read(c.b).get(..bytes)
+    let b = ws
+        .read(c.b)
+        .get(..bytes)
         .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
         .to_vec();
-    let params = Params { n: n as u32, m: 0, k: 0, pad0: 0 };
+    let params = Params {
+        n: n as u32,
+        m: 0,
+        k: 0,
+        pad0: 0,
+    };
     let groups = ((n as u32).div_ceil(64), 1, 1);
     let out_bytes = be.dispatch_compute(entry, &a, &b, bytes, params, groups);
     let out = ws.write(c.output);
@@ -292,22 +344,35 @@ fn run_binary<W: Workspace>(
 }
 
 fn run_matmul<W: Workspace>(
-    be: &WgpuBackend<W>, ws: &mut W, c: &MatMulCall,
+    be: &WgpuBackend<W>,
+    ws: &mut W,
+    c: &MatMulCall,
 ) -> Result<(), BackendError> {
     let m = c.m as usize;
     let k = c.k as usize;
     let n = c.n as usize;
-    if m == 0 || k == 0 || n == 0 { return Ok(()); }
+    if m == 0 || k == 0 || n == 0 {
+        return Ok(());
+    }
     let a_bytes = m * k * 4;
     let b_bytes = k * n * 4;
     let out_bytes = m * n * 4;
-    let a = ws.read(c.a).get(..a_bytes)
+    let a = ws
+        .read(c.a)
+        .get(..a_bytes)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
         .to_vec();
-    let b = ws.read(c.b).get(..b_bytes)
+    let b = ws
+        .read(c.b)
+        .get(..b_bytes)
         .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
         .to_vec();
-    let params = Params { n: n as u32, m: m as u32, k: k as u32, pad0: 0 };
+    let params = Params {
+        n: n as u32,
+        m: m as u32,
+        k: k as u32,
+        pad0: 0,
+    };
     let groups = ((m as u32).div_ceil(8), (n as u32).div_ceil(8), 1);
     let result = be.dispatch_compute("matmul_f32", &a, &b, out_bytes, params, groups);
     let out = ws.write(c.output);

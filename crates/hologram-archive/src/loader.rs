@@ -1,7 +1,7 @@
 //! Archive loader (spec X.2).
 
-use crate::format::{MAGIC, FORMAT_VERSION, SectionKind, SectionRef};
 use crate::error::ArchiveError;
+use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 
 /// Parsed plan view backed by a byte slice. Zero-copy where possible.
 pub struct LoadedPlan<'a> {
@@ -16,14 +16,17 @@ impl<'a> LoadedPlan<'a> {
                 let start = s.offset as usize;
                 let end = start + s.length as usize;
                 return self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
-                    needed: end, actual: self.bytes.len(),
+                    needed: end,
+                    actual: self.bytes.len(),
                 });
             }
         }
         Err(ArchiveError::SectionMissing(kind))
     }
 
-    pub fn sections(&self) -> &[SectionRef] { &self.sections }
+    pub fn sections(&self) -> &[SectionRef] {
+        &self.sections
+    }
 }
 
 pub struct HoloLoader<'a> {
@@ -41,10 +44,14 @@ impl<'a> HoloLoader<'a> {
     /// all preceding bytes, per spec X.1).
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, ArchiveError> {
         if bytes.len() < 4 + 2 + 2 + 2 + 32 {
-            return Err(ArchiveError::Truncated { needed: 40, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: 40,
+                actual: bytes.len(),
+            });
         }
         if bytes[..4] != MAGIC {
-            let mut m = [0u8; 4]; m.copy_from_slice(&bytes[..4]);
+            let mut m = [0u8; 4];
+            m.copy_from_slice(&bytes[..4]);
             return Err(ArchiveError::BadMagic(m));
         }
         let ver = u16::from_le_bytes([bytes[4], bytes[5]]);
@@ -61,28 +68,45 @@ impl<'a> HoloLoader<'a> {
         let expected: [u8; 32] = hologram_host::HologramHasher::initial()
             .fold_bytes(&bytes[..footer_start])
             .finalize();
-        let actual: [u8; 32] = bytes[footer_start..].try_into()
-            .map_err(|_| ArchiveError::Truncated { needed: bytes.len(), actual: bytes.len() })?;
+        let actual: [u8; 32] =
+            bytes[footer_start..]
+                .try_into()
+                .map_err(|_| ArchiveError::Truncated {
+                    needed: bytes.len(),
+                    actual: bytes.len(),
+                })?;
         if expected != actual {
             return Err(ArchiveError::ChecksumMismatch);
         }
 
-        Ok(Self { bytes, fingerprint: actual })
+        Ok(Self {
+            bytes,
+            fingerprint: actual,
+        })
     }
 
     /// Construct a loader without footer verification. For tests and tools
     /// that build partial archives manually.
     pub fn from_bytes_unchecked(bytes: &'a [u8]) -> Result<Self, ArchiveError> {
         if bytes.len() < 4 + 2 + 2 + 2 + 32 {
-            return Err(ArchiveError::Truncated { needed: 40, actual: bytes.len() });
+            return Err(ArchiveError::Truncated {
+                needed: 40,
+                actual: bytes.len(),
+            });
         }
         if bytes[..4] != MAGIC {
-            let mut m = [0u8; 4]; m.copy_from_slice(&bytes[..4]);
+            let mut m = [0u8; 4];
+            m.copy_from_slice(&bytes[..4]);
             return Err(ArchiveError::BadMagic(m));
         }
         let footer_start = bytes.len() - 32;
-        let fingerprint: [u8; 32] = bytes[footer_start..].try_into()
-            .map_err(|_| ArchiveError::Truncated { needed: bytes.len(), actual: bytes.len() })?;
+        let fingerprint: [u8; 32] =
+            bytes[footer_start..]
+                .try_into()
+                .map_err(|_| ArchiveError::Truncated {
+                    needed: bytes.len(),
+                    actual: bytes.len(),
+                })?;
         Ok(Self { bytes, fingerprint })
     }
 
@@ -90,7 +114,9 @@ impl<'a> HoloLoader<'a> {
     /// (the verified BLAKE3 footer, spec X.1). This is the anchor
     /// `execute_attested` routes through prism::pipeline::run.
     #[inline]
-    pub fn fingerprint(&self) -> [u8; 32] { self.fingerprint }
+    pub fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
+    }
 
     pub fn into_plan(self) -> Result<LoadedPlan<'a>, ArchiveError> {
         let _flags = u16::from_le_bytes([self.bytes[6], self.bytes[7]]);
@@ -99,7 +125,10 @@ impl<'a> HoloLoader<'a> {
         let mut cursor = 10usize;
         for _ in 0..count {
             if cursor + 24 > self.bytes.len() {
-                return Err(ArchiveError::Truncated { needed: cursor + 24, actual: self.bytes.len() });
+                return Err(ArchiveError::Truncated {
+                    needed: cursor + 24,
+                    actual: self.bytes.len(),
+                });
             }
             let kind_byte = self.bytes[cursor];
             let kind = match kind_byte {
@@ -118,12 +147,19 @@ impl<'a> HoloLoader<'a> {
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)
-            let off = u64::from_le_bytes(self.bytes[cursor..cursor+8].try_into().unwrap());
+            let off = u64::from_le_bytes(self.bytes[cursor..cursor + 8].try_into().unwrap());
             cursor += 8;
-            let len = u64::from_le_bytes(self.bytes[cursor..cursor+8].try_into().unwrap());
+            let len = u64::from_le_bytes(self.bytes[cursor..cursor + 8].try_into().unwrap());
             cursor += 8;
-            sections.push(SectionRef { kind, offset: off, length: len });
+            sections.push(SectionRef {
+                kind,
+                offset: off,
+                length: len,
+            });
         }
-        Ok(LoadedPlan { bytes: self.bytes, sections })
+        Ok(LoadedPlan {
+            bytes: self.bytes,
+            sections,
+        })
     }
 }

@@ -6,12 +6,12 @@
 //! the bijection (the compiler exempts these from `run_completeness`'s
 //! algebraic-content checks via `OpKind::is_layout_only`).
 
-use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
-use prism::vocabulary::WittLevel;
-use uor_foundation::HostBounds;
-use uor_foundation::pipeline::ConstrainedTypeShape;
 use crate::emit::{push_variable, EmitResult};
+use core::marker::PhantomData;
+use prism::vocabulary::WittLevel;
+use uor_foundation::enforcement::TermArena;
+use uor_foundation::pipeline::ConstrainedTypeShape;
+use uor_foundation::HostBounds;
 
 /// Free emitter for any layout op. Pushes a single `Term::Variable` that
 /// references the relabel binding.
@@ -52,7 +52,7 @@ macro_rules! declare_layout {
     };
 }
 
-declare_layout!(ReshapeOp,   "reshape",   [Sin, Sout]);
+declare_layout!(ReshapeOp, "reshape", [Sin, Sout]);
 declare_layout!(TransposeOp, "transpose", [S, Perm]);
-declare_layout!(ConcatOp,    "concat",    [Axis, Inputs]);
-declare_layout!(SliceOp,     "slice",     [Sin, Starts, Ends]);
+declare_layout!(ConcatOp, "concat", [Axis, Inputs]);
+declare_layout!(SliceOp, "slice", [Sin, Starts, Ends]);

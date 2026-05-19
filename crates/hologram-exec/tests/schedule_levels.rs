@@ -1,14 +1,14 @@
 //! Verify the executor consumes the per-level kernel-call schedule
 //! (spec VIII.2) — the runtime walks `ExecPlan` levels in order.
 
-use hologram_compiler::{compile, BackendKind};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
-use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
+use hologram_compiler::{compile, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use smallvec::SmallVec;
+use hologram_graph::{Graph, GraphOp, InputSource, OpKind};
 use prism::vocabulary::WittLevel;
+use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
@@ -16,7 +16,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -64,8 +65,11 @@ fn chained_ops_produce_multiple_schedule_levels() {
     let session = InferenceSession::load(&compiled.archive, backend).unwrap();
     // Three compute ops in dependency chain → 3 schedule levels with
     // 1 kernel call per level.
-    assert!(session.schedule_levels() >= 3,
-        "expected ≥3 schedule levels, got {}", session.schedule_levels());
+    assert!(
+        session.schedule_levels() >= 3,
+        "expected ≥3 schedule levels, got {}",
+        session.schedule_levels()
+    );
 }
 
 #[test]

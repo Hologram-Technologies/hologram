@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use hologram_backend::CpuBackend;
-use hologram_compiler::{Compiler, BackendKind};
+use hologram_compiler::{BackendKind, Compiler};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
 use prism::vocabulary::WittLevel;
@@ -27,11 +27,10 @@ fn sessions() -> &'static Mutex<Vec<Option<Session>>> {
 /// Writes the resulting `.holo` bytes into the caller's buffer.
 /// Returns the number of bytes written, or -1 on error.
 #[no_mangle]
-pub unsafe extern "C" fn hologram_compile_empty(
-    out: *mut c_uchar,
-    out_capacity: usize,
-) -> c_int {
-    if out.is_null() { return -1; }
+pub unsafe extern "C" fn hologram_compile_empty(out: *mut c_uchar, out_capacity: usize) -> c_int {
+    if out.is_null() {
+        return -1;
+    }
     let graph = Graph::new();
     let compiled = match Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile() {
         Ok(o) => o,
@@ -52,13 +51,16 @@ pub unsafe extern "C" fn hologram_compile_source(
     out: *mut c_uchar,
     out_capacity: usize,
 ) -> c_int {
-    if source_ptr.is_null() || out.is_null() { return -1; }
+    if source_ptr.is_null() || out.is_null() {
+        return -1;
+    }
     let bytes = std::slice::from_raw_parts(source_ptr, source_len);
     let s = match std::str::from_utf8(bytes) {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let compiled = match hologram_compiler::compile_from_source(s, WittLevel::W32, BackendKind::Cpu) {
+    let compiled = match hologram_compiler::compile_from_source(s, WittLevel::W32, BackendKind::Cpu)
+    {
         Ok(o) => o,
         Err(_) => return -1,
     };
@@ -74,14 +76,19 @@ pub unsafe extern "C" fn hologram_session_load(
     archive_ptr: *const c_uchar,
     archive_len: usize,
 ) -> c_int {
-    if archive_ptr.is_null() { return -1; }
+    if archive_ptr.is_null() {
+        return -1;
+    }
     let bytes = std::slice::from_raw_parts(archive_ptr, archive_len);
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let sess = match InferenceSession::load(bytes, backend) {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let mut tab = match sessions().lock() { Ok(t) => t, Err(_) => return -1 };
+    let mut tab = match sessions().lock() {
+        Ok(t) => t,
+        Err(_) => return -1,
+    };
     tab.push(Some(sess));
     (tab.len() - 1) as c_int
 }
@@ -110,12 +117,13 @@ pub unsafe extern "C" fn hologram_session_kernel_count(handle: c_int) -> c_int {
 /// `hologram_session_execute`. Returns 0 (not -1) when `i` is in range
 /// but the port has zero element count.
 #[no_mangle]
-pub unsafe extern "C" fn hologram_session_output_byte_len(
-    handle: c_int,
-    i: usize,
-) -> c_int {
+pub unsafe extern "C" fn hologram_session_output_byte_len(handle: c_int, i: usize) -> c_int {
     with_session(handle, |s| {
-        if i >= s.output_count() { -1 } else { s.output_byte_len(i) as c_int }
+        if i >= s.output_count() {
+            -1
+        } else {
+            s.output_byte_len(i) as c_int
+        }
     })
 }
 
@@ -129,7 +137,9 @@ pub unsafe extern "C" fn hologram_session_archive_fingerprint(
     handle: c_int,
     out: *mut c_uchar,
 ) -> c_int {
-    if out.is_null() { return -1; }
+    if out.is_null() {
+        return -1;
+    }
     with_session(handle, |s| {
         let fp = s.archive_fingerprint();
         std::slice::from_raw_parts_mut(out, 32).copy_from_slice(&fp);
@@ -156,28 +166,48 @@ pub unsafe extern "C" fn hologram_session_execute(
     out_caps: *const usize,
     out_count: usize,
 ) -> c_int {
-    if handle < 0 { return -1; }
-    let mut tab = match sessions().lock() { Ok(t) => t, Err(_) => return -1 };
+    if handle < 0 {
+        return -1;
+    }
+    let mut tab = match sessions().lock() {
+        Ok(t) => t,
+        Err(_) => return -1,
+    };
     let sess = match tab.get_mut(handle as usize).and_then(|s| s.as_mut()) {
-        Some(s) => s, None => return -1,
+        Some(s) => s,
+        None => return -1,
     };
 
-    if in_count != sess.input_count() { return -1; }
-    if out_count != sess.output_count() { return -1; }
+    if in_count != sess.input_count() {
+        return -1;
+    }
+    if out_count != sess.output_count() {
+        return -1;
+    }
 
     let mut input_storage: Vec<&[c_uchar]> = Vec::with_capacity(in_count);
     if in_count > 0 {
-        if in_ptrs.is_null() || in_lens.is_null() { return -1; }
+        if in_ptrs.is_null() || in_lens.is_null() {
+            return -1;
+        }
         let ptrs = std::slice::from_raw_parts(in_ptrs, in_count);
         let lens = std::slice::from_raw_parts(in_lens, in_count);
         for i in 0..in_count {
-            if ptrs[i].is_null() && lens[i] != 0 { return -1; }
-            let s = if lens[i] == 0 { &[][..] } else { std::slice::from_raw_parts(ptrs[i], lens[i]) };
+            if ptrs[i].is_null() && lens[i] != 0 {
+                return -1;
+            }
+            let s = if lens[i] == 0 {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(ptrs[i], lens[i])
+            };
             input_storage.push(s);
         }
     }
-    let inputs: Vec<InputBuffer> = input_storage.iter()
-        .map(|b| InputBuffer { bytes: b }).collect();
+    let inputs: Vec<InputBuffer> = input_storage
+        .iter()
+        .map(|b| InputBuffer { bytes: b })
+        .collect();
 
     let outputs = match sess.execute(&inputs) {
         Ok(o) => o,
@@ -185,12 +215,18 @@ pub unsafe extern "C" fn hologram_session_execute(
     };
 
     if out_count > 0 {
-        if out_ptrs.is_null() || out_caps.is_null() { return -1; }
+        if out_ptrs.is_null() || out_caps.is_null() {
+            return -1;
+        }
         let ptrs = std::slice::from_raw_parts(out_ptrs, out_count);
         let caps = std::slice::from_raw_parts(out_caps, out_count);
         for (i, out) in outputs.iter().enumerate() {
-            if i >= out_count { break; }
-            if ptrs[i].is_null() { continue; }
+            if i >= out_count {
+                break;
+            }
+            if ptrs[i].is_null() {
+                continue;
+            }
             let n = out.bytes.len().min(caps[i]);
             std::slice::from_raw_parts_mut(ptrs[i], n).copy_from_slice(&out.bytes[..n]);
         }
@@ -201,8 +237,13 @@ pub unsafe extern "C" fn hologram_session_execute(
 /// Drop a previously-loaded session.
 #[no_mangle]
 pub unsafe extern "C" fn hologram_session_close(handle: c_int) -> c_int {
-    if handle < 0 { return -1; }
-    let mut tab = match sessions().lock() { Ok(t) => t, Err(_) => return -1 };
+    if handle < 0 {
+        return -1;
+    }
+    let mut tab = match sessions().lock() {
+        Ok(t) => t,
+        Err(_) => return -1,
+    };
     if let Some(slot) = tab.get_mut(handle as usize) {
         *slot = None;
         return 0;
@@ -211,8 +252,13 @@ pub unsafe extern "C" fn hologram_session_close(handle: c_int) -> c_int {
 }
 
 fn with_session<F: FnOnce(&Session) -> c_int>(handle: c_int, f: F) -> c_int {
-    if handle < 0 { return -1; }
-    let tab = match sessions().lock() { Ok(t) => t, Err(_) => return -1 };
+    if handle < 0 {
+        return -1;
+    }
+    let tab = match sessions().lock() {
+        Ok(t) => t,
+        Err(_) => return -1,
+    };
     match tab.get(handle as usize).and_then(|s| s.as_ref()) {
         Some(sess) => f(sess),
         None => -1,

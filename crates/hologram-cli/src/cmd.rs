@@ -1,8 +1,8 @@
 //! CLI subcommands.
 
 use clap::{Parser, Subcommand};
-use hologram_compiler::{Compiler, BackendKind};
 use hologram_compiler::error::CompileError;
+use hologram_compiler::{BackendKind, Compiler};
 use hologram_graph::Graph;
 use prism::vocabulary::WittLevel;
 
@@ -52,7 +52,12 @@ pub enum Command {
 
 pub fn run(cli: Cli) -> Result<(), CompileError> {
     match cli.command {
-        Command::Compile { backend, witt_level, source, output } => {
+        Command::Compile {
+            backend,
+            witt_level,
+            source,
+            output,
+        } => {
             let kind = parse_backend(&backend);
             let level = WittLevel::new(witt_level);
             let graph = match source {
@@ -66,7 +71,11 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             let out = Compiler::new(graph, kind, level).compile()?;
             std::fs::write(&output, &out.archive)
                 .map_err(|_| CompileError::SourceParse("write archive"))?;
-            println!("compiled {} bytes to {}", out.archive.len(), output.display());
+            println!(
+                "compiled {} bytes to {}",
+                out.archive.len(),
+                output.display()
+            );
             println!(
                 "  nodes={} levels={} validated={} cache_hits={}",
                 out.stats.total_nodes,
@@ -77,8 +86,8 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             Ok(())
         }
         Command::Execute { archive } => {
-            let bytes = std::fs::read(&archive)
-                .map_err(|_| CompileError::SourceParse("read archive"))?;
+            let bytes =
+                std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
             let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
                 hologram_backend::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
@@ -87,7 +96,8 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             let inputs: Vec<hologram_exec::InputBuffer> = (0..session.input_count())
                 .map(|_| hologram_exec::InputBuffer { bytes: &zeros })
                 .collect();
-            let outputs = session.execute(&inputs)
+            let outputs = session
+                .execute(&inputs)
                 .map_err(|_| CompileError::SourceParse("execute"))?;
             for (i, o) in outputs.iter().enumerate() {
                 println!("output[{i}] = {} bytes", o.bytes.len());
@@ -95,8 +105,8 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             Ok(())
         }
         Command::Inspect { archive } => {
-            let bytes = std::fs::read(&archive)
-                .map_err(|_| CompileError::SourceParse("read archive"))?;
+            let bytes =
+                std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
             let plan = hologram_archive::HoloLoader::from_bytes(&bytes)
                 .map_err(CompileError::Archive)?
                 .into_plan()
@@ -106,22 +116,31 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
                 println!("  section {:?} @ {} ({} bytes)", s.kind, s.offset, s.length);
             }
             // Decode + show kernel-call and exec-plan structure.
-            if let Ok(calls_section) = plan.section(hologram_archive::format::SectionKind::KernelCalls) {
+            if let Ok(calls_section) =
+                plan.section(hologram_archive::format::SectionKind::KernelCalls)
+            {
                 if let Ok(calls) = hologram_archive::decoder::decode_calls(calls_section) {
                     println!("kernel_calls: {}", calls.len());
                 }
             }
-            if let Ok(exec_section) = plan.section(hologram_archive::format::SectionKind::ExecPlan) {
+            if let Ok(exec_section) = plan.section(hologram_archive::format::SectionKind::ExecPlan)
+            {
                 if let Ok(plan) = hologram_archive::decode_exec_plan(exec_section) {
-                    println!("exec_plan: {} levels, max_width={}",
-                        plan.len(), plan.iter().map(|l| l.len()).max().unwrap_or(0));
+                    println!(
+                        "exec_plan: {} levels, max_width={}",
+                        plan.len(),
+                        plan.iter().map(|l| l.len()).max().unwrap_or(0)
+                    );
                 }
             }
             Ok(())
         }
-        Command::Bench { archive, iterations } => {
-            let bytes = std::fs::read(&archive)
-                .map_err(|_| CompileError::SourceParse("read archive"))?;
+        Command::Bench {
+            archive,
+            iterations,
+        } => {
+            let bytes =
+                std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
             let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
                 hologram_backend::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
@@ -134,15 +153,19 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             let _ = session.execute(&inputs);
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                session.execute(&inputs)
+                session
+                    .execute(&inputs)
                     .map_err(|_| CompileError::SourceParse("execute"))?;
             }
             let elapsed = start.elapsed();
             let per = elapsed / iterations.max(1);
             println!(
                 "bench: {} iterations in {:?} ({:?}/iter, {} kernel calls, {} schedule levels)",
-                iterations, elapsed, per,
-                session.kernel_count(), session.schedule_levels(),
+                iterations,
+                elapsed,
+                per,
+                session.kernel_count(),
+                session.schedule_levels(),
             );
             Ok(())
         }

@@ -16,9 +16,9 @@
 //! an architectural-commitment surface (level boundaries are visible to
 //! a future per-slot-disaggregated executor) rather than a code switch.
 
-use hologram_backend::{Backend, KernelCall};
 use crate::buffer::BufferArena;
 use crate::error::ExecError;
+use hologram_backend::{Backend, KernelCall};
 
 pub struct Executor;
 
@@ -31,7 +31,9 @@ impl Executor {
         workspace: &mut BufferArena,
     ) -> Result<(), ExecError> {
         for call in calls {
-            backend.dispatch(call, workspace).map_err(|_| ExecError::Backend)?;
+            backend
+                .dispatch(call, workspace)
+                .map_err(|_| ExecError::Backend)?;
         }
         Ok(())
     }
@@ -54,7 +56,9 @@ impl Executor {
             for &call_idx in level {
                 let idx = call_idx as usize;
                 let call = calls.get(idx).ok_or(ExecError::Backend)?;
-                backend.dispatch(call, workspace).map_err(|_| ExecError::Backend)?;
+                backend
+                    .dispatch(call, workspace)
+                    .map_err(|_| ExecError::Backend)?;
             }
         }
         Ok(())

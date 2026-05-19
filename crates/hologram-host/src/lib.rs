@@ -27,12 +27,8 @@ pub use uor_foundation_sdk as sdk;
 mod bounds;
 
 pub use bounds::{
-    HologramHostBoundsCpu,
-    HologramHostBoundsAvx2,
-    HologramHostBoundsAvx512,
-    HologramHostBoundsNeon,
-    HologramHostBoundsMetal,
-    HologramHostBoundsWgpu,
+    HologramHostBoundsAvx2, HologramHostBoundsAvx512, HologramHostBoundsCpu,
+    HologramHostBoundsMetal, HologramHostBoundsNeon, HologramHostBoundsWgpu,
 };
 
 /// Hologram's `HostTypes` selection. Aliased to upstream's canonical
@@ -53,7 +49,11 @@ pub type HologramHasher = prism::crypto::Blake3Hasher;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub type ActiveCpuBounds = HologramHostBoundsAvx512;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(target_feature = "avx512f")
+))]
 pub type ActiveCpuBounds = HologramHostBoundsAvx2;
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
