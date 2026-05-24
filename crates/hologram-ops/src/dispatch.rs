@@ -126,6 +126,16 @@ pub fn emit_op_term<const CAP: usize>(
         // Structured: Attention = MatMul(Q,Kᵀ) → Mul(scale) → Softmax → MatMul(_,V).
         K::Attention   => structured::emit_attention(arena, level, a0, a1, a2),
         K::FusedSwiGlu => structured::emit_fused_swiglu(arena, level, a0, a1),
+        K::FusedMatMulActivation => structured::emit_fused_matmul_activation(arena, level, a0, a1),
+        // Fused conv2d + activation: same decomposition as conv2d with
+        // an activation anchor appended.
+        K::FusedConv2dActivation => conv::emit_conv2d(arena, level, a0, a1),
+        // Fused norm + activation: same decomposition as layer_norm
+        // with an activation anchor appended.
+        K::FusedNormActivation => normalization::emit_layer_norm(arena, level, a0, a1, a2),
+        // Fused unary chain: emits like a single activation (the chain
+        // is only meaningful at kernel level, not at Term level).
+        K::FusedUnaryChain => elementwise_unary::ReluOp::emit_term(arena, level, a0),
 
         // Utility.
         K::Pad             => utility::emit_layout_relabel(arena, level, a0),

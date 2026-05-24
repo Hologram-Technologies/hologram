@@ -10,7 +10,8 @@ use hologram_backend::{
     KernelCall, BufferRef,
     UnaryCall, BinaryCall, MatMulCall, GemmCall, Conv2dCall,
     NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall, DequantizeCall,
+    AttentionCall, WhereCall, DequantizeCall, FusedMatMulActivationCall,
+    FusedConv2dActivationCall, FusedNormActivationCall, FusedUnaryChainCall,
 };
 
 const D_NEG: u16 = 1;
@@ -62,6 +63,10 @@ const D_AVPG: u16 = 99; const D_GAPG: u16 = 100;
 const D_PADG: u16 = 101; const D_ATNG: u16 = 102; const D_FSWGG: u16 = 103;
 const D_UNG: u16 = 104;
 const D_DEQ: u16 = 105;
+const D_FMMA: u16 = 106;
+const D_FCA: u16 = 107;
+const D_FNA: u16 = 108;
+const D_FUC: u16 = 109;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -192,7 +197,41 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         K::FusedSwiGluGrad(c) => { put_u16(out, D_FSWGG); put_matmul(out, c); }
         K::UnaryGrad(c) => { put_u16(out, D_UNG); put_unary(out, c); }
         K::Dequantize(c) => { put_u16(out, D_DEQ); put_dequantize(out, c); }
+        K::FusedMatMulActivation(c) => { put_u16(out, D_FMMA); put_fused_matmul_act(out, c); }
+        K::FusedConv2dActivation(c) => { put_u16(out, D_FCA); put_fused_conv2d_act(out, c); }
+        K::FusedNormActivation(c) => { put_u16(out, D_FNA); put_fused_norm_act(out, c); }
+        K::FusedUnaryChain(c) => { put_u16(out, D_FUC); put_fused_unary_chain(out, c); }
     }
+}
+
+fn put_fused_unary_chain(out: &mut Vec<u8>, c: &FusedUnaryChainCall) {
+    put_buf(out, c.input); put_buf(out, c.output);
+    put_u32(out, c.element_count); put_u8(out, c.dtype);
+    put_u8(out, c.chain_len);
+    for i in 0..8 { put_u16(out, c.chain[i]); }
+}
+
+fn put_fused_conv2d_act(out: &mut Vec<u8>, c: &FusedConv2dActivationCall) {
+    put_buf(out, c.x); put_buf(out, c.w); put_buf(out, c.output);
+    put_u32(out, c.batch); put_u32(out, c.channels_in); put_u32(out, c.channels_out);
+    put_u32(out, c.h_in); put_u32(out, c.w_in);
+    put_u32(out, c.h_out); put_u32(out, c.w_out);
+    put_u32(out, c.k_h); put_u32(out, c.k_w);
+    put_u32(out, c.stride_h); put_u32(out, c.stride_w);
+    put_u32(out, c.pad_h); put_u32(out, c.pad_w);
+    put_u8(out, c.dtype); put_u16(out, c.activation);
+}
+fn put_fused_norm_act(out: &mut Vec<u8>, c: &FusedNormActivationCall) {
+    put_buf(out, c.x); put_buf(out, c.gamma); put_buf(out, c.beta);
+    put_buf(out, c.residual); put_buf(out, c.output);
+    put_u32(out, c.batch); put_u32(out, c.feature);
+    put_u64(out, c.epsilon_bits); put_u8(out, c.dtype);
+    put_u16(out, c.activation);
+}
+fn put_fused_matmul_act(out: &mut Vec<u8>, c: &FusedMatMulActivationCall) {
+    put_buf(out, c.a); put_buf(out, c.b); put_buf(out, c.output);
+    put_u32(out, c.m); put_u32(out, c.k); put_u32(out, c.n);
+    put_u8(out, c.dtype); put_u16(out, c.activation);
 }
 
 fn put_u16(out: &mut Vec<u8>, v: u16) { out.extend_from_slice(&v.to_le_bytes()); }

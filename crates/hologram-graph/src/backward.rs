@@ -79,8 +79,8 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId)
         let node = match graph.nodes().get(i) { Some(n) => n.clone(), None => continue };
         let kind = match node.op {
             GraphOp::Op(k) => k,
-            // Inputs/Outputs/Constants are leaves: no backward emitted.
-            GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) => continue,
+            // Inputs/Outputs/Constants/Dead are leaves: no backward emitted.
+            GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => continue,
         };
 
         // For each input source of the forward node, emit (or accumulate)

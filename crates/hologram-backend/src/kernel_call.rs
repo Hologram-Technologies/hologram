@@ -167,6 +167,68 @@ pub struct DequantizeCall {
     pub zero_point: i32,
 }
 
+/// Fused MatMul + activation epilogue call. The activation is applied
+/// element-wise to each output of the matmul without writing an
+/// intermediate buffer.
+#[derive(Debug, Clone, Copy)]
+pub struct FusedMatMulActivationCall {
+    pub a: BufferRef,
+    pub b: BufferRef,
+    pub output: BufferRef,
+    pub m: u32,
+    pub k: u32,
+    pub n: u32,
+    pub dtype: u8,
+    /// The activation op to apply as epilogue. Encoded as the `OpKind`
+    /// discriminant (e.g. Relu=10, Silu=14, etc.).
+    pub activation: u16,
+}
+
+/// Fused Conv2d + activation epilogue call.
+#[derive(Debug, Clone, Copy)]
+pub struct FusedConv2dActivationCall {
+    pub x: BufferRef,
+    pub w: BufferRef,
+    pub output: BufferRef,
+    pub batch: u32, pub channels_in: u32, pub channels_out: u32,
+    pub h_in: u32, pub w_in: u32,
+    pub h_out: u32, pub w_out: u32,
+    pub k_h: u32, pub k_w: u32,
+    pub stride_h: u32, pub stride_w: u32,
+    pub pad_h: u32, pub pad_w: u32,
+    pub dtype: u8,
+    pub activation: u16,
+}
+
+/// Fused Norm + activation epilogue call.
+#[derive(Debug, Clone, Copy)]
+pub struct FusedNormActivationCall {
+    pub x: BufferRef,
+    pub gamma: BufferRef,
+    pub beta: BufferRef,
+    pub residual: BufferRef,
+    pub output: BufferRef,
+    pub batch: u32, pub feature: u32,
+    pub epsilon_bits: u64,
+    pub dtype: u8,
+    pub activation: u16,
+}
+
+/// Fused unary chain call. Applies up to 8 elementwise-unary
+/// activations sequentially with a single buffer read/write.
+#[derive(Debug, Clone, Copy)]
+pub struct FusedUnaryChainCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub element_count: u32,
+    pub dtype: u8,
+    /// Number of activations in the chain (1..=8).
+    pub chain_len: u8,
+    /// Activation discriminants in application order. Unused slots
+    /// are 0 (identity). Encoded as `OpKind as u16`.
+    pub chain: [u16; 8],
+}
+
 /// Closed kernel-call surface. One variant per OpKind.
 #[derive(Debug, Clone, Copy)]
 pub enum KernelCall {
@@ -216,6 +278,10 @@ pub enum KernelCall {
     // Structured
     Attention(AttentionCall),
     FusedSwiGlu(MatMulCall),
+    FusedMatMulActivation(FusedMatMulActivationCall),
+    FusedConv2dActivation(FusedConv2dActivationCall),
+    FusedNormActivation(FusedNormActivationCall),
+    FusedUnaryChain(FusedUnaryChainCall),
 
     // Utility
     Pad(LayoutCall), Expand(LayoutCall), Resize(LayoutCall),

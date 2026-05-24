@@ -19,6 +19,7 @@ uor-foundation    = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+smallvec  = { workspace = true }
 
 [[bench]]
 name = "decode_step"
@@ -30,4 +31,12 @@ harness = false
 
 [[bench]]
 name = "compiler"
+harness = false
+
+[[bench]]
+name = "epilogue_fusion"
+harness = false
+
+[[bench]]
+name = "fusion"
 harness = false

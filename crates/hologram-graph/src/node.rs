@@ -25,6 +25,21 @@ pub enum GraphOp {
     Output,
     /// Inline constant referenced by `ConstantStore`.
     Constant(ConstantId),
+    /// Removed by a fusion pass. The compiler and scheduler skip Dead
+    /// nodes. Using a sentinel variant instead of `Option<Node>` avoids
+    /// invalidating arena indices.
+    Dead,
+}
+
+impl GraphOp {
+    /// Returns `true` for elementwise-unary activation ops that are
+    /// valid epilogue targets for MatMul/Conv/Norm fusion.
+    pub fn is_fusable_activation(self) -> bool {
+        match self {
+            GraphOp::Op(k) => k.is_fusable_activation(),
+            _ => false,
+        }
+    }
 }
 
 /// Where a node's input value comes from.
@@ -43,6 +58,22 @@ pub struct Node {
     pub inputs: SmallVec<[InputSource; 4]>,
     pub output_dtype: DTypeId,
     pub output_shape: ShapeId,
+}
+
+/// Fusion epilogue metadata (spec VI.3). Stored on `Graph::fusion_attrs`
+/// keyed by `NodeId`. Captures the epilogue activation to apply after a
+/// fused op (e.g., `FusedMatMulActivation`) or the full chain for
+/// `FusedUnaryChain`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FusionAttrs {
+    /// The activation op discriminant (e.g. `OpKind::Relu as u16`).
+    /// For `FusedUnaryChain`, this is the first element of the chain.
+    pub activation: u16,
+    /// Number of ops in the chain (1..=8). 0 means single activation.
+    pub chain_len: u8,
+    /// Chained activation discriminants. `chain[0]` is redundant with
+    /// `activation` when `chain_len > 0`.
+    pub chain: [u16; 8],
 }
 
 /// Per-tensor quantization attributes (spec X-5). Symmetric INT8/INT4

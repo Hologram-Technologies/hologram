@@ -3,7 +3,8 @@
 use hologram_backend::{
     KernelCall, BufferRef, UnaryCall, BinaryCall, MatMulCall, GemmCall,
     Conv2dCall, NormCall, ReduceCall, LayoutCall, SoftmaxCall, PoolCall,
-    AttentionCall, WhereCall, DequantizeCall,
+    AttentionCall, WhereCall, DequantizeCall, FusedMatMulActivationCall,
+    FusedConv2dActivationCall, FusedNormActivationCall, FusedUnaryChainCall,
 };
 use hologram_graph::{Graph, Node, OpKind, InputSource};
 use crate::error::CompileError;
@@ -131,6 +132,13 @@ pub struct LoweredNode {
     /// Quantization parameters (spec X-5). Default is "no quantization";
     /// the K::Dequantize arm reads these fields.
     pub quant: QuantParams,
+    /// Fusion epilogue metadata. For `FusedMatMulActivation` this
+    /// carries the activation discriminant.
+    pub fusion_activation: u16,
+    /// Chain length for `FusedUnaryChain`.
+    pub fusion_chain_len: u8,
+    /// Chain activations for `FusedUnaryChain`.
+    pub fusion_chain: [u16; 8],
 }
 
 /// Per-tensor quantization parameters (spec X-5). The compiler sets
@@ -284,6 +292,34 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
 
         K::Attention => KernelCall::Attention(attn_call),
         K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
+        K::FusedMatMulActivation => KernelCall::FusedMatMulActivation(FusedMatMulActivationCall {
+            a: inp0(), b: inp1(), output: node.output,
+            m: s.m, k: s.k, n: s.n, dtype: node.dtype,
+            activation: node.fusion_activation,
+        }),
+        K::FusedConv2dActivation => KernelCall::FusedConv2dActivation(FusedConv2dActivationCall {
+            x: inp0(), w: inp1(), output: node.output,
+            batch: s.batch, channels_in: s.channels_in, channels_out: s.channels_out,
+            h_in: s.h_in, w_in: s.w_in, h_out: s.h_out, w_out: s.w_out,
+            k_h: s.k_h, k_w: s.k_w,
+            stride_h: s.stride_h, stride_w: s.stride_w,
+            pad_h: s.pad_h, pad_w: s.pad_w, dtype: node.dtype,
+            activation: node.fusion_activation,
+        }),
+        K::FusedNormActivation => KernelCall::FusedNormActivation(FusedNormActivationCall {
+            x: inp0(), gamma: inp1(), beta: inp2(),
+            residual: NormCall::NO_RESIDUAL,
+            output: node.output,
+            batch: s.batch, feature: s.feature,
+            epsilon_bits: 0, dtype: node.dtype,
+            activation: node.fusion_activation,
+        }),
+        K::FusedUnaryChain => KernelCall::FusedUnaryChain(FusedUnaryChainCall {
+            input: inp0(), output: node.output,
+            element_count: node.element_count, dtype: node.dtype,
+            chain_len: node.fusion_chain_len,
+            chain: node.fusion_chain,
+        }),
 
         K::Pad => KernelCall::Pad(layout), K::Expand => KernelCall::Expand(layout),
         K::Resize => KernelCall::Resize(layout),

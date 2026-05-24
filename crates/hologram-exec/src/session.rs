@@ -317,5 +317,11 @@ fn buffers(call: &KernelCall) -> Vec<hologram_backend::BufferRef> {
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
         K::Dequantize(c) => vec![c.input, c.output],
+
+        K::FusedUnaryChain(c) => vec![c.input, c.output],
+
+        K::FusedMatMulActivation(c) => vec![c.a, c.b, c.output],
+        K::FusedConv2dActivation(c) => vec![c.x, c.w, c.output],
+        K::FusedNormActivation(c) => vec![c.x, c.gamma, c.beta, c.output],
     }
 }

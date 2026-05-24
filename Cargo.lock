@@ -664,6 +664,7 @@ dependencies = [
  "hologram-host",
  "hologram-ops",
  "hologram-types",
+ "smallvec",
  "uor-foundation",
 ]
 

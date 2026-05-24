@@ -27,7 +27,9 @@ fn parses_matmul_pipeline() {
         output d
     ";
     let out = compile_from_source(src, WittLevel::W32, BackendKind::Cpu).unwrap();
-    assert!(out.stats.validated_units >= 2);
+    // With fusion enabled, MatMul + Relu fuse into a single
+    // FusedMatMulActivation node, so validated_units >= 1.
+    assert!(out.stats.validated_units >= 1);
 }
 
 #[test]

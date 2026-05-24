@@ -72,7 +72,11 @@ impl Compiler {
     }
 
     pub fn compile(mut self) -> Result<CompilationOutput, CompileError> {
-        // Schedule.
+        // Fusion passes: run before scheduling to allow the fusion
+        // engine to rewrite the graph (kill/rewire nodes).
+        let _fusion_stats = hologram_graph::fusion::fuse(&mut self.graph);
+
+        // Schedule (recomputed after fusion may have killed nodes).
         self.graph.compute_schedule();
 
         let mut stats = CompilationStats {
@@ -127,7 +131,7 @@ impl Compiler {
             let node = match self.graph.nodes().get(idx) { Some(n) => n, None => continue };
             let kind = match node.op {
                 GraphOp::Op(k) => k,
-                GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) => continue,
+                GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => continue,
             };
 
             // Steps 3-5: emit Term tree and validate the per-node CompileUnit.
@@ -191,6 +195,8 @@ impl Compiler {
             // consumes them directly.
             let quant_attrs = self.graph.quant_attrs(hologram_graph::NodeId(idx as u32))
                 .unwrap_or_default();
+            let fusion_attrs = self.graph.fusion_attrs(hologram_graph::NodeId(idx as u32))
+                .unwrap_or_default();
             let lowered = LoweredNode {
                 kind,
                 inputs: collect_buffers(&self.graph, node, &byte_lengths),
@@ -204,6 +210,9 @@ impl Compiler {
                     scale_bits: quant_attrs.scale_bits,
                     zero_point: quant_attrs.zero_point,
                 },
+                fusion_activation: fusion_attrs.activation,
+                fusion_chain_len: fusion_attrs.chain_len,
+                fusion_chain: fusion_attrs.chain,
             };
             let kernel_call = lower::lower(&lowered)?;
             level_calls.push(kernel_calls.len() as u32);
