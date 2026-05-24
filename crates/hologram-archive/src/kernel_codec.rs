@@ -8,10 +8,10 @@
 
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantizeCall,
-    ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall,
-    MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall,
-    UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall,
+    FusedConv2dActivationCall, FusedMatMulActivationCall, FusedNormActivationCall,
+    FusedUnaryChainCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall,
+    NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 const D_NEG: u16 = 1;
@@ -101,8 +101,10 @@ const D_DEQ: u16 = 105;
 const D_MMA: u16 = 106;
 const D_MMADD: u16 = 107;
 const D_MMAA: u16 = 108;
-const D_MMDQ: u16 = 111;
-const D_BCBIN: u16 = 112;
+const D_FMMA: u16 = 111;
+const D_FCA: u16 = 112;
+const D_FNA: u16 = 113;
+const D_FUC: u16 = 114;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -467,15 +469,41 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_buf(out, c.residual);
             put_u8(out, c.act);
         }
-        K::MatMulDequant(c) => {
-            put_u16(out, D_MMDQ);
-            put_matmul_dequant(out, c);
-        }
-        K::BroadcastBinary(c) => {
-            put_u16(out, D_BCBIN);
-            put_broadcast_binary(out, c);
-        }
+        K::FusedMatMulActivation(c) => { put_u16(out, D_FMMA); put_fused_matmul_act(out, c); }
+        K::FusedConv2dActivation(c) => { put_u16(out, D_FCA); put_fused_conv2d_act(out, c); }
+        K::FusedNormActivation(c) => { put_u16(out, D_FNA); put_fused_norm_act(out, c); }
+        K::FusedUnaryChain(c) => { put_u16(out, D_FUC); put_fused_unary_chain(out, c); }
     }
+}
+
+fn put_fused_unary_chain(out: &mut Vec<u8>, c: &FusedUnaryChainCall) {
+    put_buf(out, c.input); put_buf(out, c.output);
+    put_u32(out, c.element_count); put_u8(out, c.dtype);
+    put_u8(out, c.chain_len);
+    for i in 0..8 { put_u16(out, c.chain[i]); }
+}
+
+fn put_fused_conv2d_act(out: &mut Vec<u8>, c: &FusedConv2dActivationCall) {
+    put_buf(out, c.x); put_buf(out, c.w); put_buf(out, c.output);
+    put_u32(out, c.batch); put_u32(out, c.channels_in); put_u32(out, c.channels_out);
+    put_u32(out, c.h_in); put_u32(out, c.w_in);
+    put_u32(out, c.h_out); put_u32(out, c.w_out);
+    put_u32(out, c.k_h); put_u32(out, c.k_w);
+    put_u32(out, c.stride_h); put_u32(out, c.stride_w);
+    put_u32(out, c.pad_h); put_u32(out, c.pad_w);
+    put_u8(out, c.dtype); put_u16(out, c.activation);
+}
+fn put_fused_norm_act(out: &mut Vec<u8>, c: &FusedNormActivationCall) {
+    put_buf(out, c.x); put_buf(out, c.gamma); put_buf(out, c.beta);
+    put_buf(out, c.residual); put_buf(out, c.output);
+    put_u32(out, c.batch); put_u32(out, c.feature);
+    put_u64(out, c.epsilon_bits); put_u8(out, c.dtype);
+    put_u16(out, c.activation);
+}
+fn put_fused_matmul_act(out: &mut Vec<u8>, c: &FusedMatMulActivationCall) {
+    put_buf(out, c.a); put_buf(out, c.b); put_buf(out, c.output);
+    put_u32(out, c.m); put_u32(out, c.k); put_u32(out, c.n);
+    put_u8(out, c.dtype); put_u16(out, c.activation);
 }
 
 fn put_u16(out: &mut Vec<u8>, v: u16) {
@@ -574,8 +602,6 @@ fn put_norm(out: &mut Vec<u8>, c: &NormCall) {
     put_buf(out, c.output);
     put_u32(out, c.batch);
     put_u32(out, c.feature);
-    put_u32(out, c.channels);
-    put_u32(out, c.num_groups);
     put_u64(out, c.epsilon_bits);
     put_u8(out, c.dtype);
 }
@@ -583,13 +609,9 @@ fn put_reduce(out: &mut Vec<u8>, c: &ReduceCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
     put_u64(out, c.element_count);
-    put_u8(out, c.rank);
-    put_u32(out, c.axes_mask);
+    put_u32(out, c.axis_count);
     put_u8(out, c.keepdims as u8);
     put_u8(out, c.dtype);
-    for i in 0..c.rank as usize {
-        put_u32(out, c.dims[i]);
-    }
 }
 fn put_layout(out: &mut Vec<u8>, c: &LayoutCall) {
     put_buf(out, c.input);
@@ -683,43 +705,10 @@ fn put_where(out: &mut Vec<u8>, c: &WhereCall) {
     put_u64(out, c.element_count);
     put_u8(out, c.dtype);
 }
-fn put_broadcast_binary(out: &mut Vec<u8>, c: &BroadcastBinaryCall) {
-    put_buf(out, c.small);
-    put_buf(out, c.other);
-    put_buf(out, c.output);
-    put_u8(out, c.rank);
-    put_u8(out, c.op);
-    put_u8(out, c.small_is_lhs as u8);
-    put_u8(out, c.dtype);
-    for i in 0..c.rank as usize {
-        put_u32(out, c.in_dims[i]);
-        put_u32(out, c.out_dims[i]);
-    }
-}
-fn put_matmul_dequant(out: &mut Vec<u8>, c: &MatMulDequantCall) {
-    put_buf(out, c.a);
-    put_buf(out, c.bq);
-    put_buf(out, c.scales);
-    put_buf(out, c.zero_points);
-    put_buf(out, c.output);
-    put_u32(out, c.m);
-    put_u32(out, c.k);
-    put_u32(out, c.n);
-    put_u32(out, c.channels);
-    put_u32(out, c.inner);
-    put_u8(out, c.quant_dtype);
-    put_u8(out, c.dtype);
-    put_u32(out, c.scale_bits);
-    put_u32(out, c.zero_point as u32);
-}
 fn put_dequantize(out: &mut Vec<u8>, c: &DequantizeCall) {
     put_buf(out, c.input);
-    put_buf(out, c.scales);
-    put_buf(out, c.zero_points);
     put_buf(out, c.output);
     put_u64(out, c.element_count);
-    put_u32(out, c.channels);
-    put_u32(out, c.inner);
     put_u8(out, c.quant_dtype);
     put_u8(out, c.dtype);
     put_u32(out, c.scale_bits);

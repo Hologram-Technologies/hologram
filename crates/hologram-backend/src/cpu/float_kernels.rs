@@ -662,6 +662,145 @@ pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
     Ok(())
 }
 
+pub fn fused_matmul_activation_float<W: Workspace>(c: &FusedMatMulActivationCall, ws: &mut W) -> Result<(), BackendError> {
+    let m = c.m as usize;
+    let k = c.k as usize;
+    let n = c.n as usize;
+    if m == 0 || k == 0 || n == 0 { return Ok(()); }
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let a = ws.read(c.a).get(..m * k * es)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
+        .to_vec();
+    let b = ws.read(c.b).get(..k * n * es)
+        .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < m * n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+
+    let act_fn = resolve_activation_f32(c.activation);
+
+    if dt == DTYPE_F32 {
+        let a32: Vec<f32> = (0..m * k).map(|i| read_f32(&a, i)).collect();
+        let b32: Vec<f32> = (0..k * n).map(|i| read_f32(&b, i)).collect();
+        let mut bt = vec![0f32; k * n];
+        for kk in 0..k {
+            for j in 0..n {
+                bt[j * k + kk] = b32[kk * n + j];
+            }
+        }
+        for i in 0..m {
+            let row = &a32[i * k..i * k + k];
+            for j in 0..n {
+                let col = &bt[j * k..j * k + k];
+                let acc = crate::cpu::simd::simd_f32_dot(row, col);
+                write_f32(out, i * n + j, act_fn(acc));
+            }
+        }
+        return Ok(());
+    }
+
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                let av = read_float(&a, i * k + kk, dt);
+                let bv = read_float(&b, kk * n + j, dt);
+                acc += av * bv;
+            }
+            write_float(out, i * n + j, act_fn(acc), dt);
+        }
+    }
+    Ok(())
+}
+
+/// Resolve an activation discriminant to an f32 function pointer.
+fn resolve_activation_f32(activation: u16) -> fn(f32) -> f32 {
+    use hologram_ops::OpKind;
+    match activation {
+        a if a == OpKind::Relu as u16 => relu_f,
+        a if a == OpKind::Sigmoid as u16 => sigmoid_f,
+        a if a == OpKind::Tanh as u16 => tanh_f,
+        a if a == OpKind::Gelu as u16 => gelu_f,
+        a if a == OpKind::Silu as u16 => silu_f,
+        a if a == OpKind::Elu as u16 => elu_f,
+        a if a == OpKind::Selu as u16 => selu_f,
+        a if a == OpKind::Exp as u16 => exp_f,
+        a if a == OpKind::Log as u16 => log_f,
+        a if a == OpKind::Abs as u16 => abs_f,
+        _ => |x| x, // identity
+    }
+}
+
+pub fn fused_unary_chain_float<W: Workspace>(c: &FusedUnaryChainCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let input = ws.read(c.input).get(..n * es)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
+        .to_vec();
+    let out = ws.write(c.output);
+    if out.len() < n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    // Resolve chain function pointers once.
+    let chain_len = c.chain_len as usize;
+    let mut fns: [fn(f32) -> f32; 8] = [|x| x; 8];
+    for (j, f) in fns.iter_mut().enumerate().take(chain_len) {
+        *f = resolve_activation_f32(c.chain[j]);
+    }
+    for i in 0..n {
+        let mut x = read_float(&input, i, dt);
+        for f in &fns[..chain_len] {
+            x = f(x);
+        }
+        write_float(out, i, x, dt);
+    }
+    Ok(())
+}
+
+pub fn fused_conv2d_activation_float<W: Workspace>(c: &FusedConv2dActivationCall, ws: &mut W) -> Result<(), BackendError> {
+    // Delegate to unfused conv2d, then apply activation in-place.
+    let conv = Conv2dCall {
+        x: c.x, w: c.w, output: c.output,
+        batch: c.batch, channels_in: c.channels_in, channels_out: c.channels_out,
+        h_in: c.h_in, w_in: c.w_in, h_out: c.h_out, w_out: c.w_out,
+        k_h: c.k_h, k_w: c.k_w,
+        stride_h: c.stride_h, stride_w: c.stride_w,
+        pad_h: c.pad_h, pad_w: c.pad_w, dtype: c.dtype,
+    };
+    conv2d_float(&conv, ws)?;
+    let n = (c.batch * c.channels_out * c.h_out * c.w_out) as usize;
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let act_fn = resolve_activation_f32(c.activation);
+    let out = ws.write(c.output);
+    for i in 0..n.min(out.len() / es) {
+        let v = read_float(out, i, dt);
+        write_float(out, i, act_fn(v), dt);
+    }
+    Ok(())
+}
+
+pub fn fused_norm_activation_float<W: Workspace>(c: &FusedNormActivationCall, ws: &mut W) -> Result<(), BackendError> {
+    // Delegate to unfused layer_norm, then apply activation in-place.
+    let norm = NormCall {
+        x: c.x, gamma: c.gamma, beta: c.beta,
+        residual: c.residual, output: c.output,
+        batch: c.batch, feature: c.feature,
+        epsilon_bits: c.epsilon_bits, dtype: c.dtype,
+    };
+    layer_norm_float(&norm, ws)?;
+    let n = (c.batch * c.feature) as usize;
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let act_fn = resolve_activation_f32(c.activation);
+    let out = ws.write(c.output);
+    for i in 0..n.min(out.len() / es) {
+        let v = read_float(out, i, dt);
+        write_float(out, i, act_fn(v), dt);
+    }
+    Ok(())
+}
+
 pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendError> {
     let m = c.m as usize;
     let k = c.k as usize;

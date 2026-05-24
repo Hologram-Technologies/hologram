@@ -2222,7 +2222,7 @@ pub fn append_backward(graph: &mut Graph, output_id: NodeId) -> Result<Vec<NodeI
         let kind = match node.op {
             GraphOp::Op(k) => k,
             // Leaves: nothing to differentiate through.
-            GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) => continue,
+            GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => continue,
         };
 
         let contribs = emit_vjp(graph, kind, &node, NodeId(i as u32), upstream)?;

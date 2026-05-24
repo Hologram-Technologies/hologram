@@ -25,6 +25,21 @@ pub enum GraphOp {
     Output,
     /// Inline constant referenced by `ConstantStore`.
     Constant(ConstantId),
+    /// Removed by a fusion pass. The compiler and scheduler skip Dead
+    /// nodes. Using a sentinel variant instead of `Option<Node>` avoids
+    /// invalidating arena indices.
+    Dead,
+}
+
+impl GraphOp {
+    /// Returns `true` for elementwise-unary activation ops that are
+    /// valid epilogue targets for MatMul/Conv/Norm fusion.
+    pub fn is_fusable_activation(self) -> bool {
+        match self {
+            GraphOp::Op(k) => k.is_fusable_activation(),
+            _ => false,
+        }
+    }
 }
 
 /// Where a node's input value comes from.
@@ -45,37 +60,36 @@ pub struct Node {
     pub output_shape: ShapeId,
 }
 
-/// Quantization attributes (spec X-5). Symmetric INT8/INT4 scheme:
-/// `dequantized = (q − zero_point) · scale`. Stored on `Graph::quant_attrs`
-/// keyed by `NodeId` rather than inlined into `Node` so that ordinary nodes
-/// pay no per-instance overhead.
-///
-/// `axis < 0` is **per-tensor** (one scalar `scale_bits`/`zero_point`).
-/// `axis >= 0` is **per-channel** along that axis (ONNX `DequantizeLinear`
-/// per-axis): the dequantize node then carries the per-channel `scale` (f32)
-/// and `zero_point` (i32) vectors as its 2nd and 3rd operands, and the
-/// compiler derives the channel count / inner stride from the input shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Fusion epilogue metadata (spec VI.3). Stored on `Graph::fusion_attrs`
+/// keyed by `NodeId`. Captures the epilogue activation to apply after a
+/// fused op (e.g., `FusedMatMulActivation`) or the full chain for
+/// `FusedUnaryChain`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FusionAttrs {
+    /// The activation op discriminant (e.g. `OpKind::Relu as u16`).
+    /// For `FusedUnaryChain`, this is the first element of the chain.
+    pub activation: u16,
+    /// Number of ops in the chain (1..=8). 0 means single activation.
+    pub chain_len: u8,
+    /// Chained activation discriminants. `chain[0]` is redundant with
+    /// `activation` when `chain_len > 0`.
+    pub chain: [u16; 8],
+}
+
+/// Per-tensor quantization attributes (spec X-5). Symmetric INT8/INT4
+/// scheme: `dequantized = (q − zero_point) · scale`. Stored on
+/// `Graph::quant_attrs` keyed by `NodeId` rather than inlined into
+/// `Node` so that ordinary nodes pay no per-instance overhead.
+/// Per-channel quantization is a future extension layered as multiple
+/// `QuantAttrs` keyed on the channel axis.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QuantAttrs {
     /// Source quantized dtype (DTypeI8 or DTypeI4 numeric tag).
     pub quant_dtype: u8,
-    /// `f32::to_bits` of the per-tensor scale (per-tensor mode only).
+    /// `f32::to_bits` of the per-tensor scale.
     pub scale_bits: u32,
-    /// Symmetric zero-point (per-tensor mode only).
+    /// Symmetric zero-point.
     pub zero_point: i32,
-    /// Quantization axis: `< 0` ⇒ per-tensor; `>= 0` ⇒ per-channel along it.
-    pub axis: i32,
-}
-
-impl Default for QuantAttrs {
-    fn default() -> Self {
-        Self {
-            quant_dtype: 0,
-            scale_bits: 0,
-            zero_point: 0,
-            axis: -1,
-        }
-    }
 }
 
 /// Per-node convolution attributes (stride / padding / dilation).
@@ -147,32 +161,4 @@ impl Default for LrnAttrs {
             bias_bits: 1.0f32.to_bits(),
         }
     }
-}
-
-/// Per-node normalization grouping attribute. Stored sparsely on
-/// `Graph::norm_attrs` keyed by `NodeId`. Only `GroupNorm` reads it; the
-/// compiler derives `InstanceNorm`'s effective group count (= channels) and
-/// leaves `LayerNorm`/`RmsNorm` ungrouped. `num_groups = 1` is plain
-/// per-sample normalization over all channels × spatial (the ONNX default
-/// for GroupNorm is supplied explicitly by the frontend).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NormAttrs {
-    pub num_groups: u32,
-}
-
-impl Default for NormAttrs {
-    fn default() -> Self {
-        Self { num_groups: 1 }
-    }
-}
-
-/// Per-node reduction axes (ONNX `axes` + `keepdims`). Stored sparsely on
-/// `Graph::reduce_attrs` keyed by `NodeId`. `axes_mask` bit `i` set ⇒ reduce
-/// axis `i`. A node with no attached `ReduceAttrs` reduces over **all** axes
-/// (full reduction to a scalar — the default), so existing graphs are
-/// unaffected.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct ReduceAttrs {
-    pub axes_mask: u32,
-    pub keepdims: bool,
 }

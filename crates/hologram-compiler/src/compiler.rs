@@ -99,7 +99,11 @@ impl Compiler {
         // it also simplifies the primitive pipelines composites expand into.
         self.graph.elide_invariants();
 
-        // Schedule.
+        // Fusion passes: run before scheduling to allow the fusion
+        // engine to rewrite the graph (kill/rewire nodes).
+        let _fusion_stats = hologram_graph::fusion::fuse(&mut self.graph);
+
+        // Schedule (recomputed after fusion may have killed nodes).
         self.graph.compute_schedule();
 
         let mut stats = CompilationStats {
@@ -177,7 +181,7 @@ impl Compiler {
                 };
                 let kind = match node.op {
                     GraphOp::Op(k) => k,
-                    GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) => continue,
+                    GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => continue,
                 };
 
                 // Steps 3-5: emit Term tree and validate the per-node CompileUnit.
@@ -251,6 +255,10 @@ impl Compiler {
                     .graph
                     .quant_attrs(hologram_graph::NodeId(idx as u32))
                     .unwrap_or_default();
+                let fusion_attrs = self
+                    .graph
+                    .fusion_attrs(hologram_graph::NodeId(idx as u32))
+                    .unwrap_or_default();
                 let lowered = LoweredNode {
                     kind,
                     inputs: collect_buffers(&self.graph, node, &byte_lengths),
@@ -285,6 +293,9 @@ impl Compiler {
                             inner,
                         }
                     },
+                    fusion_activation: fusion_attrs.activation,
+                    fusion_chain_len: fusion_attrs.chain_len,
+                    fusion_chain: fusion_attrs.chain,
                 };
                 let mut kernel_call = lower::lower(&lowered)?;
                 // Slice = `ProjectField`: point the input BufferRef at the

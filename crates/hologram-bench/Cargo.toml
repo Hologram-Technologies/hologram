@@ -44,6 +44,14 @@ name = "compiler"
 harness = false
 
 [[bench]]
+name = "epilogue_fusion"
+harness = false
+
+[[bench]]
+name = "fusion"
+harness = false
+
+[[bench]]
 name = "production"
 harness = false
 

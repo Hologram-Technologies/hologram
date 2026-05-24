@@ -13,6 +13,7 @@ pub mod constant;
 pub mod graph;
 pub mod node;
 pub mod registry;
+pub mod fusion;
 pub mod schedule;
 
 pub use backward::{append_backward, BackwardError};
@@ -20,8 +21,7 @@ pub use constant::ConstantStore;
 pub use graph::Graph;
 pub use hologram_ops::OpKind;
 pub use node::{
-    ConstantId, ConvAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs, QuantAttrs,
-    ReduceAttrs,
+    ConstantId, ConvAttrs, FusionAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs,
 };
 pub use registry::{DTypeId, ShapeDescriptor, ShapeId, ShapeRegistry};
 pub use schedule::Schedule;

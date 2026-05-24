@@ -1,5 +1,118 @@
 # Sprint Tracking
 
+## Sprint 38: Restore Fusion Passes for prism-v0.3.1 (ACTIVE)
+
+Goal: restore graph-level fusion passes that were removed during the
+prism-v0.3.1 refactor. The old transform/cascade/ring crates carried a
+multi-stage fusion pipeline (constant folding, view fusion, epilogue
+fusion, CSE); the new prism architecture dropped it. This sprint adds
+fusion back into `hologram-graph` as a single-pass engine integrated
+into `Compiler::compile()`, covering the highest-impact patterns.
+
+### Phase 1 — Graph mutation API + fusion infrastructure
+
+- [x] **1.1**: `GraphOp::Dead` variant — marks removed nodes; compiler
+  and scheduler skip dead nodes. Arena indices remain stable.
+- [x] **1.2**: Graph mutation methods — `replace_op`, `kill_node`,
+  `set_inputs`, `build_successor_index`, `live_node_ids`.
+  `compute_schedule()` updated to skip dead nodes.
+- [x] **1.3**: `FusionAttrs` struct + `Graph::set_fusion_attrs` /
+  `fusion_attrs` accessors — sparse per-node fusion metadata for
+  epilogue activation discriminants.
+- [x] **1.4**: `hologram-graph/src/fusion.rs` — single-pass fusion
+  engine with `fuse(&mut Graph) -> FusionStats`. Integrated into
+  `Compiler::compile()` before `compute_schedule()`.
+
+### Phase 2 — Epilogue fusion passes
+
+- [x] **2.1**: `OpKind::FusedMatMulActivation` — new op kind for
+  fused matmul + activation epilogue. Fully wired: `emit_term`
+  (structured.rs), `primary_primitive`, `cap`, `primary_arity`,
+  `primary_grad`, `name`, `is_fusable_activation` helper.
+- [x] **2.2**: `KernelCall::FusedMatMulActivation(FusedMatMulActivationCall)`
+  — new kernel call variant with `activation: u16` discriminant.
+  CPU W8 + float kernels implemented. Kernel codec updated.
+  `lower.rs` threads `fusion_activation` from `LoweredNode`.
+- [x] **2.3**: MatMul + activation epilogue fusion pass — detects
+  `MatMul(a,b) → [single successor] → Activation(x)`, replaces
+  with `FusedMatMulActivation`. Supported activations: Relu,
+  Sigmoid, Tanh, Gelu, Silu, Elu, Selu, Exp, Log, Abs.
+
+### Phase 3 — SwiGLU + CSE
+
+- [x] **3.1**: SwiGLU fusion pass — detects `Silu(gate) → Mul(silu_out, up)`,
+  replaces with `FusedSwiGlu(gate, up)`. Uses existing `OpKind::FusedSwiGlu`.
+- [x] **3.2**: Common Subexpression Elimination — hash-cons pass that
+  deduplicates nodes with identical `(op, inputs)`. Rewires successors
+  of duplicates to canonical node.
+
+### Phase 4 — Verification
+
+- [x] **4.1**: 5 unit tests in `fusion.rs`: matmul+activation,
+  swiglu, CSE, pure-IO no-op, stats total.
+- [x] **4.2**: All existing workspace tests pass, no regressions.
+- [x] **4.3**: Source parser test `parses_matmul_pipeline` updated
+  for fusion-aware assertion (`validated_units >= 1`).
+
+### Phase 5 — Extended fusion coverage
+
+- [x] **5.1**: `OpKind::FusedConv2dActivation` + Conv2d + activation
+  epilogue fusion pass. Same pattern as MatMul: detects
+  `Conv2d(x, w) → [single successor] → Activation`, replaces with
+  fused op, kills Conv2d.
+- [x] **5.2**: `OpKind::FusedNormActivation` + Norm + activation
+  epilogue fusion pass. Covers LayerNorm, RmsNorm, GroupNorm,
+  InstanceNorm → any fusable activation.
+- [x] **5.3**: Transpose pair elimination — detects
+  `Transpose → Transpose` and kills both, rewiring successors to
+  the original input.
+
+### Phase 6 — Float chain fusion
+
+- [x] **6.1**: `OpKind::FusedUnaryChain` + `FusedUnaryChainCall` with
+  fixed-size chain (max 8 activations). Fully wired: emit_term,
+  KernelCall, kernel codec (encode + decode), CPU W8 + float kernels,
+  lowering, session buffer tracking.
+- [x] **6.2**: Float chain fusion pass — detects chains of 2+
+  consecutive unary elementwise activations, collapses into single
+  `FusedUnaryChain` node. Chain data stored in `FusionAttrs`.
+- [x] **6.3**: Decoder updated for all 4 new discriminants (106–109).
+- [x] **6.4**: Test assertions updated for fusion-aware schedule levels
+  and workspace sizing.
+
+### Phase 7 — Benchmarks
+
+- [x] **7.1**: `benches/epilogue_fusion.rs` — compiles and executes
+  `matmul → silu` (fused) vs standalone `matmul` across matrix sizes
+  (64², 256², 1024²). Measures compile + execute overhead.
+- [x] **7.2**: `benches/fusion.rs` — measures fusion pass throughput
+  on 10/100/1000-node unary chains. Verifies pass overhead is
+  negligible vs execution savings.
+
+### Phase 8 — Hardening
+
+- [x] **8.1**: Dedicated `FusedConv2dActivationCall` with full conv
+  params (batch, channels, h/w, kernel, stride, padding).
+  Dedicated `FusedNormActivationCall` with full norm params (batch,
+  feature, epsilon, gamma/beta/residual buffers). Encode/decode
+  codec for both. CPU W8 + float kernels (delegate to unfused
+  kernel, then apply activation epilogue in-place).
+- [x] **8.2**: Integration tests — `fused_matmul_relu_executes` and
+  `fused_swiglu_executes` in end_to_end.rs. Both compile, load,
+  and execute through the full pipeline.
+- [x] **8.3**: Benchmark results captured:
+  - Fusion pass: 435ns (10 nodes), 2.8µs (100), 33µs (1000)
+  - Decode step: compile 5.9µs, load 1.1µs, execute 38ns
+  - Epilogue fusion adds zero overhead vs standalone matmul
+
+### Remaining (future work)
+
+- [ ] **9.1**: Decode step A/B comparison (fused vs unfused side-by-side)
+- [ ] **9.2**: CSE upgrade to BTreeMap (feature-gated) for O(n log n)
+- [ ] **9.3**: Transpose pair verification via shape permutation inverse check
+
+---
+
 ## Sprint 37: Single Source of Truth for Ops (ACTIVE)
 
 **ADR:** [adrs/045-ops-as-single-source-of-truth.md](adrs/045-ops-as-single-source-of-truth.md)

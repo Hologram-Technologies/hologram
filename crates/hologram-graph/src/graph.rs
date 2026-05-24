@@ -1,15 +1,13 @@
 //! `Graph` structure (spec VI.1).
 
 use crate::constant::{ConstantEntry, ConstantStore};
-use crate::node::{
-    ConvAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs, QuantAttrs,
-    ReduceAttrs,
-};
+use crate::node::{ConvAttrs, FusionAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs};
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
 use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
+
 
 /// Remap an `InputSource::Node` through an old→new node-id table; constants
 /// and graph-input ports are id-independent and pass through unchanged.
@@ -114,10 +112,9 @@ pub struct Graph {
     lrn_attrs: Vec<(NodeId, LrnAttrs)>,
     /// Sparse per-node GEMM scalars (α / β). Same layout.
     gemm_attrs: Vec<(NodeId, GemmAttrs)>,
-    /// Sparse per-node normalization grouping (`num_groups`). Same layout.
-    norm_attrs: Vec<(NodeId, NormAttrs)>,
-    /// Sparse per-node reduction axes (`axes_mask` / `keepdims`). Same layout.
-    reduce_attrs: Vec<(NodeId, ReduceAttrs)>,
+    /// Sparse per-node fusion metadata (spec VI.3). Keyed on `NodeId`.
+    /// Stores epilogue activation discriminants for fused ops.
+    fusion_attrs: Vec<(NodeId, FusionAttrs)>,
 }
 
 impl Graph {
@@ -251,38 +248,6 @@ impl Graph {
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
-    /// Attach normalization grouping (`num_groups`) to a node (GroupNorm).
-    pub fn set_norm_attrs(&mut self, id: NodeId, attrs: NormAttrs) {
-        if let Some(slot) = self.norm_attrs.iter_mut().find(|(k, _)| *k == id) {
-            slot.1 = attrs;
-        } else {
-            self.norm_attrs.push((id, attrs));
-        }
-    }
-
-    /// Retrieve normalization grouping for a node, or `None` if unset.
-    pub fn norm_attrs(&self, id: NodeId) -> Option<NormAttrs> {
-        self.norm_attrs
-            .iter()
-            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
-    }
-
-    /// Attach reduction axes (`axes_mask` / `keepdims`) to a node.
-    pub fn set_reduce_attrs(&mut self, id: NodeId, attrs: ReduceAttrs) {
-        if let Some(slot) = self.reduce_attrs.iter_mut().find(|(k, _)| *k == id) {
-            slot.1 = attrs;
-        } else {
-            self.reduce_attrs.push((id, attrs));
-        }
-    }
-
-    /// Retrieve reduction axes for a node, or `None` (⇒ reduce all axes).
-    pub fn reduce_attrs(&self, id: NodeId) -> Option<ReduceAttrs> {
-        self.reduce_attrs
-            .iter()
-            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
-    }
-
     /// **Path B — desugar composite ops into their primitive pipelines.**
     ///
     /// A composite op (e.g. `Clip`) has no single optimized kernel; its meaning
@@ -398,12 +363,6 @@ impl Graph {
             *nid = NodeId(map[nid.0 as usize]);
         }
         for (nid, _) in self.gemm_attrs.iter_mut() {
-            *nid = NodeId(map[nid.0 as usize]);
-        }
-        for (nid, _) in self.norm_attrs.iter_mut() {
-            *nid = NodeId(map[nid.0 as usize]);
-        }
-        for (nid, _) in self.reduce_attrs.iter_mut() {
             *nid = NodeId(map[nid.0 as usize]);
         }
         self.nodes = new;
@@ -561,12 +520,6 @@ impl Graph {
         for (nid, _) in self.gemm_attrs.iter_mut() {
             *nid = to_id(map[nid.0 as usize]);
         }
-        for (nid, _) in self.norm_attrs.iter_mut() {
-            *nid = to_id(map[nid.0 as usize]);
-        }
-        for (nid, _) in self.reduce_attrs.iter_mut() {
-            *nid = to_id(map[nid.0 as usize]);
-        }
         self.nodes = new;
 
         // ── Phase 2: dead-node elimination ──
@@ -624,10 +577,7 @@ impl Graph {
             for (nid, _) in self.gemm_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
-            for (nid, _) in self.norm_attrs.iter_mut() {
-                *nid = NodeId(dmap[nid.0 as usize]);
-            }
-            for (nid, _) in self.reduce_attrs.iter_mut() {
+            for (nid, _) in self.fusion_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             self.nodes = compact;
@@ -635,6 +585,72 @@ impl Graph {
 
         self.schedule = None;
         before.saturating_sub(self.nodes.len())
+    }
+
+    /// Attach fusion metadata to a node. Used by fusion passes to
+    /// record the epilogue activation discriminant.
+    pub fn set_fusion_attrs(&mut self, id: NodeId, attrs: FusionAttrs) {
+        if let Some(slot) = self.fusion_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.fusion_attrs.push((id, attrs));
+        }
+    }
+
+    pub fn fusion_attrs(&self, id: NodeId) -> Option<FusionAttrs> {
+        self.fusion_attrs.iter().find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
+    // --- Mutation API (used by fusion passes) ---
+
+    /// Replace the op of a node in-place. Used by fusion to swap an
+    /// activation node's op to a fused variant.
+    pub fn replace_op(&mut self, id: NodeId, new_op: crate::node::GraphOp) {
+        if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+            node.op = new_op;
+        }
+    }
+
+    /// Mark a node as dead (removed by fusion). The compiler and
+    /// scheduler skip dead nodes. Arena indices remain stable.
+    pub fn kill_node(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+            node.op = crate::node::GraphOp::Dead;
+            node.inputs.clear();
+        }
+    }
+
+    /// Set the inputs of a node. Used by fusion to rewire edges.
+    pub fn set_inputs(&mut self, id: NodeId, inputs: SmallVec<[InputSource; 4]>) {
+        if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+            node.inputs = inputs;
+        }
+    }
+
+    /// Build a reverse-edge index: `successors[i]` = list of nodes that
+    /// consume node `i` as an input. O(V + E).
+    pub fn build_successor_index(&self) -> Vec<SmallVec<[NodeId; 4]>> {
+        let n = self.nodes.len();
+        let mut succ: Vec<SmallVec<[NodeId; 4]>> = vec![SmallVec::new(); n];
+        for (i, node) in self.nodes.iter().enumerate() {
+            for input in &node.inputs {
+                if let InputSource::Node(NodeId(parent)) = input {
+                    let p = *parent as usize;
+                    if p < n {
+                        succ[p].push(NodeId(i as u32));
+                    }
+                }
+            }
+        }
+        succ
+    }
+
+    /// Return the list of node IDs that are still alive (not Dead).
+    pub fn live_node_ids(&self) -> Vec<NodeId> {
+        self.nodes.iter().enumerate()
+            .filter(|(_, n)| n.op != crate::node::GraphOp::Dead)
+            .map(|(i, _)| NodeId(i as u32))
+            .collect()
     }
 
     /// Topological-sort + level-grouping schedule construction.
@@ -645,12 +661,17 @@ impl Graph {
             return;
         }
         let mut depth = vec![0u32; n];
+        let mut alive = vec![true; n];
         for (i, node) in self.nodes.iter().enumerate() {
+            if node.op == crate::node::GraphOp::Dead {
+                alive[i] = false;
+                continue;
+            }
             let mut d = 0u32;
             for input in &node.inputs {
                 if let InputSource::Node(NodeId(parent)) = input {
                     let parent = *parent as usize;
-                    if parent < i {
+                    if parent < i && alive[parent] {
                         d = d.max(depth[parent] + 1);
                     }
                 }
@@ -662,11 +683,13 @@ impl Graph {
         for level in 0..=max_depth {
             let mut group: SmallVec<[NodeId; 16]> = SmallVec::new();
             for (i, &d) in depth.iter().enumerate() {
-                if d as usize == level {
+                if d as usize == level && alive[i] {
                     group.push(NodeId(i as u32));
                 }
             }
-            sched.levels.push(group);
+            if !group.is_empty() {
+                sched.levels.push(group);
+            }
         }
         self.schedule = Some(sched);
     }

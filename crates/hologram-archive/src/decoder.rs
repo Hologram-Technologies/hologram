@@ -3,9 +3,10 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantizeCall,
-    ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall,
-    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall,
+    FusedConv2dActivationCall, FusedMatMulActivationCall, FusedNormActivationCall,
+    FusedUnaryChainCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
+    MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall,
     ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
@@ -172,55 +173,11 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
             residual: cur.buf()?,
             act: cur.u8()?,
         }),
-        111 => K::MatMulDequant(read_matmul_dequant(cur)?),
-        112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
+        111 => K::FusedMatMulActivation(read_fused_matmul_act(cur)?),
+        112 => K::FusedConv2dActivation(read_fused_conv2d_act(cur)?),
+        113 => K::FusedNormActivation(read_fused_norm_act(cur)?),
+        114 => K::FusedUnaryChain(read_fused_unary_chain(cur)?),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
-    })
-}
-
-fn read_broadcast_binary(c: &mut Cursor<'_>) -> Result<BroadcastBinaryCall, ArchiveError> {
-    let small = c.buf()?;
-    let other = c.buf()?;
-    let output = c.buf()?;
-    let rank = c.u8()?;
-    let op = c.u8()?;
-    let small_is_lhs = c.u8()? != 0;
-    let dtype = c.u8()?;
-    let mut in_dims = [0u32; 8];
-    let mut out_dims = [0u32; 8];
-    for i in 0..rank as usize {
-        in_dims[i] = c.u32()?;
-        out_dims[i] = c.u32()?;
-    }
-    Ok(BroadcastBinaryCall {
-        small,
-        other,
-        output,
-        rank,
-        in_dims,
-        out_dims,
-        op,
-        small_is_lhs,
-        dtype,
-    })
-}
-
-fn read_matmul_dequant(c: &mut Cursor<'_>) -> Result<MatMulDequantCall, ArchiveError> {
-    Ok(MatMulDequantCall {
-        a: c.buf()?,
-        bq: c.buf()?,
-        scales: c.buf()?,
-        zero_points: c.buf()?,
-        output: c.buf()?,
-        m: c.u32()?,
-        k: c.u32()?,
-        n: c.u32()?,
-        channels: c.u32()?,
-        inner: c.u32()?,
-        quant_dtype: c.u8()?,
-        dtype: c.u8()?,
-        scale_bits: c.u32()?,
-        zero_point: c.u32()? as i32,
     })
 }
 
@@ -315,33 +272,18 @@ fn read_norm(c: &mut Cursor<'_>) -> Result<NormCall, ArchiveError> {
         output: c.buf()?,
         batch: c.u32()?,
         feature: c.u32()?,
-        channels: c.u32()?,
-        num_groups: c.u32()?,
         epsilon_bits: c.u64()?,
         dtype: c.u8()?,
     })
 }
 fn read_reduce(c: &mut Cursor<'_>) -> Result<ReduceCall, ArchiveError> {
-    let input = c.buf()?;
-    let output = c.buf()?;
-    let element_count = c.u64()?;
-    let rank = c.u8()?;
-    let axes_mask = c.u32()?;
-    let keepdims = c.u8()? != 0;
-    let dtype = c.u8()?;
-    let mut dims = [0u32; 8];
-    for d in dims.iter_mut().take(rank as usize) {
-        *d = c.u32()?;
-    }
     Ok(ReduceCall {
-        input,
-        output,
-        element_count,
-        rank,
-        dims,
-        axes_mask,
-        keepdims,
-        dtype,
+        input: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u64()?,
+        axis_count: c.u32()?,
+        keepdims: c.u8()? != 0,
+        dtype: c.u8()?,
     })
 }
 fn read_layout(c: &mut Cursor<'_>) -> Result<LayoutCall, ArchiveError> {
@@ -470,15 +412,50 @@ fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
         dtype: c.u8()?,
     })
 }
+fn read_fused_conv2d_act(c: &mut Cursor<'_>) -> Result<FusedConv2dActivationCall, ArchiveError> {
+    Ok(FusedConv2dActivationCall {
+        x: c.buf()?, w: c.buf()?, output: c.buf()?,
+        batch: c.u32()?, channels_in: c.u32()?, channels_out: c.u32()?,
+        h_in: c.u32()?, w_in: c.u32()?, h_out: c.u32()?, w_out: c.u32()?,
+        k_h: c.u32()?, k_w: c.u32()?,
+        stride_h: c.u32()?, stride_w: c.u32()?,
+        pad_h: c.u32()?, pad_w: c.u32()?,
+        dtype: c.u8()?, activation: c.u16()?,
+    })
+}
+fn read_fused_norm_act(c: &mut Cursor<'_>) -> Result<FusedNormActivationCall, ArchiveError> {
+    Ok(FusedNormActivationCall {
+        x: c.buf()?, gamma: c.buf()?, beta: c.buf()?,
+        residual: c.buf()?, output: c.buf()?,
+        batch: c.u32()?, feature: c.u32()?,
+        epsilon_bits: c.u64()?, dtype: c.u8()?,
+        activation: c.u16()?,
+    })
+}
+fn read_fused_matmul_act(c: &mut Cursor<'_>) -> Result<FusedMatMulActivationCall, ArchiveError> {
+    Ok(FusedMatMulActivationCall {
+        a: c.buf()?, b: c.buf()?, output: c.buf()?,
+        m: c.u32()?, k: c.u32()?, n: c.u32()?,
+        dtype: c.u8()?, activation: c.u16()?,
+    })
+}
+fn read_fused_unary_chain(c: &mut Cursor<'_>) -> Result<FusedUnaryChainCall, ArchiveError> {
+    let input = c.buf()?;
+    let output = c.buf()?;
+    let element_count = c.u32()?;
+    let dtype = c.u8()?;
+    let chain_len = c.u8()?;
+    let mut chain = [0u16; 8];
+    for slot in &mut chain {
+        *slot = c.u16()?;
+    }
+    Ok(FusedUnaryChainCall { input, output, element_count, dtype, chain_len, chain })
+}
 fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
     Ok(DequantizeCall {
         input: c.buf()?,
-        scales: c.buf()?,
-        zero_points: c.buf()?,
         output: c.buf()?,
         element_count: c.u64()?,
-        channels: c.u32()?,
-        inner: c.u32()?,
         quant_dtype: c.u8()?,
         dtype: c.u8()?,
         scale_bits: c.u32()?,
