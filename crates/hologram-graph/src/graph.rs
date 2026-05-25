@@ -155,7 +155,10 @@ impl Graph {
     /// Returns the number of composite nodes expanded.
     pub fn desugar_composites(&mut self) -> usize {
         use crate::OpKind as K;
-        let is_composite = |n: &Node| matches!(n.op, GraphOp::Op(K::Clip) if n.inputs.len() >= 3);
+        let is_composite = |n: &Node| {
+            matches!(n.op, GraphOp::Op(K::Clip) if n.inputs.len() >= 3)
+                || matches!(n.op, GraphOp::Op(K::FusedSwiGlu) if n.inputs.len() >= 3)
+        };
         if !self.nodes.iter().any(is_composite) {
             return 0;
         }
@@ -192,6 +195,35 @@ impl Graph {
                     });
                     expanded += 1;
                     min_id
+                }
+                GraphOp::Op(K::FusedSwiGlu) if inputs.len() >= 3 => {
+                    // SwiGLU(x, W_gate, W_up) = Silu(x·W_gate) ⊙ (x·W_up).
+                    // Reuses the matmul engine + verified Silu/Mul kernels; the
+                    // matmul intermediates carry the composite's [m,n] output
+                    // shape (ShapeArgs derives m,k,n from the operand shapes).
+                    let (x, w_gate, w_up) = (inputs[0], inputs[1], inputs[2]);
+                    let mk_node = |op, ins: &[InputSource]| Node {
+                        op: GraphOp::Op(op),
+                        inputs: SmallVec::from_iter(ins.iter().copied()),
+                        output_dtype: node.output_dtype,
+                        output_shape: node.output_shape,
+                    };
+                    let gate_id = new.len() as u32;
+                    new.push(mk_node(K::MatMul, &[x, w_gate]));
+                    let silu_id = new.len() as u32;
+                    new.push(mk_node(K::Silu, &[InputSource::Node(NodeId(gate_id))]));
+                    let up_id = new.len() as u32;
+                    new.push(mk_node(K::MatMul, &[x, w_up]));
+                    let mul_id = new.len() as u32;
+                    new.push(mk_node(
+                        K::Mul,
+                        &[
+                            InputSource::Node(NodeId(silu_id)),
+                            InputSource::Node(NodeId(up_id)),
+                        ],
+                    ));
+                    expanded += 1;
+                    mul_id
                 }
                 _ => {
                     let id = new.len() as u32;

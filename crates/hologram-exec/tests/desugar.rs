@@ -108,3 +108,109 @@ fn clip_desugars_and_clamps_end_to_end() {
         "no element was clamped — desugaring degenerated to identity"
     );
 }
+
+fn ref_matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    let mut o = vec![0f32; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0f64;
+            for p in 0..k {
+                acc += f64::from(a[i * k + p]) * f64::from(b[p * n + j]);
+            }
+            o[i * n + j] = acc as f32;
+        }
+    }
+    o
+}
+
+#[test]
+fn swiglu_desugars_and_computes_end_to_end() {
+    // SwiGLU(x, W_gate, W_up) = Silu(x·W_gate) ⊙ (x·W_up). Desugars to
+    // MatMul, Silu, MatMul, Mul — all existing verified kernels.
+    let (m, k, n) = (2usize, 3usize, 4usize);
+    let x: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.1 - 0.3).collect();
+    let wg: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.05 - 0.2).collect();
+    let wu: Vec<f32> = (0..k * n).map(|i| 0.3 - (i as f32) * 0.04).collect();
+
+    // Reference: silu(x·Wg) ⊙ (x·Wu).
+    let g = ref_matmul(&x, &wg, m, k, n);
+    let u = ref_matmul(&x, &wu, m, k, n);
+    let want: Vec<f32> = g
+        .iter()
+        .zip(&u)
+        .map(|(&gv, &uv)| {
+            let silu = gv / (1.0 + (-gv).exp());
+            silu * uv
+        })
+        .collect();
+
+    let mut gr = Graph::new();
+    let sx = gr
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = gr
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = gr
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let wg_c = gr.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&wg),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sw,
+    });
+    let wu_c = gr.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&wu),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sw,
+    });
+    let xi = gr.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sx,
+    });
+    gr.add_input(xi);
+    let sg = gr.add_node(Node {
+        op: GraphOp::Op(OpKind::FusedSwiGlu),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(xi),
+            InputSource::Constant(wg_c),
+            InputSource::Constant(wu_c),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let out = gr.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(sg)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    gr.add_output(out);
+
+    let compiled = compile(gr, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+
+    assert_eq!(got.len(), m * n);
+    let scale = want.iter().fold(0f64, |mx, &v| mx.max(f64::from(v).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 1e-4, "SwiGLU diverged from reference (err {err:.3e})");
+    assert!(
+        got.iter().any(|&v| v.abs() > 1e-6),
+        "SwiGLU output all-zero — desugaring degenerated"
+    );
+}
