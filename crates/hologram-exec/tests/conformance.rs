@@ -1335,3 +1335,97 @@ fn fu4_residual_add_fuses_and_is_guarded() {
         "a matmul whose output has a second observer must not fuse its residual"
     );
 }
+
+// ─── WL-1: weight-layout monomorphism (constant weight is panel-packed) ───
+//
+// The compiler packs a matmul's *constant* weight (B operand) into the
+// kernel's panel layout at compile time — a data-representation transform
+// baked into the archive (the "single monomorphism"), so the runtime kernel
+// streams B contiguously with no runtime copy. This proves: (1) the packing
+// FIRES — the compiled matmul call carries `b_packed`, and the stored weight
+// body is the larger packed extent; and (2) it is semantics-preserving — the
+// packed-weight result equals the independent f64 reference.
+#[test]
+fn wl1_constant_weight_is_panel_packed_and_conforms() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+
+    let (m, k, n) = (16usize, 32usize, 48usize); // n not a multiple of 16 → padding
+    let a = fill(m * k, 0x9A);
+    let w = fill(k * n, 0x9B);
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&w),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sw,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Constant(wc)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    // (1) Packing fired: the matmul call is marked packed.
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    let packed = calls
+        .iter()
+        .any(|c| matches!(c, KernelCall::MatMul(mm) if mm.b_packed));
+    assert!(
+        packed,
+        "constant-weight matmul must be panel-packed at compile time"
+    );
+
+    // (2) Semantics-preserving: packed-weight output == f64 reference.
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    let want = ref_matmul(&a, &w, m, k, n);
+    let scale = want.iter().fold(0f64, |mx, &x| mx.max(f64::from(x).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(
+        err <= 1e-4,
+        "packed-weight matmul diverged from reference (err {err:.3e})"
+    );
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
+}

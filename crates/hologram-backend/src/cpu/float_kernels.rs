@@ -143,10 +143,11 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     let a = reads[0]
         .get(..m * k * es)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
-    // A packed-B weight occupies `⌈n/16⌉·16·k` elements (≥ k·n); a plain
-    // weight is row-major `k×n`. View the matching extent.
+    // A packed-B weight occupies `layout::packed_len(k,n)` elements (≥ k·n);
+    // a plain weight is row-major `k×n`. View the matching extent (the packed
+    // length comes from the single source of truth for the layout).
     let b_len = if c.b_packed {
-        n.div_ceil(16) * 16 * k * es
+        crate::layout::packed_len(k, n) * es
     } else {
         k * n * es
     };
