@@ -21,6 +21,7 @@
 | **WS** | Warm-start — the compiled object carries the constant-derivation lattice (+ materialized fold results) so the runtime cache is never cold; warm ≡ cold byte-identically | compiler/exec tests (baked==derived, cone-complete, dispatch elision, warm==cold) |
 | **WL** | Weight-layout monomorphism — constant matmul weights are panel-packed at compile time into the kernel's contiguous-read layout (zero runtime copy), semantics-preserving | compiler/exec test (packing fires + packed==f64) |
 | **PV** | Performance — every part within budget, no bottlenecks | benches with baselines/budgets |
+| **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
 
@@ -208,9 +209,28 @@
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **PV-1** | f32 matmul clears a conservative throughput floor (≥1 GFLOP/s at 256³, best-of-N) and stays within the cubic scaling envelope (256³/64³ time ∈ [16,400]) — catching scalar-fallback / super-cubic / degenerate-short-cut bottlenecks. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv1_matmul_throughput_floor_and_scaling` | ✅ |
+| **PV-1c** | **Cache-hierarchy V&V (machine-independent).** The cache-oblivious recursion keeps per-FLOP throughput from collapsing as the working set grows past each cache level (compulsory-only misses): 512³ (~3 MiB operands ≫ L2) retains ≥60% of 128³'s (L2-resident) GFLOP/s — a cache-blind kernel cliffs far below; the recursion holds ~90%. Verifies the UOR hierarchical model maximizes cache hits across workloads, without hardware counters. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv1c_cache_oblivious_efficiency_holds_across_scale` | ✅ |
 | **PV-2** | Content-addressed reuse (graph-memo hit) is ≥8× faster than recompute — a same-machine ratio proving the reuse path is O(1)-ish and not secretly recomputing. Release-only. | release perf test | `hologram-exec/tests/performance.rs::pv2_content_addressed_reuse_beats_recompute` | ✅ |
 | **PV-3** | The other heavy compute kernels (Conv2d, Attention) each carry a conservative throughput floor (best-of-N) so no part is a silent bottleneck. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv3_conv_and_attention_throughput_floors` | ✅ |
 | **PV-4** | A **production-representative** workload — a stacked transformer-MLP (`matmul → gelu → matmul → residual` per layer) — sustains a throughput floor under cold (all-novel) load, does **not break down across sizes** (d=256 keeps ≥¼ of d=128's per-FLOP throughput, so arbitrary sizes hold), and under serving reuse collapses to a whole-graph memo hit ≥8× faster than cold. Reports GFLOP/s, FLOP/core-cycle, and ms/inference. Release-only; mirrored by the `production` criterion bench. | release perf test + bench | `hologram-exec/tests/performance.rs::pv4_production_mlp_throughput_latency_and_scaling`, `hologram-bench/benches/production.rs` | ✅ |
+
+## PA — Parallel execution (the whole processor surface)
+
+> Parallelism is the **same lattice recursion**, read as a task DAG: an M/N
+> split of the cache-oblivious matmul yields disjoint-output, independent
+> sub-products (lattice nodes). The pool (`cpu::parallel`, `std`-only, behind
+> `--features parallel`) cuts the recursion at the parallel grain — ≈one tile
+> per core (`output_tiles`) — and each tile runs the *sequential* recursion on
+> its **private L2**, so per-core cache locality is preserved (the hierarchy
+> compounds: each tile's working set fits one core's cache). Small ops stay
+> single-core (below `PAR_THRESHOLD`) so the single-core path stays optimal.
+> The feature is off by default (single-core unaffected); on, a single matmul
+> `dispatch` uses every core with no workspace splitting.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **PA-1** | Multi-core execution is **observationally invisible**: matmul (row-major and packed) run across the pool is byte-equal to the f64 reference and **deterministic** across repeated runs (the determinism loop is the data-race stress — disjoint output tiles must never alias). Holds for the sequential path too (feature off). | parallel conformance test (f64 ref + determinism) | `hologram-backend/tests/parallel.rs::pa1_parallel_matmul_matches_reference_and_is_deterministic` | ✅ |
+| **PA-2** | The pool **actually runs tasks concurrently** — `width` independent spins complete in `< 0.6×` their serial sum (a fully-serial drain == serial fails decisively). Regression guard for the `while let Some(t)=lock().pop_front()` footgun that held the queue lock across `t()` and silently serialized the pool. `output_tiles` exactly partitions the output (race-freedom witness). | pool concurrency + tile-partition unit tests | `hologram-backend/src/cpu/parallel.rs::{pool_diag::run_distributes_across_workers_concurrently, tests::output_tiles_partition_exactly_and_align}` | ✅ |
 
 ## OV — No fixed byte ceiling (ADR-060: operations don't overflow at scale)
 

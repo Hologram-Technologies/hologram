@@ -27,11 +27,14 @@ use core::sync::atomic::{AtomicU8, Ordering};
 /// 3 = AVX-512F, 4 = NEON.
 static SIMD_PATH: AtomicU8 = AtomicU8::new(0);
 
-/// Below this `m·k·n`, a matmul runs single-threaded: the pool's wake/barrier
-/// (~µs) only amortizes once the work is ≳ a few million FLOP. Production
-/// weight matmuls (e.g. 64·256·1024 ≈ 16M) clear it; tiny ops stay sequential.
+/// Below this `m·k·n`, a matmul runs single-threaded — keeping the small-op
+/// path single-core-optimal. The pool's wake/barrier + per-tile dispatch costs
+/// ~tens of µs, which only pays once the per-core slice is large enough: 128³
+/// (≈2.1M) is *faster* sequential (measured 46µs vs 59µs split), while 256³
+/// (≈16.8M) and production weight matmuls (e.g. 64·256·1024 ≈ 16.8M) win ~1.8×.
+/// The crossover sits between, so the grain is set at 8M.
 #[cfg(feature = "parallel")]
-const PAR_THRESHOLD: u64 = 1 << 20;
+const PAR_THRESHOLD: u64 = 1 << 23;
 
 #[inline]
 fn resolve_path() -> u8 {

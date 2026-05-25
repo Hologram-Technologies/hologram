@@ -128,6 +128,29 @@ fn pv1_matmul_throughput_floor_and_scaling() {
     );
 }
 
+#[test]
+fn pv1c_cache_oblivious_efficiency_holds_across_scale() {
+    // **Cache-hierarchy V&V (machine-independent).** The defining signature of
+    // the cache-oblivious lattice recursion is that per-FLOP throughput does
+    // **not** collapse as the working set grows past each cache level — the
+    // recursion keeps every sub-problem cache-resident, so misses stay
+    // compulsory, not capacity. 128³ operands (~192 KiB) live in L2; 512³
+    // (~3 MiB) far exceed it. If the hierarchy were *not* being leveraged, a
+    // naïve kernel would cliff (efficiency cratering with size). We require
+    // 512³ to retain ≥60% of 128³'s GFLOP/s — a fully-cache-blind kernel falls
+    // far below this; the cache-oblivious recursion holds ~90%.
+    let gflops = |n: usize, runs| 2.0 * (n as f64).powi(3) / matmul_best_secs(n, runs) / 1e9;
+    let g128 = gflops(128, 7);
+    let g512 = gflops(512, 3);
+    let retained = g512 / g128;
+    assert!(
+        retained >= 0.6,
+        "matmul efficiency collapsed at scale — 128³ {g128:.1} GFLOP/s, 512³ {g512:.1} GFLOP/s \
+         ({:.0}% retained, floor 60%): the cache hierarchy is not being leveraged uniformly",
+        100.0 * retained
+    );
+}
+
 fn best_secs(call: &KernelCall, slots: &[Vec<u8>], runs: usize) -> f64 {
     let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
     let mut ws = TestWorkspace {

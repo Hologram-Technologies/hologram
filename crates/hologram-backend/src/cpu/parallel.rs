@@ -95,9 +95,21 @@ impl Pool {
             }
         }
         self.shared.cv.notify_all();
-        // Calling thread helps drain.
-        while let Some(task) = self.shared.queue.lock().unwrap().pop_front() {
-            task();
+        // Calling thread helps drain. Pop in a scoped block so the queue
+        // `MutexGuard` is released **before** the task runs — a `while let
+        // Some(t) = lock().pop_front()` holds the guard across `t()` (the
+        // condition temporary lives to the end of the loop body), which
+        // serializes every worker behind the caller and silently turns the
+        // pool into a sequential drain.
+        loop {
+            let next = {
+                let mut q = self.shared.queue.lock().unwrap();
+                q.pop_front()
+            };
+            match next {
+                Some(task) => task(),
+                None => break,
+            }
         }
         // Wait for tasks still running on workers.
         let (m, cv) = &*remaining;
@@ -225,5 +237,45 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pool_diag {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The pool must run tasks **concurrently**, not drain them serially on
+    /// the calling thread. Regression guard for the `while let Some(t) =
+    /// lock().pop_front()` footgun (the queue guard outliving `t()` serialized
+    /// every worker behind the caller). `width` independent ~80 ms spins must
+    /// finish in well under the serial sum; we assert < 60% of serial, which a
+    /// fully-serial drain (== serial) fails decisively while staying immune to
+    /// scheduler jitter. Single-core hosts (width 1) skip — nothing to overlap.
+    #[test]
+    fn run_distributes_across_workers_concurrently() {
+        let p = pool();
+        let w = p.width();
+        if w < 2 {
+            return;
+        }
+        let spin = || {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(80) {
+                std::hint::spin_loop();
+            }
+        };
+        let t = Instant::now();
+        let tasks: Vec<Box<dyn FnOnce() + Send>> = (0..w)
+            .map(|_| Box::new(spin) as Box<dyn FnOnce() + Send>)
+            .collect();
+        p.run(tasks);
+        let wall = t.elapsed();
+        let serial = Duration::from_millis(80 * w as u64);
+        assert!(
+            wall < serial.mul_f64(0.6),
+            "pool ran {w} tasks in {wall:?}; serial≈{serial:?} — not concurrent \
+             (the calling thread is holding the queue lock across tasks)"
+        );
     }
 }
