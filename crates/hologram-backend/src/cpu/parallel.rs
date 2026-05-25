@@ -178,3 +178,52 @@ unsafe impl<T> Send for SendMut<T> {}
 #[derive(Clone, Copy)]
 pub struct SendConst<T>(pub *const T);
 unsafe impl<T> Send for SendConst<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tiles must **exactly partition** the output — every cell covered once
+    /// (the race-freedom witness for concurrent writers) — and honor the
+    /// column alignment, across a spread of shapes / grains / alignments.
+    #[test]
+    fn output_tiles_partition_exactly_and_align() {
+        for &(rows, cols) in &[
+            (64usize, 1024usize),
+            (1, 4096),
+            (4096, 1),
+            (200, 176),
+            (7, 19),
+            (64, 64),
+        ] {
+            for &grain in &[1usize, 2, 3, 4, 8, 16] {
+                for &align in &[1usize, 16] {
+                    let tiles = output_tiles(rows, cols, grain, align);
+                    assert!(!tiles.is_empty());
+                    let mut seen = vec![0u8; rows * cols];
+                    for &(r0, r, c0, c) in &tiles {
+                        assert!(r0 + r <= rows && c0 + c <= cols, "tile out of bounds");
+                        assert!(r > 0 && c > 0, "empty tile");
+                        if align > 1 {
+                            assert_eq!(c0 % align, 0, "column offset not panel-aligned");
+                            // Interior tiles (not the matrix's last column) keep
+                            // whole panels; the final partial panel may be ragged.
+                            if c0 + c != cols {
+                                assert_eq!(c % align, 0, "interior column tile not aligned");
+                            }
+                        }
+                        for i in r0..r0 + r {
+                            for j in c0..c0 + c {
+                                seen[i * cols + j] += 1;
+                            }
+                        }
+                    }
+                    assert!(
+                        seen.iter().all(|&v| v == 1),
+                        "{rows}×{cols} grain={grain} align={align}: not an exact partition"
+                    );
+                }
+            }
+        }
+    }
+}

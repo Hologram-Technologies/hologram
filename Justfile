@@ -12,7 +12,7 @@ ci: fmt-check clippy test
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance perf wasm embedded
+vv: fmt-check clippy test conformance parallel perf wasm embedded
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).
@@ -20,6 +20,12 @@ conformance:
     cargo test -p hologram-archive --test conformance --test model_address --features model-formats
     cargo test -p hologram-backend --test conformance --features cpu
     cargo test -p hologram-exec --test conformance
+
+# Parallel-execution conformance (class PA): multi-core ≡ single-thread,
+# byte-identical + deterministic. Runs the kernel suites with the in-tree
+# worker pool active so the parallel lattice-recursion frontier is exercised.
+parallel:
+    cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
 
 # Performance V&V (class PV) — release-only budgets; no silent bottleneck.
 # `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
