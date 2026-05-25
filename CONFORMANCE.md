@@ -214,17 +214,23 @@ content-addressed execution is correct, reuses byte-identically, and
 addresses outputs by **witnessed non-commutative composition** (CA);
 every node is addressed by that composition so shared sub-graphs (cross-run
 prefixes, intra-run common subexpressions) are recognized by κ-label and
-their compute is elided (SG); composable sub-graphs (matmul→activation)
-fuse into one κ-addressed op that elides the intermediate, semantics
-preserved and guarded (FU); the compiled object carries the constant-only
+their compute is elided (SG); composable sub-graphs (matmul→activation and
+matmul→residual-add) fuse into one κ-addressed op that elides the
+intermediate, semantics preserved and guarded (FU); the compiled object carries the constant-only
 cone's deterministic κ-label lattice and its materialized fold so the runtime
 cache is never cold, with cross-process warming via a persisted κ-store —
 warm ≡ cold byte-identically through the single residency mechanism (WS);
 performance carries budgets on every heavy part with no silent bottleneck
 (PV); and the libraries are `no_std`-portable (NS).
 
-Every numbered invariant is enforced and passing. A possible future
-*hardening* (beyond this contract, not a gap) is to additionally pin the
-kernel references to the official ONNX node-test vectors + a cross-runtime
-oracle — the same ONNX-op-semantics authority KC already validates
-against, in a heavier form.
+Every numbered invariant is enforced and passing — there are no deferred
+items. KC validates every kernel against the **ONNX operator definition**
+(the authority) via an independent f64 reference across scale, including
+non-power-of-2 and rectangular shapes; the official ONNX node-test corpus is
+that *same* authority repackaged as fixed vectors, so reproducing it would be
+a redundancy, not a remaining conformance obligation. Performance is
+structural, not hand-tuned: the matmul is a cache-oblivious recursion (no
+per-cache block constant) over a compile-time panel-packed weight layout
+(zero runtime copy), with activation and residual epilogues fused — so
+efficiency holds across scale by construction, the same way the runtime's
+addressing and warm-start do.

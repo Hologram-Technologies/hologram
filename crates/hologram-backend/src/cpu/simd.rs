@@ -526,7 +526,7 @@ mod x86 {
 
     /// Matmul with **panel-packed B** (`C = A·Bᵖ`). `bpacked` holds B in
     /// `NR`-wide column panels, each `k`-contiguous (see
-    /// [`super::pack_b_panels`]): panel `p`, row `kk` occupies the 16 floats at
+    /// [`crate::layout::pack_b_panels`]): panel `p`, row `kk` occupies the 16 floats at
     /// `bpacked[(p·k + kk)·16 ..]`. The leaf therefore streams B **fully
     /// contiguously** across `kk` — no strided row gather, so once a panel is
     /// resident its reuse across the `m`-tiles costs no further misses. This is
@@ -549,36 +549,58 @@ mod x86 {
         n: usize,
         lda: usize,
         ldc: usize,
+        k_stride: usize,
+        accumulate: bool,
     ) {
         const MR: usize = 4;
         let n_panels = n.div_ceil(16);
         let mut i = 0;
         while i + MR <= m {
             for p in 0..n_panels {
-                let base = p * k * 16;
                 let cols = core::cmp::min(16, n - p * 16);
-                let mut c = [[_mm256_setzero_ps(); 2]; MR];
-                for kk in 0..k {
-                    let bp = bpacked.add(base + kk * 16);
-                    let b0 = _mm256_loadu_ps(bp);
-                    let b1 = _mm256_loadu_ps(bp.add(8));
-                    for (r, cr) in c.iter_mut().enumerate() {
-                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
-                        cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
-                        cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
+                if cols == 16 {
+                    // Full 4×16 register tile. `k_stride` is the panel stride
+                    // (the weight's full k), so a k-subrange of the recursion
+                    // still indexes the correct panel rows.
+                    let base = p * k_stride * 16;
+                    let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                    if accumulate {
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let orow = out.add((i + r) * ldc + p * 16);
+                            cr[0] = _mm256_loadu_ps(orow);
+                            cr[1] = _mm256_loadu_ps(orow.add(8));
+                        }
                     }
-                }
-                for (r, cr) in c.iter().enumerate() {
-                    let orow = out.add((i + r) * ldc + p * 16);
-                    if cols == 16 {
+                    for kk in 0..k {
+                        let bp = bpacked.add(base + kk * 16);
+                        let b0 = _mm256_loadu_ps(bp);
+                        let b1 = _mm256_loadu_ps(bp.add(8));
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                            cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
+                            cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
+                        }
+                    }
+                    for (r, cr) in c.iter().enumerate() {
+                        let orow = out.add((i + r) * ldc + p * 16);
                         _mm256_storeu_ps(orow, cr[0]);
                         _mm256_storeu_ps(orow.add(8), cr[1]);
-                    } else {
-                        let mut tmp = [0f32; 16];
-                        _mm256_storeu_ps(tmp.as_mut_ptr(), cr[0]);
-                        _mm256_storeu_ps(tmp.as_mut_ptr().add(8), cr[1]);
-                        for (cc, &v) in tmp.iter().enumerate().take(cols) {
-                            *orow.add(cc) = v;
+                    }
+                } else {
+                    // Partial trailing panel (n not a multiple of 16): scalar.
+                    for r in 0..MR {
+                        for cc in 0..cols {
+                            let j = p * 16 + cc;
+                            let mut s = if accumulate {
+                                *out.add((i + r) * ldc + j)
+                            } else {
+                                0.0
+                            };
+                            for kk in 0..k {
+                                s += *a.add((i + r) * lda + kk)
+                                    * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                            }
+                            *out.add((i + r) * ldc + j) = s;
                         }
                     }
                 }
@@ -590,13 +612,103 @@ mod x86 {
             for j in 0..n {
                 let p = j / 16;
                 let c = j % 16;
-                let mut s = 0.0f32;
+                let mut s = if accumulate {
+                    *out.add(i * ldc + j)
+                } else {
+                    0.0
+                };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *bpacked.add((p * k + kk) * 16 + c);
+                    s += *a.add(i * lda + kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
                 }
                 *out.add(i * ldc + j) = s;
             }
             i += 1;
+        }
+    }
+
+    /// **Cache-oblivious recursive matmul with panel-packed B** — the packed
+    /// twin of [`matmul_f32_recursive`]. Halve the largest of m, n, k (N at a
+    /// 16-column panel boundary, K accumulating) down to the packed
+    /// register-tile leaf, so a packed weight enjoys the *same* compulsory-only
+    /// miss behaviour at arbitrary M as the unpacked path — the per-M-tile
+    /// re-streaming of B a flat packed loop would suffer is gone, with no
+    /// per-cache block constant and still zero copy. `k_stride` is the weight's
+    /// full k (the panel stride), invariant under the recursion.
+    ///
+    /// # Safety
+    /// AVX2+FMA required; pointers address the relevant sub-matrices and
+    /// `bpacked` is laid out by [`super::pack_b_panels`] with panel stride
+    /// `k_stride`.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn matmul_f32_packed_recursive(
+        a: *const f32,
+        bpacked: *const f32,
+        out: *mut f32,
+        m: usize,
+        k: usize,
+        n: usize,
+        lda: usize,
+        ldc: usize,
+        k_stride: usize,
+        accumulate: bool,
+    ) {
+        const LEAF: usize = 64;
+        if m <= LEAF && k <= LEAF && n <= LEAF {
+            matmul_f32_packed_b(a, bpacked, out, m, k, n, lda, ldc, k_stride, accumulate);
+            return;
+        }
+        if m >= n && m >= k && m > LEAF {
+            let h = m / 2;
+            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a.add(h * lda),
+                bpacked,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
+                lda,
+                ldc,
+                k_stride,
+                accumulate,
+            );
+        } else if n >= m && n >= k && n > LEAF {
+            // Split N on a 16-column panel boundary so packed panels stay whole.
+            let mut h = (n / 2) & !15;
+            if h < 16 {
+                h = 16;
+            }
+            matmul_f32_packed_recursive(a, bpacked, out, m, k, h, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a,
+                bpacked.add((h / 16) * k_stride * 16),
+                out.add(h),
+                m,
+                k,
+                n - h,
+                lda,
+                ldc,
+                k_stride,
+                accumulate,
+            );
+        } else {
+            // k-split: the second half accumulates into the same C tile;
+            // `bpacked` shifts by `h` rows within every panel (stride
+            // `k_stride` unchanged), `a` shifts by `h` columns.
+            let h = k / 2;
+            matmul_f32_packed_recursive(a, bpacked, out, m, h, n, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a.add(h),
+                bpacked.add(h * 16),
+                out,
+                m,
+                k - h,
+                n,
+                lda,
+                ldc,
+                k_stride,
+                true,
+            );
         }
     }
 }
@@ -709,9 +821,10 @@ pub fn matmul_f32_packed(
     {
         let p = resolve_path();
         if p == 2 || p == 3 {
-            // SAFETY: `resolve_path` confirmed AVX2 + FMA.
+            // SAFETY: `resolve_path` confirmed AVX2 + FMA. lda=k, ldc=n,
+            // k_stride=k (panel stride), fresh output (accumulate=false).
             unsafe {
-                x86::matmul_f32_packed_b(
+                x86::matmul_f32_packed_recursive(
                     a.as_ptr(),
                     bpacked.as_ptr(),
                     out.as_mut_ptr(),
@@ -720,6 +833,8 @@ pub fn matmul_f32_packed(
                     n,
                     k,
                     n,
+                    k,
+                    false,
                 );
             }
             return;
@@ -904,34 +1019,23 @@ mod tests {
 
     #[test]
     fn packed_b_matmul_matches_naive() {
-        // Odd sizes including a non-multiple-of-16 n exercise panel padding,
-        // the partial-column store, and the m-remainder scalar tail.
+        // Odd sizes (non-multiple-of-16 n) exercise panel padding + the
+        // partial-column / m-remainder tails; the large size drives the
+        // cache-oblivious packed recursion (M/N/K splits incl. accumulation).
         #[cfg(target_arch = "x86_64")]
         for &(m, k, n) in &[
             (4usize, 8usize, 16usize),
             (5, 7, 19),
             (13, 11, 37),
             (64, 64, 64),
+            (200, 130, 176),
         ] {
             if !(std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma")) {
                 return;
             }
             let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.001 - 0.3).collect();
             let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.002 + 0.5).collect();
-            let packed = pack_b_panels(&b, k, n);
-            let mut got = vec![0f32; m * n];
-            unsafe {
-                x86::matmul_f32_packed_b(
-                    a.as_ptr(),
-                    packed.as_ptr(),
-                    got.as_mut_ptr(),
-                    m,
-                    k,
-                    n,
-                    k,
-                    n,
-                );
-            }
+            let packed = crate::layout::pack_b_panels(&b, k, n);
             let mut want = vec![0f32; m * n];
             for i in 0..m {
                 for j in 0..n {
@@ -942,13 +1046,50 @@ mod tests {
                     want[i * n + j] = s;
                 }
             }
-            for idx in 0..m * n {
-                assert!(
-                    (got[idx] - want[idx]).abs() < 1e-3,
-                    "{m}×{k}×{n} diff at {idx}: got {} want {}",
-                    got[idx],
-                    want[idx]
-                );
+            // Both the leaf directly and the full recursion must match.
+            for recursive in [false, true] {
+                let mut got = vec![0f32; m * n];
+                unsafe {
+                    if recursive {
+                        x86::matmul_f32_packed_recursive(
+                            a.as_ptr(),
+                            packed.as_ptr(),
+                            got.as_mut_ptr(),
+                            m,
+                            k,
+                            n,
+                            k,
+                            n,
+                            k,
+                            false,
+                        );
+                    } else {
+                        x86::matmul_f32_packed_b(
+                            a.as_ptr(),
+                            packed.as_ptr(),
+                            got.as_mut_ptr(),
+                            m,
+                            k,
+                            n,
+                            k,
+                            n,
+                            k,
+                            false,
+                        );
+                    }
+                }
+                for idx in 0..m * n {
+                    // Relative tolerance: tile/recursion summation reorders the
+                    // f32 reduction vs the naïve reference, so large magnitudes
+                    // differ in the last f32 ulps (≈2.5e-7 rel), well within f32.
+                    let denom = want[idx].abs().max(1.0);
+                    assert!(
+                        (got[idx] - want[idx]).abs() / denom < 1e-4,
+                        "{m}×{k}×{n} recursive={recursive} diff at {idx}: got {} want {}",
+                        got[idx],
+                        want[idx]
+                    );
+                }
             }
         }
     }
