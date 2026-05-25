@@ -42,8 +42,8 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Tanh(c) => unary_w8(c, ws, tanh_byte),
         KernelCall::Gelu(c) => unary_w8(c, ws, gelu_byte),
         KernelCall::Silu(c) => unary_w8(c, ws, silu_byte),
-        KernelCall::Elu(c) => unary_w8(c, ws, relu_byte),
-        KernelCall::Selu(c) => unary_w8(c, ws, relu_byte),
+        KernelCall::Elu(c) => unary_w8(c, ws, elu_byte),
+        KernelCall::Selu(c) => unary_w8(c, ws, selu_byte),
         KernelCall::Exp(c) => unary_w8(c, ws, exp_byte),
         KernelCall::Log(c) => unary_w8(c, ws, log_byte),
         KernelCall::Log1p(c) => unary_w8(c, ws, log_byte),
@@ -59,7 +59,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
 
         // Elementwise binary.
         KernelCall::Div(c) => binary_w8(c, ws, div_byte),
-        KernelCall::Pow(c) => binary_w8(c, ws, mul_byte),
+        KernelCall::Pow(c) => binary_w8(c, ws, pow_byte),
         KernelCall::Mod(c) => binary_w8(c, ws, mod_byte),
         KernelCall::Min(c) => binary_w8(c, ws, min_byte),
         KernelCall::Max(c) => binary_w8(c, ws, max_byte),
@@ -144,10 +144,22 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         | KernelCall::MinGrad(c)
         | KernelCall::MaxGrad(c) => binary_w8(c, ws, sub_byte),
 
-        KernelCall::RotaryEmbedding(c)
-        | KernelCall::Clip(c)
-        | KernelCall::Lrn(c)
-        | KernelCall::UnaryGrad(c) => unary_w8(c, ws, identity_byte),
+        // Clip / RotaryEmbedding / Lrn carry no parameters in `UnaryCall`
+        // (Clip's min/max, RoPE's rotation table/θ, Lrn's size/α/β), so a
+        // byte-ring kernel here would silently behave as identity. Fail loud in
+        // every domain — these await pipeline-lowering into their primitive
+        // composition (the float path rejects them too). UnaryGrad keeps the
+        // identity placeholder (backward chain-rule seed; training-only).
+        KernelCall::RotaryEmbedding(_) => Err(BackendError::UnsupportedOp(
+            "RotaryEmbedding: rotation table / θ / positions not represented",
+        )),
+        KernelCall::Clip(_) => Err(BackendError::UnsupportedOp(
+            "Clip: (min, max) bounds not represented in UnaryCall",
+        )),
+        KernelCall::Lrn(_) => Err(BackendError::UnsupportedOp(
+            "Lrn: (size, α, β, bias) not represented in UnaryCall",
+        )),
+        KernelCall::UnaryGrad(c) => unary_w8(c, ws, identity_byte),
 
         // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
         KernelCall::Dequantize(c) => dequantize(c, ws),
@@ -920,6 +932,38 @@ fn silu_byte(x: u8) -> u8 {
     (s * 255.0 + 0.5) as u8
 }
 #[inline]
+fn elu_byte(x: u8) -> u8 {
+    // Byte-domain ELU (α = 1): decode onto [-4, 4], apply `x if x≥0 else
+    // exp(x)−1`, re-encode like the rest of the activation family. Replaces the
+    // prior `relu_byte` alias, which silently dropped the negative branch.
+    let f = (x as f32 / 255.0 - 0.5) * 8.0;
+    let g = if f >= 0.0 { f } else { libm::expf(f) - 1.0 };
+    let s = ((g + 4.0) / 8.0).clamp(0.0, 1.0);
+    (s * 255.0 + 0.5) as u8
+}
+#[inline]
+fn selu_byte(x: u8) -> u8 {
+    // Byte-domain SELU with the canonical constants (λ ≈ 1.0507, α ≈ 1.6733),
+    // same decode/encode convention as the activation family.
+    const LAMBDA: f32 = 1.050_700_9;
+    const ALPHA: f32 = 1.673_263_2;
+    let f = (x as f32 / 255.0 - 0.5) * 8.0;
+    let g = if f >= 0.0 {
+        LAMBDA * f
+    } else {
+        LAMBDA * ALPHA * (libm::expf(f) - 1.0)
+    };
+    let s = ((g + 4.0) / 8.0).clamp(0.0, 1.0);
+    (s * 255.0 + 0.5) as u8
+}
+#[inline]
+fn pow_byte(a: u8, b: u8) -> u8 {
+    // Power in the wrapping byte ring is iterated multiplication — consistent
+    // with `mul_byte` being `wrapping_mul`. Replaces the prior `mul_byte` alias
+    // (which computed a·b, not aᵇ).
+    a.wrapping_pow(b as u32)
+}
+#[inline]
 fn exp_byte(x: u8) -> u8 {
     let f = x as f32 / 255.0 * 5.0;
     let e = libm::expf(f) / libm::expf(5.0);
@@ -1064,21 +1108,40 @@ fn try_dispatch_float<W: Workspace>(
     call: &KernelCall,
     ws: &mut W,
 ) -> Option<Result<(), BackendError>> {
+    use crate::cpu::dtype::DTYPE_F64;
     use KernelCall as K;
+    // Single dtype-support policy: hologram computes in f16/bf16/f32. f64 is a
+    // super-f32 storage format with no native engine — computing it at f32
+    // precision would be a silent downgrade, so it is rejected outright rather
+    // than producing reduced-precision or zero output. (No model frontend emits
+    // f64 today; this guards against a hand-built or future call.)
+    if call_dtype(call) == DTYPE_F64 {
+        return Some(Err(BackendError::UnsupportedOp(
+            "f64 is not a supported compute dtype (hologram computes in f16/bf16/f32)",
+        )));
+    }
     match call {
         // Direct PrimitiveOp wrappers — float forms.
         K::Neg(c) if is_float(0) || is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::neg_f, dtype_of_unary(c)))
         }
-        K::Add(c) if is_float_binary(c) => {
-            Some(ff::binary_float(c, ws, ff::add_f, dtype_of_binary(c)))
-        }
+        K::Add(c) if is_float_binary(c) => Some(ff::binary_float_acc(
+            c,
+            ws,
+            ff::add_f,
+            Some(crate::cpu::simd::simd_f32_add),
+            dtype_of_binary(c),
+        )),
         K::Sub(c) if is_float_binary(c) => {
             Some(ff::binary_float(c, ws, ff::sub_f, dtype_of_binary(c)))
         }
-        K::Mul(c) if is_float_binary(c) => {
-            Some(ff::binary_float(c, ws, ff::mul_f, dtype_of_binary(c)))
-        }
+        K::Mul(c) if is_float_binary(c) => Some(ff::binary_float_acc(
+            c,
+            ws,
+            ff::mul_f,
+            Some(crate::cpu::simd::simd_f32_mul),
+            dtype_of_binary(c),
+        )),
 
         // Elementwise unary float forms.
         K::Relu(c) if is_float_unary(c) => {
@@ -1199,7 +1262,15 @@ fn try_dispatch_float<W: Workspace>(
         K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
         K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
-        K::FusedSwiGlu(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
+        // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
+        // operands, but `MatMulCall` carries one (`b`). It cannot be computed
+        // faithfully in the current representation; the old code silently ran a
+        // plain matmul and dropped the gate. Fail loud rather than return a
+        // wrong tensor. (Completing it requires a two-weight call form + the
+        // compiler lowering to populate it — see the representational-gap note.)
+        K::FusedSwiGlu(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
+            "FusedSwiGlu: gate+up weights not representable in MatMulCall (one operand)",
+        ))),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
         K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
 
@@ -1273,6 +1344,25 @@ fn try_dispatch_float<W: Workspace>(
         {
             Some(ff::layout_float(c, ws))
         }
+
+        // Parameterized ops whose parameters are *not carried* by the kernel-
+        // call representation: Clip needs (min, max), RotaryEmbedding needs the
+        // rotation table / θ / positions, Lrn needs (size, α, β, bias). The
+        // graph node has no attribute slot for them (only Quant/Conv attrs
+        // exist), so a float kernel here would silently behave as identity —
+        // corrupting any model that uses them. Fail loud until the parameters
+        // are plumbed through (graph attrs → call fields → codec). The byte
+        // ring keeps its documented reference approximation; this guard only
+        // covers the numeric float path that real models execute.
+        K::Clip(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
+            "Clip: (min, max) bounds not carried by UnaryCall — parameters dropped at lowering",
+        ))),
+        K::RotaryEmbedding(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
+            "RotaryEmbedding: rotation table / θ / positions not carried by UnaryCall",
+        ))),
+        K::Lrn(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
+            "Lrn: (size, α, β, bias) not carried by UnaryCall — parameters dropped at lowering",
+        ))),
 
         _ => None,
     }

@@ -44,6 +44,76 @@ fn with_matmul_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
     f(&mut scratch)
 }
 
+// Scratch for conv2d's im2col matrix. Distinct thread-local from the matmul
+// `bt` scratch so conv can hold the lowered `[K, N]` patch matrix while the
+// matmul engine uses its own buffer — the two never alias. Same amortization
+// story: O(1) allocations across an inference loop under `std`, fresh per call
+// on `no_std`.
+#[cfg(feature = "std")]
+fn with_conv_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    std::thread_local! {
+        static CONV_IM2COL_SCRATCH: core::cell::RefCell<Vec<f32>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+    CONV_IM2COL_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+#[cfg(not(feature = "std"))]
+fn with_conv_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    let mut scratch = Vec::new();
+    f(&mut scratch)
+}
+
+// Three reusable f32 buffers (A, B, output) for widening a low-precision
+// matmul (bf16 / f16) into the f32 engine and narrowing the result back.
+// Widening is O(mk + kn + mn) — amortized against the O(mkn) GEMM — and lets
+// bf16/f16 matmul share the cache-oblivious / packed kernel instead of a
+// strided scalar triple-loop. Thread-local so the loop pays no per-call alloc.
+#[cfg(feature = "std")]
+fn with_widen_scratch<R>(f: impl FnOnce(&mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>) -> R) -> R {
+    std::thread_local! {
+        static WIDEN: core::cell::RefCell<(Vec<f32>, Vec<f32>, Vec<f32>)> =
+            const { core::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    }
+    WIDEN.with(|cell| {
+        let mut g = cell.borrow_mut();
+        let (a, b, o) = &mut *g;
+        f(a, b, o)
+    })
+}
+
+#[cfg(not(feature = "std"))]
+fn with_widen_scratch<R>(f: impl FnOnce(&mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>) -> R) -> R {
+    let (mut a, mut b, mut o) = (Vec::new(), Vec::new(), Vec::new());
+    f(&mut a, &mut b, &mut o)
+}
+
+// Four reusable f32 buffers for widening a 3-input op (attention: Q, K, V, out)
+// into the f32 engine and narrowing back. Same amortization as `with_widen`.
+#[cfg(feature = "std")]
+fn with_widen4_scratch<R>(
+    f: impl FnOnce(&mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>) -> R,
+) -> R {
+    type Widen4Buf = (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>);
+    std::thread_local! {
+        static WIDEN4: core::cell::RefCell<Widen4Buf> =
+            const { core::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new(), Vec::new())) };
+    }
+    WIDEN4.with(|cell| {
+        let mut g = cell.borrow_mut();
+        let (a, b, c, dd) = &mut *g;
+        f(a, b, c, dd)
+    })
+}
+
+#[cfg(not(feature = "std"))]
+fn with_widen4_scratch<R>(
+    f: impl FnOnce(&mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>, &mut Vec<f32>) -> R,
+) -> R {
+    let (mut a, mut b, mut c, mut dd) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    f(&mut a, &mut b, &mut c, &mut dd)
+}
+
 pub fn unary_float<W: Workspace>(
     c: &UnaryCall,
     ws: &mut W,
@@ -84,10 +154,28 @@ pub fn unary_float<W: Workspace>(
     Ok(())
 }
 
+/// Whole-slice f32 elementwise SIMD primitive: `out[i] = op(a[i], b[i])`.
+type SimdBinaryF32 = fn(&[f32], &[f32], &mut [f32]);
+
 pub fn binary_float<W: Workspace>(
     c: &BinaryCall,
     ws: &mut W,
     f: fn(f32, f32) -> f32,
+    dtype: u8,
+) -> Result<(), BackendError> {
+    binary_float_acc(c, ws, f, None, dtype)
+}
+
+/// Elementwise binary float op, optionally accelerated by a whole-slice SIMD
+/// primitive on the contiguous f32 path. `add` / `mul` pass the corresponding
+/// `simd::simd_f32_*` (so those vectorized primitives are on the production
+/// path, not just tests); every other op passes `None` and uses the scalar
+/// closure `f` (which the compiler autovectorizes anyway).
+pub fn binary_float_acc<W: Workspace>(
+    c: &BinaryCall,
+    ws: &mut W,
+    f: fn(f32, f32) -> f32,
+    simd: Option<SimdBinaryF32>,
     dtype: u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
@@ -110,8 +198,13 @@ pub fn binary_float<W: Workspace>(
             bytemuck::try_cast_slice::<u8, f32>(&b[..bytes]),
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..bytes]),
         ) {
-            for i in 0..n {
-                o32[i] = f(a32[i], b32[i]);
+            match simd {
+                Some(s) => s(a32, b32, o32),
+                None => {
+                    for i in 0..n {
+                        o32[i] = f(a32[i], b32[i]);
+                    }
+                }
             }
             return Ok(());
         }
@@ -182,20 +275,33 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
         }
     }
 
-    // Non-f32 dtypes (bf16, f16, f64): per-element codec. The split-
-    // borrow still gives zero-copy `&[u8]` views.
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = 0f32;
-            for kk in 0..k {
-                let av = read_float(a, i * k + kk, dt);
-                let bv = read_float(b, kk * n + j, dt);
-                acc += av * bv;
+    // bf16 / f16: widen operands to f32, run the shared cache-oblivious engine
+    // (f32 accumulation — identical to the old scalar path's `acc: f32`), then
+    // narrow the result. Shares the optimized kernel instead of a strided
+    // scalar triple-loop.
+    if dt == DTYPE_BF16 || dt == DTYPE_F16 {
+        with_widen_scratch(|a32, b32, o32| {
+            a32.clear();
+            a32.extend((0..m * k).map(|i| read_float(a, i, dt)));
+            b32.clear();
+            b32.extend((0..k * n).map(|i| read_float(b, i, dt)));
+            o32.clear();
+            o32.resize(m * n, 0.0);
+            with_matmul_scratch(|bt| {
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, o32, m, k, n, bt);
+            });
+            for (i, &v) in o32.iter().enumerate() {
+                write_float(out, i, v, dt);
             }
-            write_float(out, i * n + j, acc, dt);
-        }
+        });
+        return Ok(());
     }
-    Ok(())
+
+    // f32 / f16 / bf16 are handled above; every other float dtype (f64) is
+    // rejected at dispatch. No scalar compute fallback exists.
+    Err(BackendError::UnsupportedOp(
+        "matmul: only f32/f16/bf16 are supported compute dtypes",
+    ))
 }
 
 /// Selector → activation function for a fused matmul epilogue.
@@ -320,34 +426,44 @@ pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendE
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
 
+    // α·(A·B) + β·C through the one engine for every supported float dtype:
+    // f32 zero-copy, f16/bf16 widened. No scalar fallback.
     if dt == DTYPE_F32 {
-        if let (Ok(a32), Ok(b32), Ok(c32), Ok(out32)) = (
-            bytemuck::try_cast_slice::<u8, f32>(a),
-            bytemuck::try_cast_slice::<u8, f32>(b),
-            bytemuck::try_cast_slice::<u8, f32>(cc),
-            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
-        ) {
+        let (a32, b32, c32, out32) = (
+            bytemuck::cast_slice::<u8, f32>(a),
+            bytemuck::cast_slice::<u8, f32>(b),
+            bytemuck::cast_slice::<u8, f32>(cc),
+            bytemuck::cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+        );
+        with_matmul_scratch(|bt| {
+            crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
+        });
+        for i in 0..m * n {
+            out32[i] = alpha * out32[i] + beta * c32[i];
+        }
+        return Ok(());
+    }
+    if dt == DTYPE_BF16 || dt == DTYPE_F16 {
+        with_widen_scratch(|a32, b32, o32| {
+            a32.clear();
+            a32.extend((0..m * k).map(|i| read_float(a, i, dt)));
+            b32.clear();
+            b32.extend((0..k * n).map(|i| read_float(b, i, dt)));
+            o32.clear();
+            o32.resize(m * n, 0.0);
             with_matmul_scratch(|bt| {
-                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, o32, m, k, n, bt);
             });
-            for i in 0..m * n {
-                out32[i] = alpha * out32[i] + beta * c32[i];
+            for (i, &v) in o32.iter().enumerate() {
+                let bias = read_float(cc, i, dt) * beta;
+                write_float(out, i, alpha * v + bias, dt);
             }
-            return Ok(());
-        }
+        });
+        return Ok(());
     }
-
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = 0f32;
-            for kk in 0..k {
-                acc += read_float(a, i * k + kk, dt) * read_float(b, kk * n + j, dt);
-            }
-            let bias = read_float(cc, i * n + j, dt) * beta;
-            write_float(out, i * n + j, alpha * acc + bias, dt);
-        }
-    }
-    Ok(())
+    Err(BackendError::UnsupportedOp(
+        "gemm: only f32/f16/bf16 are supported compute dtypes",
+    ))
 }
 
 pub fn conv2d_float<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), BackendError> {
@@ -385,31 +501,108 @@ pub fn conv2d_float<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), Back
     if out.len() < total_out {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    for bi in 0..b {
-        for co in 0..cout {
-            for oh in 0..h_out {
-                for ow in 0..w_out {
-                    let mut acc = 0f32;
-                    for ci in 0..cin {
-                        for kh in 0..k_h {
-                            for kw in 0..k_w {
-                                let ih = oh * s_h + kh;
-                                let iw = ow * s_w + kw;
-                                if ih < h_in && iw < w_in {
-                                    let xi = ((bi * cin + ci) * h_in + ih) * w_in + iw;
-                                    let wi = ((co * cin + ci) * k_h + kh) * k_w + kw;
-                                    acc += read_float(xs, xi, dt) * read_float(ws_w, wi, dt);
+
+    // Convolution *is* a per-batch GEMM: the weight already lives in `[cout, K]`
+    // row-major layout (K = cin·kh·kw), so lowering the input patches to an
+    // im2col matrix `Xcol[K, ho·wo]` makes each batch a dense
+    // `out_b[cout, ho·wo] = W[cout, K] · Xcol[K, ho·wo]`, routed through the one
+    // cache-oblivious / parallel matmul engine. Every supported float dtype goes
+    // through that engine — f32 zero-copy, f16/bf16 widened (they are sub-f32
+    // storage with no native compute, so f32 accumulation *is* their semantics).
+    // There is no scalar fallback.
+    let dims = ConvDims {
+        b,
+        cin,
+        cout,
+        h_in,
+        w_in,
+        h_out,
+        w_out,
+        k_h,
+        k_w,
+        s_h,
+        s_w,
+    };
+    if dt == DTYPE_F32 {
+        let (xs32, w32, out32) = (
+            bytemuck::cast_slice::<u8, f32>(xs),
+            bytemuck::cast_slice::<u8, f32>(ws_w),
+            bytemuck::cast_slice_mut::<u8, f32>(out),
+        );
+        conv2d_f32_engine(xs32, w32, out32, &dims);
+        return Ok(());
+    }
+    if dt != DTYPE_BF16 && dt != DTYPE_F16 {
+        return Err(BackendError::UnsupportedOp(
+            "conv2d: only f32/f16/bf16 are supported compute dtypes",
+        ));
+    }
+    // f16 / bf16: widen inputs to f32, run the engine, narrow the result.
+    with_widen_scratch(|x32, w32, o32| {
+        x32.clear();
+        x32.extend((0..b * cin * h_in * w_in).map(|i| read_float(xs, i, dt)));
+        w32.clear();
+        w32.extend((0..cout * cin * k_h * k_w).map(|i| read_float(ws_w, i, dt)));
+        o32.clear();
+        o32.resize(b * cout * h_out * w_out, 0.0);
+        conv2d_f32_engine(x32, w32, o32, &dims);
+        for (i, &v) in o32.iter().enumerate() {
+            write_float(out, i, v, dt);
+        }
+    });
+    Ok(())
+}
+
+struct ConvDims {
+    b: usize,
+    cin: usize,
+    cout: usize,
+    h_in: usize,
+    w_in: usize,
+    h_out: usize,
+    w_out: usize,
+    k_h: usize,
+    k_w: usize,
+    s_h: usize,
+    s_w: usize,
+}
+
+/// im2col + per-batch GEMM on f32 slices (the shared engine core for every conv
+/// dtype). `col` (im2col patches) and `bt` (matmul transpose scratch) are reused
+/// thread-locals; the receptive-field zero-fill matches ONNX valid convolution.
+fn conv2d_f32_engine(xs32: &[f32], w32: &[f32], out32: &mut [f32], d: &ConvDims) {
+    let kk = d.cin * d.k_h * d.k_w;
+    let nn = d.h_out * d.w_out;
+    with_conv_scratch(|col| {
+        col.clear();
+        col.resize(kk * nn, 0.0);
+        with_matmul_scratch(|bt| {
+            for bi in 0..d.b {
+                for ci in 0..d.cin {
+                    for kh in 0..d.k_h {
+                        for kw in 0..d.k_w {
+                            let krow = (ci * d.k_h + kh) * d.k_w + kw;
+                            let xbase = (bi * d.cin + ci) * d.h_in;
+                            for oh in 0..d.h_out {
+                                let ih = oh * d.s_h + kh;
+                                let crow = krow * nn + oh * d.w_out;
+                                for ow in 0..d.w_out {
+                                    let iw = ow * d.s_w + kw;
+                                    col[crow + ow] = if ih < d.h_in && iw < d.w_in {
+                                        xs32[(xbase + ih) * d.w_in + iw]
+                                    } else {
+                                        0.0
+                                    };
                                 }
                             }
                         }
                     }
-                    let oi = ((bi * cout + co) * h_out + oh) * w_out + ow;
-                    write_float(out, oi, acc, dt);
                 }
+                let ob = &mut out32[bi * d.cout * nn..(bi + 1) * d.cout * nn];
+                crate::cpu::simd::matmul_f32_blocked(w32, col, ob, d.cout, kk, nn, bt);
             }
-        }
-    }
-    Ok(())
+        });
+    });
 }
 
 pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
@@ -781,21 +974,70 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     }
     let scale = libm::sqrtf(d as f32).max(1.0);
 
-    // Per-row score buffer reused across all (b, h, q) iterations.
+    // Scaled dot-product attention is two matmuls per (batch, head): QKᵀ scores
+    // and the P·V context. Every supported float dtype runs through the one f32
+    // engine core — f32 zero-copy, f16/bf16 widened (sub-f32 storage). No scalar
+    // fallback. Q/K/V rows are contiguous over the head dimension, so the score
+    // reduction is a contiguous SIMD dot and the context is a contiguous AXPY.
+    if dt == DTYPE_F32 {
+        let (q32, k32, v32, out32) = (
+            bytemuck::cast_slice::<u8, f32>(q),
+            bytemuck::cast_slice::<u8, f32>(kk),
+            bytemuck::cast_slice::<u8, f32>(v),
+            bytemuck::cast_slice_mut::<u8, f32>(out),
+        );
+        attention_f32_engine(q32, k32, v32, out32, b, h, s, d, scale);
+        return Ok(());
+    }
+    if dt != DTYPE_BF16 && dt != DTYPE_F16 {
+        return Err(BackendError::UnsupportedOp(
+            "attention: only f32/f16/bf16 are supported compute dtypes",
+        ));
+    }
+    // f16 / bf16: widen Q/K/V to f32, run the engine, narrow the result.
+    with_widen4_scratch(|q32, k32, v32, o32| {
+        q32.clear();
+        q32.extend((0..total).map(|i| read_float(q, i, dt)));
+        k32.clear();
+        k32.extend((0..total).map(|i| read_float(kk, i, dt)));
+        v32.clear();
+        v32.extend((0..total).map(|i| read_float(v, i, dt)));
+        o32.clear();
+        o32.resize(total, 0.0);
+        attention_f32_engine(q32, k32, v32, o32, b, h, s, d, scale);
+        for (i, &val) in o32.iter().enumerate() {
+            write_float(out, i, val, dt);
+        }
+    });
+    Ok(())
+}
+
+/// Scaled dot-product attention on f32 slices (the shared engine core for every
+/// attention dtype). Scores via contiguous `simd_f32_dot`; context via
+/// contiguous AXPY. The per-row score buffer is the reused matmul scratch.
+#[allow(clippy::too_many_arguments)]
+fn attention_f32_engine(
+    q32: &[f32],
+    k32: &[f32],
+    v32: &[f32],
+    out32: &mut [f32],
+    b: usize,
+    h: usize,
+    s: usize,
+    d: usize,
+    scale: f32,
+) {
     with_matmul_scratch(|scores| {
         for bi in 0..b {
             for hi in 0..h {
                 let head_off = (bi * h + hi) * s * d;
                 for qi in 0..s {
+                    let qrow = &q32[head_off + qi * d..head_off + qi * d + d];
                     scores.clear();
                     scores.resize(s, 0.0);
                     for (kj, score) in scores.iter_mut().enumerate() {
-                        let mut acc = 0f32;
-                        for di in 0..d {
-                            acc += read_float(q, head_off + qi * d + di, dt)
-                                * read_float(kk, head_off + kj * d + di, dt);
-                        }
-                        *score = acc / scale;
+                        let krow = &k32[head_off + kj * d..head_off + kj * d + d];
+                        *score = crate::cpu::simd::simd_f32_dot(qrow, krow) / scale;
                     }
                     let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                     let mut sum = 0f32;
@@ -804,18 +1046,19 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
                         sum += *sc;
                     }
                     let denom = sum.max(1e-30);
-                    for di in 0..d {
-                        let mut acc = 0f32;
-                        for (kj, &sc) in scores.iter().enumerate() {
-                            acc += (sc / denom) * read_float(v, head_off + kj * d + di, dt);
+                    let orow = &mut out32[head_off + qi * d..head_off + qi * d + d];
+                    orow.fill(0.0);
+                    for (kj, &sc) in scores.iter().enumerate() {
+                        let p = sc / denom;
+                        let vrow = &v32[head_off + kj * d..head_off + kj * d + d];
+                        for (o, &vv) in orow.iter_mut().zip(vrow) {
+                            *o += p * vv;
                         }
-                        write_float(out, head_off + qi * d + di, acc, dt);
                     }
                 }
             }
         }
     });
-    Ok(())
 }
 
 pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError> {
@@ -1006,11 +1249,8 @@ pub fn mul_f(a: f32, b: f32) -> f32 {
 }
 #[inline]
 pub fn div_f(a: f32, b: f32) -> f32 {
-    if b == 0.0 {
-        0.0
-    } else {
-        a / b
-    }
+    // IEEE-754 native: x/0 → ±∞, 0/0 → NaN. No silent 0.0 substitution.
+    a / b
 }
 #[inline]
 pub fn pow_f(a: f32, b: f32) -> f32 {
@@ -1018,11 +1258,9 @@ pub fn pow_f(a: f32, b: f32) -> f32 {
 }
 #[inline]
 pub fn mod_f(a: f32, b: f32) -> f32 {
-    if b == 0.0 {
-        0.0
-    } else {
-        a - (a / b).floor() * b
-    }
+    // Floored modulo (sign follows divisor, ONNX Mod fmod=0). b==0 → NaN
+    // naturally (a/0=±∞, floor(±∞)·0=NaN), per IEEE — no silent 0.0.
+    a - (a / b).floor() * b
 }
 #[inline]
 pub fn min_f(a: f32, b: f32) -> f32 {

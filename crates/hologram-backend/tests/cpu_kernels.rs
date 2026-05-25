@@ -176,3 +176,57 @@ fn softmax_distribution_sums_to_approx_unit() {
         assert!((60..=68).contains(&v), "uniform expected, got {v}");
     }
 }
+
+// ─── Completed byte-ring reference kernels (previously aliased) ────────
+
+#[test]
+fn pow_byte_is_iterated_ring_multiplication() {
+    // Pow in the wrapping byte ring is aᵇ via repeated wrapping_mul — not a·b
+    // (the prior `mul_byte` alias). 2³=8, 3²=9, 2⁸=256→0 (wrap), 5⁰=1.
+    let mut ws = TestWorkspace::new(vec![
+        vec![2u8, 3, 2, 5],
+        vec![3u8, 2, 8, 0],
+        vec![0u8; 4],
+    ]);
+    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+    let call = KernelCall::Pow(BinaryCall {
+        a: buf(0, 4),
+        b: buf(1, 4),
+        output: buf(2, 4),
+        element_count: 4,
+        witt_bits: 8,
+        dtype: 1,
+    });
+    backend.dispatch(&call, &mut ws).unwrap();
+    assert_eq!(ws.slot(2), &vec![8u8, 9, 0, 1]);
+}
+
+#[test]
+fn elu_selu_byte_engage_negative_branch() {
+    // The prior alias mapped Elu/Selu → relu_byte = identity, so input 0 (which
+    // decodes to f = −4) produced 0. The real activations apply the negative
+    // branch: ELU(−4)=e⁻⁴−1≈−0.982 and SELU(−4)=λα(e⁻⁴−1)≈−1.726, re-encoded
+    // onto [0,255] as 96 and 72 — provably *not* the identity passthrough.
+    for (call_of, want0) in [
+        (
+            (|c| KernelCall::Elu(c)) as fn(UnaryCall) -> KernelCall,
+            96u8,
+        ),
+        ((|c| KernelCall::Selu(c)) as fn(UnaryCall) -> KernelCall, 72u8),
+    ] {
+        let mut ws = TestWorkspace::new(vec![vec![0u8, 128, 255], vec![0u8; 3]]);
+        let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+        let call = call_of(UnaryCall {
+            input: buf(0, 3),
+            output: buf(1, 3),
+            element_count: 3,
+            witt_bits: 8,
+            dtype: 1,
+        });
+        backend.dispatch(&call, &mut ws).unwrap();
+        let out = ws.slot(1);
+        assert_eq!(out[0], want0, "negative branch not engaged for input 0");
+        // Monotone non-decreasing across the decoded domain.
+        assert!(out[0] <= out[1] && out[1] <= out[2], "not monotone: {out:?}");
+    }
+}

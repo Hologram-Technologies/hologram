@@ -18,11 +18,11 @@
 //! * **KC-2** the kernel reads *all* of its operands (no short-cut): a
 //!   one-element change in B changes the corresponding output column.
 
-use hologram_backend::cpu::dtype::{DTYPE_F32, DTYPE_I8};
+use hologram_backend::cpu::dtype::{DTYPE_F32, DTYPE_F64, DTYPE_I8};
 use hologram_backend::SplitReads;
 use hologram_backend::{
-    AttentionCall, Backend, BufferRef, Conv2dCall, CpuBackend, DequantizeCall, KernelCall,
-    MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, Workspace,
+    AttentionCall, Backend, BinaryCall, BufferRef, Conv2dCall, CpuBackend, DequantizeCall,
+    KernelCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, Workspace,
 };
 
 struct TestWorkspace {
@@ -195,6 +195,77 @@ fn kc2_matmul_reads_all_operands_no_shortcut() {
         changed,
         "perturbing B did not change the output — kernel is short-cutting an operand"
     );
+}
+
+/// KC-1b: low-precision matmul (bf16 / f16) routes through the **same**
+/// cache-oblivious f32 engine (widen → engine → narrow). We quantize the
+/// operands to the target dtype *first*, then compare the kernel against an
+/// f64 reference over those same quantized inputs — isolating the engine's
+/// arithmetic (which must match f32 matmul to ~1e-4) from the dtype's
+/// inherent rounding. A short-cut (zeros / scalar breakdown) blows past this.
+#[test]
+fn kc1b_low_precision_matmul_routes_through_engine() {
+    use hologram_backend::cpu::dtype::{
+        read_bf16, read_f16, write_bf16, write_f16, DTYPE_BF16, DTYPE_F16,
+    };
+    let shapes = [(8usize, 8usize, 8usize), (31, 17, 29), (128, 96, 130)];
+    for (dtype, enc, dec) in [
+        (
+            DTYPE_BF16,
+            write_bf16 as fn(&mut [u8], usize, f32),
+            read_bf16 as fn(&[u8], usize) -> f32,
+        ),
+        (DTYPE_F16, write_f16, read_f16),
+    ] {
+        for (idx, &(m, k, n)) in shapes.iter().enumerate() {
+            let af = fill(m * k, 0x3000 + idx as u64);
+            let bf = fill(k * n, 0x4000 + idx as u64);
+            // Encode to the target dtype, then decode back to the values the
+            // kernel actually sees — these are the reference inputs.
+            let mut abytes = vec![0u8; m * k * 2];
+            let mut bbytes = vec![0u8; k * n * 2];
+            for (i, &v) in af.iter().enumerate() {
+                enc(&mut abytes, i, v);
+            }
+            for (i, &v) in bf.iter().enumerate() {
+                enc(&mut bbytes, i, v);
+            }
+            let aq: Vec<f32> = (0..m * k).map(|i| dec(&abytes, i)).collect();
+            let bq: Vec<f32> = (0..k * n).map(|i| dec(&bbytes, i)).collect();
+            let want = ref_matmul(&aq, &bq, m, k, n);
+
+            let mut ws = TestWorkspace {
+                slots: vec![abytes, bbytes, vec![0u8; m * n * 2]],
+            };
+            let call = KernelCall::MatMul(MatMulCall {
+                a: buf(0),
+                b: buf(1),
+                output: buf(2),
+                m: m as u32,
+                k: k as u32,
+                n: n as u32,
+                dtype,
+                b_packed: false,
+            });
+            let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+            backend.dispatch(&call, &mut ws).unwrap();
+            let got: Vec<f32> = (0..m * n).map(|i| dec(&ws.slots[2], i)).collect();
+
+            // Output is re-narrowed to the dtype, so allow one dtype ULP on top
+            // of the engine's f32 agreement: bf16 ≈ 8e-3, f16 ≈ 1e-3 relative.
+            let bound = if dtype == DTYPE_BF16 { 8e-3 } else { 1.5e-3 };
+            let err = max_rel_err(&got, &want);
+            assert!(
+                err <= bound,
+                "low-prec matmul dt={dtype} {m}×{k}×{n}: rel err {err:.3e} > {bound:.3e} — \
+                 not routing through the engine correctly"
+            );
+            assert!(
+                got.iter().any(|&v| v.abs() > 1e-6),
+                "low-prec matmul dt={dtype} {m}×{k}×{n} produced all zeros"
+            );
+        }
+    }
 }
 
 // ─── Shared dispatch helper ───────────────────────────────────────────
@@ -771,4 +842,149 @@ fn kc11_pooling_conforms_across_scale() {
             );
         }
     }
+}
+
+// ─── KC-DT: dtype-support policy (no silent fallbacks) ────────────────
+
+/// f64 must be **rejected explicitly**, never silently computed at reduced
+/// precision or produce zeros. The engine computes in f16/bf16/f32; f64 is a
+/// super-f32 storage format with no native kernel, so dispatch returns an
+/// error rather than the historical silent-zero output.
+#[test]
+fn kcdt_f64_rejected_never_silent_zero() {
+    let d = 4usize;
+    let mut ws = TestWorkspace {
+        slots: vec![vec![0u8; d * d * 8], vec![0u8; d * d * 8], vec![1u8; d * d * 8]],
+    };
+    let call = KernelCall::MatMul(MatMulCall {
+        a: buf(0),
+        b: buf(1),
+        output: buf(2),
+        m: d as u32,
+        k: d as u32,
+        n: d as u32,
+        dtype: DTYPE_F64,
+        b_packed: false,
+    });
+    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+    let r = backend.dispatch(&call, &mut ws);
+    assert!(
+        r.is_err(),
+        "f64 matmul must error explicitly, not silently compute/zero"
+    );
+}
+
+/// Division and modulo by zero follow IEEE-754 (±∞ / NaN), not a silent 0.0
+/// substitution — a wrong-but-quiet result is worse than a correct special
+/// value the caller can detect.
+#[test]
+fn kcdt_div_mod_by_zero_is_ieee() {
+    let a = [1.0f32, -1.0, 0.0, 5.0];
+    let b = [0.0f32, 0.0, 0.0, 2.0];
+    let mut ws = TestWorkspace {
+        slots: vec![f32_to_le(&a), f32_to_le(&b), vec![0u8; 16]],
+    };
+    let call = KernelCall::Div(BinaryCall {
+        a: buf(0),
+        b: buf(1),
+        output: buf(2),
+        element_count: 4,
+        witt_bits: 32,
+        dtype: DTYPE_F32,
+    });
+    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+    backend.dispatch(&call, &mut ws).unwrap();
+    let out = le_to_f32(&ws.slots[2]);
+    assert!(out[0].is_infinite() && out[0] > 0.0, "1/0 must be +∞");
+    assert!(out[1].is_infinite() && out[1] < 0.0, "-1/0 must be -∞");
+    assert!(out[2].is_nan(), "0/0 must be NaN");
+    assert!((out[3] - 2.5).abs() < 1e-6, "5/2 must be 2.5");
+}
+
+// ─── KC-7b / KC-8b: low-precision conv & attention route through engine ──
+
+fn enc_bf16(vals: &[f32]) -> (Vec<u8>, Vec<f32>) {
+    use hologram_backend::cpu::dtype::{read_bf16, write_bf16};
+    let mut bytes = vec![0u8; vals.len() * 2];
+    for (i, &v) in vals.iter().enumerate() {
+        write_bf16(&mut bytes, i, v);
+    }
+    let q = (0..vals.len()).map(|i| read_bf16(&bytes, i)).collect();
+    (bytes, q)
+}
+
+#[test]
+fn kc7b_bf16_conv_routes_through_engine() {
+    use hologram_backend::cpu::dtype::{read_bf16, DTYPE_BF16};
+    let (b, cin, cout, hi, wi, kh, kw, sh, sw) = (2usize, 3, 4, 16, 16, 3, 3, 1, 1);
+    let x = fill(b * cin * hi * wi, 0x900);
+    let w = fill(cout * cin * kh * kw, 0x910);
+    let (xb, xq) = enc_bf16(&x);
+    let (wb, wq) = enc_bf16(&w);
+    let (want, ho, wo) = ref_conv2d(&xq, &wq, b, cin, cout, hi, wi, kh, kw, sh, sw);
+    let mut ws = TestWorkspace {
+        slots: vec![xb, wb, vec![0u8; b * cout * ho * wo * 2]],
+    };
+    let call = KernelCall::Conv2d(Conv2dCall {
+        x: buf(0),
+        w: buf(1),
+        output: buf(2),
+        batch: b as u32,
+        channels_in: cin as u32,
+        channels_out: cout as u32,
+        h_in: hi as u32,
+        w_in: wi as u32,
+        h_out: ho as u32,
+        w_out: wo as u32,
+        k_h: kh as u32,
+        k_w: kw as u32,
+        stride_h: sh as u32,
+        stride_w: sw as u32,
+        pad_h: 0,
+        pad_w: 0,
+        dtype: DTYPE_BF16,
+    });
+    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+    backend.dispatch(&call, &mut ws).unwrap();
+    let got: Vec<f32> = (0..b * cout * ho * wo)
+        .map(|i| read_bf16(&ws.slots[2], i))
+        .collect();
+    // bf16 accumulation in f32 then narrow: error dominated by bf16 rounding.
+    let err = max_rel_err(&got, &want);
+    assert!(err <= 3e-2, "bf16 conv rel err {err:.3e} > 3e-2");
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "bf16 conv all zeros");
+}
+
+#[test]
+fn kc8b_bf16_attention_routes_through_engine() {
+    use hologram_backend::cpu::dtype::{read_bf16, DTYPE_BF16};
+    let (ab, ah, asq, ad) = (2usize, 2, 8, 16);
+    let n = ab * ah * asq * ad;
+    let qf = fill(n, 0xA00);
+    let kf = fill(n, 0xA10);
+    let vf = fill(n, 0xA20);
+    let (qb, qq) = enc_bf16(&qf);
+    let (kb, kq) = enc_bf16(&kf);
+    let (vb, vq) = enc_bf16(&vf);
+    let want = ref_attention(&qq, &kq, &vq, ab, ah, asq, ad);
+    let mut ws = TestWorkspace {
+        slots: vec![qb, kb, vb, vec![0u8; n * 2]],
+    };
+    let call = KernelCall::Attention(AttentionCall {
+        q: buf(0),
+        k: buf(1),
+        v: buf(2),
+        output: buf(3),
+        batch: ab as u32,
+        heads: ah as u32,
+        seq: asq as u32,
+        head_dim: ad as u32,
+        dtype: DTYPE_BF16,
+    });
+    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
+    backend.dispatch(&call, &mut ws).unwrap();
+    let got: Vec<f32> = (0..n).map(|i| read_bf16(&ws.slots[3], i)).collect();
+    let err = max_rel_err(&got, &want);
+    assert!(err <= 3e-2, "bf16 attention rel err {err:.3e} > 3e-2");
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "bf16 attention all zeros");
 }

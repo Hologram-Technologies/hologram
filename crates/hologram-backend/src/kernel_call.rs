@@ -803,3 +803,128 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         K::Dequantize(c) => vec![c.input, c.output],
     }
 }
+
+/// The element dtype the kernel operates on (the `dtype` tag every call carries;
+/// fused calls expose their inner matmul's). Centralised so the backend can
+/// enforce a single dtype-support policy at dispatch instead of each kernel
+/// re-checking. Exhaustive match — adding a `KernelCall` variant forces an
+/// update here.
+#[must_use]
+pub fn call_dtype(call: &KernelCall) -> u8 {
+    use KernelCall as K;
+    match call {
+        K::Neg(c)
+        | K::Bnot(c)
+        | K::Succ(c)
+        | K::Pred(c)
+        | K::Relu(c)
+        | K::Sigmoid(c)
+        | K::Tanh(c)
+        | K::Gelu(c)
+        | K::Silu(c)
+        | K::Elu(c)
+        | K::Selu(c)
+        | K::Exp(c)
+        | K::Log(c)
+        | K::Log1p(c)
+        | K::Sqrt(c)
+        | K::Reciprocal(c)
+        | K::Sin(c)
+        | K::Cos(c)
+        | K::Tan(c)
+        | K::Asin(c)
+        | K::Acos(c)
+        | K::Atan(c)
+        | K::Ceil(c)
+        | K::Floor(c)
+        | K::Round(c)
+        | K::Erf(c)
+        | K::IsNaN(c)
+        | K::Sign(c)
+        | K::Abs(c)
+        | K::RotaryEmbedding(c)
+        | K::Clip(c)
+        | K::Lrn(c)
+        | K::UnaryGrad(c) => c.dtype,
+
+        K::Add(c)
+        | K::Sub(c)
+        | K::Mul(c)
+        | K::Xor(c)
+        | K::And(c)
+        | K::Or(c)
+        | K::Div(c)
+        | K::Pow(c)
+        | K::Mod(c)
+        | K::Min(c)
+        | K::Max(c)
+        | K::Equal(c)
+        | K::Less(c)
+        | K::LessOrEqual(c)
+        | K::Greater(c)
+        | K::GreaterOrEqual(c)
+        | K::SubGrad(c)
+        | K::MulGrad(c)
+        | K::DivGrad(c)
+        | K::PowGrad(c)
+        | K::MinGrad(c)
+        | K::MaxGrad(c) => c.dtype,
+
+        K::MatMul(c)
+        | K::FusedSwiGlu(c)
+        | K::MatMulGradA(c)
+        | K::MatMulGradB(c)
+        | K::FusedSwiGluGrad(c) => c.dtype,
+
+        K::MatMulActivation(c) => c.mm.dtype,
+        K::MatMulAdd(c) => c.mm.dtype,
+
+        K::Gemm(c) => c.dtype,
+
+        K::Conv2d(c) | K::ConvTranspose2d(c) | K::Conv2dGradX(c) | K::Conv2dGradW(c) => c.dtype,
+
+        K::LayerNorm(c)
+        | K::RmsNorm(c)
+        | K::GroupNorm(c)
+        | K::InstanceNorm(c)
+        | K::AddRmsNorm(c)
+        | K::LayerNormGrad(c)
+        | K::RmsNormGrad(c)
+        | K::GroupNormGrad(c) => c.dtype,
+
+        K::ReduceSum(c)
+        | K::ReduceMean(c)
+        | K::ReduceProd(c)
+        | K::ReduceMin(c)
+        | K::ReduceMax(c)
+        | K::CumSum(c)
+        | K::ReduceSumGrad(c)
+        | K::ReduceMeanGrad(c)
+        | K::ReduceProdGrad(c) => c.dtype,
+
+        K::Reshape(c)
+        | K::Transpose(c)
+        | K::Concat(c)
+        | K::Slice(c)
+        | K::Pad(c)
+        | K::Expand(c)
+        | K::Resize(c)
+        | K::ConcatGrad(c)
+        | K::SliceGrad(c)
+        | K::PadGrad(c) => c.dtype,
+
+        K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => c.dtype,
+
+        K::MaxPool2d(c)
+        | K::AvgPool2d(c)
+        | K::GlobalAvgPool(c)
+        | K::AvgPool2dGrad(c)
+        | K::GlobalAvgPoolGrad(c) => c.dtype,
+
+        K::Attention(c) | K::AttentionGrad(c) => c.dtype,
+
+        K::Where(c) => c.dtype,
+
+        K::Dequantize(c) => c.dtype,
+    }
+}
