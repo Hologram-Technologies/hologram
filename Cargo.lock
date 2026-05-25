@@ -667,6 +667,7 @@ dependencies = [
  "hologram-graph",
  "hologram-host",
  "memmap2",
+ "smallvec",
  "thiserror 2.0.18",
  "uor-addr",
  "uor-foundation",

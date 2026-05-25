@@ -21,6 +21,11 @@ pub enum SectionKind {
     /// but indexes `kernel_calls[]` directly so the executor can walk
     /// levels in parallel without re-resolving NodeIds.
     ExecPlan = 12,
+    /// Warm-start lattice (WS class): the κ-labels (and, at fold depth,
+    /// the materialized results) of the constant-only cone — nodes whose
+    /// transitive inputs are all constants. Pinned at load under their
+    /// labels so the runtime cache is never cold. See `warm_codec`.
+    WarmStart = 13,
 }
 
 #[derive(Debug, Clone, Copy)]

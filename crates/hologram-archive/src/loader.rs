@@ -145,6 +145,7 @@ impl<'a> HoloLoader<'a> {
                 10 => SectionKind::Outputs,
                 11 => SectionKind::Constants,
                 12 => SectionKind::ExecPlan,
+                13 => SectionKind::WarmStart,
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)

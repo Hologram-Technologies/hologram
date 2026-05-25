@@ -18,6 +18,7 @@
 | **CA** | Content-addressed execution operates on κ-labels, verifiably | exec tests + replay |
 | **SG** | Sub-graph addressing — shared computation is recognized by κ-label and elided | exec reuse tests (dispatch counting) |
 | **FU** | Content-addressed fusion — composable sub-graphs collapse to one κ-addressed op, eliding intermediates | exec fusion tests (fused/kernel counts + f64 ref) |
+| **WS** | Warm-start — the compiled object carries the constant-derivation lattice (+ materialized fold results) so the runtime cache is never cold; warm ≡ cold byte-identically | compiler/exec tests (baked==derived, cone-complete, dispatch elision, warm==cold) |
 | **PV** | Performance — every part within budget, no bottlenecks | benches with baselines/budgets |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
@@ -124,6 +125,45 @@
 | **FU-2** | Fusion is **semantics-preserving** — the fused result is byte-identical to the unfused computation — and **guarded**: a matmul whose output has a second observer is *not* fused (`fused_count == 0`), so the intermediate it still needs is preserved. | fused-vs-unfused equality + guard test | `hologram-exec/tests/conformance.rs::fu2_fusion_is_semantics_preserving_and_guarded` | ✅ |
 | **FU-3** | Fusion fires on the production workload: a stacked transformer-MLP fuses one `matmul → gelu` per layer (the 4·d-wide activation intermediate is never materialized), reducing kernel count, while PV-4's throughput/scaling floors still hold. | production perf test (fused_count == layers) | `hologram-exec/tests/performance.rs::pv4_production_mlp_throughput_latency_and_scaling` | ✅ |
 
+## WS — Warm-start (the compiled object is never cold)
+
+> A κ-label is a **deterministic function of the compiled graph**:
+> `derive_label(opcode ‖ params, ordered operand labels)`. The op signature
+> and params are fixed at compile time, and a constant/weight leaf addresses
+> to a fixed label by its content — so **every node whose transitive inputs
+> are all constants** (the *constant-only cone*: weight preprocessing,
+> dequant, bias/transpose folds) has a fully compile-time-determined κ-label
+> *and* result. Warm-start ships those into the compiled object so load is
+> not cold:
+>
+> * **Lattice (WS-1).** Because the labels are a deterministic function of
+>   the compiled graph, the runtime **derives** the cone lattice itself at
+>   load (post-fusion, so it always matches what the walk dispatches) — no
+>   redundant copy is baked into the archive. These labels are the keys the
+>   fold pins under (WS-2) and the persisted store resolves (WS-3).
+> * **Fold (WS-2).** The archive carries the cone's *materialized results*
+>   (the non-recomputable part), baked by the post-compile fold pass
+>   `hologram_exec::fold_archive`. At load they are pinned under their lattice
+>   labels; the **existing** residency check in the node walk
+>   (`pool.resident(label)`) then elides every cone node on the very first
+>   run — **no walk changes, no second code path**. Because the lattice is
+>   derived post-fusion, even a fused constant-only `matmul→activation` warms.
+> * **Persisted κ-store (WS-3).** A content-addressed store (`WarmStore`)
+>   keyed by κ-label lets results computed in one process warm a later one,
+>   extending reuse past the constant cone to repeated input-dependent work.
+>
+> Warm-start is **observationally invisible**: a warm-loaded session is
+> byte-identical to a cold one (determinism ground, ADR-030; same discipline
+> as FU-2 "semantics-preserving" and CA-2 "memoized ≡ recomputed"). The
+> values are held to the independent f64 reference (KC), never to a label
+> hologram itself produced.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **WS-1** | The runtime **derives** the constant-only-cone lattice at load (`InferenceSession::warm_lattice`) — for every cone node, the κ-label is `derive_label(op-signature, operand labels)`, equal to an independent reference derivation, and the lattice is **complete** (a node is present iff all its transitive operands are constants; input-dependent nodes are absent). It is deterministic across loads and a warm-loaded session produces the f64 reference. No redundant copy is baked into the archive. | exec lattice accessor + independent-derivation cross-check + completeness | `hologram-exec/tests/conformance.rs::ws1_warm_lattice_matches_runtime_derivation_and_is_complete` | ✅ |
+| **WS-2** | The archive carries the cone's materialized results (`hologram_exec::fold_archive` runs the cone through the real runtime and re-emits the archive with a `WarmStart` section); at load they are pinned under their lattice labels, so the first cold-input run **elides every cone node** (`last_dispatched` drops by the cone size) with output equal to the f64 reference and byte-identical to a no-warm run. Because the lattice is derived post-fusion, a fused constant-only `matmul→activation` warms too. | exec tests (dispatch counting + f64 ref + warm==cold; fused-cone case) | `hologram-exec/tests/conformance.rs::ws2_materialized_fold_elides_cone_on_first_run`, `::ws2_fused_constant_cone_is_warmed` | ✅ |
+| **WS-3** | A persisted κ-store (`WarmStore` trait; in-memory `MemWarmStore`, `std`-gated file-backed `FileWarmStore`) keyed by lattice labels warms a fresh session from a prior one's computed results — even from a *labels-only* archive — so the warmed cone is elided on the first run with output equal to the f64 reference. A **missing** entry recomputes (miss-safe), and a **corrupt** entry fails its integrity check and recomputes (never a wrong result). | exec test (cross-session reuse + miss + corruption safety) | `hologram-exec/tests/warm_store.rs::ws3_persisted_store_warms_across_sessions` | ✅ |
+
 ## PV — Performance / no-bottleneck
 
 > Two layers: **microbenches** (PV-1/3) bound a single kernel; **production
@@ -171,8 +211,11 @@ every node is addressed by that composition so shared sub-graphs (cross-run
 prefixes, intra-run common subexpressions) are recognized by κ-label and
 their compute is elided (SG); composable sub-graphs (matmul→activation)
 fuse into one κ-addressed op that elides the intermediate, semantics
-preserved and guarded (FU); performance carries budgets on every heavy
-part with no silent bottleneck
+preserved and guarded (FU); the compiled object carries the constant-only
+cone's deterministic κ-label lattice and its materialized fold so the runtime
+cache is never cold, with cross-process warming via a persisted κ-store —
+warm ≡ cold byte-identically through the single residency mechanism (WS);
+performance carries budgets on every heavy part with no silent bottleneck
 (PV); and the libraries are `no_std`-portable (NS).
 
 Every numbered invariant is enforced and passing. A possible future

@@ -5,6 +5,7 @@
 //! corresponding kernel function.
 
 use crate::workspace::BufferRef;
+use alloc::{vec, vec::Vec};
 
 /// Direct PrimitiveOp wrapper kernels.
 #[derive(Debug, Clone, Copy)]
@@ -645,5 +646,134 @@ impl KernelCall {
             K::Dequantize(c) => p_dequant(c).done(104),
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
         }
+    }
+}
+
+/// All buffer references of a kernel call, in **deterministic operand
+/// order with the output last** — `[inputs.., output]`. This is the order
+/// the content-addressed executor folds operand labels in (the
+/// ordered-composition order) and the load-time slot-sizing /
+/// producer-census passes consume; centralised here so the runtime and the
+/// compiler's warm-start lattice extract operands identically.
+#[must_use]
+pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
+    use KernelCall as K;
+    match call {
+        K::Neg(c)
+        | K::Bnot(c)
+        | K::Succ(c)
+        | K::Pred(c)
+        | K::Relu(c)
+        | K::Sigmoid(c)
+        | K::Tanh(c)
+        | K::Gelu(c)
+        | K::Silu(c)
+        | K::Elu(c)
+        | K::Selu(c)
+        | K::Exp(c)
+        | K::Log(c)
+        | K::Log1p(c)
+        | K::Sqrt(c)
+        | K::Reciprocal(c)
+        | K::Sin(c)
+        | K::Cos(c)
+        | K::Tan(c)
+        | K::Asin(c)
+        | K::Acos(c)
+        | K::Atan(c)
+        | K::Ceil(c)
+        | K::Floor(c)
+        | K::Round(c)
+        | K::Erf(c)
+        | K::IsNaN(c)
+        | K::Sign(c)
+        | K::Abs(c)
+        | K::RotaryEmbedding(c)
+        | K::Clip(c)
+        | K::Lrn(c)
+        | K::UnaryGrad(c) => vec![c.input, c.output],
+
+        K::Add(c)
+        | K::Sub(c)
+        | K::Mul(c)
+        | K::Xor(c)
+        | K::And(c)
+        | K::Or(c)
+        | K::Div(c)
+        | K::Pow(c)
+        | K::Mod(c)
+        | K::Min(c)
+        | K::Max(c)
+        | K::Equal(c)
+        | K::Less(c)
+        | K::LessOrEqual(c)
+        | K::Greater(c)
+        | K::GreaterOrEqual(c)
+        | K::SubGrad(c)
+        | K::MulGrad(c)
+        | K::DivGrad(c)
+        | K::PowGrad(c)
+        | K::MinGrad(c)
+        | K::MaxGrad(c) => vec![c.a, c.b, c.output],
+
+        K::MatMul(c)
+        | K::FusedSwiGlu(c)
+        | K::MatMulGradA(c)
+        | K::MatMulGradB(c)
+        | K::FusedSwiGluGrad(c) => vec![c.a, c.b, c.output],
+
+        K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
+
+        K::Gemm(c) => vec![c.a, c.b, c.c, c.output],
+
+        K::Conv2d(c) | K::ConvTranspose2d(c) | K::Conv2dGradX(c) | K::Conv2dGradW(c) => {
+            vec![c.x, c.w, c.output]
+        }
+
+        K::LayerNorm(c)
+        | K::RmsNorm(c)
+        | K::GroupNorm(c)
+        | K::InstanceNorm(c)
+        | K::AddRmsNorm(c)
+        | K::LayerNormGrad(c)
+        | K::RmsNormGrad(c)
+        | K::GroupNormGrad(c) => vec![c.x, c.gamma, c.beta, c.output],
+
+        K::ReduceSum(c)
+        | K::ReduceMean(c)
+        | K::ReduceProd(c)
+        | K::ReduceMin(c)
+        | K::ReduceMax(c)
+        | K::CumSum(c)
+        | K::ReduceSumGrad(c)
+        | K::ReduceMeanGrad(c)
+        | K::ReduceProdGrad(c) => vec![c.input, c.output],
+
+        K::Reshape(c)
+        | K::Transpose(c)
+        | K::Concat(c)
+        | K::Slice(c)
+        | K::Pad(c)
+        | K::Expand(c)
+        | K::Resize(c)
+        | K::ConcatGrad(c)
+        | K::SliceGrad(c)
+        | K::PadGrad(c) => vec![c.input, c.output],
+
+        K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
+            vec![c.input, c.output]
+        }
+
+        K::MaxPool2d(c)
+        | K::AvgPool2d(c)
+        | K::GlobalAvgPool(c)
+        | K::AvgPool2dGrad(c)
+        | K::GlobalAvgPoolGrad(c) => vec![c.x, c.output],
+
+        K::Attention(c) | K::AttentionGrad(c) => vec![c.q, c.k, c.v, c.output],
+
+        K::Where(c) => vec![c.cond, c.a, c.b, c.output],
+
+        K::Dequantize(c) => vec![c.input, c.output],
     }
 }

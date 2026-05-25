@@ -273,6 +273,16 @@ impl Compiler {
             }
         }
 
+        // Warm-start (WS class) is *not* emitted here. A κ-label is a
+        // deterministic function of the compiled graph, so the runtime derives
+        // the constant-only-cone lattice itself at load (post-fusion, always
+        // matching execution) — baking the labels would be redundant. The
+        // archive carries only the cone's *materialized results*, and those
+        // require running kernels, so they are baked by the post-compile fold
+        // pass (`hologram_exec::fold_archive`, run by the CLI), not the
+        // (execution-free) compiler.
+        let node_count = self.graph.node_count() as u32;
+
         // Step 9: emit archive.
         let mut writer = HoloWriter::new();
         writer.set_kernel_calls(kernel_calls);
@@ -382,7 +392,6 @@ impl Compiler {
         // constant's bytes at session-load time. Small bodies are
         // inlined; larger bodies become references into the Weights
         // pool (see weight dedup above).
-        let node_count = self.graph.node_count() as u32;
         let constants: Vec<ConstantEntry> = (0..self.graph.constants().len())
             .filter_map(|i| {
                 let id = hologram_graph::ConstantId(i as u32);

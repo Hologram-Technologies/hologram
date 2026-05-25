@@ -13,8 +13,12 @@ pub mod buffer;
 pub mod error;
 pub mod prism_route;
 pub mod session;
+pub mod warm;
 
 pub use buffer::{BufferArena, InputBuffer, OutputBuffer, SlotSpan};
 pub use error::ExecError;
 pub use prism_route::AttestedExecution;
 pub use session::{InferenceSession, SessionBackend};
+#[cfg(feature = "std")]
+pub use warm::FileWarmStore;
+pub use warm::{fold_archive, MemWarmStore, WarmStore};

@@ -120,10 +120,44 @@ fn bench_matmul_f32_128(c: &mut Criterion) {
     });
 }
 
+/// f32 matmul at a size whose operands exceed L2 — exercises the
+/// cache-oblivious recursion's scaling (efficiency should hold, not fall off,
+/// since the recursion keeps each sub-problem's working set in-cache: misses
+/// stay compulsory, not capacity).
+fn bench_matmul_f32_square(c: &mut Criterion, n: usize) {
+    c.bench_function(&format!("matmul_f32_{n}x{n}x{n} (zero-copy)"), |bench| {
+        let mut ws = make_arena(n * n * 4);
+        seed_f32(&mut ws, 0, n * n);
+        seed_f32(&mut ws, 1, n * n);
+        let mut backend: CpuBackend<BufferArena> = CpuBackend::new();
+        let call = KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: n as u32,
+            k: n as u32,
+            n: n as u32,
+            dtype: DTYPE_F32,
+        });
+        bench.iter(|| {
+            backend.dispatch(black_box(&call), &mut ws).unwrap();
+        });
+    });
+}
+
+fn bench_matmul_f32_256(c: &mut Criterion) {
+    bench_matmul_f32_square(c, 256);
+}
+fn bench_matmul_f32_512(c: &mut Criterion) {
+    bench_matmul_f32_square(c, 512);
+}
+
 criterion_group!(
     benches,
     bench_matmul_w8_64,
     bench_matmul_f32_64,
-    bench_matmul_f32_128
+    bench_matmul_f32_128,
+    bench_matmul_f32_256,
+    bench_matmul_f32_512
 );
 criterion_main!(benches);

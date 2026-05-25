@@ -777,3 +777,400 @@ fn fu2_fusion_is_semantics_preserving_and_guarded() {
         "fused matmul+gelu must be byte-identical to the unfused computation"
     );
 }
+
+// ─── WS-1: warm-start lattice (the compiled object is never cold) ─────────
+//
+// A κ-label is a deterministic function of the compiled graph, so every node
+// whose transitive inputs are all constants (the constant-only cone) has a
+// compile-time-determined label. The runtime derives that lattice itself at
+// load and exposes it via `warm_lattice()` (no redundant copy is baked into
+// the archive). This builds
+//
+//     cone = add(A, B)        (A, B constant ⇒ constant-only cone)
+//     out  = matmul(X, cone)  (X is a graph input ⇒ NOT in the cone)
+//
+// and proves: (1) the lattice is COMPLETE — exactly the cone node is present,
+// the input-dependent matmul is not; (2) derived == reference — the lattice
+// label equals `derive_label(op-signature, [addr(A), addr(B)])` recomputed
+// from the decoded call with operands addressed independently; (3) the
+// lattice is deterministic across loads; and (4) the session computes the f64
+// reference (warm ≡ cold, observationally invisible).
+#[test]
+fn ws1_warm_lattice_matches_runtime_derivation_and_is_complete() {
+    use hologram_archive::{address_bytes, decoder, derive_label, format::SectionKind, HoloLoader};
+    use hologram_backend::buffers as call_buffers;
+
+    let n = 8usize;
+    let a = fill(n * n, 0xA1);
+    let b = fill(n * n, 0xB2);
+    let x = fill(n * n, 0xC3);
+
+    let mut g = Graph::new();
+    let s = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(n as u64, n as u64));
+    let ca = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&a),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let cb = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&b),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    // cone = add(A, B): both operands constant ⇒ constant-only cone.
+    let cone = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Constant(ca), InputSource::Constant(cb)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_input(xi);
+    // out = matmul(X, cone): depends on a graph input ⇒ NOT in the cone.
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Node(cone)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_output(out);
+    let (cone_slot, mm_slot) = (cone.0, mm.0);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let lattice = sess.warm_lattice();
+
+    // (1) Completeness: exactly the cone node is present; the input-dependent
+    // matmul is absent.
+    assert_eq!(
+        lattice.len(),
+        1,
+        "lattice must cover exactly the constant cone"
+    );
+    assert_eq!(
+        lattice[0].0, cone_slot,
+        "the cone node (add) must be present"
+    );
+    assert!(
+        lattice.iter().all(|&(slot, _)| slot != mm_slot),
+        "an input-dependent node must NOT be in the lattice"
+    );
+
+    // (2) derived == reference: recompute the cone label from the decoded
+    // call's op-signature with operands addressed *independently*.
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    let cone_call = calls
+        .iter()
+        .find(|c| call_buffers(c).last().map(|o| o.slot) == Some(cone_slot))
+        .expect("cone node has a kernel call");
+    let sig = cone_call.op_signature();
+    let expected = derive_label(
+        sig.opcode,
+        sig.params(),
+        &[address_bytes(&f32_to_le(&a)), address_bytes(&f32_to_le(&b))],
+    );
+    assert_eq!(
+        lattice[0].1, expected,
+        "lattice label must equal the independent runtime derivation"
+    );
+    assert!(
+        lattice[0].1.as_str().starts_with("blake3:") && lattice[0].1.as_str().len() == 71,
+        "lattice label must be a canonical blake3 κ-label"
+    );
+
+    // (3) Determinism: the lattice does not change across loads.
+    let sess2: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess.warm_lattice(),
+        sess2.warm_lattice(),
+        "warm-start lattice must be deterministic"
+    );
+
+    // (4) Warm ≡ cold: the session computes the f64 reference.
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    let want = ref_matmul(&x, &ref_add(&a, &b), n, n, n);
+    let scale = want.iter().fold(0f64, |mx, &w| mx.max(f64::from(w).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(
+        err <= 1e-4,
+        "warm-loaded session diverged from reference (err {err:.3e})"
+    );
+
+    // No-constants graph ⇒ empty lattice.
+    let empty = matmul_session(8, 8, 8);
+    assert!(
+        empty.warm_lattice().is_empty(),
+        "an all-input graph has no constant cone, so no lattice"
+    );
+}
+
+// ─── WS-2: materialized fold (the cache is never cold on the first run) ───
+//
+// Builds the same graph as WS-1 — cone = add(A, B) (constant-only), out =
+// matmul(X, cone) (input-dependent) — then runs the fold pass
+// (`fold_archive`) to materialize the cone's result into the archive. A
+// session loaded from the *warmed* archive pins the cone result under its
+// lattice label, so the **existing** residency check elides the cone node on
+// the very first cold-input run: `last_dispatched` drops by the cone size
+// (the add is skipped; only the input-dependent matmul dispatches). The
+// output still equals the f64 reference and is byte-identical to the unwarmed
+// (cold) run — warm-start is observationally invisible.
+#[test]
+fn ws2_materialized_fold_elides_cone_on_first_run() {
+    use hologram_exec::fold_archive;
+
+    let n = 8usize;
+    let a = fill(n * n, 0xA1);
+    let b = fill(n * n, 0xB2);
+    let x = fill(n * n, 0xC3);
+
+    let mut g = Graph::new();
+    let s = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(n as u64, n as u64));
+    let ca = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&a),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let cb = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&b),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let cone = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Constant(ca), InputSource::Constant(cb)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Node(cone)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    // Cold (labels-only) baseline: both kernels dispatch on the first run.
+    let mut cold: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let cold_out = cold
+        .execute(&[InputBuffer {
+            bytes: &f32_to_le(&x),
+        }])
+        .unwrap()[0]
+        .bytes
+        .clone();
+    assert_eq!(
+        cold.last_dispatched(),
+        2,
+        "cold first run dispatches every kernel (add + matmul)"
+    );
+
+    // Fold: materialize the constant-only cone into the archive.
+    let warmed = fold_archive(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_ne!(
+        warmed, compiled.archive,
+        "fold must bake the cone result in"
+    );
+
+    let mut warm: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&warmed, CpuBackend::new()).unwrap();
+    let warm_out = warm
+        .execute(&[InputBuffer {
+            bytes: &f32_to_le(&x),
+        }])
+        .unwrap()[0]
+        .bytes
+        .clone();
+
+    // The cone (add) is elided on the FIRST run; only the input-dependent
+    // matmul dispatches.
+    assert_eq!(
+        warm.last_dispatched(),
+        1,
+        "warm first run elides the constant-only cone (add skipped)"
+    );
+    assert!(
+        warm.last_skipped() >= 1,
+        "the cone node is recognized as resident and skipped"
+    );
+
+    // Output equals the f64 reference and is byte-identical to the cold run.
+    let got = le_to_f32(&warm_out);
+    let want = ref_matmul(&x, &ref_add(&a, &b), n, n, n);
+    let scale = want.iter().fold(0f64, |mx, &w| mx.max(f64::from(w).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(
+        err <= 1e-4,
+        "warm fold output diverged from reference (err {err:.3e})"
+    );
+    assert_eq!(
+        warm_out, cold_out,
+        "warm fold must be byte-identical to cold"
+    );
+}
+
+// ─── WS-2 (fusion): a fused constant-only cone is warmed ──────────────────
+//
+// Regression guard for the original pre-/post-fusion mismatch: the lattice is
+// now derived at load (POST-fusion), so a constant-only `matmul → gelu` —
+// which the load-time fusion pass rewrites into one `MatMulActivation` — is
+// addressed as that single fused op and warms correctly. Builds
+//
+//     c1 = matmul(A, B)   c2 = gelu(c1)   out = matmul(X, c2)
+//
+// where A, B are constants (c1, c2 are a constant-only cone; c1→c2 fuses),
+// folds it, and proves the fused cone node is elided on the first run with a
+// result byte-identical to the cold (unwarmed) computation.
+#[test]
+fn ws2_fused_constant_cone_is_warmed() {
+    use hologram_exec::fold_archive;
+
+    let n = 8usize;
+    let a = fill(n * n, 0x1A);
+    let b = fill(n * n, 0x2B);
+    let x = fill(n * n, 0x3C);
+
+    let mut g = Graph::new();
+    let s = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(n as u64, n as u64));
+    let ca = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&a),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let cb = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&b),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let c1 = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Constant(ca), InputSource::Constant(cb)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    // gelu(c1): single observer of c1, not a graph output ⇒ matmul→gelu fuses.
+    let c2 = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Gelu),
+        inputs: SmallVec::from_iter([InputSource::Node(c1)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Node(c2)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    // Cold baseline: post-fusion there are two kernels (fused matmul+gelu, and
+    // the input-dependent matmul); both dispatch on a cold run.
+    let mut cold: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(cold.fused_count(), 1, "matmul→gelu must fuse");
+    assert_eq!(
+        cold.warm_lattice().len(),
+        1,
+        "the fused constant-only node is the cone (derived post-fusion)"
+    );
+    let cold_out = cold
+        .execute(&[InputBuffer {
+            bytes: &f32_to_le(&x),
+        }])
+        .unwrap()[0]
+        .bytes
+        .clone();
+    assert_eq!(
+        cold.last_dispatched(),
+        2,
+        "cold run dispatches both kernels"
+    );
+
+    // Fold + reload: the fused constant cone is materialized and elided.
+    let warmed = fold_archive(&compiled.archive, CpuBackend::new()).unwrap();
+    let mut warm: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&warmed, CpuBackend::new()).unwrap();
+    let warm_out = warm
+        .execute(&[InputBuffer {
+            bytes: &f32_to_le(&x),
+        }])
+        .unwrap()[0]
+        .bytes
+        .clone();
+    assert_eq!(
+        warm.last_dispatched(),
+        1,
+        "the fused constant-only cone is warmed and elided on the first run"
+    );
+    assert_eq!(
+        warm_out, cold_out,
+        "warmed fused cone must be byte-identical to the cold computation"
+    );
+}

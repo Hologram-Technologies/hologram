@@ -44,25 +44,6 @@ fn with_matmul_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
     f(&mut scratch)
 }
 
-// Reused byte buffer for marshalling matmul operands into the prism
-// `TensorAxis::matmul` single-input contract (`[m,k,n] || A || B`). Same
-// thread-local-vs-fresh story as `with_matmul_scratch`, so routing matmul
-// through the prism axis surface costs no per-call allocation under `std`.
-#[cfg(feature = "std")]
-fn with_matmul_input_scratch<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
-    std::thread_local! {
-        static MATMUL_IN_SCRATCH: core::cell::RefCell<Vec<u8>> =
-            const { core::cell::RefCell::new(Vec::new()) };
-    }
-    MATMUL_IN_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
-}
-
-#[cfg(not(feature = "std"))]
-fn with_matmul_input_scratch<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
-    let mut scratch = Vec::new();
-    f(&mut scratch)
-}
-
 pub fn unary_float<W: Workspace>(
     c: &UnaryCall,
     ws: &mut W,
@@ -170,25 +151,23 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     }
 
     if dt == DTYPE_F32 {
-        // Dispatch through the prism `TensorAxis` surface (wiki ADR-031):
-        // marshal `[m,k,n] || A || B` into the reused scratch and invoke the
-        // axis kernel. The marshalling is Θ(m·k + k·n) against the kernel's
-        // Θ(m·k·n) compute — negligible at model scale.
-        use prism::tensor::TensorAxis;
-        let mn = m * n * 4;
-        let res = with_matmul_input_scratch(|inp| {
-            inp.clear();
-            inp.reserve(crate::prism_axes::HOLOGRAM_MATMUL_HEADER_BYTES + a.len() + b.len());
-            inp.extend_from_slice(&(m as u32).to_le_bytes());
-            inp.extend_from_slice(&(k as u32).to_le_bytes());
-            inp.extend_from_slice(&(n as u32).to_le_bytes());
-            inp.extend_from_slice(a);
-            inp.extend_from_slice(b);
-            crate::prism_axes::HologramTensorMatmulF32::matmul(inp, &mut out[..mn])
-        });
-        return res
-            .map(|_| ())
-            .map_err(|_| BackendError::Dispatch("matmul axis"));
+        // Zero-copy: the workspace buffers are already contiguous, 64-byte
+        // aligned f32, so view them directly and call the shared blocked-FMA
+        // kernel. (The prism-canonical `TensorAxis` surface —
+        // `HologramTensorMatmulF32` — wraps this same kernel for external
+        // consumers per ADR-031; the runtime hot path must not pay its
+        // marshalling copy of A and B, which is a contrived per-dispatch
+        // Θ(m·k + k·n) memory tax the `gemm` path already avoids.)
+        if let (Ok(a32), Ok(b32), Ok(out32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(a),
+            bytemuck::try_cast_slice::<u8, f32>(b),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+        ) {
+            with_matmul_scratch(|bt| {
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
+            });
+            return Ok(());
+        }
     }
 
     // Non-f32 dtypes (bf16, f16, f64): per-element codec. The split-

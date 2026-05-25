@@ -22,6 +22,7 @@ pub mod format;
 pub mod kernel_codec;
 pub mod loader;
 pub mod schedule_codec;
+pub mod warm_codec;
 pub mod weight;
 pub mod writer;
 
@@ -32,5 +33,6 @@ pub use address::{
 pub use error::ArchiveError;
 pub use format::{HoloHeader, SectionKind, FORMAT_VERSION, MAGIC};
 pub use loader::{HoloLoader, LoadedPlan};
+pub use warm_codec::{derive_cone_lattice, WarmEntry};
 pub use weight::{WeightFingerprint, WeightStore};
 pub use writer::{decode_exec_plan, decode_ports, decode_weights, HoloWriter, PortDescriptor};

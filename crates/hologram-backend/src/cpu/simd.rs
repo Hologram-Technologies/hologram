@@ -350,48 +350,56 @@ mod x86 {
         total
     }
 
-    /// Register-blocked f32 GEMM micro-kernel: `out = A·B`, row-major, with
-    /// a 4×16 output tile held in eight YMM accumulators across the `k`
-    /// loop. Each `k` step loads two contiguous 8-wide B vectors and issues
-    /// `MR` broadcast-FMAs per vector — peak FMA throughput with one stream
-    /// of B and no horizontal reductions. Row/column remainders fall to a
-    /// scalar tail.
+    /// Register-tiled FMA **leaf** of the cache-oblivious recursion: a 4×16
+    /// output tile (`MR×NR`) held entirely in YMM accumulators while B rows
+    /// stream contiguously. Operates on **strided** sub-matrix views (`lda`,
+    /// `ldb`, `ldc` = the parent matrices' row strides), so a sub-block of a
+    /// larger matrix is multiplied in place with no packing/copy. `accumulate`
+    /// selects `C += A·B` (the `k`-split combine) vs `C = A·B` (a fresh tile).
     ///
     /// # Safety
-    /// Requires AVX2 + FMA (the caller gates on `resolve_path`). The slices
-    /// must satisfy `a.len() >= m*k`, `b.len() >= k*n`, `out.len() >= m*n`.
+    /// Requires AVX2 + FMA (the caller gates on `resolve_path`); pointers must
+    /// address `m×k`, `k×n`, `m×n` sub-matrices with the given row strides.
     #[target_feature(enable = "avx2,fma")]
-    pub unsafe fn matmul_f32_fma(
-        a: &[f32],
-        b: &[f32],
-        out: &mut [f32],
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn matmul_f32_fma_strided(
+        a: *const f32,
+        b: *const f32,
+        out: *mut f32,
         m: usize,
         k: usize,
         n: usize,
+        lda: usize,
+        ldb: usize,
+        ldc: usize,
+        accumulate: bool,
     ) {
         const MR: usize = 4;
         const NR: usize = 16;
-        let ap = a.as_ptr();
-        let bp = b.as_ptr();
-        let op = out.as_mut_ptr();
-
         let mut i = 0;
         while i + MR <= m {
             let mut j = 0;
             while j + NR <= n {
                 let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let orow = out.add((i + r) * ldc + j);
+                        cr[0] = _mm256_loadu_ps(orow);
+                        cr[1] = _mm256_loadu_ps(orow.add(8));
+                    }
+                }
                 for kk in 0..k {
-                    let brow = bp.add(kk * n + j);
+                    let brow = b.add(kk * ldb + j);
                     let b0 = _mm256_loadu_ps(brow);
                     let b1 = _mm256_loadu_ps(brow.add(8));
                     for (r, cr) in c.iter_mut().enumerate() {
-                        let av = _mm256_set1_ps(*ap.add((i + r) * k + kk));
+                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
                         cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
                         cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
                     }
                 }
                 for (r, cr) in c.iter().enumerate() {
-                    let orow = op.add((i + r) * n + j);
+                    let orow = out.add((i + r) * ldc + j);
                     _mm256_storeu_ps(orow, cr[0]);
                     _mm256_storeu_ps(orow.add(8), cr[1]);
                 }
@@ -400,11 +408,15 @@ mod x86 {
             // Column remainder for this row block.
             while j < n {
                 for r in 0..MR {
-                    let mut s = 0.0f32;
+                    let mut s = if accumulate {
+                        *out.add((i + r) * ldc + j)
+                    } else {
+                        0.0
+                    };
                     for kk in 0..k {
-                        s += *ap.add((i + r) * k + kk) * *bp.add(kk * n + j);
+                        s += *a.add((i + r) * lda + kk) * *b.add(kk * ldb + j);
                     }
-                    *op.add((i + r) * n + j) = s;
+                    *out.add((i + r) * ldc + j) = s;
                 }
                 j += 1;
             }
@@ -413,13 +425,102 @@ mod x86 {
         // Row remainder.
         while i < m {
             for j in 0..n {
-                let mut s = 0.0f32;
+                let mut s = if accumulate {
+                    *out.add(i * ldc + j)
+                } else {
+                    0.0
+                };
                 for kk in 0..k {
-                    s += *ap.add(i * k + kk) * *bp.add(kk * n + j);
+                    s += *a.add(i * lda + kk) * *b.add(kk * ldb + j);
                 }
-                *op.add(i * n + j) = s;
+                *out.add(i * ldc + j) = s;
             }
             i += 1;
+        }
+    }
+
+    /// **Cache-oblivious recursive matmul** — hologram's "lattice recursion"
+    /// at the kernel level. `C = A·B` (row-major sub-matrices addressed by
+    /// strides) is computed by recursively halving the **largest** of `m, n,
+    /// k` until a sub-problem fits the register-tile leaf, which runs the FMA
+    /// microkernel. Splitting the largest dimension keeps every sub-problem's
+    /// working set ⊆ the next cache tier *without any per-cache block
+    /// constant* — blocking for L1/L2/L3 emerges from the subdivision, so the
+    /// miss count stays compulsory-only (each datum read once, reused before
+    /// eviction) and efficiency holds at arbitrary size: no contrived ceiling.
+    /// The single threshold `LEAF` is the register-tier base case (the analog
+    /// of a term-recursion base case), not a cache-size knob.
+    ///
+    /// # Safety
+    /// AVX2+FMA must be present (the caller checks `resolve_path`); pointers
+    /// must address `m×k`, `k×n`, `m×n` sub-matrices with the given strides.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn matmul_f32_recursive(
+        a: *const f32,
+        b: *const f32,
+        out: *mut f32,
+        m: usize,
+        k: usize,
+        n: usize,
+        lda: usize,
+        ldb: usize,
+        ldc: usize,
+        accumulate: bool,
+    ) {
+        // Register-tier leaf: a 64³ tile's three operands (~48 KiB) sit in
+        // L1/L2 and the 4×16 microkernel saturates the FMA units. Above this,
+        // recurse — never a per-cache block constant.
+        const LEAF: usize = 64;
+        if m <= LEAF && k <= LEAF && n <= LEAF {
+            matmul_f32_fma_strided(a, b, out, m, k, n, lda, ldb, ldc, accumulate);
+            return;
+        }
+        if m >= n && m >= k {
+            let h = m / 2;
+            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a.add(h * lda),
+                b,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
+                lda,
+                ldb,
+                ldc,
+                accumulate,
+            );
+        } else if n >= m && n >= k {
+            let h = n / 2;
+            matmul_f32_recursive(a, b, out, m, k, h, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a,
+                b.add(h),
+                out.add(h),
+                m,
+                k,
+                n - h,
+                lda,
+                ldb,
+                ldc,
+                accumulate,
+            );
+        } else {
+            // k-split: the two half-products accumulate into the same C tile.
+            let h = k / 2;
+            matmul_f32_recursive(a, b, out, m, h, n, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a.add(h),
+                b.add(h * ldb),
+                out,
+                m,
+                k - h,
+                n,
+                lda,
+                ldb,
+                ldc,
+                true,
+            );
         }
     }
 }
@@ -552,8 +653,22 @@ pub fn matmul_f32_blocked(
         if p == 2 || p == 3 {
             let _ = &bt_scratch; // unused on this path
                                  // SAFETY: `resolve_path` confirmed AVX2 + FMA are present.
+                                 // Strides are the contiguous row-major strides
+                                 // (lda=k, ldb=n, ldc=n); `accumulate=false` is a
+                                 // fresh output.
             unsafe {
-                x86::matmul_f32_fma(a, b, out, m, k, n);
+                x86::matmul_f32_recursive(
+                    a.as_ptr(),
+                    b.as_ptr(),
+                    out.as_mut_ptr(),
+                    m,
+                    k,
+                    n,
+                    k,
+                    n,
+                    n,
+                    false,
+                );
             }
             return;
         }

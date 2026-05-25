@@ -209,3 +209,31 @@ fn layout_round_trip() {
     assert!(matches!(decoded[0], KernelCall::Reshape(_)));
     assert!(matches!(decoded[1], KernelCall::Transpose(_)));
 }
+
+#[test]
+fn warm_start_round_trip() {
+    use hologram_archive::{address_bytes, warm_codec, WarmEntry};
+    let entries = vec![
+        // Labels-only entry (Layer 1).
+        WarmEntry {
+            slot: 3,
+            label: address_bytes(b"cone-node-a"),
+            result: Vec::new(),
+        },
+        // Materialized-result entry (Layer 2 shape).
+        WarmEntry {
+            slot: 7,
+            label: address_bytes(b"cone-node-b"),
+            result: vec![1u8, 2, 3, 4, 5],
+        },
+    ];
+    let bytes = warm_codec::encode(&entries);
+    let decoded = warm_codec::decode(&bytes).unwrap();
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(decoded[0].slot, 3);
+    assert_eq!(decoded[0].label, address_bytes(b"cone-node-a"));
+    assert!(decoded[0].result.is_empty());
+    assert_eq!(decoded[1].slot, 7);
+    assert_eq!(decoded[1].label, address_bytes(b"cone-node-b"));
+    assert_eq!(decoded[1].result, vec![1u8, 2, 3, 4, 5]);
+}

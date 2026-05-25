@@ -28,6 +28,11 @@ pub enum Command {
         /// Output archive path.
         #[arg(long)]
         output: std::path::PathBuf,
+        /// Skip the warm-start fold (WS-2). By default the CLI materializes
+        /// the constant-only cone into the archive so the runtime cache is
+        /// never cold; pass `--no-warm` to emit the labels-only lattice.
+        #[arg(long)]
+        no_warm: bool,
     },
     /// Execute a `.holo` archive against the CPU backend with zero-byte inputs.
     /// Returns the byte length of each declared output port.
@@ -57,6 +62,7 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             witt_level,
             source,
             output,
+            no_warm,
         } => {
             let kind = parse_backend(&backend);
             let level = WittLevel::new(witt_level);
@@ -69,13 +75,21 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
                 None => Graph::new(),
             };
             let out = Compiler::new(graph, kind, level).compile()?;
-            std::fs::write(&output, &out.archive)
+            // Warm-start fold (WS-2): materialize the constant-only cone into
+            // the archive so the runtime cache is never cold. Folded on the
+            // CPU backend (the cone's bytes are backend-independent) even when
+            // the target is a GPU. `--no-warm` keeps the labels-only lattice.
+            let archive = if no_warm {
+                out.archive
+            } else {
+                let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
+                    hologram_backend::CpuBackend::new();
+                hologram_exec::fold_archive(&out.archive, backend)
+                    .map_err(|_| CompileError::SourceParse("warm fold"))?
+            };
+            std::fs::write(&output, &archive)
                 .map_err(|_| CompileError::SourceParse("write archive"))?;
-            println!(
-                "compiled {} bytes to {}",
-                out.archive.len(),
-                output.display()
-            );
+            println!("compiled {} bytes to {}", archive.len(), output.display());
             println!(
                 "  nodes={} levels={} validated={} cache_hits={}",
                 out.stats.total_nodes,

@@ -9,10 +9,10 @@ use crate::buffer::{BufferArena, InputBuffer, OutputBuffer};
 use crate::error::ExecError;
 use hologram_archive::{
     address_bytes, constant_codec, decode_exec_plan, decode_ports, decode_weights, decoder,
-    derive_label, derive_label_witnessed, format::SectionKind, ContentLabel, HoloLoader,
-    PortDescriptor, WeightFingerprint,
+    derive_label, derive_label_witnessed, format::SectionKind, warm_codec, ContentLabel,
+    HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
 };
-use hologram_backend::{Backend, KernelCall, MatMulActivationCall, MatMulCall};
+use hologram_backend::{buffers, Backend, KernelCall, MatMulActivationCall, MatMulCall};
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
 /// `DTYPE_F32`). Content-addressed fusion only fires for f32 matmuls.
@@ -298,6 +298,23 @@ impl<B: SessionBackend> InferenceSession<B> {
             pool.pin_bytes(label, body);
             slot_label_init[entry.slot as usize] = Some(label);
             const_bindings.push((entry.slot, label));
+        }
+
+        // Warm-start fold (WS-2). If the archive carries materialized
+        // constant-only-cone results (baked by `crate::warm::fold_archive`),
+        // pin each under its κ-label so it is resident. The **existing**
+        // residency check in the node walk then elides that cone node on the
+        // very first run — the cache is never cold, with no walk changes and
+        // no second code path. Keyed purely by κ-label, so it matches whatever
+        // label the (post-fusion) walk derives. A plain `compile()` bakes no
+        // results; the lattice of labels is derived on demand (`cone_lattice`),
+        // never stored redundantly in the archive.
+        if let Ok(section) = plan.section(SectionKind::WarmStart) {
+            for entry in warm_codec::decode(section).map_err(ExecError::Archive)? {
+                if !entry.result.is_empty() {
+                    pool.pin_bytes(entry.label, &entry.result);
+                }
+            }
         }
 
         // Precompute per-node addressing metadata: op signature + operand
@@ -710,6 +727,140 @@ impl<B: SessionBackend> InferenceSession<B> {
     pub fn content_store_len(&self) -> usize {
         self.pool.resident_len()
     }
+
+    /// The warm-start lattice (WS class): `(slot, κ-label)` of every
+    /// constant-only-cone node — nodes whose transitive inputs are all
+    /// constants. **Derived on demand** from the (post-fusion) kernel calls
+    /// and the constants' leaf labels — a κ-label is a deterministic function
+    /// of the compiled graph, so this is exactly what the runtime walk would
+    /// mint, with no redundant copy baked into the archive and no per-load
+    /// cost when warm-start is unused. Empty for an all-input graph. These are
+    /// the keys the persisted store (WS-3) resolves and the V&V checks.
+    #[must_use]
+    pub fn warm_lattice(&self) -> Vec<(u32, ContentLabel)> {
+        self.cone_lattice()
+    }
+
+    /// Derive the constant-only-cone lattice over the *post-fusion* kernel
+    /// calls. Because it runs post-fusion, a fused constant-only
+    /// `matmul→activation` is addressed as the single op the walk dispatches,
+    /// so its result warms correctly (no pre-/post-fusion mismatch).
+    fn cone_lattice(&self) -> Vec<(u32, ContentLabel)> {
+        let input_slots: Vec<u32> = self.inputs.iter().map(|p| p.slot).collect();
+        hologram_archive::derive_cone_lattice(
+            &self.kernel_calls,
+            &self.const_bindings,
+            &input_slots,
+        )
+        .into_iter()
+        .map(|e| (e.slot, e.label))
+        .collect()
+    }
+
+    /// **Materialize the constant-only cone (WS-2, the fold).** Run every
+    /// cone node — its inputs are all constants/weights, so it needs no graph
+    /// input — and return a [`WarmEntry`] per node carrying its lattice
+    /// κ-label and its computed result bytes. Baking these into the archive's
+    /// `WarmStart` section (see [`crate::warm::fold_archive`]) lets a later
+    /// load pin them as resident, so the **existing** residency check in the
+    /// node walk elides the whole cone on the first run.
+    ///
+    /// Runs the cone through the *same* kernels and pool as a normal execute
+    /// (no second compute path), so the materialized bytes are byte-identical
+    /// to what the cold walk would produce. The lattice is derived
+    /// **post-fusion** (see [`Self::cone_lattice`]), so a fused constant-only
+    /// `matmul→activation` is addressed as the single op the walk dispatches
+    /// and is materialized correctly — there is no pre-/post-fusion mismatch.
+    pub fn materialize_cone(&mut self) -> Result<Vec<WarmEntry>, ExecError> {
+        let lattice = self.cone_lattice();
+        if lattice.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cone: HashMap<u32, ContentLabel> = lattice.iter().copied().collect();
+        // Bind constants; the cone reads only those (and earlier cone nodes).
+        self.pool.rebind_reset(self.slot_sizes.len());
+        for &(slot, label) in &self.const_bindings {
+            self.pool.bind_resident(slot as usize, &label);
+        }
+        let mut out: Vec<WarmEntry> = Vec::with_capacity(lattice.len());
+        for li in 0..self.exec_plan.len() {
+            for ni in 0..self.exec_plan[li].len() {
+                let ci = self.exec_plan[li][ni] as usize;
+                if ci >= self.kernel_calls.len() {
+                    return Err(ExecError::Backend);
+                }
+                let out_slot = self.node_meta[ci].output;
+                let label = match cone.get(&out_slot) {
+                    Some(l) => *l,
+                    None => continue, // not a cone node (input-dependent)
+                };
+                let size = self
+                    .slot_sizes
+                    .get(out_slot as usize)
+                    .copied()
+                    .unwrap_or(64);
+                self.pool.bind_fresh(out_slot as usize, size);
+                let call = self.kernel_calls[ci];
+                self.backend
+                    .dispatch(&call, &mut self.pool)
+                    .map_err(|_| ExecError::Backend)?;
+                self.pool.retain(out_slot as usize, label);
+                // Harvest the *logical* output bytes (the call's output
+                // BufferRef length), so a pinned result resolves to exactly
+                // what a dispatch would produce.
+                let logical = buffers(&call)
+                    .last()
+                    .map(|b| b.length as usize)
+                    .unwrap_or(0);
+                let full = self
+                    .pool
+                    .read_slot(out_slot as usize)
+                    .ok_or(ExecError::WorkspaceExhausted)?;
+                let take = logical.min(full.len());
+                out.push(WarmEntry {
+                    slot: out_slot,
+                    label,
+                    result: full[..take].to_vec(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// **Persist the materialized cone to a κ-store (WS-3).** Materializes the
+    /// constant-only cone (see [`Self::materialize_cone`]) and writes each
+    /// result under its lattice κ-label, so a later process can warm from it.
+    /// Returns the number of cone nodes persisted.
+    pub fn persist_cone(
+        &mut self,
+        store: &mut dyn crate::warm::WarmStore,
+    ) -> Result<usize, ExecError> {
+        let entries = self.materialize_cone()?;
+        for e in &entries {
+            store.put(&e.label, &e.result);
+        }
+        Ok(entries.len())
+    }
+
+    /// **Warm the pool from a persisted κ-store (WS-3).** For each
+    /// constant-only-cone node, if the store holds a result under its lattice
+    /// κ-label, pin it resident — so the **existing** residency check in the
+    /// node walk elides that node on the first run, exactly as a baked fold
+    /// (WS-2) would, but sourced from a prior process. A label the store
+    /// lacks is simply left cold (the runtime recomputes it), so a missing or
+    /// foreign store is always safe. Returns the number of cone nodes warmed.
+    pub fn warm_from_store(&mut self, store: &dyn crate::warm::WarmStore) -> usize {
+        let mut warmed = 0usize;
+        for (_slot, label) in self.cone_lattice() {
+            if !self.pool.resident(&label) {
+                if let Some(bytes) = store.get(&label) {
+                    self.pool.pin_bytes(label, &bytes);
+                    warmed += 1;
+                }
+            }
+        }
+        warmed
+    }
 }
 
 impl<B: SessionBackend> InferenceSession<B> {
@@ -848,126 +999,4 @@ fn fuse_matmul_activation(
         }
     }
     (new_calls, new_plan)
-}
-
-fn buffers(call: &KernelCall) -> Vec<hologram_backend::BufferRef> {
-    use KernelCall as K;
-    match call {
-        K::Neg(c)
-        | K::Bnot(c)
-        | K::Succ(c)
-        | K::Pred(c)
-        | K::Relu(c)
-        | K::Sigmoid(c)
-        | K::Tanh(c)
-        | K::Gelu(c)
-        | K::Silu(c)
-        | K::Elu(c)
-        | K::Selu(c)
-        | K::Exp(c)
-        | K::Log(c)
-        | K::Log1p(c)
-        | K::Sqrt(c)
-        | K::Reciprocal(c)
-        | K::Sin(c)
-        | K::Cos(c)
-        | K::Tan(c)
-        | K::Asin(c)
-        | K::Acos(c)
-        | K::Atan(c)
-        | K::Ceil(c)
-        | K::Floor(c)
-        | K::Round(c)
-        | K::Erf(c)
-        | K::IsNaN(c)
-        | K::Sign(c)
-        | K::Abs(c)
-        | K::RotaryEmbedding(c)
-        | K::Clip(c)
-        | K::Lrn(c)
-        | K::UnaryGrad(c) => vec![c.input, c.output],
-
-        K::Add(c)
-        | K::Sub(c)
-        | K::Mul(c)
-        | K::Xor(c)
-        | K::And(c)
-        | K::Or(c)
-        | K::Div(c)
-        | K::Pow(c)
-        | K::Mod(c)
-        | K::Min(c)
-        | K::Max(c)
-        | K::Equal(c)
-        | K::Less(c)
-        | K::LessOrEqual(c)
-        | K::Greater(c)
-        | K::GreaterOrEqual(c)
-        | K::SubGrad(c)
-        | K::MulGrad(c)
-        | K::DivGrad(c)
-        | K::PowGrad(c)
-        | K::MinGrad(c)
-        | K::MaxGrad(c) => vec![c.a, c.b, c.output],
-
-        K::MatMul(c)
-        | K::FusedSwiGlu(c)
-        | K::MatMulGradA(c)
-        | K::MatMulGradB(c)
-        | K::FusedSwiGluGrad(c) => vec![c.a, c.b, c.output],
-
-        K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
-
-        K::Gemm(c) => vec![c.a, c.b, c.c, c.output],
-
-        K::Conv2d(c) | K::ConvTranspose2d(c) | K::Conv2dGradX(c) | K::Conv2dGradW(c) => {
-            vec![c.x, c.w, c.output]
-        }
-
-        K::LayerNorm(c)
-        | K::RmsNorm(c)
-        | K::GroupNorm(c)
-        | K::InstanceNorm(c)
-        | K::AddRmsNorm(c)
-        | K::LayerNormGrad(c)
-        | K::RmsNormGrad(c)
-        | K::GroupNormGrad(c) => vec![c.x, c.gamma, c.beta, c.output],
-
-        K::ReduceSum(c)
-        | K::ReduceMean(c)
-        | K::ReduceProd(c)
-        | K::ReduceMin(c)
-        | K::ReduceMax(c)
-        | K::CumSum(c)
-        | K::ReduceSumGrad(c)
-        | K::ReduceMeanGrad(c)
-        | K::ReduceProdGrad(c) => vec![c.input, c.output],
-
-        K::Reshape(c)
-        | K::Transpose(c)
-        | K::Concat(c)
-        | K::Slice(c)
-        | K::Pad(c)
-        | K::Expand(c)
-        | K::Resize(c)
-        | K::ConcatGrad(c)
-        | K::SliceGrad(c)
-        | K::PadGrad(c) => vec![c.input, c.output],
-
-        K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
-            vec![c.input, c.output]
-        }
-
-        K::MaxPool2d(c)
-        | K::AvgPool2d(c)
-        | K::GlobalAvgPool(c)
-        | K::AvgPool2dGrad(c)
-        | K::GlobalAvgPoolGrad(c) => vec![c.x, c.output],
-
-        K::Attention(c) | K::AttentionGrad(c) => vec![c.q, c.k, c.v, c.output],
-
-        K::Where(c) => vec![c.cond, c.a, c.b, c.output],
-
-        K::Dequantize(c) => vec![c.input, c.output],
-    }
 }

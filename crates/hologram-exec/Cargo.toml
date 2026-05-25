@@ -23,6 +23,7 @@ thiserror        = { workspace = true, default-features = false }
 # and the std surface of the otherwise-no_std deps.
 hologram-compiler = { workspace = true, features = ["std"] }
 hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-archive  = { workspace = true, features = ["std"] }
 hologram-graph    = { workspace = true }
 uor-foundation    = { workspace = true }
 smallvec          = { workspace = true }
