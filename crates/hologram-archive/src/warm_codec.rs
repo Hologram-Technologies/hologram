@@ -5,22 +5,24 @@
 //! signature/params are fixed at compile time and a constant/weight leaf
 //! addresses to a fixed label by its content, so **every node whose
 //! transitive inputs are all constants** — the *constant-only cone* (weight
-//! preprocessing, dequant, bias/transpose folds) — has a compile-time
-//! determined label *and* result. The compiler bakes that cone into this
-//! section so the runtime cache is **never cold**:
+//! preprocessing, dequant, bias/transpose folds) — has a determined label
+//! *and* result. Warm-start makes the runtime cache **never cold**:
 //!
-//! * **Lattice (Layer 1).** Each [`WarmEntry`] carries the cone node's
-//!   output slot + its cheap [`derive_label`] κ-label, with an empty
-//!   `result`. This is the manifest: the labels are exactly the reuse keys
-//!   the runtime mints, so they are the keys a materialized fold pins under
-//!   and a persisted κ-store resolves.
-//! * **Fold (Layer 2).** `result` is additionally populated with the cone
-//!   node's materialized bytes; the session pins them under `label` at load,
-//!   and the **existing** residency check in the node walk elides the cone
-//!   on the first run — no walk changes.
+//! * **Lattice — derived at load, not baked.** The labels are recomputable
+//!   from the compiled graph, so the runtime derives the cone lattice itself
+//!   when a session loads ([`derive_cone_lattice`], post-fusion so it matches
+//!   what the walk dispatches). No redundant copy is stored in the archive.
+//!   These labels are the reuse keys the walk mints, the keys a materialized
+//!   fold pins under, and the keys a persisted κ-store resolves.
+//! * **Fold — results in the archive.** `hologram_exec::fold_archive` runs
+//!   the cone through the real runtime and writes this section with each
+//!   cone node's materialized `result`; on load the session pins them under
+//!   `label`, and the **existing** residency check in the node walk elides
+//!   the cone on the first run — no walk changes, no second code path.
 //!
-//! Wire form: `[u32 count] (entry)*`, entry =
-//! `[u32 slot][71 B label][u32 result_len][result_len B]`.
+//! This codec encodes/decodes that section, and [`derive_cone_lattice`] is
+//! the shared (labels-only) derivation the runtime uses. Wire form:
+//! `[u32 count] (entry)*`, entry = `[u32 slot][71 B label][u32 result_len][result_len B]`.
 
 use crate::address::{derive_label, ContentLabel};
 use crate::error::ArchiveError;
@@ -30,13 +32,15 @@ use hologram_backend::{buffers, KernelCall};
 use smallvec::SmallVec;
 
 /// One constant-only-cone node: its output slot, its lattice κ-label (the
-/// cheap [`derive_label`] reuse key), and — at fold depth — its
-/// materialized result bytes (empty for a labels-only lattice).
+/// cheap [`derive_label`] reuse key), and — once materialized by
+/// `fold_archive` — its result bytes (empty for the labels-only lattice the
+/// runtime derives at load).
 #[derive(Debug, Clone)]
 pub struct WarmEntry {
     pub slot: u32,
     pub label: ContentLabel,
-    /// Materialized result of this cone node. Empty ⇒ labels-only (Layer 1).
+    /// Materialized result of this cone node. Empty ⇒ labels-only (the
+    /// lattice the runtime derives at load); filled by `fold_archive`.
     pub result: Vec<u8>,
 }
 
@@ -49,8 +53,10 @@ pub struct WarmEntry {
 /// what the runtime walk derives for that node — so `baked == derived`.
 ///
 /// `constant_slot_labels` are the `(slot, leaf-label)` of every model
-/// constant; `input_slots` the graph-input slots. Layer 1 leaves
-/// `WarmEntry::result` empty; Layer 2 fills it after materializing the cone.
+/// constant; `input_slots` the graph-input slots. The returned entries have
+/// an empty `result` (labels only); `fold_archive` fills `result` after
+/// materializing the cone. The runtime calls this at load to key the
+/// persisted κ-store and to drive the materialized fold.
 #[must_use]
 pub fn derive_cone_lattice(
     calls: &[KernelCall],

@@ -288,7 +288,8 @@ impl Compiler {
         // A matmul's B operand is its weight. When that weight is a *constant*
         // (known at compile time) consumed by this matmul alone, pre-pack it
         // into the panel layout the cache-oblivious leaf streams contiguously
-        // (`cpu::simd::pack_b_panels`). The packing is a compile-time data-
+        // (`hologram_backend::layout`, the shared single source of truth for
+        // the layout). The packing is a compile-time data-
         // representation transform baked into the archive — part of the single
         // monomorphism the ONNX model compiles to — so at runtime the kernel
         // reads B with no strided gather and **no copy**. f32 only; the packed
@@ -328,7 +329,9 @@ impl Compiler {
                     if entry.bytes.len() != k * n * 4 {
                         continue; // shape/dtype guard
                     }
-                    let pbytes = pack_b_panels_bytes(&entry.bytes, k, n);
+                    // f32 weight (elem = 4); shared layout = single source of truth.
+                    let pbytes =
+                        hologram_backend::layout::pack_b_panels_bytes(&entry.bytes, k, n, 4);
                     mm.b.length = pbytes.len() as u64;
                     mm.b_packed = true;
                     packed_consts[cid] = Some(pbytes);
@@ -609,28 +612,6 @@ fn collect_buffers(
             }
         })
         .collect()
-}
-
-/// Panel-pack a row-major `k×n` f32 weight (raw LE bytes) into the layout the
-/// runtime matmul leaf streams contiguously — the byte-level twin of
-/// `hologram_backend::cpu::simd::pack_b_panels`. Element `(p,kk,c)` of panel
-/// `p` (16-wide) lands at f32 index `(p·k + kk)·16 + c`; columns past `n` are
-/// zero. This is the compile-time half of the weight-layout monomorphism; the
-/// produced length is `⌈n/16⌉·k·16·4` bytes. Kept byte-level so the compiler
-/// needs no f32 reinterpretation (alignment-free) and no bytemuck dependency.
-fn pack_b_panels_bytes(b: &[u8], k: usize, n: usize) -> Vec<u8> {
-    const ES: usize = 4; // f32
-    let n_panels = n.div_ceil(16);
-    let mut out = vec![0u8; n_panels * k * 16 * ES];
-    for p in 0..n_panels {
-        let cols = core::cmp::min(16, n - p * 16);
-        for kk in 0..k {
-            let dst = ((p * k + kk) * 16) * ES;
-            let src = (kk * n + p * 16) * ES;
-            out[dst..dst + cols * ES].copy_from_slice(&b[src..src + cols * ES]);
-        }
-    }
-    out
 }
 
 /// Bytes per element for a dtype-id (mirrors `hologram_backend::cpu::dtype`
