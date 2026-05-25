@@ -25,14 +25,16 @@ hologram-host     = { path = "crates/hologram-host", default-features = false }
 hologram-types    = { path = "crates/hologram-types", default-features = false }
 hologram-ops      = { path = "crates/hologram-ops", default-features = false }
 hologram-graph    = { path = "crates/hologram-graph", default-features = false }
-hologram-compiler = { path = "crates/hologram-compiler" }
-hologram-exec     = { path = "crates/hologram-exec" }
-hologram-backend  = { path = "crates/hologram-backend" }
-hologram-archive  = { path = "crates/hologram-archive" }
+hologram-compiler = { path = "crates/hologram-compiler", default-features = false }
+hologram-exec     = { path = "crates/hologram-exec", default-features = false }
+hologram-backend  = { path = "crates/hologram-backend", default-features = false }
+hologram-archive  = { path = "crates/hologram-archive", default-features = false }
 
-uor-foundation     = "0.4.15"
-uor-foundation-sdk = "0.4.15"
-uor-prism          = "0.1.3"
+uor-foundation     = "0.5.2"
+uor-foundation-sdk = "0.5.2"
+uor-prism          = "0.4"
+uor-prism-tensor   = { version = "0.4", default-features = false }
+uor-addr           = { version = "0.2.0", default-features = false }
 
 rkyv        = { version = "0.8", features = ["tinyvec-1"] }
 bytemuck    = { version = "1.14", features = ["derive"] }
@@ -40,7 +42,7 @@ smallvec    = "1.13"
 tinyvec     = "1.6"
 rayon       = "1.8"
 parking_lot = "0.12"
-thiserror   = "2"
+thiserror   = { version = "2", default-features = false }
 clap        = { version = "4", features = ["derive"] }
 tokio       = { version = "1", features = ["rt-multi-thread", "macros"] }
 wgpu        = "24"

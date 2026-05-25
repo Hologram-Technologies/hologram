@@ -5,11 +5,22 @@
 //! way. Per ADR-051 (workspace residency), GPU backends may keep their
 //! storage device-resident; the `Workspace` trait handles that uniformly.
 
+use smallvec::SmallVec;
+
+/// Read-slice set returned by [`Workspace::split_borrow`]. Inline-stacked
+/// for up to 4 operands (every kernel reads ≤ 4), so the disjoint borrow on
+/// the per-kernel hot path allocates nothing (the zero-cost contract).
+pub type SplitReads<'a> = SmallVec<[&'a [u8]; 4]>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferRef {
     pub slot: u32,
-    pub offset: u32,
-    pub length: u32,
+    /// Byte offset within the slot. `u64` so tensors/workspaces beyond
+    /// 4 GiB don't overflow (ADR-060: no fixed byte ceiling).
+    pub offset: u64,
+    /// Byte length. `u64` for the same reason; `0` means "the slot's full
+    /// extent" (kernels compute their own byte count from shape + dtype).
+    pub length: u64,
 }
 
 pub trait Workspace {
@@ -40,5 +51,5 @@ pub trait Workspace {
         &'a mut self,
         reads: &[BufferRef],
         write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])>;
+    ) -> Option<(SplitReads<'a>, &'a mut [u8])>;
 }

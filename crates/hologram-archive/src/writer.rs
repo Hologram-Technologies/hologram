@@ -1,18 +1,21 @@
 //! Archive writer (spec X.2).
 
+use alloc::vec::Vec;
+
 use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 use crate::weight::WeightStore;
 use hologram_backend::KernelCall;
 use hologram_graph::{Schedule, ShapeRegistry};
-use std::io::Write;
 
 /// Single input/output port descriptor: which workspace slot the runtime
 /// fills (input) or reads (output), and how many bytes it carries.
 #[derive(Debug, Clone, Copy)]
 pub struct PortDescriptor {
     pub slot: u32,
-    pub element_count: u32,
+    /// Element count. `u64` so tensors with more than 4.29 B elements
+    /// don't overflow (ADR-060: no fixed ceiling).
+    pub element_count: u64,
     pub dtype: u8,
 }
 
@@ -153,8 +156,7 @@ impl HoloWriter {
         let footer: [u8; 32] = hologram_host::HologramHasher::initial()
             .fold_bytes(&out)
             .finalize();
-        out.write_all(&footer)
-            .map_err(|_| ArchiveError::Io("footer write"))?;
+        out.extend_from_slice(&footer);
 
         Ok(out)
     }
@@ -165,7 +167,7 @@ fn encode_kernel_calls(calls: &[KernelCall]) -> Vec<u8> {
 }
 
 fn encode_ports(ports: &[PortDescriptor]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + ports.len() * 9);
+    let mut out = Vec::with_capacity(4 + ports.len() * 13);
     out.extend_from_slice(&(ports.len() as u32).to_le_bytes());
     for p in ports {
         out.extend_from_slice(&p.slot.to_le_bytes());
@@ -187,16 +189,16 @@ pub fn decode_ports(bytes: &[u8]) -> Result<Vec<PortDescriptor>, ArchiveError> {
     let mut out = Vec::with_capacity(count);
     let mut cursor = 4usize;
     for _ in 0..count {
-        if cursor + 9 > bytes.len() {
+        if cursor + 13 > bytes.len() {
             return Err(ArchiveError::Truncated {
-                needed: cursor + 9,
+                needed: cursor + 13,
                 actual: bytes.len(),
             });
         }
         let slot = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         cursor += 4;
-        let element_count = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
-        cursor += 4;
+        let element_count = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+        cursor += 8;
         let dtype = bytes[cursor];
         cursor += 1;
         out.push(PortDescriptor {

@@ -5,15 +5,15 @@
 //! V.3 (LogSoftmax):
 //!   Softmax → Log
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 pub fn emit_softmax<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -30,7 +30,7 @@ pub fn emit_softmax<const CAP: usize>(
 }
 
 pub fn emit_log_softmax<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -73,7 +73,7 @@ macro_rules! declare_actred {
             pub const CAP: usize = 32;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
             ) -> EmitResult {

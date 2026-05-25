@@ -5,15 +5,15 @@
 //! V.3 tree shape (RmsNorm):
 //!   Mul → ReduceMean → Sqrt → Div → Mul
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 fn emit_norm_body<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -47,7 +47,7 @@ fn emit_norm_body<const CAP: usize>(
 }
 
 pub fn emit_layer_norm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     _gamma_var: u32,
@@ -57,7 +57,7 @@ pub fn emit_layer_norm<const CAP: usize>(
 }
 
 pub fn emit_rms_norm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     _gamma_var: u32,
@@ -73,7 +73,7 @@ pub fn emit_rms_norm<const CAP: usize>(
 }
 
 pub fn emit_group_norm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     gamma_var: u32,
@@ -83,7 +83,7 @@ pub fn emit_group_norm<const CAP: usize>(
 }
 
 pub fn emit_instance_norm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     gamma_var: u32,
@@ -93,7 +93,7 @@ pub fn emit_instance_norm<const CAP: usize>(
 }
 
 pub fn emit_add_rms_norm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     residual_var: u32,
@@ -141,7 +141,7 @@ macro_rules! declare_norm {
             pub const CAP: usize = 64;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
                 gamma_var: u32,
@@ -185,7 +185,7 @@ where
     pub const CAP: usize = 64;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         x_var: u32,
         residual_var: u32,

@@ -11,7 +11,7 @@ use crate::workspace::BufferRef;
 pub struct UnaryCall {
     pub input: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub witt_bits: u16,
     pub dtype: u8,
 }
@@ -21,7 +21,7 @@ pub struct BinaryCall {
     pub a: BufferRef,
     pub b: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub witt_bits: u16,
     pub dtype: u8,
 }
@@ -104,7 +104,7 @@ impl NormCall {
 pub struct ReduceCall {
     pub input: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub axis_count: u32,
     pub keepdims: bool,
     pub dtype: u8,
@@ -114,7 +114,7 @@ pub struct ReduceCall {
 pub struct LayoutCall {
     pub input: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub dtype: u8,
 }
 
@@ -163,7 +163,7 @@ pub struct WhereCall {
     pub a: BufferRef,
     pub b: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub dtype: u8,
 }
 
@@ -181,7 +181,7 @@ pub struct WhereCall {
 pub struct DequantizeCall {
     pub input: BufferRef,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     /// Source quantized dtype: `DTYPE_I8` or `DTYPE_I4`.
     pub quant_dtype: u8,
     /// Destination float dtype: `DTYPE_F32`, `DTYPE_BF16`, etc.
@@ -190,6 +190,187 @@ pub struct DequantizeCall {
     pub scale_bits: u32,
     /// Symmetric zero-point (i32, conventional INT8/INT4 range).
     pub zero_point: i32,
+}
+
+/// Activation selectors applied in a **fused matmul epilogue**
+/// (content-addressed fusion): the activation runs over each matmul output
+/// element while it is still hot in cache, so the activation's intermediate
+/// is never separately materialized or addressed.
+pub mod fused_activation {
+    pub const RELU: u8 = 1;
+    pub const GELU: u8 = 2;
+    pub const SILU: u8 = 3;
+    pub const SIGMOID: u8 = 4;
+    pub const TANH: u8 = 5;
+    pub const ELU: u8 = 6;
+    pub const SELU: u8 = 7;
+    pub const EXP: u8 = 8;
+}
+
+/// A matmul with a fused elementwise-activation epilogue — the result of
+/// fusing `matmul → activation` into one content-addressed operation. The
+/// matmul output is never written back as a distinct intermediate; the
+/// activation is applied in place over the result.
+#[derive(Debug, Clone, Copy)]
+pub struct MatMulActivationCall {
+    pub mm: MatMulCall,
+    /// One of [`fused_activation`].
+    pub act: u8,
+}
+
+/// A node's semantic operation signature: a stable `opcode` (one per
+/// `KernelCall` variant) plus the LE-encoded scalar attributes that, with
+/// the operands' content addresses, fully determine the result. Buffer
+/// slots/offsets are deliberately excluded — they are physical placement,
+/// not computation identity. Used by the content-addressed executor to
+/// derive a node's output κ-label (`derive_label_witnessed`) so an
+/// identical computation (same op, params, operand addresses) is
+/// recognized and its compute elided.
+#[derive(Debug, Clone, Copy)]
+pub struct OpSignature {
+    pub opcode: u16,
+    params: [u8; 64],
+    len: u8,
+}
+
+impl OpSignature {
+    /// The op-defining scalar bytes (shape, dtype, attrs) in LE order.
+    #[must_use]
+    pub fn params(&self) -> &[u8] {
+        &self.params[..self.len as usize]
+    }
+}
+
+/// Fixed-capacity LE byte accumulator for an [`OpSignature`]'s params.
+/// 64 bytes covers the widest variant (Conv2d: 13 × u32 + dtype = 53 B).
+struct Pb {
+    buf: [u8; 64],
+    len: usize,
+}
+impl Pb {
+    fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            len: 0,
+        }
+    }
+    fn raw(mut self, b: &[u8]) -> Self {
+        self.buf[self.len..self.len + b.len()].copy_from_slice(b);
+        self.len += b.len();
+        self
+    }
+    fn u8(self, v: u8) -> Self {
+        self.raw(&[v])
+    }
+    fn u16(self, v: u16) -> Self {
+        self.raw(&v.to_le_bytes())
+    }
+    fn u32(self, v: u32) -> Self {
+        self.raw(&v.to_le_bytes())
+    }
+    fn u64(self, v: u64) -> Self {
+        self.raw(&v.to_le_bytes())
+    }
+    fn i32(self, v: i32) -> Self {
+        self.raw(&v.to_le_bytes())
+    }
+    fn done(self, opcode: u16) -> OpSignature {
+        OpSignature {
+            opcode,
+            params: self.buf,
+            len: self.len as u8,
+        }
+    }
+}
+
+fn p_unary(c: &UnaryCall) -> Pb {
+    Pb::new().u64(c.element_count).u16(c.witt_bits).u8(c.dtype)
+}
+fn p_binary(c: &BinaryCall) -> Pb {
+    Pb::new().u64(c.element_count).u16(c.witt_bits).u8(c.dtype)
+}
+fn p_matmul(c: &MatMulCall) -> Pb {
+    Pb::new().u32(c.m).u32(c.k).u32(c.n).u8(c.dtype)
+}
+fn p_gemm(c: &GemmCall) -> Pb {
+    Pb::new()
+        .u32(c.m)
+        .u32(c.k)
+        .u32(c.n)
+        .u64(c.alpha_bits)
+        .u64(c.beta_bits)
+        .u8(c.dtype)
+}
+fn p_conv(c: &Conv2dCall) -> Pb {
+    Pb::new()
+        .u32(c.batch)
+        .u32(c.channels_in)
+        .u32(c.channels_out)
+        .u32(c.h_in)
+        .u32(c.w_in)
+        .u32(c.h_out)
+        .u32(c.w_out)
+        .u32(c.k_h)
+        .u32(c.k_w)
+        .u32(c.stride_h)
+        .u32(c.stride_w)
+        .u32(c.pad_h)
+        .u32(c.pad_w)
+        .u8(c.dtype)
+}
+fn p_norm(c: &NormCall) -> Pb {
+    Pb::new()
+        .u32(c.batch)
+        .u32(c.feature)
+        .u64(c.epsilon_bits)
+        .u8(c.dtype)
+        .u8(c.has_residual() as u8)
+}
+fn p_reduce(c: &ReduceCall) -> Pb {
+    Pb::new()
+        .u64(c.element_count)
+        .u32(c.axis_count)
+        .u8(c.keepdims as u8)
+        .u8(c.dtype)
+}
+fn p_layout(c: &LayoutCall) -> Pb {
+    Pb::new().u64(c.element_count).u8(c.dtype)
+}
+fn p_softmax(c: &SoftmaxCall) -> Pb {
+    Pb::new().u32(c.batch).u32(c.feature).u8(c.dtype)
+}
+fn p_pool(c: &PoolCall) -> Pb {
+    Pb::new()
+        .u32(c.batch)
+        .u32(c.channels)
+        .u32(c.h_in)
+        .u32(c.w_in)
+        .u32(c.h_out)
+        .u32(c.w_out)
+        .u32(c.k_h)
+        .u32(c.k_w)
+        .u32(c.stride_h)
+        .u32(c.stride_w)
+        .u8(c.dtype)
+}
+fn p_attention(c: &AttentionCall) -> Pb {
+    Pb::new()
+        .u32(c.batch)
+        .u32(c.heads)
+        .u32(c.seq)
+        .u32(c.head_dim)
+        .u8(c.dtype)
+}
+fn p_where(c: &WhereCall) -> Pb {
+    Pb::new().u64(c.element_count).u8(c.dtype)
+}
+fn p_dequant(c: &DequantizeCall) -> Pb {
+    Pb::new()
+        .u64(c.element_count)
+        .u8(c.quant_dtype)
+        .u8(c.dtype)
+        .u32(c.scale_bits)
+        .i32(c.zero_point)
 }
 
 /// Closed kernel-call surface. One variant per OpKind.
@@ -325,4 +506,144 @@ pub enum KernelCall {
 
     // Quantization (spec X-5)
     Dequantize(DequantizeCall),
+
+    // Content-addressed fusion: matmul with a fused activation epilogue.
+    // Constructed by the executor's fusion pass, not by the archive.
+    MatMulActivation(MatMulActivationCall),
+}
+
+impl KernelCall {
+    /// If this call is an elementwise unary activation that can be fused
+    /// into a preceding matmul's epilogue, its [`fused_activation`]
+    /// selector; `None` otherwise. Used by the executor's fusion pass.
+    pub fn fused_activation(&self) -> Option<u8> {
+        use fused_activation as fa;
+        use KernelCall as K;
+        Some(match self {
+            K::Relu(_) => fa::RELU,
+            K::Gelu(_) => fa::GELU,
+            K::Silu(_) => fa::SILU,
+            K::Sigmoid(_) => fa::SIGMOID,
+            K::Tanh(_) => fa::TANH,
+            K::Elu(_) => fa::ELU,
+            K::Selu(_) => fa::SELU,
+            K::Exp(_) => fa::EXP,
+            _ => return None,
+        })
+    }
+    /// The node's content-addressing signature: a per-variant `opcode`
+    /// and its op-defining scalar params. Stable across runs of the same
+    /// compiled graph, so `derive_label_witnessed(opcode, params, operand
+    /// labels)` is a sound key for eliding an identical computation.
+    pub fn op_signature(&self) -> OpSignature {
+        use KernelCall as K;
+        match self {
+            K::Neg(c) => p_unary(c).done(0),
+            K::Bnot(c) => p_unary(c).done(1),
+            K::Succ(c) => p_unary(c).done(2),
+            K::Pred(c) => p_unary(c).done(3),
+            K::Add(c) => p_binary(c).done(4),
+            K::Sub(c) => p_binary(c).done(5),
+            K::Mul(c) => p_binary(c).done(6),
+            K::Xor(c) => p_binary(c).done(7),
+            K::And(c) => p_binary(c).done(8),
+            K::Or(c) => p_binary(c).done(9),
+            K::Relu(c) => p_unary(c).done(10),
+            K::Sigmoid(c) => p_unary(c).done(11),
+            K::Tanh(c) => p_unary(c).done(12),
+            K::Gelu(c) => p_unary(c).done(13),
+            K::Silu(c) => p_unary(c).done(14),
+            K::Elu(c) => p_unary(c).done(15),
+            K::Selu(c) => p_unary(c).done(16),
+            K::Exp(c) => p_unary(c).done(17),
+            K::Log(c) => p_unary(c).done(18),
+            K::Log1p(c) => p_unary(c).done(19),
+            K::Sqrt(c) => p_unary(c).done(20),
+            K::Reciprocal(c) => p_unary(c).done(21),
+            K::Sin(c) => p_unary(c).done(22),
+            K::Cos(c) => p_unary(c).done(23),
+            K::Tan(c) => p_unary(c).done(24),
+            K::Asin(c) => p_unary(c).done(25),
+            K::Acos(c) => p_unary(c).done(26),
+            K::Atan(c) => p_unary(c).done(27),
+            K::Ceil(c) => p_unary(c).done(28),
+            K::Floor(c) => p_unary(c).done(29),
+            K::Round(c) => p_unary(c).done(30),
+            K::Erf(c) => p_unary(c).done(31),
+            K::IsNaN(c) => p_unary(c).done(32),
+            K::Sign(c) => p_unary(c).done(33),
+            K::Abs(c) => p_unary(c).done(34),
+            K::Div(c) => p_binary(c).done(35),
+            K::Pow(c) => p_binary(c).done(36),
+            K::Mod(c) => p_binary(c).done(37),
+            K::Min(c) => p_binary(c).done(38),
+            K::Max(c) => p_binary(c).done(39),
+            K::Equal(c) => p_binary(c).done(40),
+            K::Less(c) => p_binary(c).done(41),
+            K::LessOrEqual(c) => p_binary(c).done(42),
+            K::Greater(c) => p_binary(c).done(43),
+            K::GreaterOrEqual(c) => p_binary(c).done(44),
+            K::MatMul(c) => p_matmul(c).done(45),
+            K::Gemm(c) => p_gemm(c).done(46),
+            K::Conv2d(c) => p_conv(c).done(47),
+            K::ConvTranspose2d(c) => p_conv(c).done(48),
+            K::LayerNorm(c) => p_norm(c).done(49),
+            K::RmsNorm(c) => p_norm(c).done(50),
+            K::GroupNorm(c) => p_norm(c).done(51),
+            K::InstanceNorm(c) => p_norm(c).done(52),
+            K::AddRmsNorm(c) => p_norm(c).done(53),
+            K::ReduceSum(c) => p_reduce(c).done(54),
+            K::ReduceMean(c) => p_reduce(c).done(55),
+            K::ReduceProd(c) => p_reduce(c).done(56),
+            K::ReduceMin(c) => p_reduce(c).done(57),
+            K::ReduceMax(c) => p_reduce(c).done(58),
+            K::Reshape(c) => p_layout(c).done(59),
+            K::Transpose(c) => p_layout(c).done(60),
+            K::Concat(c) => p_layout(c).done(61),
+            K::Slice(c) => p_layout(c).done(62),
+            K::Softmax(c) => p_softmax(c).done(63),
+            K::LogSoftmax(c) => p_softmax(c).done(64),
+            K::MaxPool2d(c) => p_pool(c).done(65),
+            K::AvgPool2d(c) => p_pool(c).done(66),
+            K::GlobalAvgPool(c) => p_pool(c).done(67),
+            K::Attention(c) => p_attention(c).done(68),
+            K::FusedSwiGlu(c) => p_matmul(c).done(69),
+            K::Pad(c) => p_layout(c).done(70),
+            K::Expand(c) => p_layout(c).done(71),
+            K::Resize(c) => p_layout(c).done(72),
+            K::CumSum(c) => p_reduce(c).done(73),
+            K::RotaryEmbedding(c) => p_unary(c).done(74),
+            K::Clip(c) => p_unary(c).done(75),
+            K::Lrn(c) => p_unary(c).done(76),
+            K::Where(c) => p_where(c).done(77),
+            K::MatMulGradA(c) => p_matmul(c).done(78),
+            K::MatMulGradB(c) => p_matmul(c).done(79),
+            K::Conv2dGradX(c) => p_conv(c).done(80),
+            K::Conv2dGradW(c) => p_conv(c).done(81),
+            K::SoftmaxGrad(c) => p_softmax(c).done(82),
+            K::LogSoftmaxGrad(c) => p_softmax(c).done(83),
+            K::LayerNormGrad(c) => p_norm(c).done(84),
+            K::RmsNormGrad(c) => p_norm(c).done(85),
+            K::GroupNormGrad(c) => p_norm(c).done(86),
+            K::ReduceSumGrad(c) => p_reduce(c).done(87),
+            K::ReduceMeanGrad(c) => p_reduce(c).done(88),
+            K::ReduceProdGrad(c) => p_reduce(c).done(89),
+            K::SubGrad(c) => p_binary(c).done(90),
+            K::MulGrad(c) => p_binary(c).done(91),
+            K::DivGrad(c) => p_binary(c).done(92),
+            K::PowGrad(c) => p_binary(c).done(93),
+            K::MinGrad(c) => p_binary(c).done(94),
+            K::MaxGrad(c) => p_binary(c).done(95),
+            K::ConcatGrad(c) => p_layout(c).done(96),
+            K::SliceGrad(c) => p_layout(c).done(97),
+            K::AvgPool2dGrad(c) => p_pool(c).done(98),
+            K::GlobalAvgPoolGrad(c) => p_pool(c).done(99),
+            K::PadGrad(c) => p_layout(c).done(100),
+            K::AttentionGrad(c) => p_attention(c).done(101),
+            K::FusedSwiGluGrad(c) => p_matmul(c).done(102),
+            K::UnaryGrad(c) => p_unary(c).done(103),
+            K::Dequantize(c) => p_dequant(c).done(104),
+            K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
+        }
+    }
 }

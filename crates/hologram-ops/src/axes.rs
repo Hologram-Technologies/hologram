@@ -24,7 +24,6 @@
 //! equivalent realization).
 
 use uor_foundation::enforcement::ShapeViolation;
-use uor_foundation::pipeline::AxisExtension;
 use uor_foundation_sdk::axis;
 
 axis! {

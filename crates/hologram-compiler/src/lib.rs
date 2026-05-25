@@ -10,6 +10,15 @@
 //!   7. Cache by ContentFingerprint<32>.
 //!   8. Lower to backend KernelCall.
 //!   9. Emit (kernel_call, certificate, fingerprint) into archive.
+//!
+//! `no_std` + `alloc` by default (matching prism / uor-addr) so the whole
+//! compile pipeline runs in wasm and on embedded targets; the `std` feature
+//! only adds `tracing` diagnostics.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[macro_use]
+extern crate alloc;
 
 pub mod cache;
 pub mod compiler;
@@ -57,5 +66,3 @@ pub fn compile_with_backward(
     let output = Compiler::new(graph, target, level).compile()?;
     Ok((output, input_grads))
 }
-
-extern crate alloc;

@@ -5,15 +5,15 @@
 //! V.3 (FusedSwiGlu):
 //!   Gemm + Silu + Mul (gate)
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 pub fn emit_attention<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     q_var: u32,
     k_var: u32,
@@ -46,7 +46,7 @@ pub fn emit_attention<const CAP: usize>(
 }
 
 pub fn emit_fused_swiglu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     w_var: u32,
@@ -95,7 +95,7 @@ where
     pub const CAP: usize = 96;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         q_var: u32,
         k_var: u32,
@@ -135,7 +135,7 @@ where
     pub const CAP: usize = 64;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         x_var: u32,
         w_var: u32,

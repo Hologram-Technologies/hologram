@@ -2,7 +2,7 @@
 //!
 //! Each canonical op is a marker type plus a const-tagged IRI plus an
 //! `emit_term` function that emits a `Term` tree into a caller-provided
-//! `TermArena<CAP>`. The Term tree is the formal specification (per
+//! `HoloArena<CAP>`. The Term tree is the formal specification (per
 //! spec invariant I-9). Backend kernels (in `hologram-backend`) are the
 //! execution form; equivalence is verified by per-op reference evaluators
 //! (`reference` module).
@@ -36,5 +36,6 @@ pub mod structured;
 pub mod utility;
 
 pub use dispatch::emit_op_term;
+pub use emit::{HoloArena, HoloTerm, HOLOGRAM_INLINE_BYTES};
 pub use kind::OpKind;
 pub use reference::{EvalError, ReferenceEvaluator, ScalarEvaluatorU64};

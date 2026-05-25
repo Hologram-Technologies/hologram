@@ -19,6 +19,7 @@
 //! Wire-level discriminant byte: `0x00` for inline, `0x01` for reference.
 
 use crate::error::ArchiveError;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
 pub struct ConstantEntry {

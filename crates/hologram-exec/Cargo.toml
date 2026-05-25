@@ -4,29 +4,41 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Hologram runtime executor: InferenceSession + Executor + BufferArena."
+description = "Hologram runtime executor: InferenceSession over a content-addressed buffer pool."
 
 [dependencies]
 hologram-host    = { workspace = true }
+hologram-ops     = { workspace = true }
 hologram-backend = { workspace = true }
 hologram-archive = { workspace = true }
 hologram-graph   = { workspace = true }
 uor-foundation   = { workspace = true }
 uor-prism        = { workspace = true }
-thiserror        = { workspace = true }
-parking_lot      = { workspace = true }
-tracing          = { workspace = true }
-tokio            = { workspace = true, optional = true }
+hashbrown        = { workspace = true }
+smallvec         = { workspace = true }
+thiserror        = { workspace = true, default-features = false }
 
 [dev-dependencies]
-hologram-compiler = { workspace = true }
+# Integration tests execute real kernels, so they pull the CPU backend
+# and the std surface of the otherwise-no_std deps.
+hologram-compiler = { workspace = true, features = ["std"] }
+hologram-backend  = { workspace = true, features = ["std", "cpu"] }
 hologram-graph    = { workspace = true }
 uor-foundation    = { workspace = true }
 smallvec          = { workspace = true }
 
 [features]
-default = []
-async = ["dep:tokio"]
+# `no_std` + `alloc` by default; `std` (host default) enables the std
+# error surface.
+default = ["std"]
+std = [
+    "thiserror/std",
+    "uor-prism/std",
+    "uor-foundation/std",
+    "hologram-host/std",
+    "hologram-backend/std",
+    "hologram-archive/std",
+]
 # Architectural surface for parallel-within-level dispatch (spec VIII.2).
 # The exec plan emits per-level kernel-call indices; the executor walks
 # each level. Sound parallelism within a level requires splitting the

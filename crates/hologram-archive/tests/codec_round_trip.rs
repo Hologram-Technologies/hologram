@@ -98,6 +98,34 @@ fn matmul_round_trip() {
 }
 
 #[test]
+fn matmul_activation_round_trip() {
+    use hologram_backend::{fused_activation, MatMulActivationCall};
+    let calls = vec![KernelCall::MatMulActivation(MatMulActivationCall {
+        mm: MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 64,
+            k: 128,
+            n: 256,
+            dtype: 8,
+        },
+        act: fused_activation::GELU,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    if let KernelCall::MatMulActivation(d) = &decoded[0] {
+        assert_eq!(d.mm.m, 64);
+        assert_eq!(d.mm.k, 128);
+        assert_eq!(d.mm.n, 256);
+        assert_eq!(d.mm.output.slot, 2);
+        assert_eq!(d.act, fused_activation::GELU);
+    } else {
+        panic!("not matmul-activation");
+    }
+}
+
+#[test]
 fn gemm_round_trip() {
     let calls = vec![KernelCall::Gemm(GemmCall {
         a: ref_buf(0),

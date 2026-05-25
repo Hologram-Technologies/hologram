@@ -5,6 +5,8 @@
 //! the Term tree (in `hologram-ops`) is the formal spec; equivalence
 //! is verified by per-op tests.
 
+use alloc::vec::Vec;
+
 use crate::cpu::dtype::is_float;
 use crate::cpu::float_kernels as ff;
 use crate::error::BackendError;
@@ -149,6 +151,11 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
 
         // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
         KernelCall::Dequantize(c) => dequantize(c, ws),
+
+        // Content-addressed fusion: matmul + activation epilogue. Fusion
+        // only fires for float matmuls, so this is handled by the float
+        // fast path above; this arm keeps the match exhaustive.
+        KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
     }
 }
 
@@ -765,14 +772,25 @@ fn matmul_w8<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), BackendErro
     if out.len() < m * n {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // `ikj` loop order: the inner loop over `j` walks `b_bytes[kk*n + j]`
+    // and `out[i*n + j]` contiguously (the `ijk` form strided B down its
+    // columns, defeating the cache and auto-vectorization). Addition in
+    // Z/(2^8)Z is associative + commutative, so reordering the accumulation
+    // preserves the exact W8-ring result. Zero rows of A are skipped.
+    for v in out[..m * n].iter_mut() {
+        *v = 0;
+    }
     for i in 0..m {
-        for j in 0..n {
-            let mut acc: u8 = 0;
-            for kk in 0..k {
-                let p = a_bytes[i * k + kk].wrapping_mul(b_bytes[kk * n + j]);
-                acc = acc.wrapping_add(p);
+        let orow = &mut out[i * n..i * n + n];
+        for kk in 0..k {
+            let a_ik = a_bytes[i * k + kk];
+            if a_ik == 0 {
+                continue;
             }
-            out[i * n + j] = acc;
+            let brow = &b_bytes[kk * n..kk * n + n];
+            for j in 0..n {
+                orow[j] = orow[j].wrapping_add(a_ik.wrapping_mul(brow[j]));
+            }
         }
     }
     Ok(())
@@ -874,7 +892,8 @@ fn identity_byte(x: u8) -> u8 {
 }
 #[inline]
 fn sigmoid_byte(x: u8) -> u8 {
-    // Approximation: linear ramp [0, 255] saturating at extremes.
+    // Byte-domain logistic: map the u8 onto [-4, 4], apply the exact
+    // sigmoid, then re-quantize to [0, 255].
     let f = (x as f32 / 255.0 - 0.5) * 8.0;
     let s = 1.0 / (1.0 + libm::expf(-f));
     (s * 255.0 + 0.5) as u8
@@ -1176,6 +1195,7 @@ fn try_dispatch_float<W: Workspace>(
         )),
 
         // Linear algebra / convolution.
+        K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         K::FusedSwiGlu(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),

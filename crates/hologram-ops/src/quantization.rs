@@ -17,8 +17,8 @@
 //! intermediate dense tensor; that is a kernel optimization, not an
 //! architectural change — the formal spec stays the affine chain.)
 
+use crate::emit::HoloArena;
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
@@ -27,7 +27,7 @@ use crate::emit::{push_application, EmitResult};
 
 /// Free emitter for Dequantize: `Mul(Sub(q, zp), scale)`.
 pub fn emit_dequantize<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     q_var: u32,
 ) -> EmitResult {
@@ -71,7 +71,7 @@ where
     pub const ARITY: u8 = 1;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         q_var: u32,
     ) -> EmitResult {

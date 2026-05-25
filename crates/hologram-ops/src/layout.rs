@@ -6,17 +6,17 @@
 //! the bijection (the compiler exempts these from `run_completeness`'s
 //! algebraic-content checks via `OpKind::is_layout_only`).
 
+use crate::emit::HoloArena;
 use crate::emit::{push_variable, EmitResult};
 use core::marker::PhantomData;
 use prism::vocabulary::WittLevel;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 
 /// Free emitter for any layout op. Pushes a single `Term::Variable` that
 /// references the relabel binding.
 pub fn emit_layout_relabel<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     remapped_var_index: u32,
 ) -> EmitResult {
@@ -42,7 +42,7 @@ macro_rules! declare_layout {
             pub const CAP: usize = 2;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 remapped_var_index: u32,
             ) -> EmitResult {

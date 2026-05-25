@@ -78,42 +78,46 @@ Add to `Cargo.toml`:
 hologram = { git = "https://github.com/UOR-Foundation/hologram" }
 ```
 
-Run the scientific calculator example, which demonstrates the full pi-F-lambda pipeline, view fusion, graph I/O, and round-trip serialisation:
+Run the end-to-end pipeline example, which parses a graph, compiles it to a
+`.holo` archive, executes it on the CPU backend, and mints + composes
+UOR-ADDR κ-labels:
 
 ```bash
-cargo run --example calculator
+cargo run -p hologram-cli --example pipeline
 ```
 
-Minimal usage — apply a sigmoid LUT to a byte buffer:
+Minimal usage — compile a graph to a `.holo` archive and execute it:
 
 ```rust
-use hologram::core::{op::LutOp, view::ElementWiseView};
+use hologram_compiler::{source, BackendKind, Compiler};
+use hologram_backend::CpuBackend;
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
+use prism::vocabulary::WittLevel;
 
-let view = ElementWiseView::from_op(LutOp::Sigmoid);
-let output: Vec<u8> = input.iter().map(|&b| view.apply(b)).collect();
+// Parse a line-oriented hologram source into a Graph and compile it.
+let graph = source::parse("input x\nop relu x as=y\noutput y\n").unwrap();
+let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
+    .compile()
+    .unwrap();
+
+// Load the archive and execute against the CPU backend.
+let mut session =
+    InferenceSession::load(&compiled.archive, CpuBackend::<BufferArena>::new()).unwrap();
+let zeros = vec![0u8; 4096];
+let inputs: Vec<InputBuffer> =
+    (0..session.input_count()).map(|_| InputBuffer { bytes: &zeros }).collect();
+let outputs = session.execute(&inputs).unwrap();
 ```
 
-Build and execute a fused graph:
+Content-address and compose model parts as UOR-ADDR κ-labels:
 
 ```rust
-use hologram::{
-    graph::builder::GraphBuilder,
-    graph::fusion,
-    archive::HoloWriter,
-    exec::{execute_bytes, GraphInputs},
-};
+use hologram_archive::address::{address_ring, compose_model};
 
-let mut b = GraphBuilder::default();
-let x = b.input("x");
-let y = b.lut(x, hologram::core::op::LutOp::Relu);
-let graph = b.output("y", y).build();
-
-let fused = fusion::fuse(graph);
-let archive = HoloWriter::default().graph(&fused).build().unwrap();
-
-let mut inputs = GraphInputs::default();
-inputs.insert("x", input_bytes);
-let outputs = execute_bytes(&archive, inputs).unwrap();
+let a = address_ring(&[1, 0x02, 0x01]).unwrap().address;
+let b = address_ring(&[2, 0x10, 0x20, 0x30]).unwrap().address;
+// CS-G2 commutative product — order-independent model identity.
+let model = compose_model(&[a, b]).unwrap();
 ```
 
 ---
@@ -129,22 +133,24 @@ Requires: Rust stable, [`just`](https://github.com/casey/just).
 | `just bench` | Criterion benchmarks |
 | `just fmt` | `cargo fmt --all` |
 | `just clippy` | `cargo clippy --workspace -- -D warnings` |
-| `just wasm` | Build `hologram-core` for `wasm32-unknown-unknown` |
+| `just wasm` | Build the `no_std` library stack for `wasm32-unknown-unknown` |
+| `just embedded` | Build the `no_std` library stack for bare-metal ARM (`thumbv7em-none-eabi`) |
 
 ---
 
 ## Feature flags
 
-| Flag | Default | Enables |
-|---|:---:|---|
-| `std` | ✓ | Standard library, mmap, rkyv std |
-| `simd` | ✓ | AVX2 `vpshufb` / SSE4.2 `pshufb` bulk LUT apply |
-| `parallel` | ✓ | Rayon work-stealing within execution levels |
-| `compiler` | ✓ | Full compilation pipeline (`hologram-compiler`) |
-| `profile` | — | Execution profiling (per-op timing, per-level breakdown) |
-| `accelerate` | — | macOS Accelerate BLAS for MatMul/Attention (Apple Silicon) |
-| `async` | — | Tokio async wrappers (`hologram-async`) |
-| `ffi` | — | C ABI + WASM bindings (`hologram-ffi`) |
+Every library crate is `no_std` + `alloc` by default (so hologram-ai runs in
+wasm and on embedded targets) and exposes a `std` feature for host builds.
+
+| Flag | Crate(s) | Default | Enables |
+|---|---|:---:|---|
+| `std` | all libs | ✓ | Standard library: file I/O, runtime SIMD detection, thread-local scratch, `tracing` |
+| `cpu` | `hologram-backend` | ✓ | The native CPU kernel backend (`CpuBackend`) |
+| `wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
+| `metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
+| `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
+| `async` | `hologram-exec` | — | Async execution wrapper (implies `std`) |
 | `cli` | — | `hologram` binary (`hologram-cli`) |
 | `wasm` | — | `wasm-bindgen` JS exports (implies `ffi`) |
 | `full` | — | All of the above |

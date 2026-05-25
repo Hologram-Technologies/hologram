@@ -11,13 +11,17 @@
 //!   8. Lower to backend KernelCall.
 //!   9. Emit (kernel_call, certificate, fingerprint) into archive.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use hologram_archive::certificate_codec::{self, CertificateRecord};
 use hologram_archive::constant_codec::ConstantEntry;
 use hologram_archive::{HoloWriter, PortDescriptor, WeightStore};
 use hologram_backend::{BufferRef, KernelCall};
 use hologram_graph::{Graph, GraphOp};
 use hologram_host::HologramHasher;
-use prism::operation::{Term, TermArena};
+use hologram_ops::{HoloArena, HoloTerm};
+use prism::operation::Term;
 use prism::vocabulary::{Hasher, VerificationDomain, WittLevel};
 // `Binding` is foundation-only (not in prism::operation's curated
 // surface as of 0.1.3); reach it through prism's substrate re-export.
@@ -112,7 +116,9 @@ impl Compiler {
         // Per-node element counts derived from the graph's shape registry.
         // `byte_lengths[i]` = element_count * bytes_per_element(dtype) — the
         // size in bytes the workspace slot must hold for node i.
-        let element_counts: Vec<u32> = self
+        // u64 with no `.min(u32::MAX)` cap — element counts and byte
+        // lengths must not be ceilinged at 4 GiB (ADR-060).
+        let element_counts: Vec<u64> = self
             .graph
             .nodes()
             .iter()
@@ -120,19 +126,18 @@ impl Compiler {
                 self.graph
                     .shape_registry()
                     .get(n.output_shape)
-                    .map(|s| s.total_elements().min(u32::MAX as u64) as u32)
+                    .map(|s| s.total_elements())
                     .unwrap_or(0)
             })
             .collect();
-        let byte_lengths: Vec<u32> = self
+        let byte_lengths: Vec<u64> = self
             .graph
             .nodes()
             .iter()
             .enumerate()
             .map(|(i, n)| {
-                let elements = element_counts[i] as u64;
                 let bytes_per = bytes_per_element(n.output_dtype.0) as u64;
-                (elements * bytes_per).min(u32::MAX as u64) as u32
+                element_counts[i].saturating_mul(bytes_per)
             })
             .collect();
 
@@ -167,7 +172,7 @@ impl Compiler {
                 // Steps 3-5: emit Term tree and validate the per-node CompileUnit.
                 // Materialize a contiguous &[Term] from the arena's `Option<Term>` slots.
                 let arena = build_node_arena(kind, self.level)?;
-                let term_vec: Vec<Term> = arena.as_slice().iter().filter_map(|t| *t).collect();
+                let term_vec: Vec<HoloTerm> = arena.as_slice().iter().filter_map(|t| *t).collect();
                 // Per-arity binding table: each binding references the
                 // corresponding `Term::Variable` pushed at the start of the
                 // arena (indices 0..arity). The surface strings are
@@ -186,7 +191,6 @@ impl Compiler {
                     witt_level: self.level,
                     budget: 1,
                     target_domains: domains,
-                    result_type_iri: "https://hologram.uor.foundation/type/tensor",
                 })?;
                 stats.validated_units += 1;
 
@@ -402,33 +406,52 @@ impl Compiler {
     }
 }
 
+/// FNV-1a 64-bit hash (`const`-evaluable). The foundation's `Binding`
+/// declares `content_address` as an FNV-1a content address (and uses the
+/// same incremental mix in `primitive_session_binding_signature`); this is
+/// the canonical derivation, so each binding's address is the FNV-1a hash
+/// of its surface identifier rather than a hand-picked constant.
+const fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET_BASIS;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+        i += 1;
+    }
+    hash
+}
+
 /// Compile-time binding table for the per-node Term arena (spec O-3).
 /// Each entry maps `name_index = i` to `value_index = i`, which is the
 /// arena slot of the corresponding `Term::Variable` pushed first.
 /// `surface` is a static identifier (`"v0"`, `"v1"`, `"v2"`) for tooling.
-/// `content_address` is the binding's FNV-1a fingerprint, used by
-/// upstream's `BindingsTable` for cross-binding deduplication.
+/// `content_address` is the binding's FNV-1a content address (over its
+/// surface identifier), used by upstream's `BindingsTable` for
+/// cross-binding deduplication.
 const VAR_BINDINGS: &[Binding] = &[
     Binding {
         name_index: 0,
         type_index: 0,
         value_index: 0,
         surface: "v0",
-        content_address: 0xCBF2_9CE4_8422_2325,
+        content_address: fnv1a_64(b"v0"),
     },
     Binding {
         name_index: 1,
         type_index: 0,
         value_index: 1,
         surface: "v1",
-        content_address: 0xCBF2_9CE4_8422_2326,
+        content_address: fnv1a_64(b"v1"),
     },
     Binding {
         name_index: 2,
         type_index: 0,
         value_index: 2,
         surface: "v2",
-        content_address: 0xCBF2_9CE4_8422_2327,
+        content_address: fnv1a_64(b"v2"),
     },
 ];
 
@@ -440,14 +463,14 @@ const VAR_BINDINGS: &[Binding] = &[
 fn build_node_arena(
     kind: hologram_graph::OpKind,
     level: WittLevel,
-) -> Result<Box<TermArena<128>>, CompileError> {
-    // Heap-allocate the arena: `TermArena<128>` is a 128-slot array of
-    // `Option<Term>` and each `Term::Literal` carries a 4 KiB
-    // `TermValue` byte buffer (`DefaultHostBounds::TERM_VALUE_MAX_BYTES`
-    // in `uor-foundation 0.4.15`). On-stack instantiation in a deep
-    // compile loop overflows the default thread stack; boxing keeps the
-    // arena on the heap while preserving the value-type ownership story.
-    let mut arena: Box<TermArena<128>> = Box::new(TermArena::new());
+) -> Result<Box<HoloArena<128>>, CompileError> {
+    // Heap-allocate the arena: `HoloArena<128>` is a 128-slot array of
+    // `Option<Term>` and each `Term::Literal` carries an inline
+    // `TermValue` byte buffer (`HOLOGRAM_INLINE_BYTES`). On-stack
+    // instantiation in a deep compile loop overflows the default thread
+    // stack; boxing keeps the arena on the heap while preserving the
+    // value-type ownership story.
+    let mut arena: Box<HoloArena<128>> = Box::new(HoloArena::new());
     let arity = kind.primary_arity();
 
     let args_start = arena
@@ -483,7 +506,7 @@ fn compute_fingerprint(
 fn collect_buffers(
     graph: &Graph,
     node: &hologram_graph::Node,
-    byte_lengths: &[u32],
+    byte_lengths: &[u64],
 ) -> Vec<BufferRef> {
     use hologram_graph::InputSource;
     node.inputs
@@ -500,7 +523,7 @@ fn collect_buffers(
                 length: graph
                     .constants()
                     .get(hologram_graph::ConstantId(id))
-                    .map(|e| e.bytes.len() as u32)
+                    .map(|e| e.bytes.len() as u64)
                     .unwrap_or(0),
             },
             InputSource::GraphInput(idx) => {

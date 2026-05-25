@@ -8,6 +8,7 @@
 //! The encoding is per-node; the section concatenates count (u32) + entries.
 
 use crate::error::ArchiveError;
+use alloc::vec::Vec;
 use prism::seal::Validated;
 use prism::uor_foundation::enforcement::LiftChainCertificate;
 

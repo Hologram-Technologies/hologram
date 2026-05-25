@@ -1,5 +1,7 @@
 //! OpKind -> KernelCall lowering (spec VII.2 step 8 + IX.1).
 
+use alloc::vec::Vec;
+
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
@@ -61,7 +63,19 @@ impl ShapeArgs {
                     .nodes()
                     .get(id as usize)
                     .and_then(|n| reg.get(n.output_shape).cloned()),
-                _ => None,
+                // Constant operands (e.g. matmul weights) carry a shape too;
+                // without this, weight matmuls inferred `m=k=n=0` → a no-op.
+                InputSource::Constant(cid) => graph
+                    .constants()
+                    .get(cid)
+                    .and_then(|e| reg.get(e.shape).cloned()),
+                // GraphInput ports map to an input node (see compiler.rs);
+                // resolve through it so a port operand isn't a silent no-op.
+                InputSource::GraphInput(idx) => graph
+                    .inputs()
+                    .get(idx as usize)
+                    .and_then(|&hologram_graph::NodeId(i)| graph.nodes().get(i as usize))
+                    .and_then(|n| reg.get(n.output_shape).cloned()),
             })
         };
         let in0 = in_shape(0);
@@ -140,7 +154,7 @@ pub struct LoweredNode {
     pub kind: OpKind,
     pub inputs: Vec<BufferRef>,
     pub output: BufferRef,
-    pub element_count: u32,
+    pub element_count: u64,
     pub witt_bits: u16,
     /// Output dtype for compute ops; for quantization ops this is the
     /// destination float dtype (the quant_dtype lives in `quant`).

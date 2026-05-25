@@ -16,6 +16,8 @@ use hologram_host::ActiveCpuBounds;
 pub mod dtype;
 mod float_kernels;
 mod kernels;
+#[cfg(not(feature = "std"))]
+pub mod mathf;
 pub mod simd;
 
 /// CPU backend parameterized over the runtime workspace shape.

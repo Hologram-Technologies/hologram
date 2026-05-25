@@ -7,15 +7,15 @@
 //!   ReduceMin  : Recurse, step = Match (a < b ? a : b)  — encoded as Sub-anchor
 //!   ReduceMax  : Recurse, step = Match (a > b ? a : b)  — encoded as Sub-anchor
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 fn emit_reduction_body<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     step_op: PrimitiveOp,
@@ -26,7 +26,7 @@ fn emit_reduction_body<const CAP: usize>(
 }
 
 pub fn emit_reduce_sum<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -34,7 +34,7 @@ pub fn emit_reduce_sum<const CAP: usize>(
 }
 
 pub fn emit_reduce_mean<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -47,7 +47,7 @@ pub fn emit_reduce_mean<const CAP: usize>(
 }
 
 pub fn emit_reduce_prod<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -55,7 +55,7 @@ pub fn emit_reduce_prod<const CAP: usize>(
 }
 
 pub fn emit_reduce_min<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -63,7 +63,7 @@ pub fn emit_reduce_min<const CAP: usize>(
 }
 
 pub fn emit_reduce_max<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -104,7 +104,7 @@ macro_rules! declare_reduction {
             pub const STEP_OP: PrimitiveOp = $step_op;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
             ) -> EmitResult {

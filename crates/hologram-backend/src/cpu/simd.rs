@@ -19,6 +19,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 /// SIMD path the runtime dispatcher selected. Cached after first
@@ -38,7 +39,12 @@ fn resolve_path() -> u8 {
 }
 
 fn detect_path() -> u8 {
-    #[cfg(target_arch = "x86_64")]
+    // Runtime CPU-feature detection requires `std` (`is_x86_feature_detected!`
+    // reads CPUID via the OS). On `no_std` targets (wasm / embedded) there is
+    // no runtime probe, so we fall back to the build target's compile-time
+    // feature floor (`cfg!(target_feature = …)`); a `RUSTFLAGS=-C
+    // target-feature=+avx2` build then still reaches the vector path.
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
     {
         if std::is_x86_feature_detected!("avx512f") {
             return 3;
@@ -46,6 +52,23 @@ fn detect_path() -> u8 {
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             return 2;
         }
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "std"),
+        target_feature = "avx512f"
+    ))]
+    {
+        return 3;
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "std"),
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    {
+        return 2;
     }
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     {
@@ -111,6 +134,9 @@ pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
 }
 
 mod scalar {
+    #[cfg(not(feature = "std"))]
+    use crate::cpu::mathf::FloatExt;
+
     pub fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len().min(b.len()).min(out.len());
         for i in 0..n {
@@ -141,6 +167,8 @@ mod scalar {
 
 #[cfg(target_arch = "x86_64")]
 mod x86 {
+    #[cfg(not(feature = "std"))]
+    use crate::cpu::mathf::FloatExt;
     use core::arch::x86_64::*;
 
     // ─── AVX2 + FMA path ──────────────────────────────────────────
@@ -321,10 +349,85 @@ mod x86 {
         }
         total
     }
+
+    /// Register-blocked f32 GEMM micro-kernel: `out = A·B`, row-major, with
+    /// a 4×16 output tile held in eight YMM accumulators across the `k`
+    /// loop. Each `k` step loads two contiguous 8-wide B vectors and issues
+    /// `MR` broadcast-FMAs per vector — peak FMA throughput with one stream
+    /// of B and no horizontal reductions. Row/column remainders fall to a
+    /// scalar tail.
+    ///
+    /// # Safety
+    /// Requires AVX2 + FMA (the caller gates on `resolve_path`). The slices
+    /// must satisfy `a.len() >= m*k`, `b.len() >= k*n`, `out.len() >= m*n`.
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn matmul_f32_fma(
+        a: &[f32],
+        b: &[f32],
+        out: &mut [f32],
+        m: usize,
+        k: usize,
+        n: usize,
+    ) {
+        const MR: usize = 4;
+        const NR: usize = 16;
+        let ap = a.as_ptr();
+        let bp = b.as_ptr();
+        let op = out.as_mut_ptr();
+
+        let mut i = 0;
+        while i + MR <= m {
+            let mut j = 0;
+            while j + NR <= n {
+                let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                for kk in 0..k {
+                    let brow = bp.add(kk * n + j);
+                    let b0 = _mm256_loadu_ps(brow);
+                    let b1 = _mm256_loadu_ps(brow.add(8));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = _mm256_set1_ps(*ap.add((i + r) * k + kk));
+                        cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
+                        cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    let orow = op.add((i + r) * n + j);
+                    _mm256_storeu_ps(orow, cr[0]);
+                    _mm256_storeu_ps(orow.add(8), cr[1]);
+                }
+                j += NR;
+            }
+            // Column remainder for this row block.
+            while j < n {
+                for r in 0..MR {
+                    let mut s = 0.0f32;
+                    for kk in 0..k {
+                        s += *ap.add((i + r) * k + kk) * *bp.add(kk * n + j);
+                    }
+                    *op.add((i + r) * n + j) = s;
+                }
+                j += 1;
+            }
+            i += MR;
+        }
+        // Row remainder.
+        while i < m {
+            for j in 0..n {
+                let mut s = 0.0f32;
+                for kk in 0..k {
+                    s += *ap.add(i * k + kk) * *bp.add(kk * n + j);
+                }
+                *op.add(i * n + j) = s;
+            }
+            i += 1;
+        }
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
 mod aarch {
+    #[cfg(not(feature = "std"))]
+    use crate::cpu::mathf::FloatExt;
     use core::arch::aarch64::*;
     #[target_feature(enable = "neon")]
     pub unsafe fn add_f32_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
@@ -438,13 +541,28 @@ pub fn matmul_f32_blocked(
     if m == 0 || k == 0 || n == 0 {
         return;
     }
-    // Block size: 64 covers a 64×64 L1-resident tile in 16 KiB
-    // (64 × 64 × 4 bytes) — fits comfortably under the 32 KiB
-    // x86-64 L1d cap with headroom for instructions + stack.
-    const BS: usize = 64;
 
-    // Pre-transpose B into a column-major scratch so each inner-loop
-    // dot product reads contiguous memory.
+    // Register-blocked FMA micro-kernel on x86: AVX2 and AVX-512 both carry
+    // FMA, so a 4×16 output tile is accumulated entirely in YMM registers
+    // while B rows stream contiguously — no per-element horizontal reduction
+    // and no B transpose, which is where the dot-product form bled cycles.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let p = resolve_path();
+        if p == 2 || p == 3 {
+            let _ = &bt_scratch; // unused on this path
+                                 // SAFETY: `resolve_path` confirmed AVX2 + FMA are present.
+            unsafe {
+                x86::matmul_f32_fma(a, b, out, m, k, n);
+            }
+            return;
+        }
+    }
+
+    // Portable fallback (NEON dot product / scalar): pre-transpose B into a
+    // column-major scratch so each output element's dot product reads
+    // contiguous memory, then reduce per element.
+    const BS: usize = 64;
     bt_scratch.clear();
     bt_scratch.resize(k * n, 0.0);
     for kk in 0..k {

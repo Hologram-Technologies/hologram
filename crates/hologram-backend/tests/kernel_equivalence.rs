@@ -7,12 +7,13 @@
 //! tree is the formal spec; the kernel is the execution form; tests
 //! verify they agree.
 
+use hologram_backend::SplitReads;
 use hologram_backend::{
     Backend, BinaryCall, BufferRef, CpuBackend, KernelCall, UnaryCall, Workspace,
 };
-use hologram_ops::{ReferenceEvaluator, ScalarEvaluatorU64};
+use hologram_ops::{HoloArena, ReferenceEvaluator, ScalarEvaluatorU64};
 use prism::operation::PrimitiveOp;
-use prism::operation::{Term, TermArena, TermList};
+use prism::operation::{Term, TermList};
 
 struct Ws {
     slots: Vec<Vec<u8>>,
@@ -30,7 +31,7 @@ impl Workspace for Ws {
         &'a mut self,
         reads: &[BufferRef],
         write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
+    ) -> Option<(SplitReads<'a>, &'a mut [u8])> {
         // Test workspace has one Vec<u8> per slot, so disjoint slot
         // indices yield disjoint borrows. Split the outer Vec at the
         // write slot to satisfy the borrow checker.
@@ -40,7 +41,7 @@ impl Workspace for Ws {
         }
         let (w_lo, w_hi) = self.slots.split_at_mut(w_slot);
         let (write_slot, w_hi_rest) = w_hi.split_first_mut()?;
-        let read_slices: Vec<&[u8]> = reads
+        let read_slices: SplitReads = reads
             .iter()
             .map(|r| {
                 let i = r.slot as usize;
@@ -54,7 +55,7 @@ impl Workspace for Ws {
         Some((read_slices, write_slot.as_mut_slice()))
     }
 }
-fn buf(slot: u32, len: u32) -> BufferRef {
+fn buf(slot: u32, len: u64) -> BufferRef {
     BufferRef {
         slot,
         offset: 0,
@@ -63,7 +64,7 @@ fn buf(slot: u32, len: u32) -> BufferRef {
 }
 
 fn eval_unary_term(prim: PrimitiveOp, x: u64) -> u64 {
-    let mut arena: Box<TermArena<8>> = Box::new(TermArena::new());
+    let mut arena: Box<HoloArena<8>> = Box::new(HoloArena::new());
     let v = arena.push(Term::Variable { name_index: 0 }).unwrap();
     let root = arena
         .push(Term::Application {
@@ -75,7 +76,7 @@ fn eval_unary_term(prim: PrimitiveOp, x: u64) -> u64 {
 }
 
 fn eval_binary_term(prim: PrimitiveOp, a: u64, b: u64) -> u64 {
-    let mut arena: Box<TermArena<8>> = Box::new(TermArena::new());
+    let mut arena: Box<HoloArena<8>> = Box::new(HoloArena::new());
     let av = arena.push(Term::Variable { name_index: 0 }).unwrap();
     arena.push(Term::Variable { name_index: 1 }).unwrap();
     let root = arena
@@ -92,9 +93,9 @@ fn run_unary_kernel(make: impl Fn(UnaryCall) -> KernelCall, inp: &[u8]) -> Vec<u
         slots: vec![inp.to_vec(), vec![0u8; inp.len()]],
     };
     let call = make(UnaryCall {
-        input: buf(0, inp.len() as u32),
-        output: buf(1, inp.len() as u32),
-        element_count: inp.len() as u32,
+        input: buf(0, inp.len() as u64),
+        output: buf(1, inp.len() as u64),
+        element_count: inp.len() as u64,
         witt_bits: 8,
         dtype: 1,
     });
@@ -110,10 +111,10 @@ fn run_binary_kernel(make: impl Fn(BinaryCall) -> KernelCall, a: &[u8], b: &[u8]
         slots: vec![a.to_vec(), b.to_vec(), vec![0u8; n]],
     };
     let call = make(BinaryCall {
-        a: buf(0, n as u32),
-        b: buf(1, n as u32),
-        output: buf(2, n as u32),
-        element_count: n as u32,
+        a: buf(0, n as u64),
+        b: buf(1, n as u64),
+        output: buf(2, n as u64),
+        element_count: n as u64,
         witt_bits: 8,
         dtype: 1,
     });

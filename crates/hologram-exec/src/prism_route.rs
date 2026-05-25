@@ -27,8 +27,9 @@
 //! pair the two — together they form hologram's TC-03 commitment
 //! (the wiki cost-model's content-anchored attestation).
 
+use alloc::vec::Vec;
+
 use prism::crypto::Digest;
-use prism::operation::Term;
 use prism::pipeline::{self as prism_pipeline, PipelineFailure};
 use prism::seal::Grounded;
 use prism::vocabulary::{CompileUnitBuilder, VerificationDomain, WittLevel};
@@ -36,7 +37,14 @@ use prism::vocabulary::{CompileUnitBuilder, VerificationDomain, WittLevel};
 // `prism::operation`); reach it via `prism`'s façade re-export of
 // the substrate crate to keep the dep tree single-rooted.
 use hologram_host::HologramHasher;
+use hologram_ops::{HoloTerm, HOLOGRAM_INLINE_BYTES};
 use prism::uor_foundation::pipeline::literal_u64;
+
+/// Content-fingerprint width threaded through prism's pipeline. Single
+/// source of truth is the application's `HostBounds` selection
+/// (BLAKE3-canonical 32 bytes); every backend agrees on this width.
+const FP_MAX: usize =
+    <hologram_host::HologramHostBoundsCpu as uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES;
 
 use crate::buffer::{InputBuffer, OutputBuffer};
 use crate::error::ExecError;
@@ -47,7 +55,7 @@ use crate::session::{InferenceSession, SessionBackend};
 /// the `Grounded` content fingerprint (witt + budget + IRI + constraints +
 /// kind); the root_term is structural metadata for resolvers, not digest
 /// input. The per-content anchor is `AttestedExecution::archive_fingerprint`.
-static ROUTE_TERMS: &[Term] = &[literal_u64(0, WittLevel::W32)];
+const ROUTE_TERMS: &[HoloTerm] = &[literal_u64(0, WittLevel::W32)];
 
 /// Static verification-domain set for the attestation unit. Hologram
 /// operates in the algebraic verification domain (the ring-arithmetic
@@ -66,7 +74,7 @@ pub struct AttestedExecution {
     /// `content_fingerprint()` is folded over the unit's TYPE-SHAPE
     /// (witt + budget + result-type IRI + constraints); identical for
     /// any two sessions with the same shape.
-    pub prism_attestation: Grounded<Digest<32>>,
+    pub prism_attestation: Grounded<'static, Digest<32>, HOLOGRAM_INLINE_BYTES, FP_MAX>,
     /// Hologram's per-content anchor: the archive's canonical 32-byte
     /// BLAKE3 footer fingerprint (spec X.1, computed via the prism
     /// `Blake3Hasher`). Differs between any two distinct archives —
@@ -118,7 +126,10 @@ impl<B: SessionBackend> InferenceSession<B> {
         // folded over the unit's TYPE-SHAPE (witt + budget + IRI +
         // constraints) — identical for every session with the same
         // shape, per prism's `fold_unit_digest` contract.
-        let prism_attestation = prism_pipeline::run::<Digest<32>, _, HologramHasher>(unit)
+        let prism_attestation =
+            prism_pipeline::run::<Digest<32>, _, HologramHasher, HOLOGRAM_INLINE_BYTES, FP_MAX>(
+                unit,
+            )
             .map_err(ExecError::Pipeline)?;
 
         // Pair the prism witness with hologram's per-content anchor.

@@ -6,7 +6,8 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use uor_foundation::enforcement::{Term, TermArena};
+use crate::emit::{HoloArena, HoloTerm, HOLOGRAM_INLINE_BYTES};
+use uor_foundation::enforcement::Term;
 use uor_foundation::PrimitiveOp;
 
 /// Safety ceiling on bounded-recursion iterations. Prevents runaway
@@ -34,7 +35,7 @@ pub trait ReferenceEvaluator {
     type Bindings: ?Sized;
 
     fn evaluate<const CAP: usize>(
-        arena: &TermArena<CAP>,
+        arena: &HoloArena<CAP>,
         root: u32,
         bindings: &Self::Bindings,
     ) -> Result<Self::Value, EvalError>;
@@ -42,7 +43,7 @@ pub trait ReferenceEvaluator {
 
 /// Helper: fetch a term at index, error on out-of-bounds.
 #[inline]
-pub fn fetch<const CAP: usize>(arena: &TermArena<CAP>, index: u32) -> Result<&Term, EvalError> {
+pub fn fetch<const CAP: usize>(arena: &HoloArena<CAP>, index: u32) -> Result<&HoloTerm, EvalError> {
     arena.get(index).ok_or(EvalError::InvalidIndex)
 }
 
@@ -61,7 +62,7 @@ impl ReferenceEvaluator for ScalarEvaluatorU64 {
     type Bindings = [u64];
 
     fn evaluate<const CAP: usize>(
-        arena: &TermArena<CAP>,
+        arena: &HoloArena<CAP>,
         root: u32,
         bindings: &[u64],
     ) -> Result<u64, EvalError> {
@@ -70,7 +71,7 @@ impl ReferenceEvaluator for ScalarEvaluatorU64 {
 }
 
 fn eval_node<const CAP: usize>(
-    arena: &TermArena<CAP>,
+    arena: &HoloArena<CAP>,
     index: u32,
     bindings: &[u64],
 ) -> Result<u64, EvalError> {
@@ -204,7 +205,9 @@ fn apply_primitive(op: PrimitiveOp, args: &[u64]) -> Result<u64, EvalError> {
 /// buffer holds the value's bytes in big-endian order at its declared
 /// width; widths > 8 truncate to the low 8 bytes.
 #[inline]
-fn term_value_to_u64(v: &uor_foundation::pipeline::TermValue) -> u64 {
+fn term_value_to_u64(
+    v: &uor_foundation::pipeline::TermValue<'static, HOLOGRAM_INLINE_BYTES>,
+) -> u64 {
     let bytes = v.bytes();
     let take = bytes.len().min(8);
     let mut padded = [0u8; 8];

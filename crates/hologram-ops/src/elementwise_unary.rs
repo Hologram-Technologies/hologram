@@ -6,8 +6,8 @@
 //! Per spec I-9, the Term tree IS the formal specification; the
 //! kernels in `hologram-backend` are the execution form.
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_match, push_recurse, EmitResult};
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 // ─── Activation family ─────────────────────────────────────────────
@@ -17,7 +17,7 @@ use uor_foundation::{PrimitiveOp, WittLevel};
 /// (the kernel does the actual max(0, x); the Term tree witnesses the
 /// bit-level decomposition).
 pub fn emit_relu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -29,7 +29,7 @@ pub fn emit_relu<const CAP: usize>(
 /// Sigmoid: 1 / (1 + exp(-x)).
 /// Tree: Mul(1, Add(1, Exp(Neg(x))))^{-1} — anchor on Mul (= reciprocal-by-product).
 pub fn emit_sigmoid<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -44,7 +44,7 @@ pub fn emit_sigmoid<const CAP: usize>(
 
 /// Tanh: (exp(2x) − 1) / (exp(2x) + 1).
 pub fn emit_tanh<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -60,7 +60,7 @@ pub fn emit_tanh<const CAP: usize>(
 
 /// Gelu: 0.5 · x · (1 + erf(x / √2)).
 pub fn emit_gelu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -81,7 +81,7 @@ pub fn emit_gelu<const CAP: usize>(
 
 /// Silu: x · sigmoid(x).
 pub fn emit_silu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -96,7 +96,7 @@ pub fn emit_silu<const CAP: usize>(
 
 /// Elu: piecewise via Match { x < 0 → α(exp(x) − 1), otherwise → x }.
 pub fn emit_elu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -109,7 +109,7 @@ pub fn emit_elu<const CAP: usize>(
 
 /// Selu: scale · Elu (anchored on Mul).
 pub fn emit_selu<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -120,7 +120,7 @@ pub fn emit_selu<const CAP: usize>(
 // ─── Transcendentals (bounded Recurse over Maclaurin / Newton) ──────
 
 pub fn emit_exp<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -132,7 +132,7 @@ pub fn emit_exp<const CAP: usize>(
 }
 
 pub fn emit_log<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -143,7 +143,7 @@ pub fn emit_log<const CAP: usize>(
 }
 
 pub fn emit_log1p<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -154,7 +154,7 @@ pub fn emit_log1p<const CAP: usize>(
 }
 
 pub fn emit_sqrt<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -166,7 +166,7 @@ pub fn emit_sqrt<const CAP: usize>(
 }
 
 pub fn emit_reciprocal<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -180,7 +180,7 @@ pub fn emit_reciprocal<const CAP: usize>(
 // ─── Trig (CORDIC / polynomial) ────────────────────────────────────
 
 fn emit_cordic<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     anchor: PrimitiveOp,
@@ -192,21 +192,21 @@ fn emit_cordic<const CAP: usize>(
 }
 
 pub fn emit_sin<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     emit_cordic(arena, level, x_var, PrimitiveOp::Add)
 }
 pub fn emit_cos<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     emit_cordic(arena, level, x_var, PrimitiveOp::Add)
 }
 pub fn emit_tan<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -214,21 +214,21 @@ pub fn emit_tan<const CAP: usize>(
     push_application(arena, PrimitiveOp::Mul, s, 2)
 }
 pub fn emit_asin<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     emit_cordic(arena, level, x_var, PrimitiveOp::Mul)
 }
 pub fn emit_acos<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     emit_cordic(arena, level, x_var, PrimitiveOp::Mul)
 }
 pub fn emit_atan<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -238,21 +238,21 @@ pub fn emit_atan<const CAP: usize>(
 // ─── Bit-pattern manipulation ───────────────────────────────────────
 
 pub fn emit_ceil<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     push_application(arena, PrimitiveOp::And, x_var, 1)
 }
 pub fn emit_floor<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     push_application(arena, PrimitiveOp::And, x_var, 1)
 }
 pub fn emit_round<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -262,7 +262,7 @@ pub fn emit_round<const CAP: usize>(
     push_application(arena, PrimitiveOp::And, added, 1)
 }
 pub fn emit_erf<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -276,21 +276,21 @@ pub fn emit_erf<const CAP: usize>(
 // ─── Predicates / sign ──────────────────────────────────────────────
 
 pub fn emit_is_nan<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     push_application(arena, PrimitiveOp::And, x_var, 1)
 }
 pub fn emit_sign<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
     push_application(arena, PrimitiveOp::And, x_var, 1)
 }
 pub fn emit_abs<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -314,7 +314,7 @@ macro_rules! declare_unary {
             pub const ARITY: u8 = 1;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 arg_var_start: u32,
             ) -> EmitResult {

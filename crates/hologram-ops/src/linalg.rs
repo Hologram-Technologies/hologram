@@ -11,8 +11,8 @@
 //!                       Application(Mul, [a[i,k], b[k,j]])])])
 //! ```
 
+use crate::emit::HoloArena;
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
@@ -21,7 +21,7 @@ use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 
 /// Free emitter for MatMul. Captures the V.3 nested-Recurse tree.
 pub fn emit_matmul<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     a_var: u32,
     b_var: u32,
@@ -39,7 +39,7 @@ pub fn emit_matmul<const CAP: usize>(
 
 /// Free emitter for Gemm: α·MatMul(A,B) + β·C.
 pub fn emit_gemm<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     a_var: u32,
     b_var: u32,
@@ -78,7 +78,7 @@ where
     pub const CAP: usize = 32;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         a_var: u32,
         b_var: u32,
@@ -111,7 +111,7 @@ where
     pub const CAP: usize = 32;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         a_var: u32,
         b_var: u32,

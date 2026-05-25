@@ -2,6 +2,7 @@
 
 use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
+use alloc::vec::Vec;
 
 /// Parsed plan view backed by a byte slice. Zero-copy where possible.
 pub struct LoadedPlan<'a> {

@@ -4,14 +4,14 @@
 //! Per ADR-043, backward Term trees are emitted at graph-build time,
 //! not traversed at runtime.
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 // ─── MatMul gradients ──────────────────────────────────────────────
 
 pub fn emit_matmul_grad_a<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     _b_var: u32,
@@ -26,7 +26,7 @@ pub fn emit_matmul_grad_a<const CAP: usize>(
 }
 
 pub fn emit_matmul_grad_b<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     a_var: u32,
@@ -37,7 +37,7 @@ pub fn emit_matmul_grad_b<const CAP: usize>(
 // ─── Conv2d gradients ──────────────────────────────────────────────
 
 pub fn emit_conv2d_grad_x<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     _w_var: u32,
@@ -55,7 +55,7 @@ pub fn emit_conv2d_grad_x<const CAP: usize>(
 }
 
 pub fn emit_conv2d_grad_w<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     x_var: u32,
@@ -66,7 +66,7 @@ pub fn emit_conv2d_grad_w<const CAP: usize>(
 // ─── Activation+reduce gradients ────────────────────────────────────
 
 pub fn emit_softmax_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -81,7 +81,7 @@ pub fn emit_softmax_grad<const CAP: usize>(
 }
 
 pub fn emit_log_softmax_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -96,7 +96,7 @@ pub fn emit_log_softmax_grad<const CAP: usize>(
 // ─── Normalization gradients ───────────────────────────────────────
 
 pub fn emit_layer_norm_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     _gamma_var: u32,
@@ -111,7 +111,7 @@ pub fn emit_layer_norm_grad<const CAP: usize>(
 }
 
 pub fn emit_rms_norm_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     gamma_var: u32,
@@ -121,7 +121,7 @@ pub fn emit_rms_norm_grad<const CAP: usize>(
 }
 
 pub fn emit_group_norm_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     gamma_var: u32,
@@ -133,7 +133,7 @@ pub fn emit_group_norm_grad<const CAP: usize>(
 // ─── Reduction gradients ───────────────────────────────────────────
 
 pub fn emit_reduce_sum_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -141,7 +141,7 @@ pub fn emit_reduce_sum_grad<const CAP: usize>(
 }
 
 pub fn emit_reduce_mean_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -149,7 +149,7 @@ pub fn emit_reduce_mean_grad<const CAP: usize>(
 }
 
 pub fn emit_reduce_prod_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -159,7 +159,7 @@ pub fn emit_reduce_prod_grad<const CAP: usize>(
 // ─── Elementwise binary gradients ──────────────────────────────────
 
 pub fn emit_sub_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -167,7 +167,7 @@ pub fn emit_sub_grad<const CAP: usize>(
 }
 
 pub fn emit_mul_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -175,7 +175,7 @@ pub fn emit_mul_grad<const CAP: usize>(
 }
 
 pub fn emit_div_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -183,7 +183,7 @@ pub fn emit_div_grad<const CAP: usize>(
 }
 
 pub fn emit_pow_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -194,7 +194,7 @@ pub fn emit_pow_grad<const CAP: usize>(
 }
 
 pub fn emit_min_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -202,7 +202,7 @@ pub fn emit_min_grad<const CAP: usize>(
 }
 
 pub fn emit_max_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -212,7 +212,7 @@ pub fn emit_max_grad<const CAP: usize>(
 // ─── Layout gradients ──────────────────────────────────────────────
 
 pub fn emit_concat_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -220,7 +220,7 @@ pub fn emit_concat_grad<const CAP: usize>(
 }
 
 pub fn emit_slice_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -228,7 +228,7 @@ pub fn emit_slice_grad<const CAP: usize>(
 }
 
 pub fn emit_pad_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -238,7 +238,7 @@ pub fn emit_pad_grad<const CAP: usize>(
 // ─── Pooling gradients ─────────────────────────────────────────────
 
 pub fn emit_avg_pool_2d_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -248,7 +248,7 @@ pub fn emit_avg_pool_2d_grad<const CAP: usize>(
 }
 
 pub fn emit_global_avg_pool_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -258,7 +258,7 @@ pub fn emit_global_avg_pool_grad<const CAP: usize>(
 // ─── Structured gradients ──────────────────────────────────────────
 
 pub fn emit_attention_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     _q_var: u32,
@@ -273,7 +273,7 @@ pub fn emit_attention_grad<const CAP: usize>(
 }
 
 pub fn emit_fused_swiglu_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     _x_var: u32,
@@ -286,7 +286,7 @@ pub fn emit_fused_swiglu_grad<const CAP: usize>(
 }
 
 pub fn emit_unary_grad<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     grad_var: u32,
 ) -> EmitResult {
@@ -309,7 +309,7 @@ macro_rules! declare_grad {
             /// gradients; multi-arg gradients carry the operand vars
             /// contiguously after the gradient var.
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 grad_var: u32,
             ) -> EmitResult {
@@ -322,25 +322,25 @@ macro_rules! declare_grad {
 /// Single-arg adapter for binary-arg backward emitters (so the marker's
 /// `emit_term` keeps the unary surface).
 fn binary_grad_adapter<const CAP: usize, F>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     emit: F,
 ) -> EmitResult
 where
-    F: Fn(&mut TermArena<CAP>, WittLevel, u32, u32) -> EmitResult,
+    F: Fn(&mut HoloArena<CAP>, WittLevel, u32, u32) -> EmitResult,
 {
     emit(arena, level, grad_var, grad_var.saturating_add(1))
 }
 
 fn ternary_grad_adapter<const CAP: usize, F>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     grad_var: u32,
     emit: F,
 ) -> EmitResult
 where
-    F: Fn(&mut TermArena<CAP>, WittLevel, u32, u32, u32) -> EmitResult,
+    F: Fn(&mut HoloArena<CAP>, WittLevel, u32, u32, u32) -> EmitResult,
 {
     emit(
         arena,
@@ -352,63 +352,63 @@ where
 }
 
 fn matmul_grad_a_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     binary_grad_adapter(arena, level, g, emit_matmul_grad_a)
 }
 fn matmul_grad_b_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     binary_grad_adapter(arena, level, g, emit_matmul_grad_b)
 }
 fn conv2d_grad_x_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     binary_grad_adapter(arena, level, g, emit_conv2d_grad_x)
 }
 fn conv2d_grad_w_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     binary_grad_adapter(arena, level, g, emit_conv2d_grad_w)
 }
 fn layer_norm_grad_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     ternary_grad_adapter(arena, level, g, emit_layer_norm_grad)
 }
 fn rms_norm_grad_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     ternary_grad_adapter(arena, level, g, emit_rms_norm_grad)
 }
 fn group_norm_grad_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     ternary_grad_adapter(arena, level, g, emit_group_norm_grad)
 }
 fn attention_grad_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {
     ternary_grad_adapter(arena, level, g, emit_attention_grad)
 }
 fn fused_swiglu_grad_unary<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     g: u32,
 ) -> EmitResult {

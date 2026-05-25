@@ -5,6 +5,7 @@
 //! groups indexed by parallel-execution level.
 
 use crate::error::ArchiveError;
+use alloc::vec::Vec;
 
 /// Decode a Schedule section payload into a list of levels, each carrying
 /// its NodeId u32 indices.

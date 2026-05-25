@@ -1,43 +1,53 @@
-//! Workspace buffer arena (spec VIII.3, wiki ADR-018 zero-cost runtime
-//! per TC-01).
+//! Workspace buffer pool (spec VIII.3, wiki ADR-018 zero-cost runtime per
+//! TC-01) — the UOR content-addressed execution substrate.
 //!
-//! Slots are pre-resolved at compile time from the graph's liveness
-//! analysis; the arena performs no runtime allocation in steady state.
+//! Each value lives in its **own** 64-byte-aligned buffer; a slot is a
+//! *binding* to one of those buffers, not a copy of it. This is what makes
+//! the runtime **zero-movement**: a value is written once by the kernel
+//! that produces it and thereafter referred to by binding a slot to it —
+//! reuse points at the existing buffer (no copy-back), retention keeps the
+//! buffer keyed by its κ-label (no copy-out). The legacy design copied
+//! tensors between a fixed byte arena and a separate content store on every
+//! node; that movement is gone.
 //!
-//! Performance levers driven by the prism cost-model:
+//! Two buffer classes, byte-bounded so memory holds for arbitrary models
+//! and run lengths (ADR-060, SC-3):
 //!
-//! - **Aligned storage.** The backing `storage: Vec<u8>` is allocated
-//!   on a 64-byte boundary via `AlignedBytes`. 64 bytes covers an
-//!   x86-64 cache line, an AVX-512 ZMM register, and `bytemuck`'s
-//!   alignment requirements for `&[u8] -> &[f32]` zero-copy casts.
-//!   Per-slot offsets stay 4-byte-aligned by construction (sizes
-//!   are multiples of `bytes_per_element` for every supported dtype
-//!   except `DTYPE_I4`, whose sub-byte packing the kernels handle
-//!   explicitly).
+//! * **pinned** — model constants/weights, deduped by content κ-label,
+//!   resident for the session (the model's inherent footprint);
+//! * **transient** — boundary inputs, intermediates, outputs — held in a
+//!   two-generation pool: a value retained past `budget` bytes ages a whole
+//!   generation out (recompute on a later miss, never a wrong answer).
 //!
-//! - **Zero-copy split-borrow** (`split_borrow`). Returns disjoint
-//!   `&[u8]` read slices alongside one `&mut [u8]` write slice from
-//!   the same backing storage in a single API call, so kernel bodies
-//!   skip the `.to_vec()` clones the previous one-borrow-at-a-time
-//!   API forced. The split is `unsafe` internally but exposed safely
-//!   under the invariant that the requested read slots are disjoint
-//!   from the write slot — a property the schedule's per-level
-//!   independence guarantees (spec VIII.2).
+//! Alignment: every buffer is 64-byte aligned (x86-64 cache line, AVX-512
+//! ZMM, `bytemuck::cast_slice::<u8,f32>` zero-copy).
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::ptr::NonNull;
-use hologram_backend::{BufferRef, Workspace};
+
+use hashbrown::HashMap;
+use hologram_archive::ContentLabel;
+use hologram_backend::{BufferRef, SplitReads, Workspace};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SlotSpan {
-    pub offset: u32,
-    pub length: u32,
+    /// Byte offset (retained for API compatibility; per-slot buffers start
+    /// at 0, so this is informational only).
+    pub offset: u64,
+    /// Byte length of the slot.
+    pub length: u64,
 }
 
-/// 64-byte-aligned byte buffer. The alignment buys:
-/// - cache-line alignment on x86-64 (64-byte L1 line);
-/// - AVX-512 ZMM-register alignment (512 bits = 64 bytes);
-/// - safe `bytemuck::cast_slice::<u8, f32>` views without a
-///   `PodCastError::TargetAlignmentGreaterAndInputNotAligned`.
+/// Default transient byte budget per generation (256 MiB). Resident
+/// transient bytes are bounded by `2 * budget`; pinned constants are
+/// separate and model-bounded.
+pub const DEFAULT_POOL_BUDGET: usize = 256 << 20;
+
+const ARENA_ALIGN: usize = 64;
+
+/// 64-byte-aligned owned byte buffer.
 #[derive(Debug)]
 struct AlignedBytes {
     ptr: NonNull<u8>,
@@ -45,16 +55,10 @@ struct AlignedBytes {
     cap: usize,
 }
 
-const ARENA_ALIGN: usize = 64;
-
 impl AlignedBytes {
     fn zeroed(len: usize) -> Self {
-        // Round capacity up to the alignment so allocator behaviour is
-        // predictable; minimum allocation is `ARENA_ALIGN` even for
-        // zero-length arenas so the NonNull never aliases a dangling
-        // address.
         let cap = len.max(ARENA_ALIGN).next_multiple_of(ARENA_ALIGN);
-        // SAFETY: cap > 0 and the layout's alignment is a power of two.
+        // SAFETY: cap > 0 and ARENA_ALIGN is a power of two.
         unsafe {
             let layout = core::alloc::Layout::from_size_align(cap, ARENA_ALIGN)
                 .expect("layout: cap > 0 and align is a power of two");
@@ -64,24 +68,37 @@ impl AlignedBytes {
         }
     }
 
+    /// Reuse this buffer for a value of `len` bytes, reallocating only if
+    /// the existing capacity is too small. Zero-fills so a kernel that
+    /// writes only a logical prefix leaves a deterministic tail.
+    fn reset_to(&mut self, len: usize) {
+        if len > self.cap {
+            *self = Self::zeroed(len);
+        } else {
+            self.len = len;
+            // SAFETY: ptr valid for cap >= len bytes.
+            unsafe {
+                core::ptr::write_bytes(self.ptr.as_ptr(), 0, len);
+            }
+        }
+    }
+
     #[inline]
     fn as_slice(&self) -> &[u8] {
-        // SAFETY: ptr is valid for `cap >= len` bytes, and we expose
-        // only the first `len`.
+        // SAFETY: ptr valid for `cap >= len` bytes; expose only `len`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: ptr is valid for `cap >= len` bytes; `&mut self`
-        // guarantees no aliasing references exist.
+        // SAFETY: ptr valid for `cap >= len`; `&mut self` ⇒ no aliasing.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl Drop for AlignedBytes {
     fn drop(&mut self) {
-        // SAFETY: ptr was produced by `alloc_zeroed` with this exact layout.
+        // SAFETY: ptr came from `alloc_zeroed` with this exact layout.
         unsafe {
             let layout = core::alloc::Layout::from_size_align(self.cap, ARENA_ALIGN)
                 .expect("layout: cap > 0 and align is a power of two");
@@ -96,152 +113,351 @@ impl Default for AlignedBytes {
     }
 }
 
-// `AlignedBytes` owns the backing allocation exclusively; the raw ptr
-// is reachable only through `&self` / `&mut self`, so the standard
-// `Send + Sync` rules apply.
+// `AlignedBytes` owns its allocation exclusively; the raw ptr is reachable
+// only through `&self`/`&mut self`, so the standard Send+Sync rules apply.
 unsafe impl Send for AlignedBytes {}
 unsafe impl Sync for AlignedBytes {}
 
-extern crate alloc;
-
+/// Content-addressed buffer pool + slot binding table. Implements
+/// [`Workspace`] so kernels are unchanged: a `BufferRef`'s `slot` resolves
+/// through the binding table to the buffer currently bound there.
 #[derive(Debug, Default)]
 pub struct BufferArena {
-    storage: AlignedBytes,
-    slots: Vec<SlotSpan>,
+    /// Backing storage, stable index. Freed indices are recycled.
+    bufs: Vec<AlignedBytes>,
+    free: Vec<usize>,
+    /// `slot_buf[slot]` = index into `bufs` currently bound to `slot`
+    /// (`usize::MAX` = unbound). Kernel I/O resolves through this.
+    slot_buf: Vec<usize>,
+    /// Declared slot lengths (informational + the fixed-arena API).
+    slot_len: Vec<usize>,
+    // Content-addressed residency (label → bufs index), byte-bounded.
+    pinned: HashMap<ContentLabel, usize>,
+    current: HashMap<ContentLabel, usize>,
+    previous: HashMap<ContentLabel, usize>,
+    current_bytes: usize,
+    budget: usize,
 }
+
+const UNBOUND: usize = usize::MAX;
 
 impl BufferArena {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            budget: DEFAULT_POOL_BUDGET,
+            ..Self::default()
+        }
     }
 
-    pub fn with_capacity(total_bytes: usize, slots: Vec<SlotSpan>) -> Self {
+    /// Construct a fixed arena: one buffer per slot, each bound to itself.
+    /// `total_bytes` is informational (each slot owns its own buffer).
+    /// This preserves the legacy fixed-slot construction used by direct
+    /// `Workspace` consumers (kernels, microbenches).
+    pub fn with_capacity(_total_bytes: usize, slots: Vec<SlotSpan>) -> Self {
+        let n = slots.len();
+        let mut bufs = Vec::with_capacity(n);
+        let mut slot_buf = Vec::with_capacity(n);
+        let mut slot_len = Vec::with_capacity(n);
+        for (i, s) in slots.iter().enumerate() {
+            bufs.push(AlignedBytes::zeroed(s.length as usize));
+            slot_buf.push(i);
+            slot_len.push(s.length as usize);
+        }
         Self {
-            storage: AlignedBytes::zeroed(total_bytes),
-            slots,
+            bufs,
+            free: Vec::new(),
+            slot_buf,
+            slot_len,
+            pinned: HashMap::new(),
+            current: HashMap::new(),
+            previous: HashMap::new(),
+            current_bytes: 0,
+            budget: DEFAULT_POOL_BUDGET,
         }
     }
 
     pub fn slot(&self, idx: usize) -> Option<SlotSpan> {
-        self.slots.get(idx).copied()
+        self.slot_len.get(idx).map(|&length| SlotSpan {
+            offset: 0,
+            length: length as u64,
+        })
     }
 
     pub fn slot_count(&self) -> usize {
-        self.slots.len()
+        self.slot_len.len()
     }
 
+    /// Total live buffer bytes (informational).
     pub fn capacity(&self) -> usize {
-        self.storage.len
+        self.bufs.iter().map(|b| b.len).sum()
+    }
+
+    /// The buffer index currently bound to `slot`, if any.
+    #[inline]
+    fn bound(&self, slot: usize) -> Option<usize> {
+        self.slot_buf.get(slot).copied().filter(|&i| i != UNBOUND)
     }
 
     pub fn read_slot(&self, idx: usize) -> Option<&[u8]> {
-        let s = self.slots.get(idx)?;
-        let start = s.offset as usize;
-        let end = start + s.length as usize;
-        self.storage.as_slice().get(start..end)
+        let bi = self.bound(idx)?;
+        Some(self.bufs[bi].as_slice())
     }
 
     pub fn write_slot(&mut self, idx: usize) -> Option<&mut [u8]> {
-        let s = *self.slots.get(idx)?;
-        let start = s.offset as usize;
-        let end = start + s.length as usize;
-        self.storage.as_mut_slice().get_mut(start..end)
+        let bi = self.bound(idx)?;
+        Some(self.bufs[bi].as_mut_slice())
     }
 
-    /// Resolve a `BufferRef` to its `[start, end)` byte range within
-    /// the arena's backing storage. Returns `None` on out-of-range.
-    /// Used by `split_borrow` to compute the per-slot disjoint slices
-    /// without intermediate allocation.
+    /// Resolve a `BufferRef` to `(bufs index, start, end)` within the bound
+    /// buffer. `None` if unbound/out-of-range.
     #[inline]
-    fn buf_range(&self, buf: BufferRef) -> Option<(usize, usize)> {
-        let slot = self.slots.get(buf.slot as usize)?;
-        let slot_start = slot.offset as usize;
-        let slot_end = slot_start + slot.length as usize;
-        if slot_end > self.storage.len {
-            return None;
-        }
-        let inner_start = slot_start + buf.offset as usize;
-        let inner_end = if buf.length == 0 {
-            slot_end
+    fn buf_range(&self, buf: BufferRef) -> Option<(usize, usize, usize)> {
+        let bi = self.bound(buf.slot as usize)?;
+        let len = self.bufs[bi].len;
+        let start = (buf.offset as usize).min(len);
+        let end = if buf.length == 0 {
+            len
         } else {
-            (inner_start + buf.length as usize).min(slot_end)
+            (start + buf.length as usize).min(len)
         };
-        if inner_end > self.storage.len || inner_start > inner_end {
+        if start > end {
             return None;
         }
-        Some((inner_start, inner_end))
+        Some((bi, start, end))
+    }
+}
+
+// ─── Content-addressed pool operations (driven by the executor) ──────────
+
+impl BufferArena {
+    /// Set the transient byte budget per generation.
+    pub fn set_budget(&mut self, budget: usize) {
+        self.budget = budget.max(1);
     }
 
-    /// Zero-copy split-borrow: obtain `&[u8]` slices for each read
-    /// buffer plus an `&mut [u8]` slice for the single write buffer,
-    /// all backed by the same arena storage.
-    ///
-    /// Returns `None` if any buffer is out-of-range OR if the write
-    /// range overlaps any read range. The caller is responsible for
-    /// supplying disjoint buffer refs; the schedule's per-level
-    /// independence (spec VIII.2) guarantees disjointness at the slot
-    /// level, and within-slot writes don't overlap reads from the
-    /// same slot in the executor's call sequence.
-    ///
-    /// Avoids the `.to_vec()` clones that the read-then-write
-    /// `Workspace::read` / `Workspace::write` pair forced (the borrow
-    /// checker can't see two non-overlapping ranges of a shared
-    /// `Vec<u8>` as disjoint without a split).
-    pub fn split_borrow<'a>(
-        &'a mut self,
-        reads: &[BufferRef],
-        write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
-        let (w_start, w_end) = self.buf_range(write)?;
-        // SAFETY: each read range is disjoint from `[w_start, w_end)` by
-        // the explicit check below, and shared `&[u8]` aliasing among
-        // reads is permitted. The mutable write slice has unique access
-        // to its range. Lifetimes are tied to `&'a mut self`.
-        let base_const = self.storage.as_slice().as_ptr();
-        let base_mut = self.storage.as_mut_slice().as_mut_ptr();
-        let mut read_slices: Vec<&'a [u8]> = Vec::with_capacity(reads.len());
-        for r in reads {
-            let (rs, re) = self.buf_range(*r)?;
-            if rs < w_end && w_start < re {
-                return None;
+    /// Reset the slot→buffer binding table to `n` unbound slots, keeping
+    /// the resident buffer pool intact. Called at the start of a walk.
+    pub fn rebind_reset(&mut self, n: usize) {
+        self.slot_buf.clear();
+        self.slot_buf.resize(n, UNBOUND);
+        if self.slot_len.len() < n {
+            self.slot_len.resize(n, 0);
+        }
+    }
+
+    fn ensure_slot(&mut self, slot: usize) {
+        if slot >= self.slot_buf.len() {
+            self.slot_buf.resize(slot + 1, UNBOUND);
+        }
+        if slot >= self.slot_len.len() {
+            self.slot_len.resize(slot + 1, 0);
+        }
+    }
+
+    /// Allocate (or recycle from the free list) a `len`-byte buffer and bind
+    /// it to `slot`. Used both for node outputs (a reuse/memo miss) and as
+    /// the backing for a freshly-interned/pinned value.
+    pub fn bind_fresh(&mut self, slot: usize, len: usize) -> usize {
+        let bi = match self.free.pop() {
+            Some(bi) => {
+                self.bufs[bi].reset_to(len);
+                bi
             }
-            unsafe {
-                read_slices.push(core::slice::from_raw_parts(base_const.add(rs), re - rs));
+            None => {
+                self.bufs.push(AlignedBytes::zeroed(len));
+                self.bufs.len() - 1
+            }
+        };
+        self.ensure_slot(slot);
+        self.slot_buf[slot] = bi;
+        self.slot_len[slot] = len;
+        bi
+    }
+
+    /// Bind `slot` to the buffer holding `label`, if resident. Returns true
+    /// on a hit (the value is now readable at `slot` with **no copy**).
+    pub fn bind_resident(&mut self, slot: usize, label: &ContentLabel) -> bool {
+        let bi = self
+            .pinned
+            .get(label)
+            .or_else(|| self.current.get(label))
+            .or_else(|| self.previous.get(label))
+            .copied();
+        match bi {
+            Some(bi) => {
+                self.ensure_slot(slot);
+                self.slot_buf[slot] = bi;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Pin a constant/weight by content label (resident for the session,
+    /// deduped — identical weights share one buffer). No slot binding; the
+    /// walk re-binds pinned constants by label each run. One-time load copy.
+    pub fn pin_bytes(&mut self, label: ContentLabel, bytes: &[u8]) {
+        if self.pinned.contains_key(&label) {
+            return;
+        }
+        // Exact logical length (the allocator pads capacity to 64 for
+        // alignment); `resolve` returns exactly these bytes.
+        let mut buf = AlignedBytes::zeroed(bytes.len());
+        buf.as_mut_slice().copy_from_slice(bytes);
+        self.bufs.push(buf);
+        let bi = self.bufs.len() - 1;
+        self.pinned.insert(label, bi);
+    }
+
+    /// Store arbitrary bytes as a transient value addressed by `label`,
+    /// without binding a slot. The byte→address boundary for inputs
+    /// pre-interned ahead of `execute_addressed`.
+    pub fn store_unbound(&mut self, label: ContentLabel, bytes: &[u8]) {
+        if self.resident(&label) {
+            return;
+        }
+        self.roll_if_needed(bytes.len());
+        let bi = match self.free.pop() {
+            Some(bi) => {
+                self.bufs[bi].reset_to(bytes.len());
+                bi
+            }
+            None => {
+                self.bufs.push(AlignedBytes::zeroed(bytes.len()));
+                self.bufs.len() - 1
+            }
+        };
+        self.bufs[bi].as_mut_slice().copy_from_slice(bytes);
+        self.current_bytes = self.current_bytes.saturating_add(bytes.len());
+        self.current.insert(label, bi);
+    }
+
+    /// Address the value currently bound to `slot` by `label` and retain it
+    /// in the transient pool — **no copy**, just records the binding's
+    /// buffer under the label. Subsequent identical derivations bind to it.
+    pub fn retain(&mut self, slot: usize, label: ContentLabel) {
+        let bi = match self.bound(slot) {
+            Some(bi) => bi,
+            None => return,
+        };
+        if self.pinned.contains_key(&label) || self.current.contains_key(&label) {
+            return;
+        }
+        let len = self.bufs[bi].len;
+        self.roll_if_needed(len);
+        self.current_bytes = self.current_bytes.saturating_add(len);
+        self.current.insert(label, bi);
+    }
+
+    /// Whether a value with this label is resident (pinned or transient).
+    pub fn resident(&self, label: &ContentLabel) -> bool {
+        self.pinned.contains_key(label)
+            || self.current.contains_key(label)
+            || self.previous.contains_key(label)
+    }
+
+    /// Resolve a label to its bytes, if resident (the address→byte boundary).
+    pub fn resolve(&self, label: &ContentLabel) -> Option<&[u8]> {
+        let bi = self
+            .pinned
+            .get(label)
+            .or_else(|| self.current.get(label))
+            .or_else(|| self.previous.get(label))
+            .copied()?;
+        Some(self.bufs[bi].as_slice())
+    }
+
+    /// Distinct resident values across both tiers (observability).
+    pub fn resident_len(&self) -> usize {
+        self.pinned.len() + self.current.len() + self.previous.len()
+    }
+
+    /// Resident transient bytes (both generations, deduped) — SC-3 bound.
+    pub fn transient_bytes(&self) -> usize {
+        let mut seen: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        let mut total = 0;
+        for &bi in self.current.values().chain(self.previous.values()) {
+            if seen.insert(bi) {
+                total += self.bufs[bi].len;
             }
         }
-        let write_slice =
-            unsafe { core::slice::from_raw_parts_mut(base_mut.add(w_start), w_end - w_start) };
-        Some((read_slices, write_slice))
+        total
+    }
+
+    /// Age `current` → `previous` (recycling the dropped generation's
+    /// buffers) when adding `incoming` bytes would exceed the budget, so
+    /// resident transient bytes stay ≤ `2 * budget` for any run length.
+    fn roll_if_needed(&mut self, incoming: usize) {
+        if self.current_bytes.saturating_add(incoming) <= self.budget || self.current.is_empty() {
+            return;
+        }
+        // Recycle the outgoing `previous` generation's buffers (deduped;
+        // only those no longer referenced by a pinned/current label or a
+        // live slot binding).
+        let dropped = core::mem::take(&mut self.previous);
+        let mut freed: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        for (_, bi) in dropped {
+            if freed.insert(bi) && !self.bufs_index_live(bi) {
+                self.free.push(bi);
+            }
+        }
+        core::mem::swap(&mut self.current, &mut self.previous);
+        self.current.clear();
+        self.current_bytes = 0;
+    }
+
+    /// Is buffer index `bi` referenced by a pinned/current label or a live
+    /// slot binding? (Then it must not be recycled.)
+    fn bufs_index_live(&self, bi: usize) -> bool {
+        self.pinned.values().any(|&v| v == bi)
+            || self.current.values().any(|&v| v == bi)
+            || self.slot_buf.contains(&bi)
     }
 }
 
 impl Workspace for BufferArena {
-    /// Read up to `buf.length` bytes from `buf.slot`, starting at
-    /// `buf.offset` *within* that slot. When `buf.length` is zero, return
-    /// the slot's full contents — kernels that compute their own byte
-    /// count from `element_count + dtype` can index into the returned
-    /// slice without being constrained by the BufferRef's stale length.
     fn read(&self, buf: BufferRef) -> &[u8] {
         match self.buf_range(buf) {
-            Some((s, e)) => &self.storage.as_slice()[s..e],
+            Some((bi, s, e)) => &self.bufs[bi].as_slice()[s..e],
             None => &[],
         }
     }
 
     fn write(&mut self, buf: BufferRef) -> &mut [u8] {
         match self.buf_range(buf) {
-            Some((s, e)) => &mut self.storage.as_mut_slice()[s..e],
+            Some((bi, s, e)) => &mut self.bufs[bi].as_mut_slice()[s..e],
             None => &mut [],
         }
     }
 
-    #[inline]
+    /// Zero-copy split-borrow across the bound buffers: `&[u8]` for each
+    /// read, one `&mut [u8]` for the write. Disjoint by construction —
+    /// distinct values live in distinct allocations; only a read aliasing
+    /// the write *buffer* with an overlapping range is rejected.
     fn split_borrow<'a>(
         &'a mut self,
         reads: &[BufferRef],
         write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
-        BufferArena::split_borrow(self, reads, write)
+    ) -> Option<(SplitReads<'a>, &'a mut [u8])> {
+        let (wb, ws, we) = self.buf_range(write)?;
+        // Raw data pointer of the write buffer (NonNull is Copy; reading it
+        // is a shared borrow that ends immediately).
+        let w_ptr = self.bufs[wb].ptr.as_ptr();
+        let mut read_slices: SplitReads<'a> = SplitReads::new();
+        for r in reads {
+            let (rb, rs, re) = self.buf_range(*r)?;
+            if rb == wb && rs < we && ws < re {
+                return None; // overlapping in-place read/write
+            }
+            let r_ptr = self.bufs[rb].ptr.as_ptr();
+            // SAFETY: `rb != wb` ⇒ distinct allocations; `rb == wb` only
+            // reaches here with non-overlapping ranges. Lifetimes tie to
+            // `&'a mut self`, which forbids other access for `'a`.
+            read_slices.push(unsafe { core::slice::from_raw_parts(r_ptr.add(rs), re - rs) });
+        }
+        // SAFETY: the write range is disjoint from every read range above.
+        let write_slice = unsafe { core::slice::from_raw_parts_mut(w_ptr.add(ws), we - ws) };
+        Some((read_slices, write_slice))
     }
 }
 
@@ -253,4 +469,46 @@ pub struct InputBuffer<'a> {
 /// Caller-receivable output buffer.
 pub struct OutputBuffer {
     pub bytes: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hologram_archive::address_bytes;
+
+    /// SC-3: transient pool bytes stay bounded across an arbitrarily long
+    /// run of distinct interned values (generational eviction), so memory
+    /// holds regardless of run length.
+    #[test]
+    fn transient_bytes_are_bounded_regardless_of_run_length() {
+        let budget = 4096;
+        let mut pool = BufferArena::new();
+        pool.set_budget(budget);
+        for i in 0..100_000u32 {
+            let mut p = [7u8; 256];
+            p[0] = i as u8;
+            p[1] = (i >> 8) as u8;
+            pool.store_unbound(address_bytes(&p), &p);
+        }
+        assert!(
+            pool.transient_bytes() <= 2 * budget + 320,
+            "resident transient {} exceeded 2*budget",
+            pool.transient_bytes()
+        );
+    }
+
+    /// A pinned value survives arbitrary transient churn (zero movement,
+    /// never evicted).
+    #[test]
+    fn pinned_survives_transient_churn() {
+        let mut pool = BufferArena::new();
+        pool.set_budget(1024);
+        let w = address_bytes(b"model-weight");
+        pool.pin_bytes(w, b"model-weight");
+        for i in 0..100_000u32 {
+            let b = i.to_le_bytes();
+            pool.store_unbound(address_bytes(&b), &b);
+        }
+        assert_eq!(pool.resolve(&w), Some(b"model-weight".as_slice()));
+    }
 }

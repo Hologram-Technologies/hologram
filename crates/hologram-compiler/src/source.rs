@@ -12,6 +12,8 @@
 //! ONNX import is post-v0.5.0; this entry point exists so `compile_from_source`
 //! has a non-empty grammar.
 
+use alloc::string::{String, ToString};
+
 use crate::error::CompileError;
 use hologram_graph::node::Node;
 use hologram_graph::{
@@ -93,7 +95,10 @@ pub fn parse(source: &str) -> Result<Graph, CompileError> {
                 }
             }
             other => {
+                #[cfg(feature = "std")]
                 tracing::warn!(lineno, head = other, "unknown source directive");
+                #[cfg(not(feature = "std"))]
+                let _ = (lineno, other);
                 return Err(CompileError::SourceParse("unknown directive"));
             }
         }

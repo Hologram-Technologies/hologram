@@ -3,6 +3,15 @@
 //! Each backend declares a `HostBounds` from `hologram-host` and a
 //! `Backend` impl whose `dispatch` consumes a `KernelCall` and writes
 //! into a runtime workspace. The hot loop holds zero virtual dispatch.
+//!
+//! `no_std` + `alloc` by default (matching prism / uor-addr) so hologram-ai
+//! runs in wasm and on embedded targets; the `std` feature adds host-only
+//! backends and amenities (wgpu, runtime SIMD detection, thread-local
+//! scratch).
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod backend;
 pub mod error;
@@ -26,7 +35,7 @@ pub use wgpu_backend::WgpuBackend;
 pub use backend::Backend;
 pub use error::BackendError;
 pub use kernel_call::*;
-pub use workspace::{BufferRef, Workspace};
+pub use workspace::{BufferRef, SplitReads, Workspace};
 
 #[cfg(feature = "cpu")]
 pub use cpu::CpuBackend;

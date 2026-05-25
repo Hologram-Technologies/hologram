@@ -18,11 +18,10 @@ uor-prism          = { workspace = true }
 # crate's root. Hologram references them through a direct dep on
 # `uor-prism-tensor` so trait declarations and companion macros
 # resolve through the same crate path.
-uor-prism-tensor   = "0.1.3"
+uor-prism-tensor   = { workspace = true }
 smallvec           = { workspace = true }
-thiserror          = { workspace = true }
+thiserror          = { workspace = true, default-features = false }
 bytemuck           = { workspace = true }
-tracing            = { workspace = true }
 libm               = { workspace = true }
 wgpu               = { workspace = true, optional = true }
 pollster           = { workspace = true, optional = true }
@@ -32,7 +31,11 @@ metal = { version = "0.29", optional = true }
 objc  = { version = "0.2", optional = true }
 
 [features]
-default = ["cpu"]
+# `no_std` + `alloc` by default; `std` (host default) adds std-only
+# backends and the runtime-SIMD / thread-local-scratch amenities.
+default = ["std", "cpu"]
+std = ["thiserror/std", "hologram-host/std"]
 cpu = []
-metal = ["dep:metal", "dep:objc"]
-wgpu = ["dep:wgpu", "dep:pollster"]
+# The GPU backends are inherently host-only.
+metal = ["std", "dep:metal", "dep:objc"]
+wgpu = ["std", "dep:wgpu", "dep:pollster"]

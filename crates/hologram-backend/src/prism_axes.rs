@@ -119,6 +119,91 @@ pub type HologramF32Tensor8x8Matmul = HologramF32MatmulSquare<8>;
 /// 16×16 f32 matmul (the `HOLOGRAM_MAX_TENSOR_DIM` ceiling).
 pub type HologramF32Tensor16x16Matmul = HologramF32MatmulSquare<16>;
 
+// ─── Runtime-dimensioned TensorAxis: the execution dispatch surface ───
+
+/// Header width of the runtime matmul axis input: `[m, k, n : u32 LE]`.
+#[cfg(feature = "cpu")]
+pub const HOLOGRAM_MATMUL_HEADER_BYTES: usize = 12;
+
+/// Runtime-dimensioned f32 matmul exposed as prism-tensor's [`TensorAxis`]
+/// (wiki ADR-031) — the canonical prism axis surface hologram's CPU executor
+/// dispatches `MatMul` through (rather than calling the kernel ad hoc).
+///
+/// Input layout: `[m: u32 LE][k: u32 LE][n: u32 LE] || A(m·k·4) || B(k·n·4)`
+/// (row-major f32); output: `C = A·B` row-major (`m·n·4` bytes). The body
+/// delegates to the register-blocked FMA micro-kernel
+/// ([`crate::cpu::simd::matmul_f32_blocked`]), so dispatching through the
+/// axis costs only operand marshalling — `Θ(m·k + k·n)` vs the kernel's
+/// `Θ(m·k·n)`, i.e. negligible at model scale.
+#[cfg(feature = "cpu")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HologramTensorMatmulF32;
+
+#[cfg(feature = "cpu")]
+impl TensorAxis for HologramTensorMatmulF32 {
+    const AXIS_ADDRESS: &'static str =
+        "https://hologram.uor.foundation/axis/TensorAxis/HologramMatmulF32";
+    // Runtime-sized: the caller supplies the workspace output slot as `out`,
+    // so there is no substrate-arbitrary byte-width cap (ADR-060).
+    const MAX_OUTPUT_BYTES: usize = 0;
+
+    fn matmul(input: &[u8], out: &mut [u8]) -> Result<usize, ShapeViolation> {
+        if input.len() < HOLOGRAM_MATMUL_HEADER_BYTES {
+            return Err(shape_violation(
+                "https://hologram.uor.foundation/axis/HologramTensorShape/matmulHeader",
+            ));
+        }
+        let rd = |o: usize| {
+            u32::from_le_bytes([input[o], input[o + 1], input[o + 2], input[o + 3]]) as usize
+        };
+        let (m, k, n) = (rd(0), rd(4), rd(8));
+        let a_bytes = m * k * 4;
+        let b_bytes = k * n * 4;
+        let o_bytes = m * n * 4;
+        let ab = &input[HOLOGRAM_MATMUL_HEADER_BYTES..];
+        if ab.len() != a_bytes + b_bytes {
+            return Err(shape_violation(
+                "https://hologram.uor.foundation/axis/HologramTensorShape/inputByteLength",
+            ));
+        }
+        if out.len() < o_bytes {
+            return Err(shape_violation(
+                "https://hologram.uor.foundation/axis/HologramTensorShape/outputByteLength",
+            ));
+        }
+        if m == 0 || k == 0 || n == 0 {
+            return Ok(o_bytes);
+        }
+        let out32 = bytemuck::cast_slice_mut::<u8, f32>(&mut out[..o_bytes]);
+        let mut scratch = alloc::vec::Vec::new();
+        // Zero-copy operand views when 4-aligned (the marshalling buffer is);
+        // otherwise a one-shot aligned copy (always correct).
+        match (
+            bytemuck::try_cast_slice::<u8, f32>(&ab[..a_bytes]),
+            bytemuck::try_cast_slice::<u8, f32>(&ab[a_bytes..]),
+        ) {
+            (Ok(a32), Ok(b32)) => {
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, &mut scratch);
+            }
+            _ => {
+                let mut af = alloc::vec![0f32; m * k];
+                let mut bf = alloc::vec![0f32; k * n];
+                for (i, v) in af.iter_mut().enumerate() {
+                    *v = read_f32(ab, i);
+                }
+                for (i, v) in bf.iter_mut().enumerate() {
+                    *v = read_f32(&ab[a_bytes..], i);
+                }
+                crate::cpu::simd::matmul_f32_blocked(&af, &bf, out32, m, k, n, &mut scratch);
+            }
+        }
+        Ok(o_bytes)
+    }
+}
+
+#[cfg(feature = "cpu")]
+axis_extension_impl_for_tensor_axis!(HologramTensorMatmulF32);
+
 // ─── ActivationAxis: f32 element-wise nonlinearities ──────────────
 
 /// Hologram f32 element-wise activation kernel marker.

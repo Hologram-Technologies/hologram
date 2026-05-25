@@ -1,6 +1,7 @@
 //! IEEE-754 native CPU kernel correctness tests.
 
 use hologram_backend::cpu::dtype::DTYPE_F32;
+use hologram_backend::SplitReads;
 use hologram_backend::{
     Backend, BinaryCall, BufferRef, CpuBackend, KernelCall, MatMulCall, UnaryCall, Workspace,
 };
@@ -23,7 +24,7 @@ impl Workspace for TestWorkspace {
         &'a mut self,
         reads: &[BufferRef],
         write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
+    ) -> Option<(SplitReads<'a>, &'a mut [u8])> {
         let w = write.slot as usize;
         if reads.iter().any(|r| r.slot as usize == w) {
             return None;
@@ -45,7 +46,7 @@ impl Workspace for TestWorkspace {
     }
 }
 
-fn buf(slot: u32, length: u32) -> BufferRef {
+fn buf(slot: u32, length: u64) -> BufferRef {
     BufferRef {
         slot,
         offset: 0,

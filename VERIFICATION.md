@@ -1,0 +1,52 @@
+# hologram — Verification & Validation
+
+> **Scope.** What hologram verifies and how. Every part of hologram is
+> validated against an **external authority** (a published spec or an
+> independent reference implementation) — never against hologram itself —
+> and verified to **perform without bottlenecks**. This mirrors the
+> discipline of `uor-addr` (realizations vs RFC/spec + cross-tool, TC-05
+> replay) and `prism-btc` (SHA vs FIPS-180-4, merkle vs rust-bitcoin,
+> mining vs real mainnet, cost-model vs χ² baselines, algebra vs Lean).
+>
+> The normative invariant catalog is [`CONFORMANCE.md`](CONFORMANCE.md).
+> The full suite is reproducible via `just vv`.
+
+## Principle: external ground truth, not self-reference
+
+A test that checks a kernel against hologram's *own* reference evaluator,
+or a hash against a constant hologram itself produced, proves only
+internal consistency. V&V here means conformance to an authority we did
+**not** author:
+
+| part | external authority |
+|---|---|
+| σ-axis hash (`HologramHasher` = `prism::crypto::Blake3Hasher`) | the upstream **BLAKE3** reference crate (the algorithm authors' impl) |
+| content addresses (κ-labels) | **uor-addr** (itself externally validated) + TC-05 replay |
+| numeric kernels (matmul, conv, norm, softmax, gelu, …) | **ONNX operator spec** + ONNX backend node test data; **IEEE-754** |
+| model ingest (GGUF / ONNX) | the **GGUF / ONNX format specs** + cross-tool (independent loaders) |
+| quantization (I8 / I4 dequant) | the **GGML / ONNX** quantization reference |
+| full-graph execution | an independent runtime's outputs (**ONNX Runtime / PyTorch**) |
+| performance | measured baselines + budgets; no part is a bottleneck |
+
+## V&V axes (reproducible: `just vv`)
+
+1. **Architecture** — `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test --workspace`.
+2. **Correctness conformance** — the `conformance` test targets that check each part against its external authority (class AS today; KC/MA forthcoming — see `CONFORMANCE.md`).
+3. **Replay (TC-05)** — every minted κ-label's `AddressWitness::verify()` re-certifies via `prism::replay::certify_from_trace` (QS-05 fingerprint equivalence) without re-running the σ-axis.
+4. **Performance / no-bottleneck** — `cargo bench` with per-part baselines and budgets (class PV); a part regressing past its budget fails V&V.
+5. **Portability** — `just wasm` + `just embedded` (the lib stack builds on `wasm32-unknown-unknown` and `thumbv7em-none-eabi`, `no_std`).
+6. **Docs** — rustdoc with intra-doc links denied.
+
+## Status (this is a living document — gaps are tracked, not hidden)
+
+- **AS (σ-axis / addressing): VERIFIED.** `HologramHasher` + `address_bytes` validated byte-for-byte against the BLAKE3 reference crate across chunk/subtree boundaries, plus determinism, collision-sensitivity, streaming.
+- **MA / RP (model addressing + replay): VERIFIED.** GGUF model → verifiable κ-label, TC-05 witness round-trips; cross-tool agreement inherited from uor-addr's gguf/onnx realization (which it cross-validates against independent tools upstream).
+- **KC / SC (kernel conformance + scaling): VERIFIED.** matmul, softmax, layer/RMS norm, gelu/silu, conv2d, attention, dequantize, reduce, max/avg-pool — each vs an **independent f64 reference of the ONNX op definition** (not hologram's own evaluator), across scale incl. non-power-of-2; content-addressed execution conforms + reuses byte-identically across 8³…128³.
+- **Zero-movement substrate: VERIFIED (architecture + perf).** The runtime is one content-addressed buffer pool: a value lives in one aligned buffer, a slot binds to it, reuse/retention/constants are pointer-level (no per-node copy to/from a separate store, no copy-back on reuse). The legacy fixed-arena + content-store dual path and its per-node `to_vec()` movement are gone; dead paths (`Executor`, `async_session`) deleted. Boundary I/O (caller bytes, output bytes) and the one-time constant load are the only copies. Bounded for arbitrary run length via generational eviction (SC-3). Measured effect: served-reuse and whole-graph memo paths ~30% faster, no novel regression. **Zero-cost walk:** the per-execute scratch (slot→label, output→witnessed) is reused across runs (no per-execute heap growth), and `Workspace::split_borrow` returns a stack `SplitReads = SmallVec<[&[u8]; 4]>` (no per-kernel-dispatch heap allocation) — the hot path allocates only the value buffers themselves.
+- **CA (content-addressed execution): VERIFIED.** Output labels are built by **witnessed *non-commutative* composition** (`compose.rs`'s `compose_ordered_blake3`, a prism `PrismModel` bound to `AddressResolverTuple<Blake3Hasher>` — the ordered ADR-061 operator uor-addr doesn't ship, realized as `prism-btc` demonstrates) and carry replayable TC-05 witnesses; determinism + order-sensitivity proven.
+- **SG (sub-graph addressing): VERIFIED.** Every node is keyed on the cheap, order-sensitive `derive_label` of its operands' labels with its op signature (hot-path, `O(operands)`), so reuse extends past whole-graph exact-match: an unchanged sub-graph is elided across runs with a *different* top-level input set (SG-1, the prefix/KV case), and a common subexpression is computed once within a single run (SG-2). Output-port addresses remain the witnessed form (CA-3), minted once per output rather than per node. Elision is proven by per-walk dispatch/skip counters; the reused result is held to the independent f64 reference.
+- **FU (content-addressed fusion): VERIFIED.** The UOR-native execution pass collapses `matmul → elementwise-activation` into one fused op (activation in the matmul epilogue), eliding the activation's intermediate from materialization *and* addressing — the composite carries a single κ-derivation. FU-1: fused result == independent f64 reference across scale, intermediate elided (one kernel, not two). FU-2: fusion is byte-identical to the unfused computation and is guarded (a matmul whose output has a second observer is not fused). FU-3: the production transformer-MLP fuses one matmul→gelu per layer with PV-4's floors intact.
+- **PV (performance / no-bottleneck): VERIFIED — microbench *and* production workload.** Release-only perf tests: matmul throughput floor + cubic envelope (PV-1), machine-independent reuse-vs-recompute ratio ≥8× (PV-2), conservative per-part floors for the other heavy kernels conv2d + attention (PV-3), and a **production-representative** stacked transformer-MLP (PV-4) that sustains a throughput floor under cold load, proves throughput does not collapse across sizes (arbitrary models), and shows serving reuse collapsing latency ≥8× — reporting GFLOP/s, FLOP/core-cycle, and ms/inference. Observed Zen3 @ 3.24 GHz core clock (32-FLOP/cycle peak): bare 128³ matmul ≈69 GFLOP/s (~21 FLOP/cycle, ~66% of peak) vs production MLP-stack ≈26 GFLOP/s (~8 FLOP/cycle, ~25% of peak — skinny/rectangular + activation-bandwidth bound); served reuse ≫1000×. The `production` criterion bench mirrors the workload across sizes.
+- **NS (portability): VERIFIED** via `just wasm` / `just embedded`.
+
+The one **optional** (non-required) escalation is KC-4: the official ONNX node-test corpus + a cross-runtime oracle — the same ONNX-op-semantics authority in a heavier form.

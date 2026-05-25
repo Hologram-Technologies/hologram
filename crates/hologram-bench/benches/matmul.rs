@@ -26,15 +26,15 @@ fn make_arena(slot_bytes: usize) -> BufferArena {
     let slots = vec![
         SlotSpan {
             offset: 0,
-            length: rounded as u32,
+            length: rounded as u64,
         },
         SlotSpan {
-            offset: rounded as u32,
-            length: rounded as u32,
+            offset: rounded as u64,
+            length: rounded as u64,
         },
         SlotSpan {
-            offset: 2 * rounded as u32,
-            length: rounded as u32,
+            offset: 2 * rounded as u64,
+            length: rounded as u64,
         },
     ];
     BufferArena::with_capacity(3 * rounded, slots)

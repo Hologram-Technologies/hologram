@@ -1,9 +1,11 @@
 //! Decoder counterpart to `kernel_codec::encode_calls`.
 
 use crate::error::ArchiveError;
+use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, WhereCall,
+    LayoutCall, MatMulActivationCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall,
+    UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -53,8 +55,8 @@ impl<'a> Cursor<'a> {
     fn buf(&mut self) -> Result<BufferRef, ArchiveError> {
         Ok(BufferRef {
             slot: self.u32()?,
-            offset: self.u32()?,
-            length: self.u32()?,
+            offset: self.u64()?,
+            length: self.u64()?,
         })
     }
 }
@@ -178,6 +180,10 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         103 => K::FusedSwiGluGrad(read_matmul(cur)?),
         104 => K::UnaryGrad(read_unary(cur)?),
         105 => K::Dequantize(read_dequantize(cur)?),
+        106 => K::MatMulActivation(MatMulActivationCall {
+            mm: read_matmul(cur)?,
+            act: cur.u8()?,
+        }),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })
 }
@@ -186,7 +192,7 @@ fn read_unary(c: &mut Cursor<'_>) -> Result<UnaryCall, ArchiveError> {
     Ok(UnaryCall {
         input: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         witt_bits: c.u16()?,
         dtype: c.u8()?,
     })
@@ -196,7 +202,7 @@ fn read_binary(c: &mut Cursor<'_>) -> Result<BinaryCall, ArchiveError> {
         a: c.buf()?,
         b: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         witt_bits: c.u16()?,
         dtype: c.u8()?,
     })
@@ -264,7 +270,7 @@ fn read_reduce(c: &mut Cursor<'_>) -> Result<ReduceCall, ArchiveError> {
     Ok(ReduceCall {
         input: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         axis_count: c.u32()?,
         keepdims: c.u8()? != 0,
         dtype: c.u8()?,
@@ -274,7 +280,7 @@ fn read_layout(c: &mut Cursor<'_>) -> Result<LayoutCall, ArchiveError> {
     Ok(LayoutCall {
         input: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         dtype: c.u8()?,
     })
 }
@@ -323,7 +329,7 @@ fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
         a: c.buf()?,
         b: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         dtype: c.u8()?,
     })
 }
@@ -331,7 +337,7 @@ fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
     Ok(DequantizeCall {
         input: c.buf()?,
         output: c.buf()?,
-        element_count: c.u32()?,
+        element_count: c.u64()?,
         quant_dtype: c.u8()?,
         dtype: c.u8()?,
         scale_bits: c.u32()?,

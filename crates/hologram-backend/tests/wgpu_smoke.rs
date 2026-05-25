@@ -6,6 +6,7 @@
 #![cfg(feature = "wgpu")]
 
 use hologram_backend::cpu::dtype::DTYPE_F32;
+use hologram_backend::SplitReads;
 use hologram_backend::WgpuBackend;
 use hologram_backend::{Backend, BinaryCall, BufferRef, KernelCall, MatMulCall, Workspace};
 
@@ -25,7 +26,7 @@ impl Workspace for Ws {
         &'a mut self,
         reads: &[BufferRef],
         write: BufferRef,
-    ) -> Option<(Vec<&'a [u8]>, &'a mut [u8])> {
+    ) -> Option<(SplitReads<'a>, &'a mut [u8])> {
         let w = write.slot as usize;
         if reads.iter().any(|r| r.slot as usize == w) {
             return None;

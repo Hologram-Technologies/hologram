@@ -1,12 +1,30 @@
-//! Shared helpers for building Term trees in a `TermArena<CAP>`.
+//! Shared helpers for building Term trees in a `HoloArena<CAP>`.
 //!
 //! Per spec V.1: loops are `Term::Recurse`, branching is `Term::Match`,
 //! cross-Witt-level moves are `Term::Lift` / `Term::Project`, and the only
 //! operator vocabulary is `PrimitiveOp` (the closed 10).
 
-use uor_foundation::enforcement::{Term, TermArena, TermList};
+use uor_foundation::enforcement::{Term, TermList};
 use uor_foundation::pipeline::literal_u64;
 use uor_foundation::{PrimitiveOp, WittLevel};
+
+/// ADR-060 inline-carrier width for hologram. `carrier_inline_bytes`
+/// reduces to `max(WITT_LEVEL_MAX_BITS / 8, FINGERPRINT_MAX_BYTES, κ)`; the
+/// κ-label term (`HASHER_IDENTIFIER_BYTES + 1 + 2·32 = 97`) dominates for
+/// every hologram backend (witt ≤ 64 bytes, fingerprint = 32), so the inline
+/// width is invariant across the CPU/AVX2/AVX-512/NEON/Metal/wgpu
+/// monomorphizations and can be pinned as a single workspace constant.
+pub const HOLOGRAM_INLINE_BYTES: usize =
+    uor_foundation::pipeline::HASHER_IDENTIFIER_BYTES + 1 + 2 * 32;
+
+/// Hologram's monomorphic `TermArena`. Every emitted term is `'static`
+/// (literals, variables and applications carry no borrowed payload), so the
+/// arena lifetime is fixed and only the capacity `CAP` varies per op.
+pub type HoloArena<const CAP: usize> =
+    uor_foundation::enforcement::TermArena<'static, HOLOGRAM_INLINE_BYTES, CAP>;
+
+/// Hologram's monomorphic `Term` — the element type of [`HoloArena`].
+pub type HoloTerm = Term<'static, HOLOGRAM_INLINE_BYTES>;
 
 /// Result of an emitter: index of the root node in the arena, or `None`
 /// if the arena overflowed.
@@ -17,7 +35,7 @@ pub type EmitResult = Option<u32>;
 /// Witt level's byte width via `pipeline::literal_u64`.
 #[inline]
 pub fn push_literal<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     value: u64,
     level: WittLevel,
 ) -> EmitResult {
@@ -26,7 +44,7 @@ pub fn push_literal<const CAP: usize>(
 
 /// Push a variable reference, return its index.
 #[inline]
-pub fn push_variable<const CAP: usize>(arena: &mut TermArena<CAP>, name_index: u32) -> EmitResult {
+pub fn push_variable<const CAP: usize>(arena: &mut HoloArena<CAP>, name_index: u32) -> EmitResult {
     arena.push(Term::Variable { name_index })
 }
 
@@ -34,7 +52,7 @@ pub fn push_variable<const CAP: usize>(arena: &mut TermArena<CAP>, name_index: u
 /// `args_start` and `args_len` describe the slice of already-pushed args.
 #[inline]
 pub fn push_application<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     op: PrimitiveOp,
     args_start: u32,
     args_len: u32,
@@ -51,7 +69,7 @@ pub fn push_application<const CAP: usize>(
 /// Push a `Lift` (canonical injection W_n → W_m, n < m).
 #[inline]
 pub fn push_lift<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     operand_index: u32,
     target: WittLevel,
 ) -> EmitResult {
@@ -64,7 +82,7 @@ pub fn push_lift<const CAP: usize>(
 /// Push a `Project` (canonical surjection W_m → W_n, m > n).
 #[inline]
 pub fn push_project<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     operand_index: u32,
     target: WittLevel,
 ) -> EmitResult {
@@ -77,7 +95,7 @@ pub fn push_project<const CAP: usize>(
 /// Push a `Recurse` (bounded recursion with descent measure).
 #[inline]
 pub fn push_recurse<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     measure_index: u32,
     base_index: u32,
     step_index: u32,
@@ -92,7 +110,7 @@ pub fn push_recurse<const CAP: usize>(
 /// Push a `Match` (pattern dispatch).
 #[inline]
 pub fn push_match<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     scrutinee_index: u32,
     arms_start: u32,
     arms_len: u32,
@@ -109,7 +127,7 @@ pub fn push_match<const CAP: usize>(
 /// Push an `Unfold`.
 #[inline]
 pub fn push_unfold<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     seed_index: u32,
     step_index: u32,
 ) -> EmitResult {
@@ -122,7 +140,7 @@ pub fn push_unfold<const CAP: usize>(
 /// Push a `Try`.
 #[inline]
 pub fn push_try<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     body_index: u32,
     handler_index: u32,
 ) -> EmitResult {
@@ -138,7 +156,7 @@ pub fn push_try<const CAP: usize>(
 /// asserts contiguity (in debug builds) and emits the application.
 #[inline]
 pub fn push_binary_app<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     op: PrimitiveOp,
     a_idx: u32,
     _b_idx: u32,
@@ -149,7 +167,7 @@ pub fn push_binary_app<const CAP: usize>(
 /// Build a unary `Application(op, [a])`.
 #[inline]
 pub fn push_unary_app<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     op: PrimitiveOp,
     a_idx: u32,
 ) -> EmitResult {

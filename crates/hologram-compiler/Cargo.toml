@@ -16,12 +16,23 @@ hologram-ops      = { workspace = true }
 uor-foundation    = { workspace = true }
 uor-prism         = { workspace = true }
 hashbrown         = { workspace = true }
-thiserror         = { workspace = true }
+thiserror         = { workspace = true, default-features = false }
 smallvec          = { workspace = true }
-tracing           = { workspace = true }
+tracing           = { workspace = true, optional = true }
 
 [dev-dependencies]
-hologram-archive = { workspace = true }
+hologram-archive = { workspace = true, features = ["std"] }
 
 [features]
-default = []
+# `no_std` + `alloc` by default; `std` (host default) enables `tracing`
+# diagnostics and the std error surface.
+default = ["std"]
+std = [
+    "dep:tracing",
+    "thiserror/std",
+    "uor-prism/std",
+    "uor-foundation/std",
+    "hologram-host/std",
+    "hologram-backend/std",
+    "hologram-archive/std",
+]

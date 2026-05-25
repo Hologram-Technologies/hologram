@@ -9,8 +9,12 @@
 //!   emitted) reaches both kernels by their numeric id.
 
 use hologram_backend::{HologramF32Tensor4x4Matmul, HologramF32VectorActivation16};
+use hologram_ops::HOLOGRAM_INLINE_BYTES;
 use prism::pipeline::AxisExtension;
 use prism::tensor::{ActivationAxis, TensorAxis};
+
+/// Hologram's content-fingerprint width — the BLAKE3-canonical 32 bytes.
+const FP_MAX: usize = 32;
 
 fn write_f32_row(bytes: &mut [u8], row: &[f32]) {
     for (i, v) in row.iter().enumerate() {
@@ -106,7 +110,7 @@ fn axis_extension_dispatch_routes_through_kernel_ids() {
 
     let mut out = vec![0u8; mat_bytes];
     // TensorAxis has one method (matmul) → KERNEL_MATMUL = 0.
-    let n = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(0, &input, &mut out)
+    let n = <HologramF32Tensor4x4Matmul as AxisExtension<HOLOGRAM_INLINE_BYTES, FP_MAX>>::dispatch_kernel(0, &input, &mut out)
         .unwrap();
     assert_eq!(n, mat_bytes);
     let c = read_f32_row(&out, N * N);
@@ -115,6 +119,6 @@ fn axis_extension_dispatch_routes_through_kernel_ids() {
 
     // An out-of-range kernel id returns ShapeViolation rather than
     // panicking — verifies the companion macro's default catch-all.
-    let oor = <HologramF32Tensor4x4Matmul as AxisExtension>::dispatch_kernel(99, &input, &mut out);
+    let oor = <HologramF32Tensor4x4Matmul as AxisExtension<HOLOGRAM_INLINE_BYTES, FP_MAX>>::dispatch_kernel(99, &input, &mut out);
     assert!(oor.is_err());
 }

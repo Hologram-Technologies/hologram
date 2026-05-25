@@ -9,8 +9,8 @@
 //! `OpKind::primary_arity()`. The emitter pulls operand indices off
 //! `(args_start + i)` as needed.
 
+use crate::emit::HoloArena;
 use prism::vocabulary::WittLevel;
-use uor_foundation::enforcement::TermArena;
 
 use crate::emit::EmitResult;
 use crate::kind::OpKind;
@@ -24,7 +24,7 @@ use crate::{
 /// Returns the root index of the emitted tree.
 pub fn emit_op_term<const CAP: usize>(
     kind: OpKind,
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     args_start: u32,
 ) -> EmitResult {

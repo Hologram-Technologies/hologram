@@ -1,14 +1,14 @@
 //! Reference evaluator tests for Match / Try / Recurse / Unfold.
 
-use hologram_ops::{EvalError, ReferenceEvaluator, ScalarEvaluatorU64};
+use hologram_ops::{EvalError, HoloArena, HoloTerm, ReferenceEvaluator, ScalarEvaluatorU64};
 use prism::vocabulary::WittLevel;
-use uor_foundation::enforcement::{Term, TermArena, TermList};
+use uor_foundation::enforcement::{Term, TermList};
 use uor_foundation::pipeline::literal_u64;
 
 /// Construct a `Term::Literal` from a `u64` at the given Witt level.
 /// Mirrors the helper in `hologram_ops::emit::push_literal` so tests
 /// stay decoupled from the upstream `TermValue` wire format.
-fn lit(v: u64, level: WittLevel) -> Term {
+fn lit(v: u64, level: WittLevel) -> HoloTerm {
     literal_u64(v, level)
 }
 
@@ -17,7 +17,7 @@ fn match_picks_first_matching_arm() {
     // scrutinee == 5; arms = [literal 3, literal 5, literal 99]; should pick 5
     // (which equals scrutinee). The actual semantics: pick first arm whose
     // value equals the scrutinee, default to last arm.
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let lit5 = arena.push(lit(5, WittLevel::W8)).unwrap();
     let lit3 = arena.push(lit(3, WittLevel::W8)).unwrap();
     let lit5b = arena.push(lit(5, WittLevel::W8)).unwrap();
@@ -39,7 +39,7 @@ fn match_picks_first_matching_arm() {
 
 #[test]
 fn match_default_when_no_arm_matches() {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let scrut = arena.push(lit(100, WittLevel::W8)).unwrap();
     let arm0 = arena.push(lit(1, WittLevel::W8)).unwrap();
     let _arm1 = arena.push(lit(2, WittLevel::W8)).unwrap();
@@ -61,7 +61,7 @@ fn match_default_when_no_arm_matches() {
 fn recurse_descends_to_zero() {
     // measure starts at 5, base = 0, step = 1; recurse runs 5 times
     // accumulating step values: 0 + 1 + 1 + 1 + 1 + 1 = 5.
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let measure = arena.push(lit(5, WittLevel::W8)).unwrap();
     let base = arena.push(lit(0, WittLevel::W8)).unwrap();
     let step = arena.push(lit(1, WittLevel::W8)).unwrap();
@@ -80,7 +80,7 @@ fn recurse_descends_to_zero() {
 fn try_falls_back_on_error() {
     // body: divide by zero (we'll fake by using an unknown variable)
     // handler: literal 7
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let body = arena.push(Term::Variable { name_index: 99 }).unwrap();
     let handler = arena.push(lit(7, WittLevel::W8)).unwrap();
     let t = arena
@@ -95,7 +95,7 @@ fn try_falls_back_on_error() {
 
 #[test]
 fn try_succeeds_when_body_works() {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let body = arena.push(lit(42, WittLevel::W8)).unwrap();
     let handler = arena.push(lit(7, WittLevel::W8)).unwrap();
     let t = arena
@@ -112,7 +112,7 @@ fn try_succeeds_when_body_works() {
 fn recurse_invalid_measure_terminates_via_safety_ceiling() {
     // Even with a large measure, the safety ceiling MAX_RECURSE_ITERATIONS
     // ensures the evaluator returns rather than looping forever.
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let measure = arena.push(lit(u64::MAX, WittLevel::new(64))).unwrap();
     let base = arena.push(lit(0, WittLevel::new(64))).unwrap();
     let step = arena.push(lit(1, WittLevel::new(64))).unwrap();

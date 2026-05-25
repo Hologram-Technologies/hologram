@@ -2,11 +2,12 @@
 //! non-empty Term tree whose `Term::Application::operator` is restricted
 //! to the closed 10-PrimitiveOp set.
 
+use hologram_ops::HoloArena;
 use hologram_ops::{emit_op_term, OpKind};
-use uor_foundation::enforcement::{Term, TermArena};
+use uor_foundation::enforcement::Term;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
-fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
+fn assert_closed_primitive_set<const CAP: usize>(arena: &HoloArena<CAP>) {
     for slot in arena.as_slice().iter().flatten() {
         if let Term::Application { operator, .. } = slot {
             // PrimitiveOp is exhaustively closed (spec I-1); this match
@@ -36,7 +37,7 @@ fn assert_closed_primitive_set<const CAP: usize>(arena: &TermArena<CAP>) {
 }
 
 fn try_emit(kind: OpKind) -> bool {
-    // Box the arena: `TermArena<256>` holds 256 × `Option<Term>` where
+    // Box the arena: `HoloArena<256>` holds 256 × `Option<Term>` where
     // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
     // upstream 0.4.15. On-stack instantiation in a loop blows the
     // default thread stack.
@@ -45,7 +46,7 @@ fn try_emit(kind: OpKind) -> bool {
     // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
     // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
     // upstream 0.4.15) below the default thread stack ceiling.
-    let mut arena: TermArena<128> = TermArena::new();
+    let mut arena: HoloArena<128> = HoloArena::new();
     let arity = kind.primary_arity();
     let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
     for i in 1..arity {
@@ -191,7 +192,7 @@ fn every_op_emit_fits_in_declared_cap() {
     // arity variables, calls dispatch, and asserts the slot count
     // stays at or below `OpKind::cap()`.
     for &kind in ALL_OP_KINDS {
-        // Box the arena: `TermArena<256>` holds 256 × `Option<Term>` where
+        // Box the arena: `HoloArena<256>` holds 256 × `Option<Term>` where
         // each `Term::Literal` carries a 4 KiB `TermValue` buffer in
         // upstream 0.4.15. On-stack instantiation in a loop blows the
         // default thread stack.
@@ -200,7 +201,7 @@ fn every_op_emit_fits_in_declared_cap() {
         // prologue, while keeping the on-stack `[Option<Term>; CAP]` size
         // (each `Term::Literal` carries a 4 KiB `TermValue` buffer in
         // upstream 0.4.15) below the default thread stack ceiling.
-        let mut arena: TermArena<128> = TermArena::new();
+        let mut arena: HoloArena<128> = HoloArena::new();
         let arity = kind.primary_arity();
         let v0 = arena.push(Term::Variable { name_index: 0 }).expect("v0");
         for i in 1..arity {

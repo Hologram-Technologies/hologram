@@ -6,9 +6,11 @@
 //! on the `blake3` crate; per ADR-031 hologram consumes its
 //! content-addressing primitive from prism-crypto.
 
+use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 use hologram_host::HologramHasher;
 use prism::vocabulary::Hasher;
-use std::collections::HashMap;
 
 /// 32-byte content fingerprint over a weight body. Computed via
 /// prism-crypto's Blake3 `HashAxis` impl (the canonical hologram

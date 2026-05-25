@@ -3,7 +3,11 @@
 //! Selected when the KernelCall's `dtype` tag indicates a float dtype.
 //! Mirrors the byte-domain kernels in semantics but at native precision.
 
+use alloc::vec::Vec;
+
 use crate::cpu::dtype::*;
+#[cfg(not(feature = "std"))]
+use crate::cpu::mathf::FloatExt;
 use crate::error::BackendError;
 use crate::kernel_call::*;
 use crate::workspace::Workspace;
@@ -18,13 +22,45 @@ fn elem_count_to_bytes(n: usize, dtype: u8) -> usize {
     n * elem_size(dtype)
 }
 
-// Thread-local scratch for matmul's pre-transposed B. Amortizes the
-// `vec![0f32; k * n]` allocation across kernel invocations on the same
-// thread — for trillion-parameter inference loops this is the
-// difference between O(calls) allocations and O(1).
-std::thread_local! {
-    static MATMUL_BT_SCRATCH: core::cell::RefCell<Vec<f32>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+// Scratch for matmul's pre-transposed B. Under `std` it is a thread-local
+// `RefCell<Vec<f32>>`, amortizing the `vec![0f32; k * n]` allocation across
+// kernel invocations on the same thread — for trillion-parameter inference
+// loops the difference between O(calls) and O(1) allocations. On `no_std`
+// targets (wasm / embedded) there is no thread-local, so each call gets a
+// fresh scratch buffer; the result is identical, only the amortization is
+// lost.
+#[cfg(feature = "std")]
+fn with_matmul_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    std::thread_local! {
+        static MATMUL_BT_SCRATCH: core::cell::RefCell<Vec<f32>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+    MATMUL_BT_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+#[cfg(not(feature = "std"))]
+fn with_matmul_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    let mut scratch = Vec::new();
+    f(&mut scratch)
+}
+
+// Reused byte buffer for marshalling matmul operands into the prism
+// `TensorAxis::matmul` single-input contract (`[m,k,n] || A || B`). Same
+// thread-local-vs-fresh story as `with_matmul_scratch`, so routing matmul
+// through the prism axis surface costs no per-call allocation under `std`.
+#[cfg(feature = "std")]
+fn with_matmul_input_scratch<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    std::thread_local! {
+        static MATMUL_IN_SCRATCH: core::cell::RefCell<Vec<u8>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+    MATMUL_IN_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+#[cfg(not(feature = "std"))]
+fn with_matmul_input_scratch<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    let mut scratch = Vec::new();
+    f(&mut scratch)
 }
 
 pub fn unary_float<W: Workspace>(
@@ -134,17 +170,25 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     }
 
     if dt == DTYPE_F32 {
-        if let (Ok(a32), Ok(b32), Ok(out32)) = (
-            bytemuck::try_cast_slice::<u8, f32>(a),
-            bytemuck::try_cast_slice::<u8, f32>(b),
-            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
-        ) {
-            MATMUL_BT_SCRATCH.with(|cell| {
-                let mut scratch = cell.borrow_mut();
-                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, &mut scratch);
-            });
-            return Ok(());
-        }
+        // Dispatch through the prism `TensorAxis` surface (wiki ADR-031):
+        // marshal `[m,k,n] || A || B` into the reused scratch and invoke the
+        // axis kernel. The marshalling is Θ(m·k + k·n) against the kernel's
+        // Θ(m·k·n) compute — negligible at model scale.
+        use prism::tensor::TensorAxis;
+        let mn = m * n * 4;
+        let res = with_matmul_input_scratch(|inp| {
+            inp.clear();
+            inp.reserve(crate::prism_axes::HOLOGRAM_MATMUL_HEADER_BYTES + a.len() + b.len());
+            inp.extend_from_slice(&(m as u32).to_le_bytes());
+            inp.extend_from_slice(&(k as u32).to_le_bytes());
+            inp.extend_from_slice(&(n as u32).to_le_bytes());
+            inp.extend_from_slice(a);
+            inp.extend_from_slice(b);
+            crate::prism_axes::HologramTensorMatmulF32::matmul(inp, &mut out[..mn])
+        });
+        return res
+            .map(|_| ())
+            .map_err(|_| BackendError::Dispatch("matmul axis"));
     }
 
     // Non-f32 dtypes (bf16, f16, f64): per-element codec. The split-
@@ -159,6 +203,58 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
             }
             write_float(out, i * n + j, acc, dt);
         }
+    }
+    Ok(())
+}
+
+/// Selector → activation function for a fused matmul epilogue.
+fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
+    use crate::kernel_call::fused_activation as fa;
+    match act {
+        fa::RELU => relu_f,
+        fa::GELU => gelu_f,
+        fa::SILU => silu_f,
+        fa::SIGMOID => sigmoid_f,
+        fa::TANH => tanh_f,
+        fa::ELU => elu_f,
+        fa::SELU => selu_f,
+        fa::EXP => exp_f,
+        _ => |x| x,
+    }
+}
+
+/// **Fused matmul + activation (content-addressed fusion).** Computes the
+/// matmul into the output slot, then applies the activation *in place* over
+/// the `m·n` results while they are still hot in cache — so the activation
+/// has no separate input/output buffer and no second dispatch. Equivalent
+/// to `activation(matmul(a, b))`, verified against the f64 reference.
+pub fn matmul_activation_float<W: Workspace>(
+    c: &MatMulActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    matmul_float(&c.mm, ws)?;
+    let count = (c.mm.m as usize) * (c.mm.n as usize);
+    if count == 0 {
+        return Ok(());
+    }
+    let dt = c.mm.dtype;
+    let es = elem_size(dt);
+    let f = fused_act_fn(c.act);
+    let out = ws.write(c.mm.output);
+    if out.len() < count * es {
+        return Err(BackendError::SlotOutOfRange(c.mm.output.slot));
+    }
+    if dt == DTYPE_F32 {
+        if let Ok(o32s) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]) {
+            for v in o32s.iter_mut() {
+                *v = f(*v);
+            }
+            return Ok(());
+        }
+    }
+    for i in 0..count {
+        let v = read_float(out, i, dt);
+        write_float(out, i, f(v), dt);
     }
     Ok(())
 }
@@ -198,9 +294,8 @@ pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendE
             bytemuck::try_cast_slice::<u8, f32>(cc),
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
         ) {
-            MATMUL_BT_SCRATCH.with(|cell| {
-                let mut bt = cell.borrow_mut();
-                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, &mut bt);
+            with_matmul_scratch(|bt| {
+                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
             });
             for i in 0..m * n {
                 out32[i] = alpha * out32[i] + beta * c32[i];
@@ -467,8 +562,7 @@ pub fn softmax_float<W: Workspace>(
     // Reuse the thread-local matmul scratch as a per-row exp buffer.
     // Reset between rows; never reallocates after the first call of
     // matching feature size.
-    MATMUL_BT_SCRATCH.with(|cell| {
-        let mut exps = cell.borrow_mut();
+    with_matmul_scratch(|exps| {
         for bi in 0..b {
             let row_off = bi * f;
             let mut max_v = f32::NEG_INFINITY;
@@ -655,8 +749,7 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     let scale = libm::sqrtf(d as f32).max(1.0);
 
     // Per-row score buffer reused across all (b, h, q) iterations.
-    MATMUL_BT_SCRATCH.with(|cell| {
-        let mut scores = cell.borrow_mut();
+    with_matmul_scratch(|scores| {
         for bi in 0..b {
             for hi in 0..h {
                 let head_off = (bi * h + hi) * s * d;

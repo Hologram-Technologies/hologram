@@ -3,13 +3,13 @@
 //! Add/Sub/Mul/Xor/And/Or live in `direct.rs`; this module covers
 //! Div, Pow, Mod, Min, Max, and the comparison family.
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 /// Div: Newton-Raphson 1/y, multiplied by x. Bounded Recurse over Mul+Sub.
 pub fn emit_div<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -22,7 +22,7 @@ pub fn emit_div<const CAP: usize>(
 
 /// Pow: Exp · log composition: x^y = exp(y · log(x)).
 pub fn emit_pow<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -35,7 +35,7 @@ pub fn emit_pow<const CAP: usize>(
 
 /// Mod: x − ⌊x/y⌋·y, expressed via Mul + Sub.
 pub fn emit_mod<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -46,7 +46,7 @@ pub fn emit_mod<const CAP: usize>(
 
 /// Min: Match over sign of (a − b).
 pub fn emit_min<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -55,7 +55,7 @@ pub fn emit_min<const CAP: usize>(
 
 /// Max: Match over sign of (a − b).
 pub fn emit_max<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -64,7 +64,7 @@ pub fn emit_max<const CAP: usize>(
 
 /// Equal: Sub then sign-bit isolation (= 0 → 1, ≠ 0 → 0). Anchor on Xor.
 pub fn emit_equal<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -73,7 +73,7 @@ pub fn emit_equal<const CAP: usize>(
 }
 
 pub fn emit_compare<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     a_var: u32,
 ) -> EmitResult {
@@ -94,7 +94,7 @@ macro_rules! declare_binary {
             pub const ARITY: u8 = 2;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 arg_var_start: u32,
             ) -> EmitResult {

@@ -11,17 +11,22 @@ hologram-host     = { workspace = true }
 hologram-types    = { workspace = true }
 hologram-ops      = { workspace = true }
 hologram-graph    = { workspace = true }
-hologram-compiler = { workspace = true }
-hologram-exec     = { workspace = true }
-hologram-backend  = { workspace = true }
-hologram-archive  = { workspace = true }
+hologram-compiler = { workspace = true, features = ["std"] }
+hologram-exec     = { workspace = true, features = ["std"] }
+hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-archive  = { workspace = true, features = ["std"] }
 uor-prism         = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+smallvec  = { workspace = true }
 
 [[bench]]
 name = "decode_step"
+harness = false
+
+[[bench]]
+name = "content_reuse"
 harness = false
 
 [[bench]]
@@ -30,4 +35,8 @@ harness = false
 
 [[bench]]
 name = "compiler"
+harness = false
+
+[[bench]]
+name = "production"
 harness = false

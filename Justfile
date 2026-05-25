@@ -9,6 +9,24 @@ default:
 # Full CI: format check, clippy, tests
 ci: fmt-check clippy test
 
+# Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
+# Every part validated against an external authority + portability +
+# performance. Conformance suites are the `*::conformance` test targets.
+vv: fmt-check clippy test conformance perf wasm embedded
+    @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
+
+# External-authority + scaling conformance suites (classes AS/MA/KC/SC).
+conformance:
+    cargo test -p hologram-archive --test conformance --test model_address --features model-formats
+    cargo test -p hologram-backend --test conformance --features cpu
+    cargo test -p hologram-exec --test conformance
+
+# Performance V&V (class PV) — release-only budgets; no silent bottleneck.
+# `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
+perf:
+    cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+    cargo test --release -p hologram-exec --test performance -- --nocapture
+
 # Run all tests
 test:
     cargo test --workspace
@@ -29,21 +47,23 @@ fmt-check:
 clippy:
     cargo clippy --workspace -- -D warnings
 
-# Build hologram-core for WASM target (std)
+# Build the no_std library stack for wasm32 (hologram-ai's deploy target).
+# `--no-default-features` deactivates every crate's `std` feature, so the
+# `#![no_std]` path is exercised; `hologram-backend` adds its CPU kernels.
 wasm:
-    cargo build --target wasm32-unknown-unknown -p hologram-core --no-default-features
+    cargo build --target wasm32-unknown-unknown --no-default-features \
+        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-archive -p hologram-compiler -p hologram-exec
+    cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
+        -p hologram-backend
 
-# Build hologram-core for WASM with no_std + no rkyv (constrained device validation)
-wasm-nostd:
-    RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
-    ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
-    --target wasm32-unknown-unknown -p hologram-core --no-default-features
-
-# Build hologram-core for ARM bare-metal (thumbv7em, no_std)
+# Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
-    RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc \
-    ~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo build \
-    --target thumbv7em-none-eabihf -p hologram-core --no-default-features
+    cargo build --target thumbv7em-none-eabi --no-default-features \
+        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-archive -p hologram-compiler -p hologram-exec
+    cargo build --target thumbv7em-none-eabi --no-default-features --features cpu \
+        -p hologram-backend
 
 # Build all
 build:

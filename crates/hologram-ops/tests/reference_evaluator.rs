@@ -3,12 +3,13 @@
 //! corresponding scalar PrimitiveOp result.
 
 use hologram_ops::direct::{AddOp, AndOp, MulOp, NegOp, OrOp, PredOp, SuccOp, XorOp};
+use hologram_ops::HoloArena;
 use hologram_ops::{ReferenceEvaluator, ScalarEvaluatorU64};
-use uor_foundation::enforcement::{Term, TermArena, TermList};
+use uor_foundation::enforcement::{Term, TermList};
 use uor_foundation::{PrimitiveOp, WittLevel};
 
-fn make_arena_2_args(a: u64, b: u64) -> (TermArena<8>, u32, u32) {
-    let mut arena: TermArena<8> = TermArena::new();
+fn make_arena_2_args(a: u64, b: u64) -> (HoloArena<8>, u32, u32) {
+    let mut arena: HoloArena<8> = HoloArena::new();
     let av = arena.push(Term::Variable { name_index: 0 }).unwrap();
     let bv = arena.push(Term::Variable { name_index: 1 }).unwrap();
     let _ = (a, b);
@@ -17,7 +18,7 @@ fn make_arena_2_args(a: u64, b: u64) -> (TermArena<8>, u32, u32) {
 }
 
 fn eval_unary(prim: PrimitiveOp, x: u64) -> u64 {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let v = arena.push(Term::Variable { name_index: 0 }).unwrap();
     let _root = arena
         .push(Term::Application {
@@ -94,7 +95,7 @@ fn and_or_xor_match_native() {
 
 #[test]
 fn lift_truncates_to_witt_level() {
-    let mut arena: TermArena<8> = TermArena::new();
+    let mut arena: HoloArena<8> = HoloArena::new();
     let v = arena.push(Term::Variable { name_index: 0 }).unwrap();
     let lift = arena
         .push(Term::Lift {

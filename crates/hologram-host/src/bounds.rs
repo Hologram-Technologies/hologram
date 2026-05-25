@@ -25,8 +25,6 @@ macro_rules! hologram_host_bounds {
             const WITT_LEVEL_MAX_BITS: u32 = $witt_bits;
 
             // ADR-037 capacities for hologram-class workloads.
-            const TERM_VALUE_MAX_BYTES: usize = 8_192;
-            const AXIS_OUTPUT_BYTES_MAX: usize = 8_192;
             const FOLD_UNROLL_THRESHOLD: usize = 8;
             const BETTI_DIMENSION_MAX: usize = 16;
             const NERVE_CONSTRAINTS_MAX: usize = 16;
@@ -36,17 +34,7 @@ macro_rules! hologram_host_bounds {
             const OP_CHAIN_DEPTH_MAX: usize = 16;
             const AFFINE_COEFFS_MAX: usize = 8;
             const CONJUNCTION_TERMS_MAX: usize = 8;
-            const ROUTE_INPUT_BUFFER_BYTES: usize = 8_192;
-            const ROUTE_OUTPUT_BUFFER_BYTES: usize = 8_192;
             const UNFOLD_ITERATIONS_MAX: usize = 4_096;
-            const NERVE_OUTPUT_BYTES_MAX: usize = 8_192;
-            const CHAIN_COMPLEX_OUTPUT_BYTES_MAX: usize = 8_192;
-            const HOMOLOGY_GROUPS_OUTPUT_BYTES_MAX: usize = 8_192;
-            const COCHAIN_COMPLEX_OUTPUT_BYTES_MAX: usize = 8_192;
-            const COHOMOLOGY_GROUPS_OUTPUT_BYTES_MAX: usize = 8_192;
-            const POSTNIKOV_TOWER_OUTPUT_BYTES_MAX: usize = 8_192;
-            const HOMOTOPY_GROUPS_OUTPUT_BYTES_MAX: usize = 8_192;
-            const K_INVARIANTS_OUTPUT_BYTES_MAX: usize = 8_192;
         }
     };
 }

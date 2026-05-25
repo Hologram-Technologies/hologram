@@ -1,17 +1,17 @@
 //! Utility ops (spec V.3).
 
+use crate::emit::HoloArena;
 use crate::emit::{
     push_application, push_literal, push_match, push_recurse, push_variable, EmitResult,
 };
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 /// Layout-style utility (Pad / Expand): single-Variable relabel, no compute.
 pub fn emit_layout_relabel<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     remapped_var: u32,
 ) -> EmitResult {
@@ -20,7 +20,7 @@ pub fn emit_layout_relabel<const CAP: usize>(
 
 /// Resize: bilinear interpolation = Mul + Add over neighbor lookups.
 pub fn emit_resize<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -32,7 +32,7 @@ pub fn emit_resize<const CAP: usize>(
 
 /// CumSum: prefix-sum via Recurse with running accumulator.
 pub fn emit_cumsum<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -43,7 +43,7 @@ pub fn emit_cumsum<const CAP: usize>(
 
 /// RotaryEmbedding: Cos · x_even + Sin · x_odd (rotation).
 pub fn emit_rotary_embedding<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -54,7 +54,7 @@ pub fn emit_rotary_embedding<const CAP: usize>(
 
 /// Clip: Min(Max(x, lo), hi).
 pub fn emit_clip<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -65,7 +65,7 @@ pub fn emit_clip<const CAP: usize>(
 
 /// Lrn: windowed Recurse (Mul + Add), Reciprocal scaling, final Mul.
 pub fn emit_lrn<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -79,7 +79,7 @@ pub fn emit_lrn<const CAP: usize>(
 
 /// Where: Match { cond → a, otherwise → b }.
 pub fn emit_where<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     _level: WittLevel,
     cond_var: u32,
     _a_var: u32,
@@ -110,7 +110,7 @@ macro_rules! declare_util_compute {
             pub const CAP: usize = $cap;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
             ) -> EmitResult {
@@ -139,7 +139,7 @@ macro_rules! declare_util_layout {
             pub const CAP: usize = 2;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 remapped_var: u32,
             ) -> EmitResult {
@@ -191,7 +191,7 @@ where
     pub const CAP: usize = 16;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         cond_var: u32,
         a_var: u32,

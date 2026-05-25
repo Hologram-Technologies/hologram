@@ -38,5 +38,3 @@ pub struct HoloHeader {
     pub section_count: u16,
     pub sections: alloc::vec::Vec<SectionRef>,
 }
-
-extern crate alloc;

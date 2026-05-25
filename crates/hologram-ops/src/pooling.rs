@@ -5,15 +5,15 @@
 //!   AvgPool2d : windowed Recurse, step = Add; final Mul (1/window)
 //!   GlobalAvgPool : ReduceMeanOp over spatial axes
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 pub fn emit_max_pool_2d<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -23,7 +23,7 @@ pub fn emit_max_pool_2d<const CAP: usize>(
 }
 
 pub fn emit_avg_pool_2d<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -34,7 +34,7 @@ pub fn emit_avg_pool_2d<const CAP: usize>(
 }
 
 pub fn emit_global_avg_pool<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
 ) -> EmitResult {
@@ -78,7 +78,7 @@ macro_rules! declare_pool {
             pub const STEP_OP: PrimitiveOp = $step_op;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
             ) -> EmitResult {
@@ -128,7 +128,7 @@ where
     pub const CAP: usize = 32;
 
     pub fn emit_term<const CAP: usize>(
-        arena: &mut TermArena<CAP>,
+        arena: &mut HoloArena<CAP>,
         level: WittLevel,
         x_var: u32,
     ) -> EmitResult {

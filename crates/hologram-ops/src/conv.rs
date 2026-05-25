@@ -3,15 +3,15 @@
 //! V.3 tree shape: 4-deep `Recurse` (output_h, output_w, kernel_h, kernel_w)
 //! with `Add(acc, Mul(x, w))` as the innermost step.
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_recurse, EmitResult};
 use core::marker::PhantomData;
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 fn emit_conv_body<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     w_var: u32,
@@ -30,7 +30,7 @@ fn emit_conv_body<const CAP: usize>(
 }
 
 pub fn emit_conv2d<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     w_var: u32,
@@ -39,7 +39,7 @@ pub fn emit_conv2d<const CAP: usize>(
 }
 
 pub fn emit_conv_transpose_2d<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     x_var: u32,
     w_var: u32,
@@ -86,7 +86,7 @@ macro_rules! declare_conv {
             pub const CAP: usize = 64;
 
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 level: WittLevel,
                 x_var: u32,
                 w_var: u32,

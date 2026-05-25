@@ -4,8 +4,8 @@
 //! `Term::Application { operator: PrimitiveOp::*, args }` tree.
 //! They exist as named markers so the catalog is uniform.
 
+use crate::emit::HoloArena;
 use crate::emit::{push_application, EmitResult};
-use uor_foundation::enforcement::TermArena;
 use uor_foundation::{PrimitiveOp, WittLevel};
 
 /// IRI prefix for direct ops.
@@ -28,7 +28,7 @@ macro_rules! declare_direct {
             /// `arg_var_indices` are the arena indices of the already-pushed
             /// `Term::Variable` argument terms.
             pub fn emit_term<const CAP: usize>(
-                arena: &mut TermArena<CAP>,
+                arena: &mut HoloArena<CAP>,
                 _level: WittLevel,
                 arg_var_start: u32,
             ) -> EmitResult {

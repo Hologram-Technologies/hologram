@@ -6,6 +6,7 @@
 //!
 //! The codec is total-roundtrip: `decode(encode(c)) == c`.
 
+use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
     LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, WhereCall,
@@ -116,6 +117,7 @@ const D_ATNG: u16 = 102;
 const D_FSWGG: u16 = 103;
 const D_UNG: u16 = 104;
 const D_DEQ: u16 = 105;
+const D_MMA: u16 = 106;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -561,6 +563,11 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_DEQ);
             put_dequantize(out, c);
         }
+        K::MatMulActivation(c) => {
+            put_u16(out, D_MMA);
+            put_matmul(out, &c.mm);
+            put_u8(out, c.act);
+        }
     }
 }
 
@@ -578,14 +585,14 @@ fn put_u8(out: &mut Vec<u8>, v: u8) {
 }
 fn put_buf(out: &mut Vec<u8>, b: BufferRef) {
     put_u32(out, b.slot);
-    put_u32(out, b.offset);
-    put_u32(out, b.length);
+    put_u64(out, b.offset);
+    put_u64(out, b.length);
 }
 
 fn put_unary(out: &mut Vec<u8>, c: &UnaryCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u16(out, c.witt_bits);
     put_u8(out, c.dtype);
 }
@@ -593,7 +600,7 @@ fn put_binary(out: &mut Vec<u8>, c: &BinaryCall) {
     put_buf(out, c.a);
     put_buf(out, c.b);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u16(out, c.witt_bits);
     put_u8(out, c.dtype);
 }
@@ -651,7 +658,7 @@ fn put_norm(out: &mut Vec<u8>, c: &NormCall) {
 fn put_reduce(out: &mut Vec<u8>, c: &ReduceCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u32(out, c.axis_count);
     put_u8(out, c.keepdims as u8);
     put_u8(out, c.dtype);
@@ -659,7 +666,7 @@ fn put_reduce(out: &mut Vec<u8>, c: &ReduceCall) {
 fn put_layout(out: &mut Vec<u8>, c: &LayoutCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u8(out, c.dtype);
 }
 fn put_softmax(out: &mut Vec<u8>, c: &SoftmaxCall) {
@@ -700,13 +707,13 @@ fn put_where(out: &mut Vec<u8>, c: &WhereCall) {
     put_buf(out, c.a);
     put_buf(out, c.b);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u8(out, c.dtype);
 }
 fn put_dequantize(out: &mut Vec<u8>, c: &DequantizeCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
-    put_u32(out, c.element_count);
+    put_u64(out, c.element_count);
     put_u8(out, c.quant_dtype);
     put_u8(out, c.dtype);
     put_u32(out, c.scale_bits);
