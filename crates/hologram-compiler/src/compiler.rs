@@ -88,6 +88,11 @@ impl Compiler {
     }
 
     pub fn compile(mut self) -> Result<CompilationOutput, CompileError> {
+        // Path B: desugar composite ops (e.g. Clip → Min∘Max) into their
+        // primitive-op pipelines before scheduling, so the rest of the pipeline
+        // sees only primitives + irreducible structured kernels.
+        self.graph.desugar_composites();
+
         // Schedule.
         self.graph.compute_schedule();
 
