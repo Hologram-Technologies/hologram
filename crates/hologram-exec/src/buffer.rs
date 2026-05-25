@@ -131,6 +131,11 @@ pub struct BufferArena {
     slot_buf: Vec<usize>,
     /// Declared slot lengths (informational + the fixed-arena API).
     slot_len: Vec<usize>,
+    /// `slot_off[slot]` = byte offset into `bufs[slot_buf[slot]]` at which this
+    /// slot's data begins. 0 for an ordinary whole-buffer binding; non-zero
+    /// only for a **view** slot (a zero-movement `ProjectField`/Slice that
+    /// aliases a sub-region of a parent buffer). Reset to 0 each walk.
+    slot_off: Vec<usize>,
     // Content-addressed residency (label → bufs index), byte-bounded.
     pinned: HashMap<ContentLabel, usize>,
     current: HashMap<ContentLabel, usize>,
@@ -167,6 +172,7 @@ impl BufferArena {
             bufs,
             free: Vec::new(),
             slot_buf,
+            slot_off: vec![0; n],
             slot_len,
             pinned: HashMap::new(),
             current: HashMap::new(),
@@ -200,23 +206,56 @@ impl BufferArena {
 
     pub fn read_slot(&self, idx: usize) -> Option<&[u8]> {
         let bi = self.bound(idx)?;
-        Some(self.bufs[bi].as_slice())
+        let off = self.slot_off.get(idx).copied().unwrap_or(0);
+        let buf = self.bufs[bi].as_slice();
+        // A view slot exposes only its declared sub-region [off, off+len).
+        let end = self
+            .slot_len
+            .get(idx)
+            .copied()
+            .filter(|&l| l > 0)
+            .map_or(buf.len(), |l| (off + l).min(buf.len()));
+        buf.get(off..end)
     }
 
     pub fn write_slot(&mut self, idx: usize) -> Option<&mut [u8]> {
         let bi = self.bound(idx)?;
-        Some(self.bufs[bi].as_mut_slice())
+        let off = self.slot_off.get(idx).copied().unwrap_or(0);
+        Some(&mut self.bufs[bi].as_mut_slice()[off..])
+    }
+
+    /// Bind `slot` as a **view** onto the buffer backing `parent` at an extra
+    /// `byte_offset` (composing with any offset the parent itself carries),
+    /// exposing `byte_len` bytes. Zero-movement: no allocation, no copy — the
+    /// UOR `ProjectField`/Slice realization. The parent buffer must outlive the
+    /// view's use within the walk (it does: the producer is bound this walk).
+    pub fn bind_view(&mut self, slot: usize, parent: usize, byte_offset: usize, byte_len: usize) {
+        let Some(pbi) = self.bound(parent) else {
+            return;
+        };
+        let poff = self.slot_off.get(parent).copied().unwrap_or(0);
+        self.ensure_slot(slot);
+        self.slot_buf[slot] = pbi;
+        self.slot_off[slot] = poff + byte_offset;
+        self.slot_len[slot] = byte_len;
     }
 
     /// Resolve a `BufferRef` to `(bufs index, start, end)` within the bound
-    /// buffer. `None` if unbound/out-of-range.
+    /// buffer, honoring any view offset on the slot. `None` if unbound/oob.
     #[inline]
     fn buf_range(&self, buf: BufferRef) -> Option<(usize, usize, usize)> {
-        let bi = self.bound(buf.slot as usize)?;
+        let slot = buf.slot as usize;
+        let bi = self.bound(slot)?;
         let len = self.bufs[bi].len;
-        let start = (buf.offset as usize).min(len);
+        let base = self.slot_off.get(slot).copied().unwrap_or(0);
+        let start = (base + buf.offset as usize).min(len);
         let end = if buf.length == 0 {
-            len
+            // Full extent of this slot's view (or whole buffer if not a view).
+            self.slot_len
+                .get(slot)
+                .copied()
+                .filter(|&l| l > 0)
+                .map_or(len, |l| (base + l).min(len))
         } else {
             (start + buf.length as usize).min(len)
         };
@@ -240,6 +279,10 @@ impl BufferArena {
     pub fn rebind_reset(&mut self, n: usize) {
         self.slot_buf.clear();
         self.slot_buf.resize(n, UNBOUND);
+        // Views are per-walk; clear all offsets so a recycled slot is a plain
+        // whole-buffer binding unless `bind_view` sets it again this walk.
+        self.slot_off.clear();
+        self.slot_off.resize(n, 0);
         if self.slot_len.len() < n {
             self.slot_len.resize(n, 0);
         }
@@ -248,6 +291,9 @@ impl BufferArena {
     fn ensure_slot(&mut self, slot: usize) {
         if slot >= self.slot_buf.len() {
             self.slot_buf.resize(slot + 1, UNBOUND);
+        }
+        if slot >= self.slot_off.len() {
+            self.slot_off.resize(slot + 1, 0);
         }
         if slot >= self.slot_len.len() {
             self.slot_len.resize(slot + 1, 0);
@@ -475,6 +521,49 @@ pub struct OutputBuffer {
 mod tests {
     use super::*;
     use hologram_archive::address_bytes;
+
+    /// A view slot (Slice / ProjectField) exposes a sub-region of a parent
+    /// buffer with **zero movement**: no new allocation, and reads see the
+    /// parent's bytes through the offset. This is the addressing-class
+    /// substrate (ADR-056).
+    #[test]
+    fn bind_view_is_zero_movement_subregion() {
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(2);
+        pool.bind_fresh(0, 8);
+        pool.write_slot(0)
+            .unwrap()
+            .copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let bufs_before = pool.bufs.len();
+
+        // Slot 1 views parent slot 0 at byte offset 2, length 4 — no alloc.
+        pool.bind_view(1, 0, 2, 4);
+        assert_eq!(pool.bufs.len(), bufs_before, "view must not allocate");
+
+        // Explicit-length read, full-extent read, and whole-slot read all
+        // resolve to the sub-region.
+        assert_eq!(
+            pool.read(BufferRef {
+                slot: 1,
+                offset: 0,
+                length: 4
+            }),
+            &[2, 3, 4, 5]
+        );
+        assert_eq!(
+            pool.read(BufferRef {
+                slot: 1,
+                offset: 0,
+                length: 0
+            }),
+            &[2, 3, 4, 5]
+        );
+        assert_eq!(pool.read_slot(1).unwrap(), &[2, 3, 4, 5]);
+
+        // The view aliases the parent: mutating the parent shows through.
+        pool.write_slot(0).unwrap()[2] = 42;
+        assert_eq!(pool.read_slot(1).unwrap(), &[42, 3, 4, 5]);
+    }
 
     /// SC-3: transient pool bytes stay bounded across an arbitrarily long
     /// run of distinct interned values (generational eviction), so memory
