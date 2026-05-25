@@ -156,6 +156,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // only fires for float matmuls, so this is handled by the float
         // fast path above; this arm keeps the match exhaustive.
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
+        KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
     }
 }
 
@@ -1196,6 +1197,7 @@ fn try_dispatch_float<W: Workspace>(
 
         // Linear algebra / convolution.
         K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
+        K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         K::FusedSwiGlu(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),

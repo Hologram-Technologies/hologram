@@ -4,8 +4,8 @@ use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulActivationCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall,
-    UnaryCall, WhereCall,
+    LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    SoftmaxCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -183,6 +183,10 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         106 => K::MatMulActivation(MatMulActivationCall {
             mm: read_matmul(cur)?,
             act: cur.u8()?,
+        }),
+        107 => K::MatMulAdd(MatMulAddCall {
+            mm: read_matmul(cur)?,
+            residual: cur.buf()?,
         }),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })

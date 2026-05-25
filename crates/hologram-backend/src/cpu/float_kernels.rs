@@ -249,6 +249,48 @@ pub fn matmul_activation_float<W: Workspace>(
     Ok(())
 }
 
+/// **Fused matmul + residual-add (content-addressed fusion).** Computes the
+/// matmul into the output slot, then adds the residual tensor *in place* over
+/// the `m·n` results while they are hot in cache — the transformer skip
+/// connection `y = A·B + residual` as one op, eliding both the matmul's
+/// intermediate and the separate (bandwidth-bound) add pass. Equivalent to
+/// `add(matmul(a, b), residual)`, verified against the f64 reference.
+pub fn matmul_add_float<W: Workspace>(c: &MatMulAddCall, ws: &mut W) -> Result<(), BackendError> {
+    matmul_float(&c.mm, ws)?;
+    let count = (c.mm.m as usize) * (c.mm.n as usize);
+    if count == 0 {
+        return Ok(());
+    }
+    let dt = c.mm.dtype;
+    let es = elem_size(dt);
+    // Disjoint borrow: residual (read) + matmul output (write).
+    let (reads, out) = ws
+        .split_borrow(&[c.residual], c.mm.output)
+        .ok_or(BackendError::SlotOutOfRange(c.mm.output.slot))?;
+    let res = reads[0]
+        .get(..count * es)
+        .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?;
+    if out.len() < count * es {
+        return Err(BackendError::SlotOutOfRange(c.mm.output.slot));
+    }
+    if dt == DTYPE_F32 {
+        if let (Ok(o32s), Ok(r32s)) = (
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]),
+            bytemuck::try_cast_slice::<u8, f32>(res),
+        ) {
+            for (o, &r) in o32s.iter_mut().zip(r32s.iter()) {
+                *o += r;
+            }
+            return Ok(());
+        }
+    }
+    for i in 0..count {
+        let v = read_float(out, i, dt) + read_float(res, i, dt);
+        write_float(out, i, v, dt);
+    }
+    Ok(())
+}
+
 pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendError> {
     let m = c.m as usize;
     let k = c.k as usize;

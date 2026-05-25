@@ -1174,3 +1174,164 @@ fn ws2_fused_constant_cone_is_warmed() {
         "warmed fused cone must be byte-identical to the cold computation"
     );
 }
+
+// ─── FU-4: residual-add fusion (matmul → add(out, residual)) ──────────────
+//
+// The transformer skip connection `y = matmul(x, W) + r` fuses the residual
+// add into the matmul epilogue (one MatMulAdd op), eliding both the matmul
+// intermediate and the separate bandwidth-bound add pass. Proves: the fused
+// result equals the independent f64 reference (and so is byte-identical to the
+// unfused computation); the pair becomes one kernel; and fusion is **guarded**
+// — when the matmul output has a second observer, it is NOT fused.
+#[test]
+fn fu4_residual_add_fuses_and_is_guarded() {
+    let n = 16usize;
+    let x = fill(n * n, 0x4A);
+    let w = fill(n * n, 0x5B);
+    let r = fill(n * n, 0x6C);
+    let want = ref_add(&ref_matmul(&x, &w, n, n, n), &r);
+
+    let shape = |g: &mut Graph| {
+        g.shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(n as u64, n as u64))
+    };
+    let f32c = DTypeId(DTYPE_F32);
+
+    // Fused: out = add(matmul(x, W), r). matmul output has a single observer
+    // (the add) and is not a graph output ⇒ fuses to one MatMulAdd.
+    let mut g = Graph::new();
+    let s = shape(&mut g);
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&w),
+        dtype: f32c,
+        shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let ri = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_input(ri);
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Constant(wc)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    let add = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Node(mm), InputSource::Node(ri)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(add)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess.residual_fused_count(),
+        1,
+        "matmul→add(residual) must fuse"
+    );
+    assert_eq!(
+        sess.kernel_count(),
+        1,
+        "the pair collapses to one MatMulAdd"
+    );
+    let got = le_to_f32(
+        &sess
+            .execute(&[
+                InputBuffer {
+                    bytes: &f32_to_le(&x),
+                },
+                InputBuffer {
+                    bytes: &f32_to_le(&r),
+                },
+            ])
+            .unwrap()[0]
+            .bytes,
+    );
+    let scale = want.iter().fold(0f64, |mx, &v| mx.max(f64::from(v).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(
+        err <= 1e-4,
+        "fused residual diverged from reference (err {err:.3e})"
+    );
+
+    // Guarded: the matmul output also feeds a second consumer (a graph output),
+    // so it has two observers and must NOT be fused.
+    let mut g2 = Graph::new();
+    let s2 = shape(&mut g2);
+    let wc2 = g2.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&w),
+        dtype: f32c,
+        shape: s2,
+    });
+    let xi2 = g2.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    g2.add_input(xi2);
+    let ri2 = g2.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    g2.add_input(ri2);
+    let mm2 = g2.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi2), InputSource::Constant(wc2)]),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    let add2 = g2.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Node(mm2), InputSource::Node(ri2)]),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    // Two graph outputs: the residual sum AND the raw matmul (second observer).
+    let o_sum = g2.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(add2)]),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    g2.add_output(o_sum);
+    let o_mm = g2.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm2)]),
+        output_dtype: f32c,
+        output_shape: s2,
+    });
+    g2.add_output(o_mm);
+    let compiled2 = compile(g2, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let sess2: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled2.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess2.residual_fused_count(),
+        0,
+        "a matmul whose output has a second observer must not fuse its residual"
+    );
+}

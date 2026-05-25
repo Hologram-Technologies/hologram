@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod backend;
 pub mod error;
 pub mod kernel_call;
+pub mod layout;
 pub mod prism_axes;
 pub mod workspace;
 

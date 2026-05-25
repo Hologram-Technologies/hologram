@@ -115,15 +115,20 @@
 > κ-value — the fused node carries a **single κ-derivation**. This is the
 > UOR-native answer to the production-throughput gap PV-4 found
 > (matmul→activation interleaving): the composite op is the addressable
-> unit, not its pieces. Fusion is **guarded** — it fires only when the
-> matmul's output has exactly one observer (the activation) and is not a
-> graph output, so it never changes observable semantics.
+> unit, not its pieces. The pass fuses **two** matmul epilogues — an
+> elementwise activation (`MatMulActivation`, FU-1/2/3) and the transformer
+> residual add (`MatMulAdd`, FU-4) — so a transformer-MLP layer collapses
+> from four ops (matmul, gelu, matmul, add) to two. Fusion is **guarded** —
+> it fires only when the matmul's output has exactly one observer and is not
+> a graph output (and, for the residual, when the skip tensor is ready no
+> later than the matmul's level), so it never changes observable semantics.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **FU-1** | A fused `matmul → activation` (relu / gelu / silu) equals the independent f64 reference `activation(matmul(a,b))` across scale, **and the intermediate is elided** — the pair becomes one kernel (`fused_count == 1`, `kernel_count == 1`), one content-addressed op. | fusion conformance test (f64 ref + fused/kernel counts) | `hologram-exec/tests/conformance.rs::fu1_fused_matmul_activation_conforms_and_elides_intermediate` | ✅ |
 | **FU-2** | Fusion is **semantics-preserving** — the fused result is byte-identical to the unfused computation — and **guarded**: a matmul whose output has a second observer is *not* fused (`fused_count == 0`), so the intermediate it still needs is preserved. | fused-vs-unfused equality + guard test | `hologram-exec/tests/conformance.rs::fu2_fusion_is_semantics_preserving_and_guarded` | ✅ |
 | **FU-3** | Fusion fires on the production workload: a stacked transformer-MLP fuses one `matmul → gelu` per layer (the 4·d-wide activation intermediate is never materialized), reducing kernel count, while PV-4's throughput/scaling floors still hold. | production perf test (fused_count == layers) | `hologram-exec/tests/performance.rs::pv4_production_mlp_throughput_latency_and_scaling` | ✅ |
+| **FU-4** | The transformer **residual** fuses too: `matmul → add(out, residual)` collapses into one `MatMulAdd` (residual added in the matmul epilogue), eliding the matmul intermediate *and* the separate bandwidth-bound add pass. Equals the independent f64 reference; **guarded** — a matmul whose output has a second observer is not fused; and the residual operand is only absorbed when it is ready no later than the matmul's schedule level (never observes a not-yet-computed tensor). The production MLP-stack fuses one per layer (12 → 8 kernels). | residual-fusion conformance test (f64 ref + count + guard) | `hologram-exec/tests/conformance.rs::fu4_residual_add_fuses_and_is_guarded` | ✅ |
 
 ## WS — Warm-start (the compiled object is never cold)
 

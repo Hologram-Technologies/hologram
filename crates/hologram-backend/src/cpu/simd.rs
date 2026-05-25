@@ -687,30 +687,10 @@ mod aarch {
 }
 
 // ─── Compile-time weight-layout monomorphism ───────────────────────
+// The packing transform that produces `Bᵖ` lives in `crate::layout`
+// (not CPU-gated, so the compiler can run it); this kernel consumes it.
 
-/// Panel-pack a row-major `k×n` matrix B into `⌈n/16⌉` column panels, each
-/// stored `k`-contiguous: output element `(p·k + kk)·16 + c` is
-/// `B[kk·n + p·16 + c]` (zero-padded where `p·16 + c ≥ n`). This is the
-/// **layout the cache-oblivious leaf consumes contiguously** — applied once
-/// at compile time to a constant weight (the data-representation half of the
-/// monomorphism), it removes the only strided access in the matmul with **no
-/// runtime copy**. The packed length is `⌈n/16⌉·k·16` floats.
-#[must_use]
-pub fn pack_b_panels(b: &[f32], k: usize, n: usize) -> alloc::vec::Vec<f32> {
-    let n_panels = n.div_ceil(16);
-    let mut out = alloc::vec![0f32; n_panels * k * 16];
-    for p in 0..n_panels {
-        let cols = core::cmp::min(16, n - p * 16);
-        for kk in 0..k {
-            let dst = (p * k + kk) * 16;
-            let src = kk * n + p * 16;
-            out[dst..dst + cols].copy_from_slice(&b[src..src + cols]);
-        }
-    }
-    out
-}
-
-/// `C = A·Bᵖ` where `Bᵖ` is [`pack_b_panels`]-packed (the compile-time
+/// `C = A·Bᵖ` where `Bᵖ` is [`crate::layout::pack_b_panels`]-packed (the compile-time
 /// weight layout). Runtime-dispatched: the AVX2+FMA leaf streams packed
 /// panels contiguously; the portable fallback reads the same layout scalarly.
 /// Zero-copy — `bpacked` is the constant weight's stored representation.

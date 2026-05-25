@@ -227,6 +227,21 @@ pub struct MatMulActivationCall {
     pub act: u8,
 }
 
+/// A matmul with a fused **residual-add** epilogue — the result of fusing
+/// `matmul → add(matmul_out, residual)` into one content-addressed operation
+/// (the transformer skip connection `y = A·B + residual`). The matmul output
+/// is never materialized as a distinct intermediate; the residual is added in
+/// place over the result while it is still hot in cache, eliminating the
+/// separate bandwidth-bound add pass. The matmul may itself carry a
+/// panel-packed weight (`mm.b_packed`), so packing and residual fusion compose.
+#[derive(Debug, Clone, Copy)]
+pub struct MatMulAddCall {
+    pub mm: MatMulCall,
+    /// The residual/skip tensor added elementwise to the matmul result
+    /// (`mm.m × mm.n`, same dtype).
+    pub residual: BufferRef,
+}
+
 /// A node's semantic operation signature: a stable `opcode` (one per
 /// `KernelCall` variant) plus the LE-encoded scalar attributes that, with
 /// the operands' content addresses, fully determine the result. Buffer
@@ -519,6 +534,7 @@ pub enum KernelCall {
     // Content-addressed fusion: matmul with a fused activation epilogue.
     // Constructed by the executor's fusion pass, not by the archive.
     MatMulActivation(MatMulActivationCall),
+    MatMulAdd(MatMulAddCall),
 }
 
 impl KernelCall {
@@ -653,6 +669,7 @@ impl KernelCall {
             K::UnaryGrad(c) => p_unary(c).done(103),
             K::Dequantize(c) => p_dequant(c).done(104),
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
+            K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
         }
     }
 }
@@ -731,6 +748,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::FusedSwiGluGrad(c) => vec![c.a, c.b, c.output],
 
         K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
+        K::MatMulAdd(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
 
         K::Gemm(c) => vec![c.a, c.b, c.c, c.output],
 

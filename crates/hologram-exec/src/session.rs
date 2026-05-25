@@ -12,7 +12,9 @@ use hologram_archive::{
     derive_label, derive_label_witnessed, format::SectionKind, warm_codec, ContentLabel,
     HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
 };
-use hologram_backend::{buffers, Backend, KernelCall, MatMulActivationCall, MatMulCall};
+use hologram_backend::{
+    buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddCall, MatMulCall,
+};
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
 /// `DTYPE_F32`). Content-addressed fusion only fires for f32 matmuls.
@@ -164,7 +166,7 @@ impl<B: SessionBackend> InferenceSession<B> {
         // the activation's intermediate is never separately materialized or
         // addressed — the fused op carries a single κ-derivation. Runs once
         // at load over the decoded schedule; a no-op when nothing fuses.
-        let (kernel_calls, exec_plan) = fuse_matmul_activation(kernel_calls, exec_plan, &outputs);
+        let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
 
         // Constants are pre-fill payloads that the runtime writes into
         // designated workspace slots before any kernel dispatches.
@@ -680,6 +682,16 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulActivation(_)))
             .count()
     }
+    /// Number of fused `matmul → add(residual)` ops in the loaded schedule —
+    /// the transformer skip connection collapsed into the matmul epilogue,
+    /// eliding both the matmul intermediate and the separate bandwidth-bound
+    /// add pass.
+    pub fn residual_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::MatMulAdd(_)))
+            .count()
+    }
     pub fn input_count(&self) -> usize {
         self.inputs.len()
     }
@@ -900,7 +912,7 @@ const fn port_bytes_per_element(dtype: u8) -> usize {
 /// schedule is rebuilt with the activation's level entry dropped; the fused
 /// op stays at the matmul's (earlier) level, which preserves all
 /// dependencies (its result is ready no later than before).
-fn fuse_matmul_activation(
+fn fuse_matmul_epilogue(
     calls: Vec<KernelCall>,
     plan: Vec<Vec<u32>>,
     outputs: &[PortDescriptor],
@@ -927,8 +939,21 @@ fn fuse_matmul_activation(
         }
     }
     let out_slots: HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
+    // Schedule level at which each slot is produced — so a residual operand is
+    // only fused when it is ready no later than the matmul that absorbs it.
+    let mut slot_level: HashMap<u32, usize> = HashMap::new();
+    for (li, level) in plan.iter().enumerate() {
+        for &ci in level {
+            if let Some((out, _)) = buffers(&calls[ci as usize]).split_last() {
+                if out.slot != u32::MAX {
+                    slot_level.insert(out.slot, li);
+                }
+            }
+        }
+    }
 
-    // Decide fusions: fused[i] replaces matmul i; absorbed[j] drops activation j.
+    // Decide fusions: fused[i] replaces matmul i; absorbed[j] drops the
+    // consumer (activation or residual-add) j.
     let mut absorbed = vec![false; n];
     let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
     for i in 0..n {
@@ -947,28 +972,59 @@ fn fuse_matmul_activation(
             Some(&j) if j != i && !absorbed[j] => j,
             _ => continue,
         };
-        let act = match calls[j].fused_activation() {
-            Some(a) => a,
-            None => continue,
-        };
-        // The activation must read exactly the matmul output as its sole input.
         let jrefs = buffers(&calls[j]);
         let (jout, jins) = match jrefs.split_last() {
             Some(v) => v,
             None => continue,
         };
-        if jins.len() != 1 || jins[0].slot != s {
-            continue;
+
+        if let Some(act) = calls[j].fused_activation() {
+            // matmul → elementwise-activation: the activation reads exactly s.
+            if jins.len() != 1 || jins[0].slot != s {
+                continue;
+            }
+            let fused_mm = MatMulCall {
+                output: *jout,
+                ..mm
+            };
+            fused[i] = Some(KernelCall::MatMulActivation(MatMulActivationCall {
+                mm: fused_mm,
+                act,
+            }));
+            absorbed[j] = true;
+        } else if matches!(&calls[j], KernelCall::Add(_)) {
+            // matmul → add(matmul_out, residual): the transformer residual.
+            // One add operand is s; the other is the residual, which must be
+            // ready no later than the matmul's level (else moving the read
+            // earlier would observe a not-yet-computed tensor).
+            if jins.len() != 2 {
+                continue;
+            }
+            let residual = if jins[0].slot == s {
+                jins[1]
+            } else if jins[1].slot == s {
+                jins[0]
+            } else {
+                continue;
+            };
+            let ready = match (slot_level.get(&residual.slot), slot_level.get(&s)) {
+                (None, _) => true, // graph input / constant — resident at load
+                (Some(rl), Some(ml)) => rl < ml,
+                _ => true,
+            };
+            if !ready {
+                continue;
+            }
+            let fused_mm = MatMulCall {
+                output: *jout,
+                ..mm
+            };
+            fused[i] = Some(KernelCall::MatMulAdd(MatMulAddCall {
+                mm: fused_mm,
+                residual,
+            }));
+            absorbed[j] = true;
         }
-        let fused_mm = MatMulCall {
-            output: *jout,
-            ..mm
-        };
-        fused[i] = Some(KernelCall::MatMulActivation(MatMulActivationCall {
-            mm: fused_mm,
-            act,
-        }));
-        absorbed[j] = true;
     }
     if !absorbed.iter().any(|&a| a) {
         return (calls, plan);

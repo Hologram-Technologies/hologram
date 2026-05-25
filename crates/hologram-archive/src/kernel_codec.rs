@@ -118,6 +118,7 @@ const D_FSWGG: u16 = 103;
 const D_UNG: u16 = 104;
 const D_DEQ: u16 = 105;
 const D_MMA: u16 = 106;
+const D_MMADD: u16 = 107;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -567,6 +568,11 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_MMA);
             put_matmul(out, &c.mm);
             put_u8(out, c.act);
+        }
+        K::MatMulAdd(c) => {
+            put_u16(out, D_MMADD);
+            put_matmul(out, &c.mm);
+            put_buf(out, c.residual);
         }
     }
 }
