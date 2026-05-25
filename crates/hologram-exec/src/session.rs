@@ -568,8 +568,18 @@ impl<B: SessionBackend> InferenceSession<B> {
                 }
                 let is_out = self.is_output_slot[out_slot];
                 let label = if addressable {
-                    let meta = &self.node_meta[ci];
-                    Some(derive_label(meta.opcode, &meta.params, &in_labels))
+                    // Reshape is a UOR addressing op, not compute: a row-major
+                    // buffer's bytes are unchanged by a logical shape change, so
+                    // its content κ-label *is* its input's. Propagating that
+                    // label makes the resident-reuse path below bind the output
+                    // slot to the input's buffer — zero dispatch, zero movement,
+                    // zero copy. (Re-addressing, not a memcpy.)
+                    if matches!(self.kernel_calls[ci], KernelCall::Reshape(_)) {
+                        in_labels.first().copied()
+                    } else {
+                        let meta = &self.node_meta[ci];
+                        Some(derive_label(meta.opcode, &meta.params, &in_labels))
+                    }
                 } else {
                     None
                 };

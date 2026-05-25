@@ -109,6 +109,74 @@ fn clip_desugars_and_clamps_end_to_end() {
     );
 }
 
+#[test]
+fn reshape_is_zero_movement_readdressing() {
+    // Input → Reshape → Relu → Output. Reshape is byte-identity (a row-major
+    // relabel), so the executor binds its output slot to the input's buffer
+    // with NO dispatch and NO copy (counted in last_skipped); Relu then reads
+    // the same bytes. This is the UOR-native addressing realization — reshape
+    // is re-addressing, not a memcpy.
+    let n = 8usize;
+    let x: Vec<f32> = (0..n).map(|i| (i as f32) - 4.0).collect();
+    let want: Vec<f32> = x.iter().map(|&v| v.max(0.0)).collect();
+
+    let mut g = Graph::new();
+    let s1 = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let s2 = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, (n / 2) as u64));
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s1,
+    });
+    g.add_input(xi);
+    let rs = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Reshape),
+        inputs: SmallVec::from_iter([InputSource::Node(xi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s2,
+    });
+    let relu = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(rs)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s2,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(relu)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s2,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        assert!((gv - wv).abs() < 1e-6, "reshape→relu[{i}]: got {gv}, want {wv}");
+    }
+    // The interior Reshape was elided (bound to the input buffer), not dispatched.
+    assert!(
+        sess.last_skipped() >= 1,
+        "reshape was not zero-movement — it dispatched a copy (last_skipped={})",
+        sess.last_skipped()
+    );
+}
+
 fn ref_matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut o = vec![0f32; m * n];
     for i in 0..m {
