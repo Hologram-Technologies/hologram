@@ -69,17 +69,22 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Greater(c) => binary_w8(c, ws, greater_byte),
         KernelCall::GreaterOrEqual(c) => binary_w8(c, ws, greater_or_equal_byte),
 
-        // Layout — copy input into output.
-        KernelCall::Reshape(c)
-        | KernelCall::Transpose(c)
-        | KernelCall::Concat(c)
-        | KernelCall::Slice(c)
-        | KernelCall::Pad(c)
-        | KernelCall::Expand(c)
-        | KernelCall::Resize(c)
-        | KernelCall::ConcatGrad(c)
-        | KernelCall::SliceGrad(c)
-        | KernelCall::PadGrad(c) => layout_copy(c, ws),
+        // Reshape is a true relabel — row-major bytes unchanged — so a byte
+        // copy is correct. The rest move/transform data and carry no params in
+        // LayoutCall; they fail loud rather than silently copy (see the float
+        // path for the full rationale).
+        KernelCall::Reshape(c) => layout_copy(c, ws),
+        KernelCall::Transpose(_)
+        | KernelCall::Concat(_)
+        | KernelCall::Slice(_)
+        | KernelCall::Pad(_)
+        | KernelCall::Expand(_)
+        | KernelCall::Resize(_)
+        | KernelCall::ConcatGrad(_)
+        | KernelCall::SliceGrad(_)
+        | KernelCall::PadGrad(_) => Err(BackendError::UnsupportedOp(
+            "layout op not yet functional: LayoutCall carries no axis/offset/permutation",
+        )),
 
         // MatMul (byte ring).
         KernelCall::MatMul(c)
@@ -1329,9 +1334,17 @@ fn try_dispatch_float<W: Workspace>(
         // Where.
         K::Where(c) if is_float(c.dtype) => Some(ff::where_float(c, ws)),
 
-        // Layout (dtype-aware copy).
-        K::Reshape(c)
-        | K::Transpose(c)
+        // Reshape is a *true relabel*: a row-major buffer's bytes are unchanged
+        // by a logical shape change, so a dtype-aware byte copy is exactly
+        // correct.
+        K::Reshape(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
+        // Transpose / Slice / Concat / Pad / Expand / Resize (and their grads)
+        // genuinely MOVE or transform data — they are not relabels — but
+        // `LayoutCall` carries no axis / offsets / permutation and only one
+        // input (Concat can't even reference its 2nd operand). A byte copy here
+        // is silently wrong, so fail loud until functional layout kernels carry
+        // their parameters (the functional-layout milestone; unblocks RoPE).
+        K::Transpose(c)
         | K::Concat(c)
         | K::Slice(c)
         | K::Pad(c)
@@ -1342,7 +1355,9 @@ fn try_dispatch_float<W: Workspace>(
         | K::PadGrad(c)
             if is_float(c.dtype) =>
         {
-            Some(ff::layout_float(c, ws))
+            Some(Err(BackendError::UnsupportedOp(
+                "layout op not yet functional: LayoutCall carries no axis/offset/permutation",
+            )))
         }
 
         // Parameterized ops whose parameters are *not carried* by the kernel-
