@@ -18,6 +18,8 @@ mod float_kernels;
 mod kernels;
 #[cfg(not(feature = "std"))]
 pub mod mathf;
+#[cfg(feature = "parallel")]
+pub mod parallel;
 pub mod simd;
 
 /// CPU backend parameterized over the runtime workspace shape.

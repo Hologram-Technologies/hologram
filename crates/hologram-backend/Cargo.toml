@@ -36,6 +36,11 @@ objc  = { version = "0.2", optional = true }
 default = ["std", "cpu"]
 std = ["thiserror/std", "hologram-host/std"]
 cpu = []
+# Multi-core execution: the cache-oblivious lattice recursion's disjoint
+# sub-products are scheduled across an in-tree persistent worker pool
+# (std threads, no external dependency). Host-only; the single-thread path
+# is byte-identical and unchanged when off.
+parallel = ["std"]
 # The GPU backends are inherently host-only.
 metal = ["std", "dep:metal", "dep:objc"]
 wgpu = ["std", "dep:wgpu", "dep:pollster"]

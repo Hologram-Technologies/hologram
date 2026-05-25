@@ -27,6 +27,12 @@ use core::sync::atomic::{AtomicU8, Ordering};
 /// 3 = AVX-512F, 4 = NEON.
 static SIMD_PATH: AtomicU8 = AtomicU8::new(0);
 
+/// Below this `m·k·n`, a matmul runs single-threaded: the pool's wake/barrier
+/// (~µs) only amortizes once the work is ≳ a few million FLOP. Production
+/// weight matmuls (e.g. 64·256·1024 ≈ 16M) clear it; tiny ops stay sequential.
+#[cfg(feature = "parallel")]
+const PAR_THRESHOLD: u64 = 1 << 20;
+
 #[inline]
 fn resolve_path() -> u8 {
     let cached = SIMD_PATH.load(Ordering::Relaxed);
@@ -821,6 +827,54 @@ pub fn matmul_f32_packed(
     {
         let p = resolve_path();
         if p == 2 || p == 3 {
+            // UOR-native multi-core: cut the lattice recursion at the parallel
+            // grain — bisect the output into ≈one disjoint tile per core — and
+            // run the frontier across the pool, each tile executing the
+            // sequential cache-oblivious recursion (panel-aligned column cuts).
+            #[cfg(feature = "parallel")]
+            {
+                use crate::cpu::parallel::{self, SendConst, SendMut};
+                let w = parallel::pool().width();
+                if w > 1 && (m as u64) * (k as u64) * (n as u64) >= PAR_THRESHOLD {
+                    let tiles = parallel::output_tiles(m, n, w, 16);
+                    if tiles.len() > 1 {
+                        let (ap, bp, op) = (
+                            SendConst(a.as_ptr()),
+                            SendConst(bpacked.as_ptr()),
+                            SendMut(out.as_mut_ptr()),
+                        );
+                        let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                            .into_iter()
+                            .map(|(r0, rows, c0, cols)| {
+                                Box::new(move || {
+                                    // Capture the Send wrappers whole (Rust 2021
+                                    // disjoint capture would otherwise grab the
+                                    // raw `*mut`/`*const` fields, not Send).
+                                    let (ap, bp, op) = (ap, bp, op);
+                                    // SAFETY: tiles are disjoint output regions;
+                                    // a/bpacked are shared read-only; AVX2+FMA.
+                                    unsafe {
+                                        x86::matmul_f32_packed_recursive(
+                                            ap.0.add(r0 * k),
+                                            bp.0.add((c0 / 16) * k * 16),
+                                            op.0.add(r0 * n + c0),
+                                            rows,
+                                            k,
+                                            cols,
+                                            k,
+                                            n,
+                                            k,
+                                            false,
+                                        );
+                                    }
+                                }) as Box<dyn FnOnce() + Send>
+                            })
+                            .collect();
+                        parallel::pool().run(tasks);
+                        return;
+                    }
+                }
+            }
             // SAFETY: `resolve_path` confirmed AVX2 + FMA. lda=k, ldc=n,
             // k_stride=k (panel stride), fresh output (accumulate=false).
             unsafe {
@@ -895,10 +949,53 @@ pub fn matmul_f32_blocked(
         let p = resolve_path();
         if p == 2 || p == 3 {
             let _ = &bt_scratch; // unused on this path
-                                 // SAFETY: `resolve_path` confirmed AVX2 + FMA are present.
-                                 // Strides are the contiguous row-major strides
-                                 // (lda=k, ldb=n, ldc=n); `accumulate=false` is a
-                                 // fresh output.
+                                 // UOR-native multi-core: the lattice recursion's
+                                 // frontier as disjoint output tiles, one per core.
+            #[cfg(feature = "parallel")]
+            {
+                use crate::cpu::parallel::{self, SendConst, SendMut};
+                let w = parallel::pool().width();
+                if w > 1 && (m as u64) * (k as u64) * (n as u64) >= PAR_THRESHOLD {
+                    let tiles = parallel::output_tiles(m, n, w, 1);
+                    if tiles.len() > 1 {
+                        let (ap, bp, op) = (
+                            SendConst(a.as_ptr()),
+                            SendConst(b.as_ptr()),
+                            SendMut(out.as_mut_ptr()),
+                        );
+                        let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                            .into_iter()
+                            .map(|(r0, rows, c0, cols)| {
+                                Box::new(move || {
+                                    // Capture the Send wrappers whole (see above).
+                                    let (ap, bp, op) = (ap, bp, op);
+                                    // SAFETY: tiles are disjoint output regions;
+                                    // a/b are shared read-only; AVX2+FMA present.
+                                    unsafe {
+                                        x86::matmul_f32_recursive(
+                                            ap.0.add(r0 * k),
+                                            bp.0.add(c0),
+                                            op.0.add(r0 * n + c0),
+                                            rows,
+                                            k,
+                                            cols,
+                                            k,
+                                            n,
+                                            n,
+                                            false,
+                                        );
+                                    }
+                                }) as Box<dyn FnOnce() + Send>
+                            })
+                            .collect();
+                        parallel::pool().run(tasks);
+                        return;
+                    }
+                }
+            }
+            // SAFETY: `resolve_path` confirmed AVX2 + FMA are present.
+            // Strides are the contiguous row-major strides
+            // (lda=k, ldb=n, ldc=n); `accumulate=false` is a fresh output.
             unsafe {
                 x86::matmul_f32_recursive(
                     a.as_ptr(),

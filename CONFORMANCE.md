@@ -19,6 +19,7 @@
 | **SG** | Sub-graph addressing — shared computation is recognized by κ-label and elided | exec reuse tests (dispatch counting) |
 | **FU** | Content-addressed fusion — composable sub-graphs collapse to one κ-addressed op, eliding intermediates | exec fusion tests (fused/kernel counts + f64 ref) |
 | **WS** | Warm-start — the compiled object carries the constant-derivation lattice (+ materialized fold results) so the runtime cache is never cold; warm ≡ cold byte-identically | compiler/exec tests (baked==derived, cone-complete, dispatch elision, warm==cold) |
+| **WL** | Weight-layout monomorphism — constant matmul weights are panel-packed at compile time into the kernel's contiguous-read layout (zero runtime copy), semantics-preserving | compiler/exec test (packing fires + packed==f64) |
 | **PV** | Performance — every part within budget, no bottlenecks | benches with baselines/budgets |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
@@ -168,6 +169,27 @@
 | **WS-1** | The runtime **derives** the constant-only-cone lattice at load (`InferenceSession::warm_lattice`) — for every cone node, the κ-label is `derive_label(op-signature, operand labels)`, equal to an independent reference derivation, and the lattice is **complete** (a node is present iff all its transitive operands are constants; input-dependent nodes are absent). It is deterministic across loads and a warm-loaded session produces the f64 reference. No redundant copy is baked into the archive. | exec lattice accessor + independent-derivation cross-check + completeness | `hologram-exec/tests/conformance.rs::ws1_warm_lattice_matches_runtime_derivation_and_is_complete` | ✅ |
 | **WS-2** | The archive carries the cone's materialized results (`hologram_exec::fold_archive` runs the cone through the real runtime and re-emits the archive with a `WarmStart` section); at load they are pinned under their lattice labels, so the first cold-input run **elides every cone node** (`last_dispatched` drops by the cone size) with output equal to the f64 reference and byte-identical to a no-warm run. Because the lattice is derived post-fusion, a fused constant-only `matmul→activation` warms too. | exec tests (dispatch counting + f64 ref + warm==cold; fused-cone case) | `hologram-exec/tests/conformance.rs::ws2_materialized_fold_elides_cone_on_first_run`, `::ws2_fused_constant_cone_is_warmed` | ✅ |
 | **WS-3** | A persisted κ-store (`WarmStore` trait; in-memory `MemWarmStore`, `std`-gated file-backed `FileWarmStore`) keyed by lattice labels warms a fresh session from a prior one's computed results — even from a *labels-only* archive — so the warmed cone is elided on the first run with output equal to the f64 reference. A **missing** entry recomputes (miss-safe), and a **corrupt** entry fails its integrity check and recomputes (never a wrong result). | exec test (cross-session reuse + miss + corruption safety) | `hologram-exec/tests/warm_store.rs::ws3_persisted_store_warms_across_sessions` | ✅ |
+
+## WL — Weight-layout monomorphism (efficiency via the data representation)
+
+> hologram reaches kernel efficiency by **lattice recursion** — the matmul is
+> a cache-oblivious recursive decomposition (`cpu::simd::matmul_f32_recursive`)
+> whose subdivision blocks for every cache level with **no per-cache constant**
+> (the term/shape-recursion analog at the kernel). The one remaining strided
+> access — gathering the weight's columns — is removed by choosing the
+> weight's **data representation** at compile time: a matmul's *constant*
+> weight is panel-packed (`layout::pack_b_panels_bytes`) into exactly the order
+> the leaf streams, baked into the archive. This is part of the single
+> monomorphism the model compiles to: at runtime the kernel reads B
+> contiguously with **zero copy** (the zero-cost/zero-copy contract holds —
+> the recursion is pointer-only, the packing is compile-time). The packed
+> weight is content-addressed by its bytes like any constant, so it composes
+> with warm-start (WS) and fusion (FU: a packed `matmul→gelu` still fuses).
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **WL-1** | The compiler panel-packs a matmul's **constant** f32 weight (consumed by that matmul alone) into the kernel's contiguous layout — the compiled `MatMul` carries `b_packed` and the stored weight body is the packed extent — and the packed-weight result equals the **independent f64 reference** (semantics-preserving; incl. `n` not a multiple of the panel width). | compiler emit + decode check + f64 ref | `hologram-exec/tests/conformance.rs::wl1_constant_weight_is_panel_packed_and_conforms` | ✅ |
+| **WL-0** | _Kernel-level_: the packed-panel matmul leaf equals a naïve product across odd shapes (panel padding, partial-column store, m-remainder). | unit test | `hologram-backend/src/cpu/simd.rs::tests::packed_b_matmul_matches_naive` | ✅ |
 
 ## PV — Performance / no-bottleneck
 
