@@ -384,7 +384,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
         K::Concat(c) => {
             put_u16(out, D_CONCAT);
-            put_layout(out, c);
+            put_binary(out, c);
         }
         K::Slice(c) => {
             put_u16(out, D_SLICE);

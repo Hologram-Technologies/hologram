@@ -177,6 +177,64 @@ fn reshape_is_zero_movement_readdressing() {
     );
 }
 
+#[test]
+fn concat_primitive_places_a_then_b() {
+    // Concat is the closed PrimitiveOp::Concat constructor: out = a ∥ b.
+    let a = [1.0f32, 2.0, 3.0];
+    let b = [4.0f32, 5.0];
+    let want = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+
+    let mut g = Graph::new();
+    let sa = g.shape_registry_mut().intern(ShapeDescriptor::rank1(3));
+    let sb = g.shape_registry_mut().intern(ShapeDescriptor::rank1(2));
+    let so = g.shape_registry_mut().intern(ShapeDescriptor::rank1(5));
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let bi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sb,
+    });
+    g.add_input(bi);
+    let cc = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Concat),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(bi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(cc)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[
+                InputBuffer {
+                    bytes: &f32_to_le(&a),
+                },
+                InputBuffer {
+                    bytes: &f32_to_le(&b),
+                },
+            ])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got, want, "concat did not place a ∥ b");
+}
+
 fn ref_matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut o = vec![0f32; m * n];
     for i in 0..m {

@@ -406,7 +406,7 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
 
         K::Reshape => KernelCall::Reshape(layout),
         K::Transpose => KernelCall::Transpose(layout),
-        K::Concat => KernelCall::Concat(layout),
+        K::Concat => KernelCall::Concat(binary),
         K::Slice => KernelCall::Slice(layout),
 
         K::Softmax => KernelCall::Softmax(softmax_call),

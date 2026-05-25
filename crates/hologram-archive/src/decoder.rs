@@ -136,7 +136,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         59 => K::ReduceMax(read_reduce(cur)?),
         60 => K::Reshape(read_layout(cur)?),
         61 => K::Transpose(read_layout(cur)?),
-        62 => K::Concat(read_layout(cur)?),
+        62 => K::Concat(read_binary(cur)?),
         63 => K::Slice(read_layout(cur)?),
         64 => K::Softmax(read_softmax(cur)?),
         65 => K::LogSoftmax(read_softmax(cur)?),

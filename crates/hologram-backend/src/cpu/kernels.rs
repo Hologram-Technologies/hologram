@@ -74,8 +74,10 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // LayoutCall; they fail loud rather than silently copy (see the float
         // path for the full rationale).
         KernelCall::Reshape(c) => layout_copy(c, ws),
+        // Concat is byte placement (dtype-agnostic) — the same kernel serves
+        // both domains.
+        KernelCall::Concat(c) => ff::concat_float(c, ws),
         KernelCall::Transpose(_)
-        | KernelCall::Concat(_)
         | KernelCall::Slice(_)
         | KernelCall::Pad(_)
         | KernelCall::Expand(_)
@@ -1338,14 +1340,14 @@ fn try_dispatch_float<W: Workspace>(
         // by a logical shape change, so a dtype-aware byte copy is exactly
         // correct.
         K::Reshape(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
-        // Transpose / Slice / Concat / Pad / Expand / Resize (and their grads)
-        // genuinely MOVE or transform data — they are not relabels — but
-        // `LayoutCall` carries no axis / offsets / permutation and only one
-        // input (Concat can't even reference its 2nd operand). A byte copy here
-        // is silently wrong, so fail loud until functional layout kernels carry
-        // their parameters (the functional-layout milestone; unblocks RoPE).
+        // Concat is the closed `PrimitiveOp::Concat` constructor: place a ∥ b.
+        K::Concat(c) if is_float(c.dtype) => Some(ff::concat_float(c, ws)),
+        // Transpose / Slice / Pad / Expand / Resize (and their grads) genuinely
+        // MOVE or transform data — they are not relabels — but `LayoutCall`
+        // carries no axis / offsets / permutation. A byte copy here is silently
+        // wrong, so fail loud until each is realized the UOR-native way
+        // (Slice = ProjectField view; Pad = Concat with zero regions; etc.).
         K::Transpose(c)
-        | K::Concat(c)
         | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)

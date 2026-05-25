@@ -1109,6 +1109,26 @@ pub fn layout_float<W: Workspace>(c: &LayoutCall, ws: &mut W) -> Result<(), Back
     Ok(())
 }
 
+/// Concat — the closed `PrimitiveOp::Concat` constructor (ADR-053): place
+/// `a` then `b` into the output (`out = a ∥ b`). Concatenation is intrinsically
+/// a constructor (it produces new content), so unlike the addressing-class
+/// relabels it is a real placement; it is dtype-agnostic byte movement, so one
+/// kernel serves both the float and byte domains. The output buffer is sized to
+/// `a ∥ b` by the compiler from the concatenated output shape. n-ary concat is
+/// expressed as a left-associated chain of this binary primitive.
+pub fn concat_float<W: Workspace>(c: &BinaryCall, ws: &mut W) -> Result<(), BackendError> {
+    let (reads, out) = ws
+        .split_borrow(&[c.a, c.b], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let (alen, blen) = (reads[0].len(), reads[1].len());
+    if out.len() < alen + blen {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    out[..alen].copy_from_slice(reads[0]);
+    out[alen..alen + blen].copy_from_slice(reads[1]);
+    Ok(())
+}
+
 // Elementwise float impls.
 #[inline]
 pub fn relu_f(x: f32) -> f32 {

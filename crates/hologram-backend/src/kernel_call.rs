@@ -474,7 +474,11 @@ pub enum KernelCall {
     // Layout
     Reshape(LayoutCall),
     Transpose(LayoutCall),
-    Concat(LayoutCall),
+    /// Concatenation — the closed `PrimitiveOp::Concat` (ADR-053). A binary
+    /// placement constructor `out = a ∥ b` (n-ary concat folds as a chain);
+    /// uses `BinaryCall` since it genuinely has two operands (unlike the
+    /// single-input layout relabels).
+    Concat(BinaryCall),
     Slice(LayoutCall),
 
     // Activation+reduce
@@ -624,7 +628,7 @@ impl KernelCall {
             K::ReduceMax(c) => p_reduce(c).done(58),
             K::Reshape(c) => p_layout(c).done(59),
             K::Transpose(c) => p_layout(c).done(60),
-            K::Concat(c) => p_layout(c).done(61),
+            K::Concat(c) => p_binary(c).done(61),
             K::Slice(c) => p_layout(c).done(62),
             K::Softmax(c) => p_softmax(c).done(63),
             K::LogSoftmax(c) => p_softmax(c).done(64),
@@ -739,7 +743,8 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::DivGrad(c)
         | K::PowGrad(c)
         | K::MinGrad(c)
-        | K::MaxGrad(c) => vec![c.a, c.b, c.output],
+        | K::MaxGrad(c)
+        | K::Concat(c) => vec![c.a, c.b, c.output],
 
         K::MatMul(c)
         | K::FusedSwiGlu(c)
@@ -777,7 +782,6 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::Reshape(c)
         | K::Transpose(c)
-        | K::Concat(c)
         | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)
@@ -868,7 +872,8 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::DivGrad(c)
         | K::PowGrad(c)
         | K::MinGrad(c)
-        | K::MaxGrad(c) => c.dtype,
+        | K::MaxGrad(c)
+        | K::Concat(c) => c.dtype,
 
         K::MatMul(c)
         | K::FusedSwiGlu(c)
@@ -904,7 +909,6 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
 
         K::Reshape(c)
         | K::Transpose(c)
-        | K::Concat(c)
         | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)
