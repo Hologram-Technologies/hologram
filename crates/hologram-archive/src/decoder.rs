@@ -216,6 +216,7 @@ fn read_matmul(c: &mut Cursor<'_>) -> Result<MatMulCall, ArchiveError> {
         k: c.u32()?,
         n: c.u32()?,
         dtype: c.u8()?,
+        b_packed: c.u8()? != 0,
     })
 }
 fn read_gemm(c: &mut Cursor<'_>) -> Result<GemmCall, ArchiveError> {

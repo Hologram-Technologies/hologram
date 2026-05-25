@@ -143,8 +143,15 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     let a = reads[0]
         .get(..m * k * es)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    // A packed-B weight occupies `⌈n/16⌉·16·k` elements (≥ k·n); a plain
+    // weight is row-major `k×n`. View the matching extent.
+    let b_len = if c.b_packed {
+        n.div_ceil(16) * 16 * k * es
+    } else {
+        k * n * es
+    };
     let b = reads[1]
-        .get(..k * n * es)
+        .get(..b_len)
         .ok_or(BackendError::SlotOutOfRange(c.b.slot))?;
     if out.len() < m * n * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
@@ -152,20 +159,24 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
 
     if dt == DTYPE_F32 {
         // Zero-copy: the workspace buffers are already contiguous, 64-byte
-        // aligned f32, so view them directly and call the shared blocked-FMA
-        // kernel. (The prism-canonical `TensorAxis` surface —
-        // `HologramTensorMatmulF32` — wraps this same kernel for external
-        // consumers per ADR-031; the runtime hot path must not pay its
-        // marshalling copy of A and B, which is a contrived per-dispatch
-        // Θ(m·k + k·n) memory tax the `gemm` path already avoids.)
+        // aligned f32, so view them directly and call the shared kernel. (The
+        // prism-canonical `TensorAxis` surface — `HologramTensorMatmulF32` —
+        // wraps the same kernel for external consumers per ADR-031; the
+        // runtime hot path must not pay its marshalling copy of A and B.)
         if let (Ok(a32), Ok(b32), Ok(out32)) = (
             bytemuck::try_cast_slice::<u8, f32>(a),
             bytemuck::try_cast_slice::<u8, f32>(b),
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
         ) {
-            with_matmul_scratch(|bt| {
-                crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
-            });
+            if c.b_packed {
+                // B is the compile-time panel-packed weight: the leaf streams
+                // it contiguously (no strided gather). Zero runtime copy.
+                crate::cpu::simd::matmul_f32_packed(a32, b32, out32, m, k, n);
+            } else {
+                with_matmul_scratch(|bt| {
+                    crate::cpu::simd::matmul_f32_blocked(a32, b32, out32, m, k, n, bt);
+                });
+            }
             return Ok(());
         }
     }

@@ -114,6 +114,7 @@ fn wgpu_matmul_f32_2x2_smoke() {
         k: 2,
         n: 2,
         dtype: DTYPE_F32,
+        b_packed: false,
     });
     backend.dispatch(&call, &mut ws).unwrap();
     let out = le_to_f32(&ws.slots[2]);

@@ -77,23 +77,42 @@ fn binary_round_trip() {
 
 #[test]
 fn matmul_round_trip() {
-    let calls = vec![KernelCall::MatMul(MatMulCall {
-        a: ref_buf(0),
-        b: ref_buf(1),
-        output: ref_buf(2),
-        m: 128,
-        k: 256,
-        n: 128,
-        dtype: 0,
-    })];
+    let calls = vec![
+        KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 128,
+            k: 256,
+            n: 128,
+            dtype: 0,
+            b_packed: false,
+        }),
+        // The weight-layout monomorphism flag must survive the round-trip.
+        KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 64,
+            k: 64,
+            n: 64,
+            dtype: 8,
+            b_packed: true,
+        }),
+    ];
     let bytes = kernel_codec::encode_calls(&calls);
     let decoded = decoder::decode_calls(&bytes).unwrap();
     if let KernelCall::MatMul(d) = &decoded[0] {
         assert_eq!(d.m, 128);
         assert_eq!(d.k, 256);
         assert_eq!(d.n, 128);
+        assert!(!d.b_packed);
     } else {
         panic!("not matmul");
+    }
+    match &decoded[1] {
+        KernelCall::MatMul(d) => assert!(d.b_packed, "b_packed must round-trip"),
+        _ => panic!("not matmul"),
     }
 }
 
@@ -109,6 +128,7 @@ fn matmul_activation_round_trip() {
             k: 128,
             n: 256,
             dtype: 8,
+            b_packed: false,
         },
         act: fused_activation::GELU,
     })];

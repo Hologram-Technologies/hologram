@@ -291,6 +291,9 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         k: s.k,
         n: s.n,
         dtype: node.dtype,
+        // Layout chosen by the post-lowering weight-packing pass; a freshly
+        // lowered call is row-major until then.
+        b_packed: false,
     };
     let gemm_call = GemmCall {
         a: inp0(),

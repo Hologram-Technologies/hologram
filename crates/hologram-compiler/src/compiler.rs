@@ -283,6 +283,69 @@ impl Compiler {
         // (execution-free) compiler.
         let node_count = self.graph.node_count() as u32;
 
+        // ── Weight-layout monomorphism (UOR-native, zero runtime copy) ──
+        //
+        // A matmul's B operand is its weight. When that weight is a *constant*
+        // (known at compile time) consumed by this matmul alone, pre-pack it
+        // into the panel layout the cache-oblivious leaf streams contiguously
+        // (`cpu::simd::pack_b_panels`). The packing is a compile-time data-
+        // representation transform baked into the archive — part of the single
+        // monomorphism the ONNX model compiles to — so at runtime the kernel
+        // reads B with no strided gather and **no copy**. f32 only; the packed
+        // weight is content-addressed by its (packed) bytes like any constant.
+        const DTYPE_F32: u8 = 8;
+        let n_const = self.graph.constants().len();
+        let mut packed_consts: Vec<Option<Vec<u8>>> = vec![None; n_const];
+        {
+            // Census of slot reads/writes across all calls: a constant the
+            // matmul uniquely consumes (count == 1) packs unambiguously.
+            let mut uses: hashbrown::HashMap<u32, u32> = hashbrown::HashMap::new();
+            for call in kernel_calls.iter() {
+                for bref in hologram_backend::buffers(call) {
+                    if bref.slot != u32::MAX {
+                        *uses.entry(bref.slot).or_insert(0) += 1;
+                    }
+                }
+            }
+            for call in kernel_calls.iter_mut() {
+                if let KernelCall::MatMul(mm) = call {
+                    if mm.dtype != DTYPE_F32 || mm.b_packed || mm.b.slot < node_count {
+                        continue;
+                    }
+                    let cid = (mm.b.slot - node_count) as usize;
+                    if cid >= n_const || uses.get(&mm.b.slot) != Some(&1) {
+                        continue;
+                    }
+                    let (k, n) = (mm.k as usize, mm.n as usize);
+                    let entry = match self
+                        .graph
+                        .constants()
+                        .get(hologram_graph::ConstantId(cid as u32))
+                    {
+                        Some(e) => e,
+                        None => continue,
+                    };
+                    if entry.bytes.len() != k * n * 4 {
+                        continue; // shape/dtype guard
+                    }
+                    let pbytes = pack_b_panels_bytes(&entry.bytes, k, n);
+                    mm.b.length = pbytes.len() as u64;
+                    mm.b_packed = true;
+                    packed_consts[cid] = Some(pbytes);
+                }
+            }
+        }
+        // Body a constant emits: its packed layout if packed, else its bytes.
+        let const_body = |i: usize| -> Vec<u8> {
+            packed_consts[i].clone().unwrap_or_else(|| {
+                self.graph
+                    .constants()
+                    .get(hologram_graph::ConstantId(i as u32))
+                    .map(|e| e.bytes.clone())
+                    .unwrap_or_default()
+            })
+        };
+
         // Step 9: emit archive.
         let mut writer = HoloWriter::new();
         writer.set_kernel_calls(kernel_calls);
@@ -310,15 +373,10 @@ impl Compiler {
         let mut const_fingerprints: Vec<Option<[u8; 32]>> =
             vec![None; self.graph.constants().len()];
         for (i, slot) in const_fingerprints.iter_mut().enumerate() {
-            if let Some(entry) = self
-                .graph
-                .constants()
-                .get(hologram_graph::ConstantId(i as u32))
-            {
-                if entry.bytes.len() > INLINE_THRESHOLD_BYTES {
-                    let fp = weights.insert(entry.bytes.clone());
-                    *slot = Some(fp.0);
-                }
+            let body = const_body(i);
+            if body.len() > INLINE_THRESHOLD_BYTES {
+                let fp = weights.insert(body);
+                *slot = Some(fp.0);
             }
         }
         writer.set_weights(weights);
@@ -401,7 +459,9 @@ impl Compiler {
                 Some(if let Some(fp) = const_fingerprints[i] {
                     ConstantEntry::reference(slot, dtype, fp)
                 } else {
-                    ConstantEntry::inline(slot, dtype, entry.bytes.clone())
+                    // Inline the (possibly packed) body — the weight-layout
+                    // monomorphism stores packed bytes for packed constants.
+                    ConstantEntry::inline(slot, dtype, const_body(i))
                 })
             })
             .collect();
@@ -549,6 +609,28 @@ fn collect_buffers(
             }
         })
         .collect()
+}
+
+/// Panel-pack a row-major `k×n` f32 weight (raw LE bytes) into the layout the
+/// runtime matmul leaf streams contiguously — the byte-level twin of
+/// `hologram_backend::cpu::simd::pack_b_panels`. Element `(p,kk,c)` of panel
+/// `p` (16-wide) lands at f32 index `(p·k + kk)·16 + c`; columns past `n` are
+/// zero. This is the compile-time half of the weight-layout monomorphism; the
+/// produced length is `⌈n/16⌉·k·16·4` bytes. Kept byte-level so the compiler
+/// needs no f32 reinterpretation (alignment-free) and no bytemuck dependency.
+fn pack_b_panels_bytes(b: &[u8], k: usize, n: usize) -> Vec<u8> {
+    const ES: usize = 4; // f32
+    let n_panels = n.div_ceil(16);
+    let mut out = vec![0u8; n_panels * k * 16 * ES];
+    for p in 0..n_panels {
+        let cols = core::cmp::min(16, n - p * 16);
+        for kk in 0..k {
+            let dst = ((p * k + kk) * 16) * ES;
+            let src = (kk * n + p * 16) * ES;
+            out[dst..dst + cols * ES].copy_from_slice(&b[src..src + cols * ES]);
+        }
+    }
+    out
 }
 
 /// Bytes per element for a dtype-id (mirrors `hologram_backend::cpu::dtype`

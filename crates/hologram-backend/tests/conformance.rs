@@ -123,6 +123,7 @@ fn run_matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
         k: k as u32,
         n: n as u32,
         dtype: DTYPE_F32,
+        b_packed: false,
     });
     let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
     backend.dispatch(&call, &mut ws).unwrap();

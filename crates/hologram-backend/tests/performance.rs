@@ -88,6 +88,7 @@ fn matmul_best_secs(dim: usize, runs: usize) -> f64 {
         k: dim as u32,
         n: dim as u32,
         dtype: DTYPE_F32,
+        b_packed: false,
     });
     // Warm up, then take the minimum (most stable under CI load).
     backend.dispatch(&call, &mut ws).unwrap();

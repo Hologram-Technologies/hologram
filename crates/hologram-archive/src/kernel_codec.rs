@@ -612,6 +612,7 @@ fn put_matmul(out: &mut Vec<u8>, c: &MatMulCall) {
     put_u32(out, c.k);
     put_u32(out, c.n);
     put_u8(out, c.dtype);
+    put_u8(out, c.b_packed as u8);
 }
 fn put_gemm(out: &mut Vec<u8>, c: &GemmCall) {
     put_buf(out, c.a);

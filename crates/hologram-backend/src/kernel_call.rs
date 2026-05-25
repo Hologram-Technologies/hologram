@@ -36,6 +36,14 @@ pub struct MatMulCall {
     pub k: u32,
     pub n: u32,
     pub dtype: u8,
+    /// When `true`, the `b` operand holds a **panel-packed** weight
+    /// (`cpu::simd::pack_b_panels`) rather than a row-major `k×n` matrix — the
+    /// compile-time weight-layout monomorphism. Set by the compiler for
+    /// constant f32 weights; the kernel then streams B contiguously. The
+    /// produced value is identical to the unpacked product (layout-only), so
+    /// it is excluded from `op_signature` — the operand's own κ-label already
+    /// reflects its (packed) bytes.
+    pub b_packed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

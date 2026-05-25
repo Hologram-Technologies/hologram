@@ -187,6 +187,7 @@ fn ov_codec_roundtrips_beyond_u32_without_truncation() {
             k: 70_000,
             n: 70_000,
             dtype: 8,
+            b_packed: false,
         }),
     ];
     let decoded = decode_calls(&encode_calls(&calls)).expect("decode");

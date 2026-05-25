@@ -69,6 +69,7 @@ fn bench_matmul_w8_64(c: &mut Criterion) {
             k: 64,
             n: 64,
             dtype: 0,
+            b_packed: false,
         });
         b.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -91,6 +92,7 @@ fn bench_matmul_f32_64(c: &mut Criterion) {
             k: 64,
             n: 64,
             dtype: DTYPE_F32,
+            b_packed: false,
         });
         bench.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -113,6 +115,7 @@ fn bench_matmul_f32_128(c: &mut Criterion) {
             k: 128,
             n: 128,
             dtype: DTYPE_F32,
+            b_packed: false,
         });
         bench.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();
@@ -138,6 +141,7 @@ fn bench_matmul_f32_square(c: &mut Criterion, n: usize) {
             k: n as u32,
             n: n as u32,
             dtype: DTYPE_F32,
+            b_packed: false,
         });
         bench.iter(|| {
             backend.dispatch(black_box(&call), &mut ws).unwrap();

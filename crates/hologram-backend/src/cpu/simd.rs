@@ -523,6 +523,82 @@ mod x86 {
             );
         }
     }
+
+    /// Matmul with **panel-packed B** (`C = A·Bᵖ`). `bpacked` holds B in
+    /// `NR`-wide column panels, each `k`-contiguous (see
+    /// [`super::pack_b_panels`]): panel `p`, row `kk` occupies the 16 floats at
+    /// `bpacked[(p·k + kk)·16 ..]`. The leaf therefore streams B **fully
+    /// contiguously** across `kk` — no strided row gather, so once a panel is
+    /// resident its reuse across the `m`-tiles costs no further misses. This is
+    /// the kernel half of the compile-time weight-layout monomorphism: the
+    /// constant weight is packed once at compile time (zero runtime copy) into
+    /// exactly the order this loop consumes. `a` (the activation) is read
+    /// row-contiguous; `out` is written in 4×16 tiles.
+    ///
+    /// # Safety
+    /// AVX2+FMA required; `a` is `m×k` (row stride `lda`), `out` is `m×n` (row
+    /// stride `ldc`), `bpacked` is `⌈n/16⌉·k·16` floats.
+    #[target_feature(enable = "avx2,fma")]
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn matmul_f32_packed_b(
+        a: *const f32,
+        bpacked: *const f32,
+        out: *mut f32,
+        m: usize,
+        k: usize,
+        n: usize,
+        lda: usize,
+        ldc: usize,
+    ) {
+        const MR: usize = 4;
+        let n_panels = n.div_ceil(16);
+        let mut i = 0;
+        while i + MR <= m {
+            for p in 0..n_panels {
+                let base = p * k * 16;
+                let cols = core::cmp::min(16, n - p * 16);
+                let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                for kk in 0..k {
+                    let bp = bpacked.add(base + kk * 16);
+                    let b0 = _mm256_loadu_ps(bp);
+                    let b1 = _mm256_loadu_ps(bp.add(8));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                        cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
+                        cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    let orow = out.add((i + r) * ldc + p * 16);
+                    if cols == 16 {
+                        _mm256_storeu_ps(orow, cr[0]);
+                        _mm256_storeu_ps(orow.add(8), cr[1]);
+                    } else {
+                        let mut tmp = [0f32; 16];
+                        _mm256_storeu_ps(tmp.as_mut_ptr(), cr[0]);
+                        _mm256_storeu_ps(tmp.as_mut_ptr().add(8), cr[1]);
+                        for (cc, &v) in tmp.iter().enumerate().take(cols) {
+                            *orow.add(cc) = v;
+                        }
+                    }
+                }
+            }
+            i += MR;
+        }
+        // Row remainder (m not a multiple of MR): scalar over the packed panels.
+        while i < m {
+            for j in 0..n {
+                let p = j / 16;
+                let c = j % 16;
+                let mut s = 0.0f32;
+                for kk in 0..k {
+                    s += *a.add(i * lda + kk) * *bpacked.add((p * k + kk) * 16 + c);
+                }
+                *out.add(i * ldc + j) = s;
+            }
+            i += 1;
+        }
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -607,6 +683,78 @@ mod aarch {
             total += a[i] * b[i];
         }
         total
+    }
+}
+
+// ─── Compile-time weight-layout monomorphism ───────────────────────
+
+/// Panel-pack a row-major `k×n` matrix B into `⌈n/16⌉` column panels, each
+/// stored `k`-contiguous: output element `(p·k + kk)·16 + c` is
+/// `B[kk·n + p·16 + c]` (zero-padded where `p·16 + c ≥ n`). This is the
+/// **layout the cache-oblivious leaf consumes contiguously** — applied once
+/// at compile time to a constant weight (the data-representation half of the
+/// monomorphism), it removes the only strided access in the matmul with **no
+/// runtime copy**. The packed length is `⌈n/16⌉·k·16` floats.
+#[must_use]
+pub fn pack_b_panels(b: &[f32], k: usize, n: usize) -> alloc::vec::Vec<f32> {
+    let n_panels = n.div_ceil(16);
+    let mut out = alloc::vec![0f32; n_panels * k * 16];
+    for p in 0..n_panels {
+        let cols = core::cmp::min(16, n - p * 16);
+        for kk in 0..k {
+            let dst = (p * k + kk) * 16;
+            let src = kk * n + p * 16;
+            out[dst..dst + cols].copy_from_slice(&b[src..src + cols]);
+        }
+    }
+    out
+}
+
+/// `C = A·Bᵖ` where `Bᵖ` is [`pack_b_panels`]-packed (the compile-time
+/// weight layout). Runtime-dispatched: the AVX2+FMA leaf streams packed
+/// panels contiguously; the portable fallback reads the same layout scalarly.
+/// Zero-copy — `bpacked` is the constant weight's stored representation.
+pub fn matmul_f32_packed(
+    a: &[f32],
+    bpacked: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let p = resolve_path();
+        if p == 2 || p == 3 {
+            // SAFETY: `resolve_path` confirmed AVX2 + FMA.
+            unsafe {
+                x86::matmul_f32_packed_b(
+                    a.as_ptr(),
+                    bpacked.as_ptr(),
+                    out.as_mut_ptr(),
+                    m,
+                    k,
+                    n,
+                    k,
+                    n,
+                );
+            }
+            return;
+        }
+    }
+    // Portable scalar fallback over the packed layout.
+    for i in 0..m {
+        for j in 0..n {
+            let (p, c) = (j / 16, j % 16);
+            let mut s = 0f32;
+            for kk in 0..k {
+                s += a[i * k + kk] * bpacked[(p * k + kk) * 16 + c];
+            }
+            out[i * n + j] = s;
+        }
     }
 }
 
@@ -771,6 +919,57 @@ mod tests {
                 got[i],
                 want[i]
             );
+        }
+    }
+
+    #[test]
+    fn packed_b_matmul_matches_naive() {
+        // Odd sizes including a non-multiple-of-16 n exercise panel padding,
+        // the partial-column store, and the m-remainder scalar tail.
+        #[cfg(target_arch = "x86_64")]
+        for &(m, k, n) in &[
+            (4usize, 8usize, 16usize),
+            (5, 7, 19),
+            (13, 11, 37),
+            (64, 64, 64),
+        ] {
+            if !(std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma")) {
+                return;
+            }
+            let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.001 - 0.3).collect();
+            let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.002 + 0.5).collect();
+            let packed = pack_b_panels(&b, k, n);
+            let mut got = vec![0f32; m * n];
+            unsafe {
+                x86::matmul_f32_packed_b(
+                    a.as_ptr(),
+                    packed.as_ptr(),
+                    got.as_mut_ptr(),
+                    m,
+                    k,
+                    n,
+                    k,
+                    n,
+                );
+            }
+            let mut want = vec![0f32; m * n];
+            for i in 0..m {
+                for j in 0..n {
+                    let mut s = 0f32;
+                    for kk in 0..k {
+                        s += a[i * k + kk] * b[kk * n + j];
+                    }
+                    want[i * n + j] = s;
+                }
+            }
+            for idx in 0..m * n {
+                assert!(
+                    (got[idx] - want[idx]).abs() < 1e-3,
+                    "{m}×{k}×{n} diff at {idx}: got {} want {}",
+                    got[idx],
+                    want[idx]
+                );
+            }
         }
     }
 

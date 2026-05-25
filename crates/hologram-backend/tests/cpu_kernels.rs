@@ -115,6 +115,7 @@ fn matmul_byte_2x2() {
         k: 2,
         n: 2,
         dtype: 0,
+        b_packed: false,
     });
     backend.dispatch(&call, &mut ws).unwrap();
     assert_eq!(ws.slot(2), &vec![19u8, 22, 43, 50]);
