@@ -140,7 +140,12 @@ fn parser_accepts_every_op_in_catalog() {
         // compute their byte regions; the bare text frontend can't express
         // constants yet, so a generic-input form is malformed and correctly
         // rejected. Both are covered end-to-end by hologram-exec/tests/desugar.rs.
-        if matches!(kind, hologram_graph::OpKind::Slice | hologram_graph::OpKind::Pad) {
+        if matches!(
+            kind,
+            hologram_graph::OpKind::Slice
+                | hologram_graph::OpKind::Pad
+                | hologram_graph::OpKind::Transpose
+        ) {
             continue;
         }
         let arity = kind.primary_arity() as usize;

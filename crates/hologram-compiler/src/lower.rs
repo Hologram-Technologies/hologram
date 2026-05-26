@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, UnaryCall, WhereCall,
+    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall, UnaryCall,
+    WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -405,7 +406,16 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::ReduceMax => KernelCall::ReduceMax(reduce_call),
 
         K::Reshape => KernelCall::Reshape(layout),
-        K::Transpose => KernelCall::Transpose(layout),
+        // dims/perm filled by the compiler's transpose pass (needs the perm
+        // operand + input shape); a fresh call is rank-0 until then.
+        K::Transpose => KernelCall::Transpose(TransposeCall {
+            input: inp0(),
+            output: node.output,
+            rank: 0,
+            dims: [0; 8],
+            perm: [0; 8],
+            dtype: node.dtype,
+        }),
         K::Concat => KernelCall::Concat(binary),
         K::Slice => KernelCall::Slice(layout),
 

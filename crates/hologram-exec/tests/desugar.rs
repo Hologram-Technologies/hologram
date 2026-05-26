@@ -254,6 +254,51 @@ fn slice_is_zero_movement_projectfield() {
 }
 
 #[test]
+fn transpose_permutes_axes() {
+    // x[2,3] transposed (default reverse perm) → [3,2]: out[j,i] = x[i,j].
+    let x = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // rows [1,2,3],[4,5,6]
+    let want = [1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0]; // [[1,4],[2,5],[3,6]]
+
+    let mut g = Graph::new();
+    let s_in = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
+    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank2(3, 2));
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_in,
+    });
+    g.add_input(xi);
+    // Single-input Transpose → default axis reversal.
+    let tr = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Transpose),
+        inputs: SmallVec::from_iter([InputSource::Node(xi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(tr)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got, want, "transpose did not permute axes");
+}
+
+#[test]
 fn pad_places_data_in_zeroed_buffer() {
     // data[2,3] padded axis-0 by (1 before, 1 after) → [4,3]: a zero row, the
     // data, a zero row. Pad = placement into a zeroed output at offset lo.

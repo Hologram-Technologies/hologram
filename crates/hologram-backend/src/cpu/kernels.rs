@@ -80,8 +80,9 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Concat is byte placement (dtype-agnostic) — the same kernel serves
         // both domains.
         KernelCall::Concat(c) => ff::concat_float(c, ws),
-        KernelCall::Transpose(_)
-        | KernelCall::Expand(_)
+        // Transpose = dtype-agnostic gather (one kernel for both domains).
+        KernelCall::Transpose(c) => ff::transpose_float(c, ws),
+        KernelCall::Expand(_)
         | KernelCall::Resize(_)
         | KernelCall::ConcatGrad(_)
         | KernelCall::SliceGrad(_)
@@ -1354,11 +1355,11 @@ fn try_dispatch_float<W: Workspace>(
         // data there and the freshly-zeroed pad regions remain zero — the
         // degenerate Concat(zeros, x, zeros) realized by offset placement.
         K::Pad(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
-        // Transpose / Expand / Resize (and grads) still need their UOR-native
-        // realization (Expand = broadcast view; Transpose = consumer-absorbed /
-        // gather). Fail loud until each lands rather than silently copy.
-        K::Transpose(c)
-        | K::Expand(c)
+        // Transpose is the irreducible re-indexing kernel (gather by perm).
+        K::Transpose(c) if is_float(c.dtype) => Some(ff::transpose_float(c, ws)),
+        // Expand / Resize (and grads) still need their UOR-native realization
+        // (Expand = broadcast view). Fail loud until each lands.
+        K::Expand(c)
         | K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)

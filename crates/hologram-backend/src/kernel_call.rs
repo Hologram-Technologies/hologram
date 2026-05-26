@@ -127,6 +127,20 @@ pub struct LayoutCall {
     pub dtype: u8,
 }
 
+/// Transpose (axis permutation). A genuine re-indexing, so it carries the
+/// input `dims` and the `perm` (output axis `i` reads input axis `perm[i]`),
+/// up to rank 8. The kernel gathers each output element from its permuted
+/// input position. (Not a relabel; this is the irreducible re-indexing op.)
+#[derive(Debug, Clone, Copy)]
+pub struct TransposeCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub rank: u8,
+    pub dims: [u32; 8],
+    pub perm: [u8; 8],
+    pub dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SoftmaxCall {
     pub input: BufferRef,
@@ -360,6 +374,14 @@ fn p_reduce(c: &ReduceCall) -> Pb {
 fn p_layout(c: &LayoutCall) -> Pb {
     Pb::new().u64(c.element_count).u8(c.dtype)
 }
+
+fn p_transpose(c: &TransposeCall) -> Pb {
+    let mut b = Pb::new().u8(c.rank).u8(c.dtype);
+    for i in 0..c.rank as usize {
+        b = b.u32(c.dims[i]).u8(c.perm[i]);
+    }
+    b
+}
 fn p_softmax(c: &SoftmaxCall) -> Pb {
     Pb::new().u32(c.batch).u32(c.feature).u8(c.dtype)
 }
@@ -473,7 +495,7 @@ pub enum KernelCall {
 
     // Layout
     Reshape(LayoutCall),
-    Transpose(LayoutCall),
+    Transpose(TransposeCall),
     /// Concatenation — the closed `PrimitiveOp::Concat` (ADR-053). A binary
     /// placement constructor `out = a ∥ b` (n-ary concat folds as a chain);
     /// uses `BinaryCall` since it genuinely has two operands (unlike the
@@ -627,7 +649,7 @@ impl KernelCall {
             K::ReduceMin(c) => p_reduce(c).done(57),
             K::ReduceMax(c) => p_reduce(c).done(58),
             K::Reshape(c) => p_layout(c).done(59),
-            K::Transpose(c) => p_layout(c).done(60),
+            K::Transpose(c) => p_transpose(c).done(60),
             K::Concat(c) => p_binary(c).done(61),
             K::Slice(c) => p_layout(c).done(62),
             K::Softmax(c) => p_softmax(c).done(63),
@@ -781,7 +803,6 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::ReduceProdGrad(c) => vec![c.input, c.output],
 
         K::Reshape(c)
-        | K::Transpose(c)
         | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)
@@ -789,6 +810,8 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => vec![c.input, c.output],
+
+        K::Transpose(c) => vec![c.input, c.output],
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
             vec![c.input, c.output]
@@ -908,7 +931,6 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::ReduceProdGrad(c) => c.dtype,
 
         K::Reshape(c)
-        | K::Transpose(c)
         | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)
@@ -916,6 +938,8 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => c.dtype,
+
+        K::Transpose(c) => c.dtype,
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => c.dtype,
 

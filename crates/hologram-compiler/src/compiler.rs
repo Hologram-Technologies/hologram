@@ -282,6 +282,17 @@ impl Compiler {
                         lc.input.length = len;
                     }
                 }
+                // Transpose: fill the permutation + input dims from the perm
+                // operand (or the default reverse) and the input shape.
+                if matches!(kind, hologram_graph::OpKind::Transpose) {
+                    if let KernelCall::Transpose(tc) = &mut kernel_call {
+                        let (rank, dims, perm) = transpose_plan(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                        tc.rank = rank;
+                        tc.dims = dims;
+                        tc.perm = perm;
+                    }
+                }
                 // Pad = placement into a zeroed buffer: write the data into the
                 // output's interior [lo, lo+data) (axis-0). The fresh output
                 // buffer is zeroed, so the pad regions remain zero.
@@ -760,4 +771,53 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
     let lo = pad_at(0).unwrap_or(0).max(0) as u64;
     let elem = bytes_per_element(node.output_dtype.0) as u64;
     Some((lo * inner * elem, data_count * elem, data_count))
+}
+
+/// Resolve a Transpose's `(rank, input_dims, perm)` from the data shape and the
+/// optional perm operand (an i64 [rank] constant); absent perm defaults to the
+/// full axis reversal (ONNX). `None` for rank 0 / >8 or an out-of-range perm.
+fn transpose_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u8; 8])> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let data_shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let rank = data_shape.rank as usize;
+    if rank == 0 || rank > 8 {
+        return None;
+    }
+    let mut dims = [0u32; 8];
+    for (i, d) in dims.iter_mut().enumerate().take(rank) {
+        *d = data_shape.dim(i)? as u32;
+    }
+    let mut perm = [0u8; 8];
+    match node.inputs.get(1).copied() {
+        Some(InputSource::Constant(cid)) => {
+            let bytes = &graph.constants().get(cid)?.bytes;
+            for (i, p) in perm.iter_mut().enumerate().take(rank) {
+                let v = i64::from_le_bytes(bytes.get(i * 8..i * 8 + 8)?.try_into().ok()?);
+                if v < 0 || v as usize >= rank {
+                    return None;
+                }
+                *p = v as u8;
+            }
+        }
+        Some(_) => return None, // non-constant perm
+        None => {
+            // Default: reverse all axes.
+            for (i, p) in perm.iter_mut().enumerate().take(rank) {
+                *p = (rank - 1 - i) as u8;
+            }
+        }
+    }
+    Some((rank as u8, dims, perm))
 }

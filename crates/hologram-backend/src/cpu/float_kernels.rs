@@ -1129,6 +1129,57 @@ pub fn concat_float<W: Workspace>(c: &BinaryCall, ws: &mut W) -> Result<(), Back
     Ok(())
 }
 
+/// Transpose (axis permutation) — the irreducible re-indexing op. Output axis
+/// `i` is input axis `perm[i]`; each output element is gathered from its
+/// permuted input position. Dtype-agnostic element-wise byte copy (one kernel
+/// for every dtype), up to rank 8.
+pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<(), BackendError> {
+    let rank = c.rank as usize;
+    if rank == 0 || rank > 8 {
+        return Err(BackendError::UnsupportedOp("transpose: rank must be 1..=8"));
+    }
+    let es = elem_size(c.dtype);
+    let in_dims = &c.dims[..rank];
+    let perm = &c.perm[..rank];
+    let total: usize = in_dims.iter().map(|&d| d as usize).product();
+
+    // Row-major input strides and permuted output extents.
+    let mut in_strides = [0usize; 8];
+    let mut stride = 1usize;
+    for i in (0..rank).rev() {
+        in_strides[i] = stride;
+        stride *= in_dims[i] as usize;
+    }
+    let mut out_dims = [1usize; 8];
+    for i in 0..rank {
+        out_dims[i] = in_dims[perm[i] as usize] as usize;
+    }
+
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0];
+    if inp.len() < total * es || out.len() < total * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let mut coord = [0usize; 8];
+    for o in 0..total {
+        // Decompose the output linear index into per-axis output coordinates.
+        let mut rem = o;
+        for i in (0..rank).rev() {
+            coord[i] = rem % out_dims[i];
+            rem /= out_dims[i];
+        }
+        // out coord i lives on input axis perm[i]; gather that input element.
+        let mut in_idx = 0usize;
+        for i in 0..rank {
+            in_idx += coord[i] * in_strides[perm[i] as usize];
+        }
+        out[o * es..o * es + es].copy_from_slice(&inp[in_idx * es..in_idx * es + es]);
+    }
+    Ok(())
+}
+
 // Elementwise float impls.
 #[inline]
 pub fn relu_f(x: f32) -> f32 {

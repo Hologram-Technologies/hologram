@@ -217,10 +217,12 @@ fn layout_round_trip() {
             element_count: 100,
             dtype: 0,
         }),
-        KernelCall::Transpose(LayoutCall {
+        KernelCall::Transpose(hologram_backend::TransposeCall {
             input: ref_buf(2),
             output: ref_buf(3),
-            element_count: 200,
+            rank: 2,
+            dims: [3, 4, 0, 0, 0, 0, 0, 0],
+            perm: [1, 0, 0, 0, 0, 0, 0, 0],
             dtype: 1,
         }),
     ];

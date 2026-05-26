@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
     LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
-    SoftmaxCall, UnaryCall, WhereCall,
+    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -135,7 +135,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         58 => K::ReduceMin(read_reduce(cur)?),
         59 => K::ReduceMax(read_reduce(cur)?),
         60 => K::Reshape(read_layout(cur)?),
-        61 => K::Transpose(read_layout(cur)?),
+        61 => K::Transpose(read_transpose(cur)?),
         62 => K::Concat(read_binary(cur)?),
         63 => K::Slice(read_layout(cur)?),
         64 => K::Softmax(read_softmax(cur)?),
@@ -287,6 +287,28 @@ fn read_layout(c: &mut Cursor<'_>) -> Result<LayoutCall, ArchiveError> {
         output: c.buf()?,
         element_count: c.u64()?,
         dtype: c.u8()?,
+    })
+}
+fn read_transpose(c: &mut Cursor<'_>) -> Result<TransposeCall, ArchiveError> {
+    let input = c.buf()?;
+    let output = c.buf()?;
+    let rank = c.u8()?;
+    let mut dims = [0u32; 8];
+    for d in &mut dims {
+        *d = c.u32()?;
+    }
+    let mut perm = [0u8; 8];
+    for p in &mut perm {
+        *p = c.u8()?;
+    }
+    let dtype = c.u8()?;
+    Ok(TransposeCall {
+        input,
+        output,
+        rank,
+        dims,
+        perm,
+        dtype,
     })
 }
 fn read_softmax(c: &mut Cursor<'_>) -> Result<SoftmaxCall, ArchiveError> {
