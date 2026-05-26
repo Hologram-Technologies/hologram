@@ -29,7 +29,7 @@ impl MemoryTier {
     /// regardless of bit-width. Small element counts stay on CPU because
     /// GPU launch overhead would dominate.
     #[inline]
-    pub const fn from_witt(witt_bits: u16, element_count: u32, is_layout_only: bool) -> Self {
+    pub const fn from_witt(witt_bits: u16, element_count: u64, is_layout_only: bool) -> Self {
         if is_layout_only {
             return Self::CpuMain;
         }

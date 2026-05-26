@@ -18,9 +18,6 @@ pub mod warm;
 #[cfg(feature = "tiered-exec")]
 pub mod coherence;
 
-#[cfg(feature = "async")]
-pub mod async_session;
-
 pub use buffer::{BufferArena, InputBuffer, OutputBuffer, SlotSpan};
 pub use error::ExecError;
 pub use prism_route::AttestedExecution;

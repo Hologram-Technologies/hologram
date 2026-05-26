@@ -26,6 +26,10 @@ pub enum SectionKind {
     /// transitive inputs are all constants. Pinned at load under their
     /// labels so the runtime cache is never cold. See `warm_codec`.
     WarmStart = 13,
+    /// Per-call memory tier assignments (PM_7). One byte per kernel call,
+    /// each byte is a `MemoryTier` discriminant (0–3). Optional section;
+    /// if absent, all calls default to `CpuMain` (backward compatible).
+    TierAssignments = 14,
 }
 
 #[derive(Debug, Clone, Copy)]

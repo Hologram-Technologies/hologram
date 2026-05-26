@@ -16,6 +16,7 @@ use hologram_host::ActiveCpuBounds;
 pub mod dtype;
 mod float_kernels;
 mod kernels;
+pub mod lut_w16;
 #[cfg(not(feature = "std"))]
 pub mod mathf;
 #[cfg(feature = "parallel")]

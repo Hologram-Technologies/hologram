@@ -10,10 +10,10 @@ extern crate alloc;
 
 pub mod backward;
 pub mod constant;
+pub mod fusion;
 pub mod graph;
 pub mod node;
 pub mod registry;
-pub mod fusion;
 pub mod schedule;
 
 pub use backward::{append_backward, BackwardError};

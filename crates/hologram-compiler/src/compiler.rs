@@ -181,7 +181,9 @@ impl Compiler {
                 };
                 let kind = match node.op {
                     GraphOp::Op(k) => k,
-                    GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => continue,
+                    GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) | GraphOp::Dead => {
+                        continue
+                    }
                 };
 
                 // Steps 3-5: emit Term tree and validate the per-node CompileUnit.
@@ -527,6 +529,20 @@ impl Compiler {
             })
         };
 
+        // PM_7 tier assignments: one byte per kernel call encoding the
+        // memory tier. Uses `KernelCall::tier_hint()` + `MemoryTier::from_witt()`.
+        let tier_assignments: Vec<u8> = kernel_calls
+            .iter()
+            .map(|call| {
+                let hint = call.tier_hint();
+                hologram_types::MemoryTier::from_witt(
+                    hint.witt_bits,
+                    hint.element_count,
+                    hint.is_layout_only,
+                ) as u8
+            })
+            .collect();
+
         // Step 9: emit archive.
         let mut writer = HoloWriter::new();
         writer.set_kernel_calls(kernel_calls);
@@ -535,6 +551,9 @@ impl Compiler {
         }
         if !exec_plan.is_empty() {
             writer.set_exec_plan(exec_plan);
+        }
+        if !tier_assignments.is_empty() {
+            writer.set_tier_assignments(tier_assignments);
         }
         // Weight dedup (spec X.3 + X-7 trillion-param scale).
         //

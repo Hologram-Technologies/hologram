@@ -610,6 +610,14 @@ fn p_dequant(c: &DequantizeCall) -> Pb {
         .i32(c.zero_point)
 }
 
+/// Tier-relevant metadata extracted from a `KernelCall`.
+#[derive(Debug, Clone, Copy)]
+pub struct TierHint {
+    pub witt_bits: u16,
+    pub element_count: u64,
+    pub is_layout_only: bool,
+}
+
 /// Closed kernel-call surface. One variant per OpKind.
 #[derive(Debug, Clone, Copy)]
 pub enum KernelCall {
@@ -736,6 +744,248 @@ pub enum KernelCall {
 }
 
 impl KernelCall {
+    /// Extract tier-relevant metadata for memory placement decisions.
+    ///
+    /// The strategy mirrors the spec PM_7 heuristics:
+    /// - Unary/binary ops: witt_bits + element_count from the call payload.
+    /// - MatMul/Gemm/Conv/Attention: witt_bits=32 (algorithmic), element_count from dimensions.
+    /// - Layout ops (Reshape, Transpose, etc.): witt_bits=0, layout_only=true.
+    /// - FusedUnaryChain: witt_bits=8 (LUT-composed).
+    /// - Everything else: witt_bits=32, layout_only=false.
+    pub fn tier_hint(&self) -> TierHint {
+        use KernelCall as K;
+        match self {
+            // Elementwise unary ops.
+            K::Neg(c)
+            | K::Bnot(c)
+            | K::Succ(c)
+            | K::Pred(c)
+            | K::Relu(c)
+            | K::Sigmoid(c)
+            | K::Tanh(c)
+            | K::Gelu(c)
+            | K::Silu(c)
+            | K::Elu(c)
+            | K::Selu(c)
+            | K::Exp(c)
+            | K::Log(c)
+            | K::Log1p(c)
+            | K::Sqrt(c)
+            | K::Reciprocal(c)
+            | K::Sin(c)
+            | K::Cos(c)
+            | K::Tan(c)
+            | K::Asin(c)
+            | K::Acos(c)
+            | K::Atan(c)
+            | K::Ceil(c)
+            | K::Floor(c)
+            | K::Round(c)
+            | K::Erf(c)
+            | K::IsNaN(c)
+            | K::Sign(c)
+            | K::Abs(c)
+            | K::Clip(c) => TierHint {
+                witt_bits: c.witt_bits,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+
+            // Elementwise binary ops.
+            K::Add(c)
+            | K::Sub(c)
+            | K::Mul(c)
+            | K::Xor(c)
+            | K::And(c)
+            | K::Or(c)
+            | K::Div(c)
+            | K::Pow(c)
+            | K::Mod(c)
+            | K::Min(c)
+            | K::Max(c)
+            | K::Equal(c)
+            | K::Less(c)
+            | K::LessOrEqual(c)
+            | K::Greater(c)
+            | K::GreaterOrEqual(c)
+            | K::Concat(c) => TierHint {
+                witt_bits: c.witt_bits,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+
+            // Linear algebra / convolution — algorithmic witt_bits=32.
+            K::MatMul(c) | K::FusedSwiGlu(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.m as u64 * c.n as u64,
+                is_layout_only: false,
+            },
+            K::MatMulActivation(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.mm.m as u64 * c.mm.n as u64,
+                is_layout_only: false,
+            },
+            K::MatMulAdd(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.mm.m as u64 * c.mm.n as u64,
+                is_layout_only: false,
+            },
+            K::MatMulAddActivation(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.mm.m as u64 * c.mm.n as u64,
+                is_layout_only: false,
+            },
+            K::FusedMatMulActivation(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.m as u64 * c.n as u64,
+                is_layout_only: false,
+            },
+            K::Gemm(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.m as u64 * c.n as u64,
+                is_layout_only: false,
+            },
+            K::Conv2d(c) | K::ConvTranspose2d(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64
+                    * c.channels_out as u64
+                    * c.h_out as u64
+                    * c.w_out as u64,
+                is_layout_only: false,
+            },
+            K::FusedConv2dActivation(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64
+                    * c.channels_out as u64
+                    * c.h_out as u64
+                    * c.w_out as u64,
+                is_layout_only: false,
+            },
+            K::Attention(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.heads as u64 * c.seq as u64 * c.head_dim as u64,
+                is_layout_only: false,
+            },
+
+            // Layout ops — zero witt_bits, layout_only=true.
+            K::Reshape(c) | K::Slice(c) | K::Pad(c) => TierHint {
+                witt_bits: 0,
+                element_count: c.element_count,
+                is_layout_only: true,
+            },
+            K::Transpose(c) => TierHint {
+                witt_bits: 0,
+                element_count: {
+                    let mut n: u64 = 1;
+                    for i in 0..c.rank as usize {
+                        n *= c.dims[i] as u64;
+                    }
+                    n
+                },
+                is_layout_only: true,
+            },
+            K::Expand(c) | K::Resize(c) => TierHint {
+                witt_bits: 0,
+                element_count: {
+                    let mut n: u64 = 1;
+                    for i in 0..c.rank as usize {
+                        n *= c.out_dims[i] as u64;
+                    }
+                    n
+                },
+                is_layout_only: true,
+            },
+
+            // FusedUnaryChain — LUT-composed, witt_bits=8.
+            K::FusedUnaryChain(c) => TierHint {
+                witt_bits: 8,
+                element_count: c.element_count as u64,
+                is_layout_only: false,
+            },
+
+            // Im2Col / Col2Im.
+            K::Im2Col(c) | K::Col2Im(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.channels as u64
+                    * c.k_h as u64
+                    * c.k_w as u64
+                    * c.h_out as u64
+                    * c.w_out as u64,
+                is_layout_only: false,
+            },
+
+            // Normalization.
+            K::LayerNorm(c)
+            | K::RmsNorm(c)
+            | K::GroupNorm(c)
+            | K::InstanceNorm(c)
+            | K::AddRmsNorm(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.feature as u64,
+                is_layout_only: false,
+            },
+            K::FusedNormActivation(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.feature as u64,
+                is_layout_only: false,
+            },
+
+            // Reduction.
+            K::ReduceSum(c)
+            | K::ReduceMean(c)
+            | K::ReduceProd(c)
+            | K::ReduceMin(c)
+            | K::ReduceMax(c)
+            | K::CumSum(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+
+            // Softmax.
+            K::Softmax(c) | K::LogSoftmax(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.feature as u64,
+                is_layout_only: false,
+            },
+
+            // Pooling.
+            K::MaxPool2d(c) | K::AvgPool2d(c) | K::GlobalAvgPool(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.channels as u64 * c.h_out as u64 * c.w_out as u64,
+                is_layout_only: false,
+            },
+
+            // RoPE.
+            K::RotaryEmbedding(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+
+            // LRN.
+            K::Lrn(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.batch as u64 * c.channels as u64 * c.inner as u64,
+                is_layout_only: false,
+            },
+
+            // Where.
+            K::Where(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+
+            // Dequantize.
+            K::Dequantize(c) => TierHint {
+                witt_bits: 32,
+                element_count: c.element_count,
+                is_layout_only: false,
+            },
+        }
+    }
+
     /// If this call is an elementwise unary activation that can be fused
     /// into a preceding matmul's epilogue, its [`fused_activation`]
     /// selector; `None` otherwise. Used by the executor's fusion pass.
@@ -865,21 +1115,52 @@ impl KernelCall {
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
             K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
-            K::FusedMatMulActivation(c) => Pb::new().u32(c.m).u32(c.k).u32(c.n).u8(c.dtype).u16(c.activation).done(110),
+            K::FusedMatMulActivation(c) => Pb::new()
+                .u32(c.m)
+                .u32(c.k)
+                .u32(c.n)
+                .u8(c.dtype)
+                .u16(c.activation)
+                .done(110),
             K::FusedConv2dActivation(c) => p_conv(&Conv2dCall {
-                x: c.x, w: c.w, output: c.output,
-                batch: c.batch, channels_in: c.channels_in, channels_out: c.channels_out,
-                h_in: c.h_in, w_in: c.w_in, h_out: c.h_out, w_out: c.w_out,
-                k_h: c.k_h, k_w: c.k_w, stride_h: c.stride_h, stride_w: c.stride_w,
-                pad_h: c.pad_h, pad_w: c.pad_w, dtype: c.dtype,
-            }).u16(c.activation).done(111),
+                x: c.x,
+                w: c.w,
+                output: c.output,
+                batch: c.batch,
+                channels_in: c.channels_in,
+                channels_out: c.channels_out,
+                h_in: c.h_in,
+                w_in: c.w_in,
+                h_out: c.h_out,
+                w_out: c.w_out,
+                k_h: c.k_h,
+                k_w: c.k_w,
+                stride_h: c.stride_h,
+                stride_w: c.stride_w,
+                pad_h: c.pad_h,
+                pad_w: c.pad_w,
+                dtype: c.dtype,
+            })
+            .u16(c.activation)
+            .done(111),
             K::FusedNormActivation(c) => p_norm(&NormCall {
-                x: c.x, gamma: c.gamma, beta: c.beta, residual: c.residual, output: c.output,
-                batch: c.batch, feature: c.feature, epsilon_bits: c.epsilon_bits, dtype: c.dtype,
-            }).u16(c.activation).done(112),
+                x: c.x,
+                gamma: c.gamma,
+                beta: c.beta,
+                residual: c.residual,
+                output: c.output,
+                batch: c.batch,
+                feature: c.feature,
+                epsilon_bits: c.epsilon_bits,
+                dtype: c.dtype,
+            })
+            .u16(c.activation)
+            .done(112),
             K::FusedUnaryChain(c) => {
                 let mut b = Pb::new().u32(c.element_count).u8(c.dtype).u8(c.chain_len);
-                for i in 0..c.chain_len as usize { b = b.u16(c.chain[i]); }
+                for i in 0..c.chain_len as usize {
+                    b = b.u16(c.chain[i]);
+                }
                 b.done(113)
             }
         }

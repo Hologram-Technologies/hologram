@@ -414,29 +414,50 @@ fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
 }
 fn read_fused_conv2d_act(c: &mut Cursor<'_>) -> Result<FusedConv2dActivationCall, ArchiveError> {
     Ok(FusedConv2dActivationCall {
-        x: c.buf()?, w: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, channels_in: c.u32()?, channels_out: c.u32()?,
-        h_in: c.u32()?, w_in: c.u32()?, h_out: c.u32()?, w_out: c.u32()?,
-        k_h: c.u32()?, k_w: c.u32()?,
-        stride_h: c.u32()?, stride_w: c.u32()?,
-        pad_h: c.u32()?, pad_w: c.u32()?,
-        dtype: c.u8()?, activation: c.u16()?,
+        x: c.buf()?,
+        w: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        channels_in: c.u32()?,
+        channels_out: c.u32()?,
+        h_in: c.u32()?,
+        w_in: c.u32()?,
+        h_out: c.u32()?,
+        w_out: c.u32()?,
+        k_h: c.u32()?,
+        k_w: c.u32()?,
+        stride_h: c.u32()?,
+        stride_w: c.u32()?,
+        pad_h: c.u32()?,
+        pad_w: c.u32()?,
+        dtype: c.u8()?,
+        activation: c.u16()?,
     })
 }
 fn read_fused_norm_act(c: &mut Cursor<'_>) -> Result<FusedNormActivationCall, ArchiveError> {
     Ok(FusedNormActivationCall {
-        x: c.buf()?, gamma: c.buf()?, beta: c.buf()?,
-        residual: c.buf()?, output: c.buf()?,
-        batch: c.u32()?, feature: c.u32()?,
-        epsilon_bits: c.u64()?, dtype: c.u8()?,
+        x: c.buf()?,
+        gamma: c.buf()?,
+        beta: c.buf()?,
+        residual: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        feature: c.u32()?,
+        epsilon_bits: c.u64()?,
+        dtype: c.u8()?,
         activation: c.u16()?,
     })
 }
 fn read_fused_matmul_act(c: &mut Cursor<'_>) -> Result<FusedMatMulActivationCall, ArchiveError> {
     Ok(FusedMatMulActivationCall {
-        a: c.buf()?, b: c.buf()?, output: c.buf()?,
-        m: c.u32()?, k: c.u32()?, n: c.u32()?,
-        dtype: c.u8()?, activation: c.u16()?,
+        a: c.buf()?,
+        b: c.buf()?,
+        output: c.buf()?,
+        m: c.u32()?,
+        k: c.u32()?,
+        n: c.u32()?,
+        dtype: c.u8()?,
+        activation: c.u16()?,
     })
 }
 fn read_fused_unary_chain(c: &mut Cursor<'_>) -> Result<FusedUnaryChainCall, ArchiveError> {
@@ -449,7 +470,14 @@ fn read_fused_unary_chain(c: &mut Cursor<'_>) -> Result<FusedUnaryChainCall, Arc
     for slot in &mut chain {
         *slot = c.u16()?;
     }
-    Ok(FusedUnaryChainCall { input, output, element_count, dtype, chain_len, chain })
+    Ok(FusedUnaryChainCall {
+        input,
+        output,
+        element_count,
+        dtype,
+        chain_len,
+        chain,
+    })
 }
 fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
     Ok(DequantizeCall {

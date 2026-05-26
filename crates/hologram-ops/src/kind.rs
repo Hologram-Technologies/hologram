@@ -224,10 +224,18 @@ impl OpKind {
     /// Whether this op is a fusable elementwise-unary activation suitable
     /// as an epilogue for MatMul / Conv / Norm fusion passes.
     pub const fn is_fusable_activation(self) -> bool {
-        matches!(self,
-            OpKind::Relu | OpKind::Sigmoid | OpKind::Tanh
-            | OpKind::Gelu | OpKind::Silu | OpKind::Elu | OpKind::Selu
-            | OpKind::Exp | OpKind::Log | OpKind::Abs
+        matches!(
+            self,
+            OpKind::Relu
+                | OpKind::Sigmoid
+                | OpKind::Tanh
+                | OpKind::Gelu
+                | OpKind::Silu
+                | OpKind::Elu
+                | OpKind::Selu
+                | OpKind::Exp
+                | OpKind::Log
+                | OpKind::Abs
         )
     }
 

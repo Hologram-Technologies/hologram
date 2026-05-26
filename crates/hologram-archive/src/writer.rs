@@ -33,6 +33,8 @@ pub struct HoloWriter {
     constants: Vec<crate::constant_codec::ConstantEntry>,
     /// Per-level kernel-call indices (spec VIII.2).
     exec_plan: Vec<Vec<u32>>,
+    /// Per-call memory tier assignments (PM_7). One byte per kernel call.
+    tier_assignments: Vec<u8>,
 }
 
 impl HoloWriter {
@@ -72,6 +74,9 @@ impl HoloWriter {
     }
     pub fn set_exec_plan(&mut self, levels: Vec<Vec<u32>>) {
         self.exec_plan = levels;
+    }
+    pub fn set_tier_assignments(&mut self, tiers: Vec<u8>) {
+        self.tier_assignments = tiers;
     }
 
     /// Serialize the archive into an in-memory buffer.
@@ -115,6 +120,9 @@ impl HoloWriter {
         }
         if !self.exec_plan.is_empty() {
             payloads.push((SectionKind::ExecPlan, encode_exec_plan(&self.exec_plan)));
+        }
+        if !self.tier_assignments.is_empty() {
+            payloads.push((SectionKind::TierAssignments, self.tier_assignments.clone()));
         }
 
         // Compute layout.

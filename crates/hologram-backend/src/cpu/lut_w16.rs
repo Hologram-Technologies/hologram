@@ -32,7 +32,7 @@ static EXP_TABLE: OnceLock<Box<[u16; 65536]>> = OnceLock::new();
 /// Maximum element count for W16 LUT dispatch. Above this threshold,
 /// the float kernel path or GPU dispatch may be more efficient due to
 /// SIMD vectorization benefits at large sizes.
-const W16_LUT_MAX_ELEMENTS: u32 = 65536;
+const W16_LUT_MAX_ELEMENTS: u64 = 65536;
 
 /// Attempt to dispatch a unary call via W16 LUT. Returns `Some(result)`
 /// if the call was handled, `None` if it should fall through to the
@@ -61,7 +61,7 @@ pub fn try_dispatch_chain_w16<W: Workspace>(
 ) -> Option<Result<(), BackendError>> {
     // FusedUnaryChain at W8 uses composed LUTs (256 bytes). At W16 we
     // compose a single 128KB table from the chain.
-    if c.element_count > W16_LUT_MAX_ELEMENTS {
+    if (c.element_count as u64) > W16_LUT_MAX_ELEMENTS {
         return None;
     }
 
@@ -205,7 +205,7 @@ impl ActivationW16 {
                 let sx = x as i16;
                 let doubled = (sx as i32 * 2).clamp(-32768, 32767) as i16 as u16;
                 let sig = sigmoid_q88(doubled); // Q8.8 in [0, 256]
-                // 2·sig − 256, reinterpret as u16 in ring
+                                                // 2·sig − 256, reinterpret as u16 in ring
                 let result = (sig as i32 * 2 - 256).clamp(-32768, 32767) as i16;
                 result as u16
             }
@@ -215,7 +215,7 @@ impl ActivationW16 {
                 let sx = x as i16 as i32;
                 let scaled = ((sx * 436) >> 8).clamp(-32768, 32767) as i16 as u16;
                 let sig = sigmoid_q88(scaled); // Q8.8 [0, 256]
-                // Q8.8 multiply: (x · sig) >> 8
+                                               // Q8.8 multiply: (x · sig) >> 8
                 q88_mul(x, sig)
             }
             Self::Silu => {
@@ -415,7 +415,11 @@ mod tests {
         let mut prev = table[32768]; // most negative
         for i in 32769..=65535u32 {
             let cur = table[i as usize];
-            assert!(cur >= prev, "sigmoid not monotonic at signed {}", i as u16 as i16);
+            assert!(
+                cur >= prev,
+                "sigmoid not monotonic at signed {}",
+                i as u16 as i16
+            );
             prev = cur;
         }
         for i in 0..=32767u32 {

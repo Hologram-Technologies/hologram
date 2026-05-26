@@ -65,17 +65,17 @@ pub fn emit_fused_swiglu<const CAP: usize>(
 /// Fused MatMul + elementwise activation epilogue.
 /// Term decomposition: nested Recurse (matmul) → activation anchor.
 pub fn emit_fused_matmul_activation<const CAP: usize>(
-    arena: &mut TermArena<CAP>,
+    arena: &mut HoloArena<CAP>,
     level: WittLevel,
     a_var: u32,
     _b_var: u32,
 ) -> EmitResult {
     // MatMul: nested Recurse over (i,j,k) → Add(acc, Mul(a,b))
-    let zero      = push_literal(arena, 0, level)?;
-    let mul_ab    = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
-    let inner     = push_application(arena, PrimitiveOp::Add, mul_ab, 2)?;
+    let zero = push_literal(arena, 0, level)?;
+    let mul_ab = push_application(arena, PrimitiveOp::Mul, a_var, 2)?;
+    let inner = push_application(arena, PrimitiveOp::Add, mul_ab, 2)?;
     let inner_rec = push_recurse(arena, zero, zero, inner)?;
-    let outer     = push_application(arena, PrimitiveOp::Add, inner_rec, 2)?;
+    let outer = push_application(arena, PrimitiveOp::Add, inner_rec, 2)?;
     let mm_result = push_recurse(arena, zero, zero, outer)?;
     // Activation epilogue (anchored on Mul, same as Silu/Sigmoid/etc.)
     push_application(arena, PrimitiveOp::Mul, mm_result, 2)

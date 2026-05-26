@@ -1,13 +1,14 @@
 //! `Graph` structure (spec VI.1).
 
 use crate::constant::{ConstantEntry, ConstantStore};
-use crate::node::{ConvAttrs, FusionAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs};
+use crate::node::{
+    ConvAttrs, FusionAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs,
+};
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
 use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
-
 
 /// Remap an `InputSource::Node` through an old→new node-id table; constants
 /// and graph-input ports are id-independent and pass through unchanged.
@@ -598,7 +599,9 @@ impl Graph {
     }
 
     pub fn fusion_attrs(&self, id: NodeId) -> Option<FusionAttrs> {
-        self.fusion_attrs.iter().find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+        self.fusion_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
     // --- Mutation API (used by fusion passes) ---
@@ -647,7 +650,9 @@ impl Graph {
 
     /// Return the list of node IDs that are still alive (not Dead).
     pub fn live_node_ids(&self) -> Vec<NodeId> {
-        self.nodes.iter().enumerate()
+        self.nodes
+            .iter()
+            .enumerate()
             .filter(|(_, n)| n.op != crate::node::GraphOp::Dead)
             .map(|(i, _)| NodeId(i as u32))
             .collect()

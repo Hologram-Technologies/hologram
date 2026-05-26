@@ -469,41 +469,77 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_buf(out, c.residual);
             put_u8(out, c.act);
         }
-        K::FusedMatMulActivation(c) => { put_u16(out, D_FMMA); put_fused_matmul_act(out, c); }
-        K::FusedConv2dActivation(c) => { put_u16(out, D_FCA); put_fused_conv2d_act(out, c); }
-        K::FusedNormActivation(c) => { put_u16(out, D_FNA); put_fused_norm_act(out, c); }
-        K::FusedUnaryChain(c) => { put_u16(out, D_FUC); put_fused_unary_chain(out, c); }
+        K::FusedMatMulActivation(c) => {
+            put_u16(out, D_FMMA);
+            put_fused_matmul_act(out, c);
+        }
+        K::FusedConv2dActivation(c) => {
+            put_u16(out, D_FCA);
+            put_fused_conv2d_act(out, c);
+        }
+        K::FusedNormActivation(c) => {
+            put_u16(out, D_FNA);
+            put_fused_norm_act(out, c);
+        }
+        K::FusedUnaryChain(c) => {
+            put_u16(out, D_FUC);
+            put_fused_unary_chain(out, c);
+        }
     }
 }
 
 fn put_fused_unary_chain(out: &mut Vec<u8>, c: &FusedUnaryChainCall) {
-    put_buf(out, c.input); put_buf(out, c.output);
-    put_u32(out, c.element_count); put_u8(out, c.dtype);
+    put_buf(out, c.input);
+    put_buf(out, c.output);
+    put_u32(out, c.element_count);
+    put_u8(out, c.dtype);
     put_u8(out, c.chain_len);
-    for i in 0..8 { put_u16(out, c.chain[i]); }
+    for i in 0..8 {
+        put_u16(out, c.chain[i]);
+    }
 }
 
 fn put_fused_conv2d_act(out: &mut Vec<u8>, c: &FusedConv2dActivationCall) {
-    put_buf(out, c.x); put_buf(out, c.w); put_buf(out, c.output);
-    put_u32(out, c.batch); put_u32(out, c.channels_in); put_u32(out, c.channels_out);
-    put_u32(out, c.h_in); put_u32(out, c.w_in);
-    put_u32(out, c.h_out); put_u32(out, c.w_out);
-    put_u32(out, c.k_h); put_u32(out, c.k_w);
-    put_u32(out, c.stride_h); put_u32(out, c.stride_w);
-    put_u32(out, c.pad_h); put_u32(out, c.pad_w);
-    put_u8(out, c.dtype); put_u16(out, c.activation);
+    put_buf(out, c.x);
+    put_buf(out, c.w);
+    put_buf(out, c.output);
+    put_u32(out, c.batch);
+    put_u32(out, c.channels_in);
+    put_u32(out, c.channels_out);
+    put_u32(out, c.h_in);
+    put_u32(out, c.w_in);
+    put_u32(out, c.h_out);
+    put_u32(out, c.w_out);
+    put_u32(out, c.k_h);
+    put_u32(out, c.k_w);
+    put_u32(out, c.stride_h);
+    put_u32(out, c.stride_w);
+    put_u32(out, c.pad_h);
+    put_u32(out, c.pad_w);
+    put_u8(out, c.dtype);
+    put_u16(out, c.activation);
 }
 fn put_fused_norm_act(out: &mut Vec<u8>, c: &FusedNormActivationCall) {
-    put_buf(out, c.x); put_buf(out, c.gamma); put_buf(out, c.beta);
-    put_buf(out, c.residual); put_buf(out, c.output);
-    put_u32(out, c.batch); put_u32(out, c.feature);
-    put_u64(out, c.epsilon_bits); put_u8(out, c.dtype);
+    put_buf(out, c.x);
+    put_buf(out, c.gamma);
+    put_buf(out, c.beta);
+    put_buf(out, c.residual);
+    put_buf(out, c.output);
+    put_u32(out, c.batch);
+    put_u32(out, c.feature);
+    put_u64(out, c.epsilon_bits);
+    put_u8(out, c.dtype);
     put_u16(out, c.activation);
 }
 fn put_fused_matmul_act(out: &mut Vec<u8>, c: &FusedMatMulActivationCall) {
-    put_buf(out, c.a); put_buf(out, c.b); put_buf(out, c.output);
-    put_u32(out, c.m); put_u32(out, c.k); put_u32(out, c.n);
-    put_u8(out, c.dtype); put_u16(out, c.activation);
+    put_buf(out, c.a);
+    put_buf(out, c.b);
+    put_buf(out, c.output);
+    put_u32(out, c.m);
+    put_u32(out, c.k);
+    put_u32(out, c.n);
+    put_u8(out, c.dtype);
+    put_u16(out, c.activation);
 }
 
 fn put_u16(out: &mut Vec<u8>, v: u16) {

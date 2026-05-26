@@ -113,6 +113,16 @@ pub struct InferenceSession<B: SessionBackend> {
     /// in `execute_attested` so the `Grounded<Digest<32>>` attestation
     /// anchors to *this* session's content, not a static dummy term.
     archive_fingerprint: [u8; 32],
+    /// Per-call memory tier assignments (PM_7). Loaded from the archive's
+    /// `TierAssignments` section. Empty if the section is absent.
+    #[cfg(feature = "tiered-exec")]
+    tiers: Vec<hologram_types::MemoryTier>,
+    /// Precomputed per-level migration schedule.
+    #[cfg(feature = "tiered-exec")]
+    migrations: Vec<crate::coherence::LevelMigration>,
+    /// Runtime tier override policy.
+    #[cfg(feature = "tiered-exec")]
+    tier_policy: crate::coherence::TierPolicy,
 }
 
 /// Backend bounds required for `InferenceSession` execute. Without the
@@ -368,6 +378,58 @@ impl<B: SessionBackend> InferenceSession<B> {
 
         let inputs_len = inputs.len();
 
+        // PM_7: load tier assignments and build migration schedule.
+        #[cfg(feature = "tiered-exec")]
+        let (tiers, migrations) = {
+            let tier_bytes: Vec<u8> = plan
+                .section(SectionKind::TierAssignments)
+                .ok()
+                .map(|b| b.to_vec())
+                .unwrap_or_default();
+            let tiers = hologram_backend::tiered::decode_tier_assignments(&tier_bytes);
+            // Build migration schedule from tier assignments + exec plan.
+            let call_outputs: Vec<u32> = kernel_calls
+                .iter()
+                .map(|c| {
+                    let bufs = hologram_backend::buffers(c);
+                    bufs.last().map(|b| b.slot).unwrap_or(u32::MAX)
+                })
+                .collect();
+            let call_inputs: Vec<Vec<u32>> = kernel_calls
+                .iter()
+                .map(|c| {
+                    let bufs = hologram_backend::buffers(c);
+                    if bufs.len() > 1 {
+                        bufs[..bufs.len() - 1]
+                            .iter()
+                            .filter(|b| b.slot != u32::MAX)
+                            .map(|b| b.slot)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect();
+            let migs = crate::coherence::build_migration_schedule(
+                &exec_plan,
+                &tiers,
+                &call_outputs,
+                &call_inputs,
+                slot_count,
+            );
+            let report = crate::coherence::build_report(&tiers, &migs);
+            tracing::info!(
+                cpu_l1 = report.cpu_l1_calls,
+                cpu_l2 = report.cpu_l2_calls,
+                cpu_main = report.cpu_main_calls,
+                device = report.device_calls,
+                migration_slots = report.total_migration_slots,
+                migration_levels = report.levels_with_migrations,
+                "PM_7 tier report"
+            );
+            (tiers, migs)
+        };
+
         Ok(Self {
             kernel_calls,
             exec_plan,
@@ -387,6 +449,12 @@ impl<B: SessionBackend> InferenceSession<B> {
             slot_label_scratch: Vec::new(),
             out_witnessed_scratch: Vec::new(),
             archive_fingerprint,
+            #[cfg(feature = "tiered-exec")]
+            tiers,
+            #[cfg(feature = "tiered-exec")]
+            migrations,
+            #[cfg(feature = "tiered-exec")]
+            tier_policy: crate::coherence::TierPolicy::Compiled,
         })
     }
 
@@ -818,6 +886,18 @@ impl<B: SessionBackend> InferenceSession<B> {
     #[inline]
     pub fn archive_fingerprint(&self) -> [u8; 32] {
         self.archive_fingerprint
+    }
+
+    /// Set the runtime tier override policy (PM_7).
+    #[cfg(feature = "tiered-exec")]
+    pub fn set_tier_policy(&mut self, policy: crate::coherence::TierPolicy) {
+        self.tier_policy = policy;
+    }
+
+    /// Get the current tier policy.
+    #[cfg(feature = "tiered-exec")]
+    pub fn tier_policy(&self) -> crate::coherence::TierPolicy {
+        self.tier_policy
     }
 
     /// Number of distinct content-addressed values resident in the

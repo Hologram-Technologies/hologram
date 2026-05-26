@@ -662,21 +662,32 @@ pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
     Ok(())
 }
 
-pub fn fused_matmul_activation_float<W: Workspace>(c: &FusedMatMulActivationCall, ws: &mut W) -> Result<(), BackendError> {
+pub fn fused_matmul_activation_float<W: Workspace>(
+    c: &FusedMatMulActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     let m = c.m as usize;
     let k = c.k as usize;
     let n = c.n as usize;
-    if m == 0 || k == 0 || n == 0 { return Ok(()); }
+    if m == 0 || k == 0 || n == 0 {
+        return Ok(());
+    }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let a = ws.read(c.a).get(..m * k * es)
+    let a = ws
+        .read(c.a)
+        .get(..m * k * es)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
         .to_vec();
-    let b = ws.read(c.b).get(..k * n * es)
+    let b = ws
+        .read(c.b)
+        .get(..k * n * es)
         .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
         .to_vec();
     let out = ws.write(c.output);
-    if out.len() < m * n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if out.len() < m * n * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
 
     let act_fn = resolve_activation_f32(c.activation);
 
@@ -732,15 +743,22 @@ fn resolve_activation_f32(activation: u16) -> fn(f32) -> f32 {
     }
 }
 
-pub fn fused_unary_chain_float<W: Workspace>(c: &FusedUnaryChainCall, ws: &mut W) -> Result<(), BackendError> {
+pub fn fused_unary_chain_float<W: Workspace>(
+    c: &FusedUnaryChainCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let dt = c.dtype;
     let es = elem_size(dt);
-    let input = ws.read(c.input).get(..n * es)
+    let input = ws
+        .read(c.input)
+        .get(..n * es)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
         .to_vec();
     let out = ws.write(c.output);
-    if out.len() < n * es { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if out.len() < n * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
     // Resolve chain function pointers once.
     let chain_len = c.chain_len as usize;
     let mut fns: [fn(f32) -> f32; 8] = [|x| x; 8];
@@ -757,15 +775,29 @@ pub fn fused_unary_chain_float<W: Workspace>(c: &FusedUnaryChainCall, ws: &mut W
     Ok(())
 }
 
-pub fn fused_conv2d_activation_float<W: Workspace>(c: &FusedConv2dActivationCall, ws: &mut W) -> Result<(), BackendError> {
+pub fn fused_conv2d_activation_float<W: Workspace>(
+    c: &FusedConv2dActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     // Delegate to unfused conv2d, then apply activation in-place.
     let conv = Conv2dCall {
-        x: c.x, w: c.w, output: c.output,
-        batch: c.batch, channels_in: c.channels_in, channels_out: c.channels_out,
-        h_in: c.h_in, w_in: c.w_in, h_out: c.h_out, w_out: c.w_out,
-        k_h: c.k_h, k_w: c.k_w,
-        stride_h: c.stride_h, stride_w: c.stride_w,
-        pad_h: c.pad_h, pad_w: c.pad_w, dtype: c.dtype,
+        x: c.x,
+        w: c.w,
+        output: c.output,
+        batch: c.batch,
+        channels_in: c.channels_in,
+        channels_out: c.channels_out,
+        h_in: c.h_in,
+        w_in: c.w_in,
+        h_out: c.h_out,
+        w_out: c.w_out,
+        k_h: c.k_h,
+        k_w: c.k_w,
+        stride_h: c.stride_h,
+        stride_w: c.stride_w,
+        pad_h: c.pad_h,
+        pad_w: c.pad_w,
+        dtype: c.dtype,
     };
     conv2d_float(&conv, ws)?;
     let n = (c.batch * c.channels_out * c.h_out * c.w_out) as usize;
@@ -780,13 +812,21 @@ pub fn fused_conv2d_activation_float<W: Workspace>(c: &FusedConv2dActivationCall
     Ok(())
 }
 
-pub fn fused_norm_activation_float<W: Workspace>(c: &FusedNormActivationCall, ws: &mut W) -> Result<(), BackendError> {
+pub fn fused_norm_activation_float<W: Workspace>(
+    c: &FusedNormActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     // Delegate to unfused layer_norm, then apply activation in-place.
     let norm = NormCall {
-        x: c.x, gamma: c.gamma, beta: c.beta,
-        residual: c.residual, output: c.output,
-        batch: c.batch, feature: c.feature,
-        epsilon_bits: c.epsilon_bits, dtype: c.dtype,
+        x: c.x,
+        gamma: c.gamma,
+        beta: c.beta,
+        residual: c.residual,
+        output: c.output,
+        batch: c.batch,
+        feature: c.feature,
+        epsilon_bits: c.epsilon_bits,
+        dtype: c.dtype,
     };
     layer_norm_float(&norm, ws)?;
     let n = (c.batch * c.feature) as usize;

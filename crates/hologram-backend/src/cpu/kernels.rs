@@ -17,6 +17,9 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
     if let Some(rv) = try_dispatch_float(call, ws) {
         return rv;
     }
+    if let Some(rv) = try_dispatch_lut_w16(call, ws) {
+        return rv;
+    }
     match call {
         // Direct PrimitiveOp wrappers.
         KernelCall::Neg(c) => unary_w8(c, ws, neg_byte),
@@ -910,7 +913,10 @@ fn matmul_w8<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), BackendErro
     Ok(())
 }
 
-fn fused_matmul_activation_w8<W: Workspace>(c: &FusedMatMulActivationCall, ws: &mut W) -> Result<(), BackendError> {
+fn fused_matmul_activation_w8<W: Workspace>(
+    c: &FusedMatMulActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     // W8 byte-domain: matmul then apply activation byte-wise.
     let m = c.m as usize;
     let k = c.k as usize;
@@ -918,16 +924,20 @@ fn fused_matmul_activation_w8<W: Workspace>(c: &FusedMatMulActivationCall, ws: &
     if m == 0 || k == 0 || n == 0 {
         return Ok(());
     }
-    let a_bytes = ws.read(c.a)
+    let a_bytes = ws
+        .read(c.a)
         .get(..m * k)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?
         .to_vec();
-    let b_bytes = ws.read(c.b)
+    let b_bytes = ws
+        .read(c.b)
         .get(..k * n)
         .ok_or(BackendError::SlotOutOfRange(c.b.slot))?
         .to_vec();
     let out = ws.write(c.output);
-    if out.len() < m * n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if out.len() < m * n {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
     for i in 0..m {
         for j in 0..n {
             let mut acc: u8 = 0;
@@ -958,13 +968,20 @@ fn apply_activation_byte(x: u8, activation: u16) -> u8 {
     }
 }
 
-fn fused_unary_chain_w8<W: Workspace>(c: &FusedUnaryChainCall, ws: &mut W) -> Result<(), BackendError> {
+fn fused_unary_chain_w8<W: Workspace>(
+    c: &FusedUnaryChainCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let input = ws.read(c.input).get(..n)
+    let input = ws
+        .read(c.input)
+        .get(..n)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?
         .to_vec();
     let out = ws.write(c.output);
-    if out.len() < n { return Err(BackendError::SlotOutOfRange(c.output.slot)); }
+    if out.len() < n {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
     for i in 0..n {
         let mut x = input[i];
         for &act in &c.chain[..c.chain_len as usize] {
@@ -975,15 +992,29 @@ fn fused_unary_chain_w8<W: Workspace>(c: &FusedUnaryChainCall, ws: &mut W) -> Re
     Ok(())
 }
 
-fn fused_conv2d_activation_w8<W: Workspace>(c: &FusedConv2dActivationCall, ws: &mut W) -> Result<(), BackendError> {
+fn fused_conv2d_activation_w8<W: Workspace>(
+    c: &FusedConv2dActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     // Delegate to the unfused conv2d kernel, then apply activation in-place.
     let conv = Conv2dCall {
-        x: c.x, w: c.w, output: c.output,
-        batch: c.batch, channels_in: c.channels_in, channels_out: c.channels_out,
-        h_in: c.h_in, w_in: c.w_in, h_out: c.h_out, w_out: c.w_out,
-        k_h: c.k_h, k_w: c.k_w,
-        stride_h: c.stride_h, stride_w: c.stride_w,
-        pad_h: c.pad_h, pad_w: c.pad_w, dtype: c.dtype,
+        x: c.x,
+        w: c.w,
+        output: c.output,
+        batch: c.batch,
+        channels_in: c.channels_in,
+        channels_out: c.channels_out,
+        h_in: c.h_in,
+        w_in: c.w_in,
+        h_out: c.h_out,
+        w_out: c.w_out,
+        k_h: c.k_h,
+        k_w: c.k_w,
+        stride_h: c.stride_h,
+        stride_w: c.stride_w,
+        pad_h: c.pad_h,
+        pad_w: c.pad_w,
+        dtype: c.dtype,
     };
     conv2d_w8(&conv, ws)?;
     // Apply activation epilogue in-place.
@@ -995,13 +1026,21 @@ fn fused_conv2d_activation_w8<W: Workspace>(c: &FusedConv2dActivationCall, ws: &
     Ok(())
 }
 
-fn fused_norm_activation_w8<W: Workspace>(c: &FusedNormActivationCall, ws: &mut W) -> Result<(), BackendError> {
+fn fused_norm_activation_w8<W: Workspace>(
+    c: &FusedNormActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
     // Delegate to the unfused norm kernel, then apply activation in-place.
     let norm = NormCall {
-        x: c.x, gamma: c.gamma, beta: c.beta,
-        residual: c.residual, output: c.output,
-        batch: c.batch, feature: c.feature,
-        epsilon_bits: c.epsilon_bits, dtype: c.dtype,
+        x: c.x,
+        gamma: c.gamma,
+        beta: c.beta,
+        residual: c.residual,
+        output: c.output,
+        batch: c.batch,
+        feature: c.feature,
+        epsilon_bits: c.epsilon_bits,
+        dtype: c.dtype,
     };
     layer_norm_w8(&norm, ws)?;
     // Apply activation epilogue in-place.
@@ -1305,6 +1344,29 @@ fn greater_or_equal_byte(a: u8, b: u8) -> u8 {
     }
 }
 
+/// W16 LUT-accelerated dispatch for unary activations at quantum level Q1
+/// (9–16 bit). Returns `Some(result)` if the call was handled via a 128KB
+/// lookup table; `None` otherwise (caller falls through to the regular path).
+fn try_dispatch_lut_w16<W: Workspace>(
+    call: &KernelCall,
+    ws: &mut W,
+) -> Option<Result<(), BackendError>> {
+    use super::lut_w16::{self, ActivationW16};
+    use KernelCall as K;
+    match call {
+        K::Relu(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Relu),
+        K::Sigmoid(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Sigmoid),
+        K::Tanh(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Tanh),
+        K::Gelu(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Gelu),
+        K::Silu(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Silu),
+        K::Neg(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Neg),
+        K::Abs(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Abs),
+        K::Exp(c) => lut_w16::try_dispatch_unary_w16(c, ws, ActivationW16::Exp),
+        K::FusedUnaryChain(c) => lut_w16::try_dispatch_chain_w16(c, ws),
+        _ => None,
+    }
+}
+
 /// Float-typed dispatch. Returns `Some(result)` if the call's dtype is a
 /// float dtype and the corresponding float kernel handled it; `None`
 /// otherwise (caller falls through to byte-domain dispatch).
@@ -1478,9 +1540,15 @@ fn try_dispatch_float<W: Workspace>(
         K::FusedSwiGlu(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
             "FusedSwiGlu: gate+up weights not representable in MatMulCall (one operand)",
         ))),
-        K::FusedMatMulActivation(c) if is_float(c.dtype) => Some(ff::fused_matmul_activation_float(c, ws)),
-        K::FusedConv2dActivation(c) if is_float(c.dtype) => Some(ff::fused_conv2d_activation_float(c, ws)),
-        K::FusedNormActivation(c) if is_float(c.dtype) => Some(ff::fused_norm_activation_float(c, ws)),
+        K::FusedMatMulActivation(c) if is_float(c.dtype) => {
+            Some(ff::fused_matmul_activation_float(c, ws))
+        }
+        K::FusedConv2dActivation(c) if is_float(c.dtype) => {
+            Some(ff::fused_conv2d_activation_float(c, ws))
+        }
+        K::FusedNormActivation(c) if is_float(c.dtype) => {
+            Some(ff::fused_norm_activation_float(c, ws))
+        }
         K::FusedUnaryChain(c) if is_float(c.dtype) => Some(ff::fused_unary_chain_float(c, ws)),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
         K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
