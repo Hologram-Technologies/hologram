@@ -10,7 +10,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use hologram_backend::CpuBackend;
 use hologram_compiler::{compile_from_source, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
-use uor_foundation::WittLevel;
+use prism::vocabulary::WittLevel;
 
 const MATMUL_SILU_SOURCE: &str = r"
 input a
