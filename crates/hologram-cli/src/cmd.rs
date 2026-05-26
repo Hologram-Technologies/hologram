@@ -64,7 +64,7 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             output,
             no_warm,
         } => {
-            let kind = parse_backend(&backend);
+            let kind = parse_backend(&backend)?;
             let level = WittLevel::new(witt_level);
             let graph = match source {
                 Some(path) => {
@@ -106,9 +106,10 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
                 hologram_backend::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
                 .map_err(|_| CompileError::SourceParse("load archive"))?;
-            let zeros = vec![0u8; 4096];
-            let inputs: Vec<hologram_exec::InputBuffer> = (0..session.input_count())
-                .map(|_| hologram_exec::InputBuffer { bytes: &zeros })
+            let zeros = zero_inputs_for(&session);
+            let inputs: Vec<hologram_exec::InputBuffer> = zeros
+                .iter()
+                .map(|b| hologram_exec::InputBuffer { bytes: b })
                 .collect();
             let outputs = session
                 .execute(&inputs)
@@ -159,9 +160,10 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
                 hologram_backend::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
                 .map_err(|_| CompileError::SourceParse("load archive"))?;
-            let zeros = vec![0u8; 4096];
-            let inputs: Vec<hologram_exec::InputBuffer> = (0..session.input_count())
-                .map(|_| hologram_exec::InputBuffer { bytes: &zeros })
+            let zeros = zero_inputs_for(&session);
+            let inputs: Vec<hologram_exec::InputBuffer> = zeros
+                .iter()
+                .map(|b| hologram_exec::InputBuffer { bytes: b })
                 .collect();
             // Warmup.
             let _ = session.execute(&inputs);
@@ -186,13 +188,32 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
     }
 }
 
-fn parse_backend(s: &str) -> BackendKind {
+fn parse_backend(s: &str) -> Result<BackendKind, CompileError> {
     match s {
-        "avx2" => BackendKind::Avx2,
-        "avx512" => BackendKind::Avx512,
-        "neon" => BackendKind::Neon,
-        "metal" => BackendKind::Metal,
-        "wgpu" => BackendKind::Wgpu,
-        _ => BackendKind::Cpu,
+        "cpu" => Ok(BackendKind::Cpu),
+        "avx2" => Ok(BackendKind::Avx2),
+        "avx512" => Ok(BackendKind::Avx512),
+        "neon" => Ok(BackendKind::Neon),
+        "metal" => Ok(BackendKind::Metal),
+        "wgpu" => Ok(BackendKind::Wgpu),
+        // Fail loud: an unrecognized `--backend` must not silently downgrade
+        // to CPU (a typo like `--backend wgpi` would otherwise compile for the
+        // wrong target without warning).
+        _ => Err(CompileError::SourceParse(
+            "unknown backend (expected one of: cpu, avx2, avx512, neon, metal, wgpu)",
+        )),
     }
+}
+
+/// Owned zero-filled input buffers sized to each declared input port — the
+/// diagnostic Execute/Bench commands feed dummy zeros, but each port's byte
+/// length comes from the archive's declared shape × dtype, not a fixed cap.
+fn zero_inputs_for(
+    session: &hologram_exec::InferenceSession<
+        hologram_backend::CpuBackend<hologram_exec::BufferArena>,
+    >,
+) -> Vec<Vec<u8>> {
+    (0..session.input_count())
+        .map(|i| vec![0u8; session.input_byte_len(i)])
+        .collect()
 }

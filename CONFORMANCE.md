@@ -306,6 +306,7 @@
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **OV-1** | Byte offsets/lengths (`BufferRef`, `SlotSpan`) and element counts (`PortDescriptor`, kernel calls, compiler `element_counts`/`byte_lengths`) are **u64** — no 4 GiB / 4.29 B-element cap, no saturating/truncating size arithmetic. Values beyond `u32::MAX` survive the archive codec round-trip without truncation. _Regression fix: these were u32 with `saturating_mul` + `offset: total as u32`, so a >4 GiB workspace silently truncated slot offsets (corruption) and a >4 GiB tensor's byte length capped._ | codec round-trip + type widening | `hologram-archive/tests/conformance.rs::ov_codec_roundtrips_beyond_u32_without_truncation` | ✅ |
+| **OV-2** | The host boundary never reports a truncated transfer as success: the C-ABI compile entry points return the **full** archive length (snprintf-style, so `ret > capacity` ⇒ caller retries larger), and `hologram_session_execute` **fails loud** (-1) on an undersized output buffer instead of silently writing a partial result. Callers size buffers from `input_byte_len`/`output_byte_len` (the archive's declared shape × dtype), not a fixed cap. _Regression fix: the FFI copied `min(len, capacity)` and returned success; the CLI fed a hard-coded 4096-byte input buffer; an unknown `--backend` silently downgraded to CPU._ | C-ABI integration tests | `hologram-ffi/tests/c_abi.rs::{compile_signals_truncation_via_required_length, execute_fails_loud_on_undersized_output_buffer}` | ✅ |
 
 ## NS — Portability
 

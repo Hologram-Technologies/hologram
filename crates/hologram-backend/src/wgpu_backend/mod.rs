@@ -166,10 +166,16 @@ impl<W: Workspace> WgpuBackend<W> {
     ) -> Vec<u8> {
         let device = &self.ctx.device;
         let queue = &self.ctx.queue;
-        let pipeline = match self.ctx.pipelines.get(entry_name) {
-            Some(p) => p,
-            None => return vec![0; out_len],
-        };
+        // Every caller passes a compile-time-constant entry name that is
+        // compiled into the pipeline set at context creation, so a miss here
+        // is an internal invariant violation — fail loud rather than silently
+        // return a zero-filled buffer (which would masquerade as a valid GPU
+        // result for an unimplemented op).
+        let pipeline = self
+            .ctx
+            .pipelines
+            .get(entry_name)
+            .unwrap_or_else(|| panic!("wgpu pipeline '{entry_name}' not compiled"));
 
         // Allocate device-side buffers.
         let a_buf = device.create_buffer(&wgpu::BufferDescriptor {
