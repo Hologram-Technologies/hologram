@@ -200,6 +200,90 @@ fn dequantize_int4_packed_unpacks_correctly() {
 }
 
 #[test]
+fn dequant_matmul_fuses_and_matches_unfused() {
+    // A[2,3] · dequant(Wq[3,2]) with a *dynamic* quantized weight (graph input).
+    // The `dequantize → matmul` fusion fires, eliding the dense f32 weight; the
+    // result equals dequantizing then multiplying separately.
+    let mut graph = Graph::new();
+    let a_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 3));
+    let w_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(3, 2));
+    let o_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 2));
+    let a_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: a_sh,
+    });
+    graph.add_input(a_in);
+    let wq = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: w_sh,
+    });
+    graph.add_input(wq);
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(wq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: w_sh,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.5f32.to_bits(),
+            zero_point: 0,
+            axis: -1,
+        },
+    );
+    let mm = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    graph.add_output(out);
+
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+    assert_eq!(
+        session.dequant_fused_count(),
+        1,
+        "dequant→matmul must fuse to MatMulDequant"
+    );
+
+    let a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let a_bytes: Vec<u8> = a.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let wq_bytes: Vec<u8> = vec![1u8, 2, 3, 4, 5, 6]; // i8 = W·2 (scale 0.5)
+    let outputs = session
+        .execute(&[
+            InputBuffer { bytes: &a_bytes },
+            InputBuffer { bytes: &wq_bytes },
+        ])
+        .unwrap();
+    let result = le_to_f32(&outputs[0].bytes);
+    // W = [[0.5,1],[1.5,2],[2.5,3]] ; A·W = [[11,14],[24.5,32]].
+    let want = [11.0f32, 14.0, 24.5, 32.0];
+    for (g, w) in result.iter().zip(want.iter()) {
+        assert!((g - w).abs() < 1e-5, "got {result:?} want {want:?}");
+    }
+}
+
+#[test]
 fn dequantize_int8_with_nonzero_zero_point() {
     // Asymmetric INT8: scale = 0.25, zp = 5 → y = (q − 5) · 0.25
     // q = [5, 9, 13, 1] → [0.0, 1.0, 2.0, -1.0]

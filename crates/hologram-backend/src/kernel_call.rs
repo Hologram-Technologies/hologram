@@ -46,6 +46,38 @@ pub struct MatMulCall {
     pub b_packed: bool,
 }
 
+/// Fused dequantize-then-matmul: `output = A · dequant(Bq)`. Produced by the
+/// runtime `Dequantize → MatMul` fusion (the dequant feeds the matmul's B
+/// operand and has no other consumer). The dense f32 weight is **never
+/// materialized in the pool** — `Bq` stays quantized and is dequantized into a
+/// transient scratch panel inside the kernel. `A` is row-major f32 `[m,k]`;
+/// `Bq` is the quantized `[k,n]` weight (i8/i4) with per-tensor or per-channel
+/// scale/zero-point (same layout as [`DequantizeCall`]).
+#[derive(Debug, Clone, Copy)]
+pub struct MatMulDequantCall {
+    pub a: BufferRef,
+    pub bq: BufferRef,
+    pub scales: BufferRef,
+    pub zero_points: BufferRef,
+    pub output: BufferRef,
+    pub m: u32,
+    pub k: u32,
+    pub n: u32,
+    pub channels: u32,
+    pub inner: u32,
+    pub quant_dtype: u8,
+    pub dtype: u8,
+    pub scale_bits: u32,
+    pub zero_point: i32,
+}
+
+impl MatMulDequantCall {
+    #[inline]
+    pub const fn per_channel(&self) -> bool {
+        self.channels > 0 && self.scales.slot != u32::MAX
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct GemmCall {
     pub a: BufferRef,
@@ -714,6 +746,8 @@ pub enum KernelCall {
     MatMulActivation(MatMulActivationCall),
     MatMulAdd(MatMulAddCall),
     MatMulAddActivation(MatMulAddActivationCall),
+    /// Fused dequantize → matmul (the dequant feeds B; dense f32 weight elided).
+    MatMulDequant(MatMulDequantCall),
 }
 
 impl KernelCall {
@@ -846,6 +880,17 @@ impl KernelCall {
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
             K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
+            K::MatMulDequant(c) => Pb::new()
+                .u32(c.m)
+                .u32(c.k)
+                .u32(c.n)
+                .u32(c.channels)
+                .u32(c.inner)
+                .u8(c.quant_dtype)
+                .u8(c.dtype)
+                .u32(c.scale_bits)
+                .i32(c.zero_point)
+                .done(108),
         }
     }
 }
@@ -914,6 +959,10 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::MatMul(c) | K::FusedSwiGlu(c) => vec![c.a, c.b, c.output],
 
+        K::MatMulDequant(c) if c.per_channel() => {
+            vec![c.a, c.bq, c.scales, c.zero_points, c.output]
+        }
+        K::MatMulDequant(c) => vec![c.a, c.bq, c.output],
         K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
         K::MatMulAdd(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
         K::MatMulAddActivation(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
@@ -1018,6 +1067,7 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
 
         K::MatMul(c) | K::FusedSwiGlu(c) => c.dtype,
 
+        K::MatMulDequant(c) => c.dtype,
         K::MatMulActivation(c) => c.mm.dtype,
         K::MatMulAdd(c) => c.mm.dtype,
         K::MatMulAddActivation(c) => c.mm.dtype,

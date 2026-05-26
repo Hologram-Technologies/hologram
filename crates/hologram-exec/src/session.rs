@@ -14,7 +14,7 @@ use hologram_archive::{
 };
 use hologram_backend::{
     buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
-    MatMulCall,
+    MatMulCall, MatMulDequantCall,
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
@@ -171,6 +171,12 @@ impl<B: SessionBackend> InferenceSession<B> {
         // addressed — the fused op carries a single κ-derivation. Runs once
         // at load over the decoded schedule; a no-op when nothing fuses.
         let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
+        // Fuse `dequantize → matmul` so a quantized weight is dequantized inside
+        // the matmul (transient panel) rather than materializing the dense f32
+        // weight in the pool. Constant quantized weights are folded at warm-start
+        // (no runtime dequant), so a runtime dequant feeding a matmul is dynamic
+        // — fusing it is a pure win.
+        let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs);
 
         // Constants are pre-fill payloads that the runtime writes into
         // designated workspace slots before any kernel dispatches.
@@ -743,6 +749,15 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulAddActivation(_)))
             .count()
     }
+    /// Number of fused `dequantize → matmul` ops in the loaded schedule — a
+    /// quantized weight dequantized inside the matmul, the dense f32 weight
+    /// never materialized in the pool.
+    pub fn dequant_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::MatMulDequant(_)))
+            .count()
+    }
     pub fn input_count(&self) -> usize {
         self.inputs.len()
     }
@@ -974,6 +989,108 @@ const fn port_bytes_per_element(dtype: u8) -> usize {
 /// schedule is rebuilt with the activation's level entry dropped; the fused
 /// op stays at the matmul's (earlier) level, which preserves all
 /// dependencies (its result is ready no later than before).
+/// Fuse a `Dequantize → MatMul` pair — the dequant produces the matmul's B
+/// operand and has no other consumer — into one [`KernelCall::MatMulDequant`],
+/// so the dense f32 weight is never materialized in the pool (the quantized
+/// source is dequantized into a transient panel inside the matmul kernel).
+/// Constant quantized weights are folded at warm-start (no runtime dequant), so
+/// a *runtime* dequant feeding a matmul is a dynamic operand — fusing it elides
+/// a full dense tensor with no recompute regression. Runs at load.
+fn fuse_dequant_matmul(
+    calls: Vec<KernelCall>,
+    plan: Vec<Vec<u32>>,
+    outputs: &[PortDescriptor],
+) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
+    use hashbrown::HashSet;
+    let n = calls.len();
+    let mut prod_count: HashMap<u32, u32> = HashMap::new();
+    let mut read_count: HashMap<u32, u32> = HashMap::new();
+    let mut read_idx: HashMap<u32, usize> = HashMap::new();
+    for (i, call) in calls.iter().enumerate() {
+        if let Some((out, ins)) = buffers(call).split_last() {
+            for r in ins {
+                if r.slot != u32::MAX {
+                    *read_count.entry(r.slot).or_insert(0) += 1;
+                    read_idx.insert(r.slot, i);
+                }
+            }
+            if out.slot != u32::MAX {
+                *prod_count.entry(out.slot).or_insert(0) += 1;
+            }
+        }
+    }
+    let out_slots: HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
+    let mut absorbed = vec![false; n];
+    let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
+    for i in 0..n {
+        let dq = match &calls[i] {
+            KernelCall::Dequantize(c) => *c,
+            _ => continue,
+        };
+        let s = dq.output.slot;
+        // The dequant output must be a private, single-consumer intermediate.
+        if s == u32::MAX || out_slots.contains(&s) {
+            continue;
+        }
+        if prod_count.get(&s) != Some(&1) || read_count.get(&s) != Some(&1) {
+            continue;
+        }
+        let j = match read_idx.get(&s) {
+            Some(&j) if j != i && !absorbed[j] => j,
+            _ => continue,
+        };
+        // Only a plain (un-packed) f32 matmul whose **B** operand is the dequant
+        // output — the dequantized weight.
+        let mm = match &calls[j] {
+            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 && !c.b_packed && c.b.slot == s => *c,
+            _ => continue,
+        };
+        fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
+            a: mm.a,
+            bq: dq.input,
+            scales: dq.scales,
+            zero_points: dq.zero_points,
+            output: mm.output,
+            m: mm.m,
+            k: mm.k,
+            n: mm.n,
+            channels: dq.channels,
+            inner: dq.inner,
+            quant_dtype: dq.quant_dtype,
+            dtype: mm.dtype,
+            scale_bits: dq.scale_bits,
+            zero_point: dq.zero_point,
+        }));
+        absorbed[i] = true; // drop the standalone dequant
+    }
+    if !absorbed.iter().any(|&a| a) {
+        return (calls, plan);
+    }
+    let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n);
+    let mut remap = vec![u32::MAX; n];
+    for i in 0..n {
+        if absorbed[i] {
+            continue;
+        }
+        remap[i] = new_calls.len() as u32;
+        new_calls.push(fused[i].take().unwrap_or(calls[i]));
+    }
+    let mut new_plan: Vec<Vec<u32>> = Vec::with_capacity(plan.len());
+    for level in &plan {
+        let lvl: Vec<u32> = level
+            .iter()
+            .filter_map(|&ci| {
+                let ci = ci as usize;
+                (ci < n && !absorbed[ci]).then(|| remap[ci])
+            })
+            .collect();
+        if !lvl.is_empty() {
+            new_plan.push(lvl);
+        }
+    }
+    (new_calls, new_plan)
+}
+
 fn fuse_matmul_epilogue(
     calls: Vec<KernelCall>,
     plan: Vec<Vec<u32>>,
