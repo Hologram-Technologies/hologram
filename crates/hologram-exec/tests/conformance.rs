@@ -1423,8 +1423,12 @@ fn fu5_matmul_add_activation_fuses_and_conforms() {
         let got = le_to_f32(
             &sess
                 .execute(&[
-                    InputBuffer { bytes: &f32_to_le(&x) },
-                    InputBuffer { bytes: &f32_to_le(&b) },
+                    InputBuffer {
+                        bytes: &f32_to_le(&x),
+                    },
+                    InputBuffer {
+                        bytes: &f32_to_le(&b),
+                    },
                 ])
                 .unwrap()[0]
                 .bytes,
@@ -1435,7 +1439,10 @@ fn fu5_matmul_add_activation_fuses_and_conforms() {
             .zip(&want)
             .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
             .fold(0f64, f64::max);
-        assert!(err <= 1e-4, "fused {act:?} diverged from reference (err {err:.3e})");
+        assert!(
+            err <= 1e-4,
+            "fused {act:?} diverged from reference (err {err:.3e})"
+        );
     }
 
     // Guarded: the intermediate add also feeds a graph output (second observer),

@@ -3,11 +3,10 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, Im2ColCall,
-    KernelCall,
-    LayoutCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, NormCall,
-    PoolCall, ReduceCall,
-    ExpandCall, LrnCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
+    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall,
+    MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
+    TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.

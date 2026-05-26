@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use crate::error::CompileError;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, Im2ColCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
+    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
     RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
@@ -174,7 +174,8 @@ impl ShapeArgs {
         // valid-conv output extent is derived: `Hout = (Hin − kh)/sh + 1`.
         if matches!(
             node.op,
-            hologram_graph::GraphOp::Op(OpKind::Im2Col) | hologram_graph::GraphOp::Op(OpKind::Col2Im)
+            hologram_graph::GraphOp::Op(OpKind::Im2Col)
+                | hologram_graph::GraphOp::Op(OpKind::Col2Im)
         ) {
             let conv = graph.conv_attrs(node_id).unwrap_or_default();
             a.k_h = conv.k_h;

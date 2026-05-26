@@ -385,7 +385,7 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// the per-port `input_cache` reuses the κ-label for an unchanged
     /// input, so identical bytes are never rehashed) and outputs are
     /// resolved back to bytes. Inside, everything operates on addresses
-    /// via [`Self::run_addressed`].
+    /// via [`Self::execute_addressed`].
     ///
     /// Callers driving a pipeline (e.g. autoregressive decode) should
     /// prefer [`Self::execute_addressed`], which never touches raw bytes
@@ -615,8 +615,11 @@ impl<B: SessionBackend> InferenceSession<B> {
                 // copy kernel so they retain their own buffer correctly.)
                 if !is_out {
                     if let KernelCall::Slice(lc) = &self.kernel_calls[ci] {
-                        let (data_slot, off, len) =
-                            (lc.input.slot as usize, lc.input.offset as usize, lc.input.length as usize);
+                        let (data_slot, off, len) = (
+                            lc.input.slot as usize,
+                            lc.input.offset as usize,
+                            lc.input.length as usize,
+                        );
                         self.pool.bind_view(out_slot, data_slot, off, len);
                         slot_label[out_slot] = label;
                         self.last_skipped += 1;
@@ -828,7 +831,7 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// Runs the cone through the *same* kernels and pool as a normal execute
     /// (no second compute path), so the materialized bytes are byte-identical
     /// to what the cold walk would produce. The lattice is derived
-    /// **post-fusion** (see [`Self::cone_lattice`]), so a fused constant-only
+    /// **post-fusion** (see `cone_lattice`), so a fused constant-only
     /// `matmul→activation` is addressed as the single op the walk dispatches
     /// and is materialized correctly — there is no pre-/post-fusion mismatch.
     pub fn materialize_cone(&mut self) -> Result<Vec<WarmEntry>, ExecError> {
@@ -1081,10 +1084,16 @@ fn fuse_matmul_epilogue(
                     let krefs = buffers(&calls[k]);
                     if let Some((kout, kins)) = krefs.split_last() {
                         if kins.len() == 1 && kins[0].slot == add_out {
-                            let fused_mm = MatMulCall { output: *kout, ..mm };
-                            fused[i] = Some(KernelCall::MatMulAddActivation(
-                                MatMulAddActivationCall { mm: fused_mm, residual, act },
-                            ));
+                            let fused_mm = MatMulCall {
+                                output: *kout,
+                                ..mm
+                            };
+                            fused[i] =
+                                Some(KernelCall::MatMulAddActivation(MatMulAddActivationCall {
+                                    mm: fused_mm,
+                                    residual,
+                                    act,
+                                }));
                             absorbed[j] = true;
                             absorbed[k] = true;
                             continue;

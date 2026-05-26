@@ -70,7 +70,7 @@ pub enum OpKind {
     /// expressed as `W · im2col(x)`, and its gradients composed from the
     /// matmul VJP. Single-instance (rank-3 `[Cin,Hin,Win]` → rank-2).
     Im2Col,
-    /// col2im: the adjoint of [`Im2Col`] — scatter-add a `[Cin·kh·kw,
+    /// col2im: the adjoint of [`Im2Col`](Self::Im2Col) — scatter-add a `[Cin·kh·kw,
     /// Hout·Wout]` patch matrix back into a `[Cin,Hin,Win]` image (overlapping
     /// windows accumulate). The input-gradient half of conv composition.
     Col2Im,

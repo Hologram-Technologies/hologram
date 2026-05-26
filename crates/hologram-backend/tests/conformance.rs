@@ -854,7 +854,11 @@ fn kc11_pooling_conforms_across_scale() {
 fn kcdt_f64_rejected_never_silent_zero() {
     let d = 4usize;
     let mut ws = TestWorkspace {
-        slots: vec![vec![0u8; d * d * 8], vec![0u8; d * d * 8], vec![1u8; d * d * 8]],
+        slots: vec![
+            vec![0u8; d * d * 8],
+            vec![0u8; d * d * 8],
+            vec![1u8; d * d * 8],
+        ],
     };
     let call = KernelCall::MatMul(MatMulCall {
         a: buf(0),
@@ -987,5 +991,8 @@ fn kc8b_bf16_attention_routes_through_engine() {
     let got: Vec<f32> = (0..n).map(|i| read_bf16(&ws.slots[3], i)).collect();
     let err = max_rel_err(&got, &want);
     assert!(err <= 3e-2, "bf16 attention rel err {err:.3e} > 3e-2");
-    assert!(got.iter().any(|&v| v.abs() > 1e-6), "bf16 attention all zeros");
+    assert!(
+        got.iter().any(|&v| v.abs() > 1e-6),
+        "bf16 attention all zeros"
+    );
 }

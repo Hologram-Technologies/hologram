@@ -67,7 +67,11 @@ fn resolve_const<'a>(
 /// `None`. Only the IEEE float dtypes (f16=6, bf16=7, f32=8) participate —
 /// the identity rules are stated in those algebras — and an empty / partial
 /// constant is treated as unknown.
-fn identity_fill(nodes: &[Node], consts: &ConstantStore, src: InputSource) -> Option<IdentityConst> {
+fn identity_fill(
+    nodes: &[Node],
+    consts: &ConstantStore,
+    src: InputSource,
+) -> Option<IdentityConst> {
     let entry = resolve_const(nodes, consts, src)?;
     let (esize, zero, one): (usize, &[u8], &[u8]) = match entry.dtype.0 {
         8 => (4, &[0, 0, 0, 0], &[0x00, 0x00, 0x80, 0x3F]), // f32: 1.0 = 0x3F800000
@@ -369,7 +373,7 @@ impl Graph {
     /// run at compile time (after [`desugar_composites`](Self::desugar_composites),
     /// before scheduling). Two value-preserving rewrites, then dead-node
     /// elimination — every rule is exact within the runtime's accuracy
-    /// contract (see [`IdentityConst`]); no rule is applied unless it provably
+    /// contract (see `IdentityConst`); no rule is applied unless it provably
     /// preserves the result, so this never trades correctness for speed.
     ///
     /// 1. **Identity-element elimination.** `x+0`, `0+x`, `x-0`, `x·1`, `1·x`,
@@ -408,7 +412,8 @@ impl Graph {
             // `operand` (already in new-id space). `None` ⇒ keep the node.
             let redirect: Option<InputSource> = match node.op {
                 GraphOp::Op(K::Add) if inputs.len() == 2 => {
-                    if identity_fill(&new, &self.constants, inputs[0]) == Some(IdentityConst::Zero) {
+                    if identity_fill(&new, &self.constants, inputs[0]) == Some(IdentityConst::Zero)
+                    {
                         Some(inputs[1])
                     } else if identity_fill(&new, &self.constants, inputs[1])
                         == Some(IdentityConst::Zero)
@@ -851,7 +856,10 @@ mod elision_tests {
             output(&mut g, c);
             g.elide_invariants();
             assert_eq!(
-                g.nodes().iter().filter(|nd| nd.op == GraphOp::Op(k)).count(),
+                g.nodes()
+                    .iter()
+                    .filter(|nd| nd.op == GraphOp::Op(k))
+                    .count(),
                 1
             );
         }
@@ -873,16 +881,20 @@ mod elision_tests {
     #[test]
     fn reshape_chain_collapses() {
         let mut g = Graph::new();
-        let s2 = g.shape_registry_mut().intern(crate::registry::ShapeDescriptor {
-            rank: 1,
-            dims: [4, 0, 0, 0, 0, 0, 0, 0],
-            dims_overflow: None,
-        });
-        let s3 = g.shape_registry_mut().intern(crate::registry::ShapeDescriptor {
-            rank: 2,
-            dims: [2, 2, 0, 0, 0, 0, 0, 0],
-            dims_overflow: None,
-        });
+        let s2 = g
+            .shape_registry_mut()
+            .intern(crate::registry::ShapeDescriptor {
+                rank: 1,
+                dims: [4, 0, 0, 0, 0, 0, 0, 0],
+                dims_overflow: None,
+            });
+        let s3 = g
+            .shape_registry_mut()
+            .intern(crate::registry::ShapeDescriptor {
+                rank: 2,
+                dims: [2, 2, 0, 0, 0, 0, 0, 0],
+                dims_overflow: None,
+            });
         let x = input(&mut g);
         let r1 = g.add_node(Node {
             op: GraphOp::Op(K::Reshape),

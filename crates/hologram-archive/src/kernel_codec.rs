@@ -8,8 +8,8 @@
 
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, Im2ColCall,
-    KernelCall, ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
+    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
     RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 

@@ -27,7 +27,9 @@ fn run(src: &str, x: &[f32]) -> (Vec<f32>, u32) {
         InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
     let out = le_to_f32(
         &sess
-            .execute(&[InputBuffer { bytes: &f32_to_le(x) }])
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(x),
+            }])
             .unwrap()[0]
             .bytes,
     );

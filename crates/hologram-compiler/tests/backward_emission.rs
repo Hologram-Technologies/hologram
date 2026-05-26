@@ -60,8 +60,12 @@ fn append_backward_composes_from_forward_ops_only() {
     // autodiff moved to composition), so every appended node is a forward op.
     let added = &graph.nodes()[original..];
     assert!(
-        added.iter().any(|n| matches!(n.op, GraphOp::Op(OpKind::Mul)))
-            && added.iter().any(|n| matches!(n.op, GraphOp::Op(OpKind::Sub))),
+        added
+            .iter()
+            .any(|n| matches!(n.op, GraphOp::Op(OpKind::Mul)))
+            && added
+                .iter()
+                .any(|n| matches!(n.op, GraphOp::Op(OpKind::Sub))),
         "sigmoid VJP composes Sub + Mul"
     );
 }

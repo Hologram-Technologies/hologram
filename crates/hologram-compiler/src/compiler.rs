@@ -303,8 +303,8 @@ impl Compiler {
                 // size/α/β/bias from the node's LrnAttrs (defaults otherwise).
                 if matches!(kind, hologram_graph::OpKind::Lrn) {
                     if let KernelCall::Lrn(lc) = &mut kernel_call {
-                        let (batch, channels, inner) = lrn_dims(&self.graph, node)
-                            .ok_or(CompileError::CompletenessFailure)?;
+                        let (batch, channels, inner) =
+                            lrn_dims(&self.graph, node).ok_or(CompileError::CompletenessFailure)?;
                         let a = self
                             .graph
                             .lrn_attrs(hologram_graph::NodeId(idx as u32))
@@ -321,8 +321,8 @@ impl Compiler {
                 // RoPE: head_dim = the input's last dimension.
                 if matches!(kind, hologram_graph::OpKind::RotaryEmbedding) {
                     if let KernelCall::RotaryEmbedding(rc) = &mut kernel_call {
-                        rc.head_dim =
-                            rope_head_dim(&self.graph, node).ok_or(CompileError::CompletenessFailure)?;
+                        rc.head_dim = rope_head_dim(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
                     }
                 }
                 // Expand: in_dims (input shape) + out_dims (output shape) for
@@ -794,7 +794,10 @@ fn slice_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, 
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -809,7 +812,9 @@ fn slice_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, 
         match src {
             InputSource::Constant(cid) => {
                 let e = graph.constants().get(cid)?;
-                e.bytes.get(0..8).map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+                e.bytes
+                    .get(0..8)
+                    .map(|b| i64::from_le_bytes(b.try_into().unwrap()))
             }
             _ => None,
         }
@@ -842,7 +847,10 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -884,7 +892,10 @@ fn lrn_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u32, u32, u32
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -911,7 +922,10 @@ fn reindex_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32;
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -941,7 +955,10 @@ fn rope_head_dim(graph: &Graph, node: &hologram_graph::Node) -> Option<u32> {
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -982,7 +999,10 @@ fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)
@@ -1019,7 +1039,10 @@ fn transpose_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u3
             .nodes()
             .get(id as usize)
             .and_then(|n| reg.get(n.output_shape).cloned()),
-        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::Constant(cid) => graph
+            .constants()
+            .get(cid)
+            .and_then(|e| reg.get(e.shape).cloned()),
         InputSource::GraphInput(idx) => graph
             .inputs()
             .get(idx as usize)

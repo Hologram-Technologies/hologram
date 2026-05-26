@@ -15,8 +15,8 @@ use prism::vocabulary::WittLevel;
 use crate::emit::EmitResult;
 use crate::kind::OpKind;
 use crate::{
-    activation_reduce, conv, direct, elementwise_binary, elementwise_unary, layout,
-    linalg, normalization, pooling, quantization, reduction, structured, utility,
+    activation_reduce, conv, direct, elementwise_binary, elementwise_unary, layout, linalg,
+    normalization, pooling, quantization, reduction, structured, utility,
 };
 
 /// Emit the Term tree for `kind` into `arena`. Variables for the op's

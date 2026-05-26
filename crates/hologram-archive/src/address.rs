@@ -7,7 +7,7 @@
 //! * **Decomposition.** Each addressable part folds to a κ-label through
 //!   the uor-addr realization that matches its type: [`ring`] for the
 //!   Amendment-43 ring elements hologram is built on, and (under the
-//!   `model-formats` feature) [`gguf`] / [`onnx`] for the model files
+//!   `model-formats` feature) `gguf` / `onnx` for the model files
 //!   hologram-ai ingests. Structurally-equivalent content collapses to
 //!   one κ-label, so a κ-label is the canonical dedup / cache key.
 //! * **Composition.** A composite object's κ-label is the E₈ categorical

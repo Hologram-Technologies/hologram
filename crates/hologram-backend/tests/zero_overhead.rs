@@ -134,7 +134,11 @@ fn matmul_hotpath_is_zero_alloc() {
             dtype: DTYPE_F32,
             b_packed: false,
         }),
-        vec![vec![0x3e; d * d * 4], vec![0x3d; d * d * 4], vec![0u8; d * d * 4]],
+        vec![
+            vec![0x3e; d * d * 4],
+            vec![0x3d; d * d * 4],
+            vec![0u8; d * d * 4],
+        ],
     );
 }
 
@@ -216,6 +220,11 @@ fn attention_hotpath_is_zero_alloc() {
             head_dim: ad as u32,
             dtype: DTYPE_F32,
         }),
-        vec![vec![0x3e; n * 4], vec![0x3d; n * 4], vec![0x3c; n * 4], vec![0u8; n * 4]],
+        vec![
+            vec![0x3e; n * 4],
+            vec![0x3d; n * 4],
+            vec![0x3c; n * 4],
+            vec![0u8; n * 4],
+        ],
     );
 }

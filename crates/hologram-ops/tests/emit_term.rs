@@ -10,9 +10,8 @@ use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::{HostBounds, PrimitiveOp, WittLevel};
 
 use hologram_ops::{
-    activation_reduce::*, conv::*, direct::*, elementwise_binary::*,
-    elementwise_unary::*, layout::*, linalg::*, normalization::*, pooling::*, reduction::*,
-    structured::*, utility::*,
+    activation_reduce::*, conv::*, direct::*, elementwise_binary::*, elementwise_unary::*,
+    layout::*, linalg::*, normalization::*, pooling::*, reduction::*, structured::*, utility::*,
 };
 
 /// Walk an arena and assert every `Term::Application::operator` is one of

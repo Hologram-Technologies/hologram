@@ -61,7 +61,13 @@ fn meta(graph: &Graph, src: InputSource) -> (DTypeId, ShapeId) {
     }
 }
 
-fn add_op(graph: &mut Graph, op: OpKind, inputs: &[InputSource], dt: DTypeId, sh: ShapeId) -> NodeId {
+fn add_op(
+    graph: &mut Graph,
+    op: OpKind,
+    inputs: &[InputSource],
+    dt: DTypeId,
+    sh: ShapeId,
+) -> NodeId {
     graph.add_node(Node {
         op: GraphOp::Op(op),
         inputs: SmallVec::from_iter(inputs.iter().copied()),
@@ -125,7 +131,11 @@ fn ones_shape(graph: &mut Graph, rank: usize) -> ShapeId {
 /// `Reshape(g)`→ones-rank then `Expand` it to `ash`: broadcast a scalar
 /// reduction gradient back over the input shape. Returns the expanded node.
 fn broadcast_scalar(graph: &mut Graph, g: InputSource, adt: DTypeId, ash: ShapeId) -> NodeId {
-    let rank = graph.shape_registry().get(ash).map(|d| d.rank as usize).unwrap_or(1);
+    let rank = graph
+        .shape_registry()
+        .get(ash)
+        .map(|d| d.rank as usize)
+        .unwrap_or(1);
     let os = ones_shape(graph, rank);
     let gr = add_op(graph, OpKind::Reshape, &[g], adt, os);
     add_op(graph, OpKind::Expand, &[InputSource::Node(gr)], adt, ash)
@@ -136,7 +146,12 @@ fn broadcast_scalar(graph: &mut Graph, g: InputSource, adt: DTypeId, ash: ShapeI
 /// reduction is a linear contraction, so it *is* a matmul with a ones-vector:
 /// `Reshape(m)→[B,F] · ones[F,1] → [B,1]`, then `Expand → [B,F]`, reshaped to
 /// `sh`. Composed entirely from forward ops (no new reduction primitive).
-fn row_reduce_broadcast(graph: &mut Graph, m: InputSource, dt: DTypeId, sh: ShapeId) -> Option<NodeId> {
+fn row_reduce_broadcast(
+    graph: &mut Graph,
+    m: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+) -> Option<NodeId> {
     let d = graph.shape_registry().get(sh)?.clone();
     let f = d.dim(d.rank as usize - 1)?;
     let total = d.total_elements();
@@ -144,9 +159,15 @@ fn row_reduce_broadcast(graph: &mut Graph, m: InputSource, dt: DTypeId, sh: Shap
         return None;
     }
     let b = total / f;
-    let bf = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(b, f));
-    let b1 = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(b, 1));
-    let f1 = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(f, 1));
+    let bf = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(b, f));
+    let b1 = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(b, 1));
+    let f1 = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(f, 1));
     let ones = InputSource::Node(const_fill(graph, f1, 1.0));
     let m2 = InputSource::Node(add_op(graph, OpKind::Reshape, &[m], dt, bf));
     let s = InputSource::Node(add_op(graph, OpKind::MatMul, &[m2, ones], dt, b1));
@@ -156,25 +177,48 @@ fn row_reduce_broadcast(graph: &mut Graph, m: InputSource, dt: DTypeId, sh: Shap
 
 /// Broadcast a per-feature vector `v` (shape `[F]` or `[1,F]`) across the
 /// batch to `[B,F]` matching `sh = [B,F]`: `Reshape(v)→[1,F]` then `Expand`.
-fn broadcast_feature(graph: &mut Graph, v: InputSource, dt: DTypeId, sh: ShapeId) -> Option<NodeId> {
+fn broadcast_feature(
+    graph: &mut Graph,
+    v: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+) -> Option<NodeId> {
     let d = graph.shape_registry().get(sh)?.clone();
     if d.rank != 2 {
         return None;
     }
     let (b, f) = (d.dim(0)?, d.dim(1)?);
-    let onef = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(1, f));
-    let bf = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(b, f));
+    let onef = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, f));
+    let bf = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(b, f));
     let vr = InputSource::Node(add_op(graph, OpKind::Reshape, &[v], dt, onef));
     Some(add_op(graph, OpKind::Expand, &[vr], dt, bf))
 }
 
 /// Per-row **mean** over the last axis, broadcast back over `sh`
 /// (`row_reduce_broadcast` / F).
-fn row_mean_broadcast(graph: &mut Graph, m: InputSource, dt: DTypeId, sh: ShapeId) -> Option<NodeId> {
-    let f = graph.shape_registry().get(sh)?.dim(graph.shape_registry().get(sh)?.rank as usize - 1)?;
+fn row_mean_broadcast(
+    graph: &mut Graph,
+    m: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+) -> Option<NodeId> {
+    let f = graph
+        .shape_registry()
+        .get(sh)?
+        .dim(graph.shape_registry().get(sh)?.rank as usize - 1)?;
     let s = row_reduce_broadcast(graph, m, dt, sh)?;
     let invf = InputSource::Node(const_fill(graph, sh, 1.0 / f as f32));
-    Some(add_op(graph, OpKind::Mul, &[InputSource::Node(s), invf], dt, sh))
+    Some(add_op(
+        graph,
+        OpKind::Mul,
+        &[InputSource::Node(s), invf],
+        dt,
+        sh,
+    ))
 }
 
 /// Build an i64 rank-1 constant (Slice index / Pad width operands), returned
@@ -184,7 +228,9 @@ fn i64_const(graph: &mut Graph, vals: &[i64]) -> InputSource {
     for v in vals {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
-    let sh = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(vals.len() as u64));
+    let sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(vals.len() as u64));
     let cid = graph.constants_mut().insert(ConstantEntry {
         bytes,
         dtype: DTypeId(5), // I64
@@ -200,19 +246,27 @@ fn read_i64_const(graph: &Graph, src: InputSource) -> Option<i64> {
         _ => return None,
     };
     let e = graph.constants().get(cid)?;
-    e.bytes.get(0..8).map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+    e.bytes
+        .get(0..8)
+        .map(|b| i64::from_le_bytes(b.try_into().unwrap()))
 }
 
 fn dim0(graph: &Graph, sh: ShapeId) -> Option<i64> {
     graph.shape_registry().get(sh)?.dim(0).map(|d| d as i64)
 }
 fn rank_of(graph: &Graph, sh: ShapeId) -> usize {
-    graph.shape_registry().get(sh).map(|d| d.rank as usize).unwrap_or(1)
+    graph
+        .shape_registry()
+        .get(sh)
+        .map(|d| d.rank as usize)
+        .unwrap_or(1)
 }
 /// Intern a rank-2 `[r, c]` shape (free helper so callers can keep using
 /// `graph` directly afterwards — unlike a `&mut graph`-capturing closure).
 fn intern2(graph: &mut Graph, r: u64, c: u64) -> ShapeId {
-    graph.shape_registry_mut().intern(ShapeDescriptor::rank2(r, c))
+    graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(r, c))
 }
 
 /// Upsample a pooled tensor `m` of shape `[N,C,Hₒ,Wₒ]` back to the input grid
@@ -299,7 +353,11 @@ fn attention_vjp(
         return None;
     }
     let invscale = 1.0 / libm::sqrtf(dd as f32).max(1.0);
-    let mut i2 = |r: u64, c: u64| graph.shape_registry_mut().intern(ShapeDescriptor::rank2(r, c));
+    let mut i2 = |r: u64, c: u64| {
+        graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(r, c))
+    };
     let r2 = i2(bh, sd);
     let sdsh = i2(s, dd);
     let dssh = i2(dd, s);
@@ -322,22 +380,20 @@ fn attention_vjp(
     let mut dk_acc: Option<(NodeId, u64)> = None;
     let mut dv_acc: Option<(NodeId, u64)> = None;
     // Concat piece `[1,sd]` onto an accumulator of `[count,sd]` → `[count+1,sd]`.
-    let append = |graph: &mut Graph, acc: &mut Option<(NodeId, u64)>, piece: NodeId| {
-        match *acc {
-            None => *acc = Some((piece, 1)),
-            Some((prev, cnt)) => {
-                let sh = graph
-                    .shape_registry_mut()
-                    .intern(ShapeDescriptor::rank2(cnt + 1, sd));
-                let c = add_op(
-                    graph,
-                    OpKind::Concat,
-                    &[InputSource::Node(prev), InputSource::Node(piece)],
-                    dt,
-                    sh,
-                );
-                *acc = Some((c, cnt + 1));
-            }
+    let append = |graph: &mut Graph, acc: &mut Option<(NodeId, u64)>, piece: NodeId| match *acc {
+        None => *acc = Some((piece, 1)),
+        Some((prev, cnt)) => {
+            let sh = graph
+                .shape_registry_mut()
+                .intern(ShapeDescriptor::rank2(cnt + 1, sd));
+            let c = add_op(
+                graph,
+                OpKind::Concat,
+                &[InputSource::Node(prev), InputSource::Node(piece)],
+                dt,
+                sh,
+            );
+            *acc = Some((c, cnt + 1));
         }
     };
 
@@ -370,9 +426,27 @@ fn attention_vjp(
         let dst = InputSource::Node(add_op(graph, OpKind::Transpose, &[dscaled], dt, sssh));
         let dkp = add_op(graph, OpKind::MatMul, &[dst, qp], dt, sdsh);
         // Reshape each [S,D] head gradient to [1,sd] and concat.
-        let dqp1 = add_op(graph, OpKind::Reshape, &[InputSource::Node(dqp)], dt, one_sd);
-        let dkp1 = add_op(graph, OpKind::Reshape, &[InputSource::Node(dkp)], dt, one_sd);
-        let dvp1 = add_op(graph, OpKind::Reshape, &[InputSource::Node(dvp)], dt, one_sd);
+        let dqp1 = add_op(
+            graph,
+            OpKind::Reshape,
+            &[InputSource::Node(dqp)],
+            dt,
+            one_sd,
+        );
+        let dkp1 = add_op(
+            graph,
+            OpKind::Reshape,
+            &[InputSource::Node(dkp)],
+            dt,
+            one_sd,
+        );
+        let dvp1 = add_op(
+            graph,
+            OpKind::Reshape,
+            &[InputSource::Node(dvp)],
+            dt,
+            one_sd,
+        );
         append(graph, &mut dq_acc, dqp1);
         append(graph, &mut dk_acc, dkp1);
         append(graph, &mut dv_acc, dvp1);
@@ -504,9 +578,21 @@ fn conv2d_vjp(
             }
         }
     }
-    let dw = add_op(graph, OpKind::Reshape, &[InputSource::Node(dw_acc?)], dt, wsh);
+    let dw = add_op(
+        graph,
+        OpKind::Reshape,
+        &[InputSource::Node(dw_acc?)],
+        dt,
+        wsh,
+    );
     let (dx_flat, _) = dx_acc?;
-    let dx = add_op(graph, OpKind::Reshape, &[InputSource::Node(dx_flat)], dt, xsh);
+    let dx = add_op(
+        graph,
+        OpKind::Reshape,
+        &[InputSource::Node(dx_flat)],
+        dt,
+        xsh,
+    );
     Some((dx, dw))
 }
 
@@ -598,7 +684,11 @@ fn rmsnorm_dx(
     let ggam = InputSource::Node(add_op(graph, OpKind::Mul, &[g, gb], dt, sh));
     let ggx = InputSource::Node(add_op(graph, OpKind::Mul, &[ggam, x], dt, sh));
     let s = InputSource::Node(row_reduce_broadcast(graph, ggx, dt, sh)?);
-    let f = graph.shape_registry().get(sh).and_then(|d| d.dim(1)).unwrap_or(1);
+    let f = graph
+        .shape_registry()
+        .get(sh)
+        .and_then(|d| d.dim(1))
+        .unwrap_or(1);
     let invf = InputSource::Node(const_fill(graph, sh, 1.0 / f as f32));
     let ir2 = InputSource::Node(add_op(graph, OpKind::Mul, &[invrms, invrms], dt, sh));
     let ir3 = InputSource::Node(add_op(graph, OpKind::Mul, &[ir2, invrms], dt, sh));
@@ -673,7 +763,13 @@ fn emit_vjp(
             if let Some(b) = node_of(ins[1]) {
                 let ga = add_op(graph, K::Mul, &[gsrc, ins[0]], dt, sh);
                 let bb = add_op(graph, K::Mul, &[ins[1], ins[1]], dt, sh);
-                let q = add_op(graph, K::Div, &[InputSource::Node(ga), InputSource::Node(bb)], dt, sh);
+                let q = add_op(
+                    graph,
+                    K::Div,
+                    &[InputSource::Node(ga), InputSource::Node(bb)],
+                    dt,
+                    sh,
+                );
                 let db = add_op(graph, K::Neg, &[InputSource::Node(q)], dt, sh);
                 out.push((b, db));
             }
@@ -691,7 +787,13 @@ fn emit_vjp(
                     return Err(BackwardError::NoGradient(kind));
                 }
                 let zero = const_fill(graph, sh, 0.0);
-                let mask = add_op(graph, K::Greater, &[ins[0], InputSource::Node(zero)], dt, sh);
+                let mask = add_op(
+                    graph,
+                    K::Greater,
+                    &[ins[0], InputSource::Node(zero)],
+                    dt,
+                    sh,
+                );
                 let da = add_op(graph, K::Mul, &[gsrc, InputSource::Node(mask)], dt, sh);
                 out.push((a, da));
             }
@@ -717,7 +819,13 @@ fn emit_vjp(
                 }
                 let one = const_fill(graph, sh, 1.0);
                 let yy = add_op(graph, K::Mul, &[y, y], dt, sh);
-                let d = add_op(graph, K::Sub, &[InputSource::Node(one), InputSource::Node(yy)], dt, sh);
+                let d = add_op(
+                    graph,
+                    K::Sub,
+                    &[InputSource::Node(one), InputSource::Node(yy)],
+                    dt,
+                    sh,
+                );
                 let da = add_op(graph, K::Mul, &[gsrc, InputSource::Node(d)], dt, sh);
                 out.push((a, da));
             }
@@ -775,7 +883,13 @@ fn emit_vjp(
                 let s = InputSource::Node(add_op(graph, K::Sigmoid, &[ins[0]], dt, sh));
                 let oms = add_op(graph, K::Sub, &[one, s], dt, sh);
                 let xs = add_op(graph, K::Mul, &[ins[0], s], dt, sh);
-                let xsoms = add_op(graph, K::Mul, &[InputSource::Node(xs), InputSource::Node(oms)], dt, sh);
+                let xsoms = add_op(
+                    graph,
+                    K::Mul,
+                    &[InputSource::Node(xs), InputSource::Node(oms)],
+                    dt,
+                    sh,
+                );
                 let dsilu = add_op(graph, K::Add, &[s, InputSource::Node(xsoms)], dt, sh);
                 let da = add_op(graph, K::Mul, &[gsrc, InputSource::Node(dsilu)], dt, sh);
                 out.push((a, da));
@@ -823,7 +937,8 @@ fn emit_vjp(
                 }
                 let one = InputSource::Node(const_fill(graph, sh, 1.0));
                 let zero = InputSource::Node(const_fill(graph, sh, 0.0));
-                let m = InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], zero], dt, sh));
+                let m =
+                    InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], zero], dt, sh));
                 let yp1 = InputSource::Node(add_op(graph, K::Add, &[y, one], dt, sh));
                 let omm = InputSource::Node(add_op(graph, K::Sub, &[one, m], dt, sh));
                 let neg = InputSource::Node(add_op(graph, K::Mul, &[omm, yp1], dt, sh));
@@ -843,7 +958,8 @@ fn emit_vjp(
                 let zero = InputSource::Node(const_fill(graph, sh, 0.0));
                 let sk = InputSource::Node(const_fill(graph, sh, scale));
                 let sak = InputSource::Node(const_fill(graph, sh, scale * alpha));
-                let m = InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], zero], dt, sh));
+                let m =
+                    InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], zero], dt, sh));
                 let pos = InputSource::Node(add_op(graph, K::Mul, &[m, sk], dt, sh));
                 let omm = InputSource::Node(add_op(graph, K::Sub, &[one, m], dt, sh));
                 let ysa = InputSource::Node(add_op(graph, K::Add, &[y, sak], dt, sh));
@@ -904,7 +1020,8 @@ fn emit_vjp(
                 if !needs_f32() {
                     return Err(BackwardError::NoGradient(kind));
                 }
-                let coef = InputSource::Node(const_fill(graph, sh, core::f32::consts::FRAC_2_SQRT_PI));
+                let coef =
+                    InputSource::Node(const_fill(graph, sh, core::f32::consts::FRAC_2_SQRT_PI));
                 let xx = InputSource::Node(add_op(graph, K::Mul, &[ins[0], ins[0]], dt, sh));
                 let nxx = InputSource::Node(add_op(graph, K::Neg, &[xx], dt, sh));
                 let e = InputSource::Node(add_op(graph, K::Exp, &[nxx], dt, sh));
@@ -929,7 +1046,8 @@ fn emit_vjp(
         K::Max => {
             // d/da = g·[a≥b] ; d/db = g·[a<b].
             if let Some(a) = node_of(ins[0]) {
-                let m = InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], ins[1]], dt, sh));
+                let m =
+                    InputSource::Node(add_op(graph, K::GreaterOrEqual, &[ins[0], ins[1]], dt, sh));
                 let da = add_op(graph, K::Mul, &[gsrc, m], dt, sh);
                 out.push((a, da));
             }
@@ -1086,10 +1204,11 @@ fn emit_vjp(
                     Some(d0) => (d0, rank_of(graph, ash)),
                     None => return Err(BackwardError::NoGradient(kind)),
                 };
-                let (start, end) = match (read_i64_const(graph, ins[1]), read_i64_const(graph, ins[2])) {
-                    (Some(s), Some(e)) => (s.clamp(0, d0), e.clamp(0, d0)),
-                    _ => return Err(BackwardError::NoGradient(kind)),
-                };
+                let (start, end) =
+                    match (read_i64_const(graph, ins[1]), read_i64_const(graph, ins[2])) {
+                        (Some(s), Some(e)) => (s.clamp(0, d0), e.clamp(0, d0)),
+                        _ => return Err(BackwardError::NoGradient(kind)),
+                    };
                 // Pad width format is [begin₀..beginᵣ, end₀..endᵣ]: pad axis-0
                 // only — `start` rows before, `d0−end` rows after.
                 let mut pads = vec![0i64; 2 * rank];
@@ -1133,13 +1252,17 @@ fn emit_vjp(
                 let (ob, of) = (od.dim(0).unwrap_or(0), od.dim(1).unwrap_or(0));
                 if ib == ob && if_ == 1 {
                     // broadcast axis 1: rowsum g[ob,of] · ones[of,1] → [ob,1].
-                    let f1 = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(of, 1));
+                    let f1 = graph
+                        .shape_registry_mut()
+                        .intern(ShapeDescriptor::rank2(of, 1));
                     let ones = InputSource::Node(const_fill(graph, f1, 1.0));
                     let dx = add_op(graph, K::MatMul, &[gsrc, ones], adt, ash);
                     out.push((a, dx));
                 } else if if_ == of && ib == 1 {
                     // broadcast axis 0: colsum ones[1,ob] · g[ob,of] → [1,of].
-                    let o1 = graph.shape_registry_mut().intern(ShapeDescriptor::rank2(1, ob));
+                    let o1 = graph
+                        .shape_registry_mut()
+                        .intern(ShapeDescriptor::rank2(1, ob));
                     let ones = InputSource::Node(const_fill(graph, o1, 1.0));
                     let dx = add_op(graph, K::MatMul, &[ones, gsrc], adt, ash);
                     out.push((a, dx));
@@ -1166,7 +1289,9 @@ fn emit_vjp(
                     xd.dim(3).unwrap_or(1),
                 );
                 let hw = (h * w).max(1);
-                let bc11 = graph.shape_registry_mut().intern(ShapeDescriptor::rank4(b, c, 1, 1));
+                let bc11 = graph
+                    .shape_registry_mut()
+                    .intern(ShapeDescriptor::rank4(b, c, 1, 1));
                 let gr = InputSource::Node(add_op(graph, K::Reshape, &[gsrc], adt, bc11));
                 let e = InputSource::Node(add_op(graph, K::Expand, &[gr], adt, ash));
                 let inv = InputSource::Node(const_fill(graph, ash, 1.0 / hw as f32));
@@ -1243,7 +1368,12 @@ fn emit_vjp(
                     return Err(BackwardError::NoGradient(kind));
                 }
                 let (adt, ash) = meta(graph, ins[0]);
-                let n = graph.shape_registry().get(ash).map(|d| d.total_elements()).unwrap_or(1).max(1);
+                let n = graph
+                    .shape_registry()
+                    .get(ash)
+                    .map(|d| d.total_elements())
+                    .unwrap_or(1)
+                    .max(1);
                 let e = broadcast_scalar(graph, gsrc, adt, ash);
                 let invn = InputSource::Node(const_fill(graph, ash, 1.0 / n as f32));
                 let dx = add_op(graph, K::Mul, &[InputSource::Node(e), invn], adt, ash);
@@ -1385,7 +1515,13 @@ fn emit_vjp(
                 let gs = InputSource::Node(add_op(graph, K::Mul, &[gsrc, ins[2]], dt, sh));
                 let zeros = InputSource::Node(const_fill(graph, csh, 0.0));
                 let ones = InputSource::Node(const_fill(graph, csh, 1.0));
-                let rot = InputSource::Node(add_op(graph, K::RotaryEmbedding, &[gs, zeros, ones], dt, sh));
+                let rot = InputSource::Node(add_op(
+                    graph,
+                    K::RotaryEmbedding,
+                    &[gs, zeros, ones],
+                    dt,
+                    sh,
+                ));
                 let gc = InputSource::Node(add_op(graph, K::Mul, &[gsrc, ins[1]], dt, sh));
                 let dx = add_op(graph, K::Sub, &[gc, rot], dt, sh);
                 out.push((a, dx));
@@ -1544,7 +1680,8 @@ fn emit_vjp(
                 let go_sh = intern2(graph, out_total, 1);
                 let gflat = InputSource::Node(add_op(graph, K::Reshape, &[gsrc], adt, go_sh));
                 let dxf_sh = intern2(graph, in_total, 1);
-                let dxf = InputSource::Node(add_op(graph, K::MatMul, &[st_node, gflat], adt, dxf_sh));
+                let dxf =
+                    InputSource::Node(add_op(graph, K::MatMul, &[st_node, gflat], adt, dxf_sh));
                 let dx = add_op(graph, K::Reshape, &[dxf], adt, ash);
                 out.push((a, dx));
             }
@@ -1572,7 +1709,10 @@ fn emit_vjp(
                 };
                 let rank = d.rank as usize;
                 let (batch, ch) = (d.dim(0).unwrap_or(1), d.dim(1).unwrap_or(1));
-                let inner: u64 = (2..rank).map(|i| d.dim(i).unwrap_or(1)).product::<u64>().max(1);
+                let inner: u64 = (2..rank)
+                    .map(|i| d.dim(i).unwrap_or(1))
+                    .product::<u64>()
+                    .max(1);
                 let size = attrs.size.max(1) as u64;
                 let (alpha, beta, bias) = (
                     f32::from_bits(attrs.alpha_bits),
@@ -1581,7 +1721,10 @@ fn emit_vjp(
                 );
                 let lo_off = (size - 1) / 2;
                 // Band matrices B (window) and Bᵀ (adjoint) as [ch,ch] constants.
-                let (mut bb, mut bt) = (vec![0f32; (ch * ch) as usize], vec![0f32; (ch * ch) as usize]);
+                let (mut bb, mut bt) = (
+                    vec![0f32; (ch * ch) as usize],
+                    vec![0f32; (ch * ch) as usize],
+                );
                 for c in 0..ch {
                     let c0 = c.saturating_sub(lo_off);
                     let c1 = (c + size / 2 + 1).min(ch);
@@ -1591,11 +1734,21 @@ fn emit_vjp(
                     }
                 }
                 let chsh = intern2(graph, ch, ch);
-                let b_node = InputSource::Node(const_tensor(graph, chsh, bb.iter().flat_map(|v| v.to_le_bytes()).collect()));
-                let bt_node = InputSource::Node(const_tensor(graph, chsh, bt.iter().flat_map(|v| v.to_le_bytes()).collect()));
+                let b_node = InputSource::Node(const_tensor(
+                    graph,
+                    chsh,
+                    bb.iter().flat_map(|v| v.to_le_bytes()).collect(),
+                ));
+                let bt_node = InputSource::Node(const_tensor(
+                    graph,
+                    chsh,
+                    bt.iter().flat_map(|v| v.to_le_bytes()).collect(),
+                ));
                 let x = ins[0];
                 let x2 = InputSource::Node(add_op(graph, K::Mul, &[x, x], dt, sh));
-                let bx2 = InputSource::Node(apply_channel_matrix(graph, b_node, x2, batch, ch, inner, dt, sh));
+                let bx2 = InputSource::Node(apply_channel_matrix(
+                    graph, b_node, x2, batch, ch, inner, dt, sh,
+                ));
                 let coef = InputSource::Node(const_fill(graph, sh, alpha / size as f32));
                 let scaled = InputSource::Node(add_op(graph, K::Mul, &[bx2, coef], dt, sh));
                 let biask = InputSource::Node(const_fill(graph, sh, bias));
@@ -1607,7 +1760,9 @@ fn emit_vjp(
                 let term1 = InputSource::Node(add_op(graph, K::Mul, &[gsrc, dnegb], dt, sh));
                 let gx = InputSource::Node(add_op(graph, K::Mul, &[gsrc, x], dt, sh));
                 let h = InputSource::Node(add_op(graph, K::Mul, &[gx, dnegb1], dt, sh));
-                let bth = InputSource::Node(apply_channel_matrix(graph, bt_node, h, batch, ch, inner, dt, sh));
+                let bth = InputSource::Node(apply_channel_matrix(
+                    graph, bt_node, h, batch, ch, inner, dt, sh,
+                ));
                 let c2 = InputSource::Node(const_fill(graph, sh, 2.0 * alpha * beta / size as f32));
                 let xbth = InputSource::Node(add_op(graph, K::Mul, &[x, bth], dt, sh));
                 let term2 = InputSource::Node(add_op(graph, K::Mul, &[xbth, c2], dt, sh));
@@ -1657,11 +1812,10 @@ fn emit_vjp(
                 return Err(BackwardError::NoGradient(kind));
             }
             let (_, qsh) = meta(graph, ins[0]);
-            let (dq, dk, dv) =
-                match attention_vjp(graph, ins[0], ins[1], ins[2], gsrc, qsh, dt) {
-                    Some(v) => v,
-                    None => return Err(BackwardError::NoGradient(kind)),
-                };
+            let (dq, dk, dv) = match attention_vjp(graph, ins[0], ins[1], ins[2], gsrc, qsh, dt) {
+                Some(v) => v,
+                None => return Err(BackwardError::NoGradient(kind)),
+            };
             if let Some(qn) = node_of(ins[0]) {
                 out.push((qn, dq));
             }

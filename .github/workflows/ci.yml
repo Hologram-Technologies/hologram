@@ -175,7 +175,44 @@ jobs:
             -p hologram-ops \
             -p hologram-graph
 
-  # Job 8: Verify all quality gates passed
+  # Job 9: V&V suites the debug `cargo test --workspace` (the `test` job) does
+  # not exercise — enforcing the full CONFORMANCE.md catalog on every push:
+  #   * PV (performance floors): release-only (`#![cfg(not(debug_assertions))]`),
+  #     so they compile to zero tests in debug.
+  #   * PA (parallel-execution conformance): gated behind `--features parallel`.
+  #   * AS/MA (external-authority model-format conformance): gated behind
+  #     `--features model-formats`.
+  # Mirrors the `parallel`, `perf`, and `conformance` targets of `just vv`.
+  vv:
+    name: V&V (perf + parallel + model-formats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: vv
+
+      - name: External-authority + scaling conformance (model-formats)
+        run: |
+          cargo test -p hologram-archive --test conformance --test model_address --features model-formats
+          cargo test -p hologram-backend --test conformance --features cpu
+          cargo test -p hologram-exec --test conformance
+
+      - name: Parallel-execution conformance (--features parallel)
+        run: cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+
+      - name: Performance floors (release-only, PV class)
+        run: |
+          cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+          cargo test --release -p hologram-exec --test performance -- --nocapture
+
+  # Job 10: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()
@@ -186,6 +223,7 @@ jobs:
       - docs
       - security
       - cross-targets
+      - vv
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

@@ -1380,7 +1380,9 @@ pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
 pub fn lrn_float<W: Workspace>(c: &LrnCall, ws: &mut W) -> Result<(), BackendError> {
     let (b, ch, inner) = (c.batch as usize, c.channels as usize, c.inner as usize);
     if ch == 0 || c.size == 0 {
-        return Err(BackendError::UnsupportedOp("lrn: channels/size must be > 0"));
+        return Err(BackendError::UnsupportedOp(
+            "lrn: channels/size must be > 0",
+        ));
     }
     let dt = c.dtype;
     let size = c.size as usize;

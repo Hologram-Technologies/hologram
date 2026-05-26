@@ -56,7 +56,10 @@ output y
             .bytes,
     );
     for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
-        assert!((gv - wv).abs() < 1e-6, "source clip[{i}]: got {gv}, want {wv}");
+        assert!(
+            (gv - wv).abs() < 1e-6,
+            "source clip[{i}]: got {gv}, want {wv}"
+        );
     }
 }
 
@@ -64,7 +67,9 @@ output y
 fn clip_desugars_and_clamps_end_to_end() {
     let n = 16usize;
     // Spread across the bounds so clamping is observable on both sides.
-    let x: Vec<f32> = (0..n).map(|i| (i as f32) / (n as f32) * 2.0 - 1.0).collect();
+    let x: Vec<f32> = (0..n)
+        .map(|i| (i as f32) / (n as f32) * 2.0 - 1.0)
+        .collect();
     let (lo_val, hi_val) = (-0.3f32, 0.4f32);
     let want: Vec<f32> = x.iter().map(|&v| v.clamp(lo_val, hi_val)).collect();
 
@@ -197,7 +202,10 @@ fn reshape_is_zero_movement_readdressing() {
     );
 
     for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
-        assert!((gv - wv).abs() < 1e-6, "reshape→relu[{i}]: got {gv}, want {wv}");
+        assert!(
+            (gv - wv).abs() < 1e-6,
+            "reshape→relu[{i}]: got {gv}, want {wv}"
+        );
     }
     // The interior Reshape was elided (bound to the input buffer), not dispatched.
     assert!(
@@ -274,7 +282,10 @@ fn slice_is_zero_movement_projectfield() {
     );
     assert_eq!(got.len(), 6, "slice output length");
     for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
-        assert!((gv - wv).abs() < 1e-6, "slice→relu[{i}]: got {gv}, want {wv}");
+        assert!(
+            (gv - wv).abs() < 1e-6,
+            "slice→relu[{i}]: got {gv}, want {wv}"
+        );
     }
     assert!(
         sess.last_skipped() >= 1,
@@ -292,8 +303,12 @@ fn resize_nearest_upsamples() {
     ];
 
     let mut g = Graph::new();
-    let s_in = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 2, 2));
-    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 4, 4));
+    let s_in = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(1, 1, 2, 2));
+    let s_out = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(1, 1, 4, 4));
     let xi = g.add_node(Node {
         op: GraphOp::Input,
         inputs: SmallVec::new(),
@@ -335,13 +350,15 @@ fn lrn_normalizes_over_channel_window() {
     // out[c] = x[c] / ((1/3)·Σ_window x²).
     let x = [1.0f32, 2.0, 3.0];
     let want = [
-        1.0 / (5.0 / 3.0),   // c0: window {1,4}
-        2.0 / (14.0 / 3.0),  // c1: window {1,4,9}
-        3.0 / (13.0 / 3.0),  // c2: window {4,9}
+        1.0 / (5.0 / 3.0),  // c0: window {1,4}
+        2.0 / (14.0 / 3.0), // c1: window {1,4,9}
+        3.0 / (13.0 / 3.0), // c2: window {4,9}
     ];
 
     let mut g = Graph::new();
-    let s = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 3, 1, 1));
+    let s = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(1, 3, 1, 1));
     let xi = g.add_node(Node {
         op: GraphOp::Input,
         inputs: SmallVec::new(),
@@ -759,7 +776,10 @@ fn swiglu_desugars_and_computes_end_to_end() {
         .zip(&want)
         .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
         .fold(0f64, f64::max);
-    assert!(err <= 1e-4, "SwiGLU diverged from reference (err {err:.3e})");
+    assert!(
+        err <= 1e-4,
+        "SwiGLU diverged from reference (err {err:.3e})"
+    );
     assert!(
         got.iter().any(|&v| v.abs() > 1e-6),
         "SwiGLU output all-zero — desugaring degenerated"

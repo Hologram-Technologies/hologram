@@ -79,7 +79,10 @@ pub fn compile_with_backward(
         let (dt, sh) = graph
             .get(g)
             .map(|n| (n.output_dtype, n.output_shape))
-            .unwrap_or((hologram_graph::registry::DTypeId(0), hologram_graph::registry::ShapeId(0)));
+            .unwrap_or((
+                hologram_graph::registry::DTypeId(0),
+                hologram_graph::registry::ShapeId(0),
+            ));
         let out = graph.add_node(Node {
             op: GraphOp::Output,
             inputs: SmallVec::from_iter([InputSource::Node(g)]),

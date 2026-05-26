@@ -183,11 +183,7 @@ fn softmax_distribution_sums_to_approx_unit() {
 fn pow_byte_is_iterated_ring_multiplication() {
     // Pow in the wrapping byte ring is aᵇ via repeated wrapping_mul — not a·b
     // (the prior `mul_byte` alias). 2³=8, 3²=9, 2⁸=256→0 (wrap), 5⁰=1.
-    let mut ws = TestWorkspace::new(vec![
-        vec![2u8, 3, 2, 5],
-        vec![3u8, 2, 8, 0],
-        vec![0u8; 4],
-    ]);
+    let mut ws = TestWorkspace::new(vec![vec![2u8, 3, 2, 5], vec![3u8, 2, 8, 0], vec![0u8; 4]]);
     let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
     let call = KernelCall::Pow(BinaryCall {
         a: buf(0, 4),
@@ -212,7 +208,10 @@ fn elu_selu_byte_engage_negative_branch() {
             (|c| KernelCall::Elu(c)) as fn(UnaryCall) -> KernelCall,
             96u8,
         ),
-        ((|c| KernelCall::Selu(c)) as fn(UnaryCall) -> KernelCall, 72u8),
+        (
+            (|c| KernelCall::Selu(c)) as fn(UnaryCall) -> KernelCall,
+            72u8,
+        ),
     ] {
         let mut ws = TestWorkspace::new(vec![vec![0u8, 128, 255], vec![0u8; 3]]);
         let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
@@ -227,6 +226,9 @@ fn elu_selu_byte_engage_negative_branch() {
         let out = ws.slot(1);
         assert_eq!(out[0], want0, "negative branch not engaged for input 0");
         // Monotone non-decreasing across the decoded domain.
-        assert!(out[0] <= out[1] && out[1] <= out[2], "not monotone: {out:?}");
+        assert!(
+            out[0] <= out[1] && out[1] <= out[2],
+            "not monotone: {out:?}"
+        );
     }
 }

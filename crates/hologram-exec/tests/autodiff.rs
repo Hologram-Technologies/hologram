@@ -60,7 +60,11 @@ fn run(archive: &[u8], inputs: &[&[f32]]) -> Vec<Vec<f32>> {
         InferenceSession::load(archive, CpuBackend::new()).unwrap();
     let bufs: Vec<Vec<u8>> = inputs.iter().map(|x| le(x)).collect();
     let ins: Vec<InputBuffer> = bufs.iter().map(|b| InputBuffer { bytes: b }).collect();
-    sess.execute(&ins).unwrap().iter().map(|o| unle(&o.bytes)).collect()
+    sess.execute(&ins)
+        .unwrap()
+        .iter()
+        .map(|o| unle(&o.bytes))
+        .collect()
 }
 
 /// Analytic `d sum(op(x)) / dx` via the compiled backward graph (seed = ones).
@@ -216,7 +220,11 @@ fn check_reduce(op: OpKind, x: &[f32], tol: f32) {
         xp[j] += eps;
         xm[j] -= eps;
         let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
-        assert!((da[j] - nd).abs() <= tol + tol * nd.abs(), "{op:?} grad[{j}]: {} vs {nd}", da[j]);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
     }
 }
 
@@ -240,7 +248,9 @@ fn check_weighted(op: OpKind, x: &[f32], rows: u64, cols: u64, tol: f32) {
     let w: Vec<f32> = (0..x.len()).map(|i| 0.3 + 0.2 * (i % 4) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sh = g.shape_registry_mut().intern(ShapeDescriptor::rank2(rows, cols));
+        let sh = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(rows, cols));
         let xn = g.add_node(Node {
             op: GraphOp::Input,
             inputs: SmallVec::new(),
@@ -287,7 +297,11 @@ fn check_weighted(op: OpKind, x: &[f32], rows: u64, cols: u64, tol: f32) {
         xp[j] += eps;
         xm[j] -= eps;
         let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
-        assert!((da[j] - nd).abs() <= tol + tol * nd.abs(), "{op:?} grad[{j}]: {} vs {nd}", da[j]);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
     }
 }
 
@@ -299,7 +313,9 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
     let w: Vec<f32> = (0..x.len()).map(|i| 0.4 + 0.25 * (i % 3) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sh = g.shape_registry_mut().intern(ShapeDescriptor::rank2(rows, cols));
+        let sh = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(rows, cols));
         let fsh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(cols));
         let xn = g.add_node(Node {
             op: GraphOp::Input,
@@ -309,7 +325,10 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
         });
         g.add_input(xn);
         let gamma = g.constants_mut().insert(ConstantEntry {
-            bytes: vec![1.0f32; f].iter().flat_map(|v| v.to_le_bytes()).collect(),
+            bytes: vec![1.0f32; f]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
             dtype: DTypeId(F32),
             shape: fsh,
         });
@@ -318,7 +337,10 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
         ins.push(InputSource::Constant(gamma));
         if affine3 {
             let beta = g.constants_mut().insert(ConstantEntry {
-                bytes: vec![0.0f32; f].iter().flat_map(|v| v.to_le_bytes()).collect(),
+                bytes: vec![0.0f32; f]
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect(),
                 dtype: DTypeId(F32),
                 shape: fsh,
             });
@@ -363,7 +385,11 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
         xp[j] += eps;
         xm[j] -= eps;
         let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
-        assert!((da[j] - nd).abs() <= tol + tol * nd.abs(), "{op:?} grad[{j}]: {} vs {nd}", da[j]);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
     }
 }
 
@@ -388,7 +414,9 @@ fn softmax_gradients_match_finite_difference() {
 
 fn i64c(g: &mut Graph, vals: &[i64]) -> InputSource {
     use hologram_graph::constant::ConstantEntry;
-    let sh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(vals.len() as u64));
+    let sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(vals.len() as u64));
     let cid = g.constants_mut().insert(ConstantEntry {
         bytes: vals.iter().flat_map(|v| v.to_le_bytes()).collect(),
         dtype: DTypeId(5),
@@ -404,26 +432,60 @@ fn slice_pad_concat_gradients_are_correct_scatter() {
         let mut g = Graph::new();
         let sin = g.shape_registry_mut().intern(ShapeDescriptor::rank2(4, 2));
         let sout = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 2));
-        let x = g.add_node(Node { op: GraphOp::Input, inputs: SmallVec::new(), output_dtype: DTypeId(F32), output_shape: sin });
+        let x = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: sin,
+        });
         g.add_input(x);
         let (s, e) = (i64c(&mut g, &[1]), i64c(&mut g, &[3]));
-        let sl = g.add_node(Node { op: GraphOp::Op(OpKind::Slice), inputs: SmallVec::from_iter([InputSource::Node(x), s, e]), output_dtype: DTypeId(F32), output_shape: sout });
-        let o = g.add_node(Node { op: GraphOp::Output, inputs: SmallVec::from_iter([InputSource::Node(sl)]), output_dtype: DTypeId(F32), output_shape: sout });
+        let sl = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Slice),
+            inputs: SmallVec::from_iter([InputSource::Node(x), s, e]),
+            output_dtype: DTypeId(F32),
+            output_shape: sout,
+        });
+        let o = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(sl)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sout,
+        });
         g.add_output(o);
         let (out, _) = compile_with_backward(g, sl, BackendKind::Cpu, WittLevel::W32).unwrap();
         let da = run(&out.archive, &[&[0.0f32; 8], &[1.0f32; 4]])[1].clone();
-        assert_eq!(da, vec![0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0], "slice grad scatter");
+        assert_eq!(
+            da,
+            vec![0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+            "slice grad scatter"
+        );
     }
     // Pad x:[2,2] → [pad 1 before, 1 after] → [4,2] ; dL/dx = g middle rows = 1.
     {
         let mut g = Graph::new();
         let sin = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 2));
         let sout = g.shape_registry_mut().intern(ShapeDescriptor::rank2(4, 2));
-        let x = g.add_node(Node { op: GraphOp::Input, inputs: SmallVec::new(), output_dtype: DTypeId(F32), output_shape: sin });
+        let x = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: sin,
+        });
         g.add_input(x);
         let pads = i64c(&mut g, &[1, 0, 1, 0]);
-        let pd = g.add_node(Node { op: GraphOp::Op(OpKind::Pad), inputs: SmallVec::from_iter([InputSource::Node(x), pads]), output_dtype: DTypeId(F32), output_shape: sout });
-        let o = g.add_node(Node { op: GraphOp::Output, inputs: SmallVec::from_iter([InputSource::Node(pd)]), output_dtype: DTypeId(F32), output_shape: sout });
+        let pd = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Pad),
+            inputs: SmallVec::from_iter([InputSource::Node(x), pads]),
+            output_dtype: DTypeId(F32),
+            output_shape: sout,
+        });
+        let o = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(pd)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sout,
+        });
         g.add_output(o);
         let (out, _) = compile_with_backward(g, pd, BackendKind::Cpu, WittLevel::W32).unwrap();
         let da = run(&out.archive, &[&[0.0f32; 4], &[1.0f32; 8]])[1].clone();
@@ -435,12 +497,32 @@ fn slice_pad_concat_gradients_are_correct_scatter() {
         let sa = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 2));
         let sb = g.shape_registry_mut().intern(ShapeDescriptor::rank2(1, 2));
         let sc = g.shape_registry_mut().intern(ShapeDescriptor::rank2(3, 2));
-        let a = g.add_node(Node { op: GraphOp::Input, inputs: SmallVec::new(), output_dtype: DTypeId(F32), output_shape: sa });
+        let a = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: sa,
+        });
         g.add_input(a);
-        let b = g.add_node(Node { op: GraphOp::Input, inputs: SmallVec::new(), output_dtype: DTypeId(F32), output_shape: sb });
+        let b = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: sb,
+        });
         g.add_input(b);
-        let cc = g.add_node(Node { op: GraphOp::Op(OpKind::Concat), inputs: SmallVec::from_iter([InputSource::Node(a), InputSource::Node(b)]), output_dtype: DTypeId(F32), output_shape: sc });
-        let o = g.add_node(Node { op: GraphOp::Output, inputs: SmallVec::from_iter([InputSource::Node(cc)]), output_dtype: DTypeId(F32), output_shape: sc });
+        let cc = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Concat),
+            inputs: SmallVec::from_iter([InputSource::Node(a), InputSource::Node(b)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sc,
+        });
+        let o = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(cc)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sc,
+        });
         g.add_output(o);
         let (out, _) = compile_with_backward(g, cc, BackendKind::Cpu, WittLevel::W32).unwrap();
         // inputs [a, b, seed]; outputs [y, dL/da, dL/db].
@@ -494,7 +576,9 @@ fn global_avg_pool_gradient_matches_finite_difference() {
     let a: Vec<f32> = (0..8).map(|i| 0.3 * i as f32 - 1.0).collect();
     let build = || {
         let mut g = Graph::new();
-        let sin = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 2, 2, 2));
+        let sin = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 2, 2, 2));
         let sout = g.shape_registry_mut().intern(ShapeDescriptor::rank2(1, 2));
         let x = g.add_node(Node {
             op: GraphOp::Input,
@@ -522,7 +606,10 @@ fn global_avg_pool_gradient_matches_finite_difference() {
     let (out, _) = compile_with_backward(g, p, BackendKind::Cpu, WittLevel::W32).unwrap();
     let da = run(&out.archive, &[&a, &[1.0f32; 2]])[1].clone();
     for (j, &v) in da.iter().enumerate() {
-        assert!((v - 0.25).abs() < 1e-4, "globalavgpool dA[{j}] = {v}, want 0.25");
+        assert!(
+            (v - 0.25).abs() < 1e-4,
+            "globalavgpool dA[{j}] = {v}, want 0.25"
+        );
     }
 }
 
@@ -538,9 +625,15 @@ fn check_pool(op: OpKind, x: &[f32], hi: u64, wi: u64, kh: u64, kw: u64, tol: f3
     let w: Vec<f32> = (0..wlen).map(|i| 0.3 + 0.2 * (i % 4) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sin = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, hi, wi));
-        let sout = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, ho, wo));
-        let so2 = g.shape_registry_mut().intern(ShapeDescriptor::rank2(1, ho * wo));
+        let sin = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 1, hi, wi));
+        let sout = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 1, ho, wo));
+        let so2 = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(1, ho * wo));
         let x = g.add_node(Node {
             op: GraphOp::Input,
             inputs: SmallVec::new(),
@@ -603,7 +696,11 @@ fn check_pool(op: OpKind, x: &[f32], hi: u64, wi: u64, kh: u64, kw: u64, tol: f3
         xp[j] += eps;
         xm[j] -= eps;
         let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
-        assert!((da[j] - nd).abs() <= tol + tol * nd.abs(), "{op:?} grad[{j}]: {} vs {nd}", da[j]);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
     }
 }
 
@@ -615,7 +712,9 @@ fn pool_gradients_match_finite_difference() {
     check_pool(OpKind::AvgPool2d, &xa, 4, 4, 2, 2, 2e-2);
     // MaxPool: distinct values so each window has a unique maximum (the mask
     // routes the gradient to exactly one element).
-    let xm: Vec<f32> = (0..16).map(|i| (((i * 7 + 3) % 16) as f32) * 0.13 - 0.4).collect();
+    let xm: Vec<f32> = (0..16)
+        .map(|i| (((i * 7 + 3) % 16) as f32) * 0.13 - 0.4)
+        .collect();
     check_pool(OpKind::MaxPool2d, &xm, 4, 4, 2, 2, 2e-2);
 }
 
@@ -720,15 +819,25 @@ fn conv_transpose_2d_gradient_matches_finite_difference() {
     use hologram_graph::constant::ConstantEntry;
     let (b, cin, hin, win, cout, kh, kw) = (1u64, 2u64, 4u64, 4u64, 2u64, 2u64, 2u64);
     let (hout, wout) = (hin - kh + 1, win - kw + 1);
-    let xv: Vec<f32> = (0..(b * cin * hin * win) as usize).map(|i| 0.1 * ((i % 7) as f32) - 0.3).collect();
-    let wv: Vec<f32> = (0..(cout * cin * kh * kw) as usize).map(|i| 0.12 * ((i % 5) as f32) - 0.2).collect();
+    let xv: Vec<f32> = (0..(b * cin * hin * win) as usize)
+        .map(|i| 0.1 * ((i % 7) as f32) - 0.3)
+        .collect();
+    let wv: Vec<f32> = (0..(cout * cin * kh * kw) as usize)
+        .map(|i| 0.12 * ((i % 5) as f32) - 0.2)
+        .collect();
     let on_ = (b * cout * hout * wout) as usize;
     let wt: Vec<f32> = (0..on_).map(|i| 0.3 + 0.2 * (i % 4) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sx = g.shape_registry_mut().intern(ShapeDescriptor::rank4(b, cin, hin, win));
-        let sw = g.shape_registry_mut().intern(ShapeDescriptor::rank4(cout, cin, kh, kw));
-        let so = g.shape_registry_mut().intern(ShapeDescriptor::rank4(b, cout, hout, wout));
+        let sx = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(b, cin, hin, win));
+        let sw = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(cout, cin, kh, kw));
+        let so = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(b, cout, hout, wout));
         let (xn, wn) = (fnode(&mut g, sx), fnode(&mut g, sw));
         let conv = g.add_node(Node {
             op: GraphOp::Op(OpKind::ConvTranspose2d),
@@ -819,7 +928,9 @@ fn lrn_gradient_matches_finite_difference() {
     let wt = [0.5f32, 0.3, 0.7, 0.4];
     let build = || {
         let mut g = Graph::new();
-        let s = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 4, 1, 1));
+        let s = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 4, 1, 1));
         let xn = fnode(&mut g, s);
         let lrn = g.add_node(Node {
             op: GraphOp::Op(OpKind::Lrn),
@@ -868,8 +979,12 @@ fn resize_gradient_matches_finite_difference() {
     let wt: Vec<f32> = (0..16).map(|i| 0.2 + 0.1 * (i % 5) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sin = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 2, 2));
-        let sout = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 4, 4));
+        let sin = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 1, 2, 2));
+        let sout = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(1, 1, 4, 4));
         let xn = fnode(&mut g, sin);
         let rz = g.add_node(Node {
             op: GraphOp::Op(OpKind::Resize),
@@ -1023,9 +1138,15 @@ fn conv2d_gradient_matches_finite_difference() {
     let wt: Vec<f32> = (0..on_).map(|i| 0.3 + 0.2 * (i % 4) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let sx = g.shape_registry_mut().intern(ShapeDescriptor::rank4(b, cin, hin, win));
-        let sw = g.shape_registry_mut().intern(ShapeDescriptor::rank4(cout, cin, kh, kw));
-        let so = g.shape_registry_mut().intern(ShapeDescriptor::rank4(b, cout, hout, wout));
+        let sx = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(b, cin, hin, win));
+        let sw = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(cout, cin, kh, kw));
+        let so = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(b, cout, hout, wout));
         let xnode = g.add_node(Node {
             op: GraphOp::Input,
             inputs: SmallVec::new(),
@@ -1082,14 +1203,22 @@ fn conv2d_gradient_matches_finite_difference() {
         xp[j] += eps;
         xm[j] -= eps;
         let nd = (sum(&xp, &wv) - sum(&xm, &wv)) / (2.0 * eps);
-        assert!((dx[j] - nd).abs() <= tol + tol * nd.abs(), "conv dX[{j}]: {} vs {nd}", dx[j]);
+        assert!(
+            (dx[j] - nd).abs() <= tol + tol * nd.abs(),
+            "conv dX[{j}]: {} vs {nd}",
+            dx[j]
+        );
     }
     for j in 0..wn_ {
         let (mut wp, mut wm) = (wv.clone(), wv.clone());
         wp[j] += eps;
         wm[j] -= eps;
         let nd = (sum(&xv, &wp) - sum(&xv, &wm)) / (2.0 * eps);
-        assert!((dw[j] - nd).abs() <= tol + tol * nd.abs(), "conv dW[{j}]: {} vs {nd}", dw[j]);
+        assert!(
+            (dw[j] - nd).abs() <= tol + tol * nd.abs(),
+            "conv dW[{j}]: {} vs {nd}",
+            dw[j]
+        );
     }
 }
 
@@ -1108,7 +1237,9 @@ fn attention_gradient_matches_finite_difference() {
     let w: Vec<f32> = (0..n).map(|i| 0.3 + 0.15 * (i % 4) as f32).collect();
     let build = || {
         let mut g = Graph::new();
-        let s4 = g.shape_registry_mut().intern(ShapeDescriptor::rank4(b, h, s, dpv));
+        let s4 = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(b, h, s, dpv));
         let inp = |g: &mut Graph| {
             let id = g.add_node(Node {
                 op: GraphOp::Input,
@@ -1159,8 +1290,9 @@ fn attention_gradient_matches_finite_difference() {
     let (dq, dk, dv) = (res[1].clone(), res[2].clone(), res[3].clone());
 
     let fwd = compile(build().0, BackendKind::Cpu, WittLevel::W32).unwrap();
-    let sum =
-        |qv: &[f32], kv: &[f32], vv: &[f32]| -> f32 { run(&fwd.archive, &[qv, kv, vv])[0].iter().sum() };
+    let sum = |qv: &[f32], kv: &[f32], vv: &[f32]| -> f32 {
+        run(&fwd.archive, &[qv, kv, vv])[0].iter().sum()
+    };
     let eps = 1e-3f32;
     let tol = 3e-2f32;
     for (which, analytic) in [(0usize, &dq), (1, &dk), (2, &dv)] {
@@ -1271,12 +1403,20 @@ fn check_binary(op: OpKind, a: &[f32], b: &[f32], tol: f32) {
         ap[j] += eps;
         am[j] -= eps;
         let n_da = (sum(&ap, b) - sum(&am, b)) / (2.0 * eps);
-        assert!((da[j] - n_da).abs() <= tol + tol * n_da.abs(), "{op:?} d/da[{j}]: {} vs {n_da}", da[j]);
+        assert!(
+            (da[j] - n_da).abs() <= tol + tol * n_da.abs(),
+            "{op:?} d/da[{j}]: {} vs {n_da}",
+            da[j]
+        );
         let (mut bp, mut bm) = (b.to_vec(), b.to_vec());
         bp[j] += eps;
         bm[j] -= eps;
         let n_db = (sum(a, &bp) - sum(a, &bm)) / (2.0 * eps);
-        assert!((db[j] - n_db).abs() <= tol + tol * n_db.abs(), "{op:?} d/db[{j}]: {} vs {n_db}", db[j]);
+        assert!(
+            (db[j] - n_db).abs() <= tol + tol * n_db.abs(),
+            "{op:?} d/db[{j}]: {} vs {n_db}",
+            db[j]
+        );
     }
 }
 
@@ -1344,6 +1484,10 @@ fn matmul_gradient_matches_finite_difference() {
         ap[j] += eps;
         am[j] -= eps;
         let n_da = (sum(&ap) - sum(&am)) / (2.0 * eps);
-        assert!((da[j] - n_da).abs() <= 1e-2 + 1e-2 * n_da.abs(), "matmul dA[{j}]: {} vs {n_da}", da[j]);
+        assert!(
+            (da[j] - n_da).abs() <= 1e-2 + 1e-2 * n_da.abs(),
+            "matmul dA[{j}]: {} vs {n_da}",
+            da[j]
+        );
     }
 }
