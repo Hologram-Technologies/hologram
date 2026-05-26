@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
     Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall,
-    MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
-    TransposeCall, UnaryCall, WhereCall,
+    MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall,
+    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -172,7 +172,27 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
             residual: cur.buf()?,
             act: cur.u8()?,
         }),
+        111 => K::MatMulDequant(read_matmul_dequant(cur)?),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
+    })
+}
+
+fn read_matmul_dequant(c: &mut Cursor<'_>) -> Result<MatMulDequantCall, ArchiveError> {
+    Ok(MatMulDequantCall {
+        a: c.buf()?,
+        bq: c.buf()?,
+        scales: c.buf()?,
+        zero_points: c.buf()?,
+        output: c.buf()?,
+        m: c.u32()?,
+        k: c.u32()?,
+        n: c.u32()?,
+        channels: c.u32()?,
+        inner: c.u32()?,
+        quant_dtype: c.u8()?,
+        dtype: c.u8()?,
+        scale_bits: c.u32()?,
+        zero_point: c.u32()? as i32,
     })
 }
 

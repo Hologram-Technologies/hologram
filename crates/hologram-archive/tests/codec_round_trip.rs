@@ -146,6 +146,42 @@ fn matmul_activation_round_trip() {
 }
 
 #[test]
+fn matmul_dequant_round_trip() {
+    use hologram_backend::MatMulDequantCall;
+    let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
+        a: ref_buf(0),
+        bq: ref_buf(1),
+        scales: ref_buf(2),
+        zero_points: ref_buf(3),
+        output: ref_buf(4),
+        m: 32,
+        k: 64,
+        n: 48,
+        channels: 48,
+        inner: 1,
+        quant_dtype: 2,
+        dtype: 8,
+        scale_bits: 0.0125f32.to_bits(),
+        zero_point: -3,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    if let KernelCall::MatMulDequant(d) = &decoded[0] {
+        assert_eq!((d.m, d.k, d.n), (32, 64, 48));
+        assert_eq!((d.channels, d.inner), (48, 1));
+        assert_eq!(d.bq.slot, 1);
+        assert_eq!(d.scales.slot, 2);
+        assert_eq!(d.zero_points.slot, 3);
+        assert_eq!(d.output.slot, 4);
+        assert_eq!(d.quant_dtype, 2);
+        assert_eq!(d.zero_point, -3);
+        assert_eq!(d.scale_bits, 0.0125f32.to_bits());
+    } else {
+        panic!("not matmul-dequant");
+    }
+}
+
+#[test]
 fn matmul_add_activation_round_trip() {
     use hologram_backend::{fused_activation, MatMulAddActivationCall};
     let calls = vec![KernelCall::MatMulAddActivation(MatMulAddActivationCall {

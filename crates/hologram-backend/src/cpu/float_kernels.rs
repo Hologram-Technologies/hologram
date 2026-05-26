@@ -304,6 +304,129 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     ))
 }
 
+/// Fused dequantize → matmul: `out = A · dequant(Bq)`. `Bq` (i8/i4, per-tensor
+/// or per-channel) is dequantized into a **transient** f32 panel — the dense
+/// weight never occupies a pool slot — then the tuned blocked f32 kernel runs
+/// unchanged (no change to the FMA inner loop, so the perf floors hold).
+pub fn matmul_dequant_float<W: Workspace>(
+    c: &MatMulDequantCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    use crate::cpu::dtype::*;
+    let (m, k, n) = (c.m as usize, c.k as usize, c.n as usize);
+    if m == 0 || k == 0 || n == 0 {
+        return Ok(());
+    }
+    if c.dtype != DTYPE_F32 {
+        return Err(BackendError::UnsupportedOp(
+            "matmul_dequant: only f32 output is supported",
+        ));
+    }
+    let kn = k * n;
+    let in_bytes = match c.quant_dtype {
+        DTYPE_I4 => kn.div_ceil(2),
+        DTYPE_I8 => kn,
+        _ => {
+            return Err(BackendError::UnsupportedOp(
+                "matmul_dequant: quant_dtype must be i8/i4",
+            ))
+        }
+    };
+    let per_ch = c.per_channel();
+    let reads_spec: &[crate::workspace::BufferRef] = if per_ch {
+        &[c.a, c.bq, c.scales, c.zero_points]
+    } else {
+        &[c.a, c.bq]
+    };
+    let (reads, out) = ws
+        .split_borrow(reads_spec, c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let a = reads[0]
+        .get(..m * k * 4)
+        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
+    let bq = reads[1]
+        .get(..in_bytes)
+        .ok_or(BackendError::SlotOutOfRange(c.bq.slot))?;
+    let (scales, zps): (&[u8], &[u8]) = if per_ch {
+        (reads[2], reads[3])
+    } else {
+        (&[], &[])
+    };
+    if out.len() < m * n * 4 {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let channels = c.channels as usize;
+    let inner = (c.inner as usize).max(1);
+    let scale = f32::from_bits(c.scale_bits);
+    let zp = c.zero_point;
+    // Dequantize Bq → transient f32 [k·n].
+    let mut bdq = alloc::vec![0f32; kn];
+    for (i, slot) in bdq.iter_mut().enumerate() {
+        let q: i32 = match c.quant_dtype {
+            DTYPE_I8 => (bq[i] as i8) as i32,
+            DTYPE_I4 => {
+                let byte = bq[i / 2];
+                let nib = if i.is_multiple_of(2) {
+                    byte & 0x0F
+                } else {
+                    byte >> 4
+                };
+                let v = nib as i32;
+                if v >= 8 {
+                    v - 16
+                } else {
+                    v
+                }
+            }
+            _ => 0,
+        };
+        let (s, z) = if per_ch {
+            let ch = (i / inner) % channels;
+            (
+                f32::from_le_bytes([
+                    scales[ch * 4],
+                    scales[ch * 4 + 1],
+                    scales[ch * 4 + 2],
+                    scales[ch * 4 + 3],
+                ]),
+                i32::from_le_bytes([
+                    zps[ch * 4],
+                    zps[ch * 4 + 1],
+                    zps[ch * 4 + 2],
+                    zps[ch * 4 + 3],
+                ]),
+            )
+        } else {
+            (scale, zp)
+        };
+        *slot = (q - z) as f32 * s;
+    }
+    // A · Bq_dequantized through the shared cache-oblivious f32 kernel.
+    let run = |a32: &[f32], out32: &mut [f32]| {
+        with_matmul_scratch(|bt| {
+            crate::cpu::simd::matmul_f32_blocked(a32, &bdq, out32, m, k, n, bt);
+        });
+    };
+    match (
+        bytemuck::try_cast_slice::<u8, f32>(a),
+        bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+    ) {
+        (Ok(a32), Ok(out32)) => run(a32, out32),
+        _ => {
+            let mut af = alloc::vec![0f32; m * k];
+            for (i, v) in af.iter_mut().enumerate() {
+                *v = read_float(a, i, DTYPE_F32);
+            }
+            let mut o32 = alloc::vec![0f32; m * n];
+            run(&af, &mut o32);
+            for (i, &v) in o32.iter().enumerate() {
+                write_float(out, i, v, DTYPE_F32);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Selector → activation function for a fused matmul epilogue.
 fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
     use crate::kernel_call::fused_activation as fa;
