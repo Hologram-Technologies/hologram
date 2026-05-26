@@ -254,6 +254,52 @@ fn slice_is_zero_movement_projectfield() {
 }
 
 #[test]
+fn resize_nearest_upsamples() {
+    // x[1,1,2,2] → [1,1,4,4], 2× nearest-neighbor: each pixel replicated 2×2.
+    let x = [1.0f32, 2.0, 3.0, 4.0];
+    let want = [
+        1.0f32, 1.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 3.0, 3.0, 4.0, 4.0,
+    ];
+
+    let mut g = Graph::new();
+    let s_in = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 2, 2));
+    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 1, 4, 4));
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_in,
+    });
+    g.add_input(xi);
+    let rz = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Resize),
+        inputs: SmallVec::from_iter([InputSource::Node(xi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(rz)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got, want, "resize nearest did not upsample correctly");
+}
+
+#[test]
 fn lrn_normalizes_over_channel_window() {
     // x[1,3,1] (3 channels), size=3, α=1, β=1, bias=0. Window [c−1,c+1]:
     // out[c] = x[c] / ((1/3)·Σ_window x²).

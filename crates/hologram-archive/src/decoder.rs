@@ -147,7 +147,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         70 => K::FusedSwiGlu(read_matmul(cur)?),
         71 => K::Pad(read_layout(cur)?),
         72 => K::Expand(read_expand(cur)?),
-        73 => K::Resize(read_layout(cur)?),
+        73 => K::Resize(read_expand(cur)?),
         74 => K::CumSum(read_reduce(cur)?),
         75 => K::RotaryEmbedding(read_rope(cur)?),
         76 => K::Clip(read_unary(cur)?),

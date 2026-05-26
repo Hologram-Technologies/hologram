@@ -83,12 +83,12 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Transpose / Expand = dtype-agnostic gather (one kernel both domains).
         KernelCall::Transpose(c) => ff::transpose_float(c, ws),
         KernelCall::Expand(c) => ff::expand_float(c, ws),
-        KernelCall::Resize(_)
-        | KernelCall::ConcatGrad(_)
-        | KernelCall::SliceGrad(_)
-        | KernelCall::PadGrad(_) => Err(BackendError::UnsupportedOp(
-            "layout op not yet functional: needs its UOR-native realization",
-        )),
+        KernelCall::Resize(c) => ff::resize_float(c, ws),
+        KernelCall::ConcatGrad(_) | KernelCall::SliceGrad(_) | KernelCall::PadGrad(_) => {
+            Err(BackendError::UnsupportedOp(
+                "layout-grad op not yet functional: needs its backward realization",
+            ))
+        }
 
         // MatMul (byte ring).
         KernelCall::MatMul(c)
@@ -1357,13 +1357,10 @@ fn try_dispatch_float<W: Workspace>(
         K::Transpose(c) if is_float(c.dtype) => Some(ff::transpose_float(c, ws)),
         // Expand is the broadcast gather (stride-0 on size-1 axes).
         K::Expand(c) if is_float(c.dtype) => Some(ff::expand_float(c, ws)),
-        // Resize (and grads) still needs its realization. Fail loud until then.
-        K::Resize(c)
-        | K::ConcatGrad(c)
-        | K::SliceGrad(c)
-        | K::PadGrad(c)
-            if is_float(c.dtype) =>
-        {
+        // Resize is the nearest-neighbor gather (reuses ExpandCall's dims).
+        K::Resize(c) if is_float(c.dtype) => Some(ff::resize_float(c, ws)),
+        // The layout-grad ops still need their backward realization.
+        K::ConcatGrad(c) | K::SliceGrad(c) | K::PadGrad(c) if is_float(c.dtype) => {
             Some(Err(BackendError::UnsupportedOp(
                 "layout op not yet functional: needs its UOR-native realization",
             )))

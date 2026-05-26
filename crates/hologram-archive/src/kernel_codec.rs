@@ -433,7 +433,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
         K::Resize(c) => {
             put_u16(out, D_RESIZE);
-            put_layout(out, c);
+            put_expand(out, c);
         }
         K::CumSum(c) => {
             put_u16(out, D_CUMSUM);

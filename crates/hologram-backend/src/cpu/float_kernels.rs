@@ -1180,6 +1180,50 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     Ok(())
 }
 
+/// Resize (nearest-neighbor) — reuses `ExpandCall`'s in/out dims. Each output
+/// coordinate maps to the nearest input coordinate `floor(o · in/out)` per
+/// axis (ONNX `nearest`, `asymmetric`-style). Dtype-agnostic gather, rank ≤ 8.
+pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
+    let rank = c.rank as usize;
+    if rank == 0 || rank > 8 {
+        return Err(BackendError::UnsupportedOp("resize: rank must be 1..=8"));
+    }
+    let es = elem_size(c.dtype);
+    let in_dims = &c.in_dims[..rank];
+    let out_dims = &c.out_dims[..rank];
+    let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
+
+    let mut in_strides = [0usize; 8];
+    let mut stride = 1usize;
+    for i in (0..rank).rev() {
+        in_strides[i] = stride;
+        stride *= in_dims[i] as usize;
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0];
+    if out.len() < out_total * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let mut coord = [0usize; 8];
+    for o in 0..out_total {
+        let mut rem = o;
+        for i in (0..rank).rev() {
+            coord[i] = rem % out_dims[i] as usize;
+            rem /= out_dims[i] as usize;
+        }
+        let mut in_idx = 0usize;
+        for i in 0..rank {
+            // Nearest source index: floor(out_coord · in_dim / out_dim).
+            let src = coord[i] * in_dims[i] as usize / out_dims[i] as usize;
+            in_idx += src.min(in_dims[i] as usize - 1) * in_strides[i];
+        }
+        out[o * es..o * es + es].copy_from_slice(&inp[in_idx * es..in_idx * es + es]);
+    }
+    Ok(())
+}
+
 /// LRN (local response normalization) over the channel axis of an
 /// `[batch, channels, inner]` tensor (inner = H·W). For each element,
 /// `out = x / (bias + (α/size)·Σ_{j∈window} x[j]²)^β`, the window spanning the

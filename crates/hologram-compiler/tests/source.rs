@@ -148,6 +148,7 @@ fn parser_accepts_every_op_in_catalog() {
                 | hologram_graph::OpKind::Expand
                 | hologram_graph::OpKind::RotaryEmbedding
                 | hologram_graph::OpKind::Lrn
+                | hologram_graph::OpKind::Resize
         ) {
             continue;
         }

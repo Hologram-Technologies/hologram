@@ -589,7 +589,9 @@ pub enum KernelCall {
     // Utility
     Pad(LayoutCall),
     Expand(ExpandCall),
-    Resize(LayoutCall),
+    // Reuses `ExpandCall`'s {in_dims, out_dims} shape; the resize kernel maps
+    // each output index to the nearest input index (vs broadcast for Expand).
+    Resize(ExpandCall),
     CumSum(ReduceCall),
     RotaryEmbedding(RoPECall),
     Clip(UnaryCall),
@@ -731,7 +733,7 @@ impl KernelCall {
             K::FusedSwiGlu(c) => p_matmul(c).done(69),
             K::Pad(c) => p_layout(c).done(70),
             K::Expand(c) => p_expand(c).done(71),
-            K::Resize(c) => p_layout(c).done(72),
+            K::Resize(c) => p_expand(c).done(72),
             K::CumSum(c) => p_reduce(c).done(73),
             K::RotaryEmbedding(c) => p_rope(c).done(74),
             K::Clip(c) => p_unary(c).done(75),
@@ -876,13 +878,12 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         K::Reshape(c)
         | K::Slice(c)
         | K::Pad(c)
-        | K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => vec![c.input, c.output],
 
         K::Transpose(c) => vec![c.input, c.output],
-        K::Expand(c) => vec![c.input, c.output],
+        K::Expand(c) | K::Resize(c) => vec![c.input, c.output],
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
             vec![c.input, c.output]
@@ -1005,13 +1006,12 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::Reshape(c)
         | K::Slice(c)
         | K::Pad(c)
-        | K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => c.dtype,
 
         K::Transpose(c) => c.dtype,
-        K::Expand(c) => c.dtype,
+        K::Expand(c) | K::Resize(c) => c.dtype,
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => c.dtype,
 

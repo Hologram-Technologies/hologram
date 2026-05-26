@@ -440,7 +440,15 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
             out_dims: [0; 8],
             dtype: node.dtype,
         }),
-        K::Resize => KernelCall::Resize(layout),
+        // in_dims/out_dims filled by the compiler's resize pass.
+        K::Resize => KernelCall::Resize(ExpandCall {
+            input: inp0(),
+            output: node.output,
+            rank: 0,
+            in_dims: [0; 8],
+            out_dims: [0; 8],
+            dtype: node.dtype,
+        }),
         K::CumSum => KernelCall::CumSum(reduce_call),
         // head_dim filled by the compiler's rope pass (from the input's last
         // dim); cos/sin are operands 1 and 2.
