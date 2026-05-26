@@ -80,10 +80,10 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Concat is byte placement (dtype-agnostic) — the same kernel serves
         // both domains.
         KernelCall::Concat(c) => ff::concat_float(c, ws),
-        // Transpose = dtype-agnostic gather (one kernel for both domains).
+        // Transpose / Expand = dtype-agnostic gather (one kernel both domains).
         KernelCall::Transpose(c) => ff::transpose_float(c, ws),
-        KernelCall::Expand(_)
-        | KernelCall::Resize(_)
+        KernelCall::Expand(c) => ff::expand_float(c, ws),
+        KernelCall::Resize(_)
         | KernelCall::ConcatGrad(_)
         | KernelCall::SliceGrad(_)
         | KernelCall::PadGrad(_) => Err(BackendError::UnsupportedOp(
@@ -1357,10 +1357,10 @@ fn try_dispatch_float<W: Workspace>(
         K::Pad(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
         // Transpose is the irreducible re-indexing kernel (gather by perm).
         K::Transpose(c) if is_float(c.dtype) => Some(ff::transpose_float(c, ws)),
-        // Expand / Resize (and grads) still need their UOR-native realization
-        // (Expand = broadcast view). Fail loud until each lands.
-        K::Expand(c)
-        | K::Resize(c)
+        // Expand is the broadcast gather (stride-0 on size-1 axes).
+        K::Expand(c) if is_float(c.dtype) => Some(ff::expand_float(c, ws)),
+        // Resize (and grads) still needs its realization. Fail loud until then.
+        K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c)

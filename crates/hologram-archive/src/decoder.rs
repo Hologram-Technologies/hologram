@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
     LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
-    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    ExpandCall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -146,7 +146,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         69 => K::Attention(read_attn(cur)?),
         70 => K::FusedSwiGlu(read_matmul(cur)?),
         71 => K::Pad(read_layout(cur)?),
-        72 => K::Expand(read_layout(cur)?),
+        72 => K::Expand(read_expand(cur)?),
         73 => K::Resize(read_layout(cur)?),
         74 => K::CumSum(read_reduce(cur)?),
         75 => K::RotaryEmbedding(read_unary(cur)?),
@@ -308,6 +308,28 @@ fn read_transpose(c: &mut Cursor<'_>) -> Result<TransposeCall, ArchiveError> {
         rank,
         dims,
         perm,
+        dtype,
+    })
+}
+fn read_expand(c: &mut Cursor<'_>) -> Result<ExpandCall, ArchiveError> {
+    let input = c.buf()?;
+    let output = c.buf()?;
+    let rank = c.u8()?;
+    let mut in_dims = [0u32; 8];
+    for d in &mut in_dims {
+        *d = c.u32()?;
+    }
+    let mut out_dims = [0u32; 8];
+    for d in &mut out_dims {
+        *d = c.u32()?;
+    }
+    let dtype = c.u8()?;
+    Ok(ExpandCall {
+        input,
+        output,
+        rank,
+        in_dims,
+        out_dims,
         dtype,
     })
 }

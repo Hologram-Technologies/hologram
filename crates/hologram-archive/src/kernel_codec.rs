@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall, UnaryCall,
+    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall, UnaryCall,
     WhereCall,
 };
 
@@ -429,7 +429,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
         K::Expand(c) => {
             put_u16(out, D_EXPAND);
-            put_layout(out, c);
+            put_expand(out, c);
         }
         K::Resize(c) => {
             put_u16(out, D_RESIZE);
@@ -686,6 +686,18 @@ fn put_transpose(out: &mut Vec<u8>, c: &TransposeCall) {
     }
     for p in c.perm {
         put_u8(out, p);
+    }
+    put_u8(out, c.dtype);
+}
+fn put_expand(out: &mut Vec<u8>, c: &ExpandCall) {
+    put_buf(out, c.input);
+    put_buf(out, c.output);
+    put_u8(out, c.rank);
+    for d in c.in_dims {
+        put_u32(out, d);
+    }
+    for d in c.out_dims {
+        put_u32(out, d);
     }
     put_u8(out, c.dtype);
 }

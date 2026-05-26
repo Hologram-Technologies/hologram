@@ -141,6 +141,20 @@ pub struct TransposeCall {
     pub dtype: u8,
 }
 
+/// Expand (broadcast). Replicates `input` to the broadcast `out_dims`: an axis
+/// with `in_dims[i] == 1` is read at index 0 (stride-0), every other axis maps
+/// 1:1. Rank ≤ 8. The kernel materializes the broadcast (a gather); a
+/// stride-0 zero-movement view is a future optimization.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpandCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub rank: u8,
+    pub in_dims: [u32; 8],
+    pub out_dims: [u32; 8],
+    pub dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SoftmaxCall {
     pub input: BufferRef,
@@ -382,6 +396,14 @@ fn p_transpose(c: &TransposeCall) -> Pb {
     }
     b
 }
+
+fn p_expand(c: &ExpandCall) -> Pb {
+    let mut b = Pb::new().u8(c.rank).u8(c.dtype);
+    for i in 0..c.rank as usize {
+        b = b.u32(c.in_dims[i]).u32(c.out_dims[i]);
+    }
+    b
+}
 fn p_softmax(c: &SoftmaxCall) -> Pb {
     Pb::new().u32(c.batch).u32(c.feature).u8(c.dtype)
 }
@@ -518,7 +540,7 @@ pub enum KernelCall {
 
     // Utility
     Pad(LayoutCall),
-    Expand(LayoutCall),
+    Expand(ExpandCall),
     Resize(LayoutCall),
     CumSum(ReduceCall),
     RotaryEmbedding(UnaryCall),
@@ -660,7 +682,7 @@ impl KernelCall {
             K::Attention(c) => p_attention(c).done(68),
             K::FusedSwiGlu(c) => p_matmul(c).done(69),
             K::Pad(c) => p_layout(c).done(70),
-            K::Expand(c) => p_layout(c).done(71),
+            K::Expand(c) => p_expand(c).done(71),
             K::Resize(c) => p_layout(c).done(72),
             K::CumSum(c) => p_reduce(c).done(73),
             K::RotaryEmbedding(c) => p_unary(c).done(74),
@@ -805,13 +827,13 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         K::Reshape(c)
         | K::Slice(c)
         | K::Pad(c)
-        | K::Expand(c)
         | K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => vec![c.input, c.output],
 
         K::Transpose(c) => vec![c.input, c.output],
+        K::Expand(c) => vec![c.input, c.output],
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
             vec![c.input, c.output]
@@ -933,13 +955,13 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::Reshape(c)
         | K::Slice(c)
         | K::Pad(c)
-        | K::Expand(c)
         | K::Resize(c)
         | K::ConcatGrad(c)
         | K::SliceGrad(c)
         | K::PadGrad(c) => c.dtype,
 
         K::Transpose(c) => c.dtype,
+        K::Expand(c) => c.dtype,
 
         K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => c.dtype,
 

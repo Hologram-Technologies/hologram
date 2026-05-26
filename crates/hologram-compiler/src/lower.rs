@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall, UnaryCall,
-    WhereCall,
+    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall,
+    UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -430,7 +430,16 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
 
         K::Pad => KernelCall::Pad(layout),
-        K::Expand => KernelCall::Expand(layout),
+        // in_dims/out_dims filled by the compiler's expand pass (from the
+        // input + output shapes); a fresh call is rank-0 until then.
+        K::Expand => KernelCall::Expand(ExpandCall {
+            input: inp0(),
+            output: node.output,
+            rank: 0,
+            in_dims: [0; 8],
+            out_dims: [0; 8],
+            dtype: node.dtype,
+        }),
         K::Resize => KernelCall::Resize(layout),
         K::CumSum => KernelCall::CumSum(reduce_call),
         K::RotaryEmbedding => KernelCall::RotaryEmbedding(unary),

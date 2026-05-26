@@ -293,6 +293,17 @@ impl Compiler {
                         tc.perm = perm;
                     }
                 }
+                // Expand: in_dims (input shape) + out_dims (output shape) for
+                // the broadcast gather.
+                if matches!(kind, hologram_graph::OpKind::Expand) {
+                    if let KernelCall::Expand(ec) = &mut kernel_call {
+                        let (rank, in_dims, out_dims) = expand_plan(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                        ec.rank = rank;
+                        ec.in_dims = in_dims;
+                        ec.out_dims = out_dims;
+                    }
+                }
                 // Pad = placement into a zeroed buffer: write the data into the
                 // output's interior [lo, lo+data) (axis-0). The fresh output
                 // buffer is zeroed, so the pad regions remain zero.
@@ -771,6 +782,43 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
     let lo = pad_at(0).unwrap_or(0).max(0) as u64;
     let elem = bytes_per_element(node.output_dtype.0) as u64;
     Some((lo * inner * elem, data_count * elem, data_count))
+}
+
+/// Resolve an Expand's `(rank, in_dims, out_dims)` from the input shape and the
+/// node's broadcast output shape (same rank; each input dim equals the output
+/// dim or is 1). `None` for rank 0/>8 or an incompatible (non-broadcast) shape.
+fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u32; 8])> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let in_shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let out_shape = reg.get(node.output_shape).cloned()?;
+    let rank = out_shape.rank as usize;
+    if rank == 0 || rank > 8 || in_shape.rank as usize != rank {
+        return None;
+    }
+    let mut in_dims = [0u32; 8];
+    let mut out_dims = [0u32; 8];
+    for i in 0..rank {
+        let id = in_shape.dim(i)? as u32;
+        let od = out_shape.dim(i)? as u32;
+        if id != od && id != 1 {
+            return None; // not a valid broadcast
+        }
+        in_dims[i] = id;
+        out_dims[i] = od;
+    }
+    Some((rank as u8, in_dims, out_dims))
 }
 
 /// Resolve a Transpose's `(rank, input_dims, perm)` from the data shape and the

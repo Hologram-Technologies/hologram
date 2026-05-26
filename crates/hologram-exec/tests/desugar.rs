@@ -254,6 +254,52 @@ fn slice_is_zero_movement_projectfield() {
 }
 
 #[test]
+fn expand_broadcasts() {
+    // x[1,3] expand → [4,3]: the size-1 axis 0 broadcasts (each row = x).
+    let x = [10.0f32, 20.0, 30.0];
+    let want = [
+        10.0f32, 20.0, 30.0, 10.0, 20.0, 30.0, 10.0, 20.0, 30.0, 10.0, 20.0, 30.0,
+    ];
+
+    let mut g = Graph::new();
+    let s_in = g.shape_registry_mut().intern(ShapeDescriptor::rank2(1, 3));
+    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank2(4, 3));
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_in,
+    });
+    g.add_input(xi);
+    let ex = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Expand),
+        inputs: SmallVec::from_iter([InputSource::Node(xi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(ex)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got, want, "expand did not broadcast");
+}
+
+#[test]
 fn transpose_permutes_axes() {
     // x[2,3] transposed (default reverse perm) → [3,2]: out[j,i] = x[i,j].
     let x = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // rows [1,2,3],[4,5,6]

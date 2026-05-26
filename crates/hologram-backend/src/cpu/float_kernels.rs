@@ -1180,6 +1180,51 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     Ok(())
 }
 
+/// Expand (broadcast): replicate `input` to `out_dims`. An axis with
+/// `in_dims[i] == 1` reads input index 0 (broadcast); every other axis maps
+/// 1:1. Dtype-agnostic gather; materializes the broadcast (a stride-0
+/// zero-movement view is a future optimization). Rank ≤ 8.
+pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
+    let rank = c.rank as usize;
+    if rank == 0 || rank > 8 {
+        return Err(BackendError::UnsupportedOp("expand: rank must be 1..=8"));
+    }
+    let es = elem_size(c.dtype);
+    let in_dims = &c.in_dims[..rank];
+    let out_dims = &c.out_dims[..rank];
+    let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
+
+    // Row-major input strides (a broadcast axis contributes stride 0).
+    let mut in_strides = [0usize; 8];
+    let mut stride = 1usize;
+    for i in (0..rank).rev() {
+        in_strides[i] = if in_dims[i] == 1 { 0 } else { stride };
+        stride *= in_dims[i] as usize;
+    }
+
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0];
+    if out.len() < out_total * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let mut coord = [0usize; 8];
+    for o in 0..out_total {
+        let mut rem = o;
+        for i in (0..rank).rev() {
+            coord[i] = rem % out_dims[i] as usize;
+            rem /= out_dims[i] as usize;
+        }
+        let mut in_idx = 0usize;
+        for i in 0..rank {
+            in_idx += coord[i] * in_strides[i];
+        }
+        out[o * es..o * es + es].copy_from_slice(&inp[in_idx * es..in_idx * es + es]);
+    }
+    Ok(())
+}
+
 // Elementwise float impls.
 #[inline]
 pub fn relu_f(x: f32) -> f32 {
