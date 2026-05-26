@@ -61,8 +61,33 @@ pub fn compile_with_backward(
     target: BackendKind,
     level: uor_foundation::WittLevel,
 ) -> Result<(CompilationOutput, alloc::vec::Vec<hologram_graph::NodeId>), CompileError> {
+    use hologram_graph::node::Node;
+    use hologram_graph::{GraphOp, InputSource};
+    use smallvec::SmallVec;
+
+    // Desugar composites first so backward differentiates their primitive
+    // pipelines (e.g. SwiGLU → MatMul·Silu·MatMul·Mul), reusing those VJPs
+    // rather than needing a separate composite gradient.
+    graph.desugar_composites();
     let input_grads = hologram_graph::append_backward(&mut graph, output_id)
         .map_err(|_| CompileError::CompletenessFailure)?;
+    // Gradients are outputs of the backward graph: expose each as a graph
+    // output port so it is materialized and retained. The elision pass roots
+    // dead-node elimination at the output set, so a gradient that fed nothing
+    // else would otherwise be (correctly) pruned as unreachable.
+    for &g in &input_grads {
+        let (dt, sh) = graph
+            .get(g)
+            .map(|n| (n.output_dtype, n.output_shape))
+            .unwrap_or((hologram_graph::registry::DTypeId(0), hologram_graph::registry::ShapeId(0)));
+        let out = graph.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(g)]),
+            output_dtype: dt,
+            output_shape: sh,
+        });
+        graph.add_output(out);
+    }
     let output = Compiler::new(graph, target, level).compile()?;
     Ok((output, input_grads))
 }

@@ -96,6 +96,13 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Conv2d / transpose.
         KernelCall::Conv2d(c) | KernelCall::ConvTranspose2d(c) => conv2d_w8(c, ws),
 
+        // im2col / col2im: float-only (they appear in the autodiff backward
+        // graph of float convs). The byte ring has no meaning here, so fail
+        // loud rather than behave as identity.
+        KernelCall::Im2Col(_) | KernelCall::Col2Im(_) => Err(BackendError::UnsupportedOp(
+            "im2col/col2im: float-only (byte-ring patch gather is not defined)",
+        )),
+
         // Normalizations.
         KernelCall::LayerNorm(c) | KernelCall::GroupNorm(c) | KernelCall::InstanceNorm(c) => {
             layer_norm_w8(c, ws)
@@ -136,40 +143,6 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
             "Lrn: float-only (byte-ring LRN is not defined)",
         )),
 
-        // Backward / gradient ops: emitted by the autodiff graph builder but
-        // NOT an inference-runtime execution target. Correct backward kernels
-        // need training-autodiff reference V&V the runtime doesn't carry, and a
-        // forward/byte alias would compute the wrong gradient — so fail loud.
-        // (Training is a distinct feature; ADR-055.)
-        KernelCall::MatMulGradA(_)
-        | KernelCall::MatMulGradB(_)
-        | KernelCall::FusedSwiGluGrad(_)
-        | KernelCall::Conv2dGradX(_)
-        | KernelCall::Conv2dGradW(_)
-        | KernelCall::SoftmaxGrad(_)
-        | KernelCall::LogSoftmaxGrad(_)
-        | KernelCall::LayerNormGrad(_)
-        | KernelCall::RmsNormGrad(_)
-        | KernelCall::GroupNormGrad(_)
-        | KernelCall::ReduceSumGrad(_)
-        | KernelCall::ReduceMeanGrad(_)
-        | KernelCall::ReduceProdGrad(_)
-        | KernelCall::SubGrad(_)
-        | KernelCall::MulGrad(_)
-        | KernelCall::DivGrad(_)
-        | KernelCall::PowGrad(_)
-        | KernelCall::MinGrad(_)
-        | KernelCall::MaxGrad(_)
-        | KernelCall::ConcatGrad(_)
-        | KernelCall::SliceGrad(_)
-        | KernelCall::PadGrad(_)
-        | KernelCall::AvgPool2dGrad(_)
-        | KernelCall::GlobalAvgPoolGrad(_)
-        | KernelCall::AttentionGrad(_)
-        | KernelCall::UnaryGrad(_) => Err(BackendError::UnsupportedOp(
-            "gradient/backward op is not an inference-runtime execution target",
-        )),
-
         // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
         KernelCall::Dequantize(c) => dequantize(c, ws),
 
@@ -178,6 +151,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // fast path above; this arm keeps the match exhaustive.
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
+        KernelCall::MatMulAddActivation(c) => ff::matmul_add_activation_float(c, ws),
     }
 }
 
@@ -1131,7 +1105,7 @@ fn try_dispatch_float<W: Workspace>(
     }
     match call {
         // Direct PrimitiveOp wrappers — float forms.
-        K::Neg(c) if is_float(0) || is_float_unary(c) => {
+        K::Neg(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::neg_f, dtype_of_unary(c)))
         }
         K::Add(c) if is_float_binary(c) => Some(ff::binary_float_acc(
@@ -1270,6 +1244,7 @@ fn try_dispatch_float<W: Workspace>(
         // Linear algebra / convolution.
         K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
         K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
+        K::MatMulAddActivation(c) => Some(ff::matmul_add_activation_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
         // operands, but `MatMulCall` carries one (`b`). It cannot be computed
@@ -1282,6 +1257,8 @@ fn try_dispatch_float<W: Workspace>(
         ))),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
         K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
+        K::Im2Col(c) if is_float(c.dtype) => Some(ff::im2col_float(c, ws)),
+        K::Col2Im(c) if is_float(c.dtype) => Some(ff::col2im_float(c, ws)),
 
         // Normalizations.
         K::LayerNorm(c) | K::GroupNorm(c) | K::InstanceNorm(c) if is_float(c.dtype) => {

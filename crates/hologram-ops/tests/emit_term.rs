@@ -10,7 +10,7 @@ use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::{HostBounds, PrimitiveOp, WittLevel};
 
 use hologram_ops::{
-    activation_reduce::*, backward::*, conv::*, direct::*, elementwise_binary::*,
+    activation_reduce::*, conv::*, direct::*, elementwise_binary::*,
     elementwise_unary::*, layout::*, linalg::*, normalization::*, pooling::*, reduction::*,
     structured::*, utility::*,
 };
@@ -198,12 +198,4 @@ fn utility_layout_emit_is_well_formed() {
             other => panic!("layout PadOp emitted non-Variable: {:?}", other),
         }
     }
-}
-
-#[test]
-fn backward_emit_is_well_formed() {
-    let mut arena: Box<HoloArena<32>> = Box::new(HoloArena::new());
-    let g0 = arena.push(Term::Variable { name_index: 0 }).unwrap();
-    MatMulGradAOp::emit_term(&mut arena, WittLevel::W8, g0).unwrap();
-    assert_closed_under_primitives(&arena);
 }

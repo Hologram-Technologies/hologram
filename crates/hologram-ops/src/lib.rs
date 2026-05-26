@@ -21,7 +21,6 @@ pub mod lut;
 pub mod reference;
 
 pub mod activation_reduce;
-pub mod backward;
 pub mod conv;
 pub mod direct;
 pub mod elementwise_binary;

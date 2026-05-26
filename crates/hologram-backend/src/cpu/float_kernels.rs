@@ -398,6 +398,155 @@ pub fn matmul_add_float<W: Workspace>(c: &MatMulAddCall, ws: &mut W) -> Result<(
     Ok(())
 }
 
+/// **Fused matmul + residual-add + activation (content-addressed fusion).**
+/// Computes the matmul into the output slot, adds the residual, then applies
+/// the activation — all over the `m·n` results while hot in cache, eliding the
+/// matmul product, the post-add sum, *and* the activation intermediate as
+/// distinct addressed values. Equivalent to `act(add(matmul(a, b), residual))`,
+/// so it inherits the V&V of its three component kernels.
+pub fn matmul_add_activation_float<W: Workspace>(
+    c: &MatMulAddActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    matmul_float(&c.mm, ws)?;
+    let count = (c.mm.m as usize) * (c.mm.n as usize);
+    if count == 0 {
+        return Ok(());
+    }
+    let dt = c.mm.dtype;
+    let es = elem_size(dt);
+    let f = fused_act_fn(c.act);
+    let (reads, out) = ws
+        .split_borrow(&[c.residual], c.mm.output)
+        .ok_or(BackendError::SlotOutOfRange(c.mm.output.slot))?;
+    let res = reads[0]
+        .get(..count * es)
+        .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?;
+    if out.len() < count * es {
+        return Err(BackendError::SlotOutOfRange(c.mm.output.slot));
+    }
+    if dt == DTYPE_F32 {
+        if let (Ok(o32s), Ok(r32s)) = (
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]),
+            bytemuck::try_cast_slice::<u8, f32>(res),
+        ) {
+            for (o, &r) in o32s.iter_mut().zip(r32s.iter()) {
+                *o = f(*o + r);
+            }
+            return Ok(());
+        }
+    }
+    for i in 0..count {
+        let v = read_float(out, i, dt) + read_float(res, i, dt);
+        write_float(out, i, f(v), dt);
+    }
+    Ok(())
+}
+
+/// **im2col** (valid conv receptive-field gather). Reads `input [Cin,Hin,Win]`
+/// and writes `output [Cin·kh·kw, Hout·Wout]`, where row `(ci·kh+kh')·kw+kw'`
+/// column `oh·Wout+ow` is `input[ci, oh·sh+kh', ow·sw+kw']`. Mirrors the
+/// receptive-field map of `conv2d_f32_engine`, so `W·im2col(x)` reproduces the
+/// convolution. Pure gather — every supported float dtype via read/write_float.
+pub fn im2col_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), BackendError> {
+    let (cin, hin, win) = (c.channels as usize, c.h_in as usize, c.w_in as usize);
+    let (hout, wout) = (c.h_out as usize, c.w_out as usize);
+    let (kh, kw) = (c.k_h as usize, c.k_w as usize);
+    let (sh, sw) = ((c.stride_h as usize).max(1), (c.stride_w as usize).max(1));
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let nn = hout * wout;
+    let kk = cin * kh * kw;
+    if kk == 0 || nn == 0 {
+        return Ok(());
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0]
+        .get(..cin * hin * win * es)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    if out.len() < kk * nn * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for ci in 0..cin {
+        for kh_ in 0..kh {
+            for kw_ in 0..kw {
+                let krow = (ci * kh + kh_) * kw + kw_;
+                for oh in 0..hout {
+                    let ih = oh * sh + kh_;
+                    for ow in 0..wout {
+                        let iw = ow * sw + kw_;
+                        let v = if ih < hin && iw < win {
+                            read_float(inp, (ci * hin + ih) * win + iw, dt)
+                        } else {
+                            0.0
+                        };
+                        write_float(out, krow * nn + oh * wout + ow, v, dt);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// **col2im** — the adjoint of [`im2col_float`]. Reads a patch matrix
+/// `input [Cin·kh·kw, Hout·Wout]` and scatter-**adds** each entry back to its
+/// source pixel in `output [Cin,Hin,Win]`; overlapping receptive fields
+/// accumulate. This is exactly the input-gradient of a convolution given the
+/// upstream patch-space gradient, so it closes conv's VJP composition.
+pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), BackendError> {
+    let (cin, hin, win) = (c.channels as usize, c.h_in as usize, c.w_in as usize);
+    let (hout, wout) = (c.h_out as usize, c.w_out as usize);
+    let (kh, kw) = (c.k_h as usize, c.k_w as usize);
+    let (sh, sw) = ((c.stride_h as usize).max(1), (c.stride_w as usize).max(1));
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let nn = hout * wout;
+    let kk = cin * kh * kw;
+    if kk == 0 || nn == 0 {
+        return Ok(());
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0]
+        .get(..kk * nn * es)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    if out.len() < cin * hin * win * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // Zero the image, then accumulate overlapping patches.
+    for i in 0..cin * hin * win {
+        write_float(out, i, 0.0, dt);
+    }
+    for ci in 0..cin {
+        for kh_ in 0..kh {
+            for kw_ in 0..kw {
+                let krow = (ci * kh + kh_) * kw + kw_;
+                for oh in 0..hout {
+                    let ih = oh * sh + kh_;
+                    if ih >= hin {
+                        continue;
+                    }
+                    for ow in 0..wout {
+                        let iw = ow * sw + kw_;
+                        if iw >= win {
+                            continue;
+                        }
+                        let v = read_float(inp, krow * nn + oh * wout + ow, dt);
+                        let idx = (ci * hin + ih) * win + iw;
+                        let acc = read_float(out, idx, dt) + v;
+                        write_float(out, idx, acc, dt);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendError> {
     let m = c.m as usize;
     let k = c.k as usize;
@@ -1258,7 +1407,9 @@ pub fn lrn_float<W: Workspace>(c: &LrnCall, ws: &mut W) -> Result<(), BackendErr
                     let v = read_float(x, (n * ch + j) * inner + i, dt);
                     sumsq += v * v;
                 }
-                let denom = (bias + (alpha / size as f32) * sumsq).powf(beta);
+                // `libm::powf` (not `f32::powf`) so the kernel builds on the
+                // no_std / bare-metal target, matching the rest of this file.
+                let denom = libm::powf(bias + (alpha / size as f32) * sumsq, beta);
                 let idx = (n * ch + cc) * inner + i;
                 write_float(out, idx, read_float(x, idx, dt) / denom, dt);
             }

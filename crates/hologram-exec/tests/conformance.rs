@@ -1336,6 +1336,181 @@ fn fu4_residual_add_fuses_and_is_guarded() {
     );
 }
 
+// ─── FU-5: three-op fusion (matmul → add → activation) ────────────────────
+//
+// The MLP epilogue `y = act(matmul(x, W) + b)` collapses the matmul, the
+// residual/bias add, AND the activation into one MatMulAddActivation op —
+// neither the matmul product, the post-add sum, nor the activation
+// intermediate is materialized as a distinct addressed value. Proves: the
+// fused result equals the independent f64 reference `act(A·B + b)`; the chain
+// of three nodes becomes one kernel; and the fusion is **guarded** — if the
+// intermediate add has a second observer, the activation is not absorbed.
+#[test]
+fn fu5_matmul_add_activation_fuses_and_conforms() {
+    let n = 16usize;
+    let f32c = DTypeId(DTYPE_F32);
+    let shape = |g: &mut Graph| {
+        g.shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(n as u64, n as u64))
+    };
+    for act in [OpKind::Relu, OpKind::Gelu, OpKind::Silu] {
+        let x = fill(n * n, 0x7A);
+        let w = fill(n * n, 0x8B);
+        let b = fill(n * n, 0x9C);
+        let mm = ref_matmul(&x, &w, n, n, n);
+        let summed = ref_add(&mm, &b);
+        let want: Vec<f32> = summed.iter().map(|&v| act_ref(act, v)).collect();
+
+        let mut g = Graph::new();
+        let s = shape(&mut g);
+        let wc = g.constants_mut().insert(ConstantEntry {
+            bytes: f32_to_le(&w),
+            dtype: f32c,
+            shape: s,
+        });
+        let xi = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        g.add_input(xi);
+        let bi = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        g.add_input(bi);
+        let mmn = g.add_node(Node {
+            op: GraphOp::Op(OpKind::MatMul),
+            inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Constant(wc)]),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        let addn = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Add),
+            inputs: SmallVec::from_iter([InputSource::Node(mmn), InputSource::Node(bi)]),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        let actn = g.add_node(Node {
+            op: GraphOp::Op(act),
+            inputs: SmallVec::from_iter([InputSource::Node(addn)]),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        let out = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(actn)]),
+            output_dtype: f32c,
+            output_shape: s,
+        });
+        g.add_output(out);
+        let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+        let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+            InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+        assert_eq!(
+            sess.add_activation_fused_count(),
+            1,
+            "matmul→add→{act:?} must fuse to one MatMulAddActivation"
+        );
+        assert_eq!(
+            sess.kernel_count(),
+            1,
+            "the three-op chain collapses to one kernel"
+        );
+        let got = le_to_f32(
+            &sess
+                .execute(&[
+                    InputBuffer { bytes: &f32_to_le(&x) },
+                    InputBuffer { bytes: &f32_to_le(&b) },
+                ])
+                .unwrap()[0]
+                .bytes,
+        );
+        let scale = want.iter().fold(0f64, |mx, &v| mx.max(f64::from(v).abs())) + 1e-9;
+        let err = got
+            .iter()
+            .zip(&want)
+            .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+            .fold(0f64, f64::max);
+        assert!(err <= 1e-4, "fused {act:?} diverged from reference (err {err:.3e})");
+    }
+
+    // Guarded: the intermediate add also feeds a graph output (second observer),
+    // so the activation is NOT absorbed — it degrades to a plain MatMulAdd.
+    let x = fill(n * n, 0x7A);
+    let w = fill(n * n, 0x8B);
+    let mut g = Graph::new();
+    let s = shape(&mut g);
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&w),
+        dtype: f32c,
+        shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let bi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_input(bi);
+    let mmn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Constant(wc)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    let addn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Node(mmn), InputSource::Node(bi)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    let actn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(addn)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    let o_act = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(actn)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_output(o_act);
+    let o_sum = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(addn)]),
+        output_dtype: f32c,
+        output_shape: s,
+    });
+    g.add_output(o_sum);
+    let _ = x;
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess.add_activation_fused_count(),
+        0,
+        "activation must not be absorbed when the add has a second observer"
+    );
+    assert_eq!(
+        sess.residual_fused_count(),
+        1,
+        "matmul→add still fuses (the residual) even when the activation can't"
+    );
+}
+
 // ─── WL-1: weight-layout monomorphism (constant weight is panel-packed) ───
 //
 // The compiler packs a matmul's *constant* weight (B operand) into the

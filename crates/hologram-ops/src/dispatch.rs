@@ -15,7 +15,7 @@ use prism::vocabulary::WittLevel;
 use crate::emit::EmitResult;
 use crate::kind::OpKind;
 use crate::{
-    activation_reduce, backward, conv, direct, elementwise_binary, elementwise_unary, layout,
+    activation_reduce, conv, direct, elementwise_binary, elementwise_unary, layout,
     linalg, normalization, pooling, quantization, reduction, structured, utility,
 };
 
@@ -92,6 +92,12 @@ pub fn emit_op_term<const CAP: usize>(
         // Convolution: 4-deep Recurse (out_h, out_w, k_h, k_w) → Add(acc, Mul(x,w)).
         K::Conv2d => conv::emit_conv2d(arena, level, a0, a1),
         K::ConvTranspose2d => conv::emit_conv_transpose_2d(arena, level, a0, a1),
+        // im2col / col2im are structural data-movement maps (a 0/1 selection and
+        // its accumulating transpose); like the other layout ops their Term is a
+        // single relabel Variable — numeric correctness is the kernel's contract,
+        // V&V'd by finite-difference grad-checking the conv VJP they compose.
+        K::Im2Col => layout::emit_layout_relabel(arena, level, a0),
+        K::Col2Im => layout::emit_layout_relabel(arena, level, a0),
 
         // Normalization: ReduceMean → Sub → Mul → ReduceMean → Sqrt → Div → Mul → Add.
         K::LayerNorm => normalization::emit_layer_norm(arena, level, a0, a1, a2),
@@ -138,33 +144,5 @@ pub fn emit_op_term<const CAP: usize>(
 
         // Quantization (spec X-5).
         K::Dequantize => quantization::emit_dequantize(arena, level, a0),
-
-        // Backward variants (spec V.4).
-        K::MatMulGradA => backward::emit_matmul_grad_a(arena, level, a0, a1),
-        K::MatMulGradB => backward::emit_matmul_grad_b(arena, level, a0, a1),
-        K::Conv2dGradX => backward::emit_conv2d_grad_x(arena, level, a0, a1),
-        K::Conv2dGradW => backward::emit_conv2d_grad_w(arena, level, a0, a1),
-        K::SoftmaxGrad => backward::emit_softmax_grad(arena, level, a0),
-        K::LogSoftmaxGrad => backward::emit_log_softmax_grad(arena, level, a0),
-        K::LayerNormGrad => backward::emit_layer_norm_grad(arena, level, a0, a1, a2),
-        K::RmsNormGrad => backward::emit_rms_norm_grad(arena, level, a0, a1, a2),
-        K::GroupNormGrad => backward::emit_group_norm_grad(arena, level, a0, a1, a2),
-        K::ReduceSumGrad => backward::emit_reduce_sum_grad(arena, level, a0),
-        K::ReduceMeanGrad => backward::emit_reduce_mean_grad(arena, level, a0),
-        K::ReduceProdGrad => backward::emit_reduce_prod_grad(arena, level, a0),
-        K::SubGrad => backward::emit_sub_grad(arena, level, a0),
-        K::MulGrad => backward::emit_mul_grad(arena, level, a0),
-        K::DivGrad => backward::emit_div_grad(arena, level, a0),
-        K::PowGrad => backward::emit_pow_grad(arena, level, a0),
-        K::MinGrad => backward::emit_min_grad(arena, level, a0),
-        K::MaxGrad => backward::emit_max_grad(arena, level, a0),
-        K::ConcatGrad => backward::emit_concat_grad(arena, level, a0),
-        K::SliceGrad => backward::emit_slice_grad(arena, level, a0),
-        K::AvgPool2dGrad => backward::emit_avg_pool_2d_grad(arena, level, a0),
-        K::GlobalAvgPoolGrad => backward::emit_global_avg_pool_grad(arena, level, a0),
-        K::PadGrad => backward::emit_pad_grad(arena, level, a0),
-        K::AttentionGrad => backward::emit_attention_grad(arena, level, a0, a1, a2),
-        K::FusedSwiGluGrad => backward::emit_fused_swiglu_grad(arena, level, a0, a1, a2),
-        K::UnaryGrad => backward::emit_unary_grad(arena, level, a0),
     }
 }

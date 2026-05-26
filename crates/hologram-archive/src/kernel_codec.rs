@@ -8,9 +8,9 @@
 
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
-    WhereCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, Im2ColCall,
+    KernelCall, ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 const D_NEG: u16 = 1;
@@ -62,6 +62,8 @@ const D_MATMUL: u16 = 46;
 const D_GEMM: u16 = 47;
 const D_CONV2D: u16 = 48;
 const D_CONVT: u16 = 49;
+const D_IM2COL: u16 = 109;
+const D_COL2IM: u16 = 110;
 const D_LN: u16 = 50;
 const D_RN: u16 = 51;
 const D_GN: u16 = 52;
@@ -91,35 +93,13 @@ const D_ROTARY: u16 = 75;
 const D_CLIP: u16 = 76;
 const D_LRN: u16 = 77;
 const D_WHERE: u16 = 78;
-const D_MMGA: u16 = 79;
-const D_MMGB: u16 = 80;
-const D_C2GX: u16 = 81;
-const D_C2GW: u16 = 82;
-const D_SMG: u16 = 83;
-const D_LSMG: u16 = 84;
-const D_LNG: u16 = 85;
-const D_RNG: u16 = 86;
-const D_GNG: u16 = 87;
-const D_RSG: u16 = 88;
-const D_RMG: u16 = 89;
-const D_RPG: u16 = 90;
-const D_SUBG: u16 = 91;
-const D_MULG: u16 = 92;
-const D_DIVG: u16 = 93;
-const D_POWG: u16 = 94;
-const D_MING: u16 = 95;
-const D_MAXG: u16 = 96;
-const D_CCG: u16 = 97;
-const D_SLG: u16 = 98;
-const D_AVPG: u16 = 99;
-const D_GAPG: u16 = 100;
-const D_PADG: u16 = 101;
-const D_ATNG: u16 = 102;
-const D_FSWGG: u16 = 103;
-const D_UNG: u16 = 104;
+// 79..=104 were the backward `*Grad` op-kinds (superseded by composition
+// autodiff in `hologram_graph::append_backward`); removed. Opcodes are not
+// reused — the decoder rejects them.
 const D_DEQ: u16 = 105;
 const D_MMA: u16 = 106;
 const D_MMADD: u16 = 107;
+const D_MMAA: u16 = 108;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -332,6 +312,14 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_CONVT);
             put_conv(out, c);
         }
+        K::Im2Col(c) => {
+            put_u16(out, D_IM2COL);
+            put_im2col(out, c);
+        }
+        K::Col2Im(c) => {
+            put_u16(out, D_COL2IM);
+            put_im2col(out, c);
+        }
 
         K::LayerNorm(c) => {
             put_u16(out, D_LN);
@@ -456,111 +444,6 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_where(out, c);
         }
 
-        // Backward variants — same payloads as forward.
-        K::MatMulGradA(c) => {
-            put_u16(out, D_MMGA);
-            put_matmul(out, c);
-        }
-        K::MatMulGradB(c) => {
-            put_u16(out, D_MMGB);
-            put_matmul(out, c);
-        }
-        K::Conv2dGradX(c) => {
-            put_u16(out, D_C2GX);
-            put_conv(out, c);
-        }
-        K::Conv2dGradW(c) => {
-            put_u16(out, D_C2GW);
-            put_conv(out, c);
-        }
-        K::SoftmaxGrad(c) => {
-            put_u16(out, D_SMG);
-            put_softmax(out, c);
-        }
-        K::LogSoftmaxGrad(c) => {
-            put_u16(out, D_LSMG);
-            put_softmax(out, c);
-        }
-        K::LayerNormGrad(c) => {
-            put_u16(out, D_LNG);
-            put_norm(out, c);
-        }
-        K::RmsNormGrad(c) => {
-            put_u16(out, D_RNG);
-            put_norm(out, c);
-        }
-        K::GroupNormGrad(c) => {
-            put_u16(out, D_GNG);
-            put_norm(out, c);
-        }
-        K::ReduceSumGrad(c) => {
-            put_u16(out, D_RSG);
-            put_reduce(out, c);
-        }
-        K::ReduceMeanGrad(c) => {
-            put_u16(out, D_RMG);
-            put_reduce(out, c);
-        }
-        K::ReduceProdGrad(c) => {
-            put_u16(out, D_RPG);
-            put_reduce(out, c);
-        }
-        K::SubGrad(c) => {
-            put_u16(out, D_SUBG);
-            put_binary(out, c);
-        }
-        K::MulGrad(c) => {
-            put_u16(out, D_MULG);
-            put_binary(out, c);
-        }
-        K::DivGrad(c) => {
-            put_u16(out, D_DIVG);
-            put_binary(out, c);
-        }
-        K::PowGrad(c) => {
-            put_u16(out, D_POWG);
-            put_binary(out, c);
-        }
-        K::MinGrad(c) => {
-            put_u16(out, D_MING);
-            put_binary(out, c);
-        }
-        K::MaxGrad(c) => {
-            put_u16(out, D_MAXG);
-            put_binary(out, c);
-        }
-        K::ConcatGrad(c) => {
-            put_u16(out, D_CCG);
-            put_layout(out, c);
-        }
-        K::SliceGrad(c) => {
-            put_u16(out, D_SLG);
-            put_layout(out, c);
-        }
-        K::AvgPool2dGrad(c) => {
-            put_u16(out, D_AVPG);
-            put_pool(out, c);
-        }
-        K::GlobalAvgPoolGrad(c) => {
-            put_u16(out, D_GAPG);
-            put_pool(out, c);
-        }
-        K::PadGrad(c) => {
-            put_u16(out, D_PADG);
-            put_layout(out, c);
-        }
-        K::AttentionGrad(c) => {
-            put_u16(out, D_ATNG);
-            put_attn(out, c);
-        }
-        K::FusedSwiGluGrad(c) => {
-            put_u16(out, D_FSWGG);
-            put_matmul(out, c);
-        }
-        K::UnaryGrad(c) => {
-            put_u16(out, D_UNG);
-            put_unary(out, c);
-        }
         K::Dequantize(c) => {
             put_u16(out, D_DEQ);
             put_dequantize(out, c);
@@ -574,6 +457,12 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_MMADD);
             put_matmul(out, &c.mm);
             put_buf(out, c.residual);
+        }
+        K::MatMulAddActivation(c) => {
+            put_u16(out, D_MMAA);
+            put_matmul(out, &c.mm);
+            put_buf(out, c.residual);
+            put_u8(out, c.act);
         }
     }
 }
@@ -631,6 +520,20 @@ fn put_gemm(out: &mut Vec<u8>, c: &GemmCall) {
     put_u32(out, c.n);
     put_u64(out, c.alpha_bits);
     put_u64(out, c.beta_bits);
+    put_u8(out, c.dtype);
+}
+fn put_im2col(out: &mut Vec<u8>, c: &Im2ColCall) {
+    put_buf(out, c.input);
+    put_buf(out, c.output);
+    put_u32(out, c.channels);
+    put_u32(out, c.h_in);
+    put_u32(out, c.w_in);
+    put_u32(out, c.h_out);
+    put_u32(out, c.w_out);
+    put_u32(out, c.k_h);
+    put_u32(out, c.k_w);
+    put_u32(out, c.stride_h);
+    put_u32(out, c.stride_w);
     put_u8(out, c.dtype);
 }
 fn put_conv(out: &mut Vec<u8>, c: &Conv2dCall) {

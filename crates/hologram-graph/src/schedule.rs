@@ -15,10 +15,6 @@ impl Schedule {
         Self::default()
     }
 
-    pub fn push_level(&mut self, level: SmallVec<[NodeId; 16]>) {
-        self.levels.push(level);
-    }
-
     pub fn level_count(&self) -> usize {
         self.levels.len()
     }

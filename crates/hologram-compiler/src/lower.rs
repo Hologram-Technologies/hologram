@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall,
-    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    ExpandCall, Im2ColCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -48,6 +48,10 @@ pub struct ShapeArgs {
     // Reduction
     pub axis_count: u32,
     pub keepdims: bool,
+
+    // Gemm scalars (`Y = α·A·B + β·C`); `f32::to_bits`.
+    pub alpha_bits: u32,
+    pub beta_bits: u32,
 }
 
 impl ShapeArgs {
@@ -118,6 +122,17 @@ impl ShapeArgs {
             }
         }
 
+        // Pooling has no weight operand, so `k_h`/`k_w` weren't set above.
+        // For non-overlapping windows the kernel equals the spatial ratio
+        // `h_in / h_out` (a max/avg pool that tiles the input); derive it when
+        // a weight didn't already supply one.
+        if a.k_h == 0 && a.h_out > 0 {
+            a.k_h = a.h_in / a.h_out;
+        }
+        if a.k_w == 0 && a.w_out > 0 {
+            a.k_w = a.w_in / a.w_out;
+        }
+
         // Convolution stride / padding: take per-node `ConvAttrs` if
         // attached; otherwise default to `(stride = 1, pad = 0)`.
         let conv = graph.conv_attrs(node_id).unwrap_or_default();
@@ -143,6 +158,44 @@ impl ShapeArgs {
                 a.heads = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
                 a.seq = s.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
                 a.head_dim = s.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+        }
+
+        // Gemm scalars `Y = α·A·B + β·C` — from GemmAttrs (default α=β=1, the
+        // plain `A·B + C`; absent attrs previously lowered to α=β=0 ⇒ zero).
+        if matches!(node.op, hologram_graph::GraphOp::Op(OpKind::Gemm)) {
+            let ga = graph.gemm_attrs(node_id).unwrap_or_default();
+            a.alpha_bits = ga.alpha_bits;
+            a.beta_bits = ga.beta_bits;
+        }
+
+        // im2col / col2im: single-instance `[Cin,Hin,Win]` image (in0 for
+        // im2col, the output for col2im) plus the window in `ConvAttrs`. The
+        // valid-conv output extent is derived: `Hout = (Hin − kh)/sh + 1`.
+        if matches!(
+            node.op,
+            hologram_graph::GraphOp::Op(OpKind::Im2Col) | hologram_graph::GraphOp::Op(OpKind::Col2Im)
+        ) {
+            let conv = graph.conv_attrs(node_id).unwrap_or_default();
+            a.k_h = conv.k_h;
+            a.k_w = conv.k_w;
+            a.stride_h = conv.stride_h.max(1);
+            a.stride_w = conv.stride_w.max(1);
+            let img = if matches!(node.op, hologram_graph::GraphOp::Op(OpKind::Im2Col)) {
+                in0.clone()
+            } else {
+                out.clone()
+            };
+            if let Some(im) = img {
+                if im.rank == 3 {
+                    a.channels_in = im.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    a.h_in = im.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    a.w_in = im.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    if a.k_h > 0 && a.k_w > 0 {
+                        a.h_out = (a.h_in - a.k_h) / a.stride_h + 1;
+                        a.w_out = (a.w_in - a.k_w) / a.stride_w + 1;
+                    }
+                }
             }
         }
 
@@ -304,8 +357,8 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         m: s.m,
         k: s.k,
         n: s.n,
-        alpha_bits: 0,
-        beta_bits: 0,
+        alpha_bits: s.alpha_bits as u64,
+        beta_bits: s.beta_bits as u64,
         dtype: node.dtype,
     };
     let conv_call = Conv2dCall {
@@ -336,6 +389,20 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         heads: s.heads,
         seq: s.seq,
         head_dim: s.head_dim,
+        dtype: node.dtype,
+    };
+    let im2col_call = Im2ColCall {
+        input: inp0(),
+        output: node.output,
+        channels: s.channels_in,
+        h_in: s.h_in,
+        w_in: s.w_in,
+        h_out: s.h_out,
+        w_out: s.w_out,
+        k_h: s.k_h,
+        k_w: s.k_w,
+        stride_h: s.stride_h,
+        stride_w: s.stride_w,
         dtype: node.dtype,
     };
 
@@ -392,6 +459,8 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::Gemm => KernelCall::Gemm(gemm_call),
         K::Conv2d => KernelCall::Conv2d(conv_call),
         K::ConvTranspose2d => KernelCall::ConvTranspose2d(conv_call),
+        K::Im2Col => KernelCall::Im2Col(im2col_call),
+        K::Col2Im => KernelCall::Col2Im(im2col_call),
 
         K::LayerNorm => KernelCall::LayerNorm(norm_call),
         K::RmsNorm => KernelCall::RmsNorm(norm_call),
@@ -477,34 +546,6 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
             dtype: node.dtype,
         }),
         K::Where => KernelCall::Where(where_call),
-
-        // Backward
-        K::MatMulGradA => KernelCall::MatMulGradA(matmul_call),
-        K::MatMulGradB => KernelCall::MatMulGradB(matmul_call),
-        K::Conv2dGradX => KernelCall::Conv2dGradX(conv_call),
-        K::Conv2dGradW => KernelCall::Conv2dGradW(conv_call),
-        K::SoftmaxGrad => KernelCall::SoftmaxGrad(softmax_call),
-        K::LogSoftmaxGrad => KernelCall::LogSoftmaxGrad(softmax_call),
-        K::LayerNormGrad => KernelCall::LayerNormGrad(norm_call),
-        K::RmsNormGrad => KernelCall::RmsNormGrad(norm_call),
-        K::GroupNormGrad => KernelCall::GroupNormGrad(norm_call),
-        K::ReduceSumGrad => KernelCall::ReduceSumGrad(reduce_call),
-        K::ReduceMeanGrad => KernelCall::ReduceMeanGrad(reduce_call),
-        K::ReduceProdGrad => KernelCall::ReduceProdGrad(reduce_call),
-        K::SubGrad => KernelCall::SubGrad(binary),
-        K::MulGrad => KernelCall::MulGrad(binary),
-        K::DivGrad => KernelCall::DivGrad(binary),
-        K::PowGrad => KernelCall::PowGrad(binary),
-        K::MinGrad => KernelCall::MinGrad(binary),
-        K::MaxGrad => KernelCall::MaxGrad(binary),
-        K::ConcatGrad => KernelCall::ConcatGrad(layout),
-        K::SliceGrad => KernelCall::SliceGrad(layout),
-        K::AvgPool2dGrad => KernelCall::AvgPool2dGrad(pool_call),
-        K::GlobalAvgPoolGrad => KernelCall::GlobalAvgPoolGrad(pool_call),
-        K::PadGrad => KernelCall::PadGrad(layout),
-        K::AttentionGrad => KernelCall::AttentionGrad(attn_call),
-        K::FusedSwiGluGrad => KernelCall::FusedSwiGluGrad(matmul_call),
-        K::UnaryGrad => KernelCall::UnaryGrad(unary),
 
         // Quantization (spec X-5).
         K::Dequantize => KernelCall::Dequantize(DequantizeCall {

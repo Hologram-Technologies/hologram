@@ -81,6 +81,26 @@ pub struct Conv2dCall {
     pub dtype: u8,
 }
 
+/// im2col / col2im patch-matrix geometry (single instance, no batch). `Im2Col`
+/// gathers `input [Cin,Hin,Win]` into `output [Cin·kh·kw, Hout·Wout]`; `Col2Im`
+/// scatter-adds the patch matrix back into the image (the same fields, inverse
+/// direction). Valid convolution (no padding); `Hout=(Hin−kh)/sh+1`.
+#[derive(Debug, Clone, Copy)]
+pub struct Im2ColCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub channels: u32,
+    pub h_in: u32,
+    pub w_in: u32,
+    pub h_out: u32,
+    pub w_out: u32,
+    pub k_h: u32,
+    pub k_w: u32,
+    pub stride_h: u32,
+    pub stride_w: u32,
+    pub dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NormCall {
     pub x: BufferRef,
@@ -302,6 +322,24 @@ pub struct MatMulAddCall {
     pub residual: BufferRef,
 }
 
+/// A matmul with a fused **residual-add then activation** epilogue — the
+/// result of fusing the three-op chain `matmul → add(matmul_out, residual) →
+/// activation` into one content-addressed operation (the transformer MLP
+/// `y = act(A·B + bias)` / a residual block whose sum is immediately
+/// activated). Neither the matmul product nor the post-add sum is materialized
+/// as a distinct addressed intermediate: the residual is added and the
+/// activation applied in place over the result while it is still hot in cache,
+/// eliding two bandwidth-bound passes. Composes with panel-packing
+/// (`mm.b_packed`).
+#[derive(Debug, Clone, Copy)]
+pub struct MatMulAddActivationCall {
+    pub mm: MatMulCall,
+    /// Residual/bias tensor added before the activation (`mm.m × mm.n`).
+    pub residual: BufferRef,
+    /// One of [`fused_activation`].
+    pub act: u8,
+}
+
 /// A node's semantic operation signature: a stable `opcode` (one per
 /// `KernelCall` variant) plus the LE-encoded scalar attributes that, with
 /// the operands' content addresses, fully determine the result. Buffer
@@ -400,6 +438,19 @@ fn p_conv(c: &Conv2dCall) -> Pb {
         .u32(c.stride_w)
         .u32(c.pad_h)
         .u32(c.pad_w)
+        .u8(c.dtype)
+}
+fn p_im2col(c: &Im2ColCall) -> Pb {
+    Pb::new()
+        .u32(c.channels)
+        .u32(c.h_in)
+        .u32(c.w_in)
+        .u32(c.h_out)
+        .u32(c.w_out)
+        .u32(c.k_h)
+        .u32(c.k_w)
+        .u32(c.stride_h)
+        .u32(c.stride_w)
         .u8(c.dtype)
 }
 fn p_norm(c: &NormCall) -> Pb {
@@ -548,6 +599,8 @@ pub enum KernelCall {
     Gemm(GemmCall),
     Conv2d(Conv2dCall),
     ConvTranspose2d(Conv2dCall),
+    Im2Col(Im2ColCall),
+    Col2Im(Im2ColCall),
 
     // Normalization
     LayerNorm(NormCall),
@@ -598,34 +651,6 @@ pub enum KernelCall {
     Lrn(LrnCall),
     Where(WhereCall),
 
-    // Backward variants — same payload shapes as their forward counterparts.
-    MatMulGradA(MatMulCall),
-    MatMulGradB(MatMulCall),
-    Conv2dGradX(Conv2dCall),
-    Conv2dGradW(Conv2dCall),
-    SoftmaxGrad(SoftmaxCall),
-    LogSoftmaxGrad(SoftmaxCall),
-    LayerNormGrad(NormCall),
-    RmsNormGrad(NormCall),
-    GroupNormGrad(NormCall),
-    ReduceSumGrad(ReduceCall),
-    ReduceMeanGrad(ReduceCall),
-    ReduceProdGrad(ReduceCall),
-    SubGrad(BinaryCall),
-    MulGrad(BinaryCall),
-    DivGrad(BinaryCall),
-    PowGrad(BinaryCall),
-    MinGrad(BinaryCall),
-    MaxGrad(BinaryCall),
-    ConcatGrad(LayoutCall),
-    SliceGrad(LayoutCall),
-    AvgPool2dGrad(PoolCall),
-    GlobalAvgPoolGrad(PoolCall),
-    PadGrad(LayoutCall),
-    AttentionGrad(AttentionCall),
-    FusedSwiGluGrad(MatMulCall),
-    UnaryGrad(UnaryCall),
-
     // Quantization (spec X-5)
     Dequantize(DequantizeCall),
 
@@ -633,6 +658,7 @@ pub enum KernelCall {
     // Constructed by the executor's fusion pass, not by the archive.
     MatMulActivation(MatMulActivationCall),
     MatMulAdd(MatMulAddCall),
+    MatMulAddActivation(MatMulAddActivationCall),
 }
 
 impl KernelCall {
@@ -654,6 +680,26 @@ impl KernelCall {
             _ => return None,
         })
     }
+    /// Whether this op is **commutative** in its operands (`f(a,b) = f(b,a)`).
+    /// The executor canonicalizes the operand order of commutative ops before
+    /// deriving their content address, so `a+b` and `b+a` collapse to one
+    /// κ-label and reuse each other's computation. Only ops whose algebra is
+    /// genuinely order-independent qualify (never Sub/Div/Pow/comparisons).
+    pub fn is_commutative(&self) -> bool {
+        use KernelCall as K;
+        matches!(
+            self,
+            K::Add(_)
+                | K::Mul(_)
+                | K::Xor(_)
+                | K::And(_)
+                | K::Or(_)
+                | K::Min(_)
+                | K::Max(_)
+                | K::Equal(_)
+        )
+    }
+
     /// The node's content-addressing signature: a per-variant `opcode`
     /// and its op-defining scalar params. Stable across runs of the same
     /// compiled graph, so `derive_label_witnessed(opcode, params, operand
@@ -710,6 +756,8 @@ impl KernelCall {
             K::Gemm(c) => p_gemm(c).done(46),
             K::Conv2d(c) => p_conv(c).done(47),
             K::ConvTranspose2d(c) => p_conv(c).done(48),
+            K::Im2Col(c) => p_im2col(c).done(108),
+            K::Col2Im(c) => p_im2col(c).done(109),
             K::LayerNorm(c) => p_norm(c).done(49),
             K::RmsNorm(c) => p_norm(c).done(50),
             K::GroupNorm(c) => p_norm(c).done(51),
@@ -739,35 +787,10 @@ impl KernelCall {
             K::Clip(c) => p_unary(c).done(75),
             K::Lrn(c) => p_lrn(c).done(76),
             K::Where(c) => p_where(c).done(77),
-            K::MatMulGradA(c) => p_matmul(c).done(78),
-            K::MatMulGradB(c) => p_matmul(c).done(79),
-            K::Conv2dGradX(c) => p_conv(c).done(80),
-            K::Conv2dGradW(c) => p_conv(c).done(81),
-            K::SoftmaxGrad(c) => p_softmax(c).done(82),
-            K::LogSoftmaxGrad(c) => p_softmax(c).done(83),
-            K::LayerNormGrad(c) => p_norm(c).done(84),
-            K::RmsNormGrad(c) => p_norm(c).done(85),
-            K::GroupNormGrad(c) => p_norm(c).done(86),
-            K::ReduceSumGrad(c) => p_reduce(c).done(87),
-            K::ReduceMeanGrad(c) => p_reduce(c).done(88),
-            K::ReduceProdGrad(c) => p_reduce(c).done(89),
-            K::SubGrad(c) => p_binary(c).done(90),
-            K::MulGrad(c) => p_binary(c).done(91),
-            K::DivGrad(c) => p_binary(c).done(92),
-            K::PowGrad(c) => p_binary(c).done(93),
-            K::MinGrad(c) => p_binary(c).done(94),
-            K::MaxGrad(c) => p_binary(c).done(95),
-            K::ConcatGrad(c) => p_layout(c).done(96),
-            K::SliceGrad(c) => p_layout(c).done(97),
-            K::AvgPool2dGrad(c) => p_pool(c).done(98),
-            K::GlobalAvgPoolGrad(c) => p_pool(c).done(99),
-            K::PadGrad(c) => p_layout(c).done(100),
-            K::AttentionGrad(c) => p_attention(c).done(101),
-            K::FusedSwiGluGrad(c) => p_matmul(c).done(102),
-            K::UnaryGrad(c) => p_unary(c).done(103),
             K::Dequantize(c) => p_dequant(c).done(104),
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
+            K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
         }
     }
 }
@@ -811,8 +834,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::IsNaN(c)
         | K::Sign(c)
         | K::Abs(c)
-        | K::Clip(c)
-        | K::UnaryGrad(c) => vec![c.input, c.output],
+        | K::Clip(c) => vec![c.input, c.output],
 
         K::RotaryEmbedding(c) => vec![c.x, c.cos, c.sin, c.output],
         K::Lrn(c) => vec![c.input, c.output],
@@ -833,69 +855,43 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::LessOrEqual(c)
         | K::Greater(c)
         | K::GreaterOrEqual(c)
-        | K::SubGrad(c)
-        | K::MulGrad(c)
-        | K::DivGrad(c)
-        | K::PowGrad(c)
-        | K::MinGrad(c)
-        | K::MaxGrad(c)
         | K::Concat(c) => vec![c.a, c.b, c.output],
 
-        K::MatMul(c)
-        | K::FusedSwiGlu(c)
-        | K::MatMulGradA(c)
-        | K::MatMulGradB(c)
-        | K::FusedSwiGluGrad(c) => vec![c.a, c.b, c.output],
+        K::MatMul(c) | K::FusedSwiGlu(c) => vec![c.a, c.b, c.output],
 
         K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
         K::MatMulAdd(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
+        K::MatMulAddActivation(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
 
         K::Gemm(c) => vec![c.a, c.b, c.c, c.output],
 
-        K::Conv2d(c) | K::ConvTranspose2d(c) | K::Conv2dGradX(c) | K::Conv2dGradW(c) => {
-            vec![c.x, c.w, c.output]
-        }
+        K::Conv2d(c) | K::ConvTranspose2d(c) => vec![c.x, c.w, c.output],
+
+        K::Im2Col(c) | K::Col2Im(c) => vec![c.input, c.output],
 
         K::LayerNorm(c)
         | K::RmsNorm(c)
         | K::GroupNorm(c)
         | K::InstanceNorm(c)
-        | K::AddRmsNorm(c)
-        | K::LayerNormGrad(c)
-        | K::RmsNormGrad(c)
-        | K::GroupNormGrad(c) => vec![c.x, c.gamma, c.beta, c.output],
+        | K::AddRmsNorm(c) => vec![c.x, c.gamma, c.beta, c.output],
 
         K::ReduceSum(c)
         | K::ReduceMean(c)
         | K::ReduceProd(c)
         | K::ReduceMin(c)
         | K::ReduceMax(c)
-        | K::CumSum(c)
-        | K::ReduceSumGrad(c)
-        | K::ReduceMeanGrad(c)
-        | K::ReduceProdGrad(c) => vec![c.input, c.output],
+        | K::CumSum(c) => vec![c.input, c.output],
 
-        K::Reshape(c)
-        | K::Slice(c)
-        | K::Pad(c)
-        | K::ConcatGrad(c)
-        | K::SliceGrad(c)
-        | K::PadGrad(c) => vec![c.input, c.output],
+        K::Reshape(c) | K::Slice(c) | K::Pad(c) => vec![c.input, c.output],
 
         K::Transpose(c) => vec![c.input, c.output],
         K::Expand(c) | K::Resize(c) => vec![c.input, c.output],
 
-        K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => {
-            vec![c.input, c.output]
-        }
+        K::Softmax(c) | K::LogSoftmax(c) => vec![c.input, c.output],
 
-        K::MaxPool2d(c)
-        | K::AvgPool2d(c)
-        | K::GlobalAvgPool(c)
-        | K::AvgPool2dGrad(c)
-        | K::GlobalAvgPoolGrad(c) => vec![c.x, c.output],
+        K::MaxPool2d(c) | K::AvgPool2d(c) | K::GlobalAvgPool(c) => vec![c.x, c.output],
 
-        K::Attention(c) | K::AttentionGrad(c) => vec![c.q, c.k, c.v, c.output],
+        K::Attention(c) => vec![c.q, c.k, c.v, c.output],
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
@@ -941,8 +937,7 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::IsNaN(c)
         | K::Sign(c)
         | K::Abs(c)
-        | K::Clip(c)
-        | K::UnaryGrad(c) => c.dtype,
+        | K::Clip(c) => c.dtype,
 
         K::RotaryEmbedding(c) => c.dtype,
         K::Lrn(c) => c.dtype,
@@ -963,65 +958,43 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::LessOrEqual(c)
         | K::Greater(c)
         | K::GreaterOrEqual(c)
-        | K::SubGrad(c)
-        | K::MulGrad(c)
-        | K::DivGrad(c)
-        | K::PowGrad(c)
-        | K::MinGrad(c)
-        | K::MaxGrad(c)
         | K::Concat(c) => c.dtype,
 
-        K::MatMul(c)
-        | K::FusedSwiGlu(c)
-        | K::MatMulGradA(c)
-        | K::MatMulGradB(c)
-        | K::FusedSwiGluGrad(c) => c.dtype,
+        K::MatMul(c) | K::FusedSwiGlu(c) => c.dtype,
 
         K::MatMulActivation(c) => c.mm.dtype,
         K::MatMulAdd(c) => c.mm.dtype,
+        K::MatMulAddActivation(c) => c.mm.dtype,
 
         K::Gemm(c) => c.dtype,
 
-        K::Conv2d(c) | K::ConvTranspose2d(c) | K::Conv2dGradX(c) | K::Conv2dGradW(c) => c.dtype,
+        K::Conv2d(c) | K::ConvTranspose2d(c) => c.dtype,
+
+        K::Im2Col(c) | K::Col2Im(c) => c.dtype,
 
         K::LayerNorm(c)
         | K::RmsNorm(c)
         | K::GroupNorm(c)
         | K::InstanceNorm(c)
-        | K::AddRmsNorm(c)
-        | K::LayerNormGrad(c)
-        | K::RmsNormGrad(c)
-        | K::GroupNormGrad(c) => c.dtype,
+        | K::AddRmsNorm(c) => c.dtype,
 
         K::ReduceSum(c)
         | K::ReduceMean(c)
         | K::ReduceProd(c)
         | K::ReduceMin(c)
         | K::ReduceMax(c)
-        | K::CumSum(c)
-        | K::ReduceSumGrad(c)
-        | K::ReduceMeanGrad(c)
-        | K::ReduceProdGrad(c) => c.dtype,
+        | K::CumSum(c) => c.dtype,
 
-        K::Reshape(c)
-        | K::Slice(c)
-        | K::Pad(c)
-        | K::ConcatGrad(c)
-        | K::SliceGrad(c)
-        | K::PadGrad(c) => c.dtype,
+        K::Reshape(c) | K::Slice(c) | K::Pad(c) => c.dtype,
 
         K::Transpose(c) => c.dtype,
         K::Expand(c) | K::Resize(c) => c.dtype,
 
-        K::Softmax(c) | K::LogSoftmax(c) | K::SoftmaxGrad(c) | K::LogSoftmaxGrad(c) => c.dtype,
+        K::Softmax(c) | K::LogSoftmax(c) => c.dtype,
 
-        K::MaxPool2d(c)
-        | K::AvgPool2d(c)
-        | K::GlobalAvgPool(c)
-        | K::AvgPool2dGrad(c)
-        | K::GlobalAvgPoolGrad(c) => c.dtype,
+        K::MaxPool2d(c) | K::AvgPool2d(c) | K::GlobalAvgPool(c) => c.dtype,
 
-        K::Attention(c) | K::AttentionGrad(c) => c.dtype,
+        K::Attention(c) => c.dtype,
 
         K::Where(c) => c.dtype,
 

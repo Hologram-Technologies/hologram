@@ -1,7 +1,8 @@
 //! Reference scalar evaluator surface (spec VII.3, O-2).
 //!
 //! Used by per-op tests to verify backend kernels match the formal Term tree.
-//! Not the hot path — slow, allocation-free, walks the arena.
+//! Not the hot path — a slow, allocating tree-walk over the arena (each
+//! `Application` collects its argument values into a `Vec`).
 
 extern crate alloc;
 use alloc::vec::Vec;

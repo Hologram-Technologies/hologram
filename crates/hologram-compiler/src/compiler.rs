@@ -93,6 +93,12 @@ impl Compiler {
         // sees only primitives + irreducible structured kernels.
         self.graph.desugar_composites();
 
+        // Algebraic elision: drop computation UOR's algebra proves
+        // unnecessary (identity elements, involutions, dead nodes) so it is
+        // never scheduled, dispatched, or addressed. Runs after desugaring so
+        // it also simplifies the primitive pipelines composites expand into.
+        self.graph.elide_invariants();
+
         // Schedule.
         self.graph.compute_schedule();
 
@@ -330,6 +336,29 @@ impl Compiler {
                         ec.out_dims = out_dims;
                     }
                 }
+                // Reduce (full reduction to a scalar): the kernel folds over
+                // its *input* elements, so `element_count` must be the input
+                // count, not the node's (scalar) output count.
+                if matches!(
+                    kind,
+                    hologram_graph::OpKind::ReduceSum
+                        | hologram_graph::OpKind::ReduceMean
+                        | hologram_graph::OpKind::ReduceProd
+                        | hologram_graph::OpKind::ReduceMin
+                        | hologram_graph::OpKind::ReduceMax
+                ) {
+                    if let (
+                        Some(in_count),
+                        KernelCall::ReduceSum(rc)
+                        | KernelCall::ReduceMean(rc)
+                        | KernelCall::ReduceProd(rc)
+                        | KernelCall::ReduceMin(rc)
+                        | KernelCall::ReduceMax(rc),
+                    ) = (input_element_count(&self.graph, node), &mut kernel_call)
+                    {
+                        rc.element_count = in_count;
+                    }
+                }
                 // Resize: same in/out dims (no broadcast constraint) — the
                 // kernel maps each output index to the nearest input index.
                 if matches!(kind, hologram_graph::OpKind::Resize) {
@@ -548,7 +577,7 @@ impl Compiler {
         // constant's bytes at session-load time. Small bodies are
         // inlined; larger bodies become references into the Weights
         // pool (see weight dedup above).
-        let constants: Vec<ConstantEntry> = (0..self.graph.constants().len())
+        let mut constants: Vec<ConstantEntry> = (0..self.graph.constants().len())
             .filter_map(|i| {
                 let id = hologram_graph::ConstantId(i as u32);
                 let entry = self.graph.constants().get(id)?;
@@ -563,6 +592,30 @@ impl Compiler {
                 })
             })
             .collect();
+
+        // A `GraphOp::Constant` node is referenced as `InputSource::Node(ni)`,
+        // so its *own* slot (its node index) must also be pre-filled — not just
+        // the `node_count + cid` slot that backs inline `InputSource::Constant`
+        // operands. Bind each constant node's slot to its body. (Used by the
+        // backward pass, which materializes identity-element / zero tensors as
+        // constant nodes.)
+        for (ni, node) in self.graph.nodes().iter().enumerate() {
+            if let hologram_graph::GraphOp::Constant(cid) = node.op {
+                let i = cid.0 as usize;
+                let dtype = self
+                    .graph
+                    .constants()
+                    .get(cid)
+                    .map(|e| e.dtype.0)
+                    .unwrap_or(0);
+                let entry = if let Some(Some(fp)) = const_fingerprints.get(i).copied() {
+                    ConstantEntry::reference(ni as u32, dtype, fp)
+                } else {
+                    ConstantEntry::inline(ni as u32, dtype, const_body(i))
+                };
+                constants.push(entry);
+            }
+        }
         if !constants.is_empty() {
             writer.set_constants(constants);
         }
@@ -905,6 +958,22 @@ fn rope_head_dim(graph: &Graph, node: &hologram_graph::Node) -> Option<u32> {
 /// Resolve an Expand's `(rank, in_dims, out_dims)` from the input shape and the
 /// node's broadcast output shape (same rank; each input dim equals the output
 /// dim or is 1). `None` for rank 0/>8 or an incompatible (non-broadcast) shape.
+/// Total element count of a node's first input (the number of elements a
+/// full reduction folds over).
+fn input_element_count(graph: &Graph, node: &hologram_graph::Node) -> Option<u64> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph.nodes().get(id as usize)?.output_shape,
+        InputSource::Constant(cid) => graph.constants().get(cid)?.shape,
+        InputSource::GraphInput(idx) => {
+            let &NodeId(i) = graph.inputs().get(idx as usize)?;
+            graph.nodes().get(i as usize)?.output_shape
+        }
+    };
+    reg.get(shape).map(|d| d.total_elements())
+}
+
 fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u32; 8])> {
     use hologram_graph::{InputSource, NodeId};
     let reg = graph.shape_registry();

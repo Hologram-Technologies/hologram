@@ -20,6 +20,9 @@
 | **FU** | Content-addressed fusion — composable sub-graphs collapse to one κ-addressed op, eliding intermediates | exec fusion tests (fused/kernel counts + f64 ref) |
 | **WS** | Warm-start — the compiled object carries the constant-derivation lattice (+ materialized fold results) so the runtime cache is never cold; warm ≡ cold byte-identically | compiler/exec tests (baked==derived, cone-complete, dispatch elision, warm==cold) |
 | **WL** | Weight-layout monomorphism — constant matmul weights are panel-packed at compile time into the kernel's contiguous-read layout (zero runtime copy), semantics-preserving | compiler/exec test (packing fires + packed==f64) |
+| **EL** | Algebraic elision — computation UOR's algebra proves unnecessary (identity elements, involutions, relabels, dead nodes) is removed at compile time so it is never scheduled/dispatched, result-preserving | graph unit tests + exec result-equality tests |
+| **CN** | κ-label canonicalization — commutative ops get operand-order-independent addresses so `a∘b`≡`b∘a` reuse each other's compute at runtime | exec reuse test (dispatch elision) |
+| **AD** | Autodiff by composition — gradients are pipelines of forward ops (chain rule = composition); verified against finite differences | graph + exec grad-check tests |
 | **PV** | Performance — every part within budget, no bottlenecks | benches with baselines/budgets |
 | **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
@@ -53,7 +56,7 @@
 | **KC-0** | _Supplementary internal cross-check_ (external conformance is KC-1/2/3): kernels also agree with hologram's Term-tree reference evaluator. | test | `hologram-backend/tests/kernel_equivalence.rs` | ✅ |
 | **KC-4** | Low-precision (bf16/f16) matmul, conv2d, attention route through the **one** f32 engine (widen→engine→narrow) and match the f64 reference over the dtype-quantized operands. | conformance vs f64 reference | `conformance.rs::kc1b_low_precision_matmul_routes_through_engine`, `::kc7b_bf16_conv_routes_through_engine`, `::kc8b_bf16_attention_routes_through_engine` | ✅ |
 | **KC-5** | dtype policy is single-sourced and never silently wrong: f64 is **rejected** (`UnsupportedOp`, not a 0-output), and div/mod by zero are IEEE-native (±∞/NaN, not 0). | conformance | `conformance.rs::kcdt_f64_rejected_never_silent_zero`, `::kcdt_div_mod_by_zero_is_ieee` | ✅ |
-| **KC-6** | Every UOR-native layout / re-indexing / constructor / composite op equals its definitional reference: Reshape & Slice (`ProjectField`, zero-movement view — `last_skipped`), Pad (offset placement), Concat (`PrimitiveOp::Concat`), Transpose (n-d permute), Expand (broadcast), Resize (nearest), Clip (`Min∘Max`), SwiGLU (`MatMul·Silu·MatMul·Mul`), RoPE (rotate-half), Lrn (windowed-channel). Backward/gradient ops **fail loud** (not an inference-runtime target). | exec conformance + graph unit tests | `hologram-exec/tests/desugar.rs::*`, `hologram-graph/src/graph.rs::desugar_tests`, `conformance.rs::kcdt_gradient_ops_fail_loud` | ✅ |
+| **KC-6** | Every UOR-native layout / re-indexing / constructor / composite op equals its definitional reference: Reshape & Slice (`ProjectField`, zero-movement view — `last_skipped`), Pad (offset placement), Concat (`PrimitiveOp::Concat`), Transpose (n-d permute), Expand (broadcast), Resize (nearest), Clip (`Min∘Max`), SwiGLU (`MatMul·Silu·MatMul·Mul`), RoPE (rotate-half), Lrn (windowed-channel). | exec conformance + graph unit tests | `hologram-exec/tests/desugar.rs::*`, `hologram-graph/src/graph.rs::desugar_tests` | ✅ |
 
 ## SC — Scaling (no short-cut / no breakdown at arbitrary size)
 
@@ -120,10 +123,11 @@
 > κ-value — the fused node carries a **single κ-derivation**. This is the
 > UOR-native answer to the production-throughput gap PV-4 found
 > (matmul→activation interleaving): the composite op is the addressable
-> unit, not its pieces. The pass fuses **two** matmul epilogues — an
-> elementwise activation (`MatMulActivation`, FU-1/2/3) and the transformer
-> residual add (`MatMulAdd`, FU-4) — so a transformer-MLP layer collapses
-> from four ops (matmul, gelu, matmul, add) to two. Fusion is **guarded** —
+> unit, not its pieces. The pass fuses **three** matmul epilogues — an
+> elementwise activation (`MatMulActivation`, FU-1/2/3), the transformer
+> residual add (`MatMulAdd`, FU-4), and the full `add → activation` chain
+> (`MatMulAddActivation`, FU-5) — so an MLP layer's `act(A·B + bias)`
+> collapses from three ops to one. Fusion is **guarded** —
 > it fires only when the matmul's output has exactly one observer and is not
 > a graph output (and, for the residual, when the skip tensor is ready no
 > later than the matmul's level), so it never changes observable semantics.
@@ -134,6 +138,7 @@
 | **FU-2** | Fusion is **semantics-preserving** — the fused result is byte-identical to the unfused computation — and **guarded**: a matmul whose output has a second observer is *not* fused (`fused_count == 0`), so the intermediate it still needs is preserved. | fused-vs-unfused equality + guard test | `hologram-exec/tests/conformance.rs::fu2_fusion_is_semantics_preserving_and_guarded` | ✅ |
 | **FU-3** | Fusion fires on the production workload: a stacked transformer-MLP fuses one `matmul → gelu` per layer (the 4·d-wide activation intermediate is never materialized), reducing kernel count, while PV-4's throughput/scaling floors still hold. | production perf test (fused_count == layers) | `hologram-exec/tests/performance.rs::pv4_production_mlp_throughput_latency_and_scaling` | ✅ |
 | **FU-4** | The transformer **residual** fuses too: `matmul → add(out, residual)` collapses into one `MatMulAdd` (residual added in the matmul epilogue), eliding the matmul intermediate *and* the separate bandwidth-bound add pass. Equals the independent f64 reference; **guarded** — a matmul whose output has a second observer is not fused; and the residual operand is only absorbed when it is ready no later than the matmul's schedule level (never observes a not-yet-computed tensor). The production MLP-stack fuses one per layer (12 → 8 kernels). | residual-fusion conformance test (f64 ref + count + guard) | `hologram-exec/tests/conformance.rs::fu4_residual_add_fuses_and_is_guarded` | ✅ |
+| **FU-5** | The full MLP epilogue **`matmul → add → activation`** (`act(A·B + bias)`) collapses into one `MatMulAddActivation` — the matmul product, the post-add sum, *and* the activation intermediate are all elided (`add_activation_fused_count == 1`, `kernel_count == 1`). Equals the independent f64 reference `act(A·B + b)` for relu/gelu/silu; **guarded** — when the intermediate add has a second observer the activation is not absorbed and it degrades to a plain `MatMulAdd`. | three-op fusion conformance test (f64 ref + counts + guard) | `hologram-exec/tests/conformance.rs::fu5_matmul_add_activation_fuses_and_conforms` | ✅ |
 
 ## WS — Warm-start (the compiled object is never cold)
 
@@ -194,6 +199,65 @@
 |---|---|---|---|---|
 | **WL-1** | The compiler panel-packs a matmul's **constant** f32 weight (consumed by that matmul alone) into the kernel's contiguous layout — the compiled `MatMul` carries `b_packed` and the stored weight body is the packed extent — and the packed-weight result equals the **independent f64 reference** (semantics-preserving; incl. `n` not a multiple of the panel width). | compiler emit + decode check + f64 ref | `hologram-exec/tests/conformance.rs::wl1_constant_weight_is_panel_packed_and_conforms` | ✅ |
 | **WL-0** | _Kernel-level_: the packed-panel matmul leaf equals a naïve product across odd shapes (panel padding, partial-column store, m-remainder). | unit test | `hologram-backend/src/cpu/simd.rs::tests::packed_b_matmul_matches_naive` | ✅ |
+
+## EL — Algebraic elision (compute UOR proves unnecessary)
+
+> UOR's algebra identifies *invariant facets* of a computation — values the
+> result does not depend on computing. `Graph::elide_invariants` (run in
+> `compile()` after desugaring, before scheduling) removes them so they are
+> never scheduled, dispatched, or addressed: **identity elements** (`x+0`,
+> `x−0`, `x·1`, `x/1`, `x¹` → `x`), **involutions** (`Neg∘Neg`, `Bnot∘Bnot`
+> → `x`), **relabels** (a same-shape `Reshape` drops; `Reshape∘Reshape`
+> collapses), and **dead nodes** (anything unreachable from a graph output;
+> inputs are retained as the call ABI). Every rule is value-preserving within
+> the runtime's accuracy contract — and only those: annihilators (`x·0→0`),
+> reciprocal round-trips, and the softmax-sum-is-1 facet are **deliberately
+> excluded** because they are *not* bit-exact under IEEE (`∞·0=NaN`,
+> `1/(1/x)≠x`), so eliding them would silently change results.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **EL-1** | Each identity/involution/relabel rule collapses its node and redirects consumers to the surviving value; annihilators and non-bit-exact identities are preserved. | graph unit tests | `hologram-graph/src/graph.rs::elision_tests` | ✅ |
+| **EL-2** | Dead nodes (unreachable from any output) are removed; graph inputs are retained. | graph unit test | `hologram-graph/src/graph.rs::elision_tests::dead_nodes_are_eliminated` | ✅ |
+| **EL-3** | Elision is transparent end-to-end: an identity-padded graph executes to bit-identical output as its reduced form and compiles to the same node count. | exec result-equality test | `hologram-exec/tests/elision.rs` | ✅ |
+
+## CN — Algebraic κ-label canonicalization (commutativity → runtime reuse)
+
+> A commutative op's value is independent of operand order, so the executor
+> sorts operand labels into a canonical order before deriving the content
+> address (`KernelCall::is_commutative` gates it: Add/Mul/Min/Max/And/Or/
+> Xor/Equal — never Sub/Div/Pow/comparisons). `a∘b` and `b∘a` then collapse to
+> one κ-label, so the second is recognized as already-resident and its compute
+> is **elided at runtime** (the resident-reuse path), and its boundary address
+> is order-independent. This is UOR's algebra turned into reuse: the same
+> mechanism as SG/WS, now reaching operand-reordered duplicates that an
+> order-sensitive hash would miss. Cost is a 2–4 element sort on commutative
+> nodes only; the served whole-graph memo-hit path skips the walk entirely, so
+> there is no hot-path regression (content-reuse + production benches unchanged).
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **CN-1** | `a+b` and `b+a` (reversed operands) derive one κ-label; the duplicate is elided at runtime (`last_skipped ≥ 1`), result preserved. | exec reuse test | `hologram-exec/tests/canonicalization.rs::commutative_reordering_dedups_at_runtime` | ✅ |
+| **CN-2** | Non-commutative ops (Sub/Div/…) keep operand order — `a−b` and `b−a` stay distinct and both compute. | exec test | `hologram-exec/tests/canonicalization.rs::noncommutative_order_is_preserved` | ✅ |
+
+## AD — Autodiff by composition (gradients are forward-op pipelines)
+
+> Per the UOR framework, a gradient is a **composition** of the forward
+> primitives a value decomposes into — the chain rule *is* categorical
+> composition. `hologram_graph::append_backward` composes each op's
+> vector-Jacobian product from existing forward ops (e.g.
+> `dA = MatMul(g, Bᵀ)`; `σ'(x) = y·(1−y)`), summing where a value fans out.
+> No new "backward kernel" exists — gradients run on the already-verified
+> forward kernels, so there is no second silent-wrong surface — and an op
+> whose VJP is not yet composed fails loud (`BackwardError::NoGradient`)
+> rather than being approximated.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **AD-1** | Composed gradients match central finite differences (the derivative's definition) across the **entire differentiable catalog**: arithmetic (Add/Sub/Mul/Div/Neg); all elementwise activations (Sigmoid/Tanh/Relu/Silu/Gelu/Elu/Selu/Exp/Log/**Log1p**/Sqrt/Reciprocal/Erf/Abs/Sin/Cos/Tan/**Asin/Acos/Atan**); **Ceil/Floor/Round** (0 a.e.); Min/Max/Pow; **Mod** (floored: `dy/db=−floor(a/b)`); the comparison/`IsNaN` predicates (0 a.e.); **Where**; Reshape/Transpose; 2-D MatMul; **Gemm**; all full reductions (Sum/Mean/Prod/Min/Max) and **CumSum**; Softmax/LogSoftmax; LayerNorm/RmsNorm/GroupNorm/InstanceNorm/**AddRmsNorm**; Expand; GlobalAvgPool/AvgPool2d/MaxPool2d; Concat/Slice/Pad; **Resize** (nearest); **Lrn**; **RotaryEmbedding**; Attention; Conv2d/**ConvTranspose2d**. Mechanisms (all from forward ops, no backward kernel): per-axis reductions = matmul-ones; pool grads = Reshape→Expand→Reshape upsample; norms route to the shared LayerNorm/RmsNorm VJP; Attention unrolls per (batch,head) into rank-2 VJPs; Conv = `dW=Σ gᵦ·im2col(xᵦ)ᵀ`, `dX=Σ col2im(Wᵀ·gᵦ)`; CumSum = `total(g)−cumsum(g)+g`; Resize = `Sᵀ·g` (selection matrix); Lrn = windowed-channel band-matrix matmuls; RoPE = `g⊙cos − RoPE(g⊙sin,0,1)`; Where reuses the Where kernel to mask. | exec grad-check | `hologram-exec/tests/autodiff.rs` | ✅ |
+| **AD-2** | `append_backward` emits only forward ops (composites desugar first; no `*Grad` op-kind). The forward primitives a VJP needs but the catalog lacked are added as honest **forward** ops — `Im2Col` (receptive-field gather) and `Col2Im` (its accumulating adjoint) — never backward kernels. Every op with a real-valued input now has a VJP; only the **discrete byte-algebra** ops (`And/Or/Xor/Bnot/Succ/Pred`) and `Dequantize` (integer source domain) fail loud (`BackwardError::NoGradient`) — they have no calculus derivative, which is a correctness statement, not a deferral. | graph/compiler tests | `hologram-compiler/tests/backward_emission.rs` | ✅ |
+| **AD-4** | _Forward fix surfaced by AD V&V_: `Gemm` lowered with α=β=0 (so `Y = α·A·B + β·C` computed **zero**); now carries `GemmAttrs` defaulting to α=β=1 (the plain `A·B + C`), and the `Lrn` kernel's `f32::powf` → `libm::powf` so the no_std/bare-metal build links. | exec grad-check + cross-compile | `hologram-exec/tests/autodiff.rs::gemm_*` ; `just embedded` | ✅ |
+| **AD-3** | _Forward fix surfaced by AD V&V_: a compiled full-reduction kernel folds over its **input** element count (was the scalar output count → only element 0 summed). | exec grad-check (reductions) | `hologram-exec/tests/autodiff.rs::reduction_gradients_match_finite_difference` | ✅ |
 
 ## PV — Performance / no-bottleneck
 

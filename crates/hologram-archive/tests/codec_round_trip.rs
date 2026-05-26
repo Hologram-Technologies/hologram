@@ -146,6 +146,68 @@ fn matmul_activation_round_trip() {
 }
 
 #[test]
+fn matmul_add_activation_round_trip() {
+    use hologram_backend::{fused_activation, MatMulAddActivationCall};
+    let calls = vec![KernelCall::MatMulAddActivation(MatMulAddActivationCall {
+        mm: MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(3),
+            m: 32,
+            k: 64,
+            n: 48,
+            dtype: 8,
+            b_packed: false,
+        },
+        residual: ref_buf(2),
+        act: fused_activation::SILU,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::MatMulAddActivation(d) => {
+            assert_eq!(d.mm.m, 32);
+            assert_eq!(d.mm.n, 48);
+            assert_eq!(d.residual.slot, 2);
+            assert_eq!(d.act, fused_activation::SILU);
+        }
+        _ => panic!("not matmul-add-activation"),
+    }
+}
+
+#[test]
+fn im2col_col2im_round_trip() {
+    use hologram_backend::Im2ColCall;
+    let geom = Im2ColCall {
+        input: ref_buf(0),
+        output: ref_buf(1),
+        channels: 3,
+        h_in: 8,
+        w_in: 8,
+        h_out: 6,
+        w_out: 6,
+        k_h: 3,
+        k_w: 3,
+        stride_h: 1,
+        stride_w: 1,
+        dtype: 8,
+    };
+    let calls = vec![KernelCall::Im2Col(geom), KernelCall::Col2Im(geom)];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match (&decoded[0], &decoded[1]) {
+        (KernelCall::Im2Col(a), KernelCall::Col2Im(b)) => {
+            assert_eq!(a.channels, 3);
+            assert_eq!(a.k_h, 3);
+            assert_eq!(a.h_out, 6);
+            assert_eq!(b.w_in, 8);
+            assert_eq!(b.stride_h, 1);
+        }
+        _ => panic!("im2col/col2im did not round-trip"),
+    }
+}
+
+#[test]
 fn gemm_round_trip() {
     let calls = vec![KernelCall::Gemm(GemmCall {
         a: ref_buf(0),

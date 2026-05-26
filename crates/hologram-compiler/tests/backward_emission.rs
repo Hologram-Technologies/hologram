@@ -1,25 +1,35 @@
-//! Backward emission (spec V.4 / ADR-043) — exercises
-//! `compile_with_backward` and the `OpKind::primary_grad` mapping.
+//! Backward emission (spec V.4 / ADR-043) — autodiff by **composition**.
+//!
+//! Gradients are not new primitives: `append_backward` composes each op's
+//! vector-Jacobian product from existing forward ops (the chain rule is
+//! categorical composition). These tests assert the structural contract; the
+//! numerical correctness of every VJP is grad-checked against finite
+//! differences in `hologram-exec/tests/autodiff.rs`.
 
 use hologram_compiler::{compile_with_backward, BackendKind};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
-use hologram_graph::{append_backward, Graph, GraphOp, InputSource, OpKind};
+use hologram_graph::{append_backward, BackwardError, Graph, GraphOp, InputSource, NodeId, OpKind};
 use prism::vocabulary::WittLevel;
 use smallvec::SmallVec;
 
 const DTYPE_F32: u8 = 8;
 
-fn build_simple_graph() -> (Graph, hologram_graph::NodeId, hologram_graph::NodeId) {
-    let mut graph = Graph::new();
-    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
-    let x = graph.add_node(Node {
+fn input(g: &mut Graph, shape: hologram_graph::registry::ShapeId) -> NodeId {
+    let id = g.add_node(Node {
         op: GraphOp::Input,
         inputs: SmallVec::new(),
         output_dtype: DTypeId(DTYPE_F32),
         output_shape: shape,
     });
-    graph.add_input(x);
+    g.add_input(id);
+    id
+}
+
+fn build_sigmoid_graph() -> (Graph, NodeId) {
+    let mut graph = Graph::new();
+    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let x = input(&mut graph, shape);
     let y = graph.add_node(Node {
         op: GraphOp::Op(OpKind::Sigmoid),
         inputs: SmallVec::from_iter([InputSource::Node(x)]),
@@ -33,55 +43,70 @@ fn build_simple_graph() -> (Graph, hologram_graph::NodeId, hologram_graph::NodeI
         output_shape: shape,
     });
     graph.add_output(out);
-    (graph, x, y)
+    (graph, y)
 }
 
 #[test]
-fn append_backward_grows_graph_with_grad_nodes() {
-    let (mut graph, _x, y) = build_simple_graph();
-    let original_count = graph.node_count();
+fn append_backward_composes_from_forward_ops_only() {
+    let (mut graph, y) = build_sigmoid_graph();
+    let original = graph.node_count();
     let grads = append_backward(&mut graph, y).unwrap();
-    assert_eq!(grads.len(), 1, "expected one input gradient");
+    assert_eq!(grads.len(), 1, "one differentiable input");
+    assert!(graph.node_count() > original, "backward adds nodes");
+
+    // The σ VJP is g·y·(1−y): composed purely from forward Sub/Mul (+ a 1.0
+    // constant). Gradients run on the already-verified forward kernels — there
+    // are no `*Grad` op-kinds in the catalog at all (they were removed when
+    // autodiff moved to composition), so every appended node is a forward op.
+    let added = &graph.nodes()[original..];
     assert!(
-        graph.node_count() > original_count,
-        "backward emission should add nodes"
-    );
-    // Confirm a UnaryGrad node was added (Sigmoid → UnaryGrad per V.4).
-    let added_unary_grad = graph
-        .nodes()
-        .iter()
-        .any(|n| matches!(n.op, GraphOp::Op(OpKind::UnaryGrad)));
-    assert!(
-        added_unary_grad,
-        "expected a UnaryGrad node in backward subgraph"
+        added.iter().any(|n| matches!(n.op, GraphOp::Op(OpKind::Mul)))
+            && added.iter().any(|n| matches!(n.op, GraphOp::Op(OpKind::Sub))),
+        "sigmoid VJP composes Sub + Mul"
     );
 }
 
 #[test]
-fn primary_grad_mapping_is_consistent() {
-    // Spec V.4: every differentiable op has a defined gradient. Spot-check
-    // the canonical mappings.
-    assert_eq!(OpKind::MatMul.primary_grad(), Some(OpKind::MatMulGradA));
-    assert_eq!(OpKind::Conv2d.primary_grad(), Some(OpKind::Conv2dGradX));
-    assert_eq!(OpKind::Softmax.primary_grad(), Some(OpKind::SoftmaxGrad));
+fn unimplemented_vjp_fails_loud() {
+    // An op whose VJP is not composed yet errors explicitly — it is never
+    // silently approximated.
+    let mut graph = Graph::new();
+    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let x = input(&mut graph, shape);
+    let y = graph.add_node(Node {
+        // `Xor` is a bitwise op on the discrete byte ring — it has no
+        // real-valued input and so no calculus derivative; append_backward
+        // fails loud rather than fabricate one. (Verifies the fail-loud
+        // mechanism. Every *differentiable* op — arithmetic, activations,
+        // matmul/gemm, conv, attention, norms, pools, resize, lrn, rope, mod,
+        // and even the predicate ops' 0-gradient — is grad-checked in
+        // hologram-exec/tests/autodiff.rs. Only the discrete byte-algebra ops
+        // (And/Or/Xor/Bnot/Succ/Pred) and Dequantize remain gradient-free.)
+        op: GraphOp::Op(OpKind::Xor),
+        inputs: SmallVec::from_iter([InputSource::Node(x)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(y)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out);
     assert_eq!(
-        OpKind::LayerNorm.primary_grad(),
-        Some(OpKind::LayerNormGrad)
+        append_backward(&mut graph, y),
+        Err(BackwardError::NoGradient(OpKind::Xor))
     );
-    assert_eq!(OpKind::Sigmoid.primary_grad(), Some(OpKind::UnaryGrad));
-    assert_eq!(OpKind::Mul.primary_grad(), Some(OpKind::MulGrad));
-    // Non-differentiable / identity-passthrough.
-    assert_eq!(OpKind::Add.primary_grad(), None);
-    assert_eq!(OpKind::Reshape.primary_grad(), None);
 }
 
 #[test]
 fn compile_with_backward_returns_input_gradients() {
-    let (graph, _x, y) = build_simple_graph();
+    let (graph, y) = build_sigmoid_graph();
     let (output, input_grads) =
         compile_with_backward(graph, y, BackendKind::Cpu, WittLevel::W32).unwrap();
     assert_eq!(input_grads.len(), 1);
     assert!(!output.archive.is_empty());
-    // The augmented graph compiles to more kernel calls than the forward.
+    // Forward + composed backward compiles to more than the 3 forward nodes.
     assert!(output.stats.total_nodes > 3);
 }

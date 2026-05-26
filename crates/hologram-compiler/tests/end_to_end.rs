@@ -74,6 +74,7 @@ fn conv_attrs_thread_through_compile() {
             stride_w: 2,
             pad_h: 1,
             pad_w: 1,
+            ..Default::default()
         },
     );
     let out = g.add_node(Node {

@@ -877,27 +877,6 @@ fn kcdt_f64_rejected_never_silent_zero() {
 /// Division and modulo by zero follow IEEE-754 (±∞ / NaN), not a silent 0.0
 /// substitution — a wrong-but-quiet result is worse than a correct special
 /// value the caller can detect.
-#[test]
-fn kcdt_gradient_ops_fail_loud() {
-    // Backward/gradient ops are not an inference-runtime execution target: they
-    // must error explicitly, never silently run a wrong byte/forward kernel.
-    let n = 8usize;
-    let mut ws = TestWorkspace {
-        slots: vec![vec![0u8; n * 4]; 3],
-    };
-    let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();
-    let grad = KernelCall::SoftmaxGrad(SoftmaxCall {
-        input: buf(0),
-        output: buf(1),
-        batch: 2,
-        feature: 4,
-        dtype: DTYPE_F32,
-    });
-    assert!(
-        backend.dispatch(&grad, &mut ws).is_err(),
-        "SoftmaxGrad must fail loud, not silently run softmax"
-    );
-}
 
 #[test]
 fn kcdt_div_mod_by_zero_is_ieee() {

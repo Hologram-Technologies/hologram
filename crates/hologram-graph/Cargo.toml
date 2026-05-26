@@ -10,6 +10,7 @@ description = "Hologram graph IR (arena-based DAG, schedule, registries)."
 hologram-ops   = { workspace = true }
 hologram-types = { workspace = true }
 smallvec       = { workspace = true }
+libm           = { workspace = true }
 
 [features]
 default = []

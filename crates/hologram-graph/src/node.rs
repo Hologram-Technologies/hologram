@@ -71,6 +71,11 @@ pub struct ConvAttrs {
     pub stride_w: u32,
     pub pad_h: u32,
     pub pad_w: u32,
+    /// Kernel window. `0` means "derive from the weight operand" (the conv /
+    /// pool default). The `Im2Col` / `Col2Im` ops have no weight operand, so
+    /// they carry the window explicitly here.
+    pub k_h: u32,
+    pub k_w: u32,
 }
 
 impl Default for ConvAttrs {
@@ -80,6 +85,27 @@ impl Default for ConvAttrs {
             stride_w: 1,
             pad_h: 0,
             pad_w: 0,
+            k_h: 0,
+            k_w: 0,
+        }
+    }
+}
+
+/// Per-node GEMM scalars (ONNX `Gemm`: `Y = α·A·B + β·C`). Stored sparsely on
+/// `Graph::gemm_attrs`; `*_bits` are `f32::to_bits`. Default is the plain
+/// `A·B + C` (α = β = 1) — without this the lowered `GemmCall` carried α=β=0
+/// and the op computed zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GemmAttrs {
+    pub alpha_bits: u32,
+    pub beta_bits: u32,
+}
+
+impl Default for GemmAttrs {
+    fn default() -> Self {
+        Self {
+            alpha_bits: 1.0f32.to_bits(),
+            beta_bits: 1.0f32.to_bits(),
         }
     }
 }

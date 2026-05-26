@@ -65,6 +65,15 @@ pub enum OpKind {
     // Convolution
     Conv2d,
     ConvTranspose2d,
+    /// im2col: gather a conv's receptive-field patches into a `[Cin·kh·kw,
+    /// Hout·Wout]` matrix (a pure layout gather). Lets a convolution be
+    /// expressed as `W · im2col(x)`, and its gradients composed from the
+    /// matmul VJP. Single-instance (rank-3 `[Cin,Hin,Win]` → rank-2).
+    Im2Col,
+    /// col2im: the adjoint of [`Im2Col`] — scatter-add a `[Cin·kh·kw,
+    /// Hout·Wout]` patch matrix back into a `[Cin,Hin,Win]` image (overlapping
+    /// windows accumulate). The input-gradient half of conv composition.
+    Col2Im,
 
     // Normalization
     LayerNorm,
@@ -111,34 +120,6 @@ pub enum OpKind {
 
     // Quantization (spec X-5)
     Dequantize,
-
-    // Backward variants (spec V.4) — one per differentiable op.
-    MatMulGradA,
-    MatMulGradB,
-    Conv2dGradX,
-    Conv2dGradW,
-    SoftmaxGrad,
-    LogSoftmaxGrad,
-    LayerNormGrad,
-    RmsNormGrad,
-    GroupNormGrad,
-    ReduceSumGrad,
-    ReduceMeanGrad,
-    ReduceProdGrad,
-    SubGrad,
-    MulGrad,
-    DivGrad,
-    PowGrad,
-    MinGrad,
-    MaxGrad,
-    ConcatGrad,
-    SliceGrad,
-    AvgPool2dGrad,
-    GlobalAvgPoolGrad,
-    PadGrad,
-    AttentionGrad,
-    FusedSwiGluGrad,
-    UnaryGrad,
 }
 
 impl OpKind {
@@ -195,6 +176,8 @@ impl OpKind {
             Gemm => "gemm",
             Conv2d => "conv2d",
             ConvTranspose2d => "conv_transpose_2d",
+            Im2Col => "im2col",
+            Col2Im => "col2im",
             LayerNorm => "layer_norm",
             RmsNorm => "rms_norm",
             GroupNorm => "group_norm",
@@ -225,32 +208,6 @@ impl OpKind {
             Lrn => "lrn",
             Where => "where",
             Dequantize => "dequantize",
-            MatMulGradA => "matmul_grad_a",
-            MatMulGradB => "matmul_grad_b",
-            Conv2dGradX => "conv2d_grad_x",
-            Conv2dGradW => "conv2d_grad_w",
-            SoftmaxGrad => "softmax_grad",
-            LogSoftmaxGrad => "log_softmax_grad",
-            LayerNormGrad => "layer_norm_grad",
-            RmsNormGrad => "rms_norm_grad",
-            GroupNormGrad => "group_norm_grad",
-            ReduceSumGrad => "reduce_sum_grad",
-            ReduceMeanGrad => "reduce_mean_grad",
-            ReduceProdGrad => "reduce_prod_grad",
-            SubGrad => "sub_grad",
-            MulGrad => "mul_grad",
-            DivGrad => "div_grad",
-            PowGrad => "pow_grad",
-            MinGrad => "min_grad",
-            MaxGrad => "max_grad",
-            ConcatGrad => "concat_grad",
-            SliceGrad => "slice_grad",
-            AvgPool2dGrad => "avg_pool_2d_grad",
-            GlobalAvgPoolGrad => "global_avg_pool_grad",
-            PadGrad => "pad_grad",
-            AttentionGrad => "attention_grad",
-            FusedSwiGluGrad => "fused_swiglu_grad",
-            UnaryGrad => "unary_grad",
         }
     }
 
@@ -264,6 +221,8 @@ impl OpKind {
                 | OpKind::Slice
                 | OpKind::Pad
                 | OpKind::Expand
+                | OpKind::Im2Col
+                | OpKind::Col2Im
         )
     }
 
@@ -355,23 +314,8 @@ impl OpKind {
             | K::Resize => P::Mul,
 
             // Reductions.
-            K::ReduceSum
-            | K::ReduceMean
-            | K::CumSum
-            | K::AvgPool2d
-            | K::GlobalAvgPool
-            | K::ConcatGrad
-            | K::SliceGrad
-            | K::PadGrad
-            | K::AvgPool2dGrad
-            | K::GlobalAvgPoolGrad
-            | K::ReduceSumGrad => P::Add,
-            K::ReduceProd
-            | K::ReduceMin
-            | K::ReduceMax
-            | K::MaxPool2d
-            | K::ReduceMeanGrad
-            | K::ReduceProdGrad => P::Mul,
+            K::ReduceSum | K::ReduceMean | K::CumSum | K::AvgPool2d | K::GlobalAvgPool => P::Add,
+            K::ReduceProd | K::ReduceMin | K::ReduceMax | K::MaxPool2d => P::Mul,
 
             K::Clip => P::And,
             K::Where => P::Or,
@@ -379,85 +323,7 @@ impl OpKind {
 
             // Layout (no-compute) — anchor at the identity-equivalent And.
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => P::And,
-
-            // Backward variants.
-            K::MatMulGradA
-            | K::MatMulGradB
-            | K::Conv2dGradX
-            | K::Conv2dGradW
-            | K::SoftmaxGrad
-            | K::LayerNormGrad
-            | K::RmsNormGrad
-            | K::GroupNormGrad
-            | K::MulGrad
-            | K::DivGrad
-            | K::PowGrad
-            | K::AttentionGrad
-            | K::FusedSwiGluGrad
-            | K::UnaryGrad => P::Mul,
-            K::LogSoftmaxGrad | K::SubGrad => P::Sub,
-            K::MinGrad | K::MaxGrad => P::And,
-        }
-    }
-
-    /// The corresponding gradient `OpKind` for this forward op (spec V.4 /
-    /// ADR-043). Returns `None` if the op is non-differentiable, or if its
-    /// gradient is the identity (Add / Sub / direct PrimitiveOp wrappers /
-    /// layout ops where the dual is itself a layout op).
-    pub const fn primary_grad(self) -> Option<OpKind> {
-        use OpKind as K;
-        match self {
-            K::MatMul => Some(K::MatMulGradA),
-            K::Conv2d => Some(K::Conv2dGradX),
-            K::Softmax => Some(K::SoftmaxGrad),
-            K::LogSoftmax => Some(K::LogSoftmaxGrad),
-            K::LayerNorm => Some(K::LayerNormGrad),
-            K::RmsNorm => Some(K::RmsNormGrad),
-            K::GroupNorm => Some(K::GroupNormGrad),
-            K::ReduceSum => Some(K::ReduceSumGrad),
-            K::ReduceMean => Some(K::ReduceMeanGrad),
-            K::ReduceProd => Some(K::ReduceProdGrad),
-            K::Sub => Some(K::SubGrad),
-            K::Mul => Some(K::MulGrad),
-            K::Div => Some(K::DivGrad),
-            K::Pow => Some(K::PowGrad),
-            K::Min => Some(K::MinGrad),
-            K::Max => Some(K::MaxGrad),
-            K::Concat => Some(K::ConcatGrad),
-            K::Slice => Some(K::SliceGrad),
-            K::AvgPool2d => Some(K::AvgPool2dGrad),
-            K::GlobalAvgPool => Some(K::GlobalAvgPoolGrad),
-            K::Pad => Some(K::PadGrad),
-            K::Attention => Some(K::AttentionGrad),
-            K::FusedSwiGlu => Some(K::FusedSwiGluGrad),
-            // All elementwise unary activations share UnaryGrad.
-            K::Relu
-            | K::Sigmoid
-            | K::Tanh
-            | K::Gelu
-            | K::Silu
-            | K::Elu
-            | K::Selu
-            | K::Exp
-            | K::Log
-            | K::Log1p
-            | K::Sqrt
-            | K::Reciprocal
-            | K::Sin
-            | K::Cos
-            | K::Tan
-            | K::Asin
-            | K::Acos
-            | K::Atan
-            | K::Ceil
-            | K::Floor
-            | K::Round
-            | K::Erf
-            | K::IsNaN
-            | K::Sign
-            | K::Abs => Some(K::UnaryGrad),
-            // Identity / non-differentiable.
-            _ => None,
+            K::Im2Col | K::Col2Im => P::And,
         }
     }
 
@@ -481,6 +347,7 @@ impl OpKind {
             | K::Or => 4,
 
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => 2,
+            K::Im2Col | K::Col2Im => 2,
 
             K::Equal
             | K::Less
@@ -499,16 +366,6 @@ impl OpKind {
             | K::ReduceProd
             | K::ReduceMin
             | K::ReduceMax
-            | K::ReduceSumGrad
-            | K::ReduceMeanGrad
-            | K::ReduceProdGrad
-            | K::SubGrad
-            | K::MulGrad
-            | K::MinGrad
-            | K::MaxGrad
-            | K::ConcatGrad
-            | K::SliceGrad
-            | K::PadGrad
             | K::Clip
             | K::Where => 16,
 
@@ -523,22 +380,14 @@ impl OpKind {
             | K::Round
             | K::Softmax
             | K::LogSoftmax
-            | K::SoftmaxGrad
-            | K::LogSoftmaxGrad
             | K::MaxPool2d
             | K::AvgPool2d
             | K::GlobalAvgPool
-            | K::AvgPool2dGrad
-            | K::GlobalAvgPoolGrad
             | K::CumSum
             | K::Resize
             | K::Div
             | K::MatMul
-            | K::Gemm
-            | K::MatMulGradA
-            | K::MatMulGradB
-            | K::UnaryGrad
-            | K::DivGrad => 32,
+            | K::Gemm => 32,
 
             K::Gelu
             | K::Exp
@@ -554,25 +403,18 @@ impl OpKind {
             | K::Atan
             | K::Erf
             | K::Pow
-            | K::PowGrad
             | K::Conv2d
             | K::ConvTranspose2d
-            | K::Conv2dGradX
-            | K::Conv2dGradW
             | K::LayerNorm
             | K::RmsNorm
             | K::GroupNorm
             | K::InstanceNorm
             | K::AddRmsNorm
-            | K::LayerNormGrad
-            | K::RmsNormGrad
-            | K::GroupNormGrad
             | K::FusedSwiGlu
-            | K::FusedSwiGluGrad
             | K::Lrn
             | K::RotaryEmbedding => 64,
 
-            K::Attention | K::AttentionGrad => 96,
+            K::Attention => 96,
 
             K::Dequantize => 8,
         }
@@ -631,16 +473,8 @@ impl OpKind {
             | K::Slice
             | K::Pad
             | K::Expand
-            | K::SoftmaxGrad
-            | K::LogSoftmaxGrad
-            | K::ReduceSumGrad
-            | K::ReduceMeanGrad
-            | K::ReduceProdGrad
-            | K::AvgPool2dGrad
-            | K::GlobalAvgPoolGrad
-            | K::SliceGrad
-            | K::PadGrad
-            | K::UnaryGrad
+            | K::Im2Col
+            | K::Col2Im
             | K::Dequantize => 1,
 
             // Binary forms.
@@ -660,23 +494,12 @@ impl OpKind {
             | K::LessOrEqual
             | K::Greater
             | K::GreaterOrEqual
-            | K::SubGrad
-            | K::MulGrad
-            | K::DivGrad
-            | K::PowGrad
-            | K::MinGrad
-            | K::MaxGrad
-            | K::ConcatGrad
             | K::Concat
             | K::MatMul
             | K::Conv2d
             | K::ConvTranspose2d
             | K::FusedSwiGlu
-            | K::AddRmsNorm
-            | K::MatMulGradA
-            | K::MatMulGradB
-            | K::Conv2dGradX
-            | K::Conv2dGradW => 2,
+            | K::AddRmsNorm => 2,
 
             // Ternary forms.
             K::Gemm
@@ -685,11 +508,6 @@ impl OpKind {
             | K::GroupNorm
             | K::InstanceNorm
             | K::Attention
-            | K::AttentionGrad
-            | K::FusedSwiGluGrad
-            | K::LayerNormGrad
-            | K::RmsNormGrad
-            | K::GroupNormGrad
             | K::Where
             // RoPE(x, cos, sin): the rotation tables are operands.
             | K::RotaryEmbedding => 3,

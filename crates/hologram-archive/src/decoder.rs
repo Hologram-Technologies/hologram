@@ -3,8 +3,10 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, Im2ColCall,
+    KernelCall,
+    LayoutCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, NormCall,
+    PoolCall, ReduceCall,
     ExpandCall, LrnCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
@@ -124,6 +126,8 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         47 => K::Gemm(read_gemm(cur)?),
         48 => K::Conv2d(read_conv(cur)?),
         49 => K::ConvTranspose2d(read_conv(cur)?),
+        109 => K::Im2Col(read_im2col(cur)?),
+        110 => K::Col2Im(read_im2col(cur)?),
         50 => K::LayerNorm(read_norm(cur)?),
         51 => K::RmsNorm(read_norm(cur)?),
         52 => K::GroupNorm(read_norm(cur)?),
@@ -153,32 +157,8 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         76 => K::Clip(read_unary(cur)?),
         77 => K::Lrn(read_lrn(cur)?),
         78 => K::Where(read_where(cur)?),
-        79 => K::MatMulGradA(read_matmul(cur)?),
-        80 => K::MatMulGradB(read_matmul(cur)?),
-        81 => K::Conv2dGradX(read_conv(cur)?),
-        82 => K::Conv2dGradW(read_conv(cur)?),
-        83 => K::SoftmaxGrad(read_softmax(cur)?),
-        84 => K::LogSoftmaxGrad(read_softmax(cur)?),
-        85 => K::LayerNormGrad(read_norm(cur)?),
-        86 => K::RmsNormGrad(read_norm(cur)?),
-        87 => K::GroupNormGrad(read_norm(cur)?),
-        88 => K::ReduceSumGrad(read_reduce(cur)?),
-        89 => K::ReduceMeanGrad(read_reduce(cur)?),
-        90 => K::ReduceProdGrad(read_reduce(cur)?),
-        91 => K::SubGrad(read_binary(cur)?),
-        92 => K::MulGrad(read_binary(cur)?),
-        93 => K::DivGrad(read_binary(cur)?),
-        94 => K::PowGrad(read_binary(cur)?),
-        95 => K::MinGrad(read_binary(cur)?),
-        96 => K::MaxGrad(read_binary(cur)?),
-        97 => K::ConcatGrad(read_layout(cur)?),
-        98 => K::SliceGrad(read_layout(cur)?),
-        99 => K::AvgPool2dGrad(read_pool(cur)?),
-        100 => K::GlobalAvgPoolGrad(read_pool(cur)?),
-        101 => K::PadGrad(read_layout(cur)?),
-        102 => K::AttentionGrad(read_attn(cur)?),
-        103 => K::FusedSwiGluGrad(read_matmul(cur)?),
-        104 => K::UnaryGrad(read_unary(cur)?),
+        // 79..=104 were the backward `*Grad` op-kinds, removed when autodiff
+        // moved to forward-op composition; those opcodes are now rejected.
         105 => K::Dequantize(read_dequantize(cur)?),
         106 => K::MatMulActivation(MatMulActivationCall {
             mm: read_matmul(cur)?,
@@ -187,6 +167,11 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         107 => K::MatMulAdd(MatMulAddCall {
             mm: read_matmul(cur)?,
             residual: cur.buf()?,
+        }),
+        108 => K::MatMulAddActivation(MatMulAddActivationCall {
+            mm: read_matmul(cur)?,
+            residual: cur.buf()?,
+            act: cur.u8()?,
         }),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })
@@ -234,6 +219,22 @@ fn read_gemm(c: &mut Cursor<'_>) -> Result<GemmCall, ArchiveError> {
         n: c.u32()?,
         alpha_bits: c.u64()?,
         beta_bits: c.u64()?,
+        dtype: c.u8()?,
+    })
+}
+fn read_im2col(c: &mut Cursor<'_>) -> Result<Im2ColCall, ArchiveError> {
+    Ok(Im2ColCall {
+        input: c.buf()?,
+        output: c.buf()?,
+        channels: c.u32()?,
+        h_in: c.u32()?,
+        w_in: c.u32()?,
+        h_out: c.u32()?,
+        w_out: c.u32()?,
+        k_h: c.u32()?,
+        k_w: c.u32()?,
+        stride_h: c.u32()?,
+        stride_w: c.u32()?,
         dtype: c.u8()?,
     })
 }

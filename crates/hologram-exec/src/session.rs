@@ -13,7 +13,8 @@ use hologram_archive::{
     HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
 };
 use hologram_backend::{
-    buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddCall, MatMulCall,
+    buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
+    MatMulCall,
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
@@ -42,6 +43,9 @@ struct NodeMeta {
     /// order); `u32::MAX` sentinels (e.g. an absent norm residual) excluded.
     inputs: SmallVec<[u32; 4]>,
     output: u32,
+    /// Commutative op (`f(a,b)=f(b,a)`): operand labels are canonicalized
+    /// (sorted) before addressing, so `a∘b` and `b∘a` share one κ-label.
+    commutative: bool,
 }
 
 pub struct InferenceSession<B: SessionBackend> {
@@ -339,6 +343,7 @@ impl<B: SessionBackend> InferenceSession<B> {
                     params: SmallVec::from_slice(sig.params()),
                     inputs,
                     output: output.slot,
+                    commutative: call.is_commutative(),
                 }
             })
             .collect();
@@ -566,6 +571,14 @@ impl<B: SessionBackend> InferenceSession<B> {
                         }
                     }
                 }
+                // Algebraic canonicalization: a commutative op's value is
+                // independent of operand order, so sort the operand labels to
+                // a canonical order before addressing. `a∘b` and `b∘a` then
+                // derive the *same* κ-label and reuse each other's result
+                // (and one boundary address) — UOR's algebra eliding compute.
+                if addressable && self.node_meta[ci].commutative {
+                    in_labels.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+                }
                 let is_out = self.is_output_slot[out_slot];
                 let label = if addressable {
                     // Reshape is a UOR addressing op, not compute: a row-major
@@ -716,6 +729,15 @@ impl<B: SessionBackend> InferenceSession<B> {
         self.kernel_calls
             .iter()
             .filter(|c| matches!(c, KernelCall::MatMulAdd(_)))
+            .count()
+    }
+    /// Number of fused `matmul → add → activation` ops in the loaded schedule —
+    /// the MLP epilogue `act(A·B + bias)` collapsed into one op, eliding the
+    /// matmul product, the post-add sum, *and* the activation intermediate.
+    pub fn add_activation_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::MatMulAddActivation(_)))
             .count()
     }
     pub fn input_count(&self) -> usize {
@@ -1041,6 +1063,36 @@ fn fuse_matmul_epilogue(
             if !ready {
                 continue;
             }
+
+            // Three-op chain `matmul → add → activation` (the MLP epilogue
+            // `act(A·B + bias)`): if the add's own output has a single observer
+            // that is an elementwise activation, absorb it too so neither the
+            // matmul product nor the post-add sum is ever materialized.
+            let add_out = jout.slot;
+            let act_consumer = (add_out != u32::MAX
+                && !out_slots.contains(&add_out)
+                && prod_count.get(&add_out) == Some(&1)
+                && read_count.get(&add_out) == Some(&1))
+            .then(|| read_idx.get(&add_out).copied())
+            .flatten()
+            .filter(|&k| k != j && !absorbed[k]);
+            if let Some(k) = act_consumer {
+                if let Some(act) = calls[k].fused_activation() {
+                    let krefs = buffers(&calls[k]);
+                    if let Some((kout, kins)) = krefs.split_last() {
+                        if kins.len() == 1 && kins[0].slot == add_out {
+                            let fused_mm = MatMulCall { output: *kout, ..mm };
+                            fused[i] = Some(KernelCall::MatMulAddActivation(
+                                MatMulAddActivationCall { mm: fused_mm, residual, act },
+                            ));
+                            absorbed[j] = true;
+                            absorbed[k] = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             let fused_mm = MatMulCall {
                 output: *jout,
                 ..mm

@@ -182,13 +182,6 @@ impl BufferArena {
         }
     }
 
-    pub fn slot(&self, idx: usize) -> Option<SlotSpan> {
-        self.slot_len.get(idx).map(|&length| SlotSpan {
-            offset: 0,
-            length: length as u64,
-        })
-    }
-
     pub fn slot_count(&self) -> usize {
         self.slot_len.len()
     }

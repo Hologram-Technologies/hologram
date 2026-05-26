@@ -153,7 +153,11 @@ pub fn read_float(bytes: &[u8], i: usize, dtype: u8) -> f32 {
         DTYPE_F32 => read_f32(bytes, i),
         DTYPE_BF16 => read_bf16(bytes, i),
         DTYPE_F16 => read_f16(bytes, i),
-        _ => 0.0,
+        // Unreachable: dispatch rejects f64 explicitly and routes the byte ring
+        // to its own element readers, so this float reader only ever sees
+        // f32/f16/bf16. Fail loud rather than silently substituting 0.0 (a
+        // silent-wrong surface) if that invariant is ever violated.
+        other => unreachable!("read_float on non-float dtype tag {other}"),
     }
 }
 
@@ -164,6 +168,8 @@ pub fn write_float(bytes: &mut [u8], i: usize, v: f32, dtype: u8) {
         DTYPE_F32 => write_f32(bytes, i, v),
         DTYPE_BF16 => write_bf16(bytes, i, v),
         DTYPE_F16 => write_f16(bytes, i, v),
-        _ => {}
+        // Unreachable for the same reason as `read_float`: fail loud rather
+        // than silently dropping the write on a non-float dtype.
+        other => unreachable!("write_float on non-float dtype tag {other}"),
     }
 }

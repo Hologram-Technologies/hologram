@@ -7,7 +7,7 @@
 
 use hologram_host::HologramHostBoundsCpu;
 use hologram_ops::{
-    activation_reduce::*, backward::*, conv::*, direct::*, elementwise_binary::*,
+    activation_reduce::*, conv::*, direct::*, elementwise_binary::*,
     elementwise_unary::*, layout::*, linalg::*, normalization::*, pooling::*, reduction::*,
     structured::*, utility::*,
 };
@@ -137,34 +137,4 @@ fn layout_iris() {
 
     type Sl = SliceOp<S, S, S, DTypeF32, HologramHostBoundsCpu>;
     assert!(Sl::IRI.starts_with(PREFIX));
-}
-
-#[test]
-fn backward_iris() {
-    assert!(MatMulGradAOp::IRI.starts_with(PREFIX));
-    assert!(MatMulGradBOp::IRI.starts_with(PREFIX));
-    assert!(Conv2dGradXOp::IRI.starts_with(PREFIX));
-    assert!(Conv2dGradWOp::IRI.starts_with(PREFIX));
-    assert!(SoftmaxGradOp::IRI.starts_with(PREFIX));
-    assert!(LogSoftmaxGradOp::IRI.starts_with(PREFIX));
-    assert!(LayerNormGradOp::IRI.starts_with(PREFIX));
-    assert!(RmsNormGradOp::IRI.starts_with(PREFIX));
-    assert!(GroupNormGradOp::IRI.starts_with(PREFIX));
-    assert!(ReduceSumGradOp::IRI.starts_with(PREFIX));
-    assert!(ReduceMeanGradOp::IRI.starts_with(PREFIX));
-    assert!(ReduceProdGradOp::IRI.starts_with(PREFIX));
-    assert!(SubGradOp::IRI.starts_with(PREFIX));
-    assert!(MulGradOp::IRI.starts_with(PREFIX));
-    assert!(DivGradOp::IRI.starts_with(PREFIX));
-    assert!(PowGradOp::IRI.starts_with(PREFIX));
-    assert!(MinGradOp::IRI.starts_with(PREFIX));
-    assert!(MaxGradOp::IRI.starts_with(PREFIX));
-    assert!(ConcatGradOp::IRI.starts_with(PREFIX));
-    assert!(SliceGradOp::IRI.starts_with(PREFIX));
-    assert!(AvgPool2dGradOp::IRI.starts_with(PREFIX));
-    assert!(GlobalAvgPoolGradOp::IRI.starts_with(PREFIX));
-    assert!(PadGradOp::IRI.starts_with(PREFIX));
-    assert!(AttentionGradOp::IRI.starts_with(PREFIX));
-    assert!(FusedSwiGluGradOp::IRI.starts_with(PREFIX));
-    assert!(UnaryGradOp::IRI.starts_with(PREFIX));
 }

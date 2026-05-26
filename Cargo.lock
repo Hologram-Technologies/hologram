@@ -780,6 +780,7 @@ version = "0.5.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
+ "libm",
  "smallvec",
 ]
 
