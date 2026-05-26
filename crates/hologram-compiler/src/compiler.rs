@@ -267,7 +267,21 @@ impl Compiler {
                         zero_point: quant_attrs.zero_point,
                     },
                 };
-                let kernel_call = lower::lower(&lowered)?;
+                let mut kernel_call = lower::lower(&lowered)?;
+                // Slice = `ProjectField`: point the input BufferRef at the
+                // sliced sub-region [byte_offset, byte_offset+byte_len) computed
+                // from the starts/ends index constants. The copy kernel then
+                // reads exactly that field, and the executor turns it into a
+                // zero-movement view. Only the axis-0 contiguous, unit-step case
+                // is realized; anything else is rejected (no silent-wrong).
+                if matches!(kind, hologram_graph::OpKind::Slice) {
+                    if let KernelCall::Slice(lc) = &mut kernel_call {
+                        let (off, len) = slice_view_bytes(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                        lc.input.offset = off;
+                        lc.input.length = len;
+                    }
+                }
                 level_calls.push(kernel_calls.len() as u32);
                 kernel_calls.push(kernel_call);
                 certificate_records.push(cert_record);
@@ -630,4 +644,54 @@ const fn bytes_per_element(dtype: u8) -> usize {
         3 | 5 | 9 => 8, // U64, I64, F64
         _ => 1,
     }
+}
+
+/// Compute the Slice = `ProjectField` sub-region as `(byte_offset, byte_len)`
+/// for the axis-0, unit-step case: `Slice(data, starts, ends)` with the index
+/// bounds as i64 (ONNX) constants. The byte field is
+/// `[start·inner·elem, end·inner·elem)` where `inner` is the product of the
+/// non-leading dims. Returns `None` for any shape the contiguous view can't
+/// represent (wrong arity, non-constant or out-of-range bounds, missing
+/// shape) — the caller rejects rather than emit a silent-wrong slice.
+fn slice_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u64)> {
+    use hologram_graph::{InputSource, NodeId};
+    // data, starts, ends — the axis-0 contiguous form.
+    if node.inputs.len() != 3 {
+        return None;
+    }
+    let reg = graph.shape_registry();
+    let data_shape = match node.inputs[0] {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let d0 = data_shape.dim(0)? as i64;
+    let inner: u64 = (1..data_shape.rank as usize)
+        .map(|i| data_shape.dim(i).unwrap_or(1))
+        .product();
+    let read_i64 = |src: InputSource| -> Option<i64> {
+        match src {
+            InputSource::Constant(cid) => {
+                let e = graph.constants().get(cid)?;
+                e.bytes.get(0..8).map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+            }
+            _ => None,
+        }
+    };
+    let start = read_i64(node.inputs[1])?.clamp(0, d0);
+    let end = read_i64(node.inputs[2])?.clamp(0, d0);
+    if end < start {
+        return None;
+    }
+    let elem = bytes_per_element(node.output_dtype.0) as u64;
+    let offset = start as u64 * inner * elem;
+    let len = (end - start) as u64 * inner * elem;
+    Some((offset, len))
 }

@@ -178,6 +178,82 @@ fn reshape_is_zero_movement_readdressing() {
 }
 
 #[test]
+fn slice_is_zero_movement_projectfield() {
+    // data[4,3] → Slice rows [1,3) (axis-0) → Relu → output. Slice is a
+    // ProjectField view: the executor binds the output to the input's
+    // sub-region with no dispatch/copy (last_skipped), and Relu reads it.
+    let data: Vec<f32> = (0..12).map(|i| i as f32 - 6.0).collect();
+    // rows 1,2 = elements 3..9, then relu.
+    let want: Vec<f32> = data[3..9].iter().map(|&v| v.max(0.0)).collect();
+
+    let mut g = Graph::new();
+    let s_data = g.shape_registry_mut().intern(ShapeDescriptor::rank2(4, 3));
+    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
+    let s_idx = g.shape_registry_mut().intern(ShapeDescriptor::rank1(1));
+    let starts = g.constants_mut().insert(ConstantEntry {
+        bytes: 1i64.to_le_bytes().to_vec(),
+        dtype: DTypeId(5), // I64
+        shape: s_idx,
+    });
+    let ends = g.constants_mut().insert(ConstantEntry {
+        bytes: 3i64.to_le_bytes().to_vec(),
+        dtype: DTypeId(5),
+        shape: s_idx,
+    });
+    let di = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_data,
+    });
+    g.add_input(di);
+    let sl = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Slice),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(di),
+            InputSource::Constant(starts),
+            InputSource::Constant(ends),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let relu = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(sl)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(relu)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&data),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got.len(), 6, "slice output length");
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        assert!((gv - wv).abs() < 1e-6, "slice→relu[{i}]: got {gv}, want {wv}");
+    }
+    assert!(
+        sess.last_skipped() >= 1,
+        "slice was not zero-movement (last_skipped={})",
+        sess.last_skipped()
+    );
+}
+
+#[test]
 fn concat_primitive_places_a_then_b() {
     // Concat is the closed PrimitiveOp::Concat constructor: out = a ∥ b.
     let a = [1.0f32, 2.0, 3.0];

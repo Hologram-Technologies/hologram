@@ -595,6 +595,22 @@ impl<B: SessionBackend> InferenceSession<B> {
                     }
                 }
 
+                // Slice = `ProjectField`: an interior slice is a zero-movement
+                // view onto its input's sub-region (the compiler set the input
+                // BufferRef to `[offset, offset+len)`). Bind the view — no
+                // dispatch, no copy. (Output-port slices fall through to the
+                // copy kernel so they retain their own buffer correctly.)
+                if !is_out {
+                    if let KernelCall::Slice(lc) = &self.kernel_calls[ci] {
+                        let (data_slot, off, len) =
+                            (lc.input.slot as usize, lc.input.offset as usize, lc.input.length as usize);
+                        self.pool.bind_view(out_slot, data_slot, off, len);
+                        slot_label[out_slot] = label;
+                        self.last_skipped += 1;
+                        continue;
+                    }
+                }
+
                 // Miss / novel: bind a fresh output buffer and dispatch the
                 // kernel straight into it.
                 let size = self.slot_sizes.get(out_slot).copied().unwrap_or(64);

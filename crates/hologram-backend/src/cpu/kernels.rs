@@ -73,19 +73,20 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // copy is correct. The rest move/transform data and carry no params in
         // LayoutCall; they fail loud rather than silently copy (see the float
         // path for the full rationale).
-        KernelCall::Reshape(c) => layout_copy(c, ws),
+        // Reshape relabel + Slice (ProjectField, input BufferRef = sub-region)
+        // are byte copies through the offset-honoring read.
+        KernelCall::Reshape(c) | KernelCall::Slice(c) => layout_copy(c, ws),
         // Concat is byte placement (dtype-agnostic) — the same kernel serves
         // both domains.
         KernelCall::Concat(c) => ff::concat_float(c, ws),
         KernelCall::Transpose(_)
-        | KernelCall::Slice(_)
         | KernelCall::Pad(_)
         | KernelCall::Expand(_)
         | KernelCall::Resize(_)
         | KernelCall::ConcatGrad(_)
         | KernelCall::SliceGrad(_)
         | KernelCall::PadGrad(_) => Err(BackendError::UnsupportedOp(
-            "layout op not yet functional: LayoutCall carries no axis/offset/permutation",
+            "layout op not yet functional: needs its UOR-native realization",
         )),
 
         // MatMul (byte ring).
@@ -1342,13 +1343,17 @@ fn try_dispatch_float<W: Workspace>(
         K::Reshape(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
         // Concat is the closed `PrimitiveOp::Concat` constructor: place a ∥ b.
         K::Concat(c) if is_float(c.dtype) => Some(ff::concat_float(c, ws)),
-        // Transpose / Slice / Pad / Expand / Resize (and their grads) genuinely
-        // MOVE or transform data — they are not relabels — but `LayoutCall`
-        // carries no axis / offsets / permutation. A byte copy here is silently
-        // wrong, so fail loud until each is realized the UOR-native way
-        // (Slice = ProjectField view; Pad = Concat with zero regions; etc.).
+        // Slice is `ProjectField`: the compiler sets the input BufferRef to the
+        // sub-region [byte_offset, byte_offset+byte_len), so the dtype-aware
+        // copy reads exactly that field. (The content-addressed executor turns
+        // this into a zero-movement view; this kernel is the direct-dispatch
+        // path.)
+        K::Slice(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
+        // Transpose / Pad / Expand / Resize (and their grads) still need their
+        // UOR-native realization (Pad = Concat with zero regions; Expand =
+        // broadcast view; Transpose = consumer-absorbed / gather). Fail loud
+        // until each lands rather than silently copy.
         K::Transpose(c)
-        | K::Slice(c)
         | K::Pad(c)
         | K::Expand(c)
         | K::Resize(c)
@@ -1358,7 +1363,7 @@ fn try_dispatch_float<W: Workspace>(
             if is_float(c.dtype) =>
         {
             Some(Err(BackendError::UnsupportedOp(
-                "layout op not yet functional: LayoutCall carries no axis/offset/permutation",
+                "layout op not yet functional: needs its UOR-native realization",
             )))
         }
 
