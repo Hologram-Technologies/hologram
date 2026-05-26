@@ -56,5 +56,5 @@ name = "production"
 harness = false
 
 [[bench]]
-name = "fusion"
+name = "tiered_executor"
 harness = false

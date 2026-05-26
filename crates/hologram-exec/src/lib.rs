@@ -15,6 +15,12 @@ pub mod prism_route;
 pub mod session;
 pub mod warm;
 
+#[cfg(feature = "tiered-exec")]
+pub mod coherence;
+
+#[cfg(feature = "async")]
+pub mod async_session;
+
 pub use buffer::{BufferArena, InputBuffer, OutputBuffer, SlotSpan};
 pub use error::ExecError;
 pub use prism_route::AttestedExecution;
@@ -22,3 +28,6 @@ pub use session::{InferenceSession, SessionBackend};
 #[cfg(feature = "std")]
 pub use warm::FileWarmStore;
 pub use warm::{fold_archive, MemWarmStore, WarmStore};
+
+#[cfg(feature = "tiered-exec")]
+pub use coherence::{DeviceOwner, LevelMigration, SlotCoherence, TierPolicy};

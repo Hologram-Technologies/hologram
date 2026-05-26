@@ -334,6 +334,38 @@ Q0 and Q1 are fully realised in `hologram-core`. Q2+ are algorithmic fallbacks.
 
 ---
 
+## Memory Tiering (Prism PM_7)
+
+PM_7 (Memory Affinity) uses quantum levels as a memory placement policy.
+The compiler assigns each kernel call a `MemoryTier` based on its Witt
+bit-width, routing compute to the optimal device:
+
+| Tier | Quantum Level | Memory Target | Dispatch |
+|------|---------------|---------------|----------|
+| `CpuL1` | Q0 (≤8-bit) | L1 cache | CPU LUT lookup |
+| `CpuL2` | Q1 (9–16-bit) | L2 cache | CPU W16 LUT (128KB, cached) |
+| `CpuMain` | Q2 (17–24-bit) | Main memory | CPU algorithmic |
+| `Device` | Q3+ (≥25-bit) | GPU VRAM | Accelerator dispatch |
+
+### Coherence
+
+PL_2 (Lease Disjointness) makes coherence trivial: within a schedule level,
+each slot has one owner. Migrations happen only at level boundaries via a
+precomputed `LevelMigration` schedule (built once at session load).
+
+On unified-memory hardware (Apple Silicon / Metal), migrations are no-ops —
+the coherence layer is metadata-only.
+
+### Feature Gate
+
+Tiered execution is enabled via `tiered-exec` on `hologram-exec`. When
+disabled, zero overhead: no extra fields, no extra branches. The archive's
+`TierAssignments` section (kind=13) is optional and backward compatible.
+
+See [ADR-055](../adrs/055-pm7-memory-affinity-tiered-execution.md) for full design.
+
+---
+
 ## Error Taxonomy (Prism PX_5)
 
 Compilation failures are classified according to Prism PX_5's two infeasibility classes:

@@ -25,13 +25,31 @@
 #![no_std]
 
 pub mod dtype;
+pub mod fingerprint;
+pub mod layout;
+pub mod memory_tier;
+pub mod region;
+pub mod schedule;
 pub mod shape;
+pub mod tensor;
+pub mod weight;
+pub mod witness;
 
 pub use dtype::{
     DType, DTypeBf16, DTypeBool, DTypeF16, DTypeF32, DTypeF64, DTypeI32, DTypeI4, DTypeI64,
     DTypeI8, DTypeKind, DTypeU64, DTypeU8,
 };
-pub use shape::{Dim, Shape1, Shape2};
+pub use fingerprint::Fingerprint;
+pub use layout::Layout;
+pub use memory_tier::MemoryTier;
+pub use region::Region;
+pub use schedule::Schedule;
+pub use shape::{
+    Dim, DimSymbolic, Shape1, Shape2, Shape3, Shape4, Shape5, Shape6, Shape7, Shape8, ShapeArray,
+};
+pub use tensor::Tensor;
+pub use weight::{Constant, Weight};
+pub use witness::WitnessRecord;
 
 // Re-export the canonical prism shape carriers so hologram callers
 // reach them through this crate's surface without an extra import.
