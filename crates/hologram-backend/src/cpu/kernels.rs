@@ -153,14 +153,12 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         | KernelCall::MinGrad(c)
         | KernelCall::MaxGrad(c) => binary_w8(c, ws, sub_byte),
 
-        // Clip / RotaryEmbedding / Lrn carry no parameters in `UnaryCall`
-        // (Clip's min/max, RoPE's rotation table/θ, Lrn's size/α/β), so a
-        // byte-ring kernel here would silently behave as identity. Fail loud in
-        // every domain — these await pipeline-lowering into their primitive
-        // composition (the float path rejects them too). UnaryGrad keeps the
-        // identity placeholder (backward chain-rule seed; training-only).
+        // RoPE is a float op (handled by the float path); the byte ring is not
+        // meaningful for it. Clip/Lrn carry no parameters in `UnaryCall`, so a
+        // byte-ring kernel would silently behave as identity — fail loud.
+        // UnaryGrad keeps the identity placeholder (backward seed; training).
         KernelCall::RotaryEmbedding(_) => Err(BackendError::UnsupportedOp(
-            "RotaryEmbedding: rotation table / θ / positions not represented",
+            "RotaryEmbedding: float-only (byte-ring rotation is not defined)",
         )),
         KernelCall::Clip(_) => Err(BackendError::UnsupportedOp(
             "Clip: (min, max) bounds not represented in UnaryCall",
@@ -1383,9 +1381,7 @@ fn try_dispatch_float<W: Workspace>(
         K::Clip(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
             "Clip: (min, max) bounds not carried by UnaryCall — parameters dropped at lowering",
         ))),
-        K::RotaryEmbedding(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "RotaryEmbedding: rotation table / θ / positions not carried by UnaryCall",
-        ))),
+        K::RotaryEmbedding(c) if is_float(c.dtype) => Some(ff::rope_float(c, ws)),
         K::Lrn(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
             "Lrn: (size, α, β, bias) not carried by UnaryCall — parameters dropped at lowering",
         ))),

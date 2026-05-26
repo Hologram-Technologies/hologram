@@ -254,6 +254,69 @@ fn slice_is_zero_movement_projectfield() {
 }
 
 #[test]
+fn rope_rotates_halves() {
+    // x[2,4] (head_dim=4, half=2). With cos=1, sin=0.5 the rotate-half form
+    // gives, per row: out[0]=x0−x2·.5, out[1]=x1−x3·.5, out[2]=x2+x0·.5,
+    // out[3]=x3+x1·.5.
+    let x = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let cos = [1.0f32; 8];
+    let sin = [0.5f32; 8];
+    let want = [-0.5f32, 0.0, 3.5, 5.0, 1.5, 2.0, 9.5, 11.0];
+
+    let mut g = Graph::new();
+    let s = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 4));
+    let cos_c = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&cos),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let sin_c = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&sin),
+        dtype: DTypeId(DTYPE_F32),
+        shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let rope = g.add_node(Node {
+        op: GraphOp::Op(OpKind::RotaryEmbedding),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(xi),
+            InputSource::Constant(cos_c),
+            InputSource::Constant(sin_c),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(rope)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        assert!((gv - wv).abs() < 1e-6, "rope[{i}]: got {gv}, want {wv}");
+    }
+}
+
+#[test]
 fn expand_broadcasts() {
     // x[1,3] expand → [4,3]: the size-1 axis 0 broadcasts (each row = x).
     let x = [10.0f32, 20.0, 30.0];

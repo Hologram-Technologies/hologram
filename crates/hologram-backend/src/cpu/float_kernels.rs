@@ -1180,6 +1180,46 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     Ok(())
 }
 
+/// RoPE (rotary positional embedding), rotate-half form. `cos`/`sin` are full
+/// per-element tables (same layout as `x`). Within each head of width
+/// `head_dim` (split into halves at `half = head_dim/2`): the first half maps
+/// to `x·cos − x₂·sin`, the second to `x·cos + x₁·sin`, where `x₂`/`x₁` are the
+/// paired elements across the half boundary. f32/bf16/f16 supported.
+pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.element_count as usize;
+    let d = c.head_dim as usize;
+    if d == 0 || d % 2 != 0 || n % d != 0 {
+        return Err(BackendError::UnsupportedOp(
+            "rope: head_dim must be even and divide the element count",
+        ));
+    }
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let half = d / 2;
+    let (reads, out) = ws
+        .split_borrow(&[c.x, c.cos, c.sin], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let (x, cos, sin) = (reads[0], reads[1], reads[2]);
+    if out.len() < n * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for e in 0..n {
+        let pos = e % d;
+        let base = e - pos;
+        let xe = read_float(x, e, dt);
+        let ce = read_float(cos, e, dt);
+        let se = read_float(sin, e, dt);
+        let v = if pos < half {
+            // pair partner is the matching element in the upper half.
+            xe * ce - read_float(x, base + pos + half, dt) * se
+        } else {
+            xe * ce + read_float(x, base + pos - half, dt) * se
+        };
+        write_float(out, e, v, dt);
+    }
+    Ok(())
+}
+
 /// Expand (broadcast): replicate `input` to `out_dims`. An axis with
 /// `in_dims[i] == 1` reads input index 0 (broadcast); every other axis maps
 /// 1:1. Dtype-agnostic gather; materializes the broadcast (a stride-0

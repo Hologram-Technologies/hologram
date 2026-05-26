@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
     LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
-    ExpandCall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    ExpandCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -149,7 +149,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         72 => K::Expand(read_expand(cur)?),
         73 => K::Resize(read_layout(cur)?),
         74 => K::CumSum(read_reduce(cur)?),
-        75 => K::RotaryEmbedding(read_unary(cur)?),
+        75 => K::RotaryEmbedding(read_rope(cur)?),
         76 => K::Clip(read_unary(cur)?),
         77 => K::Lrn(read_unary(cur)?),
         78 => K::Where(read_where(cur)?),
@@ -331,6 +331,17 @@ fn read_expand(c: &mut Cursor<'_>) -> Result<ExpandCall, ArchiveError> {
         in_dims,
         out_dims,
         dtype,
+    })
+}
+fn read_rope(c: &mut Cursor<'_>) -> Result<RoPECall, ArchiveError> {
+    Ok(RoPECall {
+        x: c.buf()?,
+        cos: c.buf()?,
+        sin: c.buf()?,
+        output: c.buf()?,
+        head_dim: c.u32()?,
+        element_count: c.u64()?,
+        dtype: c.u8()?,
     })
 }
 fn read_softmax(c: &mut Cursor<'_>) -> Result<SoftmaxCall, ArchiveError> {

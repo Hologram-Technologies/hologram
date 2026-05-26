@@ -624,7 +624,6 @@ impl OpKind {
             | K::GlobalAvgPool
             | K::Resize
             | K::CumSum
-            | K::RotaryEmbedding
             | K::Clip
             | K::Lrn
             | K::Reshape
@@ -691,7 +690,9 @@ impl OpKind {
             | K::LayerNormGrad
             | K::RmsNormGrad
             | K::GroupNormGrad
-            | K::Where => 3,
+            | K::Where
+            // RoPE(x, cos, sin): the rotation tables are operands.
+            | K::RotaryEmbedding => 3,
         }
     }
 }

@@ -141,6 +141,21 @@ pub struct TransposeCall {
     pub dtype: u8,
 }
 
+/// Rotary positional embedding (RoPE). `x` rotated by the per-position
+/// `cos`/`sin` tables (same element layout as `x`): for a pair within a head of
+/// width `head_dim` (halves at `head_dim/2`), the first half maps to
+/// `x·cos − x₂·sin` and the second to `x·cos + x₁·sin` (the rotate-half form).
+#[derive(Debug, Clone, Copy)]
+pub struct RoPECall {
+    pub x: BufferRef,
+    pub cos: BufferRef,
+    pub sin: BufferRef,
+    pub output: BufferRef,
+    pub head_dim: u32,
+    pub element_count: u64,
+    pub dtype: u8,
+}
+
 /// Expand (broadcast). Replicates `input` to the broadcast `out_dims`: an axis
 /// with `in_dims[i] == 1` is read at index 0 (stride-0), every other axis maps
 /// 1:1. Rank ≤ 8. The kernel materializes the broadcast (a gather); a
@@ -404,6 +419,10 @@ fn p_expand(c: &ExpandCall) -> Pb {
     }
     b
 }
+
+fn p_rope(c: &RoPECall) -> Pb {
+    Pb::new().u64(c.element_count).u32(c.head_dim).u8(c.dtype)
+}
 fn p_softmax(c: &SoftmaxCall) -> Pb {
     Pb::new().u32(c.batch).u32(c.feature).u8(c.dtype)
 }
@@ -543,7 +562,7 @@ pub enum KernelCall {
     Expand(ExpandCall),
     Resize(LayoutCall),
     CumSum(ReduceCall),
-    RotaryEmbedding(UnaryCall),
+    RotaryEmbedding(RoPECall),
     Clip(UnaryCall),
     Lrn(UnaryCall),
     Where(WhereCall),
@@ -685,7 +704,7 @@ impl KernelCall {
             K::Expand(c) => p_expand(c).done(71),
             K::Resize(c) => p_layout(c).done(72),
             K::CumSum(c) => p_reduce(c).done(73),
-            K::RotaryEmbedding(c) => p_unary(c).done(74),
+            K::RotaryEmbedding(c) => p_rope(c).done(74),
             K::Clip(c) => p_unary(c).done(75),
             K::Lrn(c) => p_unary(c).done(76),
             K::Where(c) => p_where(c).done(77),
@@ -761,10 +780,11 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::IsNaN(c)
         | K::Sign(c)
         | K::Abs(c)
-        | K::RotaryEmbedding(c)
         | K::Clip(c)
         | K::Lrn(c)
         | K::UnaryGrad(c) => vec![c.input, c.output],
+
+        K::RotaryEmbedding(c) => vec![c.x, c.cos, c.sin, c.output],
 
         K::Add(c)
         | K::Sub(c)
@@ -891,10 +911,11 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::IsNaN(c)
         | K::Sign(c)
         | K::Abs(c)
-        | K::RotaryEmbedding(c)
         | K::Clip(c)
         | K::Lrn(c)
         | K::UnaryGrad(c) => c.dtype,
+
+        K::RotaryEmbedding(c) => c.dtype,
 
         K::Add(c)
         | K::Sub(c)

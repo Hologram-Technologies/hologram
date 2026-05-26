@@ -146,6 +146,7 @@ fn parser_accepts_every_op_in_catalog() {
                 | hologram_graph::OpKind::Pad
                 | hologram_graph::OpKind::Transpose
                 | hologram_graph::OpKind::Expand
+                | hologram_graph::OpKind::RotaryEmbedding
         ) {
             continue;
         }

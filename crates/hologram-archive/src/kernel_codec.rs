@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall, UnaryCall,
+    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
     WhereCall,
 };
 
@@ -441,7 +441,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
         K::RotaryEmbedding(c) => {
             put_u16(out, D_ROTARY);
-            put_unary(out, c);
+            put_rope(out, c);
         }
         K::Clip(c) => {
             put_u16(out, D_CLIP);
@@ -687,6 +687,15 @@ fn put_transpose(out: &mut Vec<u8>, c: &TransposeCall) {
     for p in c.perm {
         put_u8(out, p);
     }
+    put_u8(out, c.dtype);
+}
+fn put_rope(out: &mut Vec<u8>, c: &RoPECall) {
+    put_buf(out, c.x);
+    put_buf(out, c.cos);
+    put_buf(out, c.sin);
+    put_buf(out, c.output);
+    put_u32(out, c.head_dim);
+    put_u64(out, c.element_count);
     put_u8(out, c.dtype);
 }
 fn put_expand(out: &mut Vec<u8>, c: &ExpandCall) {

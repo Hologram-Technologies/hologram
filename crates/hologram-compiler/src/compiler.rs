@@ -293,6 +293,13 @@ impl Compiler {
                         tc.perm = perm;
                     }
                 }
+                // RoPE: head_dim = the input's last dimension.
+                if matches!(kind, hologram_graph::OpKind::RotaryEmbedding) {
+                    if let KernelCall::RotaryEmbedding(rc) = &mut kernel_call {
+                        rc.head_dim =
+                            rope_head_dim(&self.graph, node).ok_or(CompileError::CompletenessFailure)?;
+                    }
+                }
                 // Expand: in_dims (input shape) + out_dims (output shape) for
                 // the broadcast gather.
                 if matches!(kind, hologram_graph::OpKind::Expand) {
@@ -782,6 +789,29 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
     let lo = pad_at(0).unwrap_or(0).max(0) as u64;
     let elem = bytes_per_element(node.output_dtype.0) as u64;
     Some((lo * inner * elem, data_count * elem, data_count))
+}
+
+/// RoPE head dimension = the input tensor's last dim (the rotated axis).
+fn rope_head_dim(graph: &Graph, node: &hologram_graph::Node) -> Option<u32> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let rank = shape.rank as usize;
+    if rank == 0 {
+        return None;
+    }
+    Some(shape.dim(rank - 1)? as u32)
 }
 
 /// Resolve an Expand's `(rank, in_dims, out_dims)` from the input shape and the

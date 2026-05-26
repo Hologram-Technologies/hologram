@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, SoftmaxCall, TransposeCall,
-    UnaryCall, WhereCall,
+    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
+    TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -442,7 +442,17 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         }),
         K::Resize => KernelCall::Resize(layout),
         K::CumSum => KernelCall::CumSum(reduce_call),
-        K::RotaryEmbedding => KernelCall::RotaryEmbedding(unary),
+        // head_dim filled by the compiler's rope pass (from the input's last
+        // dim); cos/sin are operands 1 and 2.
+        K::RotaryEmbedding => KernelCall::RotaryEmbedding(RoPECall {
+            x: inp0(),
+            cos: inp1(),
+            sin: inp2(),
+            output: node.output,
+            head_dim: 0,
+            element_count: node.element_count,
+            dtype: node.dtype,
+        }),
         K::Clip => KernelCall::Clip(unary),
         K::Lrn => KernelCall::Lrn(unary),
         K::Where => KernelCall::Where(where_call),
