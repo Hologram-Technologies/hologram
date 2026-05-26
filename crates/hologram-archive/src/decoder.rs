@@ -425,8 +425,12 @@ fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {
 fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
     Ok(DequantizeCall {
         input: c.buf()?,
+        scales: c.buf()?,
+        zero_points: c.buf()?,
         output: c.buf()?,
         element_count: c.u64()?,
+        channels: c.u32()?,
+        inner: c.u32()?,
         quant_dtype: c.u8()?,
         dtype: c.u8()?,
         scale_bits: c.u32()?,

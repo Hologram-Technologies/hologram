@@ -788,8 +788,12 @@ fn kc9_dequantize_conforms() {
     let got = run(
         KernelCall::Dequantize(DequantizeCall {
             input: buf(0),
+            scales: DequantizeCall::NO_VEC,
+            zero_points: DequantizeCall::NO_VEC,
             output: buf(1),
             element_count: n as u64,
+            channels: 0,
+            inner: 0,
             quant_dtype: DTYPE_I8,
             dtype: DTYPE_F32,
             scale_bits: scale.to_bits(),
@@ -799,6 +803,43 @@ fn kc9_dequantize_conforms() {
         1,
     );
     check("dequantize", n, 1, 1, &got, &want, 1e-6);
+}
+
+#[test]
+fn kc9b_per_channel_dequantize_conforms() {
+    // Weight `[O=4, I=8]` quantized per output channel (axis 0): each row uses
+    // its own scale/zero-point. inner = 8, channels = 4.
+    let (o, i) = (4usize, 8usize);
+    let n = o * i;
+    let scales = [0.0125f32, 0.05, 0.2, 0.0033];
+    let zps = [7i32, -3, 0, 11];
+    let q: Vec<u8> = (0..n).map(|k| (k as i32 % 200 - 100) as i8 as u8).collect();
+    let want: Vec<f32> = (0..n)
+        .map(|k| {
+            let ch = k / i; // axis-0 channel
+            ((q[k] as i8 as i32) - zps[ch]) as f32 * scales[ch]
+        })
+        .collect();
+    let scales_bytes: Vec<u8> = scales.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let zps_bytes: Vec<u8> = zps.iter().flat_map(|z| z.to_le_bytes()).collect();
+    let got = run(
+        KernelCall::Dequantize(DequantizeCall {
+            input: buf(0),
+            scales: buf(1),
+            zero_points: buf(2),
+            output: buf(3),
+            element_count: n as u64,
+            channels: o as u32,
+            inner: i as u32,
+            quant_dtype: DTYPE_I8,
+            dtype: DTYPE_F32,
+            scale_bits: 0,
+            zero_point: 0,
+        }),
+        vec![q.clone(), scales_bytes, zps_bytes, vec![0u8; n * 4]],
+        3,
+    );
+    check("dequantize_per_channel", o, i, 1, &got, &want, 1e-6);
 }
 
 // ─── KC-10: Reduce (ONNX ReduceSum/ReduceMean/ReduceMax, all axes) ────

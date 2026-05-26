@@ -261,9 +261,11 @@ pub struct LoweredNode {
     pub quant: QuantParams,
 }
 
-/// Per-tensor quantization parameters (spec X-5). The compiler sets
-/// these on the node that consumes a quantized weight (or, in fused
-/// matmul-with-dequant, the matmul itself).
+/// Quantization parameters (spec X-5). The compiler sets these on the node
+/// that consumes a quantized weight (or, in fused matmul-with-dequant, the
+/// matmul itself). `channels == 0` is per-tensor (scalar `scale_bits`/
+/// `zero_point`); `channels > 0` is per-channel (scale/zp come from the
+/// dequantize node's 2nd/3rd operands; `inner` = elements per channel step).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct QuantParams {
     /// Source quantized dtype: `DTYPE_I8` (2) or `DTYPE_I4` (10).
@@ -272,6 +274,10 @@ pub struct QuantParams {
     pub scale_bits: u32,
     /// Symmetric zero-point.
     pub zero_point: i32,
+    /// Per-channel channel count (0 ⇒ per-tensor).
+    pub channels: u32,
+    /// Per-channel inner stride (elements per channel step).
+    pub inner: u32,
 }
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
@@ -600,8 +606,21 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         // Quantization (spec X-5).
         K::Dequantize => KernelCall::Dequantize(DequantizeCall {
             input: inp0(),
+            // Per-channel scale/zero-point vectors are the 2nd/3rd operands.
+            scales: if node.quant.channels > 0 {
+                inp1()
+            } else {
+                DequantizeCall::NO_VEC
+            },
+            zero_points: if node.quant.channels > 0 {
+                inp2()
+            } else {
+                DequantizeCall::NO_VEC
+            },
             output: node.output,
             element_count: node.element_count,
+            channels: node.quant.channels,
+            inner: node.quant.inner,
             quant_dtype: node.quant.quant_dtype,
             dtype: node.dtype,
             scale_bits: node.quant.scale_bits,

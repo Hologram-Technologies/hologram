@@ -674,8 +674,12 @@ fn put_where(out: &mut Vec<u8>, c: &WhereCall) {
 }
 fn put_dequantize(out: &mut Vec<u8>, c: &DequantizeCall) {
     put_buf(out, c.input);
+    put_buf(out, c.scales);
+    put_buf(out, c.zero_points);
     put_buf(out, c.output);
     put_u64(out, c.element_count);
+    put_u32(out, c.channels);
+    put_u32(out, c.inner);
     put_u8(out, c.quant_dtype);
     put_u8(out, c.dtype);
     put_u32(out, c.scale_bits);

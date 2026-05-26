@@ -51,6 +51,7 @@ fn dequantize_int8_round_trip() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
+            axis: -1,
         },
     );
     let out = graph.add_node(Node {
@@ -72,6 +73,77 @@ fn dequantize_int8_round_trip() {
     assert!((result[1] - 0.0).abs() < 1e-6);
     assert!((result[2] - 1.0).abs() < 1e-6);
     assert!((result[3] - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn dequantize_int8_per_channel_round_trip() {
+    // Weight `[2, 3]` quantized per output channel (axis 0): row 0 uses
+    // scale 0.5 / zp 0, row 1 uses scale 0.25 / zp 2. The scale/zero-point
+    // vectors are the dequantize node's 2nd/3rd (constant) operands.
+    use hologram_graph::constant::ConstantEntry;
+    let mut graph = Graph::new();
+    let shape = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 3));
+    let vsh = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(2));
+    let q_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: shape,
+    });
+    graph.add_input(q_in);
+    let scale = graph.constants_mut().insert(ConstantEntry {
+        bytes: [0.5f32, 0.25]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect(),
+        dtype: DTypeId(DTYPE_F32),
+        shape: vsh,
+    });
+    let zp = graph.constants_mut().insert(ConstantEntry {
+        bytes: [0i32, 2].iter().flat_map(|z| z.to_le_bytes()).collect(),
+        dtype: DTypeId(2),
+        shape: vsh,
+    });
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(q_in),
+            InputSource::Constant(scale),
+            InputSource::Constant(zp),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 0,
+        },
+    );
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out);
+
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+    let q_bytes: Vec<u8> = vec![(-2i8) as u8, 0, 2, 4, 6, 8];
+    let outputs = session.execute(&[InputBuffer { bytes: &q_bytes }]).unwrap();
+    let result = le_to_f32(&outputs[0].bytes);
+    // row 0: (q−0)·0.5 = [−1, 0, 1] ; row 1: (q−2)·0.25 = [0.5, 1.0, 1.5]
+    let want = [-1.0f32, 0.0, 1.0, 0.5, 1.0, 1.5];
+    for (g, w) in result.iter().zip(want.iter()) {
+        assert!((g - w).abs() < 1e-6, "got {result:?} want {want:?}");
+    }
 }
 
 #[test]
@@ -104,6 +176,7 @@ fn dequantize_int4_packed_unpacks_correctly() {
             quant_dtype: DTYPE_I4,
             scale_bits: 1.0f32.to_bits(),
             zero_point: 0,
+            axis: -1,
         },
     );
     let out = graph.add_node(Node {
@@ -151,6 +224,7 @@ fn dequantize_int8_with_nonzero_zero_point() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0.25f32.to_bits(),
             zero_point: 5,
+            axis: -1,
         },
     );
     let out = graph.add_node(Node {

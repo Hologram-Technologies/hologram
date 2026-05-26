@@ -267,10 +267,23 @@ impl Compiler {
                         hologram_graph::NodeId(idx as u32),
                         node,
                     ),
-                    quant: lower::QuantParams {
-                        quant_dtype: quant_attrs.quant_dtype,
-                        scale_bits: quant_attrs.scale_bits,
-                        zero_point: quant_attrs.zero_point,
+                    quant: {
+                        // Per-channel (axis ≥ 0): derive channel count + inner
+                        // stride from the dequantize input shape; per-tensor
+                        // otherwise (channels = 0).
+                        let (channels, inner) = if quant_attrs.axis >= 0 {
+                            quant_channel_dims(&self.graph, node, quant_attrs.axis as usize)
+                                .unwrap_or((0, 0))
+                        } else {
+                            (0, 0)
+                        };
+                        lower::QuantParams {
+                            quant_dtype: quant_attrs.quant_dtype,
+                            scale_bits: quant_attrs.scale_bits,
+                            zero_point: quant_attrs.zero_point,
+                            channels,
+                            inner,
+                        }
                     },
                 };
                 let mut kernel_call = lower::lower(&lowered)?;
@@ -1019,6 +1032,34 @@ fn input_element_count(graph: &Graph, node: &hologram_graph::Node) -> Option<u64
         }
     };
     reg.get(shape).map(|d| d.total_elements())
+}
+
+/// `(channels, inner)` for per-channel dequantization along `axis` of the
+/// dequantize node's input shape: `channels = dim[axis]`, `inner = ∏ dims
+/// after axis` (so element `i`'s channel is `(i / inner) % channels`).
+fn quant_channel_dims(
+    graph: &Graph,
+    node: &hologram_graph::Node,
+    axis: usize,
+) -> Option<(u32, u32)> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph.nodes().get(id as usize)?.output_shape,
+        InputSource::Constant(cid) => graph.constants().get(cid)?.shape,
+        InputSource::GraphInput(idx) => {
+            let &NodeId(i) = graph.inputs().get(idx as usize)?;
+            graph.nodes().get(i as usize)?.output_shape
+        }
+    };
+    let d = reg.get(shape)?;
+    let rank = d.rank as usize;
+    if axis >= rank {
+        return None;
+    }
+    let channels = d.dim(axis)? as u32;
+    let inner: u64 = ((axis + 1)..rank).map(|i| d.dim(i).unwrap_or(1)).product();
+    Some((channels, inner.min(u32::MAX as u64) as u32))
 }
 
 /// `(rank, dims[..rank])` of a reduce node's input shape (row-major, ≤ rank 8),

@@ -288,16 +288,42 @@ pub struct WhereCall {
 #[derive(Debug, Clone, Copy)]
 pub struct DequantizeCall {
     pub input: BufferRef,
+    /// Per-channel scale vector (f32, length `channels`). `slot == u32::MAX`
+    /// ⇒ per-tensor: use the scalar `scale_bits` instead.
+    pub scales: BufferRef,
+    /// Per-channel zero-point vector (i32, length `channels`). `slot ==
+    /// u32::MAX` ⇒ per-tensor: use the scalar `zero_point` instead.
+    pub zero_points: BufferRef,
     pub output: BufferRef,
     pub element_count: u64,
+    /// Per-channel: number of channels along the quant axis (0 ⇒ per-tensor).
+    pub channels: u32,
+    /// Per-channel: elements per channel step (product of dims after the axis),
+    /// so element `i`'s channel is `(i / inner) % channels`.
+    pub inner: u32,
     /// Source quantized dtype: `DTYPE_I8` or `DTYPE_I4`.
     pub quant_dtype: u8,
     /// Destination float dtype: `DTYPE_F32`, `DTYPE_BF16`, etc.
     pub dtype: u8,
-    /// `f32::to_bits` of the per-tensor scale.
+    /// `f32::to_bits` of the per-tensor scale (per-tensor mode).
     pub scale_bits: u32,
-    /// Symmetric zero-point (i32, conventional INT8/INT4 range).
+    /// Symmetric zero-point (per-tensor mode).
     pub zero_point: i32,
+}
+
+impl DequantizeCall {
+    /// Sentinel for an absent per-channel scale/zero-point operand (per-tensor).
+    pub const NO_VEC: BufferRef = BufferRef {
+        slot: u32::MAX,
+        offset: 0,
+        length: 0,
+    };
+
+    /// True when scale/zero-point are per-channel vectors (vs. per-tensor scalars).
+    #[inline]
+    pub const fn per_channel(&self) -> bool {
+        self.channels > 0 && self.scales.slot != u32::MAX
+    }
 }
 
 /// Activation selectors applied in a **fused matmul epilogue**
@@ -560,10 +586,13 @@ fn p_where(c: &WhereCall) -> Pb {
 fn p_dequant(c: &DequantizeCall) -> Pb {
     Pb::new()
         .u64(c.element_count)
+        .u32(c.channels)
+        .u32(c.inner)
         .u8(c.quant_dtype)
         .u8(c.dtype)
         .u32(c.scale_bits)
         .i32(c.zero_point)
+        .u8(c.per_channel() as u8)
 }
 
 /// Closed kernel-call surface. One variant per OpKind.
@@ -921,6 +950,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
+        K::Dequantize(c) if c.per_channel() => vec![c.input, c.scales, c.zero_points, c.output],
         K::Dequantize(c) => vec![c.input, c.output],
     }
 }
