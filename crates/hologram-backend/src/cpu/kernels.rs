@@ -165,14 +165,57 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
         DTYPE_I8 => n,
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     };
+    // Per-channel reads the scale (f32) and zero-point (i32) vectors as extra
+    // operands; per-tensor uses the scalar fields. `(scales, zps)` is empty in
+    // per-tensor mode.
+    let per_ch = c.per_channel();
+    let reads_spec: &[crate::workspace::BufferRef] = if per_ch {
+        &[c.input, c.scales, c.zero_points]
+    } else {
+        &[c.input]
+    };
     let (reads, out) = ws
-        .split_borrow(&[c.input], c.output)
+        .split_borrow(reads_spec, c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let inp = reads[0]
         .get(..in_bytes_needed)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    let (scales, zps): (&[u8], &[u8]) = if per_ch {
+        (reads[1], reads[2])
+    } else {
+        (&[], &[])
+    };
+    let channels = c.channels as usize;
+    let inner = (c.inner as usize).max(1);
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
+    // Per-channel scale/zero-point for element `i` (channel = (i/inner)%channels).
+    let ch_scale = |i: usize| -> f32 {
+        if per_ch {
+            let ch = (i / inner) % channels;
+            f32::from_le_bytes([
+                scales[ch * 4],
+                scales[ch * 4 + 1],
+                scales[ch * 4 + 2],
+                scales[ch * 4 + 3],
+            ])
+        } else {
+            scale
+        }
+    };
+    let ch_zp = |i: usize| -> i32 {
+        if per_ch {
+            let ch = (i / inner) % channels;
+            i32::from_le_bytes([
+                zps[ch * 4],
+                zps[ch * 4 + 1],
+                zps[ch * 4 + 2],
+                zps[ch * 4 + 3],
+            ])
+        } else {
+            zp
+        }
+    };
 
     // Compute the dequantized f32 value for element index `i`.
     let dequant_at = |i: usize| -> f32 {
@@ -196,7 +239,7 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
             }
             _ => 0,
         };
-        (q - zp) as f32 * scale
+        (q - ch_zp(i)) as f32 * ch_scale(i)
     };
 
     let bytes_per_out = match c.dtype {

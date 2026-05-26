@@ -45,20 +45,37 @@ pub struct Node {
     pub output_shape: ShapeId,
 }
 
-/// Per-tensor quantization attributes (spec X-5). Symmetric INT8/INT4
-/// scheme: `dequantized = (q − zero_point) · scale`. Stored on
-/// `Graph::quant_attrs` keyed by `NodeId` rather than inlined into
-/// `Node` so that ordinary nodes pay no per-instance overhead.
-/// Per-channel quantization is a future extension layered as multiple
-/// `QuantAttrs` keyed on the channel axis.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+/// Quantization attributes (spec X-5). Symmetric INT8/INT4 scheme:
+/// `dequantized = (q − zero_point) · scale`. Stored on `Graph::quant_attrs`
+/// keyed by `NodeId` rather than inlined into `Node` so that ordinary nodes
+/// pay no per-instance overhead.
+///
+/// `axis < 0` is **per-tensor** (one scalar `scale_bits`/`zero_point`).
+/// `axis >= 0` is **per-channel** along that axis (ONNX `DequantizeLinear`
+/// per-axis): the dequantize node then carries the per-channel `scale` (f32)
+/// and `zero_point` (i32) vectors as its 2nd and 3rd operands, and the
+/// compiler derives the channel count / inner stride from the input shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QuantAttrs {
     /// Source quantized dtype (DTypeI8 or DTypeI4 numeric tag).
     pub quant_dtype: u8,
-    /// `f32::to_bits` of the per-tensor scale.
+    /// `f32::to_bits` of the per-tensor scale (per-tensor mode only).
     pub scale_bits: u32,
-    /// Symmetric zero-point.
+    /// Symmetric zero-point (per-tensor mode only).
     pub zero_point: i32,
+    /// Quantization axis: `< 0` ⇒ per-tensor; `>= 0` ⇒ per-channel along it.
+    pub axis: i32,
+}
+
+impl Default for QuantAttrs {
+    fn default() -> Self {
+        Self {
+            quant_dtype: 0,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: -1,
+        }
+    }
 }
 
 /// Per-node convolution attributes (stride / padding / dilation).
