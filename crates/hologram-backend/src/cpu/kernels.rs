@@ -14,6 +14,17 @@ use crate::kernel_call::*;
 use crate::workspace::Workspace;
 
 pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), BackendError> {
+    // Backward / gradient ops are emitted by the autodiff graph builder but are
+    // NOT an inference-runtime execution target: correct backward kernels need
+    // training-autodiff reference V&V that the runtime doesn't carry, and the
+    // forward ops they alias would compute a wrong gradient. Fail loud rather
+    // than run a silently-wrong byte/forward kernel. (Training is a distinct
+    // feature; see ADR-055.)
+    if is_backward_op(call) {
+        return Err(BackendError::UnsupportedOp(
+            "gradient/backward op is not an inference-runtime execution target",
+        ));
+    }
     if let Some(rv) = try_dispatch_float(call, ws) {
         return rv;
     }
@@ -177,6 +188,42 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
     }
+}
+
+/// Every backward/gradient `KernelCall` variant — the training-path ops the
+/// inference runtime does not execute (it rejects them rather than run a
+/// silently-wrong alias). Centralised so the policy is one list.
+fn is_backward_op(call: &KernelCall) -> bool {
+    use KernelCall as K;
+    matches!(
+        call,
+        K::MatMulGradA(_)
+            | K::MatMulGradB(_)
+            | K::FusedSwiGluGrad(_)
+            | K::Conv2dGradX(_)
+            | K::Conv2dGradW(_)
+            | K::SoftmaxGrad(_)
+            | K::LogSoftmaxGrad(_)
+            | K::LayerNormGrad(_)
+            | K::RmsNormGrad(_)
+            | K::GroupNormGrad(_)
+            | K::ReduceSumGrad(_)
+            | K::ReduceMeanGrad(_)
+            | K::ReduceProdGrad(_)
+            | K::SubGrad(_)
+            | K::MulGrad(_)
+            | K::DivGrad(_)
+            | K::PowGrad(_)
+            | K::MinGrad(_)
+            | K::MaxGrad(_)
+            | K::ConcatGrad(_)
+            | K::SliceGrad(_)
+            | K::PadGrad(_)
+            | K::AvgPool2dGrad(_)
+            | K::GlobalAvgPoolGrad(_)
+            | K::AttentionGrad(_)
+            | K::UnaryGrad(_)
+    )
 }
 
 /// Dequantize a packed-integer buffer (INT8 or INT4) into a dense float

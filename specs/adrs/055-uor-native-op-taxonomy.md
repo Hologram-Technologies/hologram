@@ -62,6 +62,19 @@ the line that **nothing computes silently-wrong**:
      multiple inputs, plus real indexed kernels.
    - the binary/unary gradient ops — backward pipelines (training path).
 
+### Backward / gradient ops are not an inference-runtime target
+
+The autodiff graph builder emits `*Grad` ops, but the **inference runtime does
+not execute them**: a correct backward kernel needs training-autodiff reference
+V&V the runtime doesn't carry, and the forward op a grad would alias computes
+the wrong gradient. So `dispatch` rejects the entire backward family
+(`is_backward_op`) with `UnsupportedOp` rather than run a silently-wrong kernel
+(V&V: `kcdt_gradient_ops_fail_loud`). Training execution — correct backward
+kernels with their own conformance suite — is a distinct feature, not part of
+the inference runtime this ADR governs. The forward op surface is complete:
+every non-gradient catalog op is an irreducible kernel, a relabel, a
+zero-movement view, a constructor/gather, or a verified primitive pipeline.
+
 ### dtype-support policy
 
 `call_dtype(&KernelCall)` (exhaustive over the catalog) is the single policy
