@@ -359,72 +359,64 @@ pub fn matmul_dequant_float<W: Workspace>(
     let inner = (c.inner as usize).max(1);
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
-    // Dequantize Bq → transient f32 [k·n].
-    let mut bdq = alloc::vec![0f32; kn];
-    for (i, slot) in bdq.iter_mut().enumerate() {
-        let q: i32 = match c.quant_dtype {
-            DTYPE_I8 => (bq[i] as i8) as i32,
-            DTYPE_I4 => {
-                let byte = bq[i / 2];
-                let nib = if i.is_multiple_of(2) {
-                    byte & 0x0F
-                } else {
-                    byte >> 4
-                };
-                let v = nib as i32;
-                if v >= 8 {
-                    v - 16
-                } else {
-                    v
+    let quant_dtype = c.quant_dtype;
+    // `bdq` is a reused thread-local (zero alloc per call after warm-up) holding
+    // the dequantized B panel. A/out are workspace slots — 64-byte aligned by
+    // construction — so the f32 views always succeed; an unaligned operand is a
+    // contract violation and fails loud (no scalar/copy fallback), matching
+    // `matmul_float`.
+    with_widen_scratch(|_a_unused, bdq, _o_unused| {
+        bdq.clear();
+        bdq.resize(kn, 0.0);
+        for (i, slot) in bdq.iter_mut().enumerate() {
+            let q: i32 = match quant_dtype {
+                DTYPE_I8 => (bq[i] as i8) as i32,
+                DTYPE_I4 => {
+                    let byte = bq[i / 2];
+                    let nib = if i.is_multiple_of(2) {
+                        byte & 0x0F
+                    } else {
+                        byte >> 4
+                    };
+                    let v = nib as i32;
+                    if v >= 8 {
+                        v - 16
+                    } else {
+                        v
+                    }
                 }
-            }
-            _ => 0,
-        };
-        let (s, z) = if per_ch {
-            let ch = (i / inner) % channels;
-            (
-                f32::from_le_bytes([
-                    scales[ch * 4],
-                    scales[ch * 4 + 1],
-                    scales[ch * 4 + 2],
-                    scales[ch * 4 + 3],
-                ]),
-                i32::from_le_bytes([
-                    zps[ch * 4],
-                    zps[ch * 4 + 1],
-                    zps[ch * 4 + 2],
-                    zps[ch * 4 + 3],
-                ]),
-            )
-        } else {
-            (scale, zp)
-        };
-        *slot = (q - z) as f32 * s;
-    }
-    // A · Bq_dequantized through the shared cache-oblivious f32 kernel.
-    let run = |a32: &[f32], out32: &mut [f32]| {
-        with_matmul_scratch(|bt| {
-            crate::cpu::simd::matmul_f32_blocked(a32, &bdq, out32, m, k, n, bt);
-        });
-    };
-    match (
-        bytemuck::try_cast_slice::<u8, f32>(a),
-        bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
-    ) {
-        (Ok(a32), Ok(out32)) => run(a32, out32),
-        _ => {
-            let mut af = alloc::vec![0f32; m * k];
-            for (i, v) in af.iter_mut().enumerate() {
-                *v = read_float(a, i, DTYPE_F32);
-            }
-            let mut o32 = alloc::vec![0f32; m * n];
-            run(&af, &mut o32);
-            for (i, &v) in o32.iter().enumerate() {
-                write_float(out, i, v, DTYPE_F32);
-            }
+                _ => 0,
+            };
+            let (s, z) = if per_ch {
+                let ch = (i / inner) % channels;
+                (
+                    f32::from_le_bytes([
+                        scales[ch * 4],
+                        scales[ch * 4 + 1],
+                        scales[ch * 4 + 2],
+                        scales[ch * 4 + 3],
+                    ]),
+                    i32::from_le_bytes([
+                        zps[ch * 4],
+                        zps[ch * 4 + 1],
+                        zps[ch * 4 + 2],
+                        zps[ch * 4 + 3],
+                    ]),
+                )
+            } else {
+                (scale, zp)
+            };
+            *slot = (q - z) as f32 * s;
         }
-    }
-    Ok(())
+        let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
+            .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
+        let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
+            .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
+        with_matmul_scratch(|bt| {
+            crate::cpu::simd::matmul_f32_blocked(a32, bdq, out32, m, k, n, bt);
+        });
+        Ok(())
+    })
 }
 
 /// Selector → activation function for a fused matmul epilogue.
@@ -1803,23 +1795,47 @@ pub fn broadcast_binary_float<W: Workspace>(
         broadcast_op::MUL => |a, b| a * b,
         _ => return Err(BackendError::UnsupportedOp("broadcast_binary: bad op")),
     };
+    // Walk the output in contiguous runs along the last axis, advancing the
+    // small-operand base index with an incremental odometer over the outer
+    // axes — no per-element div/mod. The inner run's small stride is 0 (the
+    // last axis broadcasts: `small[sbase]` constant) or 1 (it maps 1:1:
+    // `small[sbase..]` contiguous), so the inner loop autovectorizes.
+    let inner_len = out_dims[rank - 1] as usize;
+    let inner_stride = in_strides[rank - 1];
+    if inner_len == 0 {
+        return Ok(());
+    }
+    let num_rows = out_total / inner_len;
     let mut coord = [0usize; 8];
-    for o in 0..out_total {
-        let mut rem = o;
-        let mut sidx = 0usize;
-        for i in (0..rank).rev() {
-            coord[i] = rem % out_dims[i] as usize;
-            rem /= out_dims[i] as usize;
-            sidx += coord[i] * in_strides[i];
-        }
-        let sv = read_float(small, sidx, dt);
-        let ov = read_float(other, o, dt);
-        let r = if c.small_is_lhs {
-            op(sv, ov)
+    let mut sbase = 0usize;
+    let mut o = 0usize;
+    for _ in 0..num_rows {
+        if c.small_is_lhs {
+            for j in 0..inner_len {
+                let sv = read_float(small, sbase + j * inner_stride, dt);
+                let ov = read_float(other, o + j, dt);
+                write_float(out, o + j, op(sv, ov), dt);
+            }
         } else {
-            op(ov, sv)
-        };
-        write_float(out, o, r, dt);
+            for j in 0..inner_len {
+                let sv = read_float(small, sbase + j * inner_stride, dt);
+                let ov = read_float(other, o + j, dt);
+                write_float(out, o + j, op(ov, sv), dt);
+            }
+        }
+        o += inner_len;
+        // Advance the odometer over the outer axes (last outer axis fastest).
+        let mut ax = rank - 1;
+        while ax > 0 {
+            ax -= 1;
+            coord[ax] += 1;
+            sbase += in_strides[ax];
+            if coord[ax] < out_dims[ax] as usize {
+                break;
+            }
+            sbase -= in_strides[ax] * out_dims[ax] as usize;
+            coord[ax] = 0;
+        }
     }
     Ok(())
 }

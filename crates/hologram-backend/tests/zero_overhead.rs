@@ -17,8 +17,8 @@ use std::cell::Cell;
 
 use hologram_backend::cpu::dtype::DTYPE_F32;
 use hologram_backend::{
-    AttentionCall, Backend, BufferRef, Conv2dCall, CpuBackend, GemmCall, KernelCall, MatMulCall,
-    SplitReads, Workspace,
+    broadcast_op, AttentionCall, Backend, BroadcastBinaryCall, BufferRef, Conv2dCall, CpuBackend,
+    GemmCall, KernelCall, MatMulCall, MatMulDequantCall, SplitReads, Workspace,
 };
 
 // ── per-thread allocation-counting allocator ──────────────────────────
@@ -199,6 +199,69 @@ fn conv2d_hotpath_is_zero_alloc() {
             vec![0x3e; b * cin * hi * wi * 4],
             vec![0x3d; cout * cin * kh * kw * 4],
             vec![0u8; b * cout * ho * wo * 4],
+        ],
+    );
+}
+
+#[test]
+fn matmul_dequant_hotpath_is_zero_alloc() {
+    // Fused dequant→matmul: A[d,d] f32 · dequant(Bq[d,d] i8). The dequantized
+    // panel must come from reused thread-local scratch, not a per-call Vec.
+    let d = 96usize;
+    assert_zero_alloc_after_warmup(
+        "matmul_dequant",
+        KernelCall::MatMulDequant(MatMulDequantCall {
+            a: bz(0),
+            bq: bz(1),
+            // Per-tensor (channels = 0): scale/zp vectors are not read.
+            scales: bz(u32::MAX),
+            zero_points: bz(u32::MAX),
+            output: bz(2),
+            m: d as u32,
+            k: d as u32,
+            n: d as u32,
+            channels: 0,
+            inner: 0,
+            quant_dtype: 2, // i8
+            dtype: DTYPE_F32,
+            scale_bits: 0.5f32.to_bits(),
+            zero_point: 0,
+        }),
+        vec![
+            vec![0x3e; d * d * 4], // A (f32)
+            vec![0x02; d * d],     // Bq (i8)
+            vec![0u8; d * d * 4],  // out
+        ],
+    );
+}
+
+#[test]
+fn broadcast_binary_hotpath_is_zero_alloc() {
+    // Fused Expand→Mul: small[1,d] broadcast over [d,d] times other[d,d].
+    let d = 96usize;
+    let mut in_dims = [0u32; 8];
+    let mut out_dims = [0u32; 8];
+    in_dims[0] = 1;
+    in_dims[1] = d as u32;
+    out_dims[0] = d as u32;
+    out_dims[1] = d as u32;
+    assert_zero_alloc_after_warmup(
+        "broadcast_binary",
+        KernelCall::BroadcastBinary(BroadcastBinaryCall {
+            small: bz(0),
+            other: bz(1),
+            output: bz(2),
+            rank: 2,
+            in_dims,
+            out_dims,
+            op: broadcast_op::MUL,
+            small_is_lhs: true,
+            dtype: DTYPE_F32,
+        }),
+        vec![
+            vec![0x3e; d * 4],     // small (1×d f32)
+            vec![0x3d; d * d * 4], // other (d×d f32)
+            vec![0u8; d * d * 4],  // out
         ],
     );
 }
