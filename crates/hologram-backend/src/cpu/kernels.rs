@@ -153,6 +153,11 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
         KernelCall::MatMulAddActivation(c) => ff::matmul_add_activation_float(c, ws),
         KernelCall::MatMulDequant(c) => ff::matmul_dequant_float(c, ws),
+        // The Expand→binary fusion only fires for float dtypes (handled by the
+        // float fast path above); a byte-domain broadcast-binary is not emitted.
+        KernelCall::BroadcastBinary(_) => Err(BackendError::UnsupportedOp(
+            "broadcast_binary: float-only (byte-domain broadcast not fused)",
+        )),
     }
 }
 
@@ -1206,7 +1211,7 @@ fn try_dispatch_float<W: Workspace>(
     // super-f32 storage format with no native engine — computing it at f32
     // precision would be a silent downgrade, so it is rejected outright rather
     // than producing reduced-precision or zero output. (No model frontend emits
-    // f64 today; this guards against a hand-built or future call.)
+    // f64; this guards a directly-constructed call.)
     if call_dtype(call) == DTYPE_F64 {
         return Some(Err(BackendError::UnsupportedOp(
             "f64 is not a supported compute dtype (hologram computes in f16/bf16/f32)",
@@ -1355,6 +1360,7 @@ fn try_dispatch_float<W: Workspace>(
         K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
         K::MatMulAddActivation(c) => Some(ff::matmul_add_activation_float(c, ws)),
         K::MatMulDequant(c) => Some(ff::matmul_dequant_float(c, ws)),
+        K::BroadcastBinary(c) if is_float(c.dtype) => Some(ff::broadcast_binary_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
         // operands, but `MatMulCall` carries one (`b`). It cannot be computed

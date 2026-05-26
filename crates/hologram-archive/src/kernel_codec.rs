@@ -8,9 +8,10 @@
 
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
-    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
-    ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantizeCall,
+    ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall,
+    MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall,
+    UnaryCall, WhereCall,
 };
 
 const D_NEG: u16 = 1;
@@ -101,6 +102,7 @@ const D_MMA: u16 = 106;
 const D_MMADD: u16 = 107;
 const D_MMAA: u16 = 108;
 const D_MMDQ: u16 = 111;
+const D_BCBIN: u16 = 112;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -469,6 +471,10 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_MMDQ);
             put_matmul_dequant(out, c);
         }
+        K::BroadcastBinary(c) => {
+            put_u16(out, D_BCBIN);
+            put_broadcast_binary(out, c);
+        }
     }
 }
 
@@ -676,6 +682,19 @@ fn put_where(out: &mut Vec<u8>, c: &WhereCall) {
     put_buf(out, c.output);
     put_u64(out, c.element_count);
     put_u8(out, c.dtype);
+}
+fn put_broadcast_binary(out: &mut Vec<u8>, c: &BroadcastBinaryCall) {
+    put_buf(out, c.small);
+    put_buf(out, c.other);
+    put_buf(out, c.output);
+    put_u8(out, c.rank);
+    put_u8(out, c.op);
+    put_u8(out, c.small_is_lhs as u8);
+    put_u8(out, c.dtype);
+    for i in 0..c.rank as usize {
+        put_u32(out, c.in_dims[i]);
+        put_u32(out, c.out_dims[i]);
+    }
 }
 fn put_matmul_dequant(out: &mut Vec<u8>, c: &MatMulDequantCall) {
     put_buf(out, c.a);

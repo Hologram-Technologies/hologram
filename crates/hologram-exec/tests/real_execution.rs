@@ -142,6 +142,78 @@ fn softmax_rank3_normalizes_over_last_axis() {
 }
 
 #[test]
+fn expand_binary_fuses_and_elides_broadcast() {
+    // small[1,3] broadcast to [2,3] then multiplied by other[2,3]. The
+    // `Expand → Mul` fuses into one BroadcastBinary (the broadcast tensor is
+    // never materialized); the result equals the explicit broadcast-multiply.
+    let mut graph = Graph::new();
+    let small_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, 3));
+    let full_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(2, 3));
+    let small = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: small_sh,
+    });
+    graph.add_input(small);
+    let other = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: full_sh,
+    });
+    graph.add_input(other);
+    let exp = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Expand),
+        inputs: SmallVec::from_iter([InputSource::Node(small)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: full_sh,
+    });
+    let mul = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Mul),
+        inputs: SmallVec::from_iter([InputSource::Node(exp), InputSource::Node(other)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: full_sh,
+    });
+    let out_node = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mul)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: full_sh,
+    });
+    graph.add_output(out_node);
+
+    let out = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&out.archive, backend).unwrap();
+    assert_eq!(
+        session.broadcast_binary_fused_count(),
+        1,
+        "Expand → Mul must fuse to one BroadcastBinary"
+    );
+
+    let small_bytes = f32_to_le(&[1.0, 2.0, 3.0]);
+    let other_bytes = f32_to_le(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
+    let outputs = session
+        .execute(&[
+            InputBuffer {
+                bytes: &small_bytes,
+            },
+            InputBuffer {
+                bytes: &other_bytes,
+            },
+        ])
+        .unwrap();
+    let result = le_to_f32(&outputs[0].bytes);
+    // broadcast([1,2,3]) ⊙ [[10,20,30],[40,50,60]] = [10,40,90, 40,100,180]
+    assert_eq!(result, vec![10.0, 40.0, 90.0, 40.0, 100.0, 180.0]);
+}
+
+#[test]
 fn matmul_f32_real_data() {
     // Graph: input_a, input_b -> matmul -> output
     let mut graph = Graph::new();

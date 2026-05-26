@@ -40,7 +40,7 @@ pub trait WarmStore {
     /// Fetch the bytes stored under `label`, or `None` if absent (or failing
     /// an integrity check — the caller then recomputes).
     fn get(&self, label: &ContentLabel) -> Option<Vec<u8>>;
-    /// Store `bytes` under `label` for a future process.
+    /// Store `bytes` under `label` so a later process run can reuse them.
     fn put(&mut self, label: &ContentLabel, bytes: &[u8]);
 }
 

@@ -85,8 +85,8 @@ fn workspace_total_is_sum_not_product() {
     let cap = session.workspace().capacity();
     // Two big slots (input + relu output, each 16 KiB) plus four small
     // slots × 64 B floor ≈ 33 KiB. Old layout would have been
-    // 7 × 16 KiB = 112 KiB. Threshold is generous (64 KiB) to allow
-    // future schedule-aware liveness compaction without a flake.
+    // 7 × 16 KiB = 112 KiB. Threshold is generous (64 KiB) so tighter
+    // schedule-aware liveness compaction stays within it without a flake.
     assert!(
         cap < 64 * 1024,
         "workspace capacity {} bytes too large — per-slot sizing regressed",
