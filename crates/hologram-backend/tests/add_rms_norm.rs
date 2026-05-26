@@ -94,6 +94,8 @@ fn add_rms_norm_sums_residual_before_normalizing() {
         output: buf(4),
         batch: 1,
         feature: 4,
+        channels: 0,
+        num_groups: 0,
         epsilon_bits: 0,
         dtype: DTYPE_F32,
     });
@@ -122,6 +124,8 @@ fn add_rms_norm_no_residual_falls_back_to_rms() {
         output: buf(3),
         batch: 1,
         feature: 4,
+        channels: 0,
+        num_groups: 0,
         epsilon_bits: 0,
         dtype: DTYPE_F32,
     });

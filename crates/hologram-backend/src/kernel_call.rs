@@ -112,6 +112,17 @@ pub struct NormCall {
     pub output: BufferRef,
     pub batch: u32,
     pub feature: u32,
+    /// Channel count for grouped norms (GroupNorm/InstanceNorm). 0 for plain
+    /// LayerNorm/RmsNorm, where `gamma`/`beta` are indexed per-`feature` and
+    /// normalization spans the whole `feature` row.
+    pub channels: u32,
+    /// Number of normalization groups for GroupNorm (= `channels` for
+    /// InstanceNorm). 0 ⇒ ungrouped: normalize over the whole `feature` row
+    /// (plain LayerNorm/RmsNorm). When > 0, each of `batch` samples is split
+    /// into `num_groups` contiguous groups of `feature/num_groups` elements
+    /// normalized independently, then scaled per-channel by `gamma`/`beta`
+    /// (length `channels`).
+    pub num_groups: u32,
     pub epsilon_bits: u64,
     pub dtype: u8,
 }
@@ -457,6 +468,8 @@ fn p_norm(c: &NormCall) -> Pb {
     Pb::new()
         .u32(c.batch)
         .u32(c.feature)
+        .u32(c.channels)
+        .u32(c.num_groups)
         .u64(c.epsilon_bits)
         .u8(c.dtype)
         .u8(c.has_residual() as u8)

@@ -755,6 +755,9 @@ fn conv2d_f32_engine(xs32: &[f32], w32: &[f32], out32: &mut [f32], d: &ConvDims)
 }
 
 pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    if c.num_groups > 0 {
+        return group_norm_float(c, ws);
+    }
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 {
@@ -803,6 +806,82 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
             };
             let v = (read_float(xs, row_off + j, dt) - mean) * inv_std * g + bv;
             write_float(out, row_off + j, v, dt);
+        }
+    }
+    Ok(())
+}
+
+/// GroupNorm / InstanceNorm (ONNX): each of `batch` samples carries `feature`
+/// (= `channels` × spatial) elements split into `num_groups` contiguous groups;
+/// each group is mean/variance-normalized independently, then scaled per channel
+/// by `gamma`/`beta` (length `channels`). InstanceNorm is the `num_groups ==
+/// channels` case. Routed here from `layer_norm_float` when `num_groups > 0`.
+pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.batch as usize;
+    let f = c.feature as usize;
+    let ch = c.channels as usize;
+    let g = c.num_groups as usize;
+    if n == 0 || f == 0 {
+        return Ok(());
+    }
+    // Divisibility is a shape invariant; reject violations rather than compute a
+    // silently-wrong result over ragged groups.
+    if ch == 0 || g == 0 || !f.is_multiple_of(ch) || !f.is_multiple_of(g) || !ch.is_multiple_of(g) {
+        return Err(BackendError::UnsupportedOp(
+            "group_norm: require channels|feature, num_groups|feature, num_groups|channels",
+        ));
+    }
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let total = n * f * es;
+    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
+    let spatial = f / ch; // elements per channel
+    let group_size = f / g; // elements per normalization group
+
+    let (reads, out) = ws
+        .split_borrow(&[c.x, c.gamma, c.beta], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0]
+        .get(..total)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..ch * es).unwrap_or(&[]);
+    let beta = reads[2].get(..ch * es).unwrap_or(&[]);
+    if out.len() < total {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for ni in 0..n {
+        let sample = ni * f;
+        for gi in 0..g {
+            let gbase = sample + gi * group_size;
+            let mut mean = 0f32;
+            for i in 0..group_size {
+                mean += read_float(xs, gbase + i, dt);
+            }
+            mean /= group_size as f32;
+            let mut var = 0f32;
+            for i in 0..group_size {
+                let d = read_float(xs, gbase + i, dt) - mean;
+                var += d * d;
+            }
+            var /= group_size as f32;
+            let inv_std = 1.0 / libm::sqrtf(var + eps);
+            for i in 0..group_size {
+                // Channel of this element within the sample: contiguous layout is
+                // [channel][spatial], so channel = (group offset) / spatial.
+                let ci = (gi * group_size + i) / spatial;
+                let gv = if !gamma.is_empty() {
+                    read_float(gamma, ci, dt)
+                } else {
+                    1.0
+                };
+                let bv = if !beta.is_empty() {
+                    read_float(beta, ci, dt)
+                } else {
+                    0.0
+                };
+                let v = (read_float(xs, gbase + i, dt) - mean) * inv_std * gv + bv;
+                write_float(out, gbase + i, v, dt);
+            }
         }
     }
     Ok(())

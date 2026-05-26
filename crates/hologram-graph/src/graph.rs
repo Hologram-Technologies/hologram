@@ -1,7 +1,9 @@
 //! `Graph` structure (spec VI.1).
 
 use crate::constant::{ConstantEntry, ConstantStore};
-use crate::node::{ConvAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs};
+use crate::node::{
+    ConvAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs, QuantAttrs,
+};
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
 use alloc::vec;
@@ -111,6 +113,8 @@ pub struct Graph {
     lrn_attrs: Vec<(NodeId, LrnAttrs)>,
     /// Sparse per-node GEMM scalars (α / β). Same layout.
     gemm_attrs: Vec<(NodeId, GemmAttrs)>,
+    /// Sparse per-node normalization grouping (`num_groups`). Same layout.
+    norm_attrs: Vec<(NodeId, NormAttrs)>,
 }
 
 impl Graph {
@@ -244,6 +248,22 @@ impl Graph {
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
+    /// Attach normalization grouping (`num_groups`) to a node (GroupNorm).
+    pub fn set_norm_attrs(&mut self, id: NodeId, attrs: NormAttrs) {
+        if let Some(slot) = self.norm_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.norm_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve normalization grouping for a node, or `None` if unset.
+    pub fn norm_attrs(&self, id: NodeId) -> Option<NormAttrs> {
+        self.norm_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
     /// **Path B — desugar composite ops into their primitive pipelines.**
     ///
     /// A composite op (e.g. `Clip`) has no single optimized kernel; its meaning
@@ -359,6 +379,9 @@ impl Graph {
             *nid = NodeId(map[nid.0 as usize]);
         }
         for (nid, _) in self.gemm_attrs.iter_mut() {
+            *nid = NodeId(map[nid.0 as usize]);
+        }
+        for (nid, _) in self.norm_attrs.iter_mut() {
             *nid = NodeId(map[nid.0 as usize]);
         }
         self.nodes = new;
@@ -516,6 +539,9 @@ impl Graph {
         for (nid, _) in self.gemm_attrs.iter_mut() {
             *nid = to_id(map[nid.0 as usize]);
         }
+        for (nid, _) in self.norm_attrs.iter_mut() {
+            *nid = to_id(map[nid.0 as usize]);
+        }
         self.nodes = new;
 
         // ── Phase 2: dead-node elimination ──
@@ -571,6 +597,9 @@ impl Graph {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             for (nid, _) in self.gemm_attrs.iter_mut() {
+                *nid = NodeId(dmap[nid.0 as usize]);
+            }
+            for (nid, _) in self.norm_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             self.nodes = compact;

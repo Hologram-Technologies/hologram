@@ -267,6 +267,8 @@ fn read_norm(c: &mut Cursor<'_>) -> Result<NormCall, ArchiveError> {
         output: c.buf()?,
         batch: c.u32()?,
         feature: c.u32()?,
+        channels: c.u32()?,
+        num_groups: c.u32()?,
         epsilon_bits: c.u64()?,
         dtype: c.u8()?,
     })

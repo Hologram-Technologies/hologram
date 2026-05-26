@@ -198,6 +198,56 @@ fn broadcast_feature(
     Some(add_op(graph, OpKind::Expand, &[vr], dt, bf))
 }
 
+/// Broadcast a per-channel vector `v` (shape `[C]`) across `sh = [N, C, *]`:
+/// `Reshape(v) → [1, C, 1, …]` (rank = rank(sh)) then `Expand → sh`, so every
+/// `[n, c, …]` element reads `v[c]`. Used by the GroupNorm VJP to apply the
+/// per-channel scale to the upstream gradient.
+fn channel_broadcast(
+    graph: &mut Graph,
+    v: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+) -> Option<NodeId> {
+    let d = graph.shape_registry().get(sh)?.clone();
+    let rank = d.rank as usize;
+    if !(2..=8).contains(&rank) {
+        return None;
+    }
+    let mut dims = [0u64; 8];
+    for (i, slot) in dims.iter_mut().enumerate().take(rank) {
+        *slot = if i == 1 { d.dim(1)? } else { 1 };
+    }
+    let cshape = graph.shape_registry_mut().intern(ShapeDescriptor {
+        rank: rank as u8,
+        dims,
+        dims_overflow: None,
+    });
+    let vr = InputSource::Node(add_op(graph, OpKind::Reshape, &[v], dt, cshape));
+    Some(add_op(graph, OpKind::Expand, &[vr], dt, sh))
+}
+
+/// Per-**group** mean, broadcast back over `sh`. `grp = [N·G, m]` is the group
+/// view (each of `N·G` groups holds `m` contiguous elements); the mean is over
+/// `grp`'s last axis, then reshaped back to `sh`. The GroupNorm analogue of
+/// [`row_mean_broadcast`].
+fn group_mean_broadcast(
+    graph: &mut Graph,
+    v: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+    grp: ShapeId,
+) -> Option<NodeId> {
+    let vg = InputSource::Node(add_op(graph, OpKind::Reshape, &[v], dt, grp));
+    let rm = row_mean_broadcast(graph, vg, dt, grp)?;
+    Some(add_op(
+        graph,
+        OpKind::Reshape,
+        &[InputSource::Node(rm)],
+        dt,
+        sh,
+    ))
+}
+
 /// Per-row **mean** over the last axis, broadcast back over `sh`
 /// (`row_reduce_broadcast` / F).
 fn row_mean_broadcast(
@@ -1107,12 +1157,7 @@ fn emit_vjp(
                 out.push((rn, drms));
             }
         }
-        K::LayerNorm | K::GroupNorm | K::InstanceNorm => {
-            // GroupNorm/InstanceNorm lower to the *same* `layer_norm_float`
-            // kernel over the rank-2 [batch, feature] view (no separate
-            // grouping is realized — see `cpu/kernels.rs`), so their VJP is
-            // identical to LayerNorm's. Differentiating the actual forward
-            // authority, not a hypothetical grouped one.
+        K::LayerNorm => {
             // x̂ = (x−μ)·invstd ; gg = g·γ.
             // dx = invstd·(gg − mean(gg) − x̂·mean(gg·x̂)).   (ε≈0)
             if let Some(a) = node_of(ins[0]) {
@@ -1153,6 +1198,80 @@ fn emit_vjp(
                 let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
                 let da = add_op(graph, K::Mul, &[invstd, inner2], dt, sh);
                 out.push((a, da));
+            }
+        }
+        K::GroupNorm | K::InstanceNorm => {
+            // Same normalization VJP as LayerNorm, but the mean/variance are
+            // taken per **group** (each of N·G groups over m = total/(N·G)
+            // contiguous elements) and the scale is per **channel**:
+            //   gg = g ⊙ γ_c ; x̂ = (x−μ_grp)·invstd_grp
+            //   dx = invstd·(gg − mean_grp(gg) − x̂·mean_grp(gg·x̂))
+            // Differentiates the true grouped forward (group_norm_float), not a
+            // LayerNorm approximation. Gradients w.r.t. γ/β are not emitted
+            // (matching the LayerNorm arm; γ/β are treated as constants here).
+            if let Some(a) = node_of(ins[0]) {
+                if !needs_f32() {
+                    return Err(BackwardError::NoGradient(kind));
+                }
+                let d = match graph.shape_registry().get(sh).cloned() {
+                    Some(d) if d.rank >= 2 => d,
+                    _ => return Err(BackwardError::NoGradient(kind)),
+                };
+                let nn = d.dim(0).unwrap_or(0);
+                let cc = d.dim(1).unwrap_or(0);
+                let total = d.total_elements();
+                let groups = if matches!(kind, K::InstanceNorm) {
+                    cc
+                } else {
+                    graph
+                        .norm_attrs(fwd_id)
+                        .map(|attrs| attrs.num_groups as u64)
+                        .unwrap_or(1)
+                        .max(1)
+                };
+                if nn == 0 || cc == 0 || groups == 0 {
+                    return Err(BackwardError::NoGradient(kind));
+                }
+                let rows = nn.saturating_mul(groups);
+                if rows == 0 || total % rows != 0 {
+                    return Err(BackwardError::NoGradient(kind));
+                }
+                let m = total / rows;
+                let grp = graph
+                    .shape_registry_mut()
+                    .intern(ShapeDescriptor::rank2(rows, m));
+                let nog = || BackwardError::NoGradient(kind);
+                let x = ins[0];
+                let gammab = channel_broadcast(graph, ins[1], dt, sh).ok_or_else(nog)?;
+                let gg = InputSource::Node(add_op(
+                    graph,
+                    K::Mul,
+                    &[gsrc, InputSource::Node(gammab)],
+                    dt,
+                    sh,
+                ));
+                let mu =
+                    InputSource::Node(group_mean_broadcast(graph, x, dt, sh, grp).ok_or_else(nog)?);
+                let xc = InputSource::Node(add_op(graph, K::Sub, &[x, mu], dt, sh));
+                let xc2 = InputSource::Node(add_op(graph, K::Mul, &[xc, xc], dt, sh));
+                let var = InputSource::Node(
+                    group_mean_broadcast(graph, xc2, dt, sh, grp).ok_or_else(nog)?,
+                );
+                let std = InputSource::Node(add_op(graph, K::Sqrt, &[var], dt, sh));
+                let invstd = InputSource::Node(add_op(graph, K::Reciprocal, &[std], dt, sh));
+                let xhat = InputSource::Node(add_op(graph, K::Mul, &[xc, invstd], dt, sh));
+                let m1 = InputSource::Node(
+                    group_mean_broadcast(graph, gg, dt, sh, grp).ok_or_else(nog)?,
+                );
+                let ggxh = InputSource::Node(add_op(graph, K::Mul, &[gg, xhat], dt, sh));
+                let m2 = InputSource::Node(
+                    group_mean_broadcast(graph, ggxh, dt, sh, grp).ok_or_else(nog)?,
+                );
+                let xhm2 = InputSource::Node(add_op(graph, K::Mul, &[xhat, m2], dt, sh));
+                let inner = InputSource::Node(add_op(graph, K::Sub, &[gg, m1], dt, sh));
+                let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
+                let dx = add_op(graph, K::Mul, &[invstd, inner2], dt, sh);
+                out.push((a, dx));
             }
         }
         K::Softmax => {

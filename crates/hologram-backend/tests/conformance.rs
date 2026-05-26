@@ -370,6 +370,8 @@ fn kc4_layernorm_conforms_across_scale() {
                 output: buf(3),
                 batch: b as u32,
                 feature: f as u32,
+                channels: 0,
+                num_groups: 0,
                 epsilon_bits: u64::from(eps.to_bits()),
                 dtype: DTYPE_F32,
             }),
@@ -423,6 +425,8 @@ fn kc5_rmsnorm_conforms_across_scale() {
                 output: buf(3),
                 batch: b as u32,
                 feature: f as u32,
+                channels: 0,
+                num_groups: 0,
                 epsilon_bits: u64::from(eps.to_bits()),
                 dtype: DTYPE_F32,
             }),
@@ -441,6 +445,98 @@ fn kc5_rmsnorm_conforms_across_scale() {
             1,
             &got,
             &ref_rmsnorm(&x, &g, b, f, eps),
+            1e-3,
+        );
+    }
+}
+
+// ─── KC-4b: GroupNorm / InstanceNorm (ONNX, per-group normalization) ──
+
+/// Independent f64 reference for ONNX GroupNorm: input `[N, C, S]` (S = spatial)
+/// split into `groups` contiguous groups of `(C/groups)·S` elements, each
+/// mean/variance-normalized, then per-channel affine `γ_c·x̂ + β_c`.
+/// InstanceNorm is the `groups == C` case.
+#[allow(clippy::too_many_arguments)]
+fn ref_group_norm(
+    x: &[f32],
+    gamma: &[f32],
+    beta: &[f32],
+    n: usize,
+    c: usize,
+    s: usize,
+    groups: usize,
+    eps: f32,
+) -> Vec<f32> {
+    let feature = c * s;
+    let group_size = feature / groups;
+    let mut o = vec![0f32; n * feature];
+    for ni in 0..n {
+        for gi in 0..groups {
+            let gbase = ni * feature + gi * group_size;
+            let grp = &x[gbase..gbase + group_size];
+            let mean = grp.iter().map(|&v| f64::from(v)).sum::<f64>() / group_size as f64;
+            let var = grp
+                .iter()
+                .map(|&v| (f64::from(v) - mean).powi(2))
+                .sum::<f64>()
+                / group_size as f64;
+            let inv = 1.0 / (var + f64::from(eps)).sqrt();
+            for i in 0..group_size {
+                let ci = (gi * group_size + i) / s;
+                o[gbase + i] = ((f64::from(grp[i]) - mean) * inv * f64::from(gamma[ci])
+                    + f64::from(beta[ci])) as f32;
+            }
+        }
+    }
+    o
+}
+
+#[test]
+fn kc4b_group_norm_conforms_across_scale() {
+    let eps = 1e-5f32;
+    // (N, C, S, groups) — incl. InstanceNorm (groups == C) and non-power-of-2.
+    for (idx, &(n, c, s, groups)) in [
+        (2usize, 4usize, 4usize, 2usize),
+        (1, 6, 5, 3),
+        (3, 8, 7, 8), // InstanceNorm
+        (2, 4, 1, 1), // single group, unit spatial
+    ]
+    .iter()
+    .enumerate()
+    {
+        let feature = c * s;
+        let x = fill(n * feature, 0x600 + idx as u64);
+        let g = fill(c, 0x610 + idx as u64);
+        let bta = fill(c, 0x620 + idx as u64);
+        let got = run(
+            KernelCall::GroupNorm(NormCall {
+                x: buf(0),
+                gamma: buf(1),
+                beta: buf(2),
+                residual: NormCall::NO_RESIDUAL,
+                output: buf(3),
+                batch: n as u32,
+                feature: feature as u32,
+                channels: c as u32,
+                num_groups: groups as u32,
+                epsilon_bits: u64::from(eps.to_bits()),
+                dtype: DTYPE_F32,
+            }),
+            vec![
+                f32_to_le(&x),
+                f32_to_le(&g),
+                f32_to_le(&bta),
+                vec![0u8; n * feature * 4],
+            ],
+            3,
+        );
+        check(
+            "group_norm",
+            n,
+            feature,
+            groups,
+            &got,
+            &ref_group_norm(&x, &g, &bta, n, c, s, groups, eps),
             1e-3,
         );
     }

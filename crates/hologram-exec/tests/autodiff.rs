@@ -393,15 +393,113 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
     }
 }
 
+/// Grad-check a grouped norm (GroupNorm/InstanceNorm) on a real `[N,C,H,W]`
+/// tensor with a **non-uniform per-channel γ/β** (so the channel-broadcast and
+/// per-group statistics are actually exercised). For GroupNorm, `num_groups` is
+/// attached via `NormAttrs`; InstanceNorm derives it (= C) at compile time, so
+/// `num_groups` is ignored there.
+fn check_group_norm(op: OpKind, x: &[f32], n: u64, c: u64, h: u64, w: u64, num_groups: u32) {
+    use hologram_graph::constant::ConstantEntry;
+    use hologram_graph::NormAttrs;
+    let cc = c as usize;
+    let wt: Vec<f32> = (0..x.len()).map(|i| 0.4 + 0.25 * (i % 3) as f32).collect();
+    let gamma: Vec<f32> = (0..cc).map(|i| 0.7 + 0.3 * i as f32).collect();
+    let beta: Vec<f32> = (0..cc).map(|i| 0.1 * i as f32 - 0.2).collect();
+    let build = || {
+        let mut g = Graph::new();
+        let sh = g
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank4(n, c, h, w));
+        let csh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(c));
+        let xn = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: sh,
+        });
+        g.add_input(xn);
+        let gc = g.constants_mut().insert(ConstantEntry {
+            bytes: le(&gamma),
+            dtype: DTypeId(F32),
+            shape: csh,
+        });
+        let bc = g.constants_mut().insert(ConstantEntry {
+            bytes: le(&beta),
+            dtype: DTypeId(F32),
+            shape: csh,
+        });
+        let nrm = g.add_node(Node {
+            op: GraphOp::Op(op),
+            inputs: SmallVec::from_iter([
+                InputSource::Node(xn),
+                InputSource::Constant(gc),
+                InputSource::Constant(bc),
+            ]),
+            output_dtype: DTypeId(F32),
+            output_shape: sh,
+        });
+        if matches!(op, OpKind::GroupNorm) {
+            g.set_norm_attrs(nrm, NormAttrs { num_groups });
+        }
+        let wc = g.constants_mut().insert(ConstantEntry {
+            bytes: le(&wt),
+            dtype: DTypeId(F32),
+            shape: sh,
+        });
+        let z = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Mul),
+            inputs: SmallVec::from_iter([InputSource::Node(nrm), InputSource::Constant(wc)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sh,
+        });
+        let out = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(z)]),
+            output_dtype: DTypeId(F32),
+            output_shape: sh,
+        });
+        g.add_output(out);
+        (g, z)
+    };
+    let (g, z) = build();
+    let (out, _) = compile_with_backward(g, z, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let ones = vec![1.0f32; x.len()];
+    let da = run(&out.archive, &[x, &ones])[1].clone();
+
+    let fwd = compile(build().0, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let sum = |xv: &[f32]| -> f32 { run(&fwd.archive, &[xv])[0].iter().sum() };
+    let eps = 1e-3f32;
+    let tol = 3e-2f32;
+    for j in 0..x.len() {
+        let (mut xp, mut xm) = (x.to_vec(), x.to_vec());
+        xp[j] += eps;
+        xm[j] -= eps;
+        let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
+    }
+}
+
 #[test]
 fn norm_gradients_match_finite_difference() {
     let x = [0.5f32, -1.0, 2.0, 0.3, 1.2, -0.4];
     check_norm(OpKind::RmsNorm, &x, 2, 3, false, 3e-2);
     check_norm(OpKind::LayerNorm, &x, 2, 3, true, 3e-2);
-    // GroupNorm/InstanceNorm lower to the same rank-2 layer-norm kernel, so
-    // their VJP must match it numerically (3-input affine form).
-    check_norm(OpKind::GroupNorm, &x, 2, 3, true, 3e-2);
-    check_norm(OpKind::InstanceNorm, &x, 2, 3, true, 3e-2);
+}
+
+#[test]
+fn group_norm_gradients_match_finite_difference() {
+    // [N=1, C=4, H=2, W=2]: 16 elements, channels=4, spatial=4.
+    let x: Vec<f32> = (0..16).map(|i| 0.3 * i as f32 - 1.7).collect();
+    // GroupNorm with 2 groups (each group = 2 channels × 4 spatial = 8 elems).
+    check_group_norm(OpKind::GroupNorm, &x, 1, 4, 2, 2, 2);
+    // GroupNorm with 1 group (= per-sample LayerNorm over all C×spatial).
+    check_group_norm(OpKind::GroupNorm, &x, 1, 4, 2, 2, 1);
+    // InstanceNorm: num_groups = C = 4 (each channel's 4 spatial elems alone).
+    check_group_norm(OpKind::InstanceNorm, &x, 1, 4, 2, 2, 0);
 }
 
 #[test]

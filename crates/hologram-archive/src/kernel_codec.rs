@@ -563,6 +563,8 @@ fn put_norm(out: &mut Vec<u8>, c: &NormCall) {
     put_buf(out, c.output);
     put_u32(out, c.batch);
     put_u32(out, c.feature);
+    put_u32(out, c.channels);
+    put_u32(out, c.num_groups);
     put_u64(out, c.epsilon_bits);
     put_u8(out, c.dtype);
 }
