@@ -148,3 +148,14 @@ impl Default for NormAttrs {
         Self { num_groups: 1 }
     }
 }
+
+/// Per-node reduction axes (ONNX `axes` + `keepdims`). Stored sparsely on
+/// `Graph::reduce_attrs` keyed by `NodeId`. `axes_mask` bit `i` set ⇒ reduce
+/// axis `i`. A node with no attached `ReduceAttrs` reduces over **all** axes
+/// (full reduction to a scalar — the default), so existing graphs are
+/// unaffected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ReduceAttrs {
+    pub axes_mask: u32,
+    pub keepdims: bool,
+}

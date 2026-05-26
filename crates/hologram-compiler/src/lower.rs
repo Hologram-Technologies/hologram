@@ -49,10 +49,6 @@ pub struct ShapeArgs {
     pub seq: u32,
     pub head_dim: u32,
 
-    // Reduction
-    pub axis_count: u32,
-    pub keepdims: bool,
-
     // Gemm scalars (`Y = α·A·B + β·C`); `f32::to_bits`.
     pub alpha_bits: u32,
     pub beta_bits: u32,
@@ -357,12 +353,16 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         epsilon_bits: 0,
         dtype: node.dtype,
     };
+    // rank/dims/axes_mask/keepdims are filled by the compiler's reduce pass
+    // (from the input shape + ReduceAttrs); axes_mask 0 ⇒ reduce all axes.
     let reduce_call = ReduceCall {
         input: inp0(),
         output: node.output,
         element_count: node.element_count,
-        axis_count: s.axis_count,
-        keepdims: s.keepdims,
+        rank: 0,
+        dims: [0u32; 8],
+        axes_mask: 0,
+        keepdims: false,
         dtype: node.dtype,
     };
     let softmax_call = SoftmaxCall {

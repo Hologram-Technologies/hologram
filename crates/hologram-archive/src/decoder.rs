@@ -274,13 +274,26 @@ fn read_norm(c: &mut Cursor<'_>) -> Result<NormCall, ArchiveError> {
     })
 }
 fn read_reduce(c: &mut Cursor<'_>) -> Result<ReduceCall, ArchiveError> {
+    let input = c.buf()?;
+    let output = c.buf()?;
+    let element_count = c.u64()?;
+    let rank = c.u8()?;
+    let axes_mask = c.u32()?;
+    let keepdims = c.u8()? != 0;
+    let dtype = c.u8()?;
+    let mut dims = [0u32; 8];
+    for d in dims.iter_mut().take(rank as usize) {
+        *d = c.u32()?;
+    }
     Ok(ReduceCall {
-        input: c.buf()?,
-        output: c.buf()?,
-        element_count: c.u64()?,
-        axis_count: c.u32()?,
-        keepdims: c.u8()? != 0,
-        dtype: c.u8()?,
+        input,
+        output,
+        element_count,
+        rank,
+        dims,
+        axes_mask,
+        keepdims,
+        dtype,
     })
 }
 fn read_layout(c: &mut Cursor<'_>) -> Result<LayoutCall, ArchiveError> {

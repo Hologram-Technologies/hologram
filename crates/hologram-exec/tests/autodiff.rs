@@ -502,6 +502,93 @@ fn group_norm_gradients_match_finite_difference() {
     check_group_norm(OpKind::InstanceNorm, &x, 1, 4, 2, 2, 0);
 }
 
+/// Grad-check an axis reduction: `sum( reduce_axes(x) ⊙ w )` w.r.t. `x`, with a
+/// fixed non-uniform `w` on the reduced (keepdims) output so the broadcast-back
+/// gradient is exercised non-trivially.
+fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u32, tol: f32) {
+    use hologram_graph::constant::ConstantEntry;
+    use hologram_graph::ReduceAttrs;
+    let to_sd = |d: &[u64]| match d {
+        [a, b, c] => ShapeDescriptor::rank3(*a, *b, *c),
+        _ => unreachable!("test uses rank-3 shapes"),
+    };
+    let out_count: usize = out_dims.iter().product::<u64>() as usize;
+    let w: Vec<f32> = (0..out_count).map(|i| 0.5 + 0.3 * (i % 4) as f32).collect();
+    let build = || {
+        let mut g = Graph::new();
+        let xsh = g.shape_registry_mut().intern(to_sd(in_dims));
+        let osh = g.shape_registry_mut().intern(to_sd(out_dims));
+        let xn = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(F32),
+            output_shape: xsh,
+        });
+        g.add_input(xn);
+        let r = g.add_node(Node {
+            op: GraphOp::Op(op),
+            inputs: SmallVec::from_iter([InputSource::Node(xn)]),
+            output_dtype: DTypeId(F32),
+            output_shape: osh,
+        });
+        g.set_reduce_attrs(
+            r,
+            ReduceAttrs {
+                axes_mask,
+                keepdims: true,
+            },
+        );
+        let wc = g.constants_mut().insert(ConstantEntry {
+            bytes: le(&w),
+            dtype: DTypeId(F32),
+            shape: osh,
+        });
+        let z = g.add_node(Node {
+            op: GraphOp::Op(OpKind::Mul),
+            inputs: SmallVec::from_iter([InputSource::Node(r), InputSource::Constant(wc)]),
+            output_dtype: DTypeId(F32),
+            output_shape: osh,
+        });
+        let out = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(z)]),
+            output_dtype: DTypeId(F32),
+            output_shape: osh,
+        });
+        g.add_output(out);
+        (g, z)
+    };
+    let n: usize = in_dims.iter().product::<u64>() as usize;
+    let x: Vec<f32> = (0..n).map(|i| 0.2 * i as f32 - 1.3).collect();
+    let (g, z) = build();
+    let (out, _) = compile_with_backward(g, z, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let ones = vec![1.0f32; n];
+    let da = run(&out.archive, &[&x, &ones])[1].clone();
+    let fwd = compile(build().0, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let sum = |xv: &[f32]| -> f32 { run(&fwd.archive, &[xv])[0].iter().sum() };
+    let eps = 1e-3f32;
+    for j in 0..n {
+        let (mut xp, mut xm) = (x.clone(), x.clone());
+        xp[j] += eps;
+        xm[j] -= eps;
+        let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
+        assert!(
+            (da[j] - nd).abs() <= tol + tol * nd.abs(),
+            "{op:?} mask={axes_mask:#b} grad[{j}]: {} vs {nd}",
+            da[j]
+        );
+    }
+}
+
+#[test]
+fn axis_reduce_gradients_match_finite_difference() {
+    // [2,3,4] reducing single axes and a pair (keepdims), grad-checked.
+    check_axis_reduce(OpKind::ReduceSum, &[2, 3, 4], &[2, 1, 4], 0b010, 2e-2);
+    check_axis_reduce(OpKind::ReduceSum, &[2, 3, 4], &[1, 3, 4], 0b001, 2e-2);
+    check_axis_reduce(OpKind::ReduceMean, &[2, 3, 4], &[2, 3, 1], 0b100, 2e-2);
+    check_axis_reduce(OpKind::ReduceMean, &[2, 3, 4], &[2, 1, 1], 0b110, 2e-2);
+}
+
 #[test]
 fn softmax_gradients_match_finite_difference() {
     // [2,3] — softmax/logsoftmax over the last axis.

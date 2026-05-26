@@ -146,7 +146,9 @@ fn reduce_sum_byte() {
         input: buf(0, 5),
         output: buf(1, 1),
         element_count: 5,
-        axis_count: 1,
+        rank: 1,
+        dims: [5, 0, 0, 0, 0, 0, 0, 0],
+        axes_mask: 0,
         keepdims: false,
         dtype: 0,
     });

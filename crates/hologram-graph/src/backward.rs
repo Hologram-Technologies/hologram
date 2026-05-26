@@ -141,6 +141,55 @@ fn broadcast_scalar(graph: &mut Graph, g: InputSource, adt: DTypeId, ash: ShapeI
     add_op(graph, OpKind::Expand, &[InputSource::Node(gr)], adt, ash)
 }
 
+/// Broadcast a reduced gradient/value (shape = the reduce *output*) back to the
+/// full input shape `ash`: reshape to the keepdims layout (reduced axis → 1)
+/// then `Expand`. Covers both full reduction (`axes_mask == 0` ⇒ every axis
+/// collapses, equivalent to [`broadcast_scalar`]) and partial-axis reduction.
+fn broadcast_reduced(
+    graph: &mut Graph,
+    src: InputSource,
+    dt: DTypeId,
+    ash: ShapeId,
+    axes_mask: u32,
+) -> Option<NodeId> {
+    let d = graph.shape_registry().get(ash)?.clone();
+    let rank = d.rank as usize;
+    if !(1..=8).contains(&rank) {
+        return None;
+    }
+    let full = axes_mask == 0;
+    let mut dims = [0u64; 8];
+    for (i, slot) in dims.iter_mut().enumerate().take(rank) {
+        let reduced = full || (axes_mask >> i) & 1 == 1;
+        *slot = if reduced { 1 } else { d.dim(i)? };
+    }
+    let kd = graph.shape_registry_mut().intern(ShapeDescriptor {
+        rank: rank as u8,
+        dims,
+        dims_overflow: None,
+    });
+    let r = InputSource::Node(add_op(graph, OpKind::Reshape, &[src], dt, kd));
+    Some(add_op(graph, OpKind::Expand, &[r], dt, ash))
+}
+
+/// Count of elements collapsed per output cell for the given input shape +
+/// axes mask (the ReduceMean divisor). `axes_mask == 0` ⇒ all axes (the full
+/// element count).
+fn reduced_count(graph: &Graph, ash: ShapeId, axes_mask: u32) -> u64 {
+    let Some(d) = graph.shape_registry().get(ash) else {
+        return 1;
+    };
+    let rank = d.rank as usize;
+    let full = axes_mask == 0;
+    let mut n = 1u64;
+    for i in 0..rank {
+        if full || (axes_mask >> i) & 1 == 1 {
+            n = n.saturating_mul(d.dim(i).unwrap_or(1));
+        }
+    }
+    n.max(1)
+}
+
 /// Sum `m` over its **last axis** and broadcast the result back over the full
 /// shape `sh` — the per-row reduction softmax/norm backward needs. A per-axis
 /// reduction is a linear contraction, so it *is* a matmul with a ones-vector:
@@ -1486,38 +1535,39 @@ fn emit_vjp(
             }
         }
         K::ReduceSum => {
-            // Full reduction to a scalar: dx_i = g (broadcast).
+            // dx_i = g broadcast over the reduced axes (full or partial).
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
-                let dx = broadcast_scalar(graph, gsrc, adt, ash);
+                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let dx = broadcast_reduced(graph, gsrc, adt, ash, mask)
+                    .ok_or(BackwardError::NoGradient(kind))?;
                 out.push((a, dx));
             }
         }
         K::ReduceMean => {
-            // dx_i = g / N.
+            // dx_i = g / (count of reduced elements), broadcast over the axes.
             if let Some(a) = node_of(ins[0]) {
                 if !needs_f32() {
                     return Err(BackwardError::NoGradient(kind));
                 }
                 let (adt, ash) = meta(graph, ins[0]);
-                let n = graph
-                    .shape_registry()
-                    .get(ash)
-                    .map(|d| d.total_elements())
-                    .unwrap_or(1)
-                    .max(1);
-                let e = broadcast_scalar(graph, gsrc, adt, ash);
+                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let n = reduced_count(graph, ash, mask);
+                let e = broadcast_reduced(graph, gsrc, adt, ash, mask)
+                    .ok_or(BackwardError::NoGradient(kind))?;
                 let invn = InputSource::Node(const_fill(graph, ash, 1.0 / n as f32));
                 let dx = add_op(graph, K::Mul, &[InputSource::Node(e), invn], adt, ash);
                 out.push((a, dx));
             }
         }
         K::ReduceProd => {
-            // y = ∏a ; dx_i = g·y / a_i.
+            // y = ∏a (over the reduced axes) ; dx_i = g·y / a_i.
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
+                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
                 let gy = InputSource::Node(add_op(graph, K::Mul, &[gsrc, y], dt, sh));
-                let e = broadcast_scalar(graph, gy, adt, ash);
+                let e = broadcast_reduced(graph, gy, adt, ash, mask)
+                    .ok_or(BackwardError::NoGradient(kind))?;
                 let dx = add_op(graph, K::Div, &[InputSource::Node(e), ins[0]], adt, ash);
                 out.push((a, dx));
             }
@@ -1526,10 +1576,17 @@ fn emit_vjp(
             // dx_i = g where a_i is the selected extremum, else 0.
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
-                let yb = InputSource::Node(broadcast_scalar(graph, y, adt, ash));
-                let mask = InputSource::Node(add_op(graph, K::Equal, &[ins[0], yb], adt, ash));
-                let gb = InputSource::Node(broadcast_scalar(graph, gsrc, adt, ash));
-                let dx = add_op(graph, K::Mul, &[gb, mask], adt, ash);
+                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let yb = InputSource::Node(
+                    broadcast_reduced(graph, y, adt, ash, mask)
+                        .ok_or(BackwardError::NoGradient(kind))?,
+                );
+                let mask_eq = InputSource::Node(add_op(graph, K::Equal, &[ins[0], yb], adt, ash));
+                let gb = InputSource::Node(
+                    broadcast_reduced(graph, gsrc, adt, ash, mask)
+                        .ok_or(BackwardError::NoGradient(kind))?,
+                );
+                let dx = add_op(graph, K::Mul, &[gb, mask_eq], adt, ash);
                 out.push((a, dx));
             }
         }

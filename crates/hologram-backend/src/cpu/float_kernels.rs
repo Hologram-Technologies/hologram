@@ -1058,27 +1058,120 @@ pub fn reduce_float<W: Workspace>(
     }
     let dt = c.dtype;
     let es = elem_size(dt);
+    let plan = ReducePlan::new(c, n)?;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let xs = reads[0]
         .get(..n * es)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
-    if out.len() < es {
+    if out.len() < plan.out_count * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    let mut acc = init;
+    // Initialize each output cell to the fold identity, then fold every input
+    // element into the cell its non-reduced coordinates address.
+    for o in 0..plan.out_count {
+        write_float(out, o, init, dt);
+    }
+    let mut coord = [0usize; 8];
     for i in 0..n {
-        acc = f(acc, read_float(xs, i, dt));
+        let oo = plan.out_offset(i, &mut coord);
+        let acc = f(read_float(out, oo, dt), read_float(xs, i, dt));
+        write_float(out, oo, acc, dt);
     }
     if mean {
-        acc /= n as f32;
+        let inv = 1.0 / plan.reduced_count as f32;
+        for o in 0..plan.out_count {
+            write_float(out, o, read_float(out, o, dt) * inv, dt);
+        }
     }
-    write_float(out, 0, acc, dt);
-    for o in out.iter_mut().skip(es) {
-        *o = 0;
+    // Zero any trailing bytes beyond the reduced output (the slot may be wider).
+    for b in out.iter_mut().skip(plan.out_count * es) {
+        *b = 0;
     }
     Ok(())
+}
+
+/// Resolved layout for an axis reduction: which axes collapse, the row-major
+/// output strides over the keepdims (`reduced → 1`) shape, and the per-element
+/// map from an input linear index to its output cell. Shared by the float and
+/// byte reduce kernels so both fold over identical geometry.
+pub(crate) struct ReducePlan {
+    rank: usize,
+    in_dims: [usize; 8],
+    /// Row-major stride into the output for each axis; a reduced axis has its
+    /// coordinate forced to 0, so its stride is never actually consumed.
+    out_stride: [usize; 8],
+    reduced: [bool; 8],
+    pub out_count: usize,
+    pub reduced_count: usize,
+}
+
+impl ReducePlan {
+    pub(crate) fn new(c: &ReduceCall, n: usize) -> Result<Self, BackendError> {
+        let rank = c.rank as usize;
+        if rank > 8 {
+            return Err(BackendError::UnsupportedOp("reduce: rank must be ≤ 8"));
+        }
+        // rank 0 (or no dims) ⇒ a single-element full reduction.
+        let mut in_dims = [1usize; 8];
+        let mut reduced = [false; 8];
+        let mut out_dims = [1usize; 8];
+        let mut out_count = 1usize;
+        let mut reduced_count = 1usize;
+        let full = rank == 0 || c.axes_mask == 0;
+        for i in 0..rank {
+            in_dims[i] = c.dims[i] as usize;
+            let is_red = full || (c.axes_mask >> i) & 1 == 1;
+            reduced[i] = is_red;
+            if is_red {
+                reduced_count *= in_dims[i];
+            } else {
+                out_dims[i] = in_dims[i];
+                out_count *= in_dims[i];
+            }
+        }
+        // Row-major strides over the keepdims output shape.
+        let mut out_stride = [0usize; 8];
+        let mut s = 1usize;
+        for i in (0..rank).rev() {
+            out_stride[i] = s;
+            s *= out_dims[i];
+        }
+        // Guard the declared input count against the shape product.
+        let prod: usize = (0..rank).map(|i| in_dims[i]).product::<usize>().max(1);
+        if rank > 0 && prod != n {
+            return Err(BackendError::UnsupportedOp(
+                "reduce: dims product ≠ element_count",
+            ));
+        }
+        Ok(Self {
+            rank,
+            in_dims,
+            out_stride,
+            reduced,
+            out_count,
+            reduced_count,
+        })
+    }
+
+    /// Output cell for input linear index `i` (decodes `i` into `coord`).
+    #[inline]
+    #[allow(clippy::needless_range_loop)] // index addresses coord + per-axis dims/strides
+    pub(crate) fn out_offset(&self, i: usize, coord: &mut [usize; 8]) -> usize {
+        let mut rem = i;
+        for a in (0..self.rank).rev() {
+            coord[a] = rem % self.in_dims[a];
+            rem /= self.in_dims[a];
+        }
+        let mut oo = 0usize;
+        for a in 0..self.rank {
+            if !self.reduced[a] {
+                oo += coord[a] * self.out_stride[a];
+            }
+        }
+        oo
+    }
 }
 
 pub fn cumsum_float<W: Workspace>(c: &ReduceCall, ws: &mut W) -> Result<(), BackendError> {

@@ -572,30 +572,43 @@ fn reduce_w8<W: Workspace>(
     mean: bool,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let (reads, out) = ws
-        .split_borrow(&[c.input], c.output)
-        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     if n == 0 {
+        let (_, out) = ws
+            .split_borrow(&[c.input], c.output)
+            .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
         for o in out.iter_mut() {
             *o = 0;
         }
         return Ok(());
     }
+    let plan = ff::ReducePlan::new(c, n)?;
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let xs = reads[0]
         .get(..n)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
-    let acc = xs.iter().copied().fold(init, f);
-    let final_value = if mean {
-        let total: u32 = xs.iter().map(|&v| v as u32).sum();
-        ((total / n.max(1) as u32) & 0xFF) as u8
-    } else {
-        acc
-    };
-    if out.is_empty() {
+    if out.len() < plan.out_count {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    out[0] = final_value;
-    for o in out.iter_mut().skip(1) {
+    // Per-output running fold + (for mean) a running sum of the group members.
+    for o in out.iter_mut().take(plan.out_count) {
+        *o = init;
+    }
+    let mut sums = alloc::vec![0u32; plan.out_count];
+    let mut coord = [0usize; 8];
+    for (i, &v) in xs.iter().enumerate() {
+        let oo = plan.out_offset(i, &mut coord);
+        out[oo] = f(out[oo], v);
+        sums[oo] += v as u32;
+    }
+    if mean {
+        let cnt = plan.reduced_count.max(1) as u32;
+        for o in 0..plan.out_count {
+            out[o] = ((sums[o] / cnt) & 0xFF) as u8;
+        }
+    }
+    for o in out.iter_mut().skip(plan.out_count) {
         *o = 0;
     }
     Ok(())
