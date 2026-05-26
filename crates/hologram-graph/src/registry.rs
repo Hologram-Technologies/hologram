@@ -40,6 +40,18 @@ impl ShapeDescriptor {
         }
     }
 
+    pub fn rank3(d0: u64, d1: u64, d2: u64) -> Self {
+        let mut dims = [0u64; 8];
+        dims[0] = d0;
+        dims[1] = d1;
+        dims[2] = d2;
+        Self {
+            rank: 3,
+            dims,
+            dims_overflow: None,
+        }
+    }
+
     pub fn rank4(d0: u64, d1: u64, d2: u64, d3: u64) -> Self {
         let mut dims = [0u64; 8];
         dims[0] = d0;

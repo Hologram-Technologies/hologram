@@ -81,6 +81,67 @@ fn unary_relu_f32_real_data() {
 }
 
 #[test]
+fn softmax_rank3_normalizes_over_last_axis() {
+    // Regression: norm/softmax shape derivation used to fire only for rank-2
+    // inputs, leaving `feature = 0` for the common rank-3 `[batch, seq, hidden]`
+    // transformer layout — the kernel then short-circuits on `feature == 0` and
+    // silently emits an untouched (zeroed) output. The derivation now takes the
+    // last axis as `feature` and the product of preceding axes as `batch`, so
+    // any rank ≥ 1 normalizes correctly.
+    let mut graph = Graph::new();
+    // [batch=2, seq=2, hidden=3] -> 4 rows of 3 features.
+    let shape = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank3(2, 2, 3));
+
+    let in_node = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_input(in_node);
+
+    let softmax = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Softmax),
+        inputs: SmallVec::from_iter([InputSource::Node(in_node)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+
+    let out_node = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(softmax)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out_node);
+
+    let out = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&out.archive, backend).unwrap();
+
+    // Four rows of three equal logits -> each row softmaxes to [1/3, 1/3, 1/3].
+    let input_bytes = f32_to_le(&[0.0; 12]);
+    let outputs = session
+        .execute(&[InputBuffer {
+            bytes: &input_bytes,
+        }])
+        .unwrap();
+
+    let result = le_to_f32(&outputs[0].bytes);
+    assert_eq!(result.len(), 12);
+    for v in &result {
+        assert!((v - 1.0 / 3.0).abs() < 1e-6, "expected 1/3, got {v}");
+    }
+    // Each row (last axis = 3) sums to 1 — proves normalization actually ran.
+    for row in result.chunks_exact(3) {
+        let s: f32 = row.iter().sum();
+        assert!((s - 1.0).abs() < 1e-6, "row should sum to 1, got {s}");
+    }
+}
+
+#[test]
 fn matmul_f32_real_data() {
     // Graph: input_a, input_b -> matmul -> output
     let mut graph = Graph::new();
