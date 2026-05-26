@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use smallvec::SmallVec;
 
 use crate::constant::ConstantEntry;
-use crate::node::{ConvAttrs, Node};
+use crate::node::{ConvAttrs, Node, ReduceAttrs};
 use crate::registry::{DTypeId, ShapeDescriptor, ShapeId};
 use crate::{Graph, GraphOp, InputSource, NodeId};
 use hologram_ops::OpKind;
@@ -170,6 +170,97 @@ fn broadcast_reduced(
     });
     let r = InputSource::Node(add_op(graph, OpKind::Reshape, &[src], dt, kd));
     Some(add_op(graph, OpKind::Expand, &[r], dt, ash))
+}
+
+/// Gradient w.r.t. a broadcast per-axis parameter (γ or β): sum `src` (shape
+/// `sh`) over every axis whose bit is set in `axes_mask` — all axes except the
+/// parameter's — then reshape to the parameter's shape `param_sh`. Built from a
+/// real `ReduceSum`-over-axes node (keepdims), so the parameter gradient is a
+/// composed forward op like every other VJP.
+fn reduce_param_grad(
+    graph: &mut Graph,
+    src: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+    axes_mask: u32,
+    param_sh: ShapeId,
+) -> Option<NodeId> {
+    let d = graph.shape_registry().get(sh)?.clone();
+    let rank = d.rank as usize;
+    if !(1..=8).contains(&rank) {
+        return None;
+    }
+    let mut dims = [0u64; 8];
+    for (i, slot) in dims.iter_mut().enumerate().take(rank) {
+        *slot = if (axes_mask >> i) & 1 == 1 {
+            1
+        } else {
+            d.dim(i)?
+        };
+    }
+    let kd = graph.shape_registry_mut().intern(ShapeDescriptor {
+        rank: rank as u8,
+        dims,
+        dims_overflow: None,
+    });
+    let rs = add_op(graph, OpKind::ReduceSum, &[src], dt, kd);
+    graph.set_reduce_attrs(
+        rs,
+        ReduceAttrs {
+            axes_mask,
+            keepdims: true,
+        },
+    );
+    Some(add_op(
+        graph,
+        OpKind::Reshape,
+        &[InputSource::Node(rs)],
+        dt,
+        param_sh,
+    ))
+}
+
+/// dγ for an RMS-style norm `y = (s·invrms)·γ` over source `s`: the RMS-
+/// normalized `ŝ = s·invrms` is γ's local derivative, so dγ = Σ over every axis
+/// but the feature (last) of `g ⊙ ŝ`, reshaped to γ's shape `gsh`. Rank-2 only
+/// (matching [`rmsnorm_dx`]); recomputes `ŝ` from `s` (content addressing
+/// dedups it against the dx path's identical sub-graph).
+fn rms_dgamma(
+    graph: &mut Graph,
+    s: InputSource,
+    g: InputSource,
+    dt: DTypeId,
+    sh: ShapeId,
+    gsh: ShapeId,
+) -> Option<NodeId> {
+    if graph.shape_registry().get(sh).map(|d| d.rank) != Some(2) {
+        return None;
+    }
+    let x2 = InputSource::Node(add_op(graph, OpKind::Mul, &[s, s], dt, sh));
+    let meansq = InputSource::Node(row_mean_broadcast(graph, x2, dt, sh)?);
+    let rms = InputSource::Node(add_op(graph, OpKind::Sqrt, &[meansq], dt, sh));
+    let invrms = InputSource::Node(add_op(graph, OpKind::Reciprocal, &[rms], dt, sh));
+    let xhat = InputSource::Node(add_op(graph, OpKind::Mul, &[s, invrms], dt, sh));
+    let gx = InputSource::Node(add_op(graph, OpKind::Mul, &[g, xhat], dt, sh));
+    let pmask = all_but_axis(graph, sh, 1);
+    reduce_param_grad(graph, gx, dt, sh, pmask, gsh)
+}
+
+/// Mask of every axis of `sh` except `keep` (the parameter axis) — the axes a
+/// per-axis norm parameter (γ/β) is broadcast over and its gradient sums back.
+fn all_but_axis(graph: &Graph, sh: ShapeId, keep: usize) -> u32 {
+    let rank = graph
+        .shape_registry()
+        .get(sh)
+        .map(|d| d.rank as usize)
+        .unwrap_or(0);
+    let mut m = 0u32;
+    for i in 0..rank {
+        if i != keep {
+            m |= 1 << i;
+        }
+    }
+    m
 }
 
 /// Count of elements collapsed per output cell for the given input shape +
@@ -1185,6 +1276,12 @@ fn emit_vjp(
                     Some(da) => out.push((a, da)),
                     None => return Err(BackwardError::NoGradient(kind)),
                 }
+                if let Some(gn) = node_of(ins[1]) {
+                    let (gdt, gsh) = meta(graph, ins[1]);
+                    if let Some(dgam) = rms_dgamma(graph, ins[0], gsrc, gdt, sh, gsh) {
+                        out.push((gn, dgam));
+                    }
+                }
             }
         }
         K::AddRmsNorm => {
@@ -1204,6 +1301,12 @@ fn emit_vjp(
             }
             if let Some(rn) = node_of(ins[2]) {
                 out.push((rn, drms));
+            }
+            if let Some(gn) = node_of(ins[1]) {
+                let (gdt, gsh) = meta(graph, ins[1]);
+                if let Some(dgam) = rms_dgamma(graph, s, gsrc, gdt, sh, gsh) {
+                    out.push((gn, dgam));
+                }
             }
         }
         K::LayerNorm => {
@@ -1247,6 +1350,24 @@ fn emit_vjp(
                 let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
                 let da = add_op(graph, K::Mul, &[invstd, inner2], dt, sh);
                 out.push((a, da));
+                // dγ = Σ_batch g⊙x̂ ; dβ = Σ_batch g (broadcast axis = all but
+                // the feature/last axis). Emitted only for trainable (Node) γ/β.
+                let pmask = all_but_axis(graph, sh, 1);
+                if let Some(gn) = node_of(ins[1]) {
+                    let (gdt, gsh) = meta(graph, ins[1]);
+                    let gx = InputSource::Node(add_op(graph, K::Mul, &[gsrc, xhat], dt, sh));
+                    if let Some(dgam) = reduce_param_grad(graph, gx, gdt, sh, pmask, gsh) {
+                        out.push((gn, dgam));
+                    }
+                }
+                if ins.len() > 2 {
+                    if let Some(bn) = node_of(ins[2]) {
+                        let (bdt, bsh) = meta(graph, ins[2]);
+                        if let Some(dbeta) = reduce_param_grad(graph, gsrc, bdt, sh, pmask, bsh) {
+                            out.push((bn, dbeta));
+                        }
+                    }
+                }
             }
         }
         K::GroupNorm | K::InstanceNorm => {
@@ -1256,8 +1377,8 @@ fn emit_vjp(
             //   gg = g ⊙ γ_c ; x̂ = (x−μ_grp)·invstd_grp
             //   dx = invstd·(gg − mean_grp(gg) − x̂·mean_grp(gg·x̂))
             // Differentiates the true grouped forward (group_norm_float), not a
-            // LayerNorm approximation. Gradients w.r.t. γ/β are not emitted
-            // (matching the LayerNorm arm; γ/β are treated as constants here).
+            // LayerNorm approximation. dγ/dβ sum over every axis but the channel
+            // (axis 1) — the axes γ/β broadcast over.
             if let Some(a) = node_of(ins[0]) {
                 if !needs_f32() {
                     return Err(BackwardError::NoGradient(kind));
@@ -1321,6 +1442,23 @@ fn emit_vjp(
                 let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
                 let dx = add_op(graph, K::Mul, &[invstd, inner2], dt, sh);
                 out.push((a, dx));
+                // dγ = Σ g⊙x̂ ; dβ = Σ g, over every axis but the channel.
+                let pmask = all_but_axis(graph, sh, 1);
+                if let Some(gn) = node_of(ins[1]) {
+                    let (gdt, gsh) = meta(graph, ins[1]);
+                    let gx = InputSource::Node(add_op(graph, K::Mul, &[gsrc, xhat], dt, sh));
+                    if let Some(dgam) = reduce_param_grad(graph, gx, gdt, sh, pmask, gsh) {
+                        out.push((gn, dgam));
+                    }
+                }
+                if ins.len() > 2 {
+                    if let Some(bn) = node_of(ins[2]) {
+                        let (bdt, bsh) = meta(graph, ins[2]);
+                        if let Some(dbeta) = reduce_param_grad(graph, gsrc, bdt, sh, pmask, bsh) {
+                            out.push((bn, dbeta));
+                        }
+                    }
+                }
             }
         }
         K::Softmax => {

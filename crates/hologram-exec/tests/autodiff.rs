@@ -581,6 +581,109 @@ fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u
 }
 
 #[test]
+fn norm_parameter_gradients_match_finite_difference() {
+    use hologram_graph::registry::ShapeDescriptor;
+    use hologram_graph::NormAttrs;
+    // Trainable γ/β (graph inputs, not constants): grad-check dx, dγ, dβ all at
+    // once via the all-input `gradcheck`.
+    let x2 = [0.5f32, -1.0, 2.0, 0.3, 1.2, -0.4]; // [2,3]
+    let gamma3 = [1.2f32, 0.7, -0.5];
+    let beta3 = [0.1f32, -0.3, 0.4];
+
+    // LayerNorm (x, γ, β).
+    gradcheck(
+        || {
+            let mut g = Graph::new();
+            let sh = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
+            let fsh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(3));
+            let (xn, gn, bn) = (fnode(&mut g, sh), fnode(&mut g, fsh), fnode(&mut g, fsh));
+            let nrm = g.add_node(Node {
+                op: GraphOp::Op(OpKind::LayerNorm),
+                inputs: SmallVec::from_iter([
+                    InputSource::Node(xn),
+                    InputSource::Node(gn),
+                    InputSource::Node(bn),
+                ]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            let out = g.add_node(Node {
+                op: GraphOp::Output,
+                inputs: SmallVec::from_iter([InputSource::Node(nrm)]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            g.add_output(out);
+            (g, nrm)
+        },
+        &[&x2, &gamma3, &beta3],
+        3e-2,
+    );
+
+    // RmsNorm (x, γ) — no β.
+    gradcheck(
+        || {
+            let mut g = Graph::new();
+            let sh = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
+            let fsh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(3));
+            let (xn, gn) = (fnode(&mut g, sh), fnode(&mut g, fsh));
+            let nrm = g.add_node(Node {
+                op: GraphOp::Op(OpKind::RmsNorm),
+                inputs: SmallVec::from_iter([InputSource::Node(xn), InputSource::Node(gn)]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            let out = g.add_node(Node {
+                op: GraphOp::Output,
+                inputs: SmallVec::from_iter([InputSource::Node(nrm)]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            g.add_output(out);
+            (g, nrm)
+        },
+        &[&x2, &gamma3],
+        3e-2,
+    );
+
+    // GroupNorm (x, γ, β) on [1,4,2,2] with 2 groups; γ/β per-channel (len 4).
+    let x16: Vec<f32> = (0..16).map(|i| 0.3 * i as f32 - 1.7).collect();
+    let gamma4 = [1.1f32, 0.6, -0.4, 0.9];
+    let beta4 = [0.2f32, -0.1, 0.3, -0.5];
+    gradcheck(
+        || {
+            let mut g = Graph::new();
+            let sh = g
+                .shape_registry_mut()
+                .intern(ShapeDescriptor::rank4(1, 4, 2, 2));
+            let fsh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+            let (xn, gn, bn) = (fnode(&mut g, sh), fnode(&mut g, fsh), fnode(&mut g, fsh));
+            let nrm = g.add_node(Node {
+                op: GraphOp::Op(OpKind::GroupNorm),
+                inputs: SmallVec::from_iter([
+                    InputSource::Node(xn),
+                    InputSource::Node(gn),
+                    InputSource::Node(bn),
+                ]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            g.set_norm_attrs(nrm, NormAttrs { num_groups: 2 });
+            let out = g.add_node(Node {
+                op: GraphOp::Output,
+                inputs: SmallVec::from_iter([InputSource::Node(nrm)]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            g.add_output(out);
+            (g, nrm)
+        },
+        &[&x16, &gamma4, &beta4],
+        3e-2,
+    );
+}
+
+#[test]
 fn axis_reduce_gradients_match_finite_difference() {
     // [2,3,4] reducing single axes and a pair (keepdims), grad-checked.
     check_axis_reduce(OpKind::ReduceSum, &[2, 3, 4], &[2, 1, 4], 0b010, 2e-2);
