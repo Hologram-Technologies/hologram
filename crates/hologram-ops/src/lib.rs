@@ -12,7 +12,6 @@
 #![no_std]
 
 pub mod activations;
-pub mod axes;
 pub mod dispatch;
 pub mod emit;
 pub mod grounding;

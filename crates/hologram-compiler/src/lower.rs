@@ -141,14 +141,34 @@ impl ShapeArgs {
         a.pad_h = conv.pad_h;
         a.pad_w = conv.pad_w;
 
-        // Norm / softmax: derive batch + feature from the input rank-2
-        // [batch, feature] when MatMul wasn't applicable.
-        if let Some(s) = &in0 {
-            if s.rank == 2 {
-                if a.m == 0 {
-                    a.batch = s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+        // Norm / softmax normalize over the LAST axis: `feature` is the last
+        // dim and `batch` is the product of every preceding dim. This holds
+        // for *any* rank ≥ 1 — the common rank-3 `[batch, seq, hidden]`
+        // transformer layout, rank-4 vision feature maps, a bare rank-1
+        // vector — not just the rank-2 `[batch, feature]` case. Gated to the
+        // ops that actually read these fields so it never clobbers the
+        // conv/matmul `batch` derived above. (Previously rank-2-only, which
+        // left `feature = 0` for higher-rank inputs; the kernels short-circuit
+        // on `feature == 0`, so that silently emitted an untouched output.)
+        if matches!(
+            node.op,
+            hologram_graph::GraphOp::Op(
+                OpKind::Softmax
+                    | OpKind::LogSoftmax
+                    | OpKind::LayerNorm
+                    | OpKind::RmsNorm
+                    | OpKind::GroupNorm
+                    | OpKind::InstanceNorm
+                    | OpKind::AddRmsNorm
+            )
+        ) {
+            if let Some(s) = &in0 {
+                let rank = s.rank as usize;
+                if rank >= 1 {
+                    a.feature = s.dim(rank - 1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    let batch: u64 = (0..rank - 1).map(|i| s.dim(i).unwrap_or(1)).product();
+                    a.batch = batch.min(u32::MAX as u64) as u32;
                 }
-                a.feature = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
             }
         }
 
