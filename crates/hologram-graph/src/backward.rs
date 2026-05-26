@@ -1124,17 +1124,30 @@ fn emit_vjp(
                     Some(n) => InputSource::Node(n),
                     None => return Err(BackwardError::NoGradient(kind)),
                 };
-                let mu = InputSource::Node(row_mean_broadcast(graph, x, dt, sh).unwrap());
+                // `row_mean_broadcast` is None only for a 0-sized feature dim
+                // (degenerate but constructible) — fail loud rather than panic,
+                // matching this arm's other `None => NoGradient` exits.
+                let mu = InputSource::Node(
+                    row_mean_broadcast(graph, x, dt, sh).ok_or(BackwardError::NoGradient(kind))?,
+                );
                 let xc = InputSource::Node(add_op(graph, K::Sub, &[x, mu], dt, sh));
                 let xc2 = InputSource::Node(add_op(graph, K::Mul, &[xc, xc], dt, sh));
-                let var = InputSource::Node(row_mean_broadcast(graph, xc2, dt, sh).unwrap());
+                let var = InputSource::Node(
+                    row_mean_broadcast(graph, xc2, dt, sh)
+                        .ok_or(BackwardError::NoGradient(kind))?,
+                );
                 let std = InputSource::Node(add_op(graph, K::Sqrt, &[var], dt, sh));
                 let invstd = InputSource::Node(add_op(graph, K::Reciprocal, &[std], dt, sh));
                 let xhat = InputSource::Node(add_op(graph, K::Mul, &[xc, invstd], dt, sh));
                 let gg = InputSource::Node(add_op(graph, K::Mul, &[gsrc, gb], dt, sh));
-                let m1 = InputSource::Node(row_mean_broadcast(graph, gg, dt, sh).unwrap());
+                let m1 = InputSource::Node(
+                    row_mean_broadcast(graph, gg, dt, sh).ok_or(BackwardError::NoGradient(kind))?,
+                );
                 let ggxh = InputSource::Node(add_op(graph, K::Mul, &[gg, xhat], dt, sh));
-                let m2 = InputSource::Node(row_mean_broadcast(graph, ggxh, dt, sh).unwrap());
+                let m2 = InputSource::Node(
+                    row_mean_broadcast(graph, ggxh, dt, sh)
+                        .ok_or(BackwardError::NoGradient(kind))?,
+                );
                 let xhm2 = InputSource::Node(add_op(graph, K::Mul, &[xhat, m2], dt, sh));
                 let inner = InputSource::Node(add_op(graph, K::Sub, &[gg, m1], dt, sh));
                 let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
