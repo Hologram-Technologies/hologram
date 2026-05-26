@@ -14,17 +14,6 @@ use crate::kernel_call::*;
 use crate::workspace::Workspace;
 
 pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), BackendError> {
-    // Backward / gradient ops are emitted by the autodiff graph builder but are
-    // NOT an inference-runtime execution target: correct backward kernels need
-    // training-autodiff reference V&V that the runtime doesn't carry, and the
-    // forward ops they alias would compute a wrong gradient. Fail loud rather
-    // than run a silently-wrong byte/forward kernel. (Training is a distinct
-    // feature; see ADR-055.)
-    if is_backward_op(call) {
-        return Err(BackendError::UnsupportedOp(
-            "gradient/backward op is not an inference-runtime execution target",
-        ));
-    }
     if let Some(rv) = try_dispatch_float(call, ws) {
         return rv;
     }
@@ -95,18 +84,8 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Transpose(c) => ff::transpose_float(c, ws),
         KernelCall::Expand(c) => ff::expand_float(c, ws),
         KernelCall::Resize(c) => ff::resize_float(c, ws),
-        KernelCall::ConcatGrad(_) | KernelCall::SliceGrad(_) | KernelCall::PadGrad(_) => {
-            Err(BackendError::UnsupportedOp(
-                "layout-grad op not yet functional: needs its backward realization",
-            ))
-        }
-
         // MatMul (byte ring).
-        KernelCall::MatMul(c)
-        | KernelCall::MatMulGradA(c)
-        | KernelCall::MatMulGradB(c)
-        | KernelCall::FusedSwiGlu(c)
-        | KernelCall::FusedSwiGluGrad(c) => matmul_w8(c, ws),
+        KernelCall::MatMul(c) | KernelCall::FusedSwiGlu(c) => matmul_w8(c, ws),
 
         // Where: if cond != 0 select a else b.
         KernelCall::Where(c) => where_w8(c, ws),
@@ -114,60 +93,39 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Gemm: α·A·B + β·C  (W8 byte-domain).
         KernelCall::Gemm(c) => gemm_w8(c, ws),
 
-        // Conv2d / transpose / grads.
-        KernelCall::Conv2d(c)
-        | KernelCall::Conv2dGradX(c)
-        | KernelCall::Conv2dGradW(c)
-        | KernelCall::ConvTranspose2d(c) => conv2d_w8(c, ws),
+        // Conv2d / transpose.
+        KernelCall::Conv2d(c) | KernelCall::ConvTranspose2d(c) => conv2d_w8(c, ws),
 
         // Normalizations.
-        KernelCall::LayerNorm(c)
-        | KernelCall::GroupNorm(c)
-        | KernelCall::InstanceNorm(c)
-        | KernelCall::LayerNormGrad(c)
-        | KernelCall::GroupNormGrad(c) => layer_norm_w8(c, ws),
-        KernelCall::RmsNorm(c) | KernelCall::RmsNormGrad(c) => rms_norm_w8(c, ws),
+        KernelCall::LayerNorm(c) | KernelCall::GroupNorm(c) | KernelCall::InstanceNorm(c) => {
+            layer_norm_w8(c, ws)
+        }
+        KernelCall::RmsNorm(c) => rms_norm_w8(c, ws),
         KernelCall::AddRmsNorm(c) => add_rms_norm_w8(c, ws),
 
         // Reductions: per-batch fold over feature axis.
-        KernelCall::ReduceSum(c) | KernelCall::ReduceSumGrad(c) => {
-            reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, false)
-        }
-        KernelCall::ReduceMean(c) | KernelCall::ReduceMeanGrad(c) => {
-            reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, true)
-        }
-        KernelCall::ReduceProd(c) | KernelCall::ReduceProdGrad(c) => {
-            reduce_w8(c, ws, |a, b| a.wrapping_mul(b), 1, false)
-        }
+        KernelCall::ReduceSum(c) => reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, false),
+        KernelCall::ReduceMean(c) => reduce_w8(c, ws, |a, b| a.wrapping_add(b), 0, true),
+        KernelCall::ReduceProd(c) => reduce_w8(c, ws, |a, b| a.wrapping_mul(b), 1, false),
         KernelCall::ReduceMin(c) => reduce_w8(c, ws, |a, b| a.min(b), 255, false),
         KernelCall::ReduceMax(c) => reduce_w8(c, ws, |a, b| a.max(b), 0, false),
         KernelCall::CumSum(c) => cumsum_w8(c, ws),
 
         // Softmax.
-        KernelCall::Softmax(c) | KernelCall::SoftmaxGrad(c) => softmax_w8(c, ws, false),
-        KernelCall::LogSoftmax(c) | KernelCall::LogSoftmaxGrad(c) => softmax_w8(c, ws, true),
+        KernelCall::Softmax(c) => softmax_w8(c, ws, false),
+        KernelCall::LogSoftmax(c) => softmax_w8(c, ws, true),
 
         // Pooling.
         KernelCall::MaxPool2d(c) => pool_w8(c, ws, true),
-        KernelCall::AvgPool2d(c)
-        | KernelCall::GlobalAvgPool(c)
-        | KernelCall::AvgPool2dGrad(c)
-        | KernelCall::GlobalAvgPoolGrad(c) => pool_w8(c, ws, false),
+        KernelCall::AvgPool2d(c) | KernelCall::GlobalAvgPool(c) => pool_w8(c, ws, false),
 
         // Attention.
-        KernelCall::Attention(c) | KernelCall::AttentionGrad(c) => attention_w8(c, ws),
+        KernelCall::Attention(c) => attention_w8(c, ws),
 
-        KernelCall::SubGrad(c)
-        | KernelCall::MulGrad(c)
-        | KernelCall::DivGrad(c)
-        | KernelCall::PowGrad(c)
-        | KernelCall::MinGrad(c)
-        | KernelCall::MaxGrad(c) => binary_w8(c, ws, sub_byte),
-
-        // RoPE is a float op (handled by the float path); the byte ring is not
-        // meaningful for it. Clip/Lrn carry no parameters in `UnaryCall`, so a
-        // byte-ring kernel would silently behave as identity — fail loud.
-        // UnaryGrad keeps the identity placeholder (backward seed; training).
+        // RoPE / Clip / Lrn: float-only or parameter-carrying; the byte ring is
+        // not meaningful, so fail loud rather than behave as identity. (Clip
+        // normally desugars to Min∘Max before lowering; this guards a directly
+        // constructed under-specified call.)
         KernelCall::RotaryEmbedding(_) => Err(BackendError::UnsupportedOp(
             "RotaryEmbedding: float-only (byte-ring rotation is not defined)",
         )),
@@ -177,7 +135,40 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Lrn(_) => Err(BackendError::UnsupportedOp(
             "Lrn: float-only (byte-ring LRN is not defined)",
         )),
-        KernelCall::UnaryGrad(c) => unary_w8(c, ws, identity_byte),
+
+        // Backward / gradient ops: emitted by the autodiff graph builder but
+        // NOT an inference-runtime execution target. Correct backward kernels
+        // need training-autodiff reference V&V the runtime doesn't carry, and a
+        // forward/byte alias would compute the wrong gradient — so fail loud.
+        // (Training is a distinct feature; ADR-055.)
+        KernelCall::MatMulGradA(_)
+        | KernelCall::MatMulGradB(_)
+        | KernelCall::FusedSwiGluGrad(_)
+        | KernelCall::Conv2dGradX(_)
+        | KernelCall::Conv2dGradW(_)
+        | KernelCall::SoftmaxGrad(_)
+        | KernelCall::LogSoftmaxGrad(_)
+        | KernelCall::LayerNormGrad(_)
+        | KernelCall::RmsNormGrad(_)
+        | KernelCall::GroupNormGrad(_)
+        | KernelCall::ReduceSumGrad(_)
+        | KernelCall::ReduceMeanGrad(_)
+        | KernelCall::ReduceProdGrad(_)
+        | KernelCall::SubGrad(_)
+        | KernelCall::MulGrad(_)
+        | KernelCall::DivGrad(_)
+        | KernelCall::PowGrad(_)
+        | KernelCall::MinGrad(_)
+        | KernelCall::MaxGrad(_)
+        | KernelCall::ConcatGrad(_)
+        | KernelCall::SliceGrad(_)
+        | KernelCall::PadGrad(_)
+        | KernelCall::AvgPool2dGrad(_)
+        | KernelCall::GlobalAvgPoolGrad(_)
+        | KernelCall::AttentionGrad(_)
+        | KernelCall::UnaryGrad(_) => Err(BackendError::UnsupportedOp(
+            "gradient/backward op is not an inference-runtime execution target",
+        )),
 
         // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
         KernelCall::Dequantize(c) => dequantize(c, ws),
@@ -188,42 +179,6 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
     }
-}
-
-/// Every backward/gradient `KernelCall` variant — the training-path ops the
-/// inference runtime does not execute (it rejects them rather than run a
-/// silently-wrong alias). Centralised so the policy is one list.
-fn is_backward_op(call: &KernelCall) -> bool {
-    use KernelCall as K;
-    matches!(
-        call,
-        K::MatMulGradA(_)
-            | K::MatMulGradB(_)
-            | K::FusedSwiGluGrad(_)
-            | K::Conv2dGradX(_)
-            | K::Conv2dGradW(_)
-            | K::SoftmaxGrad(_)
-            | K::LogSoftmaxGrad(_)
-            | K::LayerNormGrad(_)
-            | K::RmsNormGrad(_)
-            | K::GroupNormGrad(_)
-            | K::ReduceSumGrad(_)
-            | K::ReduceMeanGrad(_)
-            | K::ReduceProdGrad(_)
-            | K::SubGrad(_)
-            | K::MulGrad(_)
-            | K::DivGrad(_)
-            | K::PowGrad(_)
-            | K::MinGrad(_)
-            | K::MaxGrad(_)
-            | K::ConcatGrad(_)
-            | K::SliceGrad(_)
-            | K::PadGrad(_)
-            | K::AvgPool2dGrad(_)
-            | K::GlobalAvgPoolGrad(_)
-            | K::AttentionGrad(_)
-            | K::UnaryGrad(_)
-    )
 }
 
 /// Dequantize a packed-integer buffer (INT8 or INT4) into a dense float
@@ -1361,13 +1316,9 @@ fn try_dispatch_float<W: Workspace>(
         )),
         K::CumSum(c) if is_float(c.dtype) => Some(ff::cumsum_float(c, ws)),
 
-        // Softmax.
-        K::Softmax(c) | K::SoftmaxGrad(c) if is_float(c.dtype) => {
-            Some(ff::softmax_float(c, ws, false))
-        }
-        K::LogSoftmax(c) | K::LogSoftmaxGrad(c) if is_float(c.dtype) => {
-            Some(ff::softmax_float(c, ws, true))
-        }
+        // Softmax. (Backward variants are rejected by the byte-path grad arm.)
+        K::Softmax(c) if is_float(c.dtype) => Some(ff::softmax_float(c, ws, false)),
+        K::LogSoftmax(c) if is_float(c.dtype) => Some(ff::softmax_float(c, ws, true)),
 
         // Pooling.
         K::MaxPool2d(c) if is_float(c.dtype) => Some(ff::pool_float(c, ws, true)),
@@ -1375,10 +1326,8 @@ fn try_dispatch_float<W: Workspace>(
             Some(ff::pool_float(c, ws, false))
         }
 
-        // Attention.
-        K::Attention(c) | K::AttentionGrad(c) if is_float(c.dtype) => {
-            Some(ff::attention_float(c, ws))
-        }
+        // Attention. (AttentionGrad is rejected by the byte-path grad arm.)
+        K::Attention(c) if is_float(c.dtype) => Some(ff::attention_float(c, ws)),
 
         // Where.
         K::Where(c) if is_float(c.dtype) => Some(ff::where_float(c, ws)),
@@ -1406,12 +1355,6 @@ fn try_dispatch_float<W: Workspace>(
         K::Expand(c) if is_float(c.dtype) => Some(ff::expand_float(c, ws)),
         // Resize is the nearest-neighbor gather (reuses ExpandCall's dims).
         K::Resize(c) if is_float(c.dtype) => Some(ff::resize_float(c, ws)),
-        // The layout-grad ops still need their backward realization.
-        K::ConcatGrad(c) | K::SliceGrad(c) | K::PadGrad(c) if is_float(c.dtype) => {
-            Some(Err(BackendError::UnsupportedOp(
-                "layout op not yet functional: needs its UOR-native realization",
-            )))
-        }
 
         // Parameterized ops whose parameters are *not carried* by the kernel-
         // call representation: Clip needs (min, max), RotaryEmbedding needs the
