@@ -15,3 +15,4 @@ external
 !/.gitignore
 opencode.jsonc
 .opencode
+**/.hypergrep/

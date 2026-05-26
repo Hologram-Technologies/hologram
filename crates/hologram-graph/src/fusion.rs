@@ -10,11 +10,11 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use smallvec::SmallVec;
-use crate::node::{GraphOp, NodeId, InputSource, FusionAttrs};
 use crate::graph::Graph;
+use crate::node::{FusionAttrs, GraphOp, InputSource, NodeId};
+use alloc::vec::Vec;
 use hologram_ops::OpKind;
+use smallvec::SmallVec;
 
 /// Statistics from a fusion pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,9 +29,7 @@ pub struct FusionStats {
 
 impl FusionStats {
     pub fn total_removed(&self) -> usize {
-        self.matmul_activations_fused
-            + self.swiglu_fused
-            + self.cse_eliminated
+        self.matmul_activations_fused + self.swiglu_fused + self.cse_eliminated
     }
 }
 
@@ -84,7 +82,13 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
                             fused.output_shape = out_shape;
                         }
                         // Store the activation discriminant.
-                        graph.set_fusion_attrs(succ_id, FusionAttrs { activation: act_kind, ..Default::default() });
+                        graph.set_fusion_attrs(
+                            succ_id,
+                            FusionAttrs {
+                                activation: act_kind,
+                                ..Default::default()
+                            },
+                        );
                         // Kill the original MatMul.
                         graph.kill_node(id);
                         stats.matmul_activations_fused += 1;
@@ -117,7 +121,13 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
                             fused.output_dtype = out_dtype;
                             fused.output_shape = out_shape;
                         }
-                        graph.set_fusion_attrs(succ_id, FusionAttrs { activation: act_kind, ..Default::default() });
+                        graph.set_fusion_attrs(
+                            succ_id,
+                            FusionAttrs {
+                                activation: act_kind,
+                                ..Default::default()
+                            },
+                        );
                         graph.kill_node(id);
                         stats.matmul_activations_fused += 1;
                         continue;
@@ -129,9 +139,12 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
         // --- Pass 1c: Norm + activation epilogue fusion ---
         //
         // Pattern: LayerNorm/RmsNorm/GroupNorm/InstanceNorm → activation
-        if matches!(node.op,
-            GraphOp::Op(OpKind::LayerNorm) | GraphOp::Op(OpKind::RmsNorm)
-            | GraphOp::Op(OpKind::GroupNorm) | GraphOp::Op(OpKind::InstanceNorm)
+        if matches!(
+            node.op,
+            GraphOp::Op(OpKind::LayerNorm)
+                | GraphOp::Op(OpKind::RmsNorm)
+                | GraphOp::Op(OpKind::GroupNorm)
+                | GraphOp::Op(OpKind::InstanceNorm)
         ) {
             let successors = node_succs;
             if successors.len() == 1 {
@@ -152,7 +165,13 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
                             fused.output_dtype = out_dtype;
                             fused.output_shape = out_shape;
                         }
-                        graph.set_fusion_attrs(succ_id, FusionAttrs { activation: act_kind, ..Default::default() });
+                        graph.set_fusion_attrs(
+                            succ_id,
+                            FusionAttrs {
+                                activation: act_kind,
+                                ..Default::default()
+                            },
+                        );
                         graph.kill_node(id);
                         stats.matmul_activations_fused += 1;
                         continue;
@@ -177,7 +196,9 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
                         // The pair cancels: T(T(x)) = x. Rewire the
                         // second transpose's successors to use the first
                         // transpose's input directly.
-                        if let Some(InputSource::Node(original_input)) = node.inputs.first().copied() {
+                        if let Some(InputSource::Node(original_input)) =
+                            node.inputs.first().copied()
+                        {
                             // Rewire all successors of succ_id to use original_input.
                             let succ_succ = graph.build_successor_index();
                             let succ_id_idx = succ_id.0 as usize;
@@ -230,7 +251,10 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
                         }
                         if let Some(up) = up_src {
                             // Gate = Silu's input.
-                            let gate = node.inputs.first().copied()
+                            let gate = node
+                                .inputs
+                                .first()
+                                .copied()
                                 .unwrap_or(InputSource::Node(id));
                             let mut new_inputs: SmallVec<[InputSource; 4]> = SmallVec::new();
                             new_inputs.push(gate);
@@ -287,7 +311,9 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
         let mut current_id = succ_id;
         let mut current_op = succ_node.op;
         loop {
-            if chain_len >= 8 { break; }
+            if chain_len >= 8 {
+                break;
+            }
             let k = match current_op {
                 GraphOp::Op(k) if k.is_fusable_activation() => k as u16,
                 _ => break,
@@ -296,14 +322,22 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
             chain_len += 1;
             // Can we extend further?
             let cidx = current_id.0 as usize;
-            let csuccs = if cidx < succ2.len() { &succ2[cidx] } else { break };
-            if csuccs.len() != 1 { break; }
+            let csuccs = if cidx < succ2.len() {
+                &succ2[cidx]
+            } else {
+                break;
+            };
+            if csuccs.len() != 1 {
+                break;
+            }
             let next_id = csuccs[0];
             let next_node = match graph.get(next_id) {
                 Some(n) => n.clone(),
                 None => break,
             };
-            if !next_node.op.is_fusable_activation() { break; }
+            if !next_node.op.is_fusable_activation() {
+                break;
+            }
             // Kill the intermediate node.
             graph.kill_node(current_id);
             current_id = next_id;
@@ -315,17 +349,23 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
         // Kill all intermediate nodes (the last one becomes the fused node).
         // The first node (id) gets killed; the last node (current_id) becomes
         // FusedUnaryChain with the first node's input.
-        let original_input = node.inputs.first().copied()
+        let original_input = node
+            .inputs
+            .first()
+            .copied()
             .unwrap_or(InputSource::Node(id));
         let mut new_inputs: SmallVec<[InputSource; 4]> = SmallVec::new();
         new_inputs.push(original_input);
         graph.replace_op(current_id, GraphOp::Op(OpKind::FusedUnaryChain));
         graph.set_inputs(current_id, new_inputs);
-        graph.set_fusion_attrs(current_id, FusionAttrs {
-            activation: chain[0],
-            chain_len,
-            chain,
-        });
+        graph.set_fusion_attrs(
+            current_id,
+            FusionAttrs {
+                activation: chain[0],
+                chain_len,
+                chain,
+            },
+        );
         graph.kill_node(id);
         stats.cse_eliminated += 0; // Don't count these in CSE
         stats.matmul_activations_fused += 1; // Reuse counter for structural opts
@@ -359,7 +399,10 @@ pub fn fuse(graph: &mut Graph) -> FusionStats {
             GraphOp::Dead | GraphOp::Input | GraphOp::Output | GraphOp::Constant(_) => continue,
             _ => {}
         }
-        let sig = Signature { op: node.op, inputs: node.inputs.clone() };
+        let sig = Signature {
+            op: node.op,
+            inputs: node.inputs.clone(),
+        };
         let mut canonical = None;
         for (s, cid) in &seen {
             if s.matches(&sig) {
@@ -421,10 +464,7 @@ mod tests {
             GraphOp::Op(OpKind::Relu),
             &[InputSource::Node(mm)],
         ));
-        let out = g.add_node(make_node(
-            GraphOp::Output,
-            &[InputSource::Node(relu)],
-        ));
+        let out = g.add_node(make_node(GraphOp::Output, &[InputSource::Node(relu)]));
         g.add_input(in0);
         g.add_output(out);
 
@@ -433,7 +473,10 @@ mod tests {
         // MatMul should be dead.
         assert_eq!(g.get(mm).unwrap().op, GraphOp::Dead);
         // Relu should now be FusedMatMulActivation.
-        assert_eq!(g.get(relu).unwrap().op, GraphOp::Op(OpKind::FusedMatMulActivation));
+        assert_eq!(
+            g.get(relu).unwrap().op,
+            GraphOp::Op(OpKind::FusedMatMulActivation)
+        );
         // Fused node should have MatMul's inputs.
         assert_eq!(g.get(relu).unwrap().inputs.len(), 2);
         // Fusion attrs should record Relu activation.
@@ -454,10 +497,7 @@ mod tests {
             GraphOp::Op(OpKind::Mul),
             &[InputSource::Node(silu), InputSource::Node(up)],
         ));
-        let out = g.add_node(make_node(
-            GraphOp::Output,
-            &[InputSource::Node(mul)],
-        ));
+        let out = g.add_node(make_node(GraphOp::Output, &[InputSource::Node(mul)]));
         g.add_input(gate);
         g.add_input(up);
         g.add_output(out);
@@ -486,10 +526,7 @@ mod tests {
             GraphOp::Op(OpKind::Add),
             &[InputSource::Node(relu1), InputSource::Node(relu2)],
         ));
-        let out = g.add_node(make_node(
-            GraphOp::Output,
-            &[InputSource::Node(add)],
-        ));
+        let out = g.add_node(make_node(GraphOp::Output, &[InputSource::Node(add)]));
         g.add_input(inp);
         g.add_output(out);
 
@@ -506,10 +543,7 @@ mod tests {
     fn fuse_no_ops_on_pure_io() {
         let mut g = Graph::new();
         let inp = g.add_node(make_node(GraphOp::Input, &[]));
-        let out = g.add_node(make_node(
-            GraphOp::Output,
-            &[InputSource::Node(inp)],
-        ));
+        let out = g.add_node(make_node(GraphOp::Output, &[InputSource::Node(inp)]));
         g.add_input(inp);
         g.add_output(out);
 

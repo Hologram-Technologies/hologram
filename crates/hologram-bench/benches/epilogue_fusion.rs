@@ -6,10 +6,10 @@
 //! buffer write/read. The benchmark measures compile + execute time
 //! across several matrix sizes.
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, black_box};
-use hologram_compiler::{compile_from_source, BackendKind};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use hologram_backend::CpuBackend;
-use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
+use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use uor_foundation::WittLevel;
 
 const MATMUL_SILU_SOURCE: &str = r"
@@ -27,7 +27,8 @@ fn bench_matmul_silu_compile(c: &mut Criterion) {
                 black_box(MATMUL_SILU_SOURCE),
                 WittLevel::W32,
                 BackendKind::Cpu,
-            ).unwrap();
+            )
+            .unwrap();
             black_box(out);
         });
     });
@@ -37,8 +38,8 @@ fn bench_matmul_silu_execute(c: &mut Criterion) {
     let mut group = c.benchmark_group("epilogue_fusion::execute");
     for &size in &[64usize, 256, 1024] {
         let bytes = size * size; // W8 byte-domain: 1 byte per element
-        let out = compile_from_source(MATMUL_SILU_SOURCE, WittLevel::W32, BackendKind::Cpu)
-            .unwrap();
+        let out =
+            compile_from_source(MATMUL_SILU_SOURCE, WittLevel::W32, BackendKind::Cpu).unwrap();
         let backend: CpuBackend<BufferArena> = CpuBackend::new();
         let mut session = InferenceSession::load(&out.archive, backend).unwrap();
         let zeros = vec![0u8; bytes];
@@ -91,5 +92,10 @@ fn bench_matmul_only_execute(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_matmul_silu_compile, bench_matmul_silu_execute, bench_matmul_only_execute);
+criterion_group!(
+    benches,
+    bench_matmul_silu_compile,
+    bench_matmul_silu_execute,
+    bench_matmul_only_execute
+);
 criterion_main!(benches);
