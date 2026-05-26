@@ -233,7 +233,8 @@ fn rms_dgamma(
     sh: ShapeId,
     gsh: ShapeId,
 ) -> Option<NodeId> {
-    if graph.shape_registry().get(sh).map(|d| d.rank) != Some(2) {
+    let rank = graph.shape_registry().get(sh).map(|d| d.rank as usize)?;
+    if !(1..=8).contains(&rank) {
         return None;
     }
     let x2 = InputSource::Node(add_op(graph, OpKind::Mul, &[s, s], dt, sh));
@@ -242,7 +243,7 @@ fn rms_dgamma(
     let invrms = InputSource::Node(add_op(graph, OpKind::Reciprocal, &[rms], dt, sh));
     let xhat = InputSource::Node(add_op(graph, OpKind::Mul, &[s, invrms], dt, sh));
     let gx = InputSource::Node(add_op(graph, OpKind::Mul, &[g, xhat], dt, sh));
-    let pmask = all_but_axis(graph, sh, 1);
+    let pmask = all_but_axis(graph, sh, rank - 1);
     reduce_param_grad(graph, gx, dt, sh, pmask, gsh)
 }
 
@@ -315,8 +316,9 @@ fn row_reduce_broadcast(
     Some(add_op(graph, OpKind::Reshape, &[sb], dt, sh))
 }
 
-/// Broadcast a per-feature vector `v` (shape `[F]` or `[1,F]`) across the
-/// batch to `[B,F]` matching `sh = [B,F]`: `Reshape(v)→[1,F]` then `Expand`.
+/// Broadcast a per-feature vector `v` (shape `[F]`) across the leading axes to
+/// match `sh = [.., F]` (F = last axis): `Reshape(v)→[1,…,1,F]` then `Expand`.
+/// Works for any rank ≥ 1, so the norm VJPs aren't restricted to rank-2.
 fn broadcast_feature(
     graph: &mut Graph,
     v: InputSource,
@@ -324,18 +326,19 @@ fn broadcast_feature(
     sh: ShapeId,
 ) -> Option<NodeId> {
     let d = graph.shape_registry().get(sh)?.clone();
-    if d.rank != 2 {
+    let rank = d.rank as usize;
+    if !(1..=8).contains(&rank) {
         return None;
     }
-    let (b, f) = (d.dim(0)?, d.dim(1)?);
-    let onef = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank2(1, f));
-    let bf = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank2(b, f));
+    let mut dims = [1u64; 8];
+    dims[rank - 1] = d.dim(rank - 1)?;
+    let onef = graph.shape_registry_mut().intern(ShapeDescriptor {
+        rank: rank as u8,
+        dims,
+        dims_overflow: None,
+    });
     let vr = InputSource::Node(add_op(graph, OpKind::Reshape, &[v], dt, onef));
-    Some(add_op(graph, OpKind::Expand, &[vr], dt, bf))
+    Some(add_op(graph, OpKind::Expand, &[vr], dt, sh))
 }
 
 /// Broadcast a per-channel vector `v` (shape `[C]`) across `sh = [N, C, *]`:
@@ -861,7 +864,8 @@ fn rmsnorm_dx(
     dt: DTypeId,
     sh: ShapeId,
 ) -> Option<NodeId> {
-    if graph.shape_registry().get(sh).map(|d| d.rank) != Some(2) {
+    let rank = graph.shape_registry().get(sh).map(|d| d.rank as usize)?;
+    if !(1..=8).contains(&rank) {
         return None;
     }
     let gb = InputSource::Node(broadcast_feature(graph, gamma, dt, sh)?);
@@ -874,10 +878,11 @@ fn rmsnorm_dx(
     let ggam = InputSource::Node(add_op(graph, OpKind::Mul, &[g, gb], dt, sh));
     let ggx = InputSource::Node(add_op(graph, OpKind::Mul, &[ggam, x], dt, sh));
     let s = InputSource::Node(row_reduce_broadcast(graph, ggx, dt, sh)?);
+    // mean is over the last (feature) axis.
     let f = graph
         .shape_registry()
         .get(sh)
-        .and_then(|d| d.dim(1))
+        .and_then(|d| d.dim(rank - 1))
         .unwrap_or(1);
     let invf = InputSource::Node(const_fill(graph, sh, 1.0 / f as f32));
     let ir2 = InputSource::Node(add_op(graph, OpKind::Mul, &[invrms, invrms], dt, sh));
@@ -1310,10 +1315,12 @@ fn emit_vjp(
             }
         }
         K::LayerNorm => {
-            // x̂ = (x−μ)·invstd ; gg = g·γ.
+            // x̂ = (x−μ)·invstd ; gg = g·γ.   (mean/var over the last axis, so
+            // this holds for any rank — `row_mean_broadcast` is rank-agnostic.)
             // dx = invstd·(gg − mean(gg) − x̂·mean(gg·x̂)).   (ε≈0)
+            let lrank = graph.shape_registry().get(sh).map(|d| d.rank as usize);
             if let Some(a) = node_of(ins[0]) {
-                if !needs_f32() || graph.shape_registry().get(sh).map(|d| d.rank) != Some(2) {
+                if !needs_f32() || !matches!(lrank, Some(1..=8)) {
                     return Err(BackwardError::NoGradient(kind));
                 }
                 let x = ins[0];
@@ -1350,9 +1357,9 @@ fn emit_vjp(
                 let inner2 = InputSource::Node(add_op(graph, K::Sub, &[inner, xhm2], dt, sh));
                 let da = add_op(graph, K::Mul, &[invstd, inner2], dt, sh);
                 out.push((a, da));
-                // dγ = Σ_batch g⊙x̂ ; dβ = Σ_batch g (broadcast axis = all but
-                // the feature/last axis). Emitted only for trainable (Node) γ/β.
-                let pmask = all_but_axis(graph, sh, 1);
+                // dγ = Σ g⊙x̂ ; dβ = Σ g over all axes but the feature (last).
+                // Emitted only for trainable (Node) γ/β.
+                let pmask = all_but_axis(graph, sh, lrank.unwrap_or(2) - 1);
                 if let Some(gn) = node_of(ins[1]) {
                     let (gdt, gsh) = meta(graph, ins[1]);
                     let gx = InputSource::Node(add_op(graph, K::Mul, &[gsrc, xhat], dt, sh));
@@ -1556,38 +1563,50 @@ fn emit_vjp(
             }
         }
         K::Expand => {
-            // y = broadcast(x) ; dx = sum g over the broadcast axes.
-            // Rank-2, exactly one broadcast axis: a row/column sum (matmul-ones).
+            // y = broadcast(x) ; dx = Σ g over the broadcast axes (those where
+            // the input dim is 1 but the output dim is larger). Summing over
+            // exactly those axes with keepdims yields the input shape, so this
+            // is one ReduceSum-over-axes — any rank, any number of broadcast
+            // axes (the prior code handled only rank-2, single-axis).
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
                 let (id, od) = match (
                     graph.shape_registry().get(ash).cloned(),
                     graph.shape_registry().get(sh).cloned(),
                 ) {
-                    (Some(i), Some(o)) if i.rank == 2 && o.rank == 2 => (i, o),
+                    (Some(i), Some(o))
+                        if i.rank == o.rank && (1..=8).contains(&(i.rank as usize)) =>
+                    {
+                        (i, o)
+                    }
                     _ => return Err(BackwardError::NoGradient(kind)),
                 };
-                let (ib, if_) = (id.dim(0).unwrap_or(0), id.dim(1).unwrap_or(0));
-                let (ob, of) = (od.dim(0).unwrap_or(0), od.dim(1).unwrap_or(0));
-                if ib == ob && if_ == 1 {
-                    // broadcast axis 1: rowsum g[ob,of] · ones[of,1] → [ob,1].
-                    let f1 = graph
-                        .shape_registry_mut()
-                        .intern(ShapeDescriptor::rank2(of, 1));
-                    let ones = InputSource::Node(const_fill(graph, f1, 1.0));
-                    let dx = add_op(graph, K::MatMul, &[gsrc, ones], adt, ash);
-                    out.push((a, dx));
-                } else if if_ == of && ib == 1 {
-                    // broadcast axis 0: colsum ones[1,ob] · g[ob,of] → [1,of].
-                    let o1 = graph
-                        .shape_registry_mut()
-                        .intern(ShapeDescriptor::rank2(1, ob));
-                    let ones = InputSource::Node(const_fill(graph, o1, 1.0));
-                    let dx = add_op(graph, K::MatMul, &[ones, gsrc], adt, ash);
-                    out.push((a, dx));
-                } else {
-                    return Err(BackwardError::NoGradient(kind));
+                let rank = id.rank as usize;
+                let mut mask = 0u32;
+                for i in 0..rank {
+                    let (di, dou) = (id.dim(i).unwrap_or(0), od.dim(i).unwrap_or(0));
+                    if di == 1 && dou > 1 {
+                        mask |= 1 << i;
+                    } else if di != dou {
+                        // Not a pure broadcast along this axis — unsupported.
+                        return Err(BackwardError::NoGradient(kind));
+                    }
                 }
+                let dx = if mask == 0 {
+                    // No broadcast (shapes equal): gradient passes through.
+                    add_op(graph, K::Reshape, &[gsrc], adt, ash)
+                } else {
+                    let rs = add_op(graph, K::ReduceSum, &[gsrc], adt, ash);
+                    graph.set_reduce_attrs(
+                        rs,
+                        ReduceAttrs {
+                            axes_mask: mask,
+                            keepdims: true,
+                        },
+                    );
+                    rs
+                };
+                out.push((a, dx));
             }
         }
         K::GlobalAvgPool => {

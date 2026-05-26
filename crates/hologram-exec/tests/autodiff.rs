@@ -684,6 +684,86 @@ fn norm_parameter_gradients_match_finite_difference() {
 }
 
 #[test]
+fn rank3_norm_gradients_match_finite_difference() {
+    use hologram_graph::registry::ShapeDescriptor;
+    // LayerNorm/RmsNorm normalize over the last axis at *any* rank; the VJP
+    // (incl. dγ/dβ) must match finite differences on a rank-3 `[2,2,3]` input.
+    let x: Vec<f32> = (0..12).map(|i| 0.25 * i as f32 - 1.4).collect();
+    let gamma = [1.1f32, 0.6, -0.4];
+    let beta = [0.2f32, -0.1, 0.3];
+    let norm3 = |op: OpKind, affine3: bool| {
+        move || {
+            let mut g = Graph::new();
+            let sh = g
+                .shape_registry_mut()
+                .intern(ShapeDescriptor::rank3(2, 2, 3));
+            let fsh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(3));
+            let xn = fnode(&mut g, sh);
+            let gn = fnode(&mut g, fsh);
+            let mut ins = SmallVec::<[InputSource; 4]>::from_iter([
+                InputSource::Node(xn),
+                InputSource::Node(gn),
+            ]);
+            if affine3 {
+                ins.push(InputSource::Node(fnode(&mut g, fsh)));
+            }
+            let nrm = g.add_node(Node {
+                op: GraphOp::Op(op),
+                inputs: ins,
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            let out = g.add_node(Node {
+                op: GraphOp::Output,
+                inputs: SmallVec::from_iter([InputSource::Node(nrm)]),
+                output_dtype: DTypeId(F32),
+                output_shape: sh,
+            });
+            g.add_output(out);
+            (g, nrm)
+        }
+    };
+    gradcheck(norm3(OpKind::LayerNorm, true), &[&x, &gamma, &beta], 3e-2);
+    gradcheck(norm3(OpKind::RmsNorm, false), &[&x, &gamma], 3e-2);
+}
+
+#[test]
+fn expand_vjp_general_rank_matches_finite_difference() {
+    use hologram_graph::registry::ShapeDescriptor;
+    // [1,3,1] → [2,3,4]: two broadcast axes (0 and 2), rank-3 — the general
+    // multi-axis Expand VJP (prior code handled only rank-2, single-axis).
+    let x = [0.5f32, -1.0, 2.0];
+    gradcheck(
+        || {
+            let mut g = Graph::new();
+            let ish = g
+                .shape_registry_mut()
+                .intern(ShapeDescriptor::rank3(1, 3, 1));
+            let osh = g
+                .shape_registry_mut()
+                .intern(ShapeDescriptor::rank3(2, 3, 4));
+            let xn = fnode(&mut g, ish);
+            let e = g.add_node(Node {
+                op: GraphOp::Op(OpKind::Expand),
+                inputs: SmallVec::from_iter([InputSource::Node(xn)]),
+                output_dtype: DTypeId(F32),
+                output_shape: osh,
+            });
+            let out = g.add_node(Node {
+                op: GraphOp::Output,
+                inputs: SmallVec::from_iter([InputSource::Node(e)]),
+                output_dtype: DTypeId(F32),
+                output_shape: osh,
+            });
+            g.add_output(out);
+            (g, e)
+        },
+        &[&x],
+        1e-3,
+    );
+}
+
+#[test]
 fn axis_reduce_gradients_match_finite_difference() {
     // [2,3,4] reducing single axes and a pair (keepdims), grad-checked.
     check_axis_reduce(OpKind::ReduceSum, &[2, 3, 4], &[2, 1, 4], 0b010, 2e-2);
