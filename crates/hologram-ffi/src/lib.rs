@@ -25,7 +25,12 @@ fn sessions() -> &'static Mutex<Vec<Option<Session>>> {
 
 /// Compile an empty graph for the CPU backend at WittLevel::W32.
 /// Writes the resulting `.holo` bytes into the caller's buffer.
-/// Returns the number of bytes written, or -1 on error.
+///
+/// Returns the **total archive length** (snprintf-style), or -1 on error. At
+/// most `out_capacity` bytes are written; a return value greater than
+/// `out_capacity` means the output was truncated and the caller must retry
+/// with a buffer of at least the returned size — truncation is never reported
+/// as success.
 #[no_mangle]
 pub unsafe extern "C" fn hologram_compile_empty(out: *mut c_uchar, out_capacity: usize) -> c_int {
     if out.is_null() {
@@ -38,12 +43,16 @@ pub unsafe extern "C" fn hologram_compile_empty(out: *mut c_uchar, out_capacity:
     };
     let n = compiled.archive.len().min(out_capacity);
     std::slice::from_raw_parts_mut(out, n).copy_from_slice(&compiled.archive[..n]);
-    n as c_int
+    compiled.archive.len() as c_int
 }
 
 /// Compile a textual hologram-source program for the CPU backend.
-/// `source_ptr`/`source_len` carry the input bytes (UTF-8). Returns
-/// the archive length on success or -1 on failure.
+/// `source_ptr`/`source_len` carry the input bytes (UTF-8).
+///
+/// Returns the **total archive length** (snprintf-style), or -1 on failure. At
+/// most `out_capacity` bytes are written; a return value greater than
+/// `out_capacity` means the output was truncated and the caller must retry
+/// with a larger buffer — truncation is never reported as success.
 #[no_mangle]
 pub unsafe extern "C" fn hologram_compile_source(
     source_ptr: *const c_uchar,
@@ -66,7 +75,7 @@ pub unsafe extern "C" fn hologram_compile_source(
     };
     let n = compiled.archive.len().min(out_capacity);
     std::slice::from_raw_parts_mut(out, n).copy_from_slice(&compiled.archive[..n]);
-    n as c_int
+    compiled.archive.len() as c_int
 }
 
 /// Load an `.holo` archive and return a session handle, or -1 on error.
@@ -220,15 +229,20 @@ pub unsafe extern "C" fn hologram_session_execute(
         }
         let ptrs = std::slice::from_raw_parts(out_ptrs, out_count);
         let caps = std::slice::from_raw_parts(out_caps, out_count);
+        // Fail loud *before* writing anything if any output buffer is too small
+        // (callers pre-size via `hologram_session_output_byte_len`). Silently
+        // truncating an output and still returning success would surface a
+        // wrong result as a correct one.
         for (i, out) in outputs.iter().enumerate() {
-            if i >= out_count {
-                break;
+            if !ptrs[i].is_null() && caps[i] < out.bytes.len() {
+                return -1;
             }
+        }
+        for (i, out) in outputs.iter().enumerate() {
             if ptrs[i].is_null() {
                 continue;
             }
-            let n = out.bytes.len().min(caps[i]);
-            std::slice::from_raw_parts_mut(ptrs[i], n).copy_from_slice(&out.bytes[..n]);
+            std::slice::from_raw_parts_mut(ptrs[i], out.bytes.len()).copy_from_slice(&out.bytes);
         }
     }
     0

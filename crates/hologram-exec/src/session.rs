@@ -763,6 +763,17 @@ impl<B: SessionBackend> InferenceSession<B> {
         &self.outputs
     }
 
+    /// Byte length of the `i`-th declared input port. Returns 0 when
+    /// `i >= input_count()`. Callers size their per-port input buffers from
+    /// this (the archive's declared shape × dtype) rather than guessing a
+    /// fixed capacity.
+    pub fn input_byte_len(&self, i: usize) -> usize {
+        self.inputs
+            .get(i)
+            .map(|p| (p.element_count as usize) * port_bytes_per_element(p.dtype))
+            .unwrap_or(0)
+    }
+
     /// Byte length of the `i`-th declared output port. Returns 0 when
     /// `i >= output_count()` so callers can pre-size buffers with a
     /// single bounded probe.

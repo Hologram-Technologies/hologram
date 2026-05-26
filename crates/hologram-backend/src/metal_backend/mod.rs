@@ -120,10 +120,15 @@ impl<W: Workspace> MetalBackend<W> {
         threads: MTLSize,
     ) -> Vec<u8> {
         let dev = &self.ctx.device;
-        let pipe = match self.ctx.pipelines.get(entry) {
-            Some(p) => p,
-            None => return vec![0; out_len],
-        };
+        // Every caller passes a compile-time-constant entry name compiled into
+        // the pipeline set at context creation; a miss is an internal invariant
+        // violation — fail loud rather than silently return a zero buffer that
+        // would masquerade as a valid GPU result for an unimplemented op.
+        let pipe = self
+            .ctx
+            .pipelines
+            .get(entry)
+            .unwrap_or_else(|| panic!("metal pipeline '{entry}' not compiled"));
         let buf_a = dev.new_buffer_with_data(
             a.as_ptr() as *const _,
             a.len() as u64,
