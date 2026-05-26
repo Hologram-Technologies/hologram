@@ -146,6 +146,34 @@ fn matmul_activation_round_trip() {
 }
 
 #[test]
+fn broadcast_binary_round_trip() {
+    use hologram_backend::{broadcast_op, BroadcastBinaryCall};
+    let calls = vec![KernelCall::BroadcastBinary(BroadcastBinaryCall {
+        small: ref_buf(0),
+        other: ref_buf(1),
+        output: ref_buf(2),
+        rank: 3,
+        in_dims: [1, 3, 1, 0, 0, 0, 0, 0],
+        out_dims: [2, 3, 4, 0, 0, 0, 0, 0],
+        op: broadcast_op::MUL,
+        small_is_lhs: false,
+        dtype: 8,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    if let KernelCall::BroadcastBinary(d) = &decoded[0] {
+        assert_eq!(d.rank, 3);
+        assert_eq!(&d.in_dims[..3], &[1, 3, 1]);
+        assert_eq!(&d.out_dims[..3], &[2, 3, 4]);
+        assert_eq!(d.op, broadcast_op::MUL);
+        assert!(!d.small_is_lhs);
+        assert_eq!(d.other.slot, 1);
+    } else {
+        panic!("not broadcast-binary");
+    }
+}
+
+#[test]
 fn matmul_dequant_round_trip() {
     use hologram_backend::MatMulDequantCall;
     let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {

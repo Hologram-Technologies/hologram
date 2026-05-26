@@ -78,6 +78,33 @@ impl MatMulDequantCall {
     }
 }
 
+/// Binary op selector for [`BroadcastBinaryCall`].
+pub mod broadcast_op {
+    pub const ADD: u8 = 0;
+    pub const SUB: u8 = 1;
+    pub const MUL: u8 = 2;
+}
+
+/// Fused `Expand → elementwise-binary`: `out[o] = op(small[bcast(o)], other[o])`
+/// (operands swapped when `small_is_lhs == false`). The `small` operand is the
+/// **pre-Expand** tensor (`in_dims`, with 1 on the broadcast axes); it is read
+/// with stride-0 broadcast indexing directly, so the full broadcasted tensor is
+/// never materialized. Produced by the runtime `Expand → {Add,Sub,Mul}` fusion.
+#[derive(Debug, Clone, Copy)]
+pub struct BroadcastBinaryCall {
+    pub small: BufferRef,
+    pub other: BufferRef,
+    pub output: BufferRef,
+    pub rank: u8,
+    pub in_dims: [u32; 8],
+    pub out_dims: [u32; 8],
+    /// One of [`broadcast_op`].
+    pub op: u8,
+    /// `true` ⇒ `op(small, other)`; `false` ⇒ `op(other, small)`.
+    pub small_is_lhs: bool,
+    pub dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct GemmCall {
     pub a: BufferRef,
@@ -246,8 +273,10 @@ pub struct LrnCall {
 
 /// Expand (broadcast). Replicates `input` to the broadcast `out_dims`: an axis
 /// with `in_dims[i] == 1` is read at index 0 (stride-0), every other axis maps
-/// 1:1. Rank ≤ 8. The kernel materializes the broadcast (a gather); a
-/// stride-0 zero-movement view is a future optimization.
+/// 1:1. Rank ≤ 8. When the sole consumer is an elementwise `{Add,Sub,Mul}` the
+/// runtime fuses this into a [`BroadcastBinaryCall`] that reads the operand with
+/// stride-0 indexing in place (no materialized broadcast); this call's kernel
+/// is the materializing gather for the remaining consumers (matmul, concat, …).
 #[derive(Debug, Clone, Copy)]
 pub struct ExpandCall {
     pub input: BufferRef,
@@ -313,10 +342,10 @@ pub struct WhereCall {
 /// the result into `output` at `dtype` (typically `DTYPE_F32` or
 /// `DTYPE_BF16`).
 ///
-/// `scale_bits` and `zero_point` are passed by value rather than via a
-/// separate buffer since they are per-tensor scalars resolved at compile
-/// time. Per-channel quantization (one scale per output channel) is left
-/// for a future fused matmul-with-dequant kernel.
+/// `scale_bits` and `zero_point` are the per-tensor scalars (used when
+/// `channels == 0`). Per-channel quantization (one scale/zero-point per
+/// channel along an axis) reads the `scales`/`zero_points` vector operands
+/// instead — see the `channels`/`inner` fields.
 #[derive(Debug, Clone, Copy)]
 pub struct DequantizeCall {
     pub input: BufferRef,
@@ -748,6 +777,9 @@ pub enum KernelCall {
     MatMulAddActivation(MatMulAddActivationCall),
     /// Fused dequantize → matmul (the dequant feeds B; dense f32 weight elided).
     MatMulDequant(MatMulDequantCall),
+    /// Fused `Expand → elementwise-binary`: the broadcast operand is read with
+    /// stride-0 indexing in place — the materialized broadcast tensor is elided.
+    BroadcastBinary(BroadcastBinaryCall),
 }
 
 impl KernelCall {
@@ -891,6 +923,17 @@ impl KernelCall {
                 .u32(c.scale_bits)
                 .i32(c.zero_point)
                 .done(108),
+            K::BroadcastBinary(c) => {
+                let mut b = Pb::new()
+                    .u8(c.rank)
+                    .u8(c.op)
+                    .u8(c.small_is_lhs as u8)
+                    .u8(c.dtype);
+                for i in 0..c.rank as usize {
+                    b = b.u32(c.in_dims[i]).u32(c.out_dims[i]);
+                }
+                b.done(112)
+            }
         }
     }
 }
@@ -963,6 +1006,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
             vec![c.a, c.bq, c.scales, c.zero_points, c.output]
         }
         K::MatMulDequant(c) => vec![c.a, c.bq, c.output],
+        K::BroadcastBinary(c) => vec![c.small, c.other, c.output],
         K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
         K::MatMulAdd(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
         K::MatMulAddActivation(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],
@@ -1068,6 +1112,7 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::MatMul(c) | K::FusedSwiGlu(c) => c.dtype,
 
         K::MatMulDequant(c) => c.dtype,
+        K::BroadcastBinary(c) => c.dtype,
         K::MatMulActivation(c) => c.mm.dtype,
         K::MatMulAdd(c) => c.mm.dtype,
         K::MatMulAddActivation(c) => c.mm.dtype,

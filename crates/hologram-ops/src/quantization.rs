@@ -13,9 +13,9 @@
 //! Trillion-parameter models stage their weights as `Weight<DTypeI4, B>`
 //! or `Weight<DTypeI8, B>`. `DequantizeOp` is the marker that lets the
 //! compiler insert the dequant kernel before the matmul that consumes
-//! the weight. (A future fused matmul-with-dequant op can elide the
-//! intermediate dense tensor; that is a kernel optimization, not an
-//! architectural change — the formal spec stays the affine chain.)
+//! the weight. The runtime `Dequantize → MatMul` fusion (`MatMulDequant`)
+//! elides the intermediate dense tensor — a kernel optimization, not an
+//! architectural change: the formal spec stays the affine chain.
 
 use crate::emit::HoloArena;
 use core::marker::PhantomData;

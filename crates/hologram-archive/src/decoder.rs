@@ -3,10 +3,10 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
-    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall,
-    MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall,
-    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantizeCall,
+    ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall,
+    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
+    ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -173,7 +173,35 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
             act: cur.u8()?,
         }),
         111 => K::MatMulDequant(read_matmul_dequant(cur)?),
+        112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
+    })
+}
+
+fn read_broadcast_binary(c: &mut Cursor<'_>) -> Result<BroadcastBinaryCall, ArchiveError> {
+    let small = c.buf()?;
+    let other = c.buf()?;
+    let output = c.buf()?;
+    let rank = c.u8()?;
+    let op = c.u8()?;
+    let small_is_lhs = c.u8()? != 0;
+    let dtype = c.u8()?;
+    let mut in_dims = [0u32; 8];
+    let mut out_dims = [0u32; 8];
+    for i in 0..rank as usize {
+        in_dims[i] = c.u32()?;
+        out_dims[i] = c.u32()?;
+    }
+    Ok(BroadcastBinaryCall {
+        small,
+        other,
+        output,
+        rank,
+        in_dims,
+        out_dims,
+        op,
+        small_is_lhs,
+        dtype,
     })
 }
 

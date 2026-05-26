@@ -1755,10 +1755,81 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
     Ok(())
 }
 
+/// Fused `Expand → elementwise-binary`: `out[o] = op(small[bcast(o)], other[o])`
+/// (operands swapped when `!small_is_lhs`). The `small` (pre-Expand) operand is
+/// read with stride-0 broadcast indexing in place, so the broadcasted tensor is
+/// **never materialized** — the zero-movement realization of Expand for its
+/// dominant consumer (bias/scale broadcast, the norm-VJP `Expand → Mul`).
+pub fn broadcast_binary_float<W: Workspace>(
+    c: &BroadcastBinaryCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    use crate::kernel_call::broadcast_op;
+    let rank = c.rank as usize;
+    if rank == 0 || rank > 8 {
+        return Err(BackendError::UnsupportedOp(
+            "broadcast_binary: rank must be 1..=8",
+        ));
+    }
+    let dt = c.dtype;
+    let es = elem_size(dt);
+    let in_dims = &c.in_dims[..rank];
+    let out_dims = &c.out_dims[..rank];
+    let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
+    let small_total: usize = in_dims.iter().map(|&d| d as usize).product();
+    // Row-major strides over the small operand; a broadcast axis (in_dim == 1)
+    // contributes stride 0, so it re-reads index 0 along that axis.
+    let mut in_strides = [0usize; 8];
+    let mut stride = 1usize;
+    for i in (0..rank).rev() {
+        in_strides[i] = if in_dims[i] == 1 { 0 } else { stride };
+        stride *= in_dims[i] as usize;
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.small, c.other], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let small = reads[0]
+        .get(..small_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.small.slot))?;
+    let other = reads[1]
+        .get(..out_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.other.slot))?;
+    if out.len() < out_total * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let op: fn(f32, f32) -> f32 = match c.op {
+        broadcast_op::ADD => |a, b| a + b,
+        broadcast_op::SUB => |a, b| a - b,
+        broadcast_op::MUL => |a, b| a * b,
+        _ => return Err(BackendError::UnsupportedOp("broadcast_binary: bad op")),
+    };
+    let mut coord = [0usize; 8];
+    for o in 0..out_total {
+        let mut rem = o;
+        let mut sidx = 0usize;
+        for i in (0..rank).rev() {
+            coord[i] = rem % out_dims[i] as usize;
+            rem /= out_dims[i] as usize;
+            sidx += coord[i] * in_strides[i];
+        }
+        let sv = read_float(small, sidx, dt);
+        let ov = read_float(other, o, dt);
+        let r = if c.small_is_lhs {
+            op(sv, ov)
+        } else {
+            op(ov, sv)
+        };
+        write_float(out, o, r, dt);
+    }
+    Ok(())
+}
+
 /// Expand (broadcast): replicate `input` to `out_dims`. An axis with
 /// `in_dims[i] == 1` reads input index 0 (broadcast); every other axis maps
-/// 1:1. Dtype-agnostic gather; materializes the broadcast (a stride-0
-/// zero-movement view is a future optimization). Rank ≤ 8.
+/// 1:1. Dtype-agnostic gather. When the sole consumer is an elementwise
+/// `{Add,Sub,Mul}`, the runtime fuses this into [`broadcast_binary_float`] so
+/// the broadcast is never materialized; this materializing path covers the
+/// remaining cases (e.g. Expand feeding a matmul/concat). Rank ≤ 8.
 pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
     let rank = c.rank as usize;
     if rank == 0 || rank > 8 {
