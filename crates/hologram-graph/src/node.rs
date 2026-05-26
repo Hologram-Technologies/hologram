@@ -83,3 +83,25 @@ impl Default for ConvAttrs {
         }
     }
 }
+
+/// Per-node LRN (local response normalization) attributes. Stored sparsely on
+/// `Graph::lrn_attrs` keyed by `NodeId` (ONNX defaults: α=1e-4, β=0.75,
+/// bias=1.0). `*_bits` are `f32::to_bits`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LrnAttrs {
+    pub size: u32,
+    pub alpha_bits: u32,
+    pub beta_bits: u32,
+    pub bias_bits: u32,
+}
+
+impl Default for LrnAttrs {
+    fn default() -> Self {
+        Self {
+            size: 1,
+            alpha_bits: 0.0001f32.to_bits(),
+            beta_bits: 0.75f32.to_bits(),
+            bias_bits: 1.0f32.to_bits(),
+        }
+    }
+}

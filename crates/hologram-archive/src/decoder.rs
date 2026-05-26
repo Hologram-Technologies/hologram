@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
     LayoutCall, MatMulActivationCall, MatMulAddCall, MatMulCall, NormCall, PoolCall, ReduceCall,
-    ExpandCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    ExpandCall, LrnCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -151,7 +151,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         74 => K::CumSum(read_reduce(cur)?),
         75 => K::RotaryEmbedding(read_rope(cur)?),
         76 => K::Clip(read_unary(cur)?),
-        77 => K::Lrn(read_unary(cur)?),
+        77 => K::Lrn(read_lrn(cur)?),
         78 => K::Where(read_where(cur)?),
         79 => K::MatMulGradA(read_matmul(cur)?),
         80 => K::MatMulGradB(read_matmul(cur)?),
@@ -331,6 +331,20 @@ fn read_expand(c: &mut Cursor<'_>) -> Result<ExpandCall, ArchiveError> {
         in_dims,
         out_dims,
         dtype,
+    })
+}
+fn read_lrn(c: &mut Cursor<'_>) -> Result<LrnCall, ArchiveError> {
+    Ok(LrnCall {
+        input: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        channels: c.u32()?,
+        inner: c.u32()?,
+        size: c.u32()?,
+        alpha_bits: c.u32()?,
+        beta_bits: c.u32()?,
+        bias_bits: c.u32()?,
+        dtype: c.u8()?,
     })
 }
 fn read_rope(c: &mut Cursor<'_>) -> Result<RoPECall, ArchiveError> {

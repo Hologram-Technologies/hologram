@@ -156,6 +156,23 @@ pub struct RoPECall {
     pub dtype: u8,
 }
 
+/// LRN (local response normalization) over the channel axis of an
+/// `[batch, channels, inner]` tensor: `out = x / (bias + (α/size)·Σ_window x²)^β`,
+/// the window spanning `size` neighbouring channels centred on each channel.
+#[derive(Debug, Clone, Copy)]
+pub struct LrnCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub batch: u32,
+    pub channels: u32,
+    pub inner: u32,
+    pub size: u32,
+    pub alpha_bits: u32,
+    pub beta_bits: u32,
+    pub bias_bits: u32,
+    pub dtype: u8,
+}
+
 /// Expand (broadcast). Replicates `input` to the broadcast `out_dims`: an axis
 /// with `in_dims[i] == 1` is read at index 0 (stride-0), every other axis maps
 /// 1:1. Rank ≤ 8. The kernel materializes the broadcast (a gather); a
@@ -423,6 +440,18 @@ fn p_expand(c: &ExpandCall) -> Pb {
 fn p_rope(c: &RoPECall) -> Pb {
     Pb::new().u64(c.element_count).u32(c.head_dim).u8(c.dtype)
 }
+
+fn p_lrn(c: &LrnCall) -> Pb {
+    Pb::new()
+        .u32(c.batch)
+        .u32(c.channels)
+        .u32(c.inner)
+        .u32(c.size)
+        .u32(c.alpha_bits)
+        .u32(c.beta_bits)
+        .u32(c.bias_bits)
+        .u8(c.dtype)
+}
 fn p_softmax(c: &SoftmaxCall) -> Pb {
     Pb::new().u32(c.batch).u32(c.feature).u8(c.dtype)
 }
@@ -564,7 +593,7 @@ pub enum KernelCall {
     CumSum(ReduceCall),
     RotaryEmbedding(RoPECall),
     Clip(UnaryCall),
-    Lrn(UnaryCall),
+    Lrn(LrnCall),
     Where(WhereCall),
 
     // Backward variants — same payload shapes as their forward counterparts.
@@ -706,7 +735,7 @@ impl KernelCall {
             K::CumSum(c) => p_reduce(c).done(73),
             K::RotaryEmbedding(c) => p_rope(c).done(74),
             K::Clip(c) => p_unary(c).done(75),
-            K::Lrn(c) => p_unary(c).done(76),
+            K::Lrn(c) => p_lrn(c).done(76),
             K::Where(c) => p_where(c).done(77),
             K::MatMulGradA(c) => p_matmul(c).done(78),
             K::MatMulGradB(c) => p_matmul(c).done(79),
@@ -781,10 +810,10 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         | K::Sign(c)
         | K::Abs(c)
         | K::Clip(c)
-        | K::Lrn(c)
         | K::UnaryGrad(c) => vec![c.input, c.output],
 
         K::RotaryEmbedding(c) => vec![c.x, c.cos, c.sin, c.output],
+        K::Lrn(c) => vec![c.input, c.output],
 
         K::Add(c)
         | K::Sub(c)
@@ -912,10 +941,10 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         | K::Sign(c)
         | K::Abs(c)
         | K::Clip(c)
-        | K::Lrn(c)
         | K::UnaryGrad(c) => c.dtype,
 
         K::RotaryEmbedding(c) => c.dtype,
+        K::Lrn(c) => c.dtype,
 
         K::Add(c)
         | K::Sub(c)

@@ -1,7 +1,7 @@
 //! `Graph` structure (spec VI.1).
 
 use crate::constant::ConstantStore;
-use crate::node::{ConvAttrs, GraphOp, InputSource, Node, NodeId, QuantAttrs};
+use crate::node::{ConvAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, QuantAttrs};
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
 use alloc::vec;
@@ -33,6 +33,8 @@ pub struct Graph {
     /// `(stride = 1, pad = 0)`. Same sparse-table layout as
     /// `quant_attrs` so ordinary nodes pay no per-instance overhead.
     conv_attrs: Vec<(NodeId, ConvAttrs)>,
+    /// Sparse per-node LRN attributes (size / α / β / bias). Same layout.
+    lrn_attrs: Vec<(NodeId, LrnAttrs)>,
 }
 
 impl Graph {
@@ -130,6 +132,22 @@ impl Graph {
     /// uses defaults.
     pub fn conv_attrs(&self, id: NodeId) -> Option<ConvAttrs> {
         self.conv_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
+    /// Attach LRN attributes (size / α / β / bias) to a node.
+    pub fn set_lrn_attrs(&mut self, id: NodeId, attrs: LrnAttrs) {
+        if let Some(slot) = self.lrn_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.lrn_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve LRN attributes for a node, or `None` if unset.
+    pub fn lrn_attrs(&self, id: NodeId) -> Option<LrnAttrs> {
+        self.lrn_attrs
             .iter()
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }

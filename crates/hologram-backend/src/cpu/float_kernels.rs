@@ -1180,6 +1180,49 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     Ok(())
 }
 
+/// LRN (local response normalization) over the channel axis of an
+/// `[batch, channels, inner]` tensor (inner = H·W). For each element,
+/// `out = x / (bias + (α/size)·Σ_{j∈window} x[j]²)^β`, the window spanning the
+/// `size` channels centred on the element's channel (ONNX LRN).
+pub fn lrn_float<W: Workspace>(c: &LrnCall, ws: &mut W) -> Result<(), BackendError> {
+    let (b, ch, inner) = (c.batch as usize, c.channels as usize, c.inner as usize);
+    if ch == 0 || c.size == 0 {
+        return Err(BackendError::UnsupportedOp("lrn: channels/size must be > 0"));
+    }
+    let dt = c.dtype;
+    let size = c.size as usize;
+    let alpha = f32::from_bits(c.alpha_bits);
+    let beta = f32::from_bits(c.beta_bits);
+    let bias = f32::from_bits(c.bias_bits);
+    let total = b * ch * inner;
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let x = reads[0];
+    if out.len() < total * elem_size(dt) {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // Window [c - (size-1)/2, c + size/2] (ONNX), clamped to [0, ch).
+    let lo_off = (size - 1) / 2;
+    for n in 0..b {
+        for cc in 0..ch {
+            let c0 = cc.saturating_sub(lo_off);
+            let c1 = (cc + size / 2 + 1).min(ch); // exclusive end
+            for i in 0..inner {
+                let mut sumsq = 0f32;
+                for j in c0..c1 {
+                    let v = read_float(x, (n * ch + j) * inner + i, dt);
+                    sumsq += v * v;
+                }
+                let denom = (bias + (alpha / size as f32) * sumsq).powf(beta);
+                let idx = (n * ch + cc) * inner + i;
+                write_float(out, idx, read_float(x, idx, dt) / denom, dt);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// RoPE (rotary positional embedding), rotate-half form. `cos`/`sin` are full
 /// per-element tables (same layout as `x`). Within each head of width
 /// `head_dim` (split into halves at `half = head_dim/2`): the first half maps
@@ -1188,7 +1231,7 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
 pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let d = c.head_dim as usize;
-    if d == 0 || d % 2 != 0 || n % d != 0 {
+    if d == 0 || !d.is_multiple_of(2) || !n.is_multiple_of(d) {
         return Err(BackendError::UnsupportedOp(
             "rope: head_dim must be even and divide the element count",
         ));

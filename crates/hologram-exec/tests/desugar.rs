@@ -14,7 +14,7 @@ use hologram_graph::{
     constant::ConstantEntry,
     node::Node,
     registry::{DTypeId, ShapeDescriptor},
-    Graph, GraphOp, InputSource, OpKind,
+    Graph, GraphOp, InputSource, LrnAttrs, NodeId, OpKind,
 };
 use prism::vocabulary::WittLevel;
 use smallvec::SmallVec;
@@ -251,6 +251,65 @@ fn slice_is_zero_movement_projectfield() {
         "slice was not zero-movement (last_skipped={})",
         sess.last_skipped()
     );
+}
+
+#[test]
+fn lrn_normalizes_over_channel_window() {
+    // x[1,3,1] (3 channels), size=3, α=1, β=1, bias=0. Window [c−1,c+1]:
+    // out[c] = x[c] / ((1/3)·Σ_window x²).
+    let x = [1.0f32, 2.0, 3.0];
+    let want = [
+        1.0 / (5.0 / 3.0),   // c0: window {1,4}
+        2.0 / (14.0 / 3.0),  // c1: window {1,4,9}
+        3.0 / (13.0 / 3.0),  // c2: window {4,9}
+    ];
+
+    let mut g = Graph::new();
+    let s = g.shape_registry_mut().intern(ShapeDescriptor::rank4(1, 3, 1, 1));
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let lrn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Lrn),
+        inputs: SmallVec::from_iter([InputSource::Node(xi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.set_lrn_attrs(
+        NodeId(lrn.0),
+        LrnAttrs {
+            size: 3,
+            alpha_bits: 1.0f32.to_bits(),
+            beta_bits: 1.0f32.to_bits(),
+            bias_bits: 0.0f32.to_bits(),
+        },
+    );
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(lrn)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        assert!((gv - wv).abs() < 1e-5, "lrn[{i}]: got {gv}, want {wv}");
+    }
 }
 
 #[test]

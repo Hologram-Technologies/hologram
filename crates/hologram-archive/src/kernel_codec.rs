@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
+    ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
     WhereCall,
 };
 
@@ -449,7 +449,7 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
         K::Lrn(c) => {
             put_u16(out, D_LRN);
-            put_unary(out, c);
+            put_lrn(out, c);
         }
         K::Where(c) => {
             put_u16(out, D_WHERE);
@@ -687,6 +687,18 @@ fn put_transpose(out: &mut Vec<u8>, c: &TransposeCall) {
     for p in c.perm {
         put_u8(out, p);
     }
+    put_u8(out, c.dtype);
+}
+fn put_lrn(out: &mut Vec<u8>, c: &LrnCall) {
+    put_buf(out, c.input);
+    put_buf(out, c.output);
+    put_u32(out, c.batch);
+    put_u32(out, c.channels);
+    put_u32(out, c.inner);
+    put_u32(out, c.size);
+    put_u32(out, c.alpha_bits);
+    put_u32(out, c.beta_bits);
+    put_u32(out, c.bias_bits);
     put_u8(out, c.dtype);
 }
 fn put_rope(out: &mut Vec<u8>, c: &RoPECall) {

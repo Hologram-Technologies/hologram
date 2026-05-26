@@ -164,7 +164,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
             "Clip: (min, max) bounds not represented in UnaryCall",
         )),
         KernelCall::Lrn(_) => Err(BackendError::UnsupportedOp(
-            "Lrn: (size, α, β, bias) not represented in UnaryCall",
+            "Lrn: float-only (byte-ring LRN is not defined)",
         )),
         KernelCall::UnaryGrad(c) => unary_w8(c, ws, identity_byte),
 
@@ -1382,9 +1382,7 @@ fn try_dispatch_float<W: Workspace>(
             "Clip: (min, max) bounds not carried by UnaryCall — parameters dropped at lowering",
         ))),
         K::RotaryEmbedding(c) if is_float(c.dtype) => Some(ff::rope_float(c, ws)),
-        K::Lrn(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "Lrn: (size, α, β, bias) not carried by UnaryCall — parameters dropped at lowering",
-        ))),
+        K::Lrn(c) if is_float(c.dtype) => Some(ff::lrn_float(c, ws)),
 
         _ => None,
     }

@@ -293,6 +293,25 @@ impl Compiler {
                         tc.perm = perm;
                     }
                 }
+                // LRN: batch/channels/inner from the rank-4 input shape;
+                // size/α/β/bias from the node's LrnAttrs (defaults otherwise).
+                if matches!(kind, hologram_graph::OpKind::Lrn) {
+                    if let KernelCall::Lrn(lc) = &mut kernel_call {
+                        let (batch, channels, inner) = lrn_dims(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                        let a = self
+                            .graph
+                            .lrn_attrs(hologram_graph::NodeId(idx as u32))
+                            .unwrap_or_default();
+                        lc.batch = batch;
+                        lc.channels = channels;
+                        lc.inner = inner;
+                        lc.size = a.size;
+                        lc.alpha_bits = a.alpha_bits;
+                        lc.beta_bits = a.beta_bits;
+                        lc.bias_bits = a.bias_bits;
+                    }
+                }
                 // RoPE: head_dim = the input's last dimension.
                 if matches!(kind, hologram_graph::OpKind::RotaryEmbedding) {
                     if let KernelCall::RotaryEmbedding(rc) = &mut kernel_call {
@@ -789,6 +808,33 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
     let lo = pad_at(0).unwrap_or(0).max(0) as u64;
     let elem = bytes_per_element(node.output_dtype.0) as u64;
     Some((lo * inner * elem, data_count * elem, data_count))
+}
+
+/// LRN dims `(batch, channels, inner)` from a rank-4 `[N, C, H, W]` input
+/// (inner = H·W); also accepts rank-2 `[N, C]` (inner = 1). `None` otherwise.
+fn lrn_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u32, u32, u32)> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let s = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let rank = s.rank as usize;
+    if rank < 2 {
+        return None;
+    }
+    let batch = s.dim(0)? as u32;
+    let channels = s.dim(1)? as u32;
+    let inner: u64 = (2..rank).map(|i| s.dim(i).unwrap_or(1)).product();
+    Some((batch, channels, inner as u32))
 }
 
 /// RoPE head dimension = the input tensor's last dim (the rotated axis).

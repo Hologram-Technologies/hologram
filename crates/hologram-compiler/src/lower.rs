@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, GemmCall, KernelCall,
-    ExpandCall, LayoutCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
-    TransposeCall, UnaryCall, WhereCall,
+    ExpandCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall,
+    SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -454,7 +454,20 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
             dtype: node.dtype,
         }),
         K::Clip => KernelCall::Clip(unary),
-        K::Lrn => KernelCall::Lrn(unary),
+        // size/α/β/bias + batch/channels/inner filled by the compiler's lrn
+        // pass (from LrnAttrs + the input shape).
+        K::Lrn => KernelCall::Lrn(LrnCall {
+            input: inp0(),
+            output: node.output,
+            batch: 0,
+            channels: 0,
+            inner: 0,
+            size: 1,
+            alpha_bits: 0.0001f32.to_bits(),
+            beta_bits: 0.75f32.to_bits(),
+            bias_bits: 1.0f32.to_bits(),
+            dtype: node.dtype,
+        }),
         K::Where => KernelCall::Where(where_call),
 
         // Backward
