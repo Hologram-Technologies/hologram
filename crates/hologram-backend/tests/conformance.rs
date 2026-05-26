@@ -810,7 +810,9 @@ fn reduce_call(kind: fn(ReduceCall) -> KernelCall, x: &[f32]) -> f32 {
             input: buf(0),
             output: buf(1),
             element_count: n as u64,
-            axis_count: 1,
+            rank: 1,
+            dims: [n as u32, 0, 0, 0, 0, 0, 0, 0],
+            axes_mask: 0, // full reduction
             keepdims: false,
             dtype: DTYPE_F32,
         }),
@@ -840,6 +842,98 @@ fn kc10_reduce_conforms_across_scale() {
             rel(reduce_call(KernelCall::ReduceMax, &x), max) <= 1e-6,
             "ReduceMax n={n}"
         );
+    }
+}
+
+// ─── KC-10b: axis-specific reduction (ONNX ReduceSum/Mean over `axes`) ─
+
+/// f64 reference for an axis reduction over input `dims` (row-major) reducing
+/// every axis whose bit is set in `axes_mask`; output is the keepdims layout
+/// (reduced axis → 1). `mean` divides each cell by the reduced-element count.
+fn ref_axis_reduce(x: &[f32], dims: &[usize], axes_mask: u32, mean: bool) -> Vec<f32> {
+    let rank = dims.len();
+    let mut out_dims = vec![1usize; rank];
+    let mut out_count = 1usize;
+    let mut reduced = 1usize;
+    for i in 0..rank {
+        if (axes_mask >> i) & 1 == 1 {
+            reduced *= dims[i];
+        } else {
+            out_dims[i] = dims[i];
+            out_count *= dims[i];
+        }
+    }
+    let mut out_stride = vec![0usize; rank];
+    let mut s = 1usize;
+    for i in (0..rank).rev() {
+        out_stride[i] = s;
+        s *= out_dims[i];
+    }
+    let mut acc = vec![0f64; out_count];
+    let n: usize = dims.iter().product();
+    let mut coord = vec![0usize; rank];
+    for (i, &v) in x.iter().enumerate().take(n) {
+        let mut rem = i;
+        for a in (0..rank).rev() {
+            coord[a] = rem % dims[a];
+            rem /= dims[a];
+        }
+        let mut oo = 0usize;
+        for a in 0..rank {
+            if (axes_mask >> a) & 1 == 0 {
+                oo += coord[a] * out_stride[a];
+            }
+        }
+        acc[oo] += f64::from(v);
+    }
+    acc.iter()
+        .map(|&a| (if mean { a / reduced as f64 } else { a }) as f32)
+        .collect()
+}
+
+#[test]
+fn kc10b_axis_reduce_conforms() {
+    // rank-3 [N=2, A=3, B=4]; reduce each single axis and a pair, vs f64 ref.
+    let dims = [2usize, 3, 4];
+    let n: usize = dims.iter().product();
+    let x = fill(n, 0xAB0);
+    for &mask in &[0b001u32, 0b010, 0b100, 0b110, 0b101, 0b011] {
+        for &mean in &[false, true] {
+            let want = ref_axis_reduce(&x, &dims, mask, mean);
+            let kind = if mean {
+                KernelCall::ReduceMean
+            } else {
+                KernelCall::ReduceSum
+            };
+            let got = run(
+                kind(ReduceCall {
+                    input: buf(0),
+                    output: buf(1),
+                    element_count: n as u64,
+                    rank: 3,
+                    dims: [2, 3, 4, 0, 0, 0, 0, 0],
+                    axes_mask: mask,
+                    keepdims: true,
+                    dtype: DTYPE_F32,
+                }),
+                vec![f32_to_le(&x), vec![0u8; n * 4]],
+                1,
+            );
+            let got = &got[..want.len()];
+            check(
+                if mean {
+                    "reduce_mean_axis"
+                } else {
+                    "reduce_sum_axis"
+                },
+                mask as usize,
+                want.len(),
+                1,
+                got,
+                &want,
+                1e-4,
+            );
+        }
     }
 }
 

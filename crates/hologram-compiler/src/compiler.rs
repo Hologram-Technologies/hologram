@@ -355,9 +355,11 @@ impl Compiler {
                         ec.out_dims = out_dims;
                     }
                 }
-                // Reduce (full reduction to a scalar): the kernel folds over
-                // its *input* elements, so `element_count` must be the input
-                // count, not the node's (scalar) output count.
+                // Reduce: the kernel folds over its *input* elements, so
+                // `element_count` is the input count (not the reduced output
+                // count). `rank`/`dims` come from the input shape; `axes_mask`/
+                // `keepdims` from the node's `ReduceAttrs` (absent ⇒ reduce all
+                // axes — full reduction to a scalar, the prior behavior).
                 if matches!(
                     kind,
                     hologram_graph::OpKind::ReduceSum
@@ -376,6 +378,15 @@ impl Compiler {
                     ) = (input_element_count(&self.graph, node), &mut kernel_call)
                     {
                         rc.element_count = in_count;
+                        let attrs = self.graph.reduce_attrs(hologram_graph::NodeId(idx as u32));
+                        if let Some((rank, dims)) = reduce_input_dims(&self.graph, node) {
+                            rc.rank = rank;
+                            rc.dims = dims;
+                            // Absent attrs ⇒ reduce all axes (mask 0 is the
+                            // kernel's "full reduction" sentinel).
+                            rc.axes_mask = attrs.map(|a| a.axes_mask).unwrap_or(0);
+                            rc.keepdims = attrs.map(|a| a.keepdims).unwrap_or(false);
+                        }
                     }
                 }
                 // Resize: same in/out dims (no broadcast constraint) — the
@@ -1008,6 +1019,30 @@ fn input_element_count(graph: &Graph, node: &hologram_graph::Node) -> Option<u64
         }
     };
     reg.get(shape).map(|d| d.total_elements())
+}
+
+/// `(rank, dims[..rank])` of a reduce node's input shape (row-major, ≤ rank 8),
+/// for filling `ReduceCall`'s axis-reduction geometry.
+fn reduce_input_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8])> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let shape = match node.inputs.first().copied()? {
+        InputSource::Node(NodeId(id)) => graph.nodes().get(id as usize)?.output_shape,
+        InputSource::Constant(cid) => graph.constants().get(cid)?.shape,
+        InputSource::GraphInput(idx) => {
+            let &NodeId(i) = graph.inputs().get(idx as usize)?;
+            graph.nodes().get(i as usize)?.output_shape
+        }
+    };
+    let d = reg.get(shape)?;
+    if d.rank as usize > 8 {
+        return None;
+    }
+    let mut dims = [0u32; 8];
+    for (i, slot) in dims.iter_mut().enumerate().take(d.rank as usize) {
+        *slot = d.dim(i).unwrap_or(0).min(u32::MAX as u64) as u32;
+    }
+    Some((d.rank, dims))
 }
 
 fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u32; 8])> {

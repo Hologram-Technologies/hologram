@@ -572,9 +572,13 @@ fn put_reduce(out: &mut Vec<u8>, c: &ReduceCall) {
     put_buf(out, c.input);
     put_buf(out, c.output);
     put_u64(out, c.element_count);
-    put_u32(out, c.axis_count);
+    put_u8(out, c.rank);
+    put_u32(out, c.axes_mask);
     put_u8(out, c.keepdims as u8);
     put_u8(out, c.dtype);
+    for i in 0..c.rank as usize {
+        put_u32(out, c.dims[i]);
+    }
 }
 fn put_layout(out: &mut Vec<u8>, c: &LayoutCall) {
     put_buf(out, c.input);

@@ -3,6 +3,7 @@
 use crate::constant::{ConstantEntry, ConstantStore};
 use crate::node::{
     ConvAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs, QuantAttrs,
+    ReduceAttrs,
 };
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
@@ -115,6 +116,8 @@ pub struct Graph {
     gemm_attrs: Vec<(NodeId, GemmAttrs)>,
     /// Sparse per-node normalization grouping (`num_groups`). Same layout.
     norm_attrs: Vec<(NodeId, NormAttrs)>,
+    /// Sparse per-node reduction axes (`axes_mask` / `keepdims`). Same layout.
+    reduce_attrs: Vec<(NodeId, ReduceAttrs)>,
 }
 
 impl Graph {
@@ -264,6 +267,22 @@ impl Graph {
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
+    /// Attach reduction axes (`axes_mask` / `keepdims`) to a node.
+    pub fn set_reduce_attrs(&mut self, id: NodeId, attrs: ReduceAttrs) {
+        if let Some(slot) = self.reduce_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.reduce_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve reduction axes for a node, or `None` (⇒ reduce all axes).
+    pub fn reduce_attrs(&self, id: NodeId) -> Option<ReduceAttrs> {
+        self.reduce_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
     /// **Path B — desugar composite ops into their primitive pipelines.**
     ///
     /// A composite op (e.g. `Clip`) has no single optimized kernel; its meaning
@@ -382,6 +401,9 @@ impl Graph {
             *nid = NodeId(map[nid.0 as usize]);
         }
         for (nid, _) in self.norm_attrs.iter_mut() {
+            *nid = NodeId(map[nid.0 as usize]);
+        }
+        for (nid, _) in self.reduce_attrs.iter_mut() {
             *nid = NodeId(map[nid.0 as usize]);
         }
         self.nodes = new;
@@ -542,6 +564,9 @@ impl Graph {
         for (nid, _) in self.norm_attrs.iter_mut() {
             *nid = to_id(map[nid.0 as usize]);
         }
+        for (nid, _) in self.reduce_attrs.iter_mut() {
+            *nid = to_id(map[nid.0 as usize]);
+        }
         self.nodes = new;
 
         // ── Phase 2: dead-node elimination ──
@@ -600,6 +625,9 @@ impl Graph {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             for (nid, _) in self.norm_attrs.iter_mut() {
+                *nid = NodeId(dmap[nid.0 as usize]);
+            }
+            for (nid, _) in self.reduce_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             self.nodes = compact;

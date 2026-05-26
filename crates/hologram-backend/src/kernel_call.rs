@@ -144,8 +144,16 @@ impl NormCall {
 pub struct ReduceCall {
     pub input: BufferRef,
     pub output: BufferRef,
+    /// Input element count (the kernel folds over these).
     pub element_count: u64,
-    pub axis_count: u32,
+    /// Input rank; `dims[..rank]` is the row-major input shape.
+    pub rank: u8,
+    pub dims: [u32; 8],
+    /// Bit `i` set ⇒ axis `i` is reduced. The output is the input shape with
+    /// every reduced axis collapsed to 1 (keepdims layout — byte-identical to
+    /// the keepdims=false layout, which only drops the size-1 axes). A mask of
+    /// `(1<<rank)-1` (or `rank == 0`) is full reduction to a scalar.
+    pub axes_mask: u32,
     pub keepdims: bool,
     pub dtype: u8,
 }
@@ -475,11 +483,16 @@ fn p_norm(c: &NormCall) -> Pb {
         .u8(c.has_residual() as u8)
 }
 fn p_reduce(c: &ReduceCall) -> Pb {
-    Pb::new()
+    let mut b = Pb::new()
         .u64(c.element_count)
-        .u32(c.axis_count)
+        .u8(c.rank)
+        .u32(c.axes_mask)
         .u8(c.keepdims as u8)
-        .u8(c.dtype)
+        .u8(c.dtype);
+    for i in 0..c.rank as usize {
+        b = b.u32(c.dims[i]);
+    }
+    b
 }
 fn p_layout(c: &LayoutCall) -> Pb {
     Pb::new().u64(c.element_count).u8(c.dtype)
