@@ -254,6 +254,66 @@ fn slice_is_zero_movement_projectfield() {
 }
 
 #[test]
+fn pad_places_data_in_zeroed_buffer() {
+    // data[2,3] padded axis-0 by (1 before, 1 after) → [4,3]: a zero row, the
+    // data, a zero row. Pad = placement into a zeroed output at offset lo.
+    let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let want = [
+        0.0f32, 0.0, 0.0, // pad-lo row
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, // data
+        0.0, 0.0, 0.0, // pad-hi row
+    ];
+    // ONNX pads (rank-2): [begin0, begin1, end0, end1] = [1,0,1,0] as i64.
+    let mut pads_bytes = Vec::new();
+    for v in [1i64, 0, 1, 0] {
+        pads_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut g = Graph::new();
+    let s_in = g.shape_registry_mut().intern(ShapeDescriptor::rank2(2, 3));
+    let s_out = g.shape_registry_mut().intern(ShapeDescriptor::rank2(4, 3));
+    let s_pads = g.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let pads = g.constants_mut().insert(ConstantEntry {
+        bytes: pads_bytes,
+        dtype: DTypeId(5), // I64
+        shape: s_pads,
+    });
+    let di = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_in,
+    });
+    g.add_input(di);
+    let pad = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Pad),
+        inputs: SmallVec::from_iter([InputSource::Node(di), InputSource::Constant(pads)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(pad)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: s_out,
+    });
+    g.add_output(out);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&data),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert_eq!(got, want, "pad did not place data in a zeroed buffer");
+}
+
+#[test]
 fn concat_primitive_places_a_then_b() {
     // Concat is the closed PrimitiveOp::Concat constructor: out = a ∥ b.
     let a = [1.0f32, 2.0, 3.0];

@@ -136,7 +136,11 @@ fn parser_accepts_every_op_in_catalog() {
         // frontend can't yet express constants, so a generic-input Slice is
         // malformed and correctly rejected. Its end-to-end behavior is covered
         // by `hologram-exec/tests/desugar.rs::slice_is_zero_movement_projectfield`.
-        if matches!(kind, hologram_graph::OpKind::Slice) {
+        // Slice (ProjectField) and Pad require *index/pad constant* operands to
+        // compute their byte regions; the bare text frontend can't express
+        // constants yet, so a generic-input form is malformed and correctly
+        // rejected. Both are covered end-to-end by hologram-exec/tests/desugar.rs.
+        if matches!(kind, hologram_graph::OpKind::Slice | hologram_graph::OpKind::Pad) {
             continue;
         }
         let arity = kind.primary_arity() as usize;

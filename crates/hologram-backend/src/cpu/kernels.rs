@@ -73,14 +73,14 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // copy is correct. The rest move/transform data and carry no params in
         // LayoutCall; they fail loud rather than silently copy (see the float
         // path for the full rationale).
-        // Reshape relabel + Slice (ProjectField, input BufferRef = sub-region)
-        // are byte copies through the offset-honoring read.
-        KernelCall::Reshape(c) | KernelCall::Slice(c) => layout_copy(c, ws),
+        // Reshape relabel + Slice (ProjectField, input = sub-region) + Pad
+        // (output = interior region of a zeroed buffer) are byte copies through
+        // the offset-honoring read/write.
+        KernelCall::Reshape(c) | KernelCall::Slice(c) | KernelCall::Pad(c) => layout_copy(c, ws),
         // Concat is byte placement (dtype-agnostic) — the same kernel serves
         // both domains.
         KernelCall::Concat(c) => ff::concat_float(c, ws),
         KernelCall::Transpose(_)
-        | KernelCall::Pad(_)
         | KernelCall::Expand(_)
         | KernelCall::Resize(_)
         | KernelCall::ConcatGrad(_)
@@ -1349,12 +1349,15 @@ fn try_dispatch_float<W: Workspace>(
         // this into a zero-movement view; this kernel is the direct-dispatch
         // path.)
         K::Slice(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
-        // Transpose / Pad / Expand / Resize (and their grads) still need their
-        // UOR-native realization (Pad = Concat with zero regions; Expand =
-        // broadcast view; Transpose = consumer-absorbed / gather). Fail loud
-        // until each lands rather than silently copy.
+        // Pad = placement into a zeroed buffer: the compiler sets the output
+        // BufferRef to the interior region [lo, lo+data) so the copy writes the
+        // data there and the freshly-zeroed pad regions remain zero — the
+        // degenerate Concat(zeros, x, zeros) realized by offset placement.
+        K::Pad(c) if is_float(c.dtype) => Some(ff::layout_float(c, ws)),
+        // Transpose / Expand / Resize (and grads) still need their UOR-native
+        // realization (Expand = broadcast view; Transpose = consumer-absorbed /
+        // gather). Fail loud until each lands rather than silently copy.
         K::Transpose(c)
-        | K::Pad(c)
         | K::Expand(c)
         | K::Resize(c)
         | K::ConcatGrad(c)

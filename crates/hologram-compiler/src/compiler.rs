@@ -282,6 +282,23 @@ impl Compiler {
                         lc.input.length = len;
                     }
                 }
+                // Pad = placement into a zeroed buffer: write the data into the
+                // output's interior [lo, lo+data) (axis-0). The fresh output
+                // buffer is zeroed, so the pad regions remain zero.
+                if matches!(kind, hologram_graph::OpKind::Pad) {
+                    if let KernelCall::Pad(lc) = &mut kernel_call {
+                        let (lo_off, data_len, data_count) = pad_view_bytes(&self.graph, node)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                        lc.input = BufferRef {
+                            slot: lc.input.slot,
+                            offset: 0,
+                            length: data_len,
+                        };
+                        lc.output.offset = lo_off;
+                        lc.output.length = data_len;
+                        lc.element_count = data_count;
+                    }
+                }
                 level_calls.push(kernel_calls.len() as u32);
                 kernel_calls.push(kernel_call);
                 certificate_records.push(cert_record);
@@ -694,4 +711,53 @@ fn slice_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, 
     let offset = start as u64 * inner * elem;
     let len = (end - start) as u64 * inner * elem;
     Some((offset, len))
+}
+
+/// Compute the axis-0 Pad placement as `(lo_byte_offset, data_byte_len,
+/// data_count)`: data is copied into the zeroed output at byte offset
+/// `lo·inner·elem`. `Pad(data, pads, ...)` with `pads` an i64 [2·rank] ONNX
+/// tensor (`[begin_0..begin_{r-1}, end_0..end_{r-1}]`). Returns `None` unless
+/// only axis-0 is padded (every inner begin/end is 0) — anything else is a
+/// non-contiguous pad that this offset-placement form cannot represent.
+fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u64, u64)> {
+    use hologram_graph::{InputSource, NodeId};
+    if node.inputs.len() < 2 {
+        return None;
+    }
+    let reg = graph.shape_registry();
+    let data_shape = match node.inputs[0] {
+        InputSource::Node(NodeId(id)) => graph
+            .nodes()
+            .get(id as usize)
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+        InputSource::Constant(cid) => graph.constants().get(cid).and_then(|e| reg.get(e.shape).cloned()),
+        InputSource::GraphInput(idx) => graph
+            .inputs()
+            .get(idx as usize)
+            .and_then(|&NodeId(i)| graph.nodes().get(i as usize))
+            .and_then(|n| reg.get(n.output_shape).cloned()),
+    }?;
+    let rank = data_shape.rank as usize;
+    let inner: u64 = (1..rank).map(|i| data_shape.dim(i).unwrap_or(1)).product();
+    let data_count: u64 = (0..rank).map(|i| data_shape.dim(i).unwrap_or(1)).product();
+    let pads = match node.inputs[1] {
+        InputSource::Constant(cid) => &graph.constants().get(cid)?.bytes,
+        _ => return None,
+    };
+    // i64 [2·rank]; require every inner (axis ≥ 1) begin and end to be zero.
+    if rank == 0 || pads.len() < 8 {
+        return None;
+    }
+    let pad_at = |i: usize| -> Option<i64> {
+        pads.get(i * 8..i * 8 + 8)
+            .map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+    };
+    for axis in 1..rank {
+        if pad_at(axis).unwrap_or(0) != 0 || pad_at(rank + axis).unwrap_or(0) != 0 {
+            return None; // inner-axis pad — not a contiguous placement
+        }
+    }
+    let lo = pad_at(0).unwrap_or(0).max(0) as u64;
+    let elem = bytes_per_element(node.output_dtype.0) as u64;
+    Some((lo * inner * elem, data_count * elem, data_count))
 }
