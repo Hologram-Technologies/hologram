@@ -37,6 +37,10 @@ pub struct ShapeArgs {
 
     // Norm / softmax
     pub feature: u32,
+    /// Channel count (GroupNorm/InstanceNorm); 0 for plain LayerNorm/RmsNorm.
+    pub norm_channels: u32,
+    /// Group count (GroupNorm/InstanceNorm); 0 ⇒ ungrouped.
+    pub num_groups: u32,
 
     // Pooling (batch + channels share the conv2d fields)
 
@@ -157,8 +161,6 @@ impl ShapeArgs {
                     | OpKind::LogSoftmax
                     | OpKind::LayerNorm
                     | OpKind::RmsNorm
-                    | OpKind::GroupNorm
-                    | OpKind::InstanceNorm
                     | OpKind::AddRmsNorm
             )
         ) {
@@ -168,6 +170,29 @@ impl ShapeArgs {
                     a.feature = s.dim(rank - 1).unwrap_or(0).min(u32::MAX as u64) as u32;
                     let batch: u64 = (0..rank - 1).map(|i| s.dim(i).unwrap_or(1)).product();
                     a.batch = batch.min(u32::MAX as u64) as u32;
+                }
+            }
+        }
+
+        // GroupNorm / InstanceNorm normalize per-sample, per-group over the
+        // channel × spatial elements (input `[N, C, *spatial]`): `batch` = N,
+        // `norm_channels` = C, `feature` = the per-sample element count
+        // (C × spatial). `num_groups` is filled by the compiler attr-fill pass
+        // (GroupNorm: from `NormAttrs`; InstanceNorm: = C).
+        if matches!(
+            node.op,
+            hologram_graph::GraphOp::Op(OpKind::GroupNorm | OpKind::InstanceNorm)
+        ) {
+            if let Some(s) = &in0 {
+                if s.rank >= 2 {
+                    let nn = s.dim(0).unwrap_or(0);
+                    a.batch = nn.min(u32::MAX as u64) as u32;
+                    a.norm_channels = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    let total: u64 = (0..s.rank as usize)
+                        .map(|i| s.dim(i).unwrap_or(1))
+                        .product();
+                    let per_sample = total.checked_div(nn).unwrap_or(0);
+                    a.feature = per_sample.min(u32::MAX as u64) as u32;
                 }
             }
         }
@@ -314,6 +339,8 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         output: node.output,
         batch: s.batch,
         feature: s.feature,
+        channels: s.norm_channels,
+        num_groups: s.num_groups,
         epsilon_bits: 0,
         dtype: node.dtype,
     };
@@ -325,6 +352,8 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         output: node.output,
         batch: s.batch,
         feature: s.feature,
+        channels: 0,
+        num_groups: 0,
         epsilon_bits: 0,
         dtype: node.dtype,
     };

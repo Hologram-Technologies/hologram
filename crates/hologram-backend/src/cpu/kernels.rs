@@ -387,6 +387,9 @@ fn conv2d_w8<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), BackendErro
 
 /// LayerNorm (byte-domain reference): subtract mean, scale by gamma, add beta.
 fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    if c.num_groups > 0 {
+        return group_norm_w8(c, ws);
+    }
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 {
@@ -412,6 +415,55 @@ fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendEr
             let g = *gamma.get(j).unwrap_or(&1);
             let bv = *beta.get(j).unwrap_or(&0);
             out[bi * f + j] = centered.wrapping_mul(g).wrapping_add(bv);
+        }
+    }
+    Ok(())
+}
+
+/// GroupNorm / InstanceNorm (byte-domain reference): per-sample, per-group
+/// mean subtraction with per-channel `gamma`/`beta`. Mirrors `group_norm_float`
+/// over the wrapping byte ring.
+fn group_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
+    let n = c.batch as usize;
+    let f = c.feature as usize;
+    let ch = c.channels as usize;
+    let g = c.num_groups as usize;
+    if n == 0 || f == 0 {
+        return Ok(());
+    }
+    if ch == 0 || g == 0 || !f.is_multiple_of(ch) || !f.is_multiple_of(g) || !ch.is_multiple_of(g) {
+        return Err(BackendError::UnsupportedOp(
+            "group_norm: require channels|feature, num_groups|feature, num_groups|channels",
+        ));
+    }
+    let spatial = f / ch;
+    let group_size = f / g;
+    let (reads, out) = ws
+        .split_borrow(&[c.x, c.gamma, c.beta], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let xs = reads[0]
+        .get(..n * f)
+        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
+    let gamma = reads[1].get(..ch).unwrap_or(&[]);
+    let beta = reads[2].get(..ch).unwrap_or(&[]);
+    if out.len() < n * f {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for ni in 0..n {
+        let sample = ni * f;
+        for gi in 0..g {
+            let gbase = sample + gi * group_size;
+            let grp = &xs[gbase..gbase + group_size];
+            let mean =
+                grp.iter().fold(0u32, |a, b| a.wrapping_add(*b as u32)) / group_size.max(1) as u32;
+            let mean = (mean & 0xFF) as u8;
+            for i in 0..group_size {
+                let ci = (gi * group_size + i) / spatial;
+                let centered = grp[i].wrapping_sub(mean);
+                let gv = *gamma.get(ci).unwrap_or(&1);
+                let bv = *beta.get(ci).unwrap_or(&0);
+                out[gbase + i] = centered.wrapping_mul(gv).wrapping_add(bv);
+            }
         }
     }
     Ok(())

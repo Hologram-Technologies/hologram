@@ -325,6 +325,25 @@ impl Compiler {
                             .ok_or(CompileError::CompletenessFailure)?;
                     }
                 }
+                // GroupNorm/InstanceNorm: fill `num_groups`. GroupNorm reads the
+                // node's `NormAttrs` (ONNX `num_groups`, default 1); InstanceNorm
+                // is the per-channel case, so `num_groups = channels`. `channels`
+                // and per-sample `feature` were derived in `ShapeArgs::from_graph`.
+                if matches!(kind, hologram_graph::OpKind::GroupNorm) {
+                    if let KernelCall::GroupNorm(nc) = &mut kernel_call {
+                        nc.num_groups = self
+                            .graph
+                            .norm_attrs(hologram_graph::NodeId(idx as u32))
+                            .unwrap_or_default()
+                            .num_groups
+                            .max(1);
+                    }
+                }
+                if matches!(kind, hologram_graph::OpKind::InstanceNorm) {
+                    if let KernelCall::InstanceNorm(nc) = &mut kernel_call {
+                        nc.num_groups = nc.channels.max(1);
+                    }
+                }
                 // Expand: in_dims (input shape) + out_dims (output shape) for
                 // the broadcast gather.
                 if matches!(kind, hologram_graph::OpKind::Expand) {

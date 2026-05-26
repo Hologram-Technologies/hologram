@@ -131,3 +131,20 @@ impl Default for LrnAttrs {
         }
     }
 }
+
+/// Per-node normalization grouping attribute. Stored sparsely on
+/// `Graph::norm_attrs` keyed by `NodeId`. Only `GroupNorm` reads it; the
+/// compiler derives `InstanceNorm`'s effective group count (= channels) and
+/// leaves `LayerNorm`/`RmsNorm` ungrouped. `num_groups = 1` is plain
+/// per-sample normalization over all channels × spatial (the ONNX default
+/// for GroupNorm is supplied explicitly by the frontend).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NormAttrs {
+    pub num_groups: u32,
+}
+
+impl Default for NormAttrs {
+    fn default() -> Self {
+        Self { num_groups: 1 }
+    }
+}
