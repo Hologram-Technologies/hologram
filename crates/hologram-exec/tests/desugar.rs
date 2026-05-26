@@ -8,7 +8,7 @@
 //! numerically correct end-to-end (not the old silent identity / fail-loud).
 
 use hologram_backend::CpuBackend;
-use hologram_compiler::{compile, BackendKind};
+use hologram_compiler::{compile, compile_from_source, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     constant::ConstantEntry,
@@ -28,6 +28,36 @@ fn le_to_f32(b: &[u8]) -> Vec<f32> {
     b.chunks_exact(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
+}
+
+#[test]
+fn source_grammar_clip_end_to_end() {
+    // The text frontend expresses shapes + constant operands: a Clip with its
+    // bounds as `const` tensors, compiled from source and executed. Proves the
+    // grammar drives a real UOR-native op end-to-end (Clip → Min∘Max).
+    let src = "\
+input x :4
+const lo :4 = -0.5,-0.5,-0.5,-0.5
+const hi :4 = 0.5,0.5,0.5,0.5
+op clip x lo hi :4 as=y
+output y
+";
+    let x = [-1.0f32, 0.0, 0.3, 1.0];
+    let want = [-0.5f32, 0.0, 0.3, 0.5];
+    let compiled = compile_from_source(src, WittLevel::W32, BackendKind::Cpu).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        assert!((gv - wv).abs() < 1e-6, "source clip[{i}]: got {gv}, want {wv}");
+    }
 }
 
 #[test]
