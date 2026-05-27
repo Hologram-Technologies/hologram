@@ -910,6 +910,20 @@ impl<B: SessionBackend> InferenceSession<B> {
     pub fn output_count(&self) -> usize {
         self.outputs.len()
     }
+
+    /// Resident bytes in the content-addressed pool, deduplicated by κ-label —
+    /// the runtime memory footprint of all interned values. Two values with the
+    /// same content address occupy one buffer (the *distinct* set, not the
+    /// total). Covers both the pinned tier (archive-embedded constants/weights)
+    /// and the transient tier (interned inputs + intermediates), so the readout
+    /// reflects embedded-weight models too.
+    pub fn resident_bytes(&self) -> usize {
+        self.pool.pinned_bytes() + self.pool.transient_bytes()
+    }
+    /// Number of distinct resident values in the pool (deduped by κ-label).
+    pub fn resident_count(&self) -> usize {
+        self.pool.resident_len()
+    }
     pub fn schedule_levels(&self) -> usize {
         self.exec_plan.len()
     }

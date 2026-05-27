@@ -112,6 +112,37 @@ fn identical_reexecution_is_fully_memoized() {
 }
 
 #[test]
+fn runtime_weight_footprint_is_the_deduplicated_set() {
+    // `resident_bytes`/`resident_count` report the *distinct* content-addressed
+    // set — the deduplicated runtime memory footprint — covering both the pinned
+    // constant (`scale`) and the transient inputs/intermediates.
+    let mut session = build_session();
+    assert_eq!(session.resident_count(), session.content_store_len());
+
+    let x = f32_to_le(&[-3.0, 1.0, 2.0, -1.0]);
+    let y = f32_to_le(&[1.0, 2.0, 3.0, -1.0]);
+    session
+        .execute(&[InputBuffer { bytes: &x }, InputBuffer { bytes: &y }])
+        .unwrap();
+
+    let bytes_after = session.resident_bytes();
+    let count_after = session.resident_count();
+    assert!(
+        bytes_after > 0,
+        "footprint must include the pinned constant"
+    );
+    assert_eq!(session.resident_count(), session.content_store_len());
+
+    // Identical re-execution is all memo hits: the deduplicated footprint stays
+    // flat (no new buffer for content that already has an address).
+    session
+        .execute(&[InputBuffer { bytes: &x }, InputBuffer { bytes: &y }])
+        .unwrap();
+    assert_eq!(session.resident_bytes(), bytes_after);
+    assert_eq!(session.resident_count(), count_after);
+}
+
+#[test]
 fn addressed_io_matches_byte_io_and_never_rehashes() {
     let mut session = build_session();
     let x = f32_to_le(&[-3.0, 1.0, 2.0, -1.0]);
