@@ -22,7 +22,12 @@ fn blake3_label_str(digest: &[u8; 32]) -> String {
 #[test]
 fn as_sigma_axis_matches_independent_blake3_reference() {
     // External authority: the upstream `blake3` crate (the algorithm authors' impl).
-    for input in [&b""[..], b"hologram", b"the quick brown fox", &[0u8; 4096][..]] {
+    for input in [
+        &b""[..],
+        b"hologram",
+        b"the quick brown fox",
+        &[0u8; 4096][..],
+    ] {
         let reference = blake3::hash(input);
         let expected = blake3_label_str(reference.as_bytes());
         let ours = address_bytes(input);
@@ -52,7 +57,11 @@ fn st2_put_is_idempotent_no_duplicate_write() {
     let a = store.put("blake3", b"payload").unwrap();
     let b = store.put("blake3", b"payload").unwrap();
     assert_eq!(a, b);
-    assert_eq!(store.approximate_count(), 1, "idempotent put must not duplicate storage");
+    assert_eq!(
+        store.approximate_count(),
+        1,
+        "idempotent put must not duplicate storage"
+    );
 }
 
 #[test]
@@ -80,7 +89,10 @@ fn st_pin_unpin_roundtrip() {
     assert_eq!(store.pinned_roots(), vec![k]);
     store.unpin(&k).unwrap();
     assert!(store.pinned_roots().is_empty());
-    assert!(store.unpin(&k).is_err(), "unpin of a non-pinned κ is NotPinned");
+    assert!(
+        store.unpin(&k).is_err(),
+        "unpin of a non-pinned κ is NotPinned"
+    );
 }
 
 // ───────────────────────────── ST/§10.8 + RZ — reachability eviction ─────────────────────────────
@@ -93,7 +105,11 @@ fn st10_8_gc_retains_reachable_evicts_unreachable() {
     let code = store.put("blake3", b"wasm-module-bytes").unwrap();
     let state = store.put("blake3", b"initial-state").unwrap();
     let params = store.put("blake3", b"params").unwrap();
-    let manifest = ContainerManifest { code, initial_state: state, parameters: params };
+    let manifest = ContainerManifest {
+        code,
+        initial_state: state,
+        parameters: params,
+    };
     let manifest_bytes = manifest.canonicalize();
     let manifest_k = store.put("blake3", &manifest_bytes).unwrap();
 
@@ -117,7 +133,11 @@ fn rz_references_inverse_projection_is_exact() {
     let code = address_bytes(b"c");
     let state = address_bytes(b"s");
     let params = address_bytes(b"p");
-    let m = ContainerManifest { code, initial_state: state, parameters: params };
+    let m = ContainerManifest {
+        code,
+        initial_state: state,
+        parameters: params,
+    };
     let refs = ContainerManifest::references(&m.canonicalize()).unwrap();
     assert_eq!(refs, vec![code, state, params]);
 }

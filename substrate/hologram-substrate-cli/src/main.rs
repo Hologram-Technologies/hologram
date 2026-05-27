@@ -11,7 +11,10 @@ use hologram_store_native::NativeKappaStore;
 use hologram_substrate_cli::{parse_kappa, run, CliError, Command, Outcome};
 
 #[derive(Parser)]
-#[command(name = "hologram", about = "Hologram deployment-substrate node (κ-label store/route)")]
+#[command(
+    name = "hologram",
+    about = "Hologram deployment-substrate node (κ-label store/route)"
+)]
 struct Cli {
     /// Path to the node's redb store.
     #[arg(long, default_value = "hologram-store.redb")]
@@ -43,7 +46,11 @@ enum Verb {
     /// Re-derive a file's bytes through the σ-axis and check they match a κ-label (SPINE-4).
     Verify { kappa: String, file: PathBuf },
     /// Build a Container manifest from three κ-labels (code, state, params); print the Container ID.
-    Manifest { code: String, state: String, params: String },
+    Manifest {
+        code: String,
+        state: String,
+        params: String,
+    },
     /// Spawn a real Wasm container (Wasmtime), optionally deliver one event file, then suspend;
     /// print the snapshot κ-label.
     Spawn {
@@ -87,23 +94,45 @@ enum Verb {
 fn build(verb: Verb) -> Result<Command, String> {
     let rd = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("read {}: {e}", p.display()));
     Ok(match verb {
-        Verb::Put { axis, file } => Command::Put { axis, bytes: rd(&file)? },
+        Verb::Put { axis, file } => Command::Put {
+            axis,
+            bytes: rd(&file)?,
+        },
         Verb::Get { kappa } => Command::Get(parse_kappa(&kappa).map_err(badk)?),
         Verb::Pin { kappa } => Command::Pin(parse_kappa(&kappa).map_err(badk)?),
         Verb::Unpin { kappa } => Command::Unpin(parse_kappa(&kappa).map_err(badk)?),
         Verb::Gc => Command::Gc,
         Verb::Ls => Command::Ls,
         Verb::Inspect { kappa } => Command::Inspect(parse_kappa(&kappa).map_err(badk)?),
-        Verb::Verify { kappa, file } => {
-            Command::Verify { kappa: parse_kappa(&kappa).map_err(badk)?, bytes: rd(&file)? }
-        }
-        Verb::Manifest { code, state, params } => Command::Manifest {
+        Verb::Verify { kappa, file } => Command::Verify {
+            kappa: parse_kappa(&kappa).map_err(badk)?,
+            bytes: rd(&file)?,
+        },
+        Verb::Manifest {
+            code,
+            state,
+            params,
+        } => Command::Manifest {
             code: parse_kappa(&code).map_err(badk)?,
             initial_state: parse_kappa(&state).map_err(badk)?,
             parameters: parse_kappa(&params).map_err(badk)?,
         },
-        Verb::Caps { roots, publish, subscribe, quota, memory_max, cpu_ms, fetch, announce } => {
-            let ks = |v: Vec<String>| v.iter().map(|s| parse_kappa(s)).collect::<Result<Vec<_>, _>>().map_err(badk);
+        Verb::Caps {
+            roots,
+            publish,
+            subscribe,
+            quota,
+            memory_max,
+            cpu_ms,
+            fetch,
+            announce,
+        } => {
+            let ks = |v: Vec<String>| {
+                v.iter()
+                    .map(|s| parse_kappa(s))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(badk)
+            };
             Command::Caps(hologram_substrate_core::Capabilities {
                 storage_roots: ks(roots)?,
                 publish_channels: ks(publish)?,
@@ -127,7 +156,11 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.verb {
         // Container/network verbs need the runtime/engine/server, not the store-generic `run`.
-        Verb::Spawn { container, caps, event } => run_spawn(&cli.store, &container, &caps, event),
+        Verb::Spawn {
+            container,
+            caps,
+            event,
+        } => run_spawn(&cli.store, &container, &caps, event),
         Verb::Serve { listen } => run_serve(&cli.store, &listen),
         // Storage/addressing verbs.
         other => {
@@ -148,7 +181,12 @@ fn main() -> ExitCode {
 }
 
 /// `hologram spawn` — run a real Wasm container, deliver an optional event, suspend, print snapshot κ.
-fn run_spawn(store_path: &std::path::Path, container: &str, caps: &str, event: Option<PathBuf>) -> ExitCode {
+fn run_spawn(
+    store_path: &std::path::Path,
+    container: &str,
+    caps: &str,
+    event: Option<PathBuf>,
+) -> ExitCode {
     use hologram_runtime::Runtime;
     use hologram_runtime_wasmtime::WasmtimeEngine;
     use hologram_substrate_core::ContainerRuntime;
@@ -199,7 +237,10 @@ fn run_serve(store_path: &std::path::Path, listen: &str) -> ExitCode {
         Ok(s) => s,
         Err(e) => return fail(format!("listen on {listen}: {e}")),
     };
-    eprintln!("hologram: HTTP-CAS gateway on http://{}/cas/{{kappa}}", server.addr());
+    eprintln!(
+        "hologram: HTTP-CAS gateway on http://{}/cas/{{kappa}}",
+        server.addr()
+    );
     // Park; the server thread handles requests until the process is terminated.
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));

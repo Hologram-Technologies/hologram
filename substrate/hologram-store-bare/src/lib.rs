@@ -35,7 +35,10 @@ fn noop_raw_waker() -> RawWaker {
     fn clone(_: *const ()) -> RawWaker {
         noop_raw_waker()
     }
-    RawWaker::new(core::ptr::null(), &RawWakerVTable::new(clone, no_op, no_op, no_op))
+    RawWaker::new(
+        core::ptr::null(),
+        &RawWakerVTable::new(clone, no_op, no_op, no_op),
+    )
 }
 fn block_on<F: Future>(f: F) -> F::Output {
     let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
@@ -69,7 +72,10 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
     /// Open a store on `device`, loading any previously-persisted image (empty if unformatted).
     pub fn open(device: D) -> Result<Self, StoreError> {
         let inner = Self::load(&device)?;
-        Ok(Self { device, inner: Mutex::new(inner) })
+        Ok(Self {
+            device,
+            inner: Mutex::new(inner),
+        })
     }
 
     fn ss(device: &D) -> usize {
@@ -135,16 +141,24 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
         };
         let nb = rd_u32(buf, &mut cur).ok_or(StoreError::BackendFailure("trunc"))?;
         for _ in 0..nb {
-            let key: Key = buf.get(cur..cur + 71).and_then(|s| s.try_into().ok()).ok_or(StoreError::BackendFailure("trunc"))?;
+            let key: Key = buf
+                .get(cur..cur + 71)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(StoreError::BackendFailure("trunc"))?;
             cur += 71;
             let len = rd_u32(buf, &mut cur).ok_or(StoreError::BackendFailure("trunc"))? as usize;
-            let bytes = buf.get(cur..cur + len).ok_or(StoreError::BackendFailure("trunc"))?;
+            let bytes = buf
+                .get(cur..cur + len)
+                .ok_or(StoreError::BackendFailure("trunc"))?;
             cur += len;
             inner.blobs.insert(key, Bytes::from(bytes.to_vec()));
         }
         let np = rd_u32(buf, &mut cur).ok_or(StoreError::BackendFailure("trunc"))?;
         for _ in 0..np {
-            let key: Key = buf.get(cur..cur + 71).and_then(|s| s.try_into().ok()).ok_or(StoreError::BackendFailure("trunc"))?;
+            let key: Key = buf
+                .get(cur..cur + 71)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(StoreError::BackendFailure("trunc"))?;
             cur += 71;
             inner.pinned.insert(key);
         }
@@ -186,7 +200,9 @@ impl<D: BlockDevice> KappaStore for BareMetalKappaStore<D> {
         if inner.blobs.contains_key(kappa.as_array()) {
             return Ok(kappa); // idempotent — no rewrite
         }
-        inner.blobs.insert(*kappa.as_array(), Bytes::from(canonical_bytes.to_vec()));
+        inner
+            .blobs
+            .insert(*kappa.as_array(), Bytes::from(canonical_bytes.to_vec()));
         self.flush(&inner)?;
         Ok(kappa)
     }
@@ -214,11 +230,21 @@ impl<D: BlockDevice> KappaStore for BareMetalKappaStore<D> {
     }
 
     fn iterate(&self) -> Vec<KappaLabel71> {
-        self.inner.lock().blobs.keys().filter_map(|k| KappaLabel::from_bytes(k).ok()).collect()
+        self.inner
+            .lock()
+            .blobs
+            .keys()
+            .filter_map(|k| KappaLabel::from_bytes(k).ok())
+            .collect()
     }
 
     fn pinned_roots(&self) -> Vec<KappaLabel71> {
-        self.inner.lock().pinned.iter().filter_map(|k| KappaLabel::from_bytes(k).ok()).collect()
+        self.inner
+            .lock()
+            .pinned
+            .iter()
+            .filter_map(|k| KappaLabel::from_bytes(k).ok())
+            .collect()
     }
 
     fn approximate_count(&self) -> usize {
@@ -226,7 +252,12 @@ impl<D: BlockDevice> KappaStore for BareMetalKappaStore<D> {
     }
 
     fn approximate_bytes(&self) -> u64 {
-        self.inner.lock().blobs.values().map(|b| b.len() as u64).sum()
+        self.inner
+            .lock()
+            .blobs
+            .values()
+            .map(|b| b.len() as u64)
+            .sum()
     }
 }
 
@@ -244,10 +275,13 @@ mod unit {
     fn image_serialize_roundtrips() {
         let mut inner = Inner::default();
         let k = address_bytes(b"x");
-        inner.blobs.insert(*k.as_array(), Bytes::from(b"hello".to_vec()));
+        inner
+            .blobs
+            .insert(*k.as_array(), Bytes::from(b"hello".to_vec()));
         inner.pinned.insert(*k.as_array());
         let img = BareMetalKappaStore::<hologram_bare_hal::RamBlockDevice>::serialize(&inner);
-        let back = BareMetalKappaStore::<hologram_bare_hal::RamBlockDevice>::deserialize(&img).unwrap();
+        let back =
+            BareMetalKappaStore::<hologram_bare_hal::RamBlockDevice>::deserialize(&img).unwrap();
         assert_eq!(back.blobs.get(k.as_array()).unwrap().as_ref(), b"hello");
         assert!(back.pinned.contains(k.as_array()));
     }

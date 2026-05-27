@@ -15,7 +15,9 @@ fn driver_kappa(name: &str) -> hologram_substrate_core::KappaLabel71 {
     let read = CodeModuleValue::function("read", &[], &ret, &body);
     let write = CodeModuleValue::function("write", &[], &ret, &body);
     let module = CodeModuleValue::module(name, &[read, write]);
-    address_blake3(module.tagged_bytes()).expect("κ-label").address
+    address_blake3(module.tagged_bytes())
+        .expect("κ-label")
+        .address
 }
 
 #[test]
@@ -35,10 +37,17 @@ fn driver_loads_through_the_same_manifest_machinery_as_a_container() {
     let code = driver_kappa("virtio-blk-driver");
     let state = hologram_substrate_core::address_bytes(b"driver-config");
     let params = hologram_substrate_core::address_bytes(b"{}");
-    let manifest = ContainerManifest { code, initial_state: state, parameters: params };
+    let manifest = ContainerManifest {
+        code,
+        initial_state: state,
+        parameters: params,
+    };
 
     // The driver's code-κ is recovered by the manifest's references() inverse projection (SPINE-3) —
     // the engine fetches + verifies + loads it exactly like container Wasm. No bespoke driver code.
     let refs = ContainerManifest::references(&manifest.canonicalize()).unwrap();
-    assert_eq!(refs[0], code, "the manifest references the driver codemodule κ");
+    assert_eq!(
+        refs[0], code,
+        "the manifest references the driver codemodule κ"
+    );
 }

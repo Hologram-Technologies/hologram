@@ -39,18 +39,35 @@ impl WasmBlockDevice {
         let module = Module::new(&engine, code).map_err(ifail)?;
         let mut store = Store::new(&engine, ());
         let instance = Instance::new(&mut store, &module, &[]).map_err(ifail)?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or(RuntimeError::InstantiationFailed("driver exports no memory"))?;
-        let ss: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "sector_size").map_err(ifail)?;
-        let sc: TypedFunc<(), i64> = instance.get_typed_func(&mut store, "sector_count").map_err(ifail)?;
+        let memory =
+            instance
+                .get_memory(&mut store, "memory")
+                .ok_or(RuntimeError::InstantiationFailed(
+                    "driver exports no memory",
+                ))?;
+        let ss: TypedFunc<(), i32> = instance
+            .get_typed_func(&mut store, "sector_size")
+            .map_err(ifail)?;
+        let sc: TypedFunc<(), i64> = instance
+            .get_typed_func(&mut store, "sector_count")
+            .map_err(ifail)?;
         let read = instance.get_typed_func(&mut store, "read").map_err(ifail)?;
-        let write = instance.get_typed_func(&mut store, "write").map_err(ifail)?;
-        let flush = instance.get_typed_func(&mut store, "flush").map_err(ifail)?;
+        let write = instance
+            .get_typed_func(&mut store, "write")
+            .map_err(ifail)?;
+        let flush = instance
+            .get_typed_func(&mut store, "flush")
+            .map_err(ifail)?;
         let sector_size = ss.call(&mut store, ()).map_err(ifail)? as u32;
         let sector_count = sc.call(&mut store, ()).map_err(ifail)? as u64;
         Ok(Self {
-            inner: Mutex::new(Driver { store, memory, read, write, flush }),
+            inner: Mutex::new(Driver {
+                store,
+                memory,
+                read,
+                write,
+                flush,
+            }),
             sector_size,
             sector_count,
             uuid: [0x77; 16],
@@ -69,13 +86,16 @@ impl BlockDevice for WasmBlockDevice {
     async fn read(&self, lba: u64, sectors: u32, buffer: &mut [u8]) -> Result<(), DeviceError> {
         let mut guard = self.inner.lock();
         let d = &mut *guard; // reborrow so disjoint fields (read/store/memory) can be split-borrowed
-        // The driver copies disk[lba..] → its scratch region; the host then reads it out.
+                             // The driver copies disk[lba..] → its scratch region; the host then reads it out.
         d.read
             .call(&mut d.store, (lba as i64, sectors as i32, IO_PTR))
             .map_err(|_| DeviceError::HardwareFault(1))?;
         let off = IO_PTR as usize;
         let data = d.memory.data(&d.store);
-        buffer.copy_from_slice(data.get(off..off + buffer.len()).ok_or(DeviceError::OutOfRange)?);
+        buffer.copy_from_slice(
+            data.get(off..off + buffer.len())
+                .ok_or(DeviceError::OutOfRange)?,
+        );
         Ok(())
     }
     async fn write(&self, lba: u64, sectors: u32, buffer: &[u8]) -> Result<(), DeviceError> {
@@ -84,7 +104,9 @@ impl BlockDevice for WasmBlockDevice {
         // The host stages bytes in the driver's scratch region; the driver copies them → disk[lba..].
         let off = IO_PTR as usize;
         let dst = d.memory.data_mut(&mut d.store);
-        dst.get_mut(off..off + buffer.len()).ok_or(DeviceError::OutOfRange)?.copy_from_slice(buffer);
+        dst.get_mut(off..off + buffer.len())
+            .ok_or(DeviceError::OutOfRange)?
+            .copy_from_slice(buffer);
         d.write
             .call(&mut d.store, (lba as i64, sectors as i32, IO_PTR))
             .map_err(|_| DeviceError::HardwareFault(2))?;
@@ -93,7 +115,9 @@ impl BlockDevice for WasmBlockDevice {
     async fn flush(&self) -> Result<(), DeviceError> {
         let mut guard = self.inner.lock();
         let d = &mut *guard;
-        d.flush.call(&mut d.store, ()).map_err(|_| DeviceError::HardwareFault(3))?;
+        d.flush
+            .call(&mut d.store, ())
+            .map_err(|_| DeviceError::HardwareFault(3))?;
         Ok(())
     }
     fn device_uuid(&self) -> [u8; 16] {

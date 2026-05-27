@@ -6,10 +6,12 @@
 //! `cargo run -p hologram-runtime-wasmtime --example wasm_inference_container`.
 
 use hologram_realizations::{CapabilitySet, ContainerManifest};
-use hologram_runtime::{Runtime};
+use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
+use hologram_substrate_core::{
+    address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization,
+};
 
 /// hg_event(input_κ): storage_get the input (granted root) → mem[100], transform, storage_put output.
 const INFER_WAT: &str = r#"
@@ -33,16 +35,35 @@ fn main() {
         let input_k = store.put("blake3", input).unwrap();
 
         // The container's code + a capability set granting it read access to the input.
-        let code = store.put("blake3", &wat::parse_str(INFER_WAT).unwrap()).unwrap();
-        let cid = store.put("blake3", &ContainerManifest { code, initial_state: code, parameters: code }.canonicalize()).unwrap();
+        let code = store
+            .put("blake3", &wat::parse_str(INFER_WAT).unwrap())
+            .unwrap();
+        let cid = store
+            .put(
+                "blake3",
+                &ContainerManifest {
+                    code,
+                    initial_state: code,
+                    parameters: code,
+                }
+                .canonicalize(),
+            )
+            .unwrap();
         let caps = store
-            .put("blake3", &CapabilitySet::new(Capabilities {
-                storage_roots: vec![input_k], // may read the input κ (and its closure)
-                storage_quota_bytes: 1 << 20,
-                network_fetch: false, network_announce: false,
-                publish_channels: vec![], subscribe_channels: vec![],
-                memory_max_bytes: 4 << 20, cpu_time_per_event_ms: 1000,
-            }).canonicalize())
+            .put(
+                "blake3",
+                &CapabilitySet::new(Capabilities {
+                    storage_roots: vec![input_k], // may read the input κ (and its closure)
+                    storage_quota_bytes: 1 << 20,
+                    network_fetch: false,
+                    network_announce: false,
+                    publish_channels: vec![],
+                    subscribe_channels: vec![],
+                    memory_max_bytes: 4 << 20,
+                    cpu_time_per_event_ms: 1000,
+                })
+                .canonicalize(),
+            )
             .unwrap();
 
         let rt = Runtime::new(WasmtimeEngine::new(), store);
@@ -51,12 +72,20 @@ fn main() {
 
         // Deliver the input κ as the event; the container reads it, transforms, and writes the output.
         let bytes_read = rt.deliver_event(h, input_k.as_array()).unwrap();
-        println!("infer     : read {} input bytes via storage_get, wrote output via storage_put", bytes_read);
+        println!(
+            "infer     : read {} input bytes via storage_get, wrote output via storage_put",
+            bytes_read
+        );
 
         // The output κ (echo transform → same content as the input) is now in the κ-graph.
         let output_k = address_bytes(input); // echo: output content == input content
-        assert!(rt.store().contains(&output_k), "inference output persisted as a κ");
+        assert!(
+            rt.store().contains(&output_k),
+            "inference output persisted as a κ"
+        );
         println!("output κ  : {}", output_k.as_str());
-        println!("OK — Wasm inference container read+wrote the κ-graph through capability-gated imports");
+        println!(
+            "OK — Wasm inference container read+wrote the κ-graph through capability-gated imports"
+        );
     });
 }

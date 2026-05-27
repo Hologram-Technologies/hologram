@@ -1,6 +1,6 @@
 //! # hologram-runtime-wasmtime
 //!
-//! The production [`ContainerEngine`](hologram_runtime::ContainerEngine) backend (spec §7.2
+//! The production [`hologram_runtime::ContainerEngine`] backend (spec §7.2
 //! Option A): real Wasm execution via Wasmtime + Cranelift, with linear-memory snapshot/restore
 //! **and the host import surface** wired through a `Linker` (spec §4.4), **capability-gated at the
 //! import boundary** (§10.4). Plugging this into `hologram_runtime::Runtime` makes
@@ -114,14 +114,21 @@ impl WasmtimeEngine {
         let ifail = |_| RuntimeError::InstantiationFailed("linker");
 
         linker
-            .func_wrap("hologram", "log", |mut caller: Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
-                if let Some(mem) = mem_of(&mut caller) {
-                    if let Some(s) = mem.data(&caller).get(ptr as usize..ptr as usize + len as usize) {
-                        let v = s.to_vec();
-                        caller.data_mut().log.push((level as u32, v));
+            .func_wrap(
+                "hologram",
+                "log",
+                |mut caller: Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
+                    if let Some(mem) = mem_of(&mut caller) {
+                        if let Some(s) = mem
+                            .data(&caller)
+                            .get(ptr as usize..ptr as usize + len as usize)
+                        {
+                            let v = s.to_vec();
+                            caller.data_mut().log.push((level as u32, v));
+                        }
                     }
-                }
-            })
+                },
+            )
             .map_err(ifail)?;
 
         linker
@@ -129,9 +136,13 @@ impl WasmtimeEngine {
                 "hologram",
                 "storage_put",
                 |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, out_ptr: i32| -> i32 {
-                    let Some(mem) = mem_of(&mut caller) else { return -1 };
-                    let Some(input) =
-                        mem.data(&caller).get(ptr as usize..ptr as usize + len as usize).map(|s| s.to_vec())
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(input) = mem
+                        .data(&caller)
+                        .get(ptr as usize..ptr as usize + len as usize)
+                        .map(|s| s.to_vec())
                     else {
                         return -1;
                     };
@@ -141,7 +152,10 @@ impl WasmtimeEngine {
                         let s = caller.data_mut();
                         let kappa = hologram_substrate_core::address_bytes(&input);
                         let already = s.store.contains(&kappa);
-                        if s.storage_quota != 0 && !already && s.storage_used + input.len() as u64 > s.storage_quota {
+                        if s.storage_quota != 0
+                            && !already
+                            && s.storage_used + input.len() as u64 > s.storage_quota
+                        {
                             return -1; // QuotaExceeded
                         }
                         if !already {
@@ -169,8 +183,14 @@ impl WasmtimeEngine {
             .func_wrap(
                 "hologram",
                 "storage_get",
-                |mut caller: Caller<'_, HostState>, kappa_ptr: i32, out_ptr: i32, out_cap: i32| -> i32 {
-                    let Some(mem) = mem_of(&mut caller) else { return -1 };
+                |mut caller: Caller<'_, HostState>,
+                 kappa_ptr: i32,
+                 out_ptr: i32,
+                 out_cap: i32|
+                 -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
                     let Some(karr) = mem
                         .data(&caller)
                         .get(kappa_ptr as usize..kappa_ptr as usize + 71)
@@ -178,7 +198,9 @@ impl WasmtimeEngine {
                     else {
                         return -1;
                     };
-                    let Ok(kappa) = KappaLabel::from_bytes(&karr) else { return -1 };
+                    let Ok(kappa) = KappaLabel::from_bytes(&karr) else {
+                        return -1;
+                    };
                     let store = caller.data().store.clone();
                     let roots = caller.data().roots.clone();
                     let registry = caller.data().registry;
@@ -205,90 +227,155 @@ impl WasmtimeEngine {
 
         // storage_contains(kappa_ptr) -> i32 (1 present / 0 absent / -1 malformed)
         linker
-            .func_wrap("hologram", "storage_contains", |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
-                let Some(mem) = mem_of(&mut caller) else { return -1 };
-                let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else { return -1 };
-                i32::from(caller.data().store.contains(&k))
-            })
+            .func_wrap(
+                "hologram",
+                "storage_contains",
+                |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else {
+                        return -1;
+                    };
+                    i32::from(caller.data().store.contains(&k))
+                },
+            )
             .map_err(ifail)?;
 
         // storage_pin / storage_unpin (kappa_ptr) -> i32 (0 ok / -1 err)
         linker
-            .func_wrap("hologram", "storage_pin", |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
-                let Some(mem) = mem_of(&mut caller) else { return -1 };
-                let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else { return -1 };
-                if caller.data().store.pin(&k).is_ok() { 0 } else { -1 }
-            })
+            .func_wrap(
+                "hologram",
+                "storage_pin",
+                |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else {
+                        return -1;
+                    };
+                    if caller.data().store.pin(&k).is_ok() {
+                        0
+                    } else {
+                        -1
+                    }
+                },
+            )
             .map_err(ifail)?;
         linker
-            .func_wrap("hologram", "storage_unpin", |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
-                let Some(mem) = mem_of(&mut caller) else { return -1 };
-                let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else { return -1 };
-                if caller.data().store.unpin(&k).is_ok() { 0 } else { -1 }
-            })
+            .func_wrap(
+                "hologram",
+                "storage_unpin",
+                |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else {
+                        return -1;
+                    };
+                    if caller.data().store.unpin(&k).is_ok() {
+                        0
+                    } else {
+                        -1
+                    }
+                },
+            )
             .map_err(ifail)?;
 
         // publish(channel_ptr, kappa_ptr) — buffer the intent; the runtime applies it gated (§10.4).
         linker
-            .func_wrap("hologram", "publish", |mut caller: Caller<'_, HostState>, channel_ptr: i32, kappa_ptr: i32| {
-                let Some(mem) = mem_of(&mut caller) else { return };
-                let (Some(ch), Some(payload)) =
-                    (read_kappa(&mem, &caller, channel_ptr), read_kappa(&mem, &caller, kappa_ptr))
-                else {
-                    return;
-                };
-                caller.data_mut().published.push((ch, payload));
-            })
+            .func_wrap(
+                "hologram",
+                "publish",
+                |mut caller: Caller<'_, HostState>, channel_ptr: i32, kappa_ptr: i32| {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return;
+                    };
+                    let (Some(ch), Some(payload)) = (
+                        read_kappa(&mem, &caller, channel_ptr),
+                        read_kappa(&mem, &caller, kappa_ptr),
+                    ) else {
+                        return;
+                    };
+                    caller.data_mut().published.push((ch, payload));
+                },
+            )
             .map_err(ifail)?;
 
         // subscribe(channel_ptr, callback_id) — buffer the intent.
         linker
-            .func_wrap("hologram", "subscribe", |mut caller: Caller<'_, HostState>, channel_ptr: i32, callback_id: i32| {
-                let Some(mem) = mem_of(&mut caller) else { return };
-                let Some(ch) = read_kappa(&mem, &caller, channel_ptr) else { return };
-                caller.data_mut().subscribed.push((ch, callback_id as u32));
-            })
+            .func_wrap(
+                "hologram",
+                "subscribe",
+                |mut caller: Caller<'_, HostState>, channel_ptr: i32, callback_id: i32| {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return;
+                    };
+                    let Some(ch) = read_kappa(&mem, &caller, channel_ptr) else {
+                        return;
+                    };
+                    caller.data_mut().subscribed.push((ch, callback_id as u32));
+                },
+            )
             .map_err(ifail)?;
 
         // time_now(out_ptr) — write 16-byte canonical UorTime [landauer-nats f64 ‖ rewrite-steps u64]
         // (ADR-058 computational time; monotonic per-engine progress, never wall-clock).
         linker
-            .func_wrap("hologram", "time_now", |mut caller: Caller<'_, HostState>, out_ptr: i32| {
-                let steps = {
-                    let s = caller.data_mut();
-                    s.rewrite_steps += 1;
-                    s.rewrite_steps
-                };
-                let Some(mem) = mem_of(&mut caller) else { return };
-                let mut buf = [0u8; 16];
-                buf[..8].copy_from_slice(&(steps as f64).to_le_bytes());
-                buf[8..].copy_from_slice(&steps.to_le_bytes());
-                if let Some(slot) = mem.data_mut(&mut caller).get_mut(out_ptr as usize..out_ptr as usize + 16) {
-                    slot.copy_from_slice(&buf);
-                }
-            })
+            .func_wrap(
+                "hologram",
+                "time_now",
+                |mut caller: Caller<'_, HostState>, out_ptr: i32| {
+                    let steps = {
+                        let s = caller.data_mut();
+                        s.rewrite_steps += 1;
+                        s.rewrite_steps
+                    };
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return;
+                    };
+                    let mut buf = [0u8; 16];
+                    buf[..8].copy_from_slice(&(steps as f64).to_le_bytes());
+                    buf[8..].copy_from_slice(&steps.to_le_bytes());
+                    if let Some(slot) = mem
+                        .data_mut(&mut caller)
+                        .get_mut(out_ptr as usize..out_ptr as usize + 16)
+                    {
+                        slot.copy_from_slice(&buf);
+                    }
+                },
+            )
             .map_err(ifail)?;
 
         // entropy(out_ptr, len) — fill `len` bytes from the instance's stream.
         linker
-            .func_wrap("hologram", "entropy", |mut caller: Caller<'_, HostState>, out_ptr: i32, len: i32| {
-                let mut bytes = Vec::with_capacity(len as usize);
-                {
-                    let s = caller.data_mut();
-                    for _ in 0..len {
-                        // splitmix64
-                        s.rng = s.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                        let mut z = s.rng;
-                        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-                        bytes.push((z ^ (z >> 31)) as u8);
+            .func_wrap(
+                "hologram",
+                "entropy",
+                |mut caller: Caller<'_, HostState>, out_ptr: i32, len: i32| {
+                    let mut bytes = Vec::with_capacity(len as usize);
+                    {
+                        let s = caller.data_mut();
+                        for _ in 0..len {
+                            // splitmix64
+                            s.rng = s.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                            let mut z = s.rng;
+                            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                            bytes.push((z ^ (z >> 31)) as u8);
+                        }
                     }
-                }
-                let Some(mem) = mem_of(&mut caller) else { return };
-                if let Some(slot) = mem.data_mut(&mut caller).get_mut(out_ptr as usize..out_ptr as usize + len as usize) {
-                    slot.copy_from_slice(&bytes);
-                }
-            })
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return;
+                    };
+                    if let Some(slot) = mem
+                        .data_mut(&mut caller)
+                        .get_mut(out_ptr as usize..out_ptr as usize + len as usize)
+                    {
+                        slot.copy_from_slice(&bytes);
+                    }
+                },
+            )
             .map_err(ifail)?;
 
         Ok(linker)
@@ -317,7 +404,11 @@ impl WasmInstance {
     /// Refuel for one lifecycle call (CPU bound, §7.6). Fuel metering is always on, so an
     /// "unbounded" budget (0) is realized as `u64::MAX` rather than leaving the store starved.
     fn refuel(&mut self) {
-        let fuel = if self.cpu_fuel > 0 { self.cpu_fuel } else { u64::MAX };
+        let fuel = if self.cpu_fuel > 0 {
+            self.cpu_fuel
+        } else {
+            u64::MAX
+        };
         let _ = self.store.set_fuel(fuel);
     }
 
@@ -330,7 +421,10 @@ impl WasmInstance {
         let f: Result<TypedFunc<(i32, i32), i32>, _> =
             self.instance.get_typed_func(&mut self.store, name);
         match f {
-            Ok(f) => f.call(&mut self.store, (0, bytes.len() as i32)).map(|c| c as u32).unwrap_or(1),
+            Ok(f) => f
+                .call(&mut self.store, (0, bytes.len() as i32))
+                .map(|c| c as u32)
+                .unwrap_or(1),
             Err(_) => 1,
         }
     }
@@ -369,7 +463,9 @@ impl ContainerEngine for WasmtimeEngine {
             rng: ctx.storage_roots.len() as u64 ^ 0xD1B5_4A32_D192_ED03,
             // Memory bound (§7.6): cap linear-memory growth at memory_max_bytes; 0 = unbounded.
             limits: if ctx.memory_max_bytes > 0 {
-                wasmtime::StoreLimitsBuilder::new().memory_size(ctx.memory_max_bytes as usize).build()
+                wasmtime::StoreLimitsBuilder::new()
+                    .memory_size(ctx.memory_max_bytes as usize)
+                    .build()
             } else {
                 wasmtime::StoreLimits::default()
             },
@@ -380,15 +476,27 @@ impl ContainerEngine for WasmtimeEngine {
         store.limiter(|s| &mut s.limits);
         // Fuel metering is always on, so seed fuel for instantiation (a start function may run);
         // unbounded (0) → u64::MAX. `refuel` resets per-event fuel before each lifecycle call.
-        let _ = store.set_fuel(if ctx.cpu_fuel_per_event > 0 { ctx.cpu_fuel_per_event } else { u64::MAX });
+        let _ = store.set_fuel(if ctx.cpu_fuel_per_event > 0 {
+            ctx.cpu_fuel_per_event
+        } else {
+            u64::MAX
+        });
         let linker = self.linker()?;
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|_| RuntimeError::InstantiationFailed("instantiation trapped (memory cap or trap)"))?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or(RuntimeError::InstantiationFailed("module exports no `memory`"))?;
-        Ok(WasmInstance { store, instance, memory, cpu_fuel: ctx.cpu_fuel_per_event })
+        let instance = linker.instantiate(&mut store, &module).map_err(|_| {
+            RuntimeError::InstantiationFailed("instantiation trapped (memory cap or trap)")
+        })?;
+        let memory =
+            instance
+                .get_memory(&mut store, "memory")
+                .ok_or(RuntimeError::InstantiationFailed(
+                    "module exports no `memory`",
+                ))?;
+        Ok(WasmInstance {
+            store,
+            instance,
+            memory,
+            cpu_fuel: ctx.cpu_fuel_per_event,
+        })
     }
 
     fn init(&self, inst: &mut WasmInstance, initial_state: &[u8]) -> u32 {
@@ -406,14 +514,18 @@ impl ContainerEngine for WasmtimeEngine {
     fn callback(&self, inst: &mut WasmInstance, callback_id: u32, payload_kappa: &[u8]) -> u32 {
         if !payload_kappa.is_empty() {
             inst.ensure_capacity(payload_kappa.len());
-            inst.memory.data_mut(&mut inst.store)[..payload_kappa.len()].copy_from_slice(payload_kappa);
+            inst.memory.data_mut(&mut inst.store)[..payload_kappa.len()]
+                .copy_from_slice(payload_kappa);
         }
         inst.refuel();
         let f: Result<TypedFunc<(i32, i32, i32), i32>, _> =
             inst.instance.get_typed_func(&mut inst.store, "hg_callback");
         match f {
             Ok(f) => f
-                .call(&mut inst.store, (callback_id as i32, 0, payload_kappa.len() as i32))
+                .call(
+                    &mut inst.store,
+                    (callback_id as i32, 0, payload_kappa.len() as i32),
+                )
                 .map(|c| c as u32)
                 .unwrap_or(1),
             Err(_) => 0,

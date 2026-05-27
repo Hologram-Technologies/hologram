@@ -8,7 +8,9 @@ use hologram_realizations::{ContainerManifest, Snapshot, REGISTRY};
 use hologram_runtime::{ContainerEngine, HostContext, Runtime};
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
+use hologram_substrate_core::{
+    Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization,
+};
 
 /// A minimal host context for direct-engine tests (empty store, no granted roots).
 fn ctx() -> HostContext {
@@ -50,13 +52,24 @@ fn engine_executes_wasm_and_snapshots_memory() {
         assert_eq!(engine.event(&mut inst, &[]), 0);
     }
     let snap = engine.snapshot_memory(&inst);
-    assert_eq!(snap[0], 3, "hg_event incremented the container's memory three times");
+    assert_eq!(
+        snap[0], 3,
+        "hg_event incremented the container's memory three times"
+    );
 
     // Restore the snapshot into a fresh instance — state continuity over real Wasm memory.
     let mut inst2 = engine.instantiate(&wasm(), &ctx()).unwrap();
-    assert_eq!(engine.snapshot_memory(&inst2)[0], 0, "fresh instance starts at 0");
+    assert_eq!(
+        engine.snapshot_memory(&inst2)[0],
+        0,
+        "fresh instance starts at 0"
+    );
     engine.restore_memory(&mut inst2, &snap);
-    assert_eq!(engine.snapshot_memory(&inst2)[0], 3, "restored memory carries the count");
+    assert_eq!(
+        engine.snapshot_memory(&inst2)[0],
+        3,
+        "restored memory carries the count"
+    );
     // And it keeps counting from the restored state.
     engine.event(&mut inst2, &[]);
     assert_eq!(engine.snapshot_memory(&inst2)[0], 4);
@@ -71,7 +84,15 @@ fn runtime_drives_a_real_wasm_container_through_suspend_resume() {
         let state = store.put("blake3", b"").unwrap();
         let params = store.put("blake3", b"").unwrap();
         let cid = store
-            .put("blake3", &ContainerManifest { code, initial_state: state, parameters: params }.canonicalize())
+            .put(
+                "blake3",
+                &ContainerManifest {
+                    code,
+                    initial_state: state,
+                    parameters: params,
+                }
+                .canonicalize(),
+            )
             .unwrap();
         let caps = store
             .put(
@@ -126,10 +147,20 @@ const IO_WAT: &str = r#"
 fn container_uses_capability_gated_host_storage_imports() {
     pollster::block_on(async {
         let store = MemKappaStore::new();
-        let io_code = store.put("blake3", &wat::parse_str(IO_WAT).unwrap()).unwrap();
+        let io_code = store
+            .put("blake3", &wat::parse_str(IO_WAT).unwrap())
+            .unwrap();
         let empty = store.put("blake3", b"").unwrap();
         let cid = store
-            .put("blake3", &ContainerManifest { code: io_code, initial_state: empty, parameters: empty }.canonicalize())
+            .put(
+                "blake3",
+                &ContainerManifest {
+                    code: io_code,
+                    initial_state: empty,
+                    parameters: empty,
+                }
+                .canonicalize(),
+            )
             .unwrap();
 
         // Two blobs already present; the container is GRANTED a root for one, not the other.
@@ -161,7 +192,9 @@ fn container_uses_capability_gated_host_storage_imports() {
         assert_eq!(rt.deliver_event(h, secret.as_array()).unwrap(), u32::MAX);
         // storage_put from inside the container: the host store gains the κ of the written bytes.
         assert_eq!(rt.deliver_event(h, b"written-by-container").unwrap(), 0);
-        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(b"written-by-container")));
+        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(
+            b"written-by-container"
+        )));
     });
 }
 
@@ -191,11 +224,21 @@ const PUBSUB_WAT: &str = r#"
 fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
     pollster::block_on(async {
         let store = MemKappaStore::new();
-        let code = store.put("blake3", &wat::parse_str(PUBSUB_WAT).unwrap()).unwrap();
+        let code = store
+            .put("blake3", &wat::parse_str(PUBSUB_WAT).unwrap())
+            .unwrap();
         let mk = |state: &[u8], pubs: Vec<KappaLabel71>, subs: Vec<KappaLabel71>| {
             let st = store.put("blake3", state).unwrap();
             let cid = store
-                .put("blake3", &ContainerManifest { code, initial_state: st, parameters: st }.canonicalize())
+                .put(
+                    "blake3",
+                    &ContainerManifest {
+                        code,
+                        initial_state: st,
+                        parameters: st,
+                    }
+                    .canonicalize(),
+                )
                 .unwrap();
             let caps = store
                 .put(
@@ -233,12 +276,20 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
         rt.deliver_event(pubh, &ev).unwrap();
 
         // The publish import → runtime applied it (cap-gated) → a Route κ exists in the graph.
-        let route = hologram_realizations::Route { endpoint: channel, target: payload };
-        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(&route.canonicalize())));
+        let route = hologram_realizations::Route {
+            endpoint: channel,
+            target: payload,
+        };
+        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(
+            &route.canonicalize()
+        )));
 
         // Delivery reached the subscriber's hg_callback, which storage_put the received payload-κ
         // bytes → the host store now contains the κ of those 71 bytes (receipt witnessed).
         let receipt = hologram_substrate_core::address_bytes(payload.as_array());
-        assert!(rt.store().contains(&receipt), "subscriber's hg_callback ran and recorded the payload");
+        assert!(
+            rt.store().contains(&receipt),
+            "subscriber's hg_callback ran and recorded the payload"
+        );
     });
 }

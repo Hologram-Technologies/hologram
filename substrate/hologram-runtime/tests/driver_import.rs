@@ -4,10 +4,10 @@
 //! re-derive to the requested κ — so the engine imports **arbitrary** drivers trustlessly.
 
 use async_trait::async_trait;
+use hologram_store_mem::MemKappaStore;
 use hologram_substrate_core::{
     address_bytes, get_with_fetch, Bytes, KappaLabel71, KappaStore, KappaSync, SyncError,
 };
-use hologram_store_mem::MemKappaStore;
 use std::collections::HashMap;
 use uor_addr::codemodule::CodeModuleValue;
 
@@ -18,7 +18,9 @@ fn driver_bytes(name: &str) -> Vec<u8> {
     let ret = CodeModuleValue::atom("DeviceError");
     let read = CodeModuleValue::function("read", &[], &ret, &body);
     let write = CodeModuleValue::function("write", &[], &ret, &body);
-    CodeModuleValue::module(name, &[read, write]).tagged_bytes().to_vec()
+    CodeModuleValue::module(name, &[read, write])
+        .tagged_bytes()
+        .to_vec()
 }
 
 /// An authoritative source peer that serves driver codemodules from its store. `forge=true` models
@@ -34,7 +36,10 @@ impl KappaSync for SourcePeer {
         if self.forge {
             return Ok(Some(Bytes::from(b"not-the-driver-you-asked-for".to_vec())));
         }
-        Ok(self.blobs.get(kappa.as_array()).map(|v| Bytes::from(v.clone())))
+        Ok(self
+            .blobs
+            .get(kappa.as_array())
+            .map(|v| Bytes::from(v.clone())))
     }
     async fn announce(&self, _kappa: &KappaLabel71) {}
     async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
@@ -61,7 +66,10 @@ fn import_arbitrary_drivers_from_an_authoritative_source_and_verify() {
             blobs.insert(*k.as_array(), bytes);
             driver_kappas.push(k);
         }
-        let source = SourcePeer { blobs, forge: false };
+        let source = SourcePeer {
+            blobs,
+            forge: false,
+        };
 
         // A fresh engine node has none of them locally; it imports each by κ, verified on receipt.
         let local = MemKappaStore::new();
@@ -69,7 +77,10 @@ fn import_arbitrary_drivers_from_an_authoritative_source_and_verify() {
             assert!(!local.contains(k));
             let imported = get_with_fetch(&local, &source, k).await.unwrap();
             assert!(imported.is_some(), "driver imported from the source");
-            assert!(local.contains(k), "verified driver cached locally for loading");
+            assert!(
+                local.contains(k),
+                "verified driver cached locally for loading"
+            );
         }
     });
 }
@@ -78,7 +89,10 @@ fn import_arbitrary_drivers_from_an_authoritative_source_and_verify() {
 fn a_forging_source_cannot_supply_a_driver() {
     pollster::block_on(async {
         let k = address_bytes(&driver_bytes("nvme"));
-        let evil = SourcePeer { blobs: HashMap::new(), forge: true };
+        let evil = SourcePeer {
+            blobs: HashMap::new(),
+            forge: true,
+        };
         let local = MemKappaStore::new();
         // The forged bytes don't re-derive to the requested κ → rejected (§6.4); nothing cached.
         assert!(get_with_fetch(&local, &evil, &k).await.is_err());

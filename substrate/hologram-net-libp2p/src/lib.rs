@@ -13,32 +13,40 @@ use futures::StreamExt;
 use hologram_substrate_core::{
     verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync, SyncError,
 };
-use libp2p::request_response::{self, Message, ProtocolSupport};
-use libp2p::swarm::SwarmEvent;
-use libp2p::{Multiaddr, StreamProtocol, SwarmBuilder};
+use libp2p_core::transport::Transport;
+use libp2p_core::upgrade::Version;
+use libp2p_core::Multiaddr;
+use libp2p_request_response::{self as request_response, Message, ProtocolSupport};
+use libp2p_swarm::{Config as SwarmConfig, StreamProtocol};
+use libp2p_swarm::{Swarm, SwarmEvent};
 use tokio::sync::oneshot;
 
 const PROTOCOL: &str = "/hologram/cas/1";
 
 type Behaviour = request_response::cbor::Behaviour<Vec<u8>, Option<Vec<u8>>>;
 
-fn build_swarm() -> libp2p::Swarm<Behaviour> {
-    SwarmBuilder::with_new_identity()
-        .with_tokio()
-        .with_tcp(
-            libp2p::tcp::Config::default(),
-            libp2p::noise::Config::new,
-            libp2p::yamux::Config::default,
-        )
-        .expect("tcp transport")
-        .with_behaviour(|_| {
-            Behaviour::new(
-                [(StreamProtocol::new(PROTOCOL), ProtocolSupport::Full)],
-                request_response::Config::default(),
-            )
-        })
-        .expect("behaviour")
-        .build()
+// Built from libp2p sub-crates rather than the `libp2p` umbrella's `SwarmBuilder`
+// (which would lock the DNS/mDNS resolver into the dependency graph). The transport
+// is exactly TCP → Noise authentication → Yamux multiplexing, the same stack the
+// umbrella's `.with_tcp(...)` produces.
+fn build_swarm() -> Swarm<Behaviour> {
+    let id_keys = libp2p_identity::Keypair::generate_ed25519();
+    let peer_id = id_keys.public().to_peer_id();
+    let transport = libp2p_tcp::tokio::Transport::new(libp2p_tcp::Config::default())
+        .upgrade(Version::V1Lazy)
+        .authenticate(libp2p_noise::Config::new(&id_keys).expect("noise"))
+        .multiplex(libp2p_yamux::Config::default())
+        .boxed();
+    let behaviour = Behaviour::new(
+        [(StreamProtocol::new(PROTOCOL), ProtocolSupport::Full)],
+        request_response::Config::default(),
+    );
+    Swarm::new(
+        transport,
+        behaviour,
+        peer_id,
+        SwarmConfig::with_tokio_executor(),
+    )
 }
 
 /// A running κ-serving node; holds its listen address. Dropping it stops the node.
@@ -62,7 +70,9 @@ impl Drop for ServedNode {
 /// Serve κ requests from `store` over libp2p; returns once the node is listening.
 pub async fn serve(store: Arc<dyn KappaStore>) -> ServedNode {
     let mut swarm = build_swarm();
-    swarm.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).expect("listen");
+    swarm
+        .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+        .expect("listen");
     let (addr_tx, addr_rx) = oneshot::channel::<Multiaddr>();
     let mut addr_tx = Some(addr_tx);
 
@@ -75,7 +85,10 @@ pub async fn serve(store: Arc<dyn KappaStore>) -> ServedNode {
                     }
                 }
                 SwarmEvent::Behaviour(request_response::Event::Message {
-                    message: Message::Request { request, channel, .. },
+                    message:
+                        Message::Request {
+                            request, channel, ..
+                        },
                     ..
                 }) => {
                     let resp: Option<Vec<u8>> = <[u8; 71]>::try_from(request.as_slice())
@@ -96,16 +109,23 @@ pub async fn serve(store: Arc<dyn KappaStore>) -> ServedNode {
 
 /// Dial `peer_addr`, request `kappa`, and **verify on receipt**. `Ok(None)` ⇒ the peer doesn't have
 /// it; `Err(VerificationFailed)` ⇒ the peer served bytes that don't re-derive to `kappa`.
-pub async fn fetch_once(peer_addr: &Multiaddr, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+pub async fn fetch_once(
+    peer_addr: &Multiaddr,
+    kappa: &KappaLabel71,
+) -> Result<Option<Bytes>, SyncError> {
     let mut swarm = build_swarm();
-    swarm.dial(peer_addr.clone()).map_err(|_| SyncError::BackendFailure("dial"))?;
+    swarm
+        .dial(peer_addr.clone())
+        .map_err(|_| SyncError::BackendFailure("dial"))?;
     let kappa = *kappa;
 
     let fut = async {
         loop {
             match swarm.select_next_some().await {
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    swarm.behaviour_mut().send_request(&peer_id, kappa.as_array().to_vec());
+                    swarm
+                        .behaviour_mut()
+                        .send_request(&peer_id, kappa.as_array().to_vec());
                 }
                 SwarmEvent::Behaviour(request_response::Event::Message {
                     message: Message::Response { response, .. },
@@ -144,7 +164,9 @@ pub struct Libp2pKappaSync {
 
 impl Libp2pKappaSync {
     pub fn new(peers: Vec<Multiaddr>) -> Self {
-        Self { peers: std::sync::Mutex::new(peers) }
+        Self {
+            peers: std::sync::Mutex::new(peers),
+        }
     }
 }
 
@@ -174,7 +196,9 @@ impl KappaSync for Libp2pKappaSync {
         Vec::new() // Kademlia provider records are the discovery layer (follow-on); fetch is here.
     }
     async fn add_peer(&self, multiaddr: &str) -> Result<(), SyncError> {
-        let a: Multiaddr = multiaddr.parse().map_err(|_| SyncError::BackendFailure("multiaddr"))?;
+        let a: Multiaddr = multiaddr
+            .parse()
+            .map_err(|_| SyncError::BackendFailure("multiaddr"))?;
         self.peers.lock().unwrap().push(a);
         Ok(())
     }
@@ -209,6 +233,9 @@ mod tests {
     #[tokio::test]
     async fn libp2p_fetch_with_no_peers_is_not_enabled() {
         let sync = Libp2pKappaSync::new(vec![]);
-        assert_eq!(sync.fetch(&address_bytes(b"x")).await, Err(SyncError::NotEnabled));
+        assert_eq!(
+            sync.fetch(&address_bytes(b"x")).await,
+            Err(SyncError::NotEnabled)
+        );
     }
 }

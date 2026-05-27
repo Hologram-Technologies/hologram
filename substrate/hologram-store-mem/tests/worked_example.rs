@@ -16,7 +16,10 @@ use hologram_substrate_core::{
     Realization, SyncError,
 };
 
-fn caps_with(storage_roots: Vec<KappaLabel71>, publish_channels: Vec<KappaLabel71>) -> Capabilities {
+fn caps_with(
+    storage_roots: Vec<KappaLabel71>,
+    publish_channels: Vec<KappaLabel71>,
+) -> Capabilities {
     Capabilities {
         storage_roots,
         publish_channels,
@@ -42,7 +45,10 @@ impl KappaSync for MockPeer {
         if !self.honest {
             return Ok(Some(Bytes::from(b"forged-content".to_vec())));
         }
-        Ok(self.blobs.get(kappa.as_array()).map(|v| Bytes::from(v.clone())))
+        Ok(self
+            .blobs
+            .get(kappa.as_array())
+            .map(|v| Bytes::from(v.clone())))
     }
     async fn announce(&self, _kappa: &KappaLabel71) {}
     async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
@@ -62,10 +68,16 @@ fn provision(store: &MemKappaStore) -> (KappaLabel71, KappaLabel71) {
     // model weights as initial state, plus instantiation params. These are leaves.
     let code = store.put("blake3", b"<llm-runtime.wasm>").unwrap();
     let weights = store.put("blake3", b"<gguf-weights>").unwrap();
-    let params = store.put("blake3", br#"{"ctx":4096,"axis":"blake3"}"#).unwrap();
+    let params = store
+        .put("blake3", br#"{"ctx":4096,"axis":"blake3"}"#)
+        .unwrap();
 
     // The Container ID *is* the manifest (spec §4.1): identity binds code+state+params.
-    let manifest = ContainerManifest { code, initial_state: weights, parameters: params };
+    let manifest = ContainerManifest {
+        code,
+        initial_state: weights,
+        parameters: params,
+    };
     let container_id = store.put("blake3", &manifest.canonicalize()).unwrap();
 
     // A capability set: may read the model-data root, publish on the "completions" channel,
@@ -100,31 +112,48 @@ fn llm_container_lifecycle_and_trustless_migration() {
         peer_a.pin(&caps_k).unwrap();
         let before = peer_a.approximate_count();
         peer_a.gc(REGISTRY);
-        assert_eq!(peer_a.approximate_count(), before, "all pinned-reachable κ retained");
+        assert_eq!(
+            peer_a.approximate_count(),
+            before,
+            "all pinned-reachable κ retained"
+        );
 
         // ── Migration to peer B via an HONEST peer: fetch the snapshot, verify on receipt ──
         let mut wire = HashMap::new();
         for k in peer_a.iterate() {
             wire.insert(*k.as_array(), peer_a.get(&k).unwrap().unwrap().to_vec());
         }
-        let honest = MockPeer { blobs: wire, honest: true };
+        let honest = MockPeer {
+            blobs: wire,
+            honest: true,
+        };
 
         let peer_b = MemKappaStore::new();
         // The snapshot isn't local on B → get_with_fetch pulls it from the peer, verifies the
         // κ by re-derivation (SPINE-4), and caches it. Resume would proceed from these bytes.
         let got = get_with_fetch(&peer_b, &honest, &snapshot_k).await.unwrap();
         assert!(got.is_some(), "honest peer serves the snapshot");
-        assert!(peer_b.contains(&snapshot_k), "verified bytes are cached locally");
+        assert!(
+            peer_b.contains(&snapshot_k),
+            "verified bytes are cached locally"
+        );
 
         // The recovered snapshot's references resolve to the same Container ID (graph continuity).
-        let refs = Snapshot::references(peer_b.get(&snapshot_k).unwrap().unwrap().as_ref()).unwrap();
+        let refs =
+            Snapshot::references(peer_b.get(&snapshot_k).unwrap().unwrap().as_ref()).unwrap();
         assert_eq!(refs, vec![container_id]);
 
         // ── Migration via a MALICIOUS peer: forged bytes are rejected (trustless) ──
-        let evil = MockPeer { blobs: HashMap::new(), honest: false };
+        let evil = MockPeer {
+            blobs: HashMap::new(),
+            honest: false,
+        };
         let peer_c = MemKappaStore::new();
         let result = get_with_fetch(&peer_c, &evil, &snapshot_k).await;
-        assert!(result.is_err(), "forged content fails σ-axis re-derivation (SPINE-4)");
+        assert!(
+            result.is_err(),
+            "forged content fails σ-axis re-derivation (SPINE-4)"
+        );
         assert!(!peer_c.contains(&snapshot_k), "nothing forged is cached");
     });
 }
@@ -139,5 +168,8 @@ fn capability_set_grants_are_reachability_roots() {
     let refs = CapabilitySet::references(&caps.canonicalize()).unwrap();
     assert_eq!(refs, vec![root, chan]);
     // And the canonical form decodes back to the same Capabilities (round-trip for enforcement).
-    assert_eq!(CapabilitySet::to_capabilities(&caps.canonicalize()).unwrap(), caps.caps);
+    assert_eq!(
+        CapabilitySet::to_capabilities(&caps.canonicalize()).unwrap(),
+        caps.caps
+    );
 }

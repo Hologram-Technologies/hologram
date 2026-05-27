@@ -77,7 +77,10 @@ impl RamBlockDevice {
     pub fn new(sector_size: u32, sector_count: u64) -> Self {
         Self {
             sector_size,
-            data: Arc::new(Mutex::new(vec![0u8; (sector_size as u64 * sector_count) as usize])),
+            data: Arc::new(Mutex::new(vec![
+                0u8;
+                (sector_size as u64 * sector_count) as usize
+            ])),
             uuid: [0xA5; 16],
         }
     }
@@ -141,7 +144,10 @@ mod tests {
             dev.read(2, 2, &mut back).await.unwrap();
             assert_eq!(back, payload);
             // Out-of-range read is refused (no silent truncation).
-            assert_eq!(dev.read(7, 4, &mut std::vec![0u8; 2048]).await, Err(DeviceError::OutOfRange));
+            assert_eq!(
+                dev.read(7, 4, &mut std::vec![0u8; 2048]).await,
+                Err(DeviceError::OutOfRange)
+            );
         });
     }
 }

@@ -132,12 +132,20 @@ impl KappaStore for MemKappaStore {
     }
 
     fn approximate_bytes(&self) -> u64 {
-        self.inner.lock().blobs.values().map(|b| b.len() as u64).sum()
+        self.inner
+            .lock()
+            .blobs
+            .values()
+            .map(|b| b.len() as u64)
+            .sum()
     }
 }
 
 impl hologram_substrate_core::GarbageCollect for MemKappaStore {
-    fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, hologram_substrate_core::StoreError> {
+    fn gc(
+        &self,
+        registry: RealizationRegistry<'_>,
+    ) -> Result<usize, hologram_substrate_core::StoreError> {
         Ok(MemKappaStore::gc(self, registry))
     }
 }

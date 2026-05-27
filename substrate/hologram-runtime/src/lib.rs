@@ -147,17 +147,33 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
     ) -> Result<KappaLabel71, RuntimeError> {
         {
             let table = self.table.lock();
-            let e = table.get(&publisher.0).ok_or(RuntimeError::ContainerIdNotFound)?;
-            if self.revoked.lock().contains(e.info.capabilities_kappa.as_array()) {
+            let e = table
+                .get(&publisher.0)
+                .ok_or(RuntimeError::ContainerIdNotFound)?;
+            if self
+                .revoked
+                .lock()
+                .contains(e.info.capabilities_kappa.as_array())
+            {
                 return Err(RuntimeError::CapabilityVerificationFailed);
             }
             if !e.caps.publish_channels.contains(channel) {
                 return Err(RuntimeError::CapabilityVerificationFailed); // §10.4
             }
         }
-        self.channels.lock().entry(*channel.as_array()).or_default().push(*payload);
-        let route = hologram_realizations::Route { endpoint: *channel, target: *payload };
-        let route_k = self.store.put("blake3", &route.canonicalize()).map_err(be)?;
+        self.channels
+            .lock()
+            .entry(*channel.as_array())
+            .or_default()
+            .push(*payload);
+        let route = hologram_realizations::Route {
+            endpoint: *channel,
+            target: *payload,
+        };
+        let route_k = self
+            .store
+            .put("blake3", &route.canonicalize())
+            .map_err(be)?;
         self.pump();
         Ok(route_k)
     }
@@ -174,7 +190,9 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
     ) -> Result<(), RuntimeError> {
         let container_id = {
             let table = self.table.lock();
-            let e = table.get(&subscriber.0).ok_or(RuntimeError::ContainerIdNotFound)?;
+            let e = table
+                .get(&subscriber.0)
+                .ok_or(RuntimeError::ContainerIdNotFound)?;
             if !e.caps.subscribe_channels.contains(channel) {
                 return Err(RuntimeError::CapabilityVerificationFailed); // §10.4
             }
@@ -286,9 +304,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             }
             None => {
                 // initial state is the manifest's second operand, if present locally.
-                let state = refs
-                    .get(1)
-                    .and_then(|k| self.store.get(k).ok().flatten());
+                let state = refs.get(1).and_then(|k| self.store.get(k).ok().flatten());
                 self.engine.init(&mut inst, state.as_deref().unwrap_or(&[]));
             }
         }
@@ -301,16 +317,28 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             state: ContainerState::Running,
             memory_bytes: self.engine.memory_bytes(&inst),
         };
-        self.table.lock().insert(handle.0, Entry { inst, info, caps });
+        self.table
+            .lock()
+            .insert(handle.0, Entry { inst, info, caps });
         Ok(handle)
     }
 
     /// Deliver an event to a running container (`hg_event`). Refuses if its capability set has been
     /// revoked (spec §10.12).
-    pub fn deliver_event(&self, handle: ContainerHandle, event_kappa: &[u8]) -> Result<u32, RuntimeError> {
+    pub fn deliver_event(
+        &self,
+        handle: ContainerHandle,
+        event_kappa: &[u8],
+    ) -> Result<u32, RuntimeError> {
         let mut table = self.table.lock();
-        let entry = table.get_mut(&handle.0).ok_or(RuntimeError::ContainerIdNotFound)?;
-        if self.revoked.lock().contains(entry.info.capabilities_kappa.as_array()) {
+        let entry = table
+            .get_mut(&handle.0)
+            .ok_or(RuntimeError::ContainerIdNotFound)?;
+        if self
+            .revoked
+            .lock()
+            .contains(entry.info.capabilities_kappa.as_array())
+        {
             return Err(RuntimeError::CapabilityVerificationFailed);
         }
         let code = self.engine.event(&mut entry.inst, event_kappa);
@@ -360,8 +388,8 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
 }
 
 #[async_trait::async_trait]
-impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_substrate_core::ContainerRuntime
-    for Runtime<E, S>
+impl<E: ContainerEngine + 'static, S: KappaStore + 'static>
+    hologram_substrate_core::ContainerRuntime for Runtime<E, S>
 {
     async fn spawn(
         &self,
@@ -374,7 +402,9 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_substrate_c
 
     async fn suspend(&self, handle: ContainerHandle) -> Result<KappaLabel71, RuntimeError> {
         let mut table = self.table.lock();
-        let entry = table.get_mut(&handle.0).ok_or(RuntimeError::ContainerIdNotFound)?;
+        let entry = table
+            .get_mut(&handle.0)
+            .ok_or(RuntimeError::ContainerIdNotFound)?;
         self.engine.suspend(&mut entry.inst);
         let mem = self.engine.snapshot_memory(&entry.inst);
         let snapshot = Snapshot {
@@ -402,11 +432,18 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_substrate_c
             .get(snapshot)
             .map_err(be)?
             .ok_or(RuntimeError::SnapshotInvalid)?;
-        let refs = Snapshot::references(snap_bytes.as_ref()).map_err(|_| RuntimeError::SnapshotInvalid)?;
+        let refs =
+            Snapshot::references(snap_bytes.as_ref()).map_err(|_| RuntimeError::SnapshotInvalid)?;
         let container_id = *refs.first().ok_or(RuntimeError::SnapshotInvalid)?;
         let mem = hologram_realizations::payload_of(Snapshot::IRI, snap_bytes.as_ref())
             .map_err(|_| RuntimeError::SnapshotInvalid)?;
-        let handle = self.instantiate_from(&container_id, capabilities, caps, Some(&mem), Some(*snapshot))?;
+        let handle = self.instantiate_from(
+            &container_id,
+            capabilities,
+            caps,
+            Some(&mem),
+            Some(*snapshot),
+        )?;
         // Replay any channel messages published while this container was suspended (§10.11).
         self.pump();
         Ok(handle)
@@ -418,7 +455,11 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_substrate_c
     }
 
     fn list(&self) -> Vec<ContainerHandle> {
-        self.table.lock().keys().map(|k| ContainerHandle(*k)).collect()
+        self.table
+            .lock()
+            .keys()
+            .map(|k| ContainerHandle(*k))
+            .collect()
     }
 
     fn info(&self, handle: ContainerHandle) -> Option<ContainerInfo> {
@@ -438,7 +479,11 @@ impl<S: KappaStore + 'static> Runtime<MockEngine, S> {
     /// Test helper (mock engine only): the `(callback_id, payload_kappa_bytes)` delivered to a
     /// container instance via `hg_callback` — lets a test observe channel delivery.
     pub fn delivered_callbacks(&self, handle: ContainerHandle) -> Vec<(u32, Vec<u8>)> {
-        self.table.lock().get(&handle.0).map(|e| e.inst.callbacks.clone()).unwrap_or_default()
+        self.table
+            .lock()
+            .get(&handle.0)
+            .map(|e| e.inst.callbacks.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -454,7 +499,11 @@ pub struct MockInstance {
 impl ContainerEngine for MockEngine {
     type Instance = MockInstance;
     fn instantiate(&self, _code: &[u8], _ctx: &HostContext) -> Result<MockInstance, RuntimeError> {
-        Ok(MockInstance { memory: Vec::new(), log: Vec::new(), callbacks: Vec::new() })
+        Ok(MockInstance {
+            memory: Vec::new(),
+            log: Vec::new(),
+            callbacks: Vec::new(),
+        })
     }
     fn init(&self, inst: &mut MockInstance, initial_state: &[u8]) -> u32 {
         inst.memory = initial_state.to_vec();

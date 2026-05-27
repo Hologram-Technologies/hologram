@@ -60,7 +60,10 @@ pub fn pin_unpin(store: &dyn KappaStore) {
     assert!(store.pinned_roots().iter().any(|r| r == &k));
     store.unpin(&k).unwrap();
     assert!(!store.pinned_roots().iter().any(|r| r == &k));
-    assert!(store.unpin(&k).is_err(), "unpin of a non-pinned κ must error (NotPinned)");
+    assert!(
+        store.unpin(&k).is_err(),
+        "unpin of a non-pinned κ must error (NotPinned)"
+    );
 }
 
 /// Content integrity — bytes put are bytes got, and the κ re-derives to itself.
