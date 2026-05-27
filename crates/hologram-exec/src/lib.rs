@@ -10,10 +10,14 @@
 extern crate alloc;
 
 pub mod buffer;
+#[cfg(feature = "tiered-exec")]
+pub mod coherence;
 pub mod error;
 pub mod prism_route;
 pub mod session;
 pub mod warm;
+#[cfg(feature = "tiered-exec")]
+pub use coherence::{DeviceOwner, LevelMigration, SlotCoherence, TierPolicy, TierReport};
 
 pub use buffer::{BufferArena, InputBuffer, OutputBuffer, SlotSpan};
 pub use error::ExecError;

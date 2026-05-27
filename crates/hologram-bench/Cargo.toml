@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "fusion"
 harness = false
+
+[[bench]]
+name = "tiered_executor"
+harness = false
