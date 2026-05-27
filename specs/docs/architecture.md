@@ -43,9 +43,9 @@ addressed once by its κ-label and a graph-level memo hit is O(1) in graph size.
 
 | Prism Identity | Foundation Basis | Hologram Component |
 |---------------|-----------------|-------------------|
-| PA_4 (base binding preservation) | SR_1 + bitmask OR irreversibility | `DispatchContext` immutability; PM_5 rollback |
+| PA_4 (base binding preservation) | SR_1 + bitmask OR irreversibility | Compiled `.holo` immutability (`KernelCall`s fixed post-compile); PM_5 rollback |
 | PI_1 (inference idempotence) | CC_1 + SC_5 | κ-label result memoization in the `BufferArena` pool |
-| PD_1 (dispatch determinism) | AD_1 (addressing bijection) | `float_dispatch.rs` determinism |
+| PD_1 (dispatch determinism) | AD_1 (addressing bijection) | `CpuBackend::dispatch` exhaustive-match determinism |
 | PD_2 (dispatch type safety) | CB_5 (fiber sufficiency) | dtype-gated dispatch |
 | PL_2 (lease disjointness) | SR_9 (ContextLease fiber disjointness) | `ParallelLevel` isolation |
 | PX_5 (infeasibility detection) | CB_5 + SR_5 (ContradictionBoundary) | `CompileError` taxonomy |

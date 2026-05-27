@@ -2,231 +2,272 @@
 
 ## Overview
 
-hologram-ai should use the **tape execution path** (`build_tape_from_plan` + `execute_tape`) instead of the KvExecutor path (`execute_plan`) for all inference. The tape path is **17.5x faster** for elementwise ops (Phase 9: 2.54 µs vs 44.4 µs on Relu 64KB), has zero per-instruction allocation, and automatically dispatches to Metal GPU on Apple Silicon. At TinyLlama scale (hidden=2048), the tape path achieves **140x speedup** over KvExecutor (2.8 ms vs 391 ms).
+`hologram-ai` is the downstream AI-inference layer; `hologram` (v0.5.0) is the
+compile-and-execute runtime it builds on. hologram has **zero knowledge of AI
+model formats** — it compiles an op `Graph` into a content-addressed `.holo`
+archive and executes that archive **synchronously** through an
+`InferenceSession`. hologram-ai owns everything above the graph layer (format
+parsing, graph lowering, tokenization, sampling).
 
-## Quick Start
+The integration surface is small and stable:
 
-```rust
-use hologram::*;
+1. Build (or lower a model into) a `hologram_graph::Graph`.
+2. Compile it to a `.holo` archive with `hologram-compiler`.
+3. Load + execute the archive with `hologram-exec`'s `InferenceSession`.
+4. Read back raw output bytes.
 
-// 1. Load the .holo archive (once at model load time).
-let loader = HoloLoader::open(&path)?;
-let plan = loader.load()?;  // madvise hints applied automatically
+There is **no umbrella `hologram` crate** — depend on the individual crates
+listed below.
 
-// 2. Build the tape (once at model load time).
-//    Pre-resolves all kernel dispatch — O(1) per op at runtime.
-let tape = build_tape_from_plan(&plan)?;
+> **Migration note (removed architecture).** Earlier drafts described a "tape
+> execution path" (`build_tape_from_plan` / `execute_tape` / `EnumTape` /
+> `TapeKernel`), a `KvExecutor` (`execute_plan`), a `Float(FloatOp::…)` op
+> encoding, a LUT-GEMM codebook, `build.rs` backend autodetection, and the
+> `hologram-core` / `hologram-async` crates. **None of these exist in v0.5.0.**
+> See "Migration from the removed tape / KvExecutor path" at the end of this
+> guide.
 
-// 3. Execute per inference call (reuse tape across calls).
-let mut inputs = GraphInputs::new();
-inputs.set(0, token_embedding_bytes);
-let outputs = execute_tape(&tape, &plan, &inputs)?;
-let logits = outputs.by_name("logits")?;
+## 1. Crates and features
+
+| Crate | Role |
+|-------|------|
+| `hologram-compiler` | `Graph` → `.holo` archive (`Compiler` / `compile`). |
+| `hologram-exec` | Load + run an archive (`InferenceSession`, `BufferArena`, `InputBuffer`/`OutputBuffer`). |
+| `hologram-backend` | Compute backends (`CpuBackend`, plus optional GPU). |
+| `hologram-archive` | `.holo` format + content addressing (`address_ring`, `compose_model`); model-file realization under the `model-formats` feature. |
+| `hologram-graph` | The op graph (`Graph`, `Node`, `GraphOp`, `OpKind`). Re-exported through the compiler's inputs. |
+
+```toml
+[dependencies]
+hologram-compiler = "0.5"
+hologram-exec     = "0.5"
+hologram-backend  = "0.5"
+hologram-archive  = { version = "0.5", features = ["model-formats"] }
 ```
 
-## Backend Selection
+Relevant Cargo features:
 
-By default, `execute_tape` uses `BackendSelector::Auto` which picks the best available backend:
+- `hologram-archive/model-formats` — enables `hologram_archive::{onnx, gguf}`
+  (UOR-ADDR realization of ONNX / GGUF model files; see §5). Off by default.
+- `hologram-exec/tiered-exec` — enables `InferenceSession::tier_report()` and the
+  PM_7 memory-tier accessors (see §4). Off by default.
+- `hologram-exec/parallel` — intra-kernel multi-core dispatch (forwards to
+  `hologram-backend/parallel`).
+- `hologram-backend` GPU features `wgpu` / `metal` — optional GPU backends
+  (`CpuBackend` is always available; GPU is opt-in, *not* autodetected).
 
-| Priority | Backend | Auto-detected when |
-|----------|---------|-------------------|
-| 1 | Metal | macOS (Apple Silicon) |
-| 2 | WebGPU | wasm32 target |
-| 3 | CUDA | `CUDA_HOME` set or `nvcc` on PATH |
-| 4 | CPU | Always available |
+## 2. Compile a graph to a `.holo` archive
 
-### Forcing a Backend
-
-```rust
-use hologram::tape::TapeContext;
-use hologram::backend::BackendSelector;
-
-let mut tape_ctx = TapeContext::new(&plan.graph().constants, plan.weights());
-tape_ctx.backend = BackendSelector::Cpu;  // Force CPU even on Metal-capable machines
-
-tape.execute(&mut arena, &tape_ctx)?;
-```
-
-### Checking Available Backends
+A graph is built with `hologram_graph` (there is no fluent `GraphBuilder` in the
+Rust API — construct `Node`s directly, or lower your model IR into a `Graph`).
+Then compile it:
 
 ```rust
-use hologram::backend::available_backends;
+use hologram_compiler::{compile, BackendKind, CompilationOutput};
+use prism::vocabulary::WittLevel;
 
-let backends = available_backends();
-// On macOS: ["cpu", "metal"]
-// On Linux with CUDA: ["cpu", "cuda"]
-// On wasm32: ["cpu", "webgpu"]
+// `graph: hologram_graph::Graph` produced by hologram-ai's lowering.
+let out: CompilationOutput = compile(graph, BackendKind::Cpu, WittLevel::W32)?;
+let archive: Vec<u8> = out.archive;        // the `.holo` bytes
+// out.stats: CompilationStats { total_nodes, schedule_levels, cache_hits, ... }
 ```
 
-## Autoregressive Generation (KV Cache)
-
-For LLM token-by-token generation:
+The builder form is equivalent and exposes the per-compile certificate cache:
 
 ```rust
-use hologram::tape::TapeContext;
-use hologram::KvCacheState;
+use hologram_compiler::{Compiler, BackendKind};
+use prism::vocabulary::WittLevel;
 
-// Create KV cache for the model architecture.
-let kv = KvCacheState::new(n_layers, n_kv_heads, head_dim, max_seq_len);
-
-// Create tape context with KV cache.
-let tape_ctx = TapeContext::with_kv_cache(
-    &plan.graph().constants,
-    plan.weights(),
-    kv,
-);
-
-// Execute prefill (full prompt).
-tape.execute(&mut arena, &tape_ctx)?;
-
-// Execute decode (one token at a time).
-for _ in 0..max_tokens {
-    tape.execute(&mut arena, &tape_ctx)?;
-    // Extract next token from arena output...
-}
+let out = Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile()?;
 ```
 
-## Performance Characteristics
+`BackendKind` selects the lowering target (`Cpu`, `Avx2`, `Avx512`, `Neon`,
+`Metal`, `Wgpu`). `WittLevel::W32` is the standard quantum level for f32
+inference. Compilation desugars composite ops into primitive pipelines, elides
+algebraically-unnecessary computation, schedules, validates each node, and emits
+the archive (kernel calls, schedule, dedup'd weights, constants, port
+descriptors, certificates).
 
-### Tape vs KvExecutor
+The `hologram` CLI compiles hologram-source files the same way
+(`hologram compile --source m.holosrc --output m.holo`) and, by default, bakes
+the warm-start fold so the runtime cache is never cold.
 
-| Metric | KvExecutor | EnumTape | Speedup |
-|--------|-----------|----------|---------|
-| Relu 64KB | 44.4 µs | 2.54 µs | **17.5x** |
-| TinyLlama decode step | 391 ms | 2.8 ms | **140x** |
-| Dispatch overhead per op | ~2 µs | ~0 ns | ∞ |
-| Allocation per inference | O(n) Vec | 0 (swap-insert) | ∞ |
-| Matmul dispatch | match chain | inline | direct |
+## 3. Load and execute via `InferenceSession`
 
-### Metal GPU Dispatch
-
-The Metal backend automatically dispatches ops to the GPU when buffer sizes exceed thresholds:
-
-| Op type | GPU threshold | Below threshold |
-|---------|--------------|-----------------|
-| Elementwise (relu, add, etc.) | 4 MB | CPU SIMD |
-| MatMul | 128×128 output | Accelerate BLAS |
-| Softmax / RmsNorm | 4 MB | CPU |
-
-GPU output is stored in the arena as `ArenaBuffer::Metal` — zero-copy on Apple Silicon unified memory. Downstream ops reading from a Metal buffer get a CPU-accessible pointer without any DMA transfer.
-
-## API Reference
-
-### Building the Tape
+Execution is **synchronous**. Load the archive with a backend, then call
+`execute` with one `InputBuffer` per declared input port; read each
+`OutputBuffer.bytes`.
 
 ```rust
-// From a loaded plan:
-let tape = build_tape_from_plan(&plan)?;
+use hologram_backend::CpuBackend;
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer, OutputBuffer};
 
-// Or from raw graph + schedule:
-let schedule = build_schedule(plan.graph())?;
-let tape = hologram::tape_builder::build_tape(plan.graph(), &schedule)?;
+// Backend is generic over the workspace; the session uses `BufferArena`.
+let backend: CpuBackend<BufferArena> = CpuBackend::new();
+let mut session = InferenceSession::load(&archive, backend)?;
+
+// One InputBuffer per input port, in declared order. `bytes` is a raw
+// little-endian tensor payload (e.g. f32 LE for an f32 port).
+let x_bytes: Vec<u8> = /* token embeddings etc., little-endian */;
+let outputs: Vec<OutputBuffer> = session.execute(&[InputBuffer { bytes: &x_bytes }])?;
+
+let logits: &[u8] = &outputs[0].bytes; // raw LE bytes; hologram-ai decodes
 ```
 
-### Execution Functions
+For a content-addressed pipeline (e.g. autoregressive decode), prefer the
+address-level surface so values flow by κ-label and are never rehashed:
 
-| Function | Use case |
-|----------|----------|
-| `execute_tape(&tape, &plan, &inputs)` | Standard inference (auto backend) |
-| `execute_plan(&plan, &inputs)` | Legacy KvExecutor path (slower) |
-| `execute_bytes(&archive, &inputs)` | One-shot from archive bytes |
-| `execute_file(&path, &inputs)` | One-shot from .holo file |
+- `session.intern_input(bytes) -> ContentLabel` — byte → address (hashes once).
+- `session.execute_addressed(&[label, ..]) -> Vec<ContentLabel>` — runs on
+  addresses; on a repeat it is an O(1) memo hit with no graph walk and no byte
+  movement.
+- `session.resolve(&label) -> Option<&[u8]>` — address → bytes for reading an
+  output.
 
-### Tape Reuse
+Port sizing helpers: `input_byte_len(i)` / `output_byte_len(i)` and
+`input_ports()` / `output_ports()` (each `PortDescriptor` carries `slot`,
+`element_count`, `dtype`).
 
-The tape is immutable after construction. It can be:
-- Shared across threads (`EnumTape` is `Send + Sync`)
-- Reused across inference calls (just change inputs)
-- Cached for the lifetime of the model
+## 4. Observability
 
-The `TapeContext` is per-call — it holds mutable state (weight cache, KV cache). Create one per inference thread.
+`InferenceSession` exposes the content-addressed runtime's footprint and the
+last walk's reuse:
 
-## Migration from KvExecutor
+| Accessor | Meaning |
+|----------|---------|
+| `input_count()` / `output_count()` | Declared port counts. |
+| `resident_bytes()` | Deduplicated content-addressed footprint (pinned constants/weights + transient inputs/intermediates). Identical content occupies one buffer. |
+| `resident_count()` | Number of distinct resident values (deduped by κ-label). |
+| `content_store_len()` | Distinct addressed values in the store (same count as `resident_count`; grows with novel values, flat across all-memo-hit re-runs). |
+| `last_dispatched()` / `last_skipped()` | Kernels dispatched vs. elided (sub-graph reuse) in the most recent walk. |
+| `kernel_count()` / `schedule_levels()` | Static schedule size. |
+| `fused_count()`, `dequant_fused_count()`, `broadcast_binary_fused_count()`, … | Counts of each load-time fusion (see §6). |
 
-Replace:
+With the `tiered-exec` feature:
+
 ```rust
-// Old (KvExecutor path):
-let outputs = execute_plan(&plan, &inputs)?;
+#[cfg(feature = "tiered-exec")]
+let report = session.tier_report(); // per-tier kernel histogram + migration stats
 ```
 
-With:
+## 5. Content addressing and model composition
+
+Every value the runtime operates on carries a UOR-ADDR **κ-label** — a typed,
+σ-projection-grounded, replayable 71-byte content address (`blake3:<64 hex>`),
+not a bare hash. Identical re-execution is recognized by label and served from
+the graph memo in O(1) (no walk, no movement); identical sub-graphs / weights
+collapse to one buffer.
+
+For model **identity** (decomposition → composition), use
+`hologram_archive::address`:
+
 ```rust
-// New (tape path):
-let tape = build_tape_from_plan(&plan)?;  // Once at load time
-let outputs = execute_tape(&tape, &plan, &inputs)?;  // Per inference
+use hologram_archive::address::{address_ring, compose_model};
+
+// Address each part (an Amendment-43 ring element) to a κ-label, then fold
+// the parts into one model identity. compose_model uses the CS-G2 *commutative*
+// product, so the model identity is independent of assembly order.
+let part_a = address_ring(&canonical_bytes_a)?.address;
+let part_b = address_ring(&canonical_bytes_b)?.address;
+let model_id = compose_model(&[part_a, part_b])?;
 ```
 
-The tape path is a strict superset — it handles all ops the KvExecutor handles, plus LUT-GEMM, KvCache, and GPU dispatch. The only difference is the tape is built once and reused.
+Other addressing primitives in the same module: `address_bytes` (leaf identity
+for arbitrary bytes), `derive_label` (cheap ordered reuse key — the runtime's
+internal memo key), and `derive_label_witnessed` (replayable TC-05 boundary
+address). The full per-axis surface (sha256, sha3-256, …) is re-exported via
+`address::{ring, composition}`.
 
-## What hologram-ai Needs to Implement
+With the `model-formats` feature, `hologram_archive::{onnx, gguf}` (UOR-ADDR's
+ONNX / GGUF realizations) address a *model file* into κ-labels. Note these
+**address** model files — they do not lower them into a `Graph`. Parsing a model
+into hologram's op graph is hologram-ai's responsibility.
 
-hologram provides the execution engine but has **zero knowledge of AI model formats**. hologram-ai must implement everything above the graph layer:
+## 6. Quantization
 
-### 1. Model Format Parsers
+hologram dequantizes packed integer weights with
+`output = (q − zero_point) · scale`, in both **per-tensor** and **per-channel
+(per-axis)** modes (the per-channel form supplies `scale`/`zero_point` vectors as
+extra operands). Supported quantized source dtypes are **`i8`, `u8`, and `i4`**
+(`u8` is ONNX's default asymmetric type — the byte is read unsigned; `i4` = two
+sign-extended nibbles per byte). The `zero_point` is a full `i32`, so asymmetric
+(ONNX-style) zero-points are handled.
 
-| Format | Purpose | Suggested crate |
-|--------|---------|-----------------|
-| ONNX (.onnx) | Industry standard, wide model zoo | `onnx-pb` or `prost` + proto files |
-| safetensors (.safetensors) | HuggingFace, safe/fast tensor loading | `safetensors` |
-| GGUF (.gguf) | llama.cpp quantized models | custom parser or `gguf` |
+The compiler reads a node's `QuantAttrs` (`quant_dtype`, `scale_bits`,
+`zero_point`, `axis`) and the executor fuses quantized patterns at load:
 
-### 2. Graph Lowering (AiGraph → hologram::Graph)
+- **`Dequantize → MatMul`** fuses into `MatMulDequant` — the quantized weight is
+  dequantized into a transient panel *inside* the matmul, so the dense f32 weight
+  is never materialized in the pool. (Count via `dequant_fused_count()`.)
+- **`Dequantize → unary activation`** densifies into `DequantActivation` — a
+  table over the finite quantum domain (≤256 entries for `i8`, ≤16 for `i4`),
+  removing the per-element transcendental path. (Count via
+  `dequant_activation_fused_count()`.)
 
-Map AI operations to hologram's `GraphOp` variants:
+Constant quantized weights are folded at warm-start (no runtime dequant); a
+runtime dequant feeding a matmul is the dynamic case the fusion targets.
 
-| AI operation | hologram GraphOp |
+## 7. Op mapping
+
+hologram-ai's lowering targets `hologram_graph::OpKind` (the canonical op set
+defined in `hologram-ops`). Construct nodes as `GraphOp::Op(OpKind::…)`. There is
+**no `Float(FloatOp::…)` encoding** — use the `OpKind` variants directly.
+
+| AI operation | `OpKind` |
 |---|---|
-| MatMul (FP32 weights) | `Float(FloatOp::MatMul { m, k, n })` |
-| MatMul (Q4 quantized) | `MatMulLut4(ConstantId)` |
-| MatMul (Q8 quantized) | `MatMulLut8(ConstantId)` |
-| RmsNorm | `Float(FloatOp::RmsNorm { size, epsilon })` |
-| Softmax | `Float(FloatOp::Softmax { size })` |
-| Activations (Gelu, Silu, etc.) | `Float(FloatOp::Gelu)` or `Lut(LutOp::Gelu)` |
-| Binary ops (Add, Mul) | `Float(FloatOp::Add)` or `Prim(PrimOp::Add)` |
-| Attention (fused) | `Custom { id, arity: 3 }` + handler in `CustomOpRegistry` |
-| RoPE | `Custom { id, arity }` + handler |
-| Embedding lookup | `Custom { id, arity: 1 }` + handler |
+| Matrix multiply | `MatMul` (or `Gemm`) |
+| RMS norm / layer norm | `RmsNorm`, `LayerNorm`, `AddRmsNorm` |
+| Group / instance norm | `GroupNorm`, `InstanceNorm` |
+| Softmax / log-softmax | `Softmax`, `LogSoftmax` |
+| Activations | `Gelu`, `Silu`, `Relu`, `Sigmoid`, `Tanh`, `Elu`, `Selu`, `Erf`, … |
+| Elementwise binary | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Min`, `Max`, … |
+| Attention (fused) | `Attention` |
+| SwiGLU (fused) | `FusedSwiGlu` |
+| Rotary position embedding | `RotaryEmbedding` |
+| Dequantize | `Dequantize` |
+| Layout / shape | `Reshape`, `Transpose`, `Concat`, `Slice`, `Pad`, `Expand`, `Resize` |
+| Reductions | `ReduceSum`, `ReduceMean`, `ReduceMax`, `ReduceMin`, `ReduceProd` |
+| Convolution / pooling | `Conv2d`, `ConvTranspose2d`, `MaxPool2d`, `AvgPool2d`, `GlobalAvgPool` |
 
-Use `GraphBuilder` for construction:
+All float dtypes route through the one f32 engine: `f16`/`bf16` inputs widen into
+it; `f64` is rejected. (See `hologram-ops` for the authoritative `OpKind` list.)
+
+## What hologram-ai still owns
+
+hologram provides the compile + execute engine only. hologram-ai implements:
+
+- **Model parsers** — ONNX, safetensors, GGUF → an in-memory model IR. (hologram's
+  `model-formats` addresses these files but does not parse them into graphs.)
+- **Graph lowering** — model IR → `hologram_graph::Graph` (mapping ops to the
+  `OpKind` set in §7).
+- **Tokenization & sampling** — BPE / SentencePiece, top-k / top-p / temperature,
+  and the token-by-token generation loop (driving `execute` / `execute_addressed`).
+
+## Migration from the removed tape / KvExecutor path
+
+The "tape" and `KvExecutor` execution paths were **removed** in v0.5.0. Replace:
+
 ```rust
-let graph = GraphBuilder::new()
-    .input("tokens")
-    .node_from_graph_input(GraphOp::Input, 0)
-    .constant_with_shape(embed_weight, vec![vocab, hidden])
-    .node_with_inputs(GraphOp::Custom { id: EMBED_ID, arity: 2 }, &[0, 1])
-    // ... transformer layers ...
-    .output("logits", final_node)
-    .build();
+// OLD — removed. Does not compile against v0.5.0.
+let plan   = HoloLoader::open(&path)?.load()?;
+let tape   = build_tape_from_plan(&plan)?;
+let outputs = execute_tape(&tape, &plan, &inputs)?;
+// (and the KvExecutor form: execute_plan(&plan, &inputs)?)
 ```
 
-### 3. Weight Quantization & Storage
+with the single synchronous `InferenceSession` surface:
 
-- **Small constants** (biases, norms): `ConstantData::Bytes(bytes)` inline
-- **Large weights**: serialize to `.holo` via `HoloWriter`, load with `HoloLoader` (mmap)
-- **Quantized weights**: use `QuantizedWeights` struct for Q4/Q8 LUT-GEMM format
-- hologram provides `hologram_core::lut_gemm::quantize_q4` / `quantize_q8` for conversion
-
-### 4. Tokenization & Sampling
-
-hologram provides raw logits; hologram-ai handles:
-- BPE/SentencePiece tokenizer
-- Top-k / top-p / temperature sampling
-- Token-by-token generation loop (using `KvCacheState`)
-
-### 5. Suggested Crate Structure for hologram-ai
-
-```
-hologram-ai/
-├── hologram-ai-common/     # Shared types: AiGraph IR, ModelConfig
-│   └── hologram-ai-lower/  # AiGraph → hologram::Graph lowering
-├── hologram-ai-onnx/       # ONNX parser → AiGraph
-├── hologram-ai-gguf/       # GGUF parser → AiGraph (quantized models)
-├── hologram-ai-safetensors/ # safetensors loader
-├── hologram-ai-tokenizer/  # BPE, SentencePiece
-├── hologram-ai-server/     # HTTP inference server (optional)
-└── hologram-ai-cli/        # CLI: `hologram-ai run model.gguf "prompt"`
+```rust
+// NEW — v0.5.0.
+let mut session = InferenceSession::load(&archive, CpuBackend::<BufferArena>::new())?;
+let outputs = session.execute(&[InputBuffer { bytes: &input_bytes }])?;
 ```
 
-### 6. ADR Reference
-
-See [ADR-0001](../../docs/adrs/0001-hologram-ai-execution-layer.md) for the full integration contract between hologram and hologram-ai.
+Specifically removed (do not reference them): the tape path
+(`build_tape_from_plan`, `execute_tape`, `EnumTape`, `TapeKernel`), `KvExecutor`
+and `execute_plan`, the `Float(FloatOp::…)` / `FloatOp` op encoding, the
+LUT-GEMM codebook, `build.rs` backend autodetection, and the `hologram-core` /
+`hologram-async` crates. The performance story is now content addressing
+(O(1) memo hits, sub-graph reuse, deduplicated residency) plus load-time fusion
+(§6), not a tape; the old "17.5x / 140x tape vs KvExecutor" figures no longer
+apply.

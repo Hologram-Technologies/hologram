@@ -1,6 +1,6 @@
 # Benchmarks & throughput
 
-Captured on the `cleanup-arbitrary-limits` branch (criterion, release, 100
+Captured at v0.5.0 (criterion, release, 100
 samples/bench; CPU). Absolute times are machine-dependent (a shared CI VM); the
 **ratios** — content-addressing reuse and matmul scaling efficiency — are the
 load-bearing results. Re-run with `cargo bench -p hologram-bench` and the
