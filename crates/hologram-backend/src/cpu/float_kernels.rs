@@ -1994,6 +1994,25 @@ pub fn gelu_f(x: f32) -> f32 {
 pub fn silu_f(x: f32) -> f32 {
     x * sigmoid_f(x)
 }
+
+/// The reference `f32 → f32` activation for a `lut_act::*` id. The single source
+/// of truth for the transcendental activations that have a dense finite-domain
+/// table form — both the f16/bf16 LUT (`cpu::lut`) and the quantized-domain
+/// densification (`DequantActivation`) build their tables from this, so all
+/// three paths are bit-identical by construction.
+#[inline]
+pub fn lut_act_ref(act: u8) -> fn(f32) -> f32 {
+    use crate::kernel_call::lut_act;
+    match act {
+        lut_act::SIGMOID => sigmoid_f,
+        lut_act::TANH => tanh_f,
+        lut_act::GELU => gelu_f,
+        lut_act::SILU => silu_f,
+        lut_act::EXP => exp_f,
+        _ => erf_f,
+    }
+}
+
 #[inline]
 pub fn elu_f(x: f32) -> f32 {
     if x >= 0.0 {

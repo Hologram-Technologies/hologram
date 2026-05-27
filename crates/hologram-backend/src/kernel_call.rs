@@ -78,6 +78,39 @@ impl MatMulDequantCall {
     }
 }
 
+/// Fused `Dequantize → unary activation` over a **finite quantum domain**
+/// (PM_7 densification, generalized). The realized information content of the
+/// dequantized values is the quantized source's quantum level — `i8` has only
+/// 256 distinct values, `i4` only 16 — *regardless* of the f32 storage width.
+/// So `activation((q − zero_point)·scale)` is a pure function of the quantized
+/// byte and is fully materialized as a dense table indexed by `q` (≤256
+/// entries), built bit-identically from the reference activation. Dispatch is
+/// then one table lookup per element instead of `dequantize → widen →
+/// transcendental → narrow` — the exact LUT strategy that serves bf16/f16,
+/// now keyed on the *realized* quantum level so it scales to the f32-stored
+/// quantized-inference path (the common case the scalar path used to own).
+///
+/// Per-tensor only (one global `scale`/`zero_point` ⇒ one table). Produced by
+/// the runtime `Dequantize → {Sigmoid,Tanh,Gelu,Silu,Exp,Erf}` fusion when the
+/// dequant output is a private, single-consumer f32 intermediate.
+#[derive(Debug, Clone, Copy)]
+pub struct DequantActivationCall {
+    /// Quantized source buffer (`i8`/`i4`), read directly.
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub element_count: u64,
+    /// Source quantized dtype: `DTYPE_I8` or `DTYPE_I4`.
+    pub quant_dtype: u8,
+    /// Activation identity (`lut_act::*`).
+    pub act: u8,
+    /// Destination float dtype (`DTYPE_F32`).
+    pub dtype: u8,
+    /// `f32::to_bits` of the per-tensor scale.
+    pub scale_bits: u32,
+    /// Symmetric per-tensor zero-point.
+    pub zero_point: i32,
+}
+
 /// Binary op selector for [`BroadcastBinaryCall`].
 pub mod broadcast_op {
     pub const ADD: u8 = 0;
@@ -784,6 +817,7 @@ pub enum KernelCall {
 
     // Quantization (spec X-5)
     Dequantize(DequantizeCall),
+    DequantActivation(DequantActivationCall),
 
     // Content-addressed fusion: matmul with a fused activation epilogue.
     // Constructed by the executor's fusion pass, not by the archive.
@@ -924,6 +958,14 @@ impl KernelCall {
             K::Lrn(c) => p_lrn(c).done(76),
             K::Where(c) => p_where(c).done(77),
             K::Dequantize(c) => p_dequant(c).done(104),
+            K::DequantActivation(c) => Pb::new()
+                .u64(c.element_count)
+                .u8(c.quant_dtype)
+                .u8(c.act)
+                .u8(c.dtype)
+                .u32(c.scale_bits)
+                .i32(c.zero_point)
+                .done(113),
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
             K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
@@ -1060,6 +1102,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::Dequantize(c) if c.per_channel() => vec![c.input, c.scales, c.zero_points, c.output],
         K::Dequantize(c) => vec![c.input, c.output],
+        K::DequantActivation(c) => vec![c.input, c.output],
     }
 }
 
@@ -1165,5 +1208,6 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::Where(c) => c.dtype,
 
         K::Dequantize(c) => c.dtype,
+        K::DequantActivation(c) => c.dtype,
     }
 }

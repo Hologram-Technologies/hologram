@@ -20,22 +20,11 @@ use alloc::boxed::Box;
 use std::sync::OnceLock;
 
 use crate::cpu::dtype::{read_bf16, read_f16, write_bf16, write_f16, DTYPE_BF16, DTYPE_F16};
-use crate::cpu::float_kernels::{erf_f, exp_f, gelu_f, sigmoid_f, silu_f, tanh_f};
+use crate::cpu::float_kernels::lut_act_ref;
 use crate::error::BackendError;
 use crate::kernel_call::lut_act;
 use crate::kernel_call::UnaryCall;
 use crate::workspace::Workspace;
-
-fn act_fn(act: u8) -> fn(f32) -> f32 {
-    match act {
-        lut_act::SIGMOID => sigmoid_f,
-        lut_act::TANH => tanh_f,
-        lut_act::GELU => gelu_f,
-        lut_act::SILU => silu_f,
-        lut_act::EXP => exp_f,
-        _ => erf_f,
-    }
-}
 
 /// `true` if `dtype` is a 16-bit (Q1) float the LUT path serves.
 #[inline]
@@ -52,7 +41,7 @@ fn tables() -> &'static [[OnceLock<Table>; 2]; lut_act::COUNT] {
 }
 
 fn build_table(act: u8, dtype: u8) -> Table {
-    let f = act_fn(act);
+    let f = lut_act_ref(act);
     let mut t: Table = alloc::vec![0u16; 65536]
         .into_boxed_slice()
         .try_into()

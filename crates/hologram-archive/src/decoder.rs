@@ -3,10 +3,10 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantizeCall,
-    ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall,
-    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
-    ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantActivationCall,
+    DequantizeCall, ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
+    MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall,
+    NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 /// Cursor over a section payload.
@@ -174,6 +174,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         }),
         111 => K::MatMulDequant(read_matmul_dequant(cur)?),
         112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
+        113 => K::DequantActivation(read_dequant_activation(cur)?),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })
 }
@@ -218,6 +219,19 @@ fn read_matmul_dequant(c: &mut Cursor<'_>) -> Result<MatMulDequantCall, ArchiveE
         channels: c.u32()?,
         inner: c.u32()?,
         quant_dtype: c.u8()?,
+        dtype: c.u8()?,
+        scale_bits: c.u32()?,
+        zero_point: c.u32()? as i32,
+    })
+}
+
+fn read_dequant_activation(c: &mut Cursor<'_>) -> Result<DequantActivationCall, ArchiveError> {
+    Ok(DequantActivationCall {
+        input: c.buf()?,
+        output: c.buf()?,
+        element_count: c.u64()?,
+        quant_dtype: c.u8()?,
+        act: c.u8()?,
         dtype: c.u8()?,
         scale_bits: c.u32()?,
         zero_point: c.u32()? as i32,

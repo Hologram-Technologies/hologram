@@ -13,8 +13,8 @@ use hologram_archive::{
     HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
 };
 use hologram_backend::{
-    buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
-    MatMulCall, MatMulDequantCall,
+    buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
+    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall,
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
@@ -220,6 +220,13 @@ impl<B: SessionBackend> InferenceSession<B> {
         // (no runtime dequant), so a runtime dequant feeding a matmul is dynamic
         // — fusing it is a pure win.
         let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs);
+        // Fuse `dequantize → unary activation` into a table densified over the
+        // *quantized* domain (PM_7 densification generalized): the dequantized
+        // value is a pure function of the i8/i4 byte, so `activation(dequant(q))`
+        // is ≤256 precomputed entries — the f16/bf16 LUT win keyed on the realized
+        // quantum level, removing the scalar transcendental path for the f32
+        // quantized-inference case. Scales to any element count.
+        let (kernel_calls, exec_plan) = fuse_dequant_activation(kernel_calls, exec_plan, &outputs);
         // Fuse `Expand → elementwise-binary` so the broadcast operand is read
         // with stride-0 indexing in place — the materialized broadcast tensor is
         // elided (the zero-movement realization of Expand for its dominant
@@ -881,6 +888,14 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulDequant(_)))
             .count()
     }
+    /// Number of `Dequantize → activation` pairs densified into a single
+    /// quantized-domain table ([`KernelCall::DequantActivation`]).
+    pub fn dequant_activation_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::DequantActivation(_)))
+            .count()
+    }
     /// Number of fused `Expand → elementwise-binary` ops in the loaded schedule
     /// — the broadcast read in place, the materialized broadcast tensor elided.
     pub fn broadcast_binary_fused_count(&self) -> usize {
@@ -1296,6 +1311,123 @@ fn fuse_dequant_matmul(
             inner: dq.inner,
             quant_dtype: dq.quant_dtype,
             dtype: mm.dtype,
+            scale_bits: dq.scale_bits,
+            zero_point: dq.zero_point,
+        }));
+        absorbed[i] = true; // drop the standalone dequant
+    }
+    if !absorbed.iter().any(|&a| a) {
+        return (calls, plan);
+    }
+    let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n);
+    let mut remap = vec![u32::MAX; n];
+    for i in 0..n {
+        if absorbed[i] {
+            continue;
+        }
+        remap[i] = new_calls.len() as u32;
+        new_calls.push(fused[i].take().unwrap_or(calls[i]));
+    }
+    let mut new_plan: Vec<Vec<u32>> = Vec::with_capacity(plan.len());
+    for level in &plan {
+        let lvl: Vec<u32> = level
+            .iter()
+            .filter_map(|&ci| {
+                let ci = ci as usize;
+                (ci < n && !absorbed[ci]).then(|| remap[ci])
+            })
+            .collect();
+        if !lvl.is_empty() {
+            new_plan.push(lvl);
+        }
+    }
+    (new_calls, new_plan)
+}
+
+/// The `lut_act::*` id for a unary activation `KernelCall` that has a dense
+/// finite-domain table form, or `None` for non-densified ops. Only the
+/// transcendental activations the LUT path serves (the expensive scalar ones).
+fn dequant_act_id(call: &KernelCall) -> Option<(u8, &hologram_backend::UnaryCall)> {
+    use hologram_backend::lut_act;
+    match call {
+        KernelCall::Sigmoid(c) => Some((lut_act::SIGMOID, c)),
+        KernelCall::Tanh(c) => Some((lut_act::TANH, c)),
+        KernelCall::Gelu(c) => Some((lut_act::GELU, c)),
+        KernelCall::Silu(c) => Some((lut_act::SILU, c)),
+        KernelCall::Exp(c) => Some((lut_act::EXP, c)),
+        KernelCall::Erf(c) => Some((lut_act::ERF, c)),
+        _ => None,
+    }
+}
+
+/// Fuse `Dequantize → {Sigmoid,Tanh,Gelu,Silu,Exp,Erf}` into a single
+/// [`KernelCall::DequantActivation`] that densifies `activation((q − zp)·scale)`
+/// over the quantized domain (≤256 entries for i8, ≤16 for i4). The dequant
+/// output — an f32 tensor — is otherwise served by the scalar transcendental
+/// path (no LUT: f32's 2³² domain can't be tabled). But its *realized* quantum
+/// level is the quantized source's (i8/i4), so the composition is a tiny dense
+/// table indexed by the quantized byte: the PM_7 LUT win, keyed on realized
+/// information content rather than storage width, made to scale arbitrarily.
+///
+/// Fires only when the dequant is **per-tensor** (one global scale/zero-point ⇒
+/// one table), produces f32, and its output is a private single-consumer
+/// intermediate feeding the activation. Bit-identical to the unfused pair.
+fn fuse_dequant_activation(
+    calls: Vec<KernelCall>,
+    plan: Vec<Vec<u32>>,
+    outputs: &[PortDescriptor],
+) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
+    use hashbrown::HashSet;
+    let n = calls.len();
+    let mut prod_count: HashMap<u32, u32> = HashMap::new();
+    let mut read_count: HashMap<u32, u32> = HashMap::new();
+    let mut read_idx: HashMap<u32, usize> = HashMap::new();
+    for (i, call) in calls.iter().enumerate() {
+        if let Some((out, ins)) = buffers(call).split_last() {
+            for r in ins {
+                if r.slot != u32::MAX {
+                    *read_count.entry(r.slot).or_insert(0) += 1;
+                    read_idx.insert(r.slot, i);
+                }
+            }
+            if out.slot != u32::MAX {
+                *prod_count.entry(out.slot).or_insert(0) += 1;
+            }
+        }
+    }
+    let out_slots: HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
+    let mut absorbed = vec![false; n];
+    let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
+    for i in 0..n {
+        let dq = match &calls[i] {
+            // Per-tensor (scalar scale/zp) f32 dequant only: per-channel needs one
+            // table per channel, and a non-f32 intermediate would round between
+            // dequant and activation (handled by the existing LUT/compute paths).
+            KernelCall::Dequantize(c) if !c.per_channel() && c.dtype == DTYPE_F32 => *c,
+            _ => continue,
+        };
+        let s = dq.output.slot;
+        if s == u32::MAX || out_slots.contains(&s) {
+            continue;
+        }
+        if prod_count.get(&s) != Some(&1) || read_count.get(&s) != Some(&1) {
+            continue;
+        }
+        let j = match read_idx.get(&s) {
+            Some(&j) if j != i && !absorbed[j] => j,
+            _ => continue,
+        };
+        let (act, ac) = match dequant_act_id(&calls[j]) {
+            Some((act, ac)) if ac.dtype == DTYPE_F32 && ac.input.slot == s => (act, ac),
+            _ => continue,
+        };
+        fused[j] = Some(KernelCall::DequantActivation(DequantActivationCall {
+            input: dq.input,
+            output: ac.output,
+            element_count: dq.element_count,
+            quant_dtype: dq.quant_dtype,
+            act,
+            dtype: DTYPE_F32,
             scale_bits: dq.scale_bits,
             zero_point: dq.zero_point,
         }));

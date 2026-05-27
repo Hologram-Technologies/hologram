@@ -145,6 +145,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
 
         // Quantization (spec X-5): dequantize INT8 / packed-INT4 → float.
         KernelCall::Dequantize(c) => dequantize(c, ws),
+        KernelCall::DequantActivation(c) => dequant_activation(c, ws),
 
         // Content-addressed fusion: matmul + activation epilogue. Fusion
         // only fires for float matmuls, so this is handled by the float
@@ -269,6 +270,78 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Fused `Dequantize → unary activation`, densified over the quantized domain
+/// (PM_7 generalization). The dequantized value is a pure function of the
+/// quantized byte — `i8` has ≤256 distinct inputs, `i4` ≤16 — so the *whole*
+/// composition `activation((q − zp)·scale)` is materialized once as a dense
+/// `[f32]` table indexed by `q`, then every element is one lookup. This is the
+/// f16/bf16 LUT strategy keyed on the **realized** quantum level rather than the
+/// f32 storage width: a 4 GB f32 table is infeasible, but the realized domain
+/// here is 256 entries regardless of element count, so it scales arbitrarily.
+///
+/// Bit-identical to `dequantize (→ f32) → unary_float`: the table entry runs the
+/// exact same f32 dequant arithmetic and reference activation, and the output is
+/// the same f32. Per-tensor only (`DequantActivationCall` carries scalar
+/// scale/zero-point — one global table).
+fn dequant_activation<W: Workspace>(
+    c: &crate::kernel_call::DequantActivationCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    use crate::cpu::dtype::*;
+    let n = c.element_count as usize;
+    let in_bytes_needed = match c.quant_dtype {
+        DTYPE_I4 => n.div_ceil(2),
+        DTYPE_I8 => n,
+        _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
+    };
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0]
+        .get(..in_bytes_needed)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    if out.len() < n * 4 {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    let f = ff::lut_act_ref(c.act);
+    let scale = f32::from_bits(c.scale_bits);
+    let zp = c.zero_point;
+    // Densify the composition over the quantized domain. `i8` indexes a raw byte
+    // `0..256` whose signed value is `(raw as i8)`; `i4` indexes a nibble `0..16`
+    // whose signed value sign-extends from bit 3. Built once, then pure lookups.
+    match c.quant_dtype {
+        DTYPE_I8 => {
+            let mut table = [0f32; 256];
+            for (raw, slot) in table.iter_mut().enumerate() {
+                let q = (raw as u8 as i8) as i32;
+                *slot = f((q - zp) as f32 * scale);
+            }
+            for i in 0..n {
+                write_f32(out, i, table[inp[i] as usize]);
+            }
+        }
+        DTYPE_I4 => {
+            let mut table = [0f32; 16];
+            for (idx, slot) in table.iter_mut().enumerate() {
+                let v = idx as i32;
+                let q = if v >= 8 { v - 16 } else { v };
+                *slot = f((q - zp) as f32 * scale);
+            }
+            for i in 0..n {
+                let byte = inp[i / 2];
+                let nib = if i.is_multiple_of(2) {
+                    byte & 0x0F
+                } else {
+                    byte >> 4
+                };
+                write_f32(out, i, table[nib as usize]);
+            }
+        }
+        _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     }
     Ok(())
 }
@@ -1252,8 +1325,15 @@ fn greater_or_equal_byte(a: u8, b: u8) -> u8 {
 /// Dispatch a unary activation: for low-precision (f16/bf16) inputs use the
 /// content-addressed LUT (PM_7 Q1 tier — one table lookup per element,
 /// bit-identical to compute and faster than `widen → transcendental → narrow`);
-/// otherwise compute. The LUT cache needs `std`; under no_std the activation is
-/// always computed (a compile-time choice, not a runtime fallback).
+/// otherwise compute through the reference engine.
+///
+/// The remaining compute path is reached for **f32** (Q3+/Device tier: a 4 GB
+/// table is infeasible, so f32 transcendentals are computed — reuse is
+/// structural, via the executor's κ-label memo at the graph level, not a
+/// per-element table) and for f16/bf16 under no_std (the LUT cache needs `std`;
+/// computing is a compile-time choice, not a runtime fallback). f32 values whose
+/// *realized* quantum level is small — the `Dequantize → activation` case — are
+/// densified separately by the `DequantActivation` fusion before reaching here.
 #[cfg_attr(not(feature = "std"), allow(unused_variables))]
 #[inline]
 fn unary_act<W: Workspace>(
