@@ -1,0 +1,28 @@
+[package]
+name = "hologram-substrate-cli"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "The `hologram` node CLI (spec §9.2): put/get/pin/unpin/gc/ls/inspect/verify/manifest over a native redb store. Command logic is store-generic and hermetically testable."
+
+[[bin]]
+name = "hologram"
+path = "src/main.rs"
+
+[lib]
+name = "hologram_substrate_cli"
+path = "src/lib.rs"
+
+[dependencies]
+hologram-substrate-core   = { workspace = true }
+hologram-realizations     = { workspace = true }
+hologram-store-native     = { workspace = true }
+hologram-runtime          = { workspace = true }
+hologram-runtime-wasmtime = { workspace = true }
+hologram-net-http         = { workspace = true, features = ["live"] }
+clap     = { workspace = true }
+pollster = { workspace = true }
+
+[dev-dependencies]
+hologram-store-mem = { workspace = true }

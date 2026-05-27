@@ -62,6 +62,10 @@ wasm:
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
         -p hologram-backend
+    # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
+    cargo build --target wasm32-unknown-unknown --no-default-features \
+        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+        -p hologram-net-http -p hologram-runtime
 
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
@@ -70,6 +74,31 @@ embedded:
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target thumbv7em-none-eabi --no-default-features --features cpu \
         -p hologram-backend
+    # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
+    cargo build --target thumbv7em-none-eabi --no-default-features \
+        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+        -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare
+
+# Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
+# + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
+# (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
+vv-substrate:
+    cargo test -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
+        -p hologram-store-mem -p hologram-store-native -p hologram-net-http -p hologram-runtime \
+        -p hologram-substrate-cli -p hologram-runtime-wasmtime -p hologram-bare-hal \
+        -p hologram-store-bare
+    cargo test -p hologram-net-http --features live   # live HTTP-CAS transport
+    @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
+    @for c in hologram-store-mem hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-substrate-cli; do \
+        cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
+        && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
+    done
+    just wasm embedded
+
+# End-to-end bare-metal boot: build hologram.efi and boot it in QEMU/OVMF (no OS), asserting the
+# engine's storage self-check prints PASS. Requires qemu-system-x86_64 + OVMF + x86_64-unknown-uefi.
+uefi-boot:
+    ./scripts/uefi-boot-test.sh
 
 # Build all
 build:
@@ -123,3 +152,17 @@ demo: wasm-demo
 hooks:
     git config core.hooksPath .githooks
     chmod +x .githooks/pre-commit
+
+# End-to-end OPFS browser-store test: build the wasm32 store + run it in Chromium via Playwright
+# (put/get round-trip, reload persistence, verify-on-receipt). Requires wasm-bindgen + node + Playwright.
+opfs-test:
+    ./scripts/opfs-browser-test.sh
+
+# Run the real-world container examples (CAS cache, event bus, least-privilege, Wasm inference,
+# live migration) — each a runnable narrative of a substrate capability.
+examples:
+    cargo run -q -p hologram-runtime-wasmtime --example cas_artifact_cache
+    cargo run -q -p hologram-runtime-wasmtime --example event_bus
+    cargo run -q -p hologram-runtime-wasmtime --example least_privilege
+    cargo run -q -p hologram-runtime-wasmtime --example wasm_inference_container
+    cargo run -q -p hologram-runtime-wasmtime --example live_migration

@@ -1,0 +1,26 @@
+[package]
+name = "hologram-efi"
+version = "0.5.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+description = "hologram.efi — the bare-metal UEFI boot binary (bare-metal spec §3). Boots from UEFI firmware, brings up the engine over a block device, and exercises BareMetalKappaStore. Built for x86_64-unknown-uefi; booted in QEMU/OVMF."
+
+[[bin]]
+name = "hologram"
+path = "src/main.rs"
+
+[dependencies]
+hologram-substrate-core = { path = "../hologram-substrate-core", default-features = false }
+hologram-bare-hal       = { path = "../hologram-bare-hal" }
+hologram-store-bare     = { path = "../hologram-store-bare", default-features = false }
+hologram-realizations   = { path = "../hologram-realizations", default-features = false }
+uefi = { version = "0.35", features = ["alloc", "global_allocator", "panic_handler", "logger"] }
+# Force pure-Rust BLAKE3 (no x86 assembly .o) so the σ-axis links into a PE/UEFI binary.
+blake3 = { version = "1", default-features = false, features = ["pure"] }
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
