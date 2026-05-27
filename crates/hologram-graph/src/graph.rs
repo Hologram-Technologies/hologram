@@ -2,8 +2,8 @@
 
 use crate::constant::{ConstantEntry, ConstantStore};
 use crate::node::{
-    ConvAttrs, GatherAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs,
-    QuantAttrs, ReduceAttrs,
+    AttentionAttrs, ConvAttrs, GatherAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node,
+    NodeId, NormAttrs, QuantAttrs, ReduceAttrs,
 };
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
@@ -127,6 +127,9 @@ pub struct Graph {
     reduce_attrs: Vec<(NodeId, ReduceAttrs)>,
     /// Sparse per-node `Gather` axis. Same layout; absent ⇒ axis 0.
     gather_attrs: Vec<(NodeId, GatherAttrs)>,
+    /// Sparse per-node `Attention` semantics (causal / scale). Same layout;
+    /// absent ⇒ non-causal, default `1/√d` scale.
+    attention_attrs: Vec<(NodeId, AttentionAttrs)>,
     /// Open producer-defined metadata (`key`, `bytes`) to embed in the compiled
     /// archive as `Extension` sections (tokenizer, generation config, class
     /// labels, …). Carried opaquely; not part of the graph's compute semantics.
@@ -344,6 +347,22 @@ impl Graph {
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
+    /// Attach `Attention` semantics (causal / scale) to a node.
+    pub fn set_attention_attrs(&mut self, id: NodeId, attrs: AttentionAttrs) {
+        if let Some(slot) = self.attention_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.attention_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve a node's `Attention` semantics, or `None` (⇒ non-causal, `1/√d`).
+    pub fn attention_attrs(&self, id: NodeId) -> Option<AttentionAttrs> {
+        self.attention_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
     /// **Path B — desugar composite ops into their primitive pipelines.**
     ///
     /// A composite op (e.g. `Clip`) has no single optimized kernel; its meaning
@@ -468,6 +487,9 @@ impl Graph {
             *nid = NodeId(map[nid.0 as usize]);
         }
         for (nid, _) in self.gather_attrs.iter_mut() {
+            *nid = NodeId(map[nid.0 as usize]);
+        }
+        for (nid, _) in self.attention_attrs.iter_mut() {
             *nid = NodeId(map[nid.0 as usize]);
         }
         self.nodes = new;
@@ -634,6 +656,9 @@ impl Graph {
         for (nid, _) in self.gather_attrs.iter_mut() {
             *nid = to_id(map[nid.0 as usize]);
         }
+        for (nid, _) in self.attention_attrs.iter_mut() {
+            *nid = to_id(map[nid.0 as usize]);
+        }
         self.nodes = new;
 
         // ── Phase 2: dead-node elimination ──
@@ -698,6 +723,9 @@ impl Graph {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             for (nid, _) in self.gather_attrs.iter_mut() {
+                *nid = NodeId(dmap[nid.0 as usize]);
+            }
+            for (nid, _) in self.attention_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
             self.nodes = compact;

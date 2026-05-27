@@ -751,6 +751,9 @@ fn kc8_attention_conforms_across_scale() {
                 heads: h as u32,
                 seq: s as u32,
                 head_dim: d as u32,
+                kv_heads: 0,
+                causal: false,
+                scale_bits: 0,
                 dtype: DTYPE_F32,
             }),
             vec![
@@ -1215,6 +1218,9 @@ fn kc8b_bf16_attention_routes_through_engine() {
         heads: ah as u32,
         seq: asq as u32,
         head_dim: ad as u32,
+        kv_heads: 0,
+        causal: false,
+        scale_bits: 0,
         dtype: DTYPE_BF16,
     });
     let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();

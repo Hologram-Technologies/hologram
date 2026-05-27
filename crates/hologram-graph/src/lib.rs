@@ -20,8 +20,8 @@ pub use constant::ConstantStore;
 pub use graph::Graph;
 pub use hologram_ops::OpKind;
 pub use node::{
-    ConstantId, ConvAttrs, GatherAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId,
-    NormAttrs, QuantAttrs, ReduceAttrs,
+    AttentionAttrs, ConstantId, ConvAttrs, GatherAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs,
+    Node, NodeId, NormAttrs, QuantAttrs, ReduceAttrs,
 };
 pub use registry::{DTypeId, ShapeDescriptor, ShapeId, ShapeRegistry};
 pub use schedule::Schedule;
