@@ -61,7 +61,11 @@ pub fn serve(store: Arc<dyn KappaStore>, forge: bool) -> std::io::Result<CasServ
 
 /// Serve `GET /cas/{kappa}` from `store` on a specified `addr` (e.g. `0.0.0.0:8080` for a node, spec
 /// §6.5).
-pub fn serve_addr(store: Arc<dyn KappaStore>, addr: &str, forge: bool) -> std::io::Result<CasServer> {
+pub fn serve_addr(
+    store: Arc<dyn KappaStore>,
+    addr: &str,
+    forge: bool,
+) -> std::io::Result<CasServer> {
     let listener = TcpListener::bind(addr)?;
     let addr = listener.local_addr()?;
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -76,7 +80,11 @@ pub fn serve_addr(store: Arc<dyn KappaStore>, addr: &str, forge: bool) -> std::i
             }
         }
     });
-    Ok(CasServer { addr, shutdown, handle: Some(handle) })
+    Ok(CasServer {
+        addr,
+        shutdown,
+        handle: Some(handle),
+    })
 }
 
 /// Cap on request-header bytes — a DoS guard, not a functional limit on κ paths (which are tiny).
@@ -128,7 +136,12 @@ fn serve_discover(store: &dyn KappaStore, path: &str) -> String {
         }
     }
     let mut out = String::new();
-    for k in store.iterate().into_iter().filter(|k| k.as_str().starts_with(prefix)).take(limit) {
+    for k in store
+        .iterate()
+        .into_iter()
+        .filter(|k| k.as_str().starts_with(prefix))
+        .take(limit)
+    {
         out.push_str(k.as_str());
         out.push('\n');
     }
@@ -164,7 +177,9 @@ mod spin_lock {
 
 impl HttpKappaSync {
     pub fn new(gateways: Vec<String>) -> Self {
-        Self { gateways: std::sync::Mutex::new(gateways) }
+        Self {
+            gateways: std::sync::Mutex::new(gateways),
+        }
     }
 
     fn fetch_one(gateway: &str, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
@@ -174,10 +189,15 @@ impl HttpKappaSync {
             "GET {} HTTP/1.1\r\nHost: {gateway}\r\nConnection: close\r\n\r\n",
             cas_path(kappa)
         );
-        stream.write_all(req.as_bytes()).map_err(|_| SyncError::BackendFailure("write"))?;
+        stream
+            .write_all(req.as_bytes())
+            .map_err(|_| SyncError::BackendFailure("write"))?;
         let mut resp = Vec::new();
-        stream.read_to_end(&mut resp).map_err(|_| SyncError::BackendFailure("read"))?;
-        let split = find_subslice(&resp, b"\r\n\r\n").ok_or(SyncError::BackendFailure("no headers"))?;
+        stream
+            .read_to_end(&mut resp)
+            .map_err(|_| SyncError::BackendFailure("read"))?;
+        let split =
+            find_subslice(&resp, b"\r\n\r\n").ok_or(SyncError::BackendFailure("no headers"))?;
         let head = &resp[..split];
         let body = &resp[split + 4..];
         let status = parse_status(head).ok_or(SyncError::BackendFailure("bad status"))?;
@@ -252,12 +272,17 @@ impl KappaSync for HttpKappaSync {
         // discovered by querying its prefix endpoint). PUT-publication is a gateway-specific opt-in.
     }
     async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71> {
-        let prefix_str = prefix.and_then(|p| core::str::from_utf8(p).ok()).unwrap_or("");
+        let prefix_str = prefix
+            .and_then(|p| core::str::from_utf8(p).ok())
+            .unwrap_or("");
         let gateways = self.gateways.lock().unwrap().clone();
         let mut seen: std::collections::HashSet<[u8; 71]> = std::collections::HashSet::new();
         let mut out = Vec::new();
         for g in gateways {
-            for label in Self::discover_one(&g, prefix_str, limit).into_iter().flatten() {
+            for label in Self::discover_one(&g, prefix_str, limit)
+                .into_iter()
+                .flatten()
+            {
                 if out.len() >= limit {
                     return out;
                 }
@@ -328,18 +353,30 @@ mod tests {
             let node_c = serve(store_c, false).unwrap();
 
             // Node A knows both peers (C first so we exercise the 404→next-peer fallback for k1).
-            let a = HttpKappaSync::new(std::vec![node_c.addr().to_string(), node_b.addr().to_string()]);
+            let a = HttpKappaSync::new(std::vec![
+                node_c.addr().to_string(),
+                node_b.addr().to_string()
+            ]);
 
             // k1: C 404s → falls through to B → verified bytes.
-            assert_eq!(a.fetch(&k1).await.unwrap().unwrap().as_ref(), b"lives-on-node-B");
+            assert_eq!(
+                a.fetch(&k1).await.unwrap().unwrap().as_ref(),
+                b"lives-on-node-B"
+            );
             // k2: served by C, verified.
-            assert_eq!(a.fetch(&k2).await.unwrap().unwrap().as_ref(), b"lives-on-node-C");
+            assert_eq!(
+                a.fetch(&k2).await.unwrap().unwrap().as_ref(),
+                b"lives-on-node-C"
+            );
             // A κ no peer has → Ok(None).
             assert_eq!(a.fetch(&address_bytes(b"nowhere")).await.unwrap(), None);
 
             // Cross-node discovery: merge what B and C advertise (deduped).
             let found = a.discover(Some(b"blake3:"), 64).await;
-            assert!(found.contains(&k1) && found.contains(&k2), "discovery merges peers' κ-labels");
+            assert!(
+                found.contains(&k1) && found.contains(&k2),
+                "discovery merges peers' κ-labels"
+            );
             node_b.shutdown();
             node_c.shutdown();
         });

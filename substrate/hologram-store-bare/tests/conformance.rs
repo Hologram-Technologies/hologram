@@ -23,7 +23,17 @@ fn bare_reachability_gc() {
     let code = store.put("blake3", b"wasm").unwrap();
     let st = store.put("blake3", b"state").unwrap();
     let pa = store.put("blake3", b"params").unwrap();
-    let mk = store.put("blake3", &ContainerManifest { code, initial_state: st, parameters: pa }.canonicalize()).unwrap();
+    let mk = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: st,
+                parameters: pa,
+            }
+            .canonicalize(),
+        )
+        .unwrap();
     let orphan = store.put("blake3", b"orphan").unwrap();
     store.pin(&mk).unwrap();
     assert_eq!(store.gc(REGISTRY).unwrap(), 1);
@@ -43,6 +53,12 @@ fn bare_persists_across_reboot() {
     };
     // Fresh engine instance over the same block device — reads the persisted on-disk image.
     let rebooted = BareMetalKappaStore::open(device).unwrap();
-    assert_eq!(rebooted.get(&k).unwrap().unwrap().as_ref(), b"durable-on-disk");
-    assert!(rebooted.pinned_roots().contains(&pinned), "pinned roots survive reboot");
+    assert_eq!(
+        rebooted.get(&k).unwrap().unwrap().as_ref(),
+        b"durable-on-disk"
+    );
+    assert!(
+        rebooted.pinned_roots().contains(&pinned),
+        "pinned roots survive reboot"
+    );
 }

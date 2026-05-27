@@ -6,7 +6,7 @@
 //! entirely by κ. Run: `cargo run -p hologram-runtime-wasmtime --example live_migration`.
 
 use hologram_realizations::{CapabilitySet, ContainerManifest, Snapshot};
-use hologram_runtime::{Runtime};
+use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_store_mem::MemKappaStore;
 use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaStore, Realization};
@@ -22,13 +22,42 @@ const SESSION_WAT: &str = r#"
     (i32.load8_u (i32.const 0))))
 "#;
 
-fn provision(store: &MemKappaStore) -> (hologram_substrate_core::KappaLabel71, hologram_substrate_core::KappaLabel71) {
-    let code = store.put("blake3", &wat::parse_str(SESSION_WAT).unwrap()).unwrap();
-    let cid = store.put("blake3", &ContainerManifest { code, initial_state: code, parameters: code }.canonicalize()).unwrap();
-    let caps = store.put("blake3", &CapabilitySet::new(Capabilities {
-        storage_roots: vec![], storage_quota_bytes: 0, network_fetch: false, network_announce: false,
-        publish_channels: vec![], subscribe_channels: vec![], memory_max_bytes: 0, cpu_time_per_event_ms: 100,
-    }).canonicalize()).unwrap();
+fn provision(
+    store: &MemKappaStore,
+) -> (
+    hologram_substrate_core::KappaLabel71,
+    hologram_substrate_core::KappaLabel71,
+) {
+    let code = store
+        .put("blake3", &wat::parse_str(SESSION_WAT).unwrap())
+        .unwrap();
+    let cid = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: code,
+                parameters: code,
+            }
+            .canonicalize(),
+        )
+        .unwrap();
+    let caps = store
+        .put(
+            "blake3",
+            &CapabilitySet::new(Capabilities {
+                storage_roots: vec![],
+                storage_quota_bytes: 0,
+                network_fetch: false,
+                network_announce: false,
+                publish_channels: vec![],
+                subscribe_channels: vec![],
+                memory_max_bytes: 0,
+                cpu_time_per_event_ms: 100,
+            })
+            .canonicalize(),
+        )
+        .unwrap();
     (cid, caps)
 }
 
@@ -44,23 +73,36 @@ fn main() {
             rt_a.deliver_event(h, b"").unwrap();
         }
         let snap = rt_a.suspend(h).await.unwrap();
-        println!("node A    : 3 requests served; checkpointed → snapshot κ {}", snap.as_str());
+        println!(
+            "node A    : 3 requests served; checkpointed → snapshot κ {}",
+            snap.as_str()
+        );
 
         // Ship the reachable bytes (snapshot + manifest + code) to node B.
         let node_b = MemKappaStore::new();
         for k in rt_a.store().iterate() {
-            node_b.put("blake3", rt_a.store().get(&k).unwrap().unwrap().as_ref()).unwrap();
+            node_b
+                .put("blake3", rt_a.store().get(&k).unwrap().unwrap().as_ref())
+                .unwrap();
         }
         let snap_refs = Snapshot::references(node_b.get(&snap).unwrap().unwrap().as_ref()).unwrap();
-        println!("transfer  : snapshot references Container ID {} (graph continuity)", snap_refs[0].as_str());
+        println!(
+            "transfer  : snapshot references Container ID {} (graph continuity)",
+            snap_refs[0].as_str()
+        );
 
         // Node B: resume from the snapshot κ — session state (counter == 3) is intact.
         let rt_b = Runtime::new(WasmtimeEngine::new(), node_b);
         let h2 = rt_b.resume(&snap, &caps).await.unwrap();
         let next = rt_b.deliver_event(h2, b"").unwrap();
-        println!("node B    : resumed; next request returns {} (state continued from 3 → 4)", next);
+        println!(
+            "node B    : resumed; next request returns {} (state continued from 3 → 4)",
+            next
+        );
         assert_eq!(next, 4, "session counter survived migration");
 
-        println!("OK — live migration: checkpoint on A → resume on B from the snapshot κ, state intact");
+        println!(
+            "OK — live migration: checkpoint on A → resume on B from the snapshot κ, state intact"
+        );
     });
 }

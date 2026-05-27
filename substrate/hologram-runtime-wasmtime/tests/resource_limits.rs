@@ -6,7 +6,9 @@ use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
+use hologram_substrate_core::{
+    address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization,
+};
 
 fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {
     Capabilities {
@@ -21,11 +23,31 @@ fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {
     }
 }
 
-fn provision(store: &MemKappaStore, tag: &[u8], wasm: &[u8], c: Capabilities) -> (hologram_substrate_core::KappaLabel71, hologram_substrate_core::KappaLabel71) {
+fn provision(
+    store: &MemKappaStore,
+    tag: &[u8],
+    wasm: &[u8],
+    c: Capabilities,
+) -> (
+    hologram_substrate_core::KappaLabel71,
+    hologram_substrate_core::KappaLabel71,
+) {
     let code = store.put("blake3", wasm).unwrap();
     let st = store.put("blake3", tag).unwrap();
-    let cid = store.put("blake3", &ContainerManifest { code, initial_state: st, parameters: st }.canonicalize()).unwrap();
-    let ck = store.put("blake3", &CapabilitySet::new(c).canonicalize()).unwrap();
+    let cid = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: st,
+                parameters: st,
+            }
+            .canonicalize(),
+        )
+        .unwrap();
+    let ck = store
+        .put("blake3", &CapabilitySet::new(c).canonicalize())
+        .unwrap();
     (cid, ck)
 }
 
@@ -40,11 +62,20 @@ fn cpu_budget_bounds_a_runaway_event() {
       (func (export "hg_event") (param i32 i32) (result i32) (loop (br 0)) (i32.const 0)))"#;
     pollster::block_on(async {
         let store = MemKappaStore::new();
-        let (cid, ck) = provision(&store, b"loop", &wat::parse_str(LOOP).unwrap(), caps(0, 1, 0));
+        let (cid, ck) = provision(
+            &store,
+            b"loop",
+            &wat::parse_str(LOOP).unwrap(),
+            caps(0, 1, 0),
+        );
         let rt = Runtime::new(WasmtimeEngine::new(), store);
         let h = rt.spawn(&cid, &ck).await.unwrap();
         // Returns a nonzero status (fuel-exhausted PipelineFailure) — crucially, it *returns* (no hang).
-        assert_ne!(rt.deliver_event(h, b"").unwrap(), 0, "runaway event is fuel-bounded");
+        assert_ne!(
+            rt.deliver_event(h, b"").unwrap(),
+            0,
+            "runaway event is fuel-bounded"
+        );
         // The container survives for subsequent events (the engine refuels per call).
         assert_ne!(rt.deliver_event(h, b"").unwrap(), 0);
     });
@@ -69,8 +100,16 @@ fn memory_budget_caps_linear_memory_growth() {
         let rt = Runtime::new(WasmtimeEngine::new(), store);
         let capped = rt.spawn(&cid, &ck).await.unwrap();
         let free = rt.spawn(&cid2, &ck2).await.unwrap();
-        assert_eq!(rt.deliver_event(capped, b"").unwrap(), u32::MAX, "grow past memory cap refused");
-        assert_eq!(rt.deliver_event(free, b"").unwrap(), 1, "unbounded memory grows (old size = 1 page)");
+        assert_eq!(
+            rt.deliver_event(capped, b"").unwrap(),
+            u32::MAX,
+            "grow past memory cap refused"
+        );
+        assert_eq!(
+            rt.deliver_event(free, b"").unwrap(),
+            1,
+            "unbounded memory grows (old size = 1 page)"
+        );
     });
 }
 
@@ -89,7 +128,12 @@ fn storage_quota_bounds_what_a_container_persists() {
     pollster::block_on(async {
         let store = MemKappaStore::new();
         // Quota of 8 bytes.
-        let (cid, ck) = provision(&store, b"quota", &wat::parse_str(PUT).unwrap(), caps(0, 100, 8));
+        let (cid, ck) = provision(
+            &store,
+            b"quota",
+            &wat::parse_str(PUT).unwrap(),
+            caps(0, 100, 8),
+        );
         let rt = Runtime::new(WasmtimeEngine::new(), store);
         let h = rt.spawn(&cid, &ck).await.unwrap();
 
@@ -98,7 +142,11 @@ fn storage_quota_bounds_what_a_container_persists() {
         assert!(rt.store().contains(&address_bytes(b"12345")));
         // An over-quota put (the remaining budget is 3 bytes) is refused → -1, and not stored.
         let big = [0u8; 50];
-        assert_eq!(rt.deliver_event(h, &big).unwrap(), u32::MAX, "over-quota put refused");
+        assert_eq!(
+            rt.deliver_event(h, &big).unwrap(),
+            u32::MAX,
+            "over-quota put refused"
+        );
         assert!(!rt.store().contains(&address_bytes(&big)));
     });
 }

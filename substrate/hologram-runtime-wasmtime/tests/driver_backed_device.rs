@@ -40,7 +40,10 @@ struct DriverSource {
 #[async_trait]
 impl KappaSync for DriverSource {
     async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
-        Ok(self.blobs.get(kappa.as_array()).map(|v| Bytes::from(v.clone())))
+        Ok(self
+            .blobs
+            .get(kappa.as_array())
+            .map(|v| Bytes::from(v.clone())))
     }
     async fn announce(&self, _k: &KappaLabel71) {}
     async fn discover(&self, _p: Option<&[u8]>, _l: usize) -> Vec<KappaLabel71> {
@@ -60,11 +63,16 @@ fn imported_driver_backs_the_store_device_end_to_end() {
         // 1) An authoritative source publishes the block-device driver (Wasm) under its κ.
         let driver_wasm = wat::parse_str(BLOCK_DRIVER_WAT).expect("valid wat");
         let driver_k = address_bytes(&driver_wasm);
-        let source = DriverSource { blobs: HashMap::from([(*driver_k.as_array(), driver_wasm.clone())]) };
+        let source = DriverSource {
+            blobs: HashMap::from([(*driver_k.as_array(), driver_wasm.clone())]),
+        };
 
         // 2) A node imports the driver by κ, verified on receipt (a forged driver would be rejected).
         let local = MemKappaStore::new();
-        let imported = get_with_fetch(&local, &source, &driver_k).await.unwrap().expect("driver imported");
+        let imported = get_with_fetch(&local, &source, &driver_k)
+            .await
+            .unwrap()
+            .expect("driver imported");
         assert_eq!(imported.as_ref(), driver_wasm.as_slice());
 
         // 3) Instantiate the verified driver as the block device.
@@ -75,7 +83,11 @@ fn imported_driver_backs_the_store_device_end_to_end() {
         let store = BareMetalKappaStore::open(device).expect("store over driver device");
         let payload = b"data-stored-through-an-imported-wasm-driver";
         let k = store.put("blake3", payload).expect("put via driver");
-        assert_eq!(store.get(&k).unwrap().unwrap().as_ref(), payload, "round-trip through the driver");
+        assert_eq!(
+            store.get(&k).unwrap().unwrap().as_ref(),
+            payload,
+            "round-trip through the driver"
+        );
 
         // A second κ to exercise multiple sectors through the driver.
         let k2 = store.put("blake3", &[7u8; 2048]).unwrap();

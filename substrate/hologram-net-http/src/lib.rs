@@ -100,8 +100,14 @@ mod tests {
         let store = MemKappaStore::new();
         let k = store.put("blake3", b"served-bytes").unwrap();
         // §10.6: the body is byte-identical to the stored canonical bytes.
-        assert_eq!(serve_get(&store, &cas_path(&k)), CasResponse::Ok(store.get(&k).unwrap().unwrap()));
-        assert_eq!(serve_get(&store, &cas_path(&address_bytes(b"absent"))), CasResponse::NotFound);
+        assert_eq!(
+            serve_get(&store, &cas_path(&k)),
+            CasResponse::Ok(store.get(&k).unwrap().unwrap())
+        );
+        assert_eq!(
+            serve_get(&store, &cas_path(&address_bytes(b"absent"))),
+            CasResponse::NotFound
+        );
         assert_eq!(serve_get(&store, "/cas/garbage"), CasResponse::BadRequest);
     }
 
@@ -113,8 +119,14 @@ mod tests {
             panic!("expected 200");
         };
         // Honest body verifies.
-        assert_eq!(accept_received(&k, body.as_ref()).unwrap().as_ref(), b"authentic-payload");
+        assert_eq!(
+            accept_received(&k, body.as_ref()).unwrap().as_ref(),
+            b"authentic-payload"
+        );
         // Forged body for the same κ is rejected (§6.4 trustless).
-        assert_eq!(accept_received(&k, b"forged"), Err(ReceiveError::VerificationFailed));
+        assert_eq!(
+            accept_received(&k, b"forged"),
+            Err(ReceiveError::VerificationFailed)
+        );
     }
 }

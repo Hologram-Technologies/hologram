@@ -50,7 +50,11 @@ fn sp3_gc_is_bounded_by_reachable_set() {
         let c = store.put("blake3", &[i as u8, 0]).unwrap();
         let s = store.put("blake3", &[i as u8, 1]).unwrap();
         let p = store.put("blake3", &[i as u8, 2]).unwrap();
-        let m = ContainerManifest { code: c, initial_state: s, parameters: p };
+        let m = ContainerManifest {
+            code: c,
+            initial_state: s,
+            parameters: p,
+        };
         let mk = store.put("blake3", &m.canonicalize()).unwrap();
         store.pin(&mk).unwrap();
     }
@@ -58,7 +62,10 @@ fn sp3_gc_is_bounded_by_reachable_set() {
         store.put("blake3", &i.to_le_bytes()).unwrap();
     }
     let reclaimed = store.gc(REGISTRY);
-    assert_eq!(reclaimed, 300, "exactly the unreachable orphans are reclaimed");
+    assert_eq!(
+        reclaimed, 300,
+        "exactly the unreachable orphans are reclaimed"
+    );
     // 100 manifests + 300 operand leaves remain reachable.
     assert_eq!(store.approximate_count(), 400);
 }

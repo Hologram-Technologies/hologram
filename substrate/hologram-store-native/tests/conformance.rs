@@ -18,7 +18,11 @@ fn native_reachability_gc_matches_reference_semantics() {
     let code = store.put("blake3", b"wasm").unwrap();
     let state = store.put("blake3", b"state").unwrap();
     let params = store.put("blake3", b"params").unwrap();
-    let manifest = ContainerManifest { code, initial_state: state, parameters: params };
+    let manifest = ContainerManifest {
+        code,
+        initial_state: state,
+        parameters: params,
+    };
     let mk = store.put("blake3", &manifest.canonicalize()).unwrap();
     let orphan = store.put("blake3", b"orphan").unwrap();
 
@@ -26,7 +30,12 @@ fn native_reachability_gc_matches_reference_semantics() {
     let evicted = store.gc(REGISTRY).unwrap();
 
     assert_eq!(evicted, 1);
-    assert!(store.contains(&mk) && store.contains(&code) && store.contains(&state) && store.contains(&params));
+    assert!(
+        store.contains(&mk)
+            && store.contains(&code)
+            && store.contains(&state)
+            && store.contains(&params)
+    );
     assert!(!store.contains(&orphan));
 }
 

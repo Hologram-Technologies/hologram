@@ -7,16 +7,42 @@
 use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
+use hologram_substrate_core::{
+    Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization,
+};
 
 fn caps(publish: Vec<KappaLabel71>, subscribe: Vec<KappaLabel71>) -> Capabilities {
-    Capabilities { storage_roots: vec![], storage_quota_bytes: 0, network_fetch: false, network_announce: false, publish_channels: publish, subscribe_channels: subscribe, memory_max_bytes: 0, cpu_time_per_event_ms: 0 }
+    Capabilities {
+        storage_roots: vec![],
+        storage_quota_bytes: 0,
+        network_fetch: false,
+        network_announce: false,
+        publish_channels: publish,
+        subscribe_channels: subscribe,
+        memory_max_bytes: 0,
+        cpu_time_per_event_ms: 0,
+    }
 }
 
 fn provision(store: &MemKappaStore, tag: &[u8], c: Capabilities) -> (KappaLabel71, KappaLabel71) {
     let code = store.put("blake3", tag).unwrap();
-    let cid = store.put("blake3", &ContainerManifest { code, initial_state: code, parameters: code }.canonicalize()).unwrap();
-    (cid, store.put("blake3", &CapabilitySet::new(c).canonicalize()).unwrap())
+    let cid = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: code,
+                parameters: code,
+            }
+            .canonicalize(),
+        )
+        .unwrap();
+    (
+        cid,
+        store
+            .put("blake3", &CapabilitySet::new(c).canonicalize())
+            .unwrap(),
+    )
 }
 
 fn main() {
@@ -42,7 +68,10 @@ fn main() {
         // Logger resumes and catches up on everything it missed (durable subscription).
         let l2 = rt.resume(&snap, &lk).await.unwrap();
         let received = rt.delivered_callbacks(l2);
-        println!("delivered : logger caught up on {} reading(s) published while offline", received.len());
+        println!(
+            "delivered : logger caught up on {} reading(s) published while offline",
+            received.len()
+        );
         assert_eq!(received.len(), 2);
 
         // Capability gate: a container without publish rights is refused.

@@ -76,9 +76,13 @@ impl NativeKappaStore {
     }
 
     /// The reachable closure from the pinned roots.
-    pub fn reachable(&self, registry: RealizationRegistry<'_>) -> Result<HashSet<[u8; 71]>, StoreError> {
+    pub fn reachable(
+        &self,
+        registry: RealizationRegistry<'_>,
+    ) -> Result<HashSet<[u8; 71]>, StoreError> {
         let mut live: HashSet<[u8; 71]> = HashSet::new();
-        let mut frontier: Vec<[u8; 71]> = self.pinned_roots().iter().map(|k| *k.as_array()).collect();
+        let mut frontier: Vec<[u8; 71]> =
+            self.pinned_roots().iter().map(|k| *k.as_array()).collect();
         let tx = self.db.begin_read().map_err(backend)?;
         let t = tx.open_table(BLOBS).map_err(backend)?;
         while let Some(key) = frontier.pop() {
@@ -120,8 +124,7 @@ impl KappaStore for NativeKappaStore {
     fn get(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
         let tx = self.db.begin_read().map_err(backend)?;
         let t = tx.open_table(BLOBS).map_err(backend)?;
-        Ok(t
-            .get(kappa.as_array().as_slice())
+        Ok(t.get(kappa.as_array().as_slice())
             .map_err(backend)?
             .map(|v| Arc::from(v.value())))
     }
@@ -130,7 +133,9 @@ impl KappaStore for NativeKappaStore {
         (|| -> Result<bool, StoreError> {
             let tx = self.db.begin_read().map_err(backend)?;
             let t = tx.open_table(BLOBS).map_err(backend)?;
-            Ok(t.get(kappa.as_array().as_slice()).map_err(backend)?.is_some())
+            Ok(t.get(kappa.as_array().as_slice())
+                .map_err(backend)?
+                .is_some())
         })()
         .unwrap_or(false)
     }
@@ -139,7 +144,8 @@ impl KappaStore for NativeKappaStore {
         let tx = self.db.begin_write().map_err(backend)?;
         {
             let mut t = tx.open_table(PINNED).map_err(backend)?;
-            t.insert(kappa.as_array().as_slice(), 1u8).map_err(backend)?;
+            t.insert(kappa.as_array().as_slice(), 1u8)
+                .map_err(backend)?;
         }
         tx.commit().map_err(backend)?;
         Ok(())
@@ -150,7 +156,10 @@ impl KappaStore for NativeKappaStore {
         let existed;
         {
             let mut t = tx.open_table(PINNED).map_err(backend)?;
-            existed = t.remove(kappa.as_array().as_slice()).map_err(backend)?.is_some();
+            existed = t
+                .remove(kappa.as_array().as_slice())
+                .map_err(backend)?
+                .is_some();
         }
         tx.commit().map_err(backend)?;
         if existed {

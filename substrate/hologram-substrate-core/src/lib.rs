@@ -198,7 +198,8 @@ pub fn references(
         .iter()
         .position(|&b| b == 0)
         .ok_or(RealizationError::Malformed)?;
-    let iri = core::str::from_utf8(&canonical_bytes[..nul]).map_err(|_| RealizationError::Malformed)?;
+    let iri =
+        core::str::from_utf8(&canonical_bytes[..nul]).map_err(|_| RealizationError::Malformed)?;
     for (id, extractor) in registry {
         if *id == iri {
             return extractor(canonical_bytes);
@@ -420,7 +421,10 @@ mod tests {
     #[test]
     fn cr_admits_is_reflexive() {
         let c = caps(&[b"r1", b"r2"], 1000, true);
-        assert!(c.admits(&c), "every capability set admits itself (reflexive)");
+        assert!(
+            c.admits(&c),
+            "every capability set admits itself (reflexive)"
+        );
     }
 
     #[test]

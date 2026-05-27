@@ -23,13 +23,24 @@ fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
 }
 
 /// Provision a container (manifest + code + caps) into a store; return (container_id, caps_kappa).
-fn provision(store: &MemKappaStore, body: &[u8], state: &[u8], c: Capabilities) -> (KappaLabel71, KappaLabel71) {
+fn provision(
+    store: &MemKappaStore,
+    body: &[u8],
+    state: &[u8],
+    c: Capabilities,
+) -> (KappaLabel71, KappaLabel71) {
     let code = store.put("blake3", body).unwrap();
     let st = store.put("blake3", state).unwrap();
     let params = store.put("blake3", b"params").unwrap();
-    let manifest = ContainerManifest { code, initial_state: st, parameters: params };
+    let manifest = ContainerManifest {
+        code,
+        initial_state: st,
+        parameters: params,
+    };
     let cid = store.put("blake3", &manifest.canonicalize()).unwrap();
-    let caps_k = store.put("blake3", &CapabilitySet::new(c).canonicalize()).unwrap();
+    let caps_k = store
+        .put("blake3", &CapabilitySet::new(c).canonicalize())
+        .unwrap();
     (cid, caps_k)
 }
 
@@ -50,12 +61,18 @@ fn cr_lifecycle_spawn_suspend_resume_preserves_state() {
 
         // The snapshot's references resolve to the same Container ID (continuity).
         let snap_bytes = rt.store().get(&snap).unwrap().unwrap();
-        assert_eq!(hologram_realizations::Snapshot::references(snap_bytes.as_ref()).unwrap()[0], cid);
+        assert_eq!(
+            hologram_realizations::Snapshot::references(snap_bytes.as_ref()).unwrap()[0],
+            cid
+        );
 
         // Resume into a fresh handle; the restored linear memory is exactly the pre-suspend state.
         let h2 = rt.resume(&snap, &caps_k).await.unwrap();
         assert_eq!(rt.info(h2).unwrap().state, ContainerState::Running);
-        assert_eq!(rt.info(h2).unwrap().memory_bytes, ("INIT-EVENT".len()) as u64);
+        assert_eq!(
+            rt.info(h2).unwrap().memory_bytes,
+            ("INIT-EVENT".len()) as u64
+        );
     });
 }
 
@@ -83,18 +100,42 @@ fn cr_spawn_child_enforces_capability_containment() {
         // Parent holds {r1} with quota 1000, no fetch.
         let (cid, parent_caps) = provision(&store, b"<wasm>", b"", caps(&[r1], 1000, false));
         // A properly-narrowed child caps {r1}, quota 500.
-        let narrow = store.put("blake3", &CapabilitySet::new(caps(&[r1], 500, false)).canonicalize()).unwrap();
+        let narrow = store
+            .put(
+                "blake3",
+                &CapabilitySet::new(caps(&[r1], 500, false)).canonicalize(),
+            )
+            .unwrap();
         // An over-broad child caps {r1, r2} (extra root) — must be refused.
-        let broad = store.put("blake3", &CapabilitySet::new(caps(&[r1, r2], 500, false)).canonicalize()).unwrap();
+        let broad = store
+            .put(
+                "blake3",
+                &CapabilitySet::new(caps(&[r1, r2], 500, false)).canonicalize(),
+            )
+            .unwrap();
         // An over-broad child requesting a flag the parent lacks — must be refused.
-        let flagged = store.put("blake3", &CapabilitySet::new(caps(&[r1], 500, true)).canonicalize()).unwrap();
+        let flagged = store
+            .put(
+                "blake3",
+                &CapabilitySet::new(caps(&[r1], 500, true)).canonicalize(),
+            )
+            .unwrap();
 
         let rt = Runtime::new(MockEngine, store);
         let parent = rt.spawn(&cid, &parent_caps).await.unwrap();
 
-        assert!(rt.spawn_child(parent, &cid, &narrow).is_ok(), "narrowed delegation admitted");
-        assert!(rt.spawn_child(parent, &cid, &broad).is_err(), "extra storage root refused");
-        assert!(rt.spawn_child(parent, &cid, &flagged).is_err(), "un-held network flag refused");
+        assert!(
+            rt.spawn_child(parent, &cid, &narrow).is_ok(),
+            "narrowed delegation admitted"
+        );
+        assert!(
+            rt.spawn_child(parent, &cid, &broad).is_err(),
+            "extra storage root refused"
+        );
+        assert!(
+            rt.spawn_child(parent, &cid, &flagged).is_err(),
+            "un-held network flag refused"
+        );
     });
 }
 
@@ -108,8 +149,14 @@ fn cr_revocation_refuses_subsequent_operations() {
 
         rt.deliver_event(h, b"ok").unwrap(); // works before revocation
         rt.revoke(&caps_k);
-        assert!(rt.deliver_event(h, b"nope").is_err(), "events refused after revocation");
-        assert!(rt.spawn(&cid, &caps_k).await.is_err(), "spawn refused with a revoked cap set");
+        assert!(
+            rt.deliver_event(h, b"nope").is_err(),
+            "events refused after revocation"
+        );
+        assert!(
+            rt.spawn(&cid, &caps_k).await.is_err(),
+            "spawn refused with a revoked cap set"
+        );
     });
 }
 
@@ -127,13 +174,18 @@ fn cr_cross_runtime_migration_from_snapshot() {
         // Transfer the reachable bytes (snapshot + manifest + code) to peer B's store.
         let store_b = MemKappaStore::new();
         for k in rt_a.store().iterate() {
-            store_b.put("blake3", rt_a.store().get(&k).unwrap().unwrap().as_ref()).unwrap();
+            store_b
+                .put("blake3", rt_a.store().get(&k).unwrap().unwrap().as_ref())
+                .unwrap();
         }
         // Peer B resumes from the same snapshot κ — same Container ID, restored memory.
         let rt_b = Runtime::new(MockEngine, store_b);
         let h2 = rt_b.resume(&snap, &caps_k).await.unwrap();
         assert_eq!(rt_b.info(h2).unwrap().container_id, cid);
-        assert_eq!(rt_b.info(h2).unwrap().memory_bytes, ("STATE+A".len()) as u64);
+        assert_eq!(
+            rt_b.info(h2).unwrap().memory_bytes,
+            ("STATE+A".len()) as u64
+        );
     });
 }
 
@@ -152,13 +204,29 @@ fn caps_chan(publish: &[KappaLabel71], subscribe: &[KappaLabel71]) -> Capabiliti
     }
 }
 
-fn provision_caps(store: &MemKappaStore, tag: &[u8], c: Capabilities) -> (KappaLabel71, KappaLabel71) {
+fn provision_caps(
+    store: &MemKappaStore,
+    tag: &[u8],
+    c: Capabilities,
+) -> (KappaLabel71, KappaLabel71) {
     // `tag` distinguishes containers — identical manifests content-address to the SAME Container ID,
     // and subscriptions are keyed by Container ID (§10.11), so publisher and subscriber must differ.
     let code = store.put("blake3", tag).unwrap();
     let e = store.put("blake3", b"").unwrap();
-    let cid = store.put("blake3", &ContainerManifest { code, initial_state: e, parameters: e }.canonicalize()).unwrap();
-    let ck = store.put("blake3", &CapabilitySet::new(c).canonicalize()).unwrap();
+    let cid = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: e,
+                parameters: e,
+            }
+            .canonicalize(),
+        )
+        .unwrap();
+    let ck = store
+        .put("blake3", &CapabilitySet::new(c).canonicalize())
+        .unwrap();
     (cid, ck)
 }
 
@@ -181,7 +249,11 @@ fn ch_publish_delivers_to_subscriber_via_callback() {
         let info = rt.info(subh).unwrap();
         assert_eq!(info.container_id, sid);
         // MockEngine recorded the callback on the instance; expose via a fresh subscribe-then-check.
-        assert!(rt.delivered_callbacks(subh).contains(&(42, payload.as_array().to_vec())), "subscriber received the published κ via hg_callback");
+        assert!(
+            rt.delivered_callbacks(subh)
+                .contains(&(42, payload.as_array().to_vec())),
+            "subscriber received the published κ via hg_callback"
+        );
     });
 }
 
@@ -197,8 +269,14 @@ fn ch_publish_and_subscribe_are_capability_gated() {
         let rt = Runtime::new(MockEngine, store);
         let h = rt.spawn(&cid, &ck).await.unwrap();
 
-        assert!(rt.publish(h, &other, &payload).is_err(), "publish to ungranted channel refused");
-        assert!(rt.subscribe(h, &other, 1).is_err(), "subscribe to ungranted channel refused");
+        assert!(
+            rt.publish(h, &other, &payload).is_err(),
+            "publish to ungranted channel refused"
+        );
+        assert!(
+            rt.subscribe(h, &other, 1).is_err(),
+            "subscribe to ungranted channel refused"
+        );
         assert!(rt.publish(h, &chan, &payload).is_ok());
         assert!(rt.subscribe(h, &chan, 1).is_ok());
     });
@@ -222,6 +300,10 @@ fn ch_subscription_persists_across_suspend_resume() {
         let snap = rt.suspend(subh).await.unwrap();
         rt.publish(pubh, &chan, &payload).unwrap(); // subscriber suspended → not delivered yet
         let subh2 = rt.resume(&snap, &sk).await.unwrap();
-        assert!(rt.delivered_callbacks(subh2).contains(&(7, payload.as_array().to_vec())), "message published during suspension replayed on resume");
+        assert!(
+            rt.delivered_callbacks(subh2)
+                .contains(&(7, payload.as_array().to_vec())),
+            "message published during suspension replayed on resume"
+        );
     });
 }

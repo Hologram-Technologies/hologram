@@ -8,7 +8,13 @@ description = "libp2p KappaSync transport (spec §6.2): κ-label fetch over a re
 
 [dependencies]
 hologram-substrate-core = { workspace = true }
-libp2p = { workspace = true }
+libp2p-swarm = { workspace = true }
+libp2p-core = { workspace = true }
+libp2p-tcp = { workspace = true }
+libp2p-noise = { workspace = true }
+libp2p-yamux = { workspace = true }
+libp2p-request-response = { workspace = true }
+libp2p-identity = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures = { workspace = true }
 async-trait = { workspace = true }

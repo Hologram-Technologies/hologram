@@ -39,7 +39,10 @@ fn encode(iri: &str, refs: &[KappaLabel71], payload: &[u8]) -> Vec<u8> {
 /// Generic inverse projection (SPINE-3): validate the leading IRI, then recover exactly the
 /// embedded operand κ-labels. Used by every realization's `references()`.
 fn extract_refs(iri: &str, bytes: &[u8]) -> Result<References, RealizationError> {
-    let nul = bytes.iter().position(|&b| b == 0).ok_or(RealizationError::Malformed)?;
+    let nul = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or(RealizationError::Malformed)?;
     if &bytes[..nul] != iri.as_bytes() {
         return Err(RealizationError::WrongIri);
     }
@@ -47,7 +50,9 @@ fn extract_refs(iri: &str, bytes: &[u8]) -> Result<References, RealizationError>
     let n = read_u32(bytes, &mut cur)? as usize;
     let mut refs = Vec::with_capacity(n);
     for _ in 0..n {
-        let end = cur.checked_add(KAPPA71).ok_or(RealizationError::Truncated)?;
+        let end = cur
+            .checked_add(KAPPA71)
+            .ok_or(RealizationError::Truncated)?;
         let arr: [u8; KAPPA71] = bytes
             .get(cur..end)
             .ok_or(RealizationError::Truncated)?
@@ -85,16 +90,24 @@ fn read_u64(bytes: &[u8], cur: &mut usize) -> Result<u64, RealizationError> {
 /// (the inverse of `encode`'s payload region) — used to recover a snapshot's linear-memory digest
 /// or a capability set's scalar budgets.
 pub fn payload_of(iri: &str, bytes: &[u8]) -> Result<alloc::vec::Vec<u8>, RealizationError> {
-    let nul = bytes.iter().position(|&b| b == 0).ok_or(RealizationError::Malformed)?;
+    let nul = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or(RealizationError::Malformed)?;
     if &bytes[..nul] != iri.as_bytes() {
         return Err(RealizationError::WrongIri);
     }
     let mut cur = nul + 1;
     let n = read_u32(bytes, &mut cur)? as usize;
-    cur = cur.checked_add(n * KAPPA71).ok_or(RealizationError::Truncated)?;
+    cur = cur
+        .checked_add(n * KAPPA71)
+        .ok_or(RealizationError::Truncated)?;
     let len = read_u32(bytes, &mut cur)? as usize;
     let end = cur.checked_add(len).ok_or(RealizationError::Truncated)?;
-    Ok(bytes.get(cur..end).ok_or(RealizationError::Truncated)?.to_vec())
+    Ok(bytes
+        .get(cur..end)
+        .ok_or(RealizationError::Truncated)?
+        .to_vec())
 }
 
 /// Macro: a realization whose `references()` is the generic inverse projection over its IRI.
@@ -131,10 +144,16 @@ pub struct ContainerManifest {
 }
 impl ContainerManifest {
     fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
-        (alloc::vec![self.code, self.initial_state, self.parameters], Vec::new())
+        (
+            alloc::vec![self.code, self.initial_state, self.parameters],
+            Vec::new(),
+        )
     }
 }
-realization!(ContainerManifest, "https://hologram.foundation/realization/container-manifest");
+realization!(
+    ContainerManifest,
+    "https://hologram.foundation/realization/container-manifest"
+);
 
 /// `https://hologram.foundation/realization/capability-set` — a container's authority (spec §4.5).
 /// Operands are the κ-labels it grants access to (storage roots, publish/subscribe channels) —
@@ -168,7 +187,10 @@ impl CapabilitySet {
     /// `canonicalize`. The runtime decodes the spawn'd caps κ-label to enforce `admits` (CR).
     pub fn to_capabilities(bytes: &[u8]) -> Result<Capabilities, RealizationError> {
         let refs = <Self as hologram_substrate_core::Realization>::references(bytes)?;
-        let payload = payload_of("https://hologram.foundation/realization/capability-set", bytes)?;
+        let payload = payload_of(
+            "https://hologram.foundation/realization/capability-set",
+            bytes,
+        )?;
         let mut cur = 0usize;
         let ns = read_u32(&payload, &mut cur)? as usize;
         let np = read_u32(&payload, &mut cur)? as usize;
@@ -192,7 +214,10 @@ impl CapabilitySet {
         })
     }
 }
-realization!(CapabilitySet, "https://hologram.foundation/realization/capability-set");
+realization!(
+    CapabilitySet,
+    "https://hologram.foundation/realization/capability-set"
+);
 
 /// `https://hologram.foundation/realization/snapshot` — suspended container state (spec §4.7).
 /// Operands: the Container ID and the prior snapshot (the suspend/resume chain). Payload: opaque
@@ -228,7 +253,10 @@ impl RuntimeState {
         (refs, self.counters_payload.clone())
     }
 }
-realization!(RuntimeState, "https://hologram.foundation/realization/runtime-state");
+realization!(
+    RuntimeState,
+    "https://hologram.foundation/realization/runtime-state"
+);
 
 /// `https://hologram.foundation/realization/error-event` — an error occurrence (spec §7.5).
 /// Operands: the source Container ID, the predecessor error-event (the append-only log chain),
@@ -252,7 +280,10 @@ impl ErrorEvent {
         (refs, self.class_code_payload.clone())
     }
 }
-realization!(ErrorEvent, "https://hologram.foundation/realization/error-event");
+realization!(
+    ErrorEvent,
+    "https://hologram.foundation/realization/error-event"
+);
 
 /// `https://hologram.foundation/realization/channel` — a channel declaration (spec §4.4).
 /// Operand: the payload type-shape κ (if any). Payload: name + retention + peer-scope.
@@ -290,8 +321,14 @@ use hologram_substrate_core::{Realization, RealizationId, RefExtractor};
 /// The IRI → reference-extractor table the storage backend borrows for reachability walks
 /// (spec §5.3). One row per realization above. Static (no_std-friendly).
 pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
-    (ContainerManifest::IRI, <ContainerManifest as Realization>::references),
-    (CapabilitySet::IRI, <CapabilitySet as Realization>::references),
+    (
+        ContainerManifest::IRI,
+        <ContainerManifest as Realization>::references,
+    ),
+    (
+        CapabilitySet::IRI,
+        <CapabilitySet as Realization>::references,
+    ),
     (Snapshot::IRI, <Snapshot as Realization>::references),
     (RuntimeState::IRI, <RuntimeState as Realization>::references),
     (ErrorEvent::IRI, <ErrorEvent as Realization>::references),
@@ -310,7 +347,11 @@ mod tests {
 
     #[test]
     fn manifest_references_are_exactly_the_embedded_operands() {
-        let m = ContainerManifest { code: k(b"code"), initial_state: k(b"state"), parameters: k(b"params") };
+        let m = ContainerManifest {
+            code: k(b"code"),
+            initial_state: k(b"state"),
+            parameters: k(b"params"),
+        };
         let bytes = m.canonicalize();
         let refs = ContainerManifest::references(&bytes).unwrap();
         assert_eq!(refs, alloc::vec![k(b"code"), k(b"state"), k(b"params")]);
@@ -318,7 +359,11 @@ mod tests {
 
     #[test]
     fn registry_dispatch_recovers_references_without_knowing_the_type() {
-        let s = Snapshot { container_id: k(b"cid"), previous: Some(k(b"prev")), state_payload: alloc::vec![1, 2, 3] };
+        let s = Snapshot {
+            container_id: k(b"cid"),
+            previous: Some(k(b"prev")),
+            state_payload: alloc::vec![1, 2, 3],
+        };
         let bytes = s.canonicalize();
         // The store only sees bytes + the registry; it recovers edges via the embedded IRI.
         let refs = references(&bytes, REGISTRY).unwrap();
@@ -327,7 +372,10 @@ mod tests {
 
     #[test]
     fn wrong_iri_is_rejected() {
-        let c = Channel { type_shape: None, decl_payload: alloc::vec![9] };
+        let c = Channel {
+            type_shape: None,
+            decl_payload: alloc::vec![9],
+        };
         let mut bytes = c.canonicalize();
         bytes[0] = b'X';
         assert!(Channel::references(&bytes).is_err());
@@ -335,9 +383,21 @@ mod tests {
 
     #[test]
     fn identity_is_deterministic_and_binds_operands() {
-        let a = ContainerManifest { code: k(b"c"), initial_state: k(b"s"), parameters: k(b"p") };
-        let b = ContainerManifest { code: k(b"c"), initial_state: k(b"s"), parameters: k(b"p") };
-        let c = ContainerManifest { code: k(b"c"), initial_state: k(b"DIFFERENT"), parameters: k(b"p") };
+        let a = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"s"),
+            parameters: k(b"p"),
+        };
+        let b = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"s"),
+            parameters: k(b"p"),
+        };
+        let c = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"DIFFERENT"),
+            parameters: k(b"p"),
+        };
         assert_eq!(a.kappa(), b.kappa());
         assert_ne!(a.kappa(), c.kappa());
     }
