@@ -113,6 +113,51 @@ pub struct InferenceSession<B: SessionBackend> {
     /// in `execute_attested` so the `Grounded<Digest<32>>` attestation
     /// anchors to *this* session's content, not a static dummy term.
     archive_fingerprint: [u8; 32],
+    /// PM_7 memory affinity (Prism identity PM_7): per-kernel memory tier
+    /// derived from the datum's quantum level (Witt bit-width). Recomputed at
+    /// load — the tier is a pure function of the kernel's dtype/quantum level,
+    /// so it needs no archive section. `tiered-exec` only.
+    #[cfg(feature = "tiered-exec")]
+    tiers: Vec<hologram_types::MemoryTier>,
+    /// Precomputed buffer-migration schedule at parallel-level boundaries (a
+    /// no-op on unified-memory hardware; PL_2 lease disjointness makes
+    /// coherence trivial). `tiered-exec` only.
+    #[cfg(feature = "tiered-exec")]
+    migrations: Vec<crate::coherence::LevelMigration>,
+    /// Runtime tier-routing override (Compiled / ForceAllCpu / ForceAllDevice).
+    #[cfg(feature = "tiered-exec")]
+    tier_policy: crate::coherence::TierPolicy,
+}
+
+/// PM_7 tier of one kernel call: a pure function of its quantum level (the
+/// dtype's Witt bit-width), element count (from the output buffer length), and
+/// whether it is a pure-layout op. Recomputed at load — no stored assignment.
+#[cfg(feature = "tiered-exec")]
+fn call_tier(call: &KernelCall) -> hologram_types::MemoryTier {
+    let dt = hologram_backend::call_dtype(call);
+    let bpe = port_bytes_per_element(dt).max(1);
+    let witt_bits = (bpe * 8).min(u16::MAX as usize) as u16;
+    let element_count = hologram_backend::buffers(call)
+        .last()
+        .map(|b| b.length / bpe as u64)
+        .unwrap_or(0);
+    hologram_types::MemoryTier::from_witt(witt_bits, element_count, is_layout_only_call(call))
+}
+
+/// Pure-layout kernels (relabel / re-index / placement) — no arithmetic, so
+/// their tier stays CPU-resident regardless of quantum level.
+#[cfg(feature = "tiered-exec")]
+fn is_layout_only_call(call: &KernelCall) -> bool {
+    matches!(
+        call,
+        KernelCall::Reshape(_)
+            | KernelCall::Transpose(_)
+            | KernelCall::Concat(_)
+            | KernelCall::Slice(_)
+            | KernelCall::Pad(_)
+            | KernelCall::Expand(_)
+            | KernelCall::Resize(_)
+    )
 }
 
 /// Backend bounds required for `InferenceSession` execute. Without the
@@ -368,6 +413,49 @@ impl<B: SessionBackend> InferenceSession<B> {
 
         let inputs_len = inputs.len();
 
+        // PM_7 memory affinity: derive each kernel's tier from its quantum
+        // level (recomputed here from the decoded calls — the tier is a pure
+        // function of dtype/quantum level, so no archive section is needed),
+        // then precompute the level-boundary migration schedule. PL_2 lease
+        // disjointness makes the schedule a no-op on unified-memory hardware.
+        #[cfg(feature = "tiered-exec")]
+        let (tiers, migrations) = {
+            let tiers: Vec<hologram_types::MemoryTier> =
+                kernel_calls.iter().map(call_tier).collect();
+            let call_outputs: Vec<u32> = kernel_calls
+                .iter()
+                .map(|c| {
+                    hologram_backend::buffers(c)
+                        .last()
+                        .map(|b| b.slot)
+                        .unwrap_or(u32::MAX)
+                })
+                .collect();
+            let call_inputs: Vec<Vec<u32>> = kernel_calls
+                .iter()
+                .map(|c| {
+                    let bufs = hologram_backend::buffers(c);
+                    if bufs.len() > 1 {
+                        bufs[..bufs.len() - 1]
+                            .iter()
+                            .filter(|b| b.slot != u32::MAX)
+                            .map(|b| b.slot)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect();
+            let migrations = crate::coherence::build_migration_schedule(
+                &exec_plan,
+                &tiers,
+                &call_outputs,
+                &call_inputs,
+                slot_count,
+            );
+            (tiers, migrations)
+        };
+
         Ok(Self {
             kernel_calls,
             exec_plan,
@@ -387,7 +475,39 @@ impl<B: SessionBackend> InferenceSession<B> {
             slot_label_scratch: Vec::new(),
             out_witnessed_scratch: Vec::new(),
             archive_fingerprint,
+            #[cfg(feature = "tiered-exec")]
+            tiers,
+            #[cfg(feature = "tiered-exec")]
+            migrations,
+            #[cfg(feature = "tiered-exec")]
+            tier_policy: crate::coherence::TierPolicy::Compiled,
         })
+    }
+
+    /// PM_7 tier report — the per-tier kernel histogram + migration stats for
+    /// this session (built on demand from the load-time tier assignment).
+    #[cfg(feature = "tiered-exec")]
+    pub fn tier_report(&self) -> crate::coherence::TierReport {
+        crate::coherence::build_report(&self.tiers, &self.migrations)
+    }
+
+    /// Per-kernel memory tiers (parallel to the kernel-call schedule).
+    #[cfg(feature = "tiered-exec")]
+    pub fn tiers(&self) -> &[hologram_types::MemoryTier] {
+        &self.tiers
+    }
+
+    /// Override the runtime tier-routing policy (Compiled / ForceAllCpu /
+    /// ForceAllDevice) for latency-vs-throughput tuning.
+    #[cfg(feature = "tiered-exec")]
+    pub fn set_tier_policy(&mut self, policy: crate::coherence::TierPolicy) {
+        self.tier_policy = policy;
+    }
+
+    /// The active tier-routing policy.
+    #[cfg(feature = "tiered-exec")]
+    pub fn tier_policy(&self) -> crate::coherence::TierPolicy {
+        self.tier_policy
     }
 
     /// Execute one inference pass from raw input bytes, returning raw

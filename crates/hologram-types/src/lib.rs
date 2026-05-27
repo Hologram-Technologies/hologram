@@ -25,7 +25,9 @@
 #![no_std]
 
 pub mod dtype;
+pub mod memory_tier;
 pub mod shape;
+pub use memory_tier::MemoryTier;
 
 pub use dtype::{
     DType, DTypeBf16, DTypeBool, DTypeF16, DTypeF32, DTypeF64, DTypeI32, DTypeI4, DTypeI64,

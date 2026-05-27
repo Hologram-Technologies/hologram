@@ -8,6 +8,7 @@ description = "Hologram runtime executor: InferenceSession over a content-addres
 
 [dependencies]
 hologram-host    = { workspace = true }
+hologram-types   = { workspace = true }
 hologram-ops     = { workspace = true }
 hologram-backend = { workspace = true }
 hologram-archive = { workspace = true }
@@ -29,6 +30,7 @@ uor-foundation    = { workspace = true }
 smallvec          = { workspace = true }
 
 [features]
+tiered-exec = []
 # `no_std` + `alloc` by default; `std` (host default) enables the std
 # error surface.
 default = ["std"]
