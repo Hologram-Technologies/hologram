@@ -48,7 +48,8 @@ jobs:
       - name: Get current version
         id: current_version
         run: |
-          CURRENT=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "hologram") | .version')
+          # The shared workspace version (no package is named `hologram`).
+          CURRENT=$(scripts/workspace-version.sh)
           echo "version=$CURRENT" >> $GITHUB_OUTPUT
           echo "Current version: $CURRENT"
 
@@ -59,12 +60,12 @@ jobs:
           cargo set-version --workspace --bump ${{ inputs.version_type }}
 
           # Get the new version
-          NEW_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "hologram") | .version')
+          NEW_VERSION=$(scripts/workspace-version.sh)
 
           # Add prerelease identifier if specified
           if [ -n "${{ inputs.prerelease }}" ]; then
             cargo set-version --workspace "${NEW_VERSION}-${{ inputs.prerelease }}.1"
-            NEW_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "hologram") | .version')
+            NEW_VERSION=$(scripts/workspace-version.sh)
           fi
 
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
@@ -80,31 +81,14 @@ jobs:
 
       - name: Snapshot public API + update API changelog
         run: |
-          VERSION=${{ steps.bump.outputs.new_version }}
-          PREV=${{ steps.current_version.outputs.version }}
-
-          # Regenerate the committed per-crate API snapshots at the new version.
+          # Regenerate the committed per-crate API snapshots at the new version,
+          # then diff against the previous release's archive to update
+          # api/CHANGELOG.md and archive this release's snapshots. The history
+          # logic lives in a tested script (scripts/test-release-tooling.sh).
           scripts/update-api-snapshots.sh
-
-          # Diff the combined surface against the previous release's archive and
-          # prepend a categorized (Added/Changed/Deprecated/Removed) section to
-          # api/CHANGELOG.md — the durable cross-version API history.
-          NEW_COMBINED=$(mktemp)
-          PREV_COMBINED=$(mktemp)
-          cat api/*.txt > "$NEW_COMBINED"
-          if ls "api/history/v${PREV}"/*.txt >/dev/null 2>&1; then
-            cat "api/history/v${PREV}"/*.txt > "$PREV_COMBINED"
-          else
-            : > "$PREV_COMBINED"   # first archived release: everything reads as Added
-          fi
-          python3 scripts/api-changelog.py \
-            --old "$PREV_COMBINED" --new "$NEW_COMBINED" \
-            --version "$VERSION" --output api/CHANGELOG.md
-
-          # Archive this release's snapshots so the next release can diff them.
-          mkdir -p "api/history/v${VERSION}"
-          cp api/*.txt "api/history/v${VERSION}/"
-          echo "Archived API snapshots to api/history/v${VERSION}/"
+          scripts/release-api-history.sh \
+            "${{ steps.bump.outputs.new_version }}" \
+            "${{ steps.current_version.outputs.version }}"
 
       - name: Update CHANGELOG.md
         run: |

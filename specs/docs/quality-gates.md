@@ -187,6 +187,26 @@ would be lying about compatibility. Bump with `cargo set-version --workspace …
 
   Nothing tracked is ever removed in a single step at an unchanged version.
 
+## The tooling is itself tested
+
+The gate logic is not trusted by inspection — it has its own tests, run in CI by
+the **Quality-gate tooling tests** job (`ci.yml`, no Rust toolchain, so fast):
+
+- `scripts/test_quality_gates.py` (22 tests) — the regression classifier
+  (threshold + cv-floor suppression *and* genuine-regression gating), the
+  benchmark-lifecycle transitions, best-of-N reduction, the benchmark-manifest
+  tool, criterion aggregation, and API-changelog categorization for all four
+  scenarios + cross-version accumulation.
+- `scripts/test-release-tooling.sh` — drives `scripts/release-api-history.sh`
+  through two simulated releases (no cargo) and asserts the changelog
+  categorizes/accumulates and the per-version snapshots are archived; also
+  checks `scripts/workspace-version.sh`.
+
+The release version is read by `scripts/workspace-version.sh` from
+`[workspace.package].version` (every crate inherits it) — *not* from a package
+named `hologram`, which does not exist (the `hologram` binary is built by the
+`hologram-cli` package). `version-bump.yml` and `publish.yml` use this script.
+
 ## Enforcement
 
 Each gate's job name must be added as a **required status check**

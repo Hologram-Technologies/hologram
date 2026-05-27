@@ -8,8 +8,10 @@ cargo-public-api) are validated by running those tools in CI, not here.
 """
 
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,6 +26,8 @@ def _load(mod_name, filename):
 cmp = _load("compare_benchmarks", "compare-benchmarks.py")
 red = _load("bench_reduce_min", "bench-reduce-min.py")
 chg = _load("api_changelog", "api-changelog.py")
+man = _load("update_bench_manifest", "update-bench-manifest.py")
+agg = _load("aggregate_benchmarks", "aggregate-benchmarks.py")
 
 
 def bench(name, median, std=0.0):
@@ -170,6 +174,122 @@ def test_api_changelog_renders_all_sections():
     s = chg.render_section(cats, "0.6.0", crate="k")
     for tok in ("v0.6.0", "Added", "Deprecated", "Removed (breaking)", "Changed (breaking)"):
         assert tok in s, tok
+
+
+# ── benchmark manifest tool (update-bench-manifest.py) ──────────────────────
+
+
+def test_manifest_render_round_trips_and_preserves_deprecated():
+    benchmarks = {
+        "a/active": {"status": "active"},
+        "b/dep": {"status": "deprecated", "deprecated_since": "0.6.0"},
+    }
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "manifest.toml")
+        with open(p, "w") as f:
+            f.write(man.render(benchmarks))
+        parsed = man.parse(p)
+    assert parsed["a/active"]["status"] == "active"
+    assert parsed["b/dep"]["status"] == "deprecated"
+    assert parsed["b/dep"]["deprecated_since"] == "0.6.0"
+
+
+def test_manifest_adds_new_and_preserves_existing():
+    with tempfile.TemporaryDirectory() as d:
+        manifest = os.path.join(d, "manifest.toml")
+        with open(manifest, "w") as f:
+            f.write(man.render({"old/dep": {"status": "deprecated", "deprecated_since": "0.5.0"}}))
+        bj = os.path.join(d, "bench.json")
+        with open(bj, "w") as f:
+            json.dump({"benchmarks": [bench("new/one", 1), bench("new/two", 2)]}, f)
+        rc = man.main([bj, "--manifest", manifest])
+        assert rc == 0
+        out = man.parse(manifest)
+    # New benches registered active; the pre-existing deprecated entry is kept.
+    assert out["new/one"]["status"] == "active"
+    assert out["new/two"]["status"] == "active"
+    assert out["old/dep"]["status"] == "deprecated"
+
+
+def test_manifest_check_flags_unregistered():
+    with tempfile.TemporaryDirectory() as d:
+        manifest = os.path.join(d, "manifest.toml")
+        with open(manifest, "w") as f:
+            f.write(man.render({"known": {"status": "active"}}))
+        bj = os.path.join(d, "bench.json")
+        with open(bj, "w") as f:
+            json.dump({"benchmarks": [bench("known", 1), bench("surprise", 2)]}, f)
+        assert man.main([bj, "--manifest", manifest, "--check"]) == 1  # unregistered → fail
+        # Register, then --check passes.
+        man.main([bj, "--manifest", manifest])
+        assert man.main([bj, "--manifest", manifest, "--check"]) == 0
+
+
+# ── criterion aggregation (aggregate-benchmarks.py) ─────────────────────────
+
+
+def test_aggregate_parses_criterion_layout():
+    with tempfile.TemporaryDirectory() as d:
+        # Criterion writes <group>/<id>/new/{benchmark,estimates}.json.
+        newdir = os.path.join(d, "crit", "matmul", "256", "new")
+        os.makedirs(newdir)
+        with open(os.path.join(newdir, "benchmark.json"), "w") as f:
+            json.dump({"full_id": "matmul/256"}, f)
+        with open(os.path.join(newdir, "estimates.json"), "w") as f:
+            json.dump({"mean": {"point_estimate": 1234.5},
+                       "median": {"point_estimate": 1200.0},
+                       "std_dev": {"point_estimate": 10.0}}, f)
+        out = os.path.join(d, "out.json")
+        _agg_via_main(d, out)
+        data = json.load(open(out))
+    names = {b["name"]: b for b in data["benchmarks"]}
+    assert "matmul/256" in names
+    assert names["matmul/256"]["median_ns"] == 1200.0
+    assert data["sha"] == "deadbeef"
+
+
+def _agg_via_main(d, out):
+    # aggregate-benchmarks.py uses sys.argv; drive it directly.
+    argv_bak = sys.argv
+    try:
+        sys.argv = ["aggregate", os.path.join(d, "crit"), out, "deadbeef"]
+        try:
+            agg.main()
+        except SystemExit as e:
+            assert (e.code or 0) == 0
+    finally:
+        sys.argv = argv_bak
+    return 0
+
+
+# ── API changelog accumulation (--output prepend) ───────────────────────────
+
+
+def test_changelog_output_prepends_newest_first():
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "CHANGELOG.md")
+        old = os.path.join(d, "old.txt")
+        new = os.path.join(d, "new.txt")
+        # v0.5.0: one item added from nothing.
+        open(old, "w").write("")
+        open(new, "w").write("pub fn k::a()\n")
+        chg.main(["--old", old, "--new", new, "--version", "0.5.0", "--output", out])
+        # v0.6.0: add a second item (old = the v0.5.0 surface).
+        open(old, "w").write("pub fn k::a()\n")
+        open(new, "w").write("pub fn k::a()\npub fn k::b()\n")
+        chg.main(["--old", old, "--new", new, "--version", "0.6.0", "--output", out])
+        text = open(out).read()
+    assert text.count("# Public API changelog") == 1, "single title"
+    assert "## v0.6.0" in text and "## v0.5.0" in text
+    assert text.index("## v0.6.0") < text.index("## v0.5.0"), "newest first"
+
+
+def test_changelog_item_key_ignores_args_and_deprecation():
+    # Same item, different arg list + deprecation marker ⇒ identical key.
+    assert chg.item_key("pub fn k::f(x: u8)") == chg.item_key("pub fn k::f(x: u8, y: u8)")
+    assert chg.item_key("#[deprecated] pub fn k::f()") == chg.item_key("pub fn k::f()")
+    assert chg.is_deprecated("#[deprecated] pub fn k::f()")
+    assert not chg.is_deprecated("pub fn k::f()")
 
 
 def _run():
