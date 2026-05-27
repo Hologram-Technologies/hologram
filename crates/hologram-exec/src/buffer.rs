@@ -423,6 +423,21 @@ impl BufferArena {
         total
     }
 
+    /// Resident pinned bytes (deduped) — the archive-embedded constants/weights
+    /// pinned for the session's lifetime. Disjoint from `transient_bytes` (the
+    /// pinned tier is keyed separately), so the full content-addressed footprint
+    /// is `pinned_bytes() + transient_bytes()`.
+    pub fn pinned_bytes(&self) -> usize {
+        let mut seen: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        let mut total = 0;
+        for &bi in self.pinned.values() {
+            if seen.insert(bi) {
+                total += self.bufs[bi].len;
+            }
+        }
+        total
+    }
+
     /// Age `current` → `previous` (recycling the dropped generation's
     /// buffers) when adding `incoming` bytes would exceed the budget, so
     /// resident transient bytes stay ≤ `2 * budget` for any run length.
