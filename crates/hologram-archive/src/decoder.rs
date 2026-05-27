@@ -7,6 +7,7 @@ use hologram_backend::{
     DequantizeCall, ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
     MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall,
     NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    MAX_RANK,
 };
 
 /// Cursor over a section payload.
@@ -187,8 +188,8 @@ fn read_broadcast_binary(c: &mut Cursor<'_>) -> Result<BroadcastBinaryCall, Arch
     let op = c.u8()?;
     let small_is_lhs = c.u8()? != 0;
     let dtype = c.u8()?;
-    let mut in_dims = [0u32; 8];
-    let mut out_dims = [0u32; 8];
+    let mut in_dims = [0u32; MAX_RANK];
+    let mut out_dims = [0u32; MAX_RANK];
     for i in 0..rank as usize {
         in_dims[i] = c.u32()?;
         out_dims[i] = c.u32()?;
@@ -343,7 +344,7 @@ fn read_reduce(c: &mut Cursor<'_>) -> Result<ReduceCall, ArchiveError> {
     let axes_mask = c.u32()?;
     let keepdims = c.u8()? != 0;
     let dtype = c.u8()?;
-    let mut dims = [0u32; 8];
+    let mut dims = [0u32; MAX_RANK];
     for d in dims.iter_mut().take(rank as usize) {
         *d = c.u32()?;
     }
@@ -370,11 +371,11 @@ fn read_transpose(c: &mut Cursor<'_>) -> Result<TransposeCall, ArchiveError> {
     let input = c.buf()?;
     let output = c.buf()?;
     let rank = c.u8()?;
-    let mut dims = [0u32; 8];
+    let mut dims = [0u32; MAX_RANK];
     for d in &mut dims {
         *d = c.u32()?;
     }
-    let mut perm = [0u8; 8];
+    let mut perm = [0u8; MAX_RANK];
     for p in &mut perm {
         *p = c.u8()?;
     }
@@ -392,11 +393,11 @@ fn read_expand(c: &mut Cursor<'_>) -> Result<ExpandCall, ArchiveError> {
     let input = c.buf()?;
     let output = c.buf()?;
     let rank = c.u8()?;
-    let mut in_dims = [0u32; 8];
+    let mut in_dims = [0u32; MAX_RANK];
     for d in &mut in_dims {
         *d = c.u32()?;
     }
-    let mut out_dims = [0u32; 8];
+    let mut out_dims = [0u32; MAX_RANK];
     for d in &mut out_dims {
         *d = c.u32()?;
     }

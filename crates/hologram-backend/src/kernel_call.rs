@@ -7,6 +7,24 @@
 use crate::workspace::BufferRef;
 use alloc::{vec, vec::Vec};
 
+/// Maximum tensor rank carried inline by the shape-bearing kernel calls
+/// (`Transpose`, `Expand`, `Resize`, `Reduce`, `BroadcastBinary`).
+///
+/// This is the one **structural** bound in the runtime: it is fixed because
+/// `KernelCall` is a `Copy`, zero-allocation value type (the content-addressed
+/// executor copies calls and folds them into κ-labels with no heap traffic) and
+/// the archive serializes these shapes as a fixed-width record. It is **not** a
+/// data-scale limit — element counts (`u64`), matmul/tensor dimensions (`u32`),
+/// sequence length, head count, and model size are all unbounded. Rank 8 covers
+/// every mainstream tensor layout (NCHW=4, NCDHW=5, batched-attention ≈6); a
+/// graph exceeding it is **rejected loudly at compile time**, never silently
+/// truncated (see `compiler`'s shape-planning + the kernels' rank guards).
+///
+/// Raising it to literally-unbounded rank is a deliberate archive-format
+/// revision (length-prefixed shapes) plus moving the dims out of the `Copy`
+/// call — tracked separately so the format/ABI change is explicit, not implicit.
+pub const MAX_RANK: usize = 8;
+
 /// Direct PrimitiveOp wrapper kernels.
 #[derive(Debug, Clone, Copy)]
 pub struct UnaryCall {
@@ -129,8 +147,8 @@ pub struct BroadcastBinaryCall {
     pub other: BufferRef,
     pub output: BufferRef,
     pub rank: u8,
-    pub in_dims: [u32; 8],
-    pub out_dims: [u32; 8],
+    pub in_dims: [u32; MAX_RANK],
+    pub out_dims: [u32; MAX_RANK],
     /// One of [`broadcast_op`].
     pub op: u8,
     /// `true` ⇒ `op(small, other)`; `false` ⇒ `op(other, small)`.
@@ -240,7 +258,7 @@ pub struct ReduceCall {
     pub element_count: u64,
     /// Input rank; `dims[..rank]` is the row-major input shape.
     pub rank: u8,
-    pub dims: [u32; 8],
+    pub dims: [u32; MAX_RANK],
     /// Bit `i` set ⇒ axis `i` is reduced. The output is the input shape with
     /// every reduced axis collapsed to 1 (keepdims layout — byte-identical to
     /// the keepdims=false layout, which only drops the size-1 axes). A mask of
@@ -267,8 +285,8 @@ pub struct TransposeCall {
     pub input: BufferRef,
     pub output: BufferRef,
     pub rank: u8,
-    pub dims: [u32; 8],
-    pub perm: [u8; 8],
+    pub dims: [u32; MAX_RANK],
+    pub perm: [u8; MAX_RANK],
     pub dtype: u8,
 }
 
@@ -315,8 +333,8 @@ pub struct ExpandCall {
     pub input: BufferRef,
     pub output: BufferRef,
     pub rank: u8,
-    pub in_dims: [u32; 8],
-    pub out_dims: [u32; 8],
+    pub in_dims: [u32; MAX_RANK],
+    pub out_dims: [u32; MAX_RANK],
     pub dtype: u8,
 }
 
