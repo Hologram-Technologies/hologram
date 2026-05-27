@@ -1088,4 +1088,43 @@ mod elision_tests {
         assert!(!g.nodes().iter().any(|nd| nd.op == GraphOp::Op(K::Sigmoid)));
         assert!(g.nodes().iter().any(|nd| nd.op == GraphOp::Op(K::Relu)));
     }
+
+    /// Regression: dead-node elimination renumbers nodes, and `gather_attrs`
+    /// must follow the remap. A dead node with a *lower* id than a Gather forces
+    /// the Gather's id to shift; its non-zero axis must survive (a stale key
+    /// would make the compiler default the axis to 0 — silently wrong for e.g.
+    /// RoPE rotate-half on `head_dim`).
+    #[test]
+    fn gather_attrs_survive_dead_node_renumber() {
+        let mut g = Graph::new();
+        let data = input(&mut g); // id 0
+        let idx = input(&mut g); // id 1
+                                 // Dead node with a LOWER id than the gather, so removing it shifts the
+                                 // gather's id down by one.
+        let _dead = op(&mut g, K::Sigmoid, &[InputSource::Node(data)]); // id 2, dead
+        let gather = op(
+            &mut g,
+            K::Gather,
+            &[InputSource::Node(data), InputSource::Node(idx)],
+        ); // id 3
+        g.set_gather_attrs(gather, GatherAttrs { axis: 2 });
+        output(&mut g, gather);
+
+        g.elide_invariants();
+
+        // The dead Sigmoid is gone; the Gather survived but moved id.
+        assert!(!g.nodes().iter().any(|nd| nd.op == GraphOp::Op(K::Sigmoid)));
+        let (gid, _) = g
+            .nodes()
+            .iter()
+            .enumerate()
+            .find(|(_, nd)| nd.op == GraphOp::Op(K::Gather))
+            .expect("gather survives");
+        assert_ne!(gid as u32, gather.0, "gather id should have shifted");
+        assert_eq!(
+            g.gather_attrs(NodeId(gid as u32)).map(|a| a.axis),
+            Some(2),
+            "gather axis must follow the dead-node renumber, not reset to 0"
+        );
+    }
 }
