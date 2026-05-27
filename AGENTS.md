@@ -15,10 +15,24 @@ Standards version: `2026.03`
 ## Repository Structure
 
 ```
+crates/         — the 11 workspace crates (hologram-host, -types, -ops,
+                  -graph, -compiler, -exec, -backend, -archive, -cli,
+                  -ffi, -bench)
 specs/
-  docs/         — project documentation
+  docs/         — project documentation (see architecture.md)
   adrs/         — architecture decision records
+site/           — Astro documentation website + wasm demo
 ```
+
+---
+
+## Development
+
+- Run tests: `cargo test --workspace`
+- Check lints: `cargo clippy --workspace -- -D warnings`
+- Format code: `cargo fmt --all`
+- Common workflows live in the `Justfile` (`just ci`, `just test`, `just bench`).
+- Project-specific architecture: `specs/docs/architecture.md`.
 
 ---
 

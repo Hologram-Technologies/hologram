@@ -2,9 +2,12 @@
 
 ## Overview
 
-Hologram is an O(1) compute acceleration runtime built on UOR-Framework. It compiles ONNX models
-into a content-addressed, KV-lookup execution graph where every operation resolves in O(1) on a
-pre-saturated context.
+Hologram is a content-addressed, UOR-native tensor runtime built on the UOR Foundation. It compiles
+a tensor graph to a `.holo` archive and executes it through a single content-addressed buffer pool:
+every value carries a UOR-ADDR κ-label, so identical computation is addressed once and reused
+(memoized, deduplicated, replayed) rather than recomputed, and a function over a finite quantum
+domain is materialized once as a lookup table. (ONNX/GGUF models are realized into this graph by the
+downstream `hologram-ai` layer via the `model-formats` feature.)
 
 ---
 

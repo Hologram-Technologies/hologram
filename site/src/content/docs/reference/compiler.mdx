@@ -1,42 +1,77 @@
 ---
 title: Compiler Pipeline
-description: Compiles a HoloGraph into an executable schedule artifact.
+description: Compiles a hologram Graph into a self-contained .holo archive.
 ---
 
-Compiles a `HoloGraph` into an executable schedule, running fusion passes and producing an artifact ready for the executor.
+`hologram-compiler` turns a `hologram_graph::Graph` into a `.holo` archive: a
+self-contained, content-addressed artifact the executor can load and run. The
+compiler is `no_std + alloc` by default, so the whole pipeline runs in wasm and
+on embedded targets; the `std` feature only adds `tracing` diagnostics.
 
 ## Pipeline Steps
 
-1. Graph validation
-2. Constant folding
-3. CSE (common subexpression elimination)
-4. View fusion
-5. Topological sort + level assignment
-6. Liveness analysis
-7. Schedule serialization
+The per-graph pipeline (`Compiler::compile`) runs in order:
 
-## Components
+1. Desugar composite ops into their primitive-op pipelines (e.g. `Clip` → `Min∘Max`)
+2. Algebraic elision — drop computation UOR's algebra proves unnecessary (identity elements, involutions, dead nodes)
+3. Schedule — compute topological levels
+4. Per-node compile: emit a Term tree, build and validate a `CompileUnit`, run completeness
+5. Cache certificates by content fingerprint over `(op_kind, witt_level, backend)`
+6. Lower each node to a backend `KernelCall`
+7. Weight-layout monomorphism — pre-pack constant matmul weights into the panel layout (zero runtime copy)
+8. Emit the `.holo` archive (kernel calls, schedule, exec plan, weights, constants, ports, certificates)
 
-### `compiler`
+## Types
 
-- `HoloCompiler` — main entry point; runs the full compilation pipeline
+- `Compiler` — main entry point; owns the graph, target `BackendKind`, and `WittLevel`
+- `CompilationOutput` — `{ archive: Vec<u8>, stats: CompilationStats }`
+- `CompilationStats` — node/level counts plus cache hit/miss and validated-unit tallies
+- `BackendKind` — `Cpu`, `Avx2`, `Avx512`, `Neon`, `Metal`, `Wgpu`
+- `CompileError` — the pipeline's error type
 
-### `liveness`
-
-Liveness analysis — determines which intermediate buffers can be freed between levels, minimizing peak memory usage in the executor's buffer arena.
-
-### `workspace`
-
-- `CompilerWorkspace` — holds intermediate representations during compilation; builder pattern for configuring optimization passes.
+`WittLevel` comes from `prism::vocabulary`.
 
 ## Usage
 
+Compile a programmatically built graph:
+
 ```rust
-use hologram_compiler::compiler::HoloCompiler;
+use hologram_compiler::{Compiler, BackendKind};
+use prism::vocabulary::WittLevel;
 
-let schedule = HoloCompiler::new()
-    .with_graph(graph)
-    .compile()?;
-
-let archive = HoloWriter::new().write(graph, weights, schedule)?;
+let output = Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile()?;
+let archive: Vec<u8> = output.archive;
 ```
+
+Or use the free `compile` function:
+
+```rust
+use hologram_compiler::{compile, BackendKind};
+use prism::vocabulary::WittLevel;
+
+let output = compile(graph, BackendKind::Cpu, WittLevel::W32)?;
+```
+
+## Compiling from source
+
+`hologram_compiler::source::parse` reads a line-oriented textual grammar
+(`#` comments and blank lines ignored) into a `Graph`. A `:<shape>` token is
+`d0xd1x…` (e.g. `:2x3`); op inputs reference any prior `input` / `const` /
+op-alias name.
+
+```text
+input  x :2x3
+op     relu x as=y
+output y
+```
+
+```rust
+use hologram_compiler::{compile_from_source, BackendKind};
+use prism::vocabulary::WittLevel;
+
+let src = "input x\nop relu x as=y\noutput y\n";
+let output = compile_from_source(src, WittLevel::W32, BackendKind::Cpu)?;
+```
+
+`source::parse` returns `Result<Graph, CompileError>` if you want the graph
+without compiling.

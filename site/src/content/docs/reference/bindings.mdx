@@ -1,73 +1,73 @@
 ---
 title: C & WASM Bindings
-description: C ABI and WebAssembly bindings for Hologram.
+description: The hologram-ffi C ABI for compiling and running models from non-Rust environments.
 ---
 
-C ABI and WebAssembly bindings for integrating Hologram into non-Rust environments.
+`hologram-ffi` exposes hologram through a **C ABI only**. A loaded model is
+referenced by an integer session handle (an index into a global session
+table), not by a pointer. The same crate compiles to `wasm32` under the `wasm`
+feature — the site demo loads the generated module — but there is no
+JavaScript class wrapper; the wasm build exports the same C-ABI functions.
 
-## C ABI
-
-The C header is generated via `cbindgen` and lives at `include/hologram.h`.
-
-### Handles
-
-All Hologram objects are exposed as opaque `Handle` pointers:
+## Lifecycle
 
 ```c
-typedef struct HologramGraph    *HologramGraphHandle;
-typedef struct HologramExecutor *HologramExecutorHandle;
+// Compile textual hologram source to a .holo archive (snprintf-style length).
+int hologram_compile_source(const unsigned char *source_ptr, size_t source_len,
+                            unsigned char *out, size_t out_capacity);
+
+// Compile an empty graph (baseline / smoke test).
+int hologram_compile_empty(unsigned char *out, size_t out_capacity);
+
+// Load a .holo archive; returns a session handle, or -1 on error.
+int hologram_session_load(const unsigned char *archive_ptr, size_t archive_len);
+
+// Release a session handle.
+int hologram_session_close(int handle);
 ```
 
-### Key Functions
+`hologram_compile_source` and `hologram_compile_empty` return the **total**
+archive length; a return value greater than `out_capacity` means the output was
+truncated and the caller should retry with a larger buffer (truncation is never
+reported as success). Both compile for the CPU backend.
+
+## Inspecting a session
 
 ```c
-HologramGraphHandle hologram_graph_from_bytes(const uint8_t *data, size_t len);
-void                hologram_graph_free(HologramGraphHandle graph);
+int hologram_session_input_count(int handle);
+int hologram_session_output_count(int handle);
+int hologram_session_kernel_count(int handle);
 
-HologramExecutorHandle hologram_executor_new(HologramGraphHandle graph);
-int  hologram_executor_run(HologramExecutorHandle exec,
-                           const uint8_t *input, size_t input_len,
-                           uint8_t *output, size_t output_len);
-void hologram_executor_free(HologramExecutorHandle exec);
+// Byte length the i-th output port will produce — pre-size buffers with this.
+int hologram_session_output_byte_len(int handle, size_t i);
+
+// Copy the archive's canonical 32-byte BLAKE3 fingerprint into `out` (>= 32 bytes).
+int hologram_session_archive_fingerprint(int handle, unsigned char *out);
 ```
 
-Functions return `0` on success, negative error codes on failure. Use `hologram_last_error()` for a human-readable string.
+These return `-1` on an invalid handle.
 
-## WASM
+## Executing
 
-WASM-specific bindings using `wasm-bindgen`. Exposes `HologramSession` as a JavaScript class.
-
-```js
-import init, { HologramSession } from './hologram_ffi.js'
-await init()
-const session = HologramSession.from_bytes(modelBytes)
-const output = session.run(inputBytes)
+```c
+int hologram_session_execute(int handle,
+                             const unsigned char *const *in_ptrs,
+                             const size_t *in_lens, size_t in_count,
+                             unsigned char *const *out_ptrs,
+                             const size_t *out_caps, size_t out_count);
 ```
 
-## Internal Components
-
-### `compiler` / `exec` / `graph`
-
-FFI wrappers around `HoloCompiler` and `Executor`. Accepts raw bytes, returns opaque handles.
-
-### `encoding`
-
-Encoding/decoding helpers exposed to C for converting float arrays to ring-encoded `u8` buffers.
-
-### `handle`
-
-`Handle<T>` — ref-counted wrapper that keeps objects alive across the FFI boundary.
-
-### `error`
-
-Thread-local last-error storage, exposed via `hologram_last_error()`.
+`hologram_session_execute` runs the loaded model: inputs are passed as parallel
+pointer/length arrays, outputs as parallel pointer/capacity arrays. `in_count`
+must equal `input_count()` and `out_count` must equal `output_count()`. Callers
+size each output buffer ahead of time using `hologram_session_output_byte_len`.
 
 ## Building
 
 ```bash
-# C header
-cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
+# Build the C-ABI dynamic/static library (crate-type = cdylib + rlib).
+cargo build -p hologram-ffi
 
-# WASM bindings
-just wasm
+# Build the wasm32 module the site demo loads.
+cargo build -p hologram-ffi --features wasm --target wasm32-unknown-unknown
 ```

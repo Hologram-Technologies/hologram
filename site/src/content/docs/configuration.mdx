@@ -1,134 +1,89 @@
 ---
 title: Configuration
-description: Cargo features, dependency setup, and runtime configuration.
+description: Cargo features, runtime/session configuration, and platform targets.
 ---
+
+Hologram has no TOML config system. Configuration is done in code (backend selection, Witt level, buffer-pool budget) and at build time via Cargo features.
 
 ## Cargo Features
 
-| Feature | Crate | Effect |
-|---------|-------|--------|
-| `simd` | `hologram-core` | Enables SIMD acceleration for `ElementWiseView` behind `#[cfg(target_arch)]` guards |
-| `parallel` | `hologram-exec` | Enables Rayon parallel level execution and LUT-GEMM tile parallelism |
-| `wasm` | `hologram-core`, `hologram-ffi` | Strips non-WASM dependencies; enables `wasm-bindgen` bindings |
+Every library crate is `no_std` + `alloc` by default and exposes a `std` feature for host builds.
+
+| Feature | Crate(s) | Default | Effect |
+|---------|----------|:-------:|--------|
+| `std` | all libs | ✓ | Standard library: file I/O, runtime SIMD detection, thread-local scratch, `tracing` |
+| `cpu` | `hologram-backend` | ✓ | The native CPU kernel backend (`CpuBackend`) |
+| `parallel` | `hologram-backend`, `hologram-exec` | — | Multi-core execution: a matmul dispatch fans its cache-oblivious recursion across an in-tree worker pool (host-only; the single-thread path is byte-identical) |
+| `wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
+| `metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
+| `tiered-exec` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
+| `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing |
+| `wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
 
 Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-hologram = { version = "0.1", features = ["parallel", "simd"] }
+hologram-backend = { git = "https://github.com/Hologram-Technologies/hologram", features = ["parallel"] }
 ```
-
-## Tokio Runtime
-
-`hologram-async` requires Tokio with the `rt-multi-thread` feature for the blocking compiler wrapper:
-
-```toml
-[dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-hologram-async = { version = "0.1" }
-```
-
-The async executor itself is runtime-agnostic — single-thread `rt` works for embedded or WASM contexts.
 
 ## no_std Targets
 
-`hologram-core` is `no_std + alloc`. To use it in a `no_std` environment:
+Every library crate is `no_std` + `alloc` by default. For `no_std` targets (wasm / embedded) disable default features on the library crates:
 
 ```toml
 [dependencies]
-hologram-core = { version = "0.1", default-features = false }
+hologram-backend = { ..., default-features = false }
 ```
 
-LUT tables are `static` arrays — no heap allocation occurs in lookup functions.
+## Compile-time configuration
+
+Compilation is configured through the `Compiler` constructor — the target backend and the Witt level (the UOR-ADDR addressing granularity):
+
+```rust
+use hologram_compiler::{BackendKind, Compiler};
+use prism::vocabulary::WittLevel;
+
+let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
+    .compile()
+    .unwrap();
+// compiled.archive: Vec<u8>
+```
+
+`BackendKind` selects the target backend (e.g. `Cpu`). `WittLevel::new(32)` is the conventional default.
+
+## Runtime / session configuration
+
+Execution is synchronous. A session is loaded from an archive against a backend, and the backend is parameterized by the buffer pool (`BufferArena`):
+
+```rust
+use hologram_backend::CpuBackend;
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
+
+let mut session =
+    InferenceSession::load(&archive, CpuBackend::<BufferArena>::new()).unwrap();
+let outputs = session.execute(&inputs).unwrap();
+```
+
+`BufferArena` is the content-addressed buffer pool that backs intermediate values and pinned constants. Selecting a different `Backend` (CPU SIMD, or the optional `wgpu` / `metal` GPU backends) is how you change where kernels run.
 
 ## WASM Build
 
 ```bash
-# Install wasm-pack if needed
-cargo install wasm-pack
-
-# Build via just
+# Build the no_std library stack for the browser
 just wasm
 
-# Or manually
+# Or build the C-ABI FFI for the browser demo
 cargo build -p hologram-ffi --target wasm32-unknown-unknown --features wasm
 ```
 
-The generated JS bindings and `.wasm` file are output to `pkg/`.
-
 ## C Bindings
 
-Generate the C header with `cbindgen`:
+`hologram-ffi` exposes a C ABI. A session is referenced by an integer handle into a process-local table; functions return negative error codes on failure:
 
-```bash
-cbindgen --config crates/hologram-ffi/cbindgen.toml --output include/hologram.h
+```c
+int len = hologram_compile_source(src, src_len, out, out_capacity);
+int h   = hologram_session_load(archive, archive_len);
+hologram_session_execute(h, /* … */);
+hologram_session_close(h);
 ```
-
-Link against the compiled `libhologram_ffi` and include `hologram.h`. Functions return `0` on success, negative error codes on failure — call `hologram_last_error()` for details.
-
-## Runtime Configuration
-
-Hologram loads settings from TOML config files, checked in priority order:
-
-1. `--config <path>` flag (explicit override)
-2. `.hologram/config.toml` in the current directory (project-local)
-3. `~/.hologram/config.toml` (user-global)
-4. Built-in defaults
-
-### Config file reference
-
-```toml
-[cache]
-# Directory for decompressed archive caches.
-# Compressed archives are decompressed once, then mmap'd from cache.
-# Supports ~ expansion. Default: cache next to the archive file.
-dir = "~/.hologram/cache"
-
-[archive]
-# Compression settings for new archives.
-# false = larger files, instant mmap loading (default).
-# true  = smaller files, decompression required on first load.
-compress_weights = false
-compress_graph = false
-
-[inference]
-# Default inference parameters (CLI flags override these).
-temperature = 0.7
-top_k = 40
-max_tokens = 128
-```
-
-### Config resolution
-
-Project-local config (`.hologram/config.toml`) overrides user-global config (`~/.hologram/config.toml`). CLI flags override both. Missing files are silently ignored.
-
-```rust
-use hologram::config::HologramConfig;
-
-let config = HologramConfig::load();           // standard locations
-let config = HologramConfig::load_file(path);  // explicit file
-let cache_dir = config.cache_dir();            // Option<PathBuf>, ~ expanded
-```
-
-## Archive Loading Modes
-
-| Mode | Archive type | Load time | RSS |
-|------|-------------|-----------|-----|
-| **Zero-copy mmap** | Uncompressed | Instant (&lt;1ms) | On-demand via page faults |
-| **Decompress + cache** | Compressed | First run: slow. Subsequent: instant | Cache file + mmap |
-| **In-memory** | Any | Proportional to size | Full archive in heap |
-
-`HoloWriter` produces uncompressed archives by default for instant mmap loading:
-
-```rust
-// Default: uncompressed, instant loading
-HoloWriter::new().set_graph(&g).set_weights(w).build()?;
-
-// Opt-in compression for distribution
-HoloWriter::new().set_graph(&g).set_weights(w)
-    .compress_weights()
-    .compress_graph()
-    .build()?;
-```
-
-When loading a compressed archive, the runtime automatically decompresses to a cache file on first run. Subsequent runs mmap the cache for instant loading. The cache location is configurable via the `[cache] dir` setting or `--cache-dir` CLI flag.

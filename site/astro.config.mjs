@@ -10,20 +10,19 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Hologram',
-      description: 'O(1) neural network inference via precomputed lookup tables and KV-dispatch',
+      description: 'A content-addressed, UOR-native tensor runtime',
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/UOR-Foundation/hologram',
+          href: 'https://github.com/Hologram-Technologies/hologram',
         },
       ],
       sidebar: [
         { label: 'Getting Started', link: '/guides/getting-started/' },
         {
-          label: 'Guides',
+          label: 'Demos',
           items: [
-            { label: 'Custom Ops', link: '/guides/custom-ops/' },
             { label: 'Calculator Demo', link: '/demo/calculator/' },
             { label: 'Compression Demo', link: '/demo/compression/' },
           ],
@@ -33,18 +32,17 @@ export default defineConfig({
         {
           label: 'Reference',
           items: [
-            { label: 'LUT Tables & Ring Algebra', link: '/reference/lut-ring/' },
-            { label: 'Expression Graph', link: '/reference/graph/' },
-            { label: 'Executor & KV-Dispatch', link: '/reference/executor/' },
+            { label: 'LUT Materialization', link: '/reference/lut-ring/' },
+            { label: 'Tensor Graph', link: '/reference/graph/' },
+            { label: 'Executor', link: '/reference/executor/' },
             { label: 'Archive Format', link: '/reference/archive/' },
             { label: 'Compiler Pipeline', link: '/reference/compiler/' },
-            { label: 'Async & Streaming', link: '/reference/async/' },
-            { label: 'C & WASM Bindings', link: '/reference/bindings/' },
+            { label: 'C ABI Bindings', link: '/reference/bindings/' },
           ],
         },
       ],
       editLink: {
-        baseUrl: 'https://github.com/UOR-Foundation/hologram/edit/main/site/',
+        baseUrl: 'https://github.com/Hologram-Technologies/hologram/edit/main/site/',
       },
     }),
   ],

@@ -1,38 +1,93 @@
 ---
 title: Getting Started
-description: Clone, build, and run your first Hologram inference.
+description: Install the crates, run the pipeline example, and compile + execute a graph.
 ---
 
 ## Prerequisites
 
-- Rust stable (1.75+)
+- Rust stable
 - `just` — `cargo install just`
-- `cargo-nextest` (optional, faster tests) — `cargo install cargo-nextest`
 
 ## Clone and Build
 
 ```bash
-git clone https://github.com/UOR-Foundation/hologram
+git clone https://github.com/Hologram-Technologies/hologram
 cd hologram
 just ci   # fmt check + clippy + full test suite
 ```
 
-## Run the Calculator Example
+## Install
 
-`examples/calculator.rs` demonstrates a scientific calculator built on Hologram's LUT activation ops:
+There is no umbrella crate. Add the individual crates you need to `Cargo.toml`:
 
-```bash
-cargo run --example calculator
+```toml
+[dependencies]
+hologram-compiler = { git = "https://github.com/Hologram-Technologies/hologram" }
+hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram" }
+hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram" }
 ```
 
-This builds a small expression graph, compiles it, and runs inference using the KV executor.
+## Run the Pipeline Example
+
+`crates/hologram-cli/examples/pipeline.rs` runs the end-to-end flow: it parses a graph, compiles it to a `.holo` archive, executes it on the CPU backend, and mints + composes UOR-ADDR κ-labels.
+
+```bash
+cargo run -p hologram-cli --example pipeline
+```
+
+## Compile and Execute
+
+Compile a graph to a `.holo` archive and execute it synchronously against the CPU backend:
+
+```rust
+use hologram_compiler::{source, BackendKind, Compiler};
+use hologram_backend::CpuBackend;
+use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
+use prism::vocabulary::WittLevel;
+
+// Parse a line-oriented hologram source into a Graph and compile it.
+let graph = source::parse("input x\nop relu x as=y\noutput y\n").unwrap();
+let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
+    .compile()
+    .unwrap();
+
+// Load the archive and execute against the CPU backend.
+let mut session =
+    InferenceSession::load(&compiled.archive, CpuBackend::<BufferArena>::new()).unwrap();
+let zeros = vec![0u8; 4096];
+let inputs: Vec<InputBuffer> =
+    (0..session.input_count()).map(|_| InputBuffer { bytes: &zeros }).collect();
+let outputs = session.execute(&inputs).unwrap();
+```
+
+Graphs can also be built programmatically with `Graph::new()` plus `add_node` / `add_input` / `add_output`.
+
+## Using the CLI
+
+`hologram-cli` builds the `hologram` binary:
+
+```bash
+# compile hologram-source (or an empty graph) to a .holo archive
+hologram compile --source graph.txt --output model.holo --backend cpu --witt-level 32
+
+# inspect an archive's section table
+hologram inspect --archive model.holo
+
+# execute against zero-byte inputs; prints each output port's byte length
+hologram execute --archive model.holo
+
+# micro-bench: run an archive N times, report wall-clock per iteration
+hologram bench --archive model.holo --iterations 100
+```
+
+By default `compile` folds the constant-only cone into the archive (warm start); pass `--no-warm` to emit the labels-only lattice instead.
 
 ## Run Benchmarks
 
 ```bash
 just bench
-# or a single group:
-cargo bench -p hologram-bench -- activation_lookup
+# or a single suite:
+cargo bench -p hologram-bench --bench lut_activation
 ```
 
 Criterion HTML reports: `target/criterion/report/index.html`
@@ -41,30 +96,27 @@ Criterion HTML reports: `target/criterion/report/index.html`
 
 ```bash
 just wasm
-# builds hologram-core for wasm32-unknown-unknown
+# builds the no_std library stack for wasm32-unknown-unknown
 ```
 
 ## Project Layout
 
 ```
 crates/
-  hologram-core/       # no_std LUT core
-  hologram-graph/      # expression graph
-  hologram-archive/    # .holo format
-  hologram-exec/       # KV executor
-  hologram-compiler/   # compilation pipeline
-  hologram-async/      # Tokio async
-  hologram-ffi/        # C/WASM bindings
-  hologram-bench/      # benchmarks
-src/
-  lib.rs               # re-exports all public API
-  main.rs              # hologram-cli entry point
-examples/
-  calculator.rs
+  hologram-host/       # platform/host bounds
+  hologram-types/      # shared types: dtype tags, memory tiers
+  hologram-ops/        # UOR-native op taxonomy + semantics + backward rules
+  hologram-graph/      # tensor graph IR, desugaring, elision, scheduling
+  hologram-compiler/   # graph → .holo (lowering, fusion, planning)
+  hologram-archive/    # .holo format, UOR-ADDR κ-labels, BLAKE3 footer
+  hologram-backend/    # kernel backends (CPU SIMD + LUT; optional wgpu/Metal)
+  hologram-exec/       # content-addressed executor, buffer pool, warm-start
+  hologram-ffi/        # C ABI bindings
+  hologram-cli/        # compile / execute / inspect / bench subcommands
+  hologram-bench/      # criterion benchmarks
 ```
 
 ## Next Steps
 
-- [Architecture](../../architecture/) — understand the design
-- [Custom Ops](../custom-ops/) — extend with your own operations
-- [hologram-core](../../crates/core/) — dive into LUT tables and ring algebra
+- [Architecture](../../architecture/) — content-addressed execution, LUT materialization, fusion, and the `.holo` format
+- [Configuration](../../configuration/) — Cargo features, backend selection, and Witt level
