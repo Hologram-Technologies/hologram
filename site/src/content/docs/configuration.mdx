@@ -3,7 +3,7 @@ title: Configuration
 description: Cargo features, runtime/session configuration, and platform targets.
 ---
 
-Hologram has no TOML config system. Configuration is done in code (backend selection, Witt level, buffer-pool budget) and at build time via Cargo features.
+Hologram has no TOML config system. Configuration is done in code (backend selection, Witt level) and at build time via Cargo features. The content-addressed buffer pool is self-sizing — it bounds to the computation's working set (the last two execution walks) with no configured cap.
 
 ## Cargo Features
 
