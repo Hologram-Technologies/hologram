@@ -1,21 +1,34 @@
 # Hologram Operations Reference
 
-This document catalogs every operation available in the hologram runtime. Operations are
-defined at two levels:
+This document catalogs the operations available in the hologram runtime and their
+semantics. The provenance of an op in v0.5.0 is:
 
-- **`FloatOp`** (`hologram-core/src/op/float_op.rs`) — typed tensor operations for AI
-  inference, operating on f32 buffers with shape-aware semantics. Each variant carries the
-  shape parameters needed for dispatch since the graph IR has no per-edge shape metadata.
-- **`TapeKernel`** (`hologram-exec/src/tape.rs`) — pre-resolved dispatch kernels. The tape
-  builder maps graph ops to these variants at compile time, eliminating vtable indirection
-  and enabling inlining.
+- **`OpKind`** (`crates/hologram-ops/src/kind.rs`, re-exported as
+  `hologram_graph::OpKind`) — the closed canonical op catalog. This is the graph IR op
+  set. Each canonical op is a marker type in `hologram-ops` plus a const-tagged IRI plus
+  an `emit_term` function; the Term tree it emits is the formal specification, and
+  per-op reference evaluators verify the backend kernels against it.
+- **`KernelCall`** (`crates/hologram-backend/src/kernel_call.rs`) — the lowered,
+  pre-resolved dispatch enum. `hologram-compiler` lowers each `OpKind` graph node into
+  one or more `KernelCall`s; the CPU backend dispatches them by an exhaustive match
+  (`crates/hologram-backend/src/cpu.rs`). `KernelCall` variants carry the shape
+  parameters needed for dispatch since the graph IR has no per-edge shape metadata.
 
-Lower-level byte-domain ops (`PrimOp`, `LutOp`) operate on Z/256Z ring arithmetic and
-byte-domain activation tables respectively — they are not covered here.
+Execution runs through the content-addressed `InferenceSession`
+(`crates/hologram-exec/src/session.rs`) over a `BufferArena` pool — there is no
+`KvExecutor` and no tape.
+
+> **Scope note.** The canonical `OpKind` catalog is closed (see
+> `crates/hologram-ops/src/kind.rs`). Some operations described in the tables below are
+> *not* present in `hologram_graph::OpKind` in v0.5.0 — notably `Gather`, `GatherND`,
+> `Cast`, `Embed`, `Range`, `Shape`, `ScatterND`, `TopK`, `NonZero`, `Compress`,
+> `ReverseSequence`, and the KV-cache ops `KvWrite` / `KvRead`. Their semantic
+> descriptions are retained here for reference, but they are not part of the current
+> canonical op set.
 
 ---
 
-## FloatOp — Float-domain tensor operations
+## Float-domain tensor operations
 
 ### Arithmetic (binary, element-wise with broadcast)
 
@@ -186,178 +199,59 @@ All take 1 input (f32). Reduce along the last `size` elements of each row.
 
 ---
 
-## TapeKernel — Pre-resolved dispatch kernels
+## KernelCall — Lowered dispatch kernels
 
-The tape builder resolves each graph operation to a `TapeKernel` variant at compile time.
-The executor matches on this enum and calls the appropriate kernel directly, eliminating
-vtable indirection and HashMap lookups.
+`hologram-compiler` lowers each graph `OpKind` node into one or more `KernelCall`
+variants at compile time (`crates/hologram-backend/src/kernel_call.rs`). The CPU backend
+matches on this enum exhaustively (`crates/hologram-backend/src/cpu.rs`) and calls the
+appropriate kernel directly, eliminating vtable indirection and HashMap lookups.
 
-### Generic dispatch
+The variant names and groupings below describe the v0.5.0 lowering. (The historical
+byte-domain `PrimOp` / `LutOp` and the pre-resolved `TapeKernel` tape have been removed;
+dispatch is now the single `KernelCall` match.)
 
-| Variant | Semantics |
-|---------|-----------|
-| `Float(FloatOp)` | Dispatched via `dispatch_float_into` — the general-purpose path for all `FloatOp` variants |
-| `FusedFloatChain(Vec<FloatOp>)` | Fused chain of unary float ops — applies multiple ops in a single pass without intermediate buffers |
-| `Output` | Graph output passthrough — marks a tape slot as a final output |
+### Concrete-op variants
 
-### Byte-domain ops
+`KernelCall` is largely flat: it has one variant per canonical `OpKind` op, carrying the
+baked shape/parameter payload that op needs (e.g. `MatMul { m, k, n }`,
+`Softmax { size }`, `RmsNorm { size, epsilon }`, `Conv2d { … }`, `Attention { … }`).
+The CPU backend's exhaustive match calls the corresponding kernel directly — elementwise
+unary/binary ops route through monomorphic fast paths, and structured ops (Gemm,
+Attention, Conv2d, the normalizations, etc.) call their dedicated kernels. There is no
+catch-all "generic float" arm and no per-op vtable; the match is closed.
 
-| Variant | Semantics |
-|---------|-----------|
-| `LutView(ElementWiseView)` | 256-byte lookup table — byte-domain activation |
-| `PrimUnary(ElementWiseView)` | Unary primitive via LUT — byte-domain Z/256Z ring |
-| `PrimBinary(PrimOp)` | Binary primitive — byte-domain Z/256Z ring |
+### Fusion variants
 
-### Quantized matmul
-
-| Variant | Parameters | Semantics |
-|---------|------------|-----------|
-| `MatMulLut4(ConstantId)` | Constant ID of weight table | 4-bit quantized LUT-GEMM matmul |
-| `MatMulLut8(ConstantId)` | Constant ID of weight table | 8-bit quantized LUT-GEMM matmul |
-
-### KV cache
-
-| Variant | Parameters | Semantics |
-|---------|------------|-----------|
-| `KvWrite { layer, n_kv_heads, head_dim, is_key }` | Transformer layer index, head config | Write K/V to autoregressive cache |
-| `KvRead { layer, n_kv_heads, head_dim }` | Transformer layer index, head config | Read cached K/V for autoregressive generation |
-
-### Inline hot ops (Phase 9a)
-
-These skip the backend vtable and `dispatch_float_into` entirely. The execute loop calls
-the kernel function directly — zero dispatch overhead.
-
-**Inline unary:**
+Beyond the one-per-op variants, `KernelCall` carries fused kernels that the compiler
+emits to elide intermediate buffers. These are content-addressed (κ-labelled) fusions:
 
 | Variant | Semantics |
 |---------|-----------|
-| `InlineRelu` | `v.max(0.0)` |
-| `InlineNeg` | `-v` |
-| `InlineAbs` | `v.abs()` |
-| `InlineSigmoid` | `1/(1+exp(-v))` |
-| `InlineSilu` | `v * sigmoid(v)` |
-| `InlineTanh` | `tanh(v)` |
-| `InlineGelu` | GELU (approximate) |
-| `InlineExp` | `exp(v)` |
-| `InlineReciprocal` | `1.0 / v` |
-
-**Inline binary:**
-
-| Variant | Semantics |
-|---------|-----------|
-| `InlineAdd` | `a + b` |
-| `InlineMul` | `a * b` |
-| `InlineSub` | `a - b` |
-| `InlineDiv` | `a / b` |
-
-### Inline custom ops (Phase 9a.3–9a.4)
-
-Skip the `dispatch_float_into` → `dispatch_custom_into` indirection. Still try backend
-(Metal GPU) first, then fall back to direct CPU kernel call.
-
-| Variant | Parameters | Semantics |
-|---------|------------|-----------|
-| `InlineMatMul { m, k, n }` | Baked matrix dimensions | MatMul with zero-overhead dispatch |
-| `InlineSoftmax { size }` | Baked row size | Softmax with zero-overhead dispatch |
-| `InlineRmsNorm { size, epsilon }` | Baked row size and epsilon (f32 bits) | RmsNorm with zero-overhead dispatch |
-
-### Custom extension
-
-| Variant | Semantics |
-|---------|-----------|
-| `Custom(CustomHandler)` | Registry-based handler baked at tape build time — for user-defined ops registered via `CustomOpRegistry` |
+| `BroadcastBinary` | Expand → elementwise-binary fused into one zero-movement pass (no materialized broadcast) |
+| `MatMulActivation` | MatMul immediately followed by an activation, fused — elides the intermediate |
+| `MatMulAdd` | MatMul + bias add, fused |
+| `MatMulAddActivation` | MatMul + bias add + activation, fused |
+| `MatMulDequant` | Dequantize → MatMul fused — elides the dense f32 weight |
+| `DequantActivation` | Dequantize → activation fused |
 
 ---
 
-## Dispatch Architecture
+## Dispatch architecture
 
-### FloatOp → TapeKernel resolution
+`hologram-compiler` lowers the `OpKind` graph (after its fusion/elision passes) into a
+flat sequence of `KernelCall`s. At execution time the `InferenceSession` drives the
+backend's `dispatch(&KernelCall, &mut WS)`, which is a single closed match in
+`crates/hologram-backend/src/cpu.rs`:
 
-At tape build time, `resolve_float_kernel()` (`tape_builder.rs`) maps each `FloatOp` to
-a `TapeKernel` variant. The mapping determines which dispatch tier handles each op at
-execution time:
+1. Elementwise unary/binary ops dispatch to monomorphic kernels (with broadcast).
+2. Comparison/boolean ops dispatch to their comparison kernels.
+3. Structured ops (Gemm, Attention, Conv2d, the normalizations, pooling, …) call their
+   dedicated kernels.
+4. Fusion variants run their single combined kernel.
 
-```
-FloatOp variant
-    │
-    ▼
-resolve_float_kernel()
-    ├──▶ Inline hot ops (13)      ──▶ direct kernel call, no backend
-    ├──▶ Inline custom ops (3)    ──▶ try GPU backend, then CPU kernel
-    ├──▶ KvWrite / KvRead (2)     ──▶ dedicated KV cache dispatch
-    └──▶ Float(op) catch-all (60+)──▶ backend → dispatch_float_into → category dispatch
-```
-
-### Tier 1: Inline hot ops (13 ops)
-
-Skip the backend vtable and `dispatch_float_into` entirely. The execute loop calls the
-kernel closure directly — zero dispatch overhead.
-
-| FloatOp | TapeKernel | Type |
-|---------|-----------|------|
-| `Relu` | `InlineRelu` | unary |
-| `Neg` | `InlineNeg` | unary |
-| `Abs` | `InlineAbs` | unary |
-| `Sigmoid` | `InlineSigmoid` | unary |
-| `Silu` | `InlineSilu` | unary |
-| `Tanh` | `InlineTanh` | unary |
-| `Gelu` | `InlineGelu` | unary |
-| `Exp` | `InlineExp` | unary |
-| `Reciprocal` | `InlineReciprocal` | unary |
-| `Add` | `InlineAdd` | binary |
-| `Mul` | `InlineMul` | binary |
-| `Sub` | `InlineSub` | binary |
-| `Div` | `InlineDiv` | binary |
-
-These are the most frequent ops in transformer inference — they appear hundreds of times
-per forward pass. Phase 9a benchmarks showed ~36% speedup on Relu (5.1µs → 3.3µs for
-64KB buffers).
-
-### Tier 2: Inline custom ops (3 ops)
-
-Bake parameters at build time to skip `dispatch_float_into` → `dispatch_custom_into`
-indirection, but still try the GPU backend (Metal/WebGPU) first before falling back to
-the CPU kernel.
-
-| FloatOp | TapeKernel |
-|---------|-----------|
-| `MatMul { m, k, n }` | `InlineMatMul { m, k, n }` |
-| `Softmax { size }` | `InlineSoftmax { size }` |
-| `RmsNorm { size, epsilon }` | `InlineRmsNorm { size, epsilon }` |
-
-These ops are hot (multiple times per transformer layer) but benefit from GPU
-acceleration for large tensors, so the backend check is preserved.
-
-### Tier 3: Generic `Float(op)` (~60+ ops)
-
-All remaining `FloatOp` variants use the catch-all `_ => TapeKernel::Float(*fop)`. At
-execution time, this path:
-
-1. Tries the GPU backend (`backend.dispatch_float()`)
-2. Falls back to `dispatch_float_into()`, which routes by category:
-   - `UnaryElementwise` → `elementwise::unary_map()` with monomorphic fast paths
-   - `BinaryElementwise` → `elementwise::binary_elementwise()` with broadcast
-   - `BinaryCompare` / `BinaryByteBool` / `UnaryByteBool` → comparison kernels
-   - `Custom` → dedicated dispatch functions (Gemm, Attention, Conv2d, etc.)
-3. Ultimate fallback: `op.apply_unary(v)` / `op.apply_binary(a, b)`
-
-**Every FloatOp variant is handled** — the catch-all ensures no op is ever unhandled or
-panics at dispatch time.
-
-### Why only 16 ops are inlined
-
-Adding inline variants for the remaining ~60 ops would not help and could hurt:
-
-- **Enum bloat**: More `TapeKernel` variants increase match table size, degrading
-  instruction cache performance in the hot dispatch loop.
-- **Complex ops need GPU**: Conv2d, Attention, and Gemm *must* try the GPU backend —
-  skipping it would be a major regression on Metal/WebGPU-capable hardware.
-- **Shape ops are near-zero-cost**: Reshape is a no-op (metadata only). Transpose,
-  Gather, and Cast are memory moves — dispatch overhead is noise compared to actual
-  data movement.
-- **Rare ops have negligible total impact**: Cos, Sign, Erf, and similar math ops
-  appear at most once per layer. Even saving 2µs per call yields < 2µs total per
-  forward pass — not worth the enum bloat.
+Because the match is exhaustive over a closed enum, every `KernelCall` is handled at
+compile time — there is no fallback arm and no runtime "unhandled op" path. The GPU
+backends (`metal`, `wgpu`, gated by Cargo feature) implement the same `dispatch` match.
 
 ---
 
