@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "tiered_executor"
 harness = false
+
+[[bench]]
+name = "lut_activation"
+harness = false

@@ -16,6 +16,11 @@ use hologram_host::ActiveCpuBounds;
 pub mod dtype;
 mod float_kernels;
 mod kernels;
+/// LUT-accelerated low-precision activations (PM_7 Q0/Q1). Needs `OnceLock`
+/// (std) for the process-lifetime table cache; under no_std the activations
+/// are computed directly (a compile-time choice, not a runtime fallback).
+#[cfg(feature = "std")]
+pub mod lut;
 #[cfg(not(feature = "std"))]
 pub mod mathf;
 #[cfg(feature = "parallel")]

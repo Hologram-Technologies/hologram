@@ -402,6 +402,21 @@ pub mod fused_activation {
     pub const EXP: u8 = 8;
 }
 
+/// Activation identities for the LUT-accelerated low-precision path (PM_7
+/// Q0/Q1 tiers). Plain `u8` so they exist regardless of the `std`-gated LUT
+/// cache; `cpu::lut` materializes a 65536-entry table per id × f16/bf16 dtype
+/// (the content-addressed, compute-once form of the activation over the finite
+/// 16-bit quantum domain).
+pub mod lut_act {
+    pub const SIGMOID: u8 = 0;
+    pub const TANH: u8 = 1;
+    pub const GELU: u8 = 2;
+    pub const SILU: u8 = 3;
+    pub const EXP: u8 = 4;
+    pub const ERF: u8 = 5;
+    pub const COUNT: usize = 6;
+}
+
 /// A matmul with a fused elementwise-activation epilogue — the result of
 /// fusing `matmul → activation` into one content-addressed operation. The
 /// matmul output is never written back as a distinct intermediate; the
