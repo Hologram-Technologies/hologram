@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use hologram_archive::certificate_codec::{self, CertificateRecord};
 use hologram_archive::constant_codec::ConstantEntry;
 use hologram_archive::{HoloWriter, PortDescriptor, WeightStore};
-use hologram_backend::{BufferRef, KernelCall};
+use hologram_backend::{BufferRef, KernelCall, MAX_RANK};
 use hologram_graph::{Graph, GraphOp};
 use hologram_host::HologramHasher;
 use hologram_ops::{HoloArena, HoloTerm};
@@ -983,7 +983,10 @@ fn lrn_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u32, u32, u32
 
 /// `(rank, in_dims, out_dims)` from the input and output shapes (same rank, no
 /// broadcast constraint) — used by Resize's nearest-neighbor gather.
-fn reindex_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u32; 8])> {
+fn reindex_dims(
+    graph: &Graph,
+    node: &hologram_graph::Node,
+) -> Option<(u8, [u32; MAX_RANK], [u32; MAX_RANK])> {
     use hologram_graph::{InputSource, NodeId};
     let reg = graph.shape_registry();
     let in_shape = match node.inputs.first().copied()? {
@@ -1003,11 +1006,11 @@ fn reindex_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32;
     }?;
     let out_shape = reg.get(node.output_shape).cloned()?;
     let rank = out_shape.rank as usize;
-    if rank == 0 || rank > 8 || in_shape.rank as usize != rank {
+    if rank == 0 || rank > MAX_RANK || in_shape.rank as usize != rank {
         return None;
     }
-    let mut in_dims = [0u32; 8];
-    let mut out_dims = [0u32; 8];
+    let mut in_dims = [0u32; MAX_RANK];
+    let mut out_dims = [0u32; MAX_RANK];
     for i in 0..rank {
         in_dims[i] = in_shape.dim(i)? as u32;
         out_dims[i] = out_shape.dim(i)? as u32;
@@ -1090,7 +1093,7 @@ fn quant_channel_dims(
 
 /// `(rank, dims[..rank])` of a reduce node's input shape (row-major, ≤ rank 8),
 /// for filling `ReduceCall`'s axis-reduction geometry.
-fn reduce_input_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8])> {
+fn reduce_input_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; MAX_RANK])> {
     use hologram_graph::{InputSource, NodeId};
     let reg = graph.shape_registry();
     let shape = match node.inputs.first().copied()? {
@@ -1102,17 +1105,20 @@ fn reduce_input_dims(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, 
         }
     };
     let d = reg.get(shape)?;
-    if d.rank as usize > 8 {
+    if d.rank as usize > MAX_RANK {
         return None;
     }
-    let mut dims = [0u32; 8];
+    let mut dims = [0u32; MAX_RANK];
     for (i, slot) in dims.iter_mut().enumerate().take(d.rank as usize) {
         *slot = d.dim(i).unwrap_or(0).min(u32::MAX as u64) as u32;
     }
     Some((d.rank, dims))
 }
 
-fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u32; 8])> {
+fn expand_plan(
+    graph: &Graph,
+    node: &hologram_graph::Node,
+) -> Option<(u8, [u32; MAX_RANK], [u32; MAX_RANK])> {
     use hologram_graph::{InputSource, NodeId};
     let reg = graph.shape_registry();
     let in_shape = match node.inputs.first().copied()? {
@@ -1132,11 +1138,11 @@ fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 
     }?;
     let out_shape = reg.get(node.output_shape).cloned()?;
     let rank = out_shape.rank as usize;
-    if rank == 0 || rank > 8 || in_shape.rank as usize != rank {
+    if rank == 0 || rank > MAX_RANK || in_shape.rank as usize != rank {
         return None;
     }
-    let mut in_dims = [0u32; 8];
-    let mut out_dims = [0u32; 8];
+    let mut in_dims = [0u32; MAX_RANK];
+    let mut out_dims = [0u32; MAX_RANK];
     for i in 0..rank {
         let id = in_shape.dim(i)? as u32;
         let od = out_shape.dim(i)? as u32;
@@ -1152,7 +1158,10 @@ fn expand_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 
 /// Resolve a Transpose's `(rank, input_dims, perm)` from the data shape and the
 /// optional perm operand (an i64 [rank] constant); absent perm defaults to the
 /// full axis reversal (ONNX). `None` for rank 0 / >8 or an out-of-range perm.
-fn transpose_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u32; 8], [u8; 8])> {
+fn transpose_plan(
+    graph: &Graph,
+    node: &hologram_graph::Node,
+) -> Option<(u8, [u32; MAX_RANK], [u8; MAX_RANK])> {
     use hologram_graph::{InputSource, NodeId};
     let reg = graph.shape_registry();
     let data_shape = match node.inputs.first().copied()? {
@@ -1171,14 +1180,14 @@ fn transpose_plan(graph: &Graph, node: &hologram_graph::Node) -> Option<(u8, [u3
             .and_then(|n| reg.get(n.output_shape).cloned()),
     }?;
     let rank = data_shape.rank as usize;
-    if rank == 0 || rank > 8 {
+    if rank == 0 || rank > MAX_RANK {
         return None;
     }
-    let mut dims = [0u32; 8];
+    let mut dims = [0u32; MAX_RANK];
     for (i, d) in dims.iter_mut().enumerate().take(rank) {
         *d = data_shape.dim(i)? as u32;
     }
-    let mut perm = [0u8; 8];
+    let mut perm = [0u8; MAX_RANK];
     match node.inputs.get(1).copied() {
         Some(InputSource::Constant(cid)) => {
             let bytes = &graph.constants().get(cid)?.bytes;

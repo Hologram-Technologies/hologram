@@ -1188,7 +1188,7 @@ pub fn reduce_float<W: Workspace>(
     for o in 0..plan.out_count {
         write_float(out, o, init, dt);
     }
-    let mut coord = [0usize; 8];
+    let mut coord = [0usize; MAX_RANK];
     for i in 0..n {
         let oo = plan.out_offset(i, &mut coord);
         let acc = f(read_float(out, oo, dt), read_float(xs, i, dt));
@@ -1213,11 +1213,11 @@ pub fn reduce_float<W: Workspace>(
 /// byte reduce kernels so both fold over identical geometry.
 pub(crate) struct ReducePlan {
     rank: usize,
-    in_dims: [usize; 8],
+    in_dims: [usize; MAX_RANK],
     /// Row-major stride into the output for each axis; a reduced axis has its
     /// coordinate forced to 0, so its stride is never actually consumed.
-    out_stride: [usize; 8],
-    reduced: [bool; 8],
+    out_stride: [usize; MAX_RANK],
+    reduced: [bool; MAX_RANK],
     pub out_count: usize,
     pub reduced_count: usize,
 }
@@ -1225,13 +1225,13 @@ pub(crate) struct ReducePlan {
 impl ReducePlan {
     pub(crate) fn new(c: &ReduceCall, n: usize) -> Result<Self, BackendError> {
         let rank = c.rank as usize;
-        if rank > 8 {
+        if rank > MAX_RANK {
             return Err(BackendError::UnsupportedOp("reduce: rank must be ≤ 8"));
         }
         // rank 0 (or no dims) ⇒ a single-element full reduction.
-        let mut in_dims = [1usize; 8];
-        let mut reduced = [false; 8];
-        let mut out_dims = [1usize; 8];
+        let mut in_dims = [1usize; MAX_RANK];
+        let mut reduced = [false; MAX_RANK];
+        let mut out_dims = [1usize; MAX_RANK];
         let mut out_count = 1usize;
         let mut reduced_count = 1usize;
         let full = rank == 0 || c.axes_mask == 0;
@@ -1247,7 +1247,7 @@ impl ReducePlan {
             }
         }
         // Row-major strides over the keepdims output shape.
-        let mut out_stride = [0usize; 8];
+        let mut out_stride = [0usize; MAX_RANK];
         let mut s = 1usize;
         for i in (0..rank).rev() {
             out_stride[i] = s;
@@ -1273,7 +1273,7 @@ impl ReducePlan {
     /// Output cell for input linear index `i` (decodes `i` into `coord`).
     #[inline]
     #[allow(clippy::needless_range_loop)] // index addresses coord + per-axis dims/strides
-    pub(crate) fn out_offset(&self, i: usize, coord: &mut [usize; 8]) -> usize {
+    pub(crate) fn out_offset(&self, i: usize, coord: &mut [usize; MAX_RANK]) -> usize {
         let mut rem = i;
         for a in (0..self.rank).rev() {
             coord[a] = rem % self.in_dims[a];
@@ -1571,7 +1571,7 @@ pub fn concat_float<W: Workspace>(c: &BinaryCall, ws: &mut W) -> Result<(), Back
 /// for every dtype), up to rank 8.
 pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<(), BackendError> {
     let rank = c.rank as usize;
-    if rank == 0 || rank > 8 {
+    if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("transpose: rank must be 1..=8"));
     }
     let es = elem_size(c.dtype);
@@ -1580,13 +1580,13 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     let total: usize = in_dims.iter().map(|&d| d as usize).product();
 
     // Row-major input strides and permuted output extents.
-    let mut in_strides = [0usize; 8];
+    let mut in_strides = [0usize; MAX_RANK];
     let mut stride = 1usize;
     for i in (0..rank).rev() {
         in_strides[i] = stride;
         stride *= in_dims[i] as usize;
     }
-    let mut out_dims = [1usize; 8];
+    let mut out_dims = [1usize; MAX_RANK];
     for i in 0..rank {
         out_dims[i] = in_dims[perm[i] as usize] as usize;
     }
@@ -1598,7 +1598,7 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     if inp.len() < total * es || out.len() < total * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    let mut coord = [0usize; 8];
+    let mut coord = [0usize; MAX_RANK];
     for o in 0..total {
         // Decompose the output linear index into per-axis output coordinates.
         let mut rem = o;
@@ -1621,7 +1621,7 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
 /// axis (ONNX `nearest`, `asymmetric`-style). Dtype-agnostic gather, rank ≤ 8.
 pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
     let rank = c.rank as usize;
-    if rank == 0 || rank > 8 {
+    if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("resize: rank must be 1..=8"));
     }
     let es = elem_size(c.dtype);
@@ -1629,7 +1629,7 @@ pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     let out_dims = &c.out_dims[..rank];
     let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
 
-    let mut in_strides = [0usize; 8];
+    let mut in_strides = [0usize; MAX_RANK];
     let mut stride = 1usize;
     for i in (0..rank).rev() {
         in_strides[i] = stride;
@@ -1642,7 +1642,7 @@ pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     if out.len() < out_total * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    let mut coord = [0usize; 8];
+    let mut coord = [0usize; MAX_RANK];
     for o in 0..out_total {
         let mut rem = o;
         for i in (0..rank).rev() {
@@ -1758,7 +1758,7 @@ pub fn broadcast_binary_float<W: Workspace>(
 ) -> Result<(), BackendError> {
     use crate::kernel_call::broadcast_op;
     let rank = c.rank as usize;
-    if rank == 0 || rank > 8 {
+    if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp(
             "broadcast_binary: rank must be 1..=8",
         ));
@@ -1771,7 +1771,7 @@ pub fn broadcast_binary_float<W: Workspace>(
     let small_total: usize = in_dims.iter().map(|&d| d as usize).product();
     // Row-major strides over the small operand; a broadcast axis (in_dim == 1)
     // contributes stride 0, so it re-reads index 0 along that axis.
-    let mut in_strides = [0usize; 8];
+    let mut in_strides = [0usize; MAX_RANK];
     let mut stride = 1usize;
     for i in (0..rank).rev() {
         in_strides[i] = if in_dims[i] == 1 { 0 } else { stride };
@@ -1806,7 +1806,7 @@ pub fn broadcast_binary_float<W: Workspace>(
         return Ok(());
     }
     let num_rows = out_total / inner_len;
-    let mut coord = [0usize; 8];
+    let mut coord = [0usize; MAX_RANK];
     let mut sbase = 0usize;
     let mut o = 0usize;
     for _ in 0..num_rows {
@@ -1848,7 +1848,7 @@ pub fn broadcast_binary_float<W: Workspace>(
 /// remaining cases (e.g. Expand feeding a matmul/concat). Rank ≤ 8.
 pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
     let rank = c.rank as usize;
-    if rank == 0 || rank > 8 {
+    if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("expand: rank must be 1..=8"));
     }
     let es = elem_size(c.dtype);
@@ -1857,7 +1857,7 @@ pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
 
     // Row-major input strides (a broadcast axis contributes stride 0).
-    let mut in_strides = [0usize; 8];
+    let mut in_strides = [0usize; MAX_RANK];
     let mut stride = 1usize;
     for i in (0..rank).rev() {
         in_strides[i] = if in_dims[i] == 1 { 0 } else { stride };
@@ -1871,7 +1871,7 @@ pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     if out.len() < out_total * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    let mut coord = [0usize; 8];
+    let mut coord = [0usize; MAX_RANK];
     for o in 0..out_total {
         let mut rem = o;
         for i in (0..rank).rev() {

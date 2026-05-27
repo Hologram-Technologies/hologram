@@ -32,6 +32,50 @@ fn empty_graph_compile_then_load() {
 }
 
 #[test]
+fn rank_above_max_rank_fails_loud_not_silently_truncated() {
+    // The shape-bearing kernel calls carry rank inline up to `MAX_RANK` (8).
+    // A graph whose tensor rank exceeds that must be rejected at compile time —
+    // never silently truncated to 8 dims (which would compute the wrong result).
+    // Data-scale axes (element counts, dims) are unbounded; this is the one
+    // structural bound, and it fails loud.
+    let mut g = Graph::new();
+    let rank9 = ShapeDescriptor {
+        rank: 9,
+        dims: [2; 8],
+        dims_overflow: Some(vec![2u64].into_boxed_slice()),
+    };
+    let shape = g.shape_registry_mut().intern(rank9);
+    let dtype = DTypeId(8); // F32
+    let x = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: dtype,
+        output_shape: shape,
+    });
+    g.add_input(x);
+    // Transpose carries a rank-indexed perm/dims array; rank 9 > MAX_RANK.
+    let t = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Transpose),
+        inputs: SmallVec::from_iter([InputSource::Node(x)]),
+        output_dtype: dtype,
+        output_shape: shape,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(t)]),
+        output_dtype: dtype,
+        output_shape: shape,
+    });
+    g.add_output(out);
+
+    let result = Compiler::new(g, BackendKind::Cpu, WittLevel::W32).compile();
+    assert!(
+        result.is_err(),
+        "a rank-9 > MAX_RANK graph must fail compilation loudly, not silently truncate"
+    );
+}
+
+#[test]
 fn conv_attrs_thread_through_compile() {
     // Conv2d with `ConvAttrs { stride = (2, 2), pad = (1, 1) }` must
     // reach the lowered KernelCall — previously the compiler hardcoded
