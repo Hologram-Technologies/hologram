@@ -29,6 +29,37 @@ fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
 }
 
 #[test]
+fn output_sourced_from_constant_returns_its_bytes() {
+    // Regression: an Output node whose first input is a `Constant` (e.g. the
+    // const-folded result of Shape→Gather→Cast collapsing to the scalar 64.0)
+    // must alias the constant's pre-filled slot, not the Output node's own
+    // (never-written) slot. The latter returned `WorkspaceExhausted` at execute.
+    use hologram_graph::constant::ConstantEntry;
+    let mut graph = Graph::new();
+    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(1));
+    let c = graph.constants_mut().insert(ConstantEntry {
+        bytes: 64.0f32.to_le_bytes().to_vec(),
+        dtype: DTypeId(DTYPE_F32),
+        shape,
+    });
+    let out_node = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Constant(c)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out_node);
+
+    let out = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&out.archive, backend).unwrap();
+    assert_eq!(session.input_count(), 0);
+    // Must not return WorkspaceExhausted; the output is the constant 64.0.
+    let outputs = session.execute(&[]).unwrap();
+    assert_eq!(le_to_f32(&outputs[0].bytes), vec![64.0]);
+}
+
+#[test]
 fn unary_relu_f32_real_data() {
     // Graph: input_x -> relu -> output
     let mut graph = Graph::new();

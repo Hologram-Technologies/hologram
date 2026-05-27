@@ -587,29 +587,55 @@ impl Compiler {
             .iter()
             .copied()
             .map(|id| {
+                use hologram_graph::{InputSource, NodeId};
                 let idx = id.0 as usize;
                 let n = self.graph.nodes().get(idx);
-                // Resolve the output port's data slot to the producer node's
-                // slot via the Output node's first input source.
-                let producer_idx = n
-                    .and_then(|n| n.inputs.first())
-                    .and_then(|src| match *src {
-                        hologram_graph::InputSource::Node(hologram_graph::NodeId(p)) => {
-                            Some(p as usize)
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(idx);
+                // An Output node runs no kernel of its own; its port must alias
+                // the slot where its first input's data actually lives. Resolve
+                // by source kind — a non-`Node` source (a const-folded constant,
+                // or a direct graph-input passthrough) lives in a *different*
+                // slot than the Output node's own index. The previous code only
+                // handled `Node` and fell back to the Output node's own (never
+                // written) slot, so an Output sourced from a Constant aliased an
+                // unwritten slot → `WorkspaceExhausted` at execute.
+                let resolved = n.and_then(|n| n.inputs.first()).and_then(|src| match *src {
+                    InputSource::Node(NodeId(p)) => {
+                        let p = p as usize;
+                        Some((
+                            p as u32,
+                            element_counts.get(p).copied().unwrap_or(0),
+                            self.graph.nodes().get(p).map(|x| x.output_dtype.0),
+                        ))
+                    }
+                    // Inline constant operand: its bytes are pre-filled into
+                    // slot `node_count + cid` (see the constants emission below).
+                    InputSource::Constant(cid) => {
+                        let entry = self.graph.constants().get(cid)?;
+                        let dt = entry.dtype.0;
+                        let ec = (entry.bytes.len() / bytes_per_element(dt).max(1)) as u64;
+                        Some((node_count + cid.0, ec, Some(dt)))
+                    }
+                    // Direct graph-input passthrough: alias the input node's slot
+                    // (= its node index), which the runtime fills with the bound
+                    // input bytes before dispatch.
+                    InputSource::GraphInput(g) => {
+                        let in_idx = self.graph.inputs().get(g as usize)?.0 as usize;
+                        Some((
+                            in_idx as u32,
+                            element_counts.get(in_idx).copied().unwrap_or(0),
+                            self.graph.nodes().get(in_idx).map(|x| x.output_dtype.0),
+                        ))
+                    }
+                });
+                let (slot, element_count, dtype) = resolved.unwrap_or((
+                    idx as u32,
+                    element_counts.get(idx).copied().unwrap_or(0),
+                    n.map(|n| n.output_dtype.0),
+                ));
                 PortDescriptor {
-                    slot: producer_idx as u32,
-                    element_count: element_counts.get(producer_idx).copied().unwrap_or(0),
-                    dtype: self
-                        .graph
-                        .nodes()
-                        .get(producer_idx)
-                        .map(|p| p.output_dtype.0)
-                        .or_else(|| n.map(|n| n.output_dtype.0))
-                        .unwrap_or(0),
+                    slot,
+                    element_count,
+                    dtype: dtype.or_else(|| n.map(|n| n.output_dtype.0)).unwrap_or(0),
                 }
             })
             .collect();
