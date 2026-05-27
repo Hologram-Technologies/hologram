@@ -176,3 +176,13 @@ pub struct ReduceAttrs {
     pub axes_mask: u32,
     pub keepdims: bool,
 }
+
+/// Per-node `Gather` axis (ONNX `Gather.axis`, default 0). Stored sparsely on
+/// `Graph::gather_attrs` keyed by `NodeId`. `axis < 0` counts from the end of
+/// the data rank (ONNX convention), normalized against the data shape at
+/// compile time. A node with no attached `GatherAttrs` gathers along axis 0
+/// (the embedding-lookup default).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct GatherAttrs {
+    pub axis: i32,
+}

@@ -2,11 +2,12 @@
 
 use crate::constant::{ConstantEntry, ConstantStore};
 use crate::node::{
-    ConvAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs, QuantAttrs,
-    ReduceAttrs,
+    ConvAttrs, GatherAttrs, GemmAttrs, GraphOp, InputSource, LrnAttrs, Node, NodeId, NormAttrs,
+    QuantAttrs, ReduceAttrs,
 };
 use crate::registry::ShapeRegistry;
 use crate::schedule::Schedule;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -99,6 +100,12 @@ pub struct Graph {
     nodes: Vec<Node>,
     inputs: SmallVec<[NodeId; 8]>,
     outputs: SmallVec<[NodeId; 8]>,
+    /// Semantic input-port names, parallel to `inputs` by position (empty
+    /// string ⇒ unnamed). Preserved through graph rewrites (the input vec's
+    /// order is stable; rewrites only renumber the `NodeId` values).
+    input_names: Vec<String>,
+    /// Semantic output-port names, parallel to `outputs` by position.
+    output_names: Vec<String>,
     constants: ConstantStore,
     shape_registry: ShapeRegistry,
     schedule: Option<Schedule>,
@@ -118,6 +125,12 @@ pub struct Graph {
     norm_attrs: Vec<(NodeId, NormAttrs)>,
     /// Sparse per-node reduction axes (`axes_mask` / `keepdims`). Same layout.
     reduce_attrs: Vec<(NodeId, ReduceAttrs)>,
+    /// Sparse per-node `Gather` axis. Same layout; absent ⇒ axis 0.
+    gather_attrs: Vec<(NodeId, GatherAttrs)>,
+    /// Open producer-defined metadata (`key`, `bytes`) to embed in the compiled
+    /// archive as `Extension` sections (tokenizer, generation config, class
+    /// labels, …). Carried opaquely; not part of the graph's compute semantics.
+    extensions: Vec<(String, Vec<u8>)>,
 }
 
 impl Graph {
@@ -148,9 +161,22 @@ impl Graph {
 
     pub fn add_input(&mut self, id: NodeId) {
         self.inputs.push(id);
+        self.input_names.push(String::new());
     }
     pub fn add_output(&mut self, id: NodeId) {
         self.outputs.push(id);
+        self.output_names.push(String::new());
+    }
+    /// Register an input port with a semantic `name` (e.g. `"input_ids"`), so a
+    /// caller can bind a model input to this port by name.
+    pub fn add_named_input(&mut self, id: NodeId, name: impl Into<String>) {
+        self.inputs.push(id);
+        self.input_names.push(name.into());
+    }
+    /// Register an output port with a semantic `name` (e.g. `"logits"`).
+    pub fn add_named_output(&mut self, id: NodeId, name: impl Into<String>) {
+        self.outputs.push(id);
+        self.output_names.push(name.into());
     }
 
     pub fn inputs(&self) -> &[NodeId] {
@@ -158,6 +184,25 @@ impl Graph {
     }
     pub fn outputs(&self) -> &[NodeId] {
         &self.outputs
+    }
+    /// Semantic name of input port `i` (empty string if unnamed).
+    pub fn input_name(&self, i: usize) -> &str {
+        self.input_names.get(i).map(|s| s.as_str()).unwrap_or("")
+    }
+    /// Semantic name of output port `i` (empty string if unnamed).
+    pub fn output_name(&self, i: usize) -> &str {
+        self.output_names.get(i).map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// Attach open producer metadata under `key` (tokenizer, generation config,
+    /// class labels, …); the compiler embeds it as an archive `Extension`
+    /// section, retrievable at runtime via `InferenceSession::extension`.
+    pub fn add_extension(&mut self, key: impl Into<String>, bytes: Vec<u8>) {
+        self.extensions.push((key.into(), bytes));
+    }
+    /// The producer metadata sections attached to this graph.
+    pub fn extensions(&self) -> &[(String, Vec<u8>)] {
+        &self.extensions
     }
 
     pub fn constants(&self) -> &ConstantStore {
@@ -283,6 +328,22 @@ impl Graph {
             .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
     }
 
+    /// Attach a `Gather` axis to a node.
+    pub fn set_gather_attrs(&mut self, id: NodeId, attrs: GatherAttrs) {
+        if let Some(slot) = self.gather_attrs.iter_mut().find(|(k, _)| *k == id) {
+            slot.1 = attrs;
+        } else {
+            self.gather_attrs.push((id, attrs));
+        }
+    }
+
+    /// Retrieve a node's `Gather` axis, or `None` (⇒ axis 0).
+    pub fn gather_attrs(&self, id: NodeId) -> Option<GatherAttrs> {
+        self.gather_attrs
+            .iter()
+            .find_map(|(k, v)| if *k == id { Some(*v) } else { None })
+    }
+
     /// **Path B — desugar composite ops into their primitive pipelines.**
     ///
     /// A composite op (e.g. `Clip`) has no single optimized kernel; its meaning
@@ -404,6 +465,9 @@ impl Graph {
             *nid = NodeId(map[nid.0 as usize]);
         }
         for (nid, _) in self.reduce_attrs.iter_mut() {
+            *nid = NodeId(map[nid.0 as usize]);
+        }
+        for (nid, _) in self.gather_attrs.iter_mut() {
             *nid = NodeId(map[nid.0 as usize]);
         }
         self.nodes = new;
@@ -565,6 +629,9 @@ impl Graph {
             *nid = to_id(map[nid.0 as usize]);
         }
         for (nid, _) in self.reduce_attrs.iter_mut() {
+            *nid = to_id(map[nid.0 as usize]);
+        }
+        for (nid, _) in self.gather_attrs.iter_mut() {
             *nid = to_id(map[nid.0 as usize]);
         }
         self.nodes = new;

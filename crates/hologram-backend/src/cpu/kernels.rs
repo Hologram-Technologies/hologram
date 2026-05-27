@@ -90,6 +90,15 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // Where: if cond != 0 select a else b.
         KernelCall::Where(c) => where_w8(c, ws),
 
+        // Gather / embedding lookup: dtype-agnostic indexed row copy (handled
+        // here for every dtype — it moves whole elements by byte width, so the
+        // float fast path deliberately leaves it to this one implementation).
+        KernelCall::Gather(c) => gather(c, ws),
+
+        // Cast: numeric dtype conversion (int↔float↔int). One implementation
+        // for every dtype pair; the float fast path leaves it here.
+        KernelCall::Cast(c) => cast(c, ws),
+
         // Gemm: α·A·B + β·C  (W8 byte-domain).
         KernelCall::Gemm(c) => gemm_w8(c, ws),
 
@@ -351,6 +360,170 @@ fn dequant_activation<W: Workspace>(
             }
         }
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
+    }
+    Ok(())
+}
+
+/// Runtime-indexed Gather / embedding lookup. `data` viewed as
+/// `[outer, axis_dim, inner]`, `indices` as `num_indices` ints; output is
+/// `[outer, num_indices, inner]` with `out[o,k,:] = data[o, idx[k], :]`. A
+/// direct indexed row copy — `O(outer·num_indices·inner)` — bit-identical to
+/// the `OneHot(idx)·data` matmul it replaces. ONNX negative indices wrap by
+/// `axis_dim`; an out-of-range index fails loud.
+fn gather<W: Workspace>(
+    c: &crate::kernel_call::GatherCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    use crate::cpu::dtype::*;
+    let elem = bytes_per_element(c.dtype);
+    if elem == 0 {
+        // Sub-byte (i4) gather is not defined — a gathered row must be a whole
+        // number of bytes.
+        return Err(BackendError::UnsupportedOp(
+            "gather: sub-byte element dtype not supported",
+        ));
+    }
+    let idx_w = match c.idx_dtype {
+        DTYPE_I32 => 4usize,
+        DTYPE_I64 => 8usize,
+        _ => return Err(BackendError::SlotOutOfRange(c.indices.slot)),
+    };
+    let outer = c.outer as usize;
+    let axis_dim = c.axis_dim as usize;
+    let inner = c.inner as usize;
+    let num_idx = c.num_indices as usize;
+    let row = inner * elem; // bytes per gathered row
+
+    let (reads, out) = ws
+        .split_borrow(&[c.data, c.indices], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let data = reads[0];
+    let idxb = reads[1];
+    if data.len() < outer * axis_dim * row
+        || idxb.len() < num_idx * idx_w
+        || out.len() < outer * num_idx * row
+    {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+
+    // Read index `k` (i32/i64, little-endian) and resolve ONNX negative
+    // indexing against `axis_dim`.
+    let read_idx = |k: usize| -> i64 {
+        match c.idx_dtype {
+            DTYPE_I32 => i32::from_le_bytes(idxb[k * 4..k * 4 + 4].try_into().unwrap()) as i64,
+            _ => i64::from_le_bytes(idxb[k * 8..k * 8 + 8].try_into().unwrap()),
+        }
+    };
+
+    for o in 0..outer {
+        for k in 0..num_idx {
+            let mut idx = read_idx(k);
+            if idx < 0 {
+                idx += axis_dim as i64;
+            }
+            if idx < 0 || idx as usize >= axis_dim {
+                return Err(BackendError::SlotOutOfRange(c.indices.slot));
+            }
+            let src = (o * axis_dim + idx as usize) * row;
+            let dst = (o * num_idx + k) * row;
+            out[dst..dst + row].copy_from_slice(&data[src..src + row]);
+        }
+    }
+    Ok(())
+}
+
+/// Read element `i` of a buffer as an `f64` (float dtypes) — the common
+/// representation for the value-preserving leg of a numeric [`cast`].
+fn load_float(bytes: &[u8], i: usize, dtype: u8) -> f64 {
+    use crate::cpu::dtype::*;
+    match dtype {
+        DTYPE_F32 => read_f32(bytes, i) as f64,
+        DTYPE_BF16 => read_bf16(bytes, i) as f64,
+        DTYPE_F16 => read_f16(bytes, i) as f64,
+        DTYPE_F64 => f64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()),
+        _ => 0.0,
+    }
+}
+
+/// Read element `i` of a buffer as an `i64` (integer/bool dtypes).
+fn load_int(bytes: &[u8], i: usize, dtype: u8) -> i64 {
+    use crate::cpu::dtype::*;
+    match dtype {
+        DTYPE_BOOL | DTYPE_U8 => bytes[i] as i64,
+        DTYPE_I8 => (bytes[i] as i8) as i64,
+        DTYPE_I32 => i32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap()) as i64,
+        DTYPE_U64 => u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()) as i64,
+        DTYPE_I64 => i64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()),
+        _ => 0,
+    }
+}
+
+/// Write `v` into element `i` as a float dtype.
+fn store_float(bytes: &mut [u8], i: usize, dtype: u8, v: f64) {
+    use crate::cpu::dtype::*;
+    match dtype {
+        DTYPE_F32 => write_f32(bytes, i, v as f32),
+        DTYPE_BF16 => write_bf16(bytes, i, v as f32),
+        DTYPE_F16 => write_f16(bytes, i, v as f32),
+        _ => {}
+    }
+}
+
+/// Write `v` into element `i` as an integer/bool dtype (truncating to width).
+fn store_int(bytes: &mut [u8], i: usize, dtype: u8, v: i64) {
+    use crate::cpu::dtype::*;
+    match dtype {
+        DTYPE_BOOL => bytes[i] = (v != 0) as u8,
+        DTYPE_U8 => bytes[i] = v as u8,
+        DTYPE_I8 => bytes[i] = (v as i8) as u8,
+        DTYPE_I32 => bytes[i * 4..i * 4 + 4].copy_from_slice(&(v as i32).to_le_bytes()),
+        DTYPE_U64 => bytes[i * 8..i * 8 + 8].copy_from_slice(&(v as u64).to_le_bytes()),
+        DTYPE_I64 => bytes[i * 8..i * 8 + 8].copy_from_slice(&v.to_le_bytes()),
+        _ => {}
+    }
+}
+
+/// Numeric `Cast` (ONNX semantics): convert each element from `src_dtype` to
+/// `dst_dtype`, preserving the abstract value. int→float is exact within the
+/// destination mantissa; float→int truncates toward zero; int↔int and
+/// float↔float change width. The value travels through an `i64` (both ends
+/// integer) or `f64` (either end float) intermediate, so no pair loses more
+/// than the destination type inherently must.
+fn cast<W: Workspace>(c: &crate::kernel_call::CastCall, ws: &mut W) -> Result<(), BackendError> {
+    use crate::cpu::dtype::*;
+    let n = c.element_count as usize;
+    let src_is_float = is_float(c.src_dtype);
+    let dst_is_float = is_float(c.dst_dtype);
+    // i4 (sub-byte) and unrecognized dtypes have no element width here.
+    let src_w = bytes_per_element(c.src_dtype);
+    let dst_w = bytes_per_element(c.dst_dtype);
+    if src_w == 0 || dst_w == 0 {
+        return Err(BackendError::UnsupportedOp(
+            "cast: unsupported source/destination dtype (sub-byte not castable)",
+        ));
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.input], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let inp = reads[0]
+        .get(..n * src_w)
+        .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+    if out.len() < n * dst_w {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    for i in 0..n {
+        match (src_is_float, dst_is_float) {
+            (true, true) => store_float(out, i, c.dst_dtype, load_float(inp, i, c.src_dtype)),
+            // float→int: ONNX truncates toward zero.
+            (true, false) => store_int(
+                out,
+                i,
+                c.dst_dtype,
+                load_float(inp, i, c.src_dtype).trunc() as i64,
+            ),
+            (false, true) => store_float(out, i, c.dst_dtype, load_int(inp, i, c.src_dtype) as f64),
+            (false, false) => store_int(out, i, c.dst_dtype, load_int(inp, i, c.src_dtype)),
+        }
     }
     Ok(())
 }

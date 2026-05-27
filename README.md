@@ -263,6 +263,14 @@ int h = hologram_session_load(archive, archive_len);
 int in_count  = hologram_session_input_count(h);
 int out_count = hologram_session_output_count(h);
 
+// ports carry a semantic name + shape (multi-input models map by identity)
+hologram_session_input_name(h, 0, name_buf, name_cap);   // snprintf-style copy
+int rank = hologram_session_input_shape(h, 0, dims, dim_cap);
+// (and hologram_session_output_name / hologram_session_output_shape)
+
+// open producer-defined metadata (tokenizer, gen config, …) travels in the archive
+int n = hologram_session_extension(h, key, key_len, out, out_cap); // bytes, or -1
+
 // execute (inputs/outputs marshalled as byte buffers), then release
 hologram_session_execute(h, /* … */);
 hologram_session_close(h);

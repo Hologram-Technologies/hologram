@@ -19,12 +19,13 @@ Execution runs through the content-addressed `InferenceSession`
 `KvExecutor` and no tape.
 
 > **Scope note.** The canonical `OpKind` catalog is closed (see
-> `crates/hologram-ops/src/kind.rs`). Some operations described in the tables below are
-> *not* present in `hologram_graph::OpKind` in v0.5.0 — notably `Gather`, `GatherND`,
-> `Cast`, `Embed`, `Range`, `Shape`, `ScatterND`, `TopK`, `NonZero`, `Compress`,
-> `ReverseSequence`, and the KV-cache ops `KvWrite` / `KvRead`. Their semantic
-> descriptions are retained here for reference, but they are not part of the current
-> canonical op set.
+> `crates/hologram-ops/src/kind.rs`) and currently holds **83** variants. `Gather`
+> and `Cast` *are* part of the catalog (described below). Some operations described
+> in the tables below are *not* present in `hologram_graph::OpKind` in v0.5.0 —
+> notably `GatherND`, `Embed`, `Range`, `Shape`, `ScatterND`, `TopK`, `NonZero`,
+> `Compress`, `ReverseSequence`, and the KV-cache ops `KvWrite` / `KvRead`. Their
+> semantic descriptions are retained here for reference, but they are not part of the
+> current canonical op set.
 
 ---
 
@@ -136,12 +137,12 @@ All take 1 input (f32). Reduce along the last `size` elements of each row.
 
 | Variant | Inputs | Parameters | Semantics |
 |---------|--------|------------|-----------|
-| `Gather { dim, dtype }` | 2: data, indices (i64) | `dim` — gather dimension; `dtype` — element type of data | Gather rows by index |
+| `Gather` | 2: data, indices (i32/i64) | `axis` (from `GatherAttrs`, default 0); negative indices wrap by the axis size | Runtime-indexed Gather / embedding lookup (ONNX `Gather`): `out[…,i,…] = data[…,indices[i],…]`. A pure data-movement op (layout-only, like `Im2Col`/`Col2Im`) — its Term is a relabel and numeric correctness is the kernel's contract, V&V'd against the ONNX Gather spec. The kernel is a direct indexed row copy (`O(outer·num_indices·inner)`), replacing the `OneHot(indices)·data` matmul a frontend would otherwise emit (which is `axis_dim×` more work). |
 | `GatherND` | 2: data, indices | — | N-D gather (stub: pass-through) |
 | `Concat { size_a, size_b, dtype }` | 2: a, b | `size_a`/`size_b` — row sizes; `dtype` — element type | Concatenate along an axis |
 | `Reshape` | 1 | — | Pass-through (shape is metadata only, bytes unchanged) |
 | `Transpose { perm, ndim }` | 1 | `perm: [u8; 8]` — first `ndim` entries are valid permutation indices | Physical data permutation |
-| `Cast { from, to }` | 1 | Source and target `FloatDType` | Type cast |
+| `Cast` | 1 | `src_dtype`, `dst_dtype` | General numeric dtype conversion (ONNX `Cast`): int↔float (exact within destination mantissa), float→int (truncates toward zero), int↔int and float↔float width changes. The value is preserved; only the representation changes — its Term is the value-identity `Mul(x,1)` and the per-dtype byte conversion is the kernel's contract, V&V'd against ONNX Cast. This is the general int→float primitive, distinct from `Dequantize` (which decodes a *quantized* value with scale/zero-point). `f64` as a *destination* is rejected (casting *from* f64 is fine). |
 | `Embed { dim, quant }` | 2: token_ids (u32), table (f32/quantized) | `dim` — embedding dimension; `quant`: 0=none, 1=Q4_0, 2=Q8_0 | Embedding lookup; table is `[vocab, dim]`, output is `[len(ids), dim]` |
 | `Where` | 3: cond (u8), x (f32), y (f32) | — | Conditional selection |
 | `Range` | 3: start, limit, delta (f32) | — | Generate `[start, limit)` with step |
@@ -165,7 +166,7 @@ All take 1 input (f32). Reduce along the last `size` elements of each row.
 
 | Variant | Inputs | Semantics |
 |---------|--------|-----------|
-| `Dequantize` | 1 (Q4_0) | Dequantize Q4_0 → f32 |
+| `Dequantize` | 1 (quantized: `i4` / `i8` / `u8`) | Decode a *quantized* value to f32 via `(q − zero_point) · scale` (per-tensor or per-channel). `u8` is ONNX's default asymmetric type. Quantization-only — it does **not** convert general `i32`/`i64` → float; that is `Cast`'s job. |
 
 ### Vision / Spatial
 

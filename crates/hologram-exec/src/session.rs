@@ -58,6 +58,10 @@ pub struct InferenceSession<B: SessionBackend> {
     exec_plan: Vec<Vec<u32>>,
     inputs: Vec<PortDescriptor>,
     outputs: Vec<PortDescriptor>,
+    /// Open producer-defined metadata sections (`key`, `bytes`), carried
+    /// opaquely from the archive's `Extension` sections (tokenizer, generation
+    /// config, class labels, …). Fetched by key via [`InferenceSession::extension`].
+    extensions: Vec<(String, Vec<u8>)>,
     /// The content-addressed buffer pool — the single execution substrate.
     /// Constants are pinned; intermediates/outputs/inputs are transient and
     /// byte-bounded. A value lives in exactly one buffer and is referred to
@@ -155,6 +159,8 @@ fn is_layout_only_call(call: &KernelCall) -> bool {
             | KernelCall::Pad(_)
             | KernelCall::Expand(_)
             | KernelCall::Resize(_)
+            // Gather is a runtime-indexed data-movement map (no arithmetic).
+            | KernelCall::Gather(_)
     )
 }
 
@@ -196,6 +202,15 @@ impl<B: SessionBackend> InferenceSession<B> {
             .transpose()
             .map_err(ExecError::Archive)?
             .unwrap_or_default();
+
+        // Open producer metadata (tokenizer, generation config, …) carried
+        // opaquely as owned `(key, bytes)`.
+        let extensions: Vec<(String, Vec<u8>)> = plan
+            .extensions()
+            .map_err(ExecError::Archive)?
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.to_vec()))
+            .collect();
 
         // Decode the per-level kernel-call schedule (spec VIII.2). If the
         // archive omits an `ExecPlan`, fall back to a single level holding
@@ -466,6 +481,7 @@ impl<B: SessionBackend> InferenceSession<B> {
             exec_plan,
             inputs,
             outputs,
+            extensions,
             pool,
             backend,
             slot_sizes,
@@ -936,6 +952,34 @@ impl<B: SessionBackend> InferenceSession<B> {
     }
     pub fn output_ports(&self) -> &[PortDescriptor] {
         &self.outputs
+    }
+
+    /// The input port named `name`, with its positional index — for mapping a
+    /// model's semantic inputs (`input_ids`, `attention_mask`, …) to the
+    /// `execute` argument order. `None` if no input carries that name.
+    pub fn input_port_by_name(&self, name: &str) -> Option<(usize, &PortDescriptor)> {
+        self.inputs.iter().enumerate().find(|(_, p)| p.name == name)
+    }
+    /// The output port named `name`, with its positional index.
+    pub fn output_port_by_name(&self, name: &str) -> Option<(usize, &PortDescriptor)> {
+        self.outputs
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.name == name)
+    }
+
+    /// Open producer metadata stored under `key` (an archive `Extension`
+    /// section): tokenizer, generation config, class labels, calibration
+    /// tables, provenance, … The runtime carries it opaquely. `None` if absent.
+    pub fn extension(&self, key: &str) -> Option<&[u8]> {
+        self.extensions
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_slice())
+    }
+    /// Every extension key present in the archive, in archive order.
+    pub fn extension_keys(&self) -> impl Iterator<Item = &str> {
+        self.extensions.iter().map(|(k, _)| k.as_str())
     }
 
     /// Byte length of the `i`-th declared input port. Returns 0 when

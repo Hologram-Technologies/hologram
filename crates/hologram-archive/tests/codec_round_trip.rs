@@ -414,3 +414,59 @@ fn warm_start_round_trip() {
     assert_eq!(decoded[1].label, address_bytes(b"cone-node-b"));
     assert_eq!(decoded[1].result, vec![1u8, 2, 3, 4, 5]);
 }
+
+#[test]
+fn gather_round_trip() {
+    use hologram_backend::GatherCall;
+    let calls = vec![KernelCall::Gather(GatherCall {
+        data: ref_buf(0),
+        indices: ref_buf(1),
+        output: ref_buf(2),
+        outer: 1,
+        axis_dim: 32000,
+        inner: 768,
+        num_indices: 17,
+        idx_dtype: 5, // i64
+        dtype: 8,     // f32
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::Gather(d) => {
+            assert_eq!(d.data.slot, 0);
+            assert_eq!(d.indices.slot, 1);
+            assert_eq!(d.output.slot, 2);
+            assert_eq!(d.outer, 1);
+            assert_eq!(d.axis_dim, 32000);
+            assert_eq!(d.inner, 768);
+            assert_eq!(d.num_indices, 17);
+            assert_eq!(d.idx_dtype, 5);
+            assert_eq!(d.dtype, 8);
+        }
+        _ => panic!("not gather"),
+    }
+}
+
+#[test]
+fn cast_round_trip() {
+    use hologram_backend::CastCall;
+    let calls = vec![KernelCall::Cast(CastCall {
+        input: ref_buf(0),
+        output: ref_buf(1),
+        element_count: 256,
+        src_dtype: 5, // i64
+        dst_dtype: 8, // f32
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::Cast(d) => {
+            assert_eq!(d.input.slot, 0);
+            assert_eq!(d.output.slot, 1);
+            assert_eq!(d.element_count, 256);
+            assert_eq!(d.src_dtype, 5);
+            assert_eq!(d.dst_dtype, 8);
+        }
+        _ => panic!("not cast"),
+    }
+}

@@ -25,6 +25,19 @@ use uor_foundation::{PrimitiveOp, WittLevel};
 
 use crate::emit::{push_application, EmitResult};
 
+/// Free emitter for numeric `Cast`: the value is preserved (`y = x`), so the
+/// Term is the unit-scale application `Mul(x, 1)` — value-identity anchored on
+/// `PrimitiveOp::Mul`. The per-dtype byte conversion is the kernel's contract
+/// (V&V'd against ONNX Cast), as with the layout/quantization ops whose Term is
+/// their algebraic spec and whose representation handling lives in the kernel.
+pub fn emit_cast<const CAP: usize>(
+    arena: &mut HoloArena<CAP>,
+    _level: WittLevel,
+    x_var: u32,
+) -> EmitResult {
+    push_application(arena, PrimitiveOp::Mul, x_var, 1)
+}
+
 /// Free emitter for Dequantize: `Mul(Sub(q, zp), scale)`.
 pub fn emit_dequantize<const CAP: usize>(
     arena: &mut HoloArena<CAP>,

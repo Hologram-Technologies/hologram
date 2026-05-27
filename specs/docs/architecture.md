@@ -136,8 +136,14 @@ A `KernelCall` is a fully-resolved, self-describing instruction: it carries the 
 the resolved shapes/dtypes, and the output label. There is no boxed trait object and no runtime
 shape-inference module — shapes are resolved at compile time and travel inside the `KernelCall`.
 
-The compiler emits these `KernelCall`s plus the schedule into a `.holo` archive. All graph edges are
-resolved to κ-labels at this stage; no graph traversal occurs at runtime.
+The compiler emits these `KernelCall`s plus the schedule into a `.holo` archive (`FORMAT_VERSION`
+2). All graph edges are resolved to κ-labels at this stage; no graph traversal occurs at runtime.
+The archive's I/O port descriptors carry a semantic `name` and full `shape` (so multi-input models
+are addressed by identity rather than position — `Graph::add_named_input`/`add_named_output`,
+`InferenceSession::input_port_by_name`/`output_port_by_name`), and an open, repeatable
+`SectionKind::Extension` (kind 14) carries producer-defined metadata (tokenizer, generation config,
+class labels, calibration tables, provenance) as a length-prefixed `key` + arbitrary `bytes`
+(`Graph::add_extension`, `InferenceSession::extension`/`extension_keys`).
 
 **Key types**: `OpKind` and per-op marker types (`hologram-ops`), `KernelCall`
 (`hologram-backend/src/kernel_call.rs`), `.holo` archive (`hologram-archive`)
