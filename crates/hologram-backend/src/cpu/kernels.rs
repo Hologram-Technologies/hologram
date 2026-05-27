@@ -1201,6 +1201,26 @@ fn greater_or_equal_byte(a: u8, b: u8) -> u8 {
 /// Float-typed dispatch. Returns `Some(result)` if the call's dtype is a
 /// float dtype and the corresponding float kernel handled it; `None`
 /// otherwise (caller falls through to byte-domain dispatch).
+/// Dispatch a unary activation: for low-precision (f16/bf16) inputs use the
+/// content-addressed LUT (PM_7 Q1 tier — one table lookup per element,
+/// bit-identical to compute and faster than `widen → transcendental → narrow`);
+/// otherwise compute. The LUT cache needs `std`; under no_std the activation is
+/// always computed (a compile-time choice, not a runtime fallback).
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+#[inline]
+fn unary_act<W: Workspace>(
+    c: &UnaryCall,
+    ws: &mut W,
+    act: u8,
+    f: fn(f32) -> f32,
+) -> Result<(), BackendError> {
+    #[cfg(feature = "std")]
+    if crate::cpu::lut::is_lut_dtype(dtype_of_unary(c)) {
+        return crate::cpu::lut::unary_lut(c, ws, act);
+    }
+    ff::unary_float(c, ws, f, dtype_of_unary(c))
+}
+
 fn try_dispatch_float<W: Workspace>(
     call: &KernelCall,
     ws: &mut W,
@@ -1245,26 +1265,18 @@ fn try_dispatch_float<W: Workspace>(
             Some(ff::unary_float(c, ws, ff::relu_f, dtype_of_unary(c)))
         }
         K::Sigmoid(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::sigmoid_f, dtype_of_unary(c)))
+            Some(unary_act(c, ws, lut_act::SIGMOID, ff::sigmoid_f))
         }
-        K::Tanh(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::tanh_f, dtype_of_unary(c)))
-        }
-        K::Gelu(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::gelu_f, dtype_of_unary(c)))
-        }
-        K::Silu(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::silu_f, dtype_of_unary(c)))
-        }
+        K::Tanh(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::TANH, ff::tanh_f)),
+        K::Gelu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::GELU, ff::gelu_f)),
+        K::Silu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::SILU, ff::silu_f)),
         K::Elu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::elu_f, dtype_of_unary(c)))
         }
         K::Selu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::selu_f, dtype_of_unary(c)))
         }
-        K::Exp(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::exp_f, dtype_of_unary(c)))
-        }
+        K::Exp(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::EXP, ff::exp_f)),
         K::Log(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::log_f, dtype_of_unary(c)))
         }
@@ -1304,9 +1316,7 @@ fn try_dispatch_float<W: Workspace>(
         K::Round(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::round_f, dtype_of_unary(c)))
         }
-        K::Erf(c) if is_float_unary(c) => {
-            Some(ff::unary_float(c, ws, ff::erf_f, dtype_of_unary(c)))
-        }
+        K::Erf(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::ERF, ff::erf_f)),
         K::IsNaN(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::is_nan_f, dtype_of_unary(c)))
         }

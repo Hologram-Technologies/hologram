@@ -84,15 +84,24 @@ handles both), the tier routing is informational — correctness is identical
 to `Executor::run_levels`. The infrastructure exists so that adding a
 discrete GPU backend requires only wiring a second backend instance.
 
-### W16 LUT expansion (deferred)
+### Q1 LUT-accelerated activations (realized)
 
-The tier model designates Q1 (9–16-bit) as an L2-resident 128 KB LUT tier.
-A concrete W16 LUT dispatch (65536-entry per-activation tables) is **not part
-of this change** — it depends on a W16 compute path and fused-unary-chain
-representation that main does not have, and its activation-caching benefit
-overlaps main's vectorized-f32 activations plus content-addressed reuse. It is
-left to a follow-up that introduces a genuine W16 execution path; the tier
-enum already reserves `CpuL2` for it.
+The Q1 (CpuL2) tier is concretely realized for **IEEE f16/bf16** — the 16-bit
+quantum levels main already executes. A transcendental unary activation over a
+16-bit domain has only 65536 possible inputs, so it is materialized once as a
+`[u16; 65536]` table (128 KB, L2-resident) whose entry is `narrow(f(widen
+(bits)))` — the content-addressed, compute-once form of the function over that
+finite quantum domain (the UOR materialize-and-reuse principle applied to a
+function). At dispatch a low-precision Sigmoid/Tanh/Gelu/Silu/Exp/Erf becomes a
+single table lookup instead of `widen → transcendental → narrow`.
+
+This is **bit-identical** to the compute path (same f32 evaluation, precomputed)
+— a pure speedup, validated against the f64 reference. Always-on (not gated):
+any f16/bf16 transcendental activation takes the LUT path; f32 still computes
+(a 4 GB table is infeasible — f32 is the Device/Q3+ tier). Measured: **bf16
+GELU over 1M elements is ~28× faster** (743 µs LUT vs 20.7 ms compute). The
+table cache uses `OnceLock` (std); under no_std the activation is computed (a
+compile-time choice, not a runtime fallback).
 
 ## Formal Grounding
 
