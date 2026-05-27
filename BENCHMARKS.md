@@ -65,3 +65,40 @@ Both fused kernels are verified **zero heap allocation per call** after warm-up
 (`tests/zero_overhead.rs`) and bit-equal to the unfused path (FU-6/FU-7). Their
 value is memory elision and scheduler simplification, not raw FLOP/s at these
 sizes.
+
+## PM_7 tiered execution + LUT activations (`pm7-unified-memory` branch)
+
+### LUT-accelerated low-precision activations — the genuine win
+
+A transcendental activation over a finite quantum level is fully materialized
+as a content-addressed table (Q0 = 256-entry, Q1 = 65536-entry), so dispatch is
+one load instead of `widen → exp/tanh → narrow`. Bit-identical to compute.
+
+| activation (1M elements) | computed | **LUT** | speedup |
+|---|---|---|---|
+| bf16 GELU | 20.2 ms | **712 µs** | **~28×** (≈1.4 G elem/s vs 50 M) |
+
+Byte (Q0) Sigmoid/Tanh/Gelu/Silu/Exp/Erf likewise dispatch via a 256-byte table.
+The table is built once (`OnceLock`); the loop scales to any element count.
+
+### No regression vs main (dropped the branch's slower fusion engine)
+
+| workload | this branch | original PR branch |
+|---|---|---|
+| MLP cold d256 (4 layers) | **2.93 ms** (≈47 GFLOP/s) | 7.72 ms (2.6× slower) |
+| MLP cold d128 | 1.16 ms | 2.58 ms |
+| f32 matmul 256³ / 512³ | 422 µs / 3.50 ms (~79 / ~77 GFLOP/s) | — |
+
+Content-addressing reuse intact: memo hit 150 ns vs 579 µs recompute (~3860×);
+MLP served 3.97 µs vs 2.93 ms cold (~740×).
+
+### PM_7 tiering — zero execution overhead
+
+Tiers are classified at load (pure function of the quantum level); `execute()`
+never consults them. Per-execute dispatch is unchanged:
+
+| | time/execute |
+|---|---|
+| tiered 2-op | 155 ns |
+| tiered 6-op chain | 157 ns |
+| 6-op cached re-execute | 169 ns |
