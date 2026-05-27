@@ -1,0 +1,19 @@
+[package]
+name = "hologram-substrate-core"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Portable trait surfaces + κ-addressing for the Hologram deployment substrate (container/storage/network). See specs/docs/container-substrate-architecture.md."
+
+[dependencies]
+# Reuse only the RZ-clean hologram primitives: the σ-axis (no compute-engine dep, G-E1)
+# and uor-addr's κ-labels + witnessed composition. NOT hologram-archive (pulls hologram-backend).
+hologram-host = { workspace = true }
+uor-addr      = { workspace = true, features = ["alloc"] }
+async-trait   = { workspace = true }
+hashbrown     = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["uor-addr/std", "hologram-host/std"]

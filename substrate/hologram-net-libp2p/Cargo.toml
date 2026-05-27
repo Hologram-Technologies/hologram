@@ -1,0 +1,17 @@
+[package]
+name = "hologram-net-libp2p"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "libp2p KappaSync transport (spec §6.2): κ-label fetch over a request-response protocol on TCP+Noise+Yamux, with verify-on-receipt. The peer-to-peer transport beneath the Network Layer."
+
+[dependencies]
+hologram-substrate-core = { workspace = true }
+libp2p = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+hologram-store-mem = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "hologram-store-native"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Native (WASI/std) KappaStore backend on a redb B-tree index (spec §5.5). Passes the substrate TCK identically to the in-memory reference."
+
+[dependencies]
+hologram-substrate-core = { workspace = true }
+redb = { workspace = true }
+
+[dev-dependencies]
+hologram-substrate-tck = { workspace = true }
+hologram-realizations  = { workspace = true }

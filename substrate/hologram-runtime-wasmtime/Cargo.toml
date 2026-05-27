@@ -1,0 +1,23 @@
+[package]
+name = "hologram-runtime-wasmtime"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Wasmtime ContainerEngine backend (spec §7.2 Option A): instantiates Wasm container modules, drives the hg_* lifecycle exports, and snapshots/restores linear memory. Implements the hologram-runtime ContainerEngine seam."
+
+[dependencies]
+hologram-runtime        = { workspace = true }
+hologram-substrate-core = { workspace = true }
+hologram-bare-hal       = { workspace = true }
+wasmtime                = { workspace = true }
+async-trait             = { workspace = true }
+spin                    = { workspace = true }
+
+[dev-dependencies]
+hologram-store-mem    = { workspace = true }
+hologram-store-bare   = { workspace = true }
+hologram-realizations = { workspace = true }
+wat                   = "1"
+pollster              = { workspace = true }
+async-trait           = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name = "hologram-net-http"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "HTTP-CAS gateway protocol for the Hologram Network Layer (spec §6.3): request/response codec + verify-on-receipt, hermetically testable. Live transport (axum/reqwest libp2p) is layered on top in a later phase."
+
+[dependencies]
+hologram-substrate-core = { workspace = true }
+async-trait = { workspace = true, optional = true }
+
+[dev-dependencies]
+hologram-store-mem = { workspace = true }
+pollster = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-substrate-core/std"]
+# A live HTTP/1.1 CAS client+server over std::net (no heavy deps) — the verifiable transport for the
+# §6.3 protocol. libp2p (Kademlia/gossipsub peer discovery) is the wider-network layer above this.
+live = ["std", "dep:async-trait"]
