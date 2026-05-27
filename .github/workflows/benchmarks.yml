@@ -3,9 +3,11 @@ name: Benchmarks
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+  # PRs are handled by `perf-gate.yml`, which benchmarks the PR against the
+  # target branch and blocks merges on regression. This workflow records the
+  # post-merge results for `main` (and publishes them to the website), so it
+  # only runs on push to `main` — avoiding a redundant PR benchmark run.
 
 env:
   CARGO_TERM_COLOR: always

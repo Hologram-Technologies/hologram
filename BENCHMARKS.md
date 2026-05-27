@@ -118,3 +118,33 @@ never consults them. Per-execute dispatch is unchanged:
 | tiered 2-op | 155 ns |
 | tiered 6-op chain | 157 ns |
 | 6-op cached re-execute | 169 ns |
+
+## Regression gate (CI)
+
+PRs to `main` are gated by [`.github/workflows/perf-gate.yml`](.github/workflows/perf-gate.yml).
+The job benchmarks the **PR merge result** and the **target branch tip**
+back-to-back on the same runner (controlling for machine variance), aggregates
+each with [`scripts/aggregate-benchmarks.py`](scripts/aggregate-benchmarks.py),
+then runs [`scripts/compare-benchmarks.py`](scripts/compare-benchmarks.py),
+which **fails the job** if any benchmark's median regresses past the gate.
+
+A regression must clear two bars, so CI noise doesn't block honest PRs:
+
+1. **Relative** — `pr_median > base_median × (1 + threshold)` (default 10%).
+2. **Noise** — the slowdown also exceeds `noise-sigmas × √(base_std² + pr_std²)`
+   (default 2σ), i.e. it is outside the measured jitter.
+
+Both knobs are env-tunable in the workflow (`REGRESSION_THRESHOLD`,
+`NOISE_SIGMAS`). New benchmarks (no baseline) are reported but never gate;
+benchmarks missing from the PR (renamed/removed) are flagged as warnings.
+`main` keeps publishing its post-merge numbers via `benchmarks.yml`.
+
+Run the same gate locally before pushing:
+
+```bash
+scripts/perf-gate-local.sh                 # vs origin/main, 10% / 2σ
+scripts/perf-gate-local.sh origin/main 0.15 2.0
+```
+
+To enforce it, make **“Benchmark regression gate”** a required status check
+(Settings → Branches → `main` → branch protection).
