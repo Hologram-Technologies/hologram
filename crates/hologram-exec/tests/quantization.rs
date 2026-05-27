@@ -76,6 +76,56 @@ fn dequantize_int8_round_trip() {
 }
 
 #[test]
+fn dequantize_uint8_round_trip() {
+    // ONNX's default asymmetric uint8: y = (q − zp) · scale, q unsigned 0..=255.
+    // scale = 0.5, zp = 128 over q = [128, 130, 126, 200] → [0, 1, -1, 36].
+    const DTYPE_U8: u8 = 1;
+    let mut graph = Graph::new();
+    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let q_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_U8),
+        output_shape: shape,
+    });
+    graph.add_input(q_in);
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(q_in)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_U8,
+            scale_bits: 0.5f32.to_bits(),
+            zero_point: 128,
+            axis: -1,
+        },
+    );
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out);
+
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+    // Raw unsigned bytes 128, 130, 126, 200 (no two's-complement reinterpretation).
+    let q_bytes: Vec<u8> = vec![128, 130, 126, 200];
+    let outputs = session.execute(&[InputBuffer { bytes: &q_bytes }]).unwrap();
+    let result = le_to_f32(&outputs[0].bytes);
+    assert!((result[0] - 0.0).abs() < 1e-6, "got {result:?}");
+    assert!((result[1] - 1.0).abs() < 1e-6, "got {result:?}");
+    assert!((result[2] - (-1.0)).abs() < 1e-6, "got {result:?}");
+    assert!((result[3] - 36.0).abs() < 1e-6, "got {result:?}");
+}
+
+#[test]
 fn dequantize_int8_per_channel_round_trip() {
     // Weight `[2, 3]` quantized per output channel (axis 0): row 0 uses
     // scale 0.5 / zp 0, row 1 uses scale 0.25 / zp 2. The scale/zero-point

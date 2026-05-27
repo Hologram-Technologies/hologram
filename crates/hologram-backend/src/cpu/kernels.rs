@@ -169,7 +169,7 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
     let n = c.element_count as usize;
     let in_bytes_needed = match c.quant_dtype {
         DTYPE_I4 => n.div_ceil(2),
-        DTYPE_I8 => n,
+        DTYPE_I8 | DTYPE_U8 => n,
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     };
     // Per-channel reads the scale (f32) and zero-point (i32) vectors as extra
@@ -227,7 +227,10 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
     // Compute the dequantized f32 value for element index `i`.
     let dequant_at = |i: usize| -> f32 {
         let q: i32 = match c.quant_dtype {
+            // Signed i8: two's-complement. Unsigned u8 (ONNX's default
+            // asymmetric quantization type): the raw byte 0..=255.
             DTYPE_I8 => (inp[i] as i8) as i32,
+            DTYPE_U8 => inp[i] as i32,
             DTYPE_I4 => {
                 // Two nibbles per byte; low nibble is element 2k, high
                 // nibble is element 2k+1. Sign-extend each 4-bit value.
@@ -295,7 +298,7 @@ fn dequant_activation<W: Workspace>(
     let n = c.element_count as usize;
     let in_bytes_needed = match c.quant_dtype {
         DTYPE_I4 => n.div_ceil(2),
-        DTYPE_I8 => n,
+        DTYPE_I8 | DTYPE_U8 => n,
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     };
     let (reads, out) = ws
@@ -310,14 +313,20 @@ fn dequant_activation<W: Workspace>(
     let f = ff::lut_act_ref(c.act);
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
-    // Densify the composition over the quantized domain. `i8` indexes a raw byte
-    // `0..256` whose signed value is `(raw as i8)`; `i4` indexes a nibble `0..16`
-    // whose signed value sign-extends from bit 3. Built once, then pure lookups.
+    // Densify the composition over the quantized domain. `i8`/`u8` index a raw
+    // byte `0..256` (signed `(raw as i8)` for i8, unsigned `raw` for u8); `i4`
+    // indexes a nibble `0..16` sign-extended from bit 3. Built once, then pure
+    // lookups. u8 is ONNX's default asymmetric quantization type.
     match c.quant_dtype {
-        DTYPE_I8 => {
+        DTYPE_I8 | DTYPE_U8 => {
+            let signed = c.quant_dtype == DTYPE_I8;
             let mut table = [0f32; 256];
             for (raw, slot) in table.iter_mut().enumerate() {
-                let q = (raw as u8 as i8) as i32;
+                let q = if signed {
+                    (raw as u8 as i8) as i32
+                } else {
+                    raw as i32
+                };
                 *slot = f((q - zp) as f32 * scale);
             }
             for i in 0..n {
