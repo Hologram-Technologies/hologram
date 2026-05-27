@@ -70,6 +70,42 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
+      - name: Install nightly (for rustdoc JSON)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-public-api
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+
+      - name: Snapshot public API + update API changelog
+        run: |
+          VERSION=${{ steps.bump.outputs.new_version }}
+          PREV=${{ steps.current_version.outputs.version }}
+
+          # Regenerate the committed per-crate API snapshots at the new version.
+          scripts/update-api-snapshots.sh
+
+          # Diff the combined surface against the previous release's archive and
+          # prepend a categorized (Added/Changed/Deprecated/Removed) section to
+          # api/CHANGELOG.md — the durable cross-version API history.
+          NEW_COMBINED=$(mktemp)
+          PREV_COMBINED=$(mktemp)
+          cat api/*.txt > "$NEW_COMBINED"
+          if ls "api/history/v${PREV}"/*.txt >/dev/null 2>&1; then
+            cat "api/history/v${PREV}"/*.txt > "$PREV_COMBINED"
+          else
+            : > "$PREV_COMBINED"   # first archived release: everything reads as Added
+          fi
+          python3 scripts/api-changelog.py \
+            --old "$PREV_COMBINED" --new "$NEW_COMBINED" \
+            --version "$VERSION" --output api/CHANGELOG.md
+
+          # Archive this release's snapshots so the next release can diff them.
+          mkdir -p "api/history/v${VERSION}"
+          cp api/*.txt "api/history/v${VERSION}/"
+          echo "Archived API snapshots to api/history/v${VERSION}/"
+
       - name: Update CHANGELOG.md
         run: |
           DATE=$(date +%Y-%m-%d)
@@ -98,8 +134,9 @@ jobs:
         run: |
           VERSION=${{ steps.bump.outputs.new_version }}
 
-          # Add all Cargo.toml files and CHANGELOG.md
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md
+          # Add all Cargo.toml files, the changelogs, and the API snapshots +
+          # history archived by the API-snapshot step.
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md api/
 
           # Commit changes
           git commit -m "chore: bump version to v${VERSION}"

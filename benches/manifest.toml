@@ -1,0 +1,83 @@
+# Benchmark registry — the committed snapshot of every tracked benchmark.
+# Managed by scripts/update-bench-manifest.py; the lifecycle gate
+# (scripts/compare-benchmarks.py) enforces that benchmarks only appear
+# once registered and only fall off once deprecated + versioned out.
+
+[benchmarks."bf16_gelu_compute_1M (widen+tanh+narrow)"]
+status = "active"
+
+[benchmarks."bf16_gelu_lut_1M (table lookup)"]
+status = "active"
+
+[benchmarks."broadcast_mul_512 (fused)"]
+status = "active"
+
+[benchmarks."compile_empty_graph"]
+status = "active"
+
+[benchmarks."content_reuse::chain8_128_addressed_memo_hit"]
+status = "active"
+
+[benchmarks."content_reuse::chain8_128_novel_recompute"]
+status = "active"
+
+[benchmarks."content_reuse::chain8_128_repeated_memo_hit"]
+status = "active"
+
+[benchmarks."decode_step::compile"]
+status = "active"
+
+[benchmarks."decode_step::execute"]
+status = "active"
+
+[benchmarks."decode_step::session_load"]
+status = "active"
+
+[benchmarks."dequant_gelu_i8_1M_fused (densified table)"]
+status = "active"
+
+[benchmarks."dequant_gelu_i8_1M_unfused (dequant + scalar gelu)"]
+status = "active"
+
+[benchmarks."dequant_then_matmul_256 (unfused)"]
+status = "active"
+
+[benchmarks."expand_then_mul_512 (unfused)"]
+status = "active"
+
+[benchmarks."matmul_dequant_256 (fused)"]
+status = "active"
+
+[benchmarks."matmul_f32_128x128x128 (zero-copy)"]
+status = "active"
+
+[benchmarks."matmul_f32_256x256x256 (zero-copy)"]
+status = "active"
+
+[benchmarks."matmul_f32_512x512x512 (zero-copy)"]
+status = "active"
+
+[benchmarks."matmul_f32_64x64x64 (zero-copy)"]
+status = "active"
+
+[benchmarks."matmul_w8_64x64x64"]
+status = "active"
+
+[benchmarks."production::mlp_cold_seq64_d128_l2"]
+status = "active"
+
+[benchmarks."production::mlp_cold_seq64_d256_l2"]
+status = "active"
+
+[benchmarks."production::mlp_served_seq64_d256_l2"]
+status = "active"
+
+[benchmarks."tiered_executor/chain_6op_cached_reexecute"]
+status = "active"
+
+[benchmarks."tiered_executor/chain_6op_execute"]
+status = "active"
+
+[benchmarks."tiered_executor/small_2op_execute"]
+status = "active"
+

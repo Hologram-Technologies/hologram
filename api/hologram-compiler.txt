@@ -1,0 +1,350 @@
+pub mod hologram_compiler
+pub mod hologram_compiler::cache
+pub struct hologram_compiler::cache::CachedCertificate
+pub hologram_compiler::cache::CachedCertificate::record: hologram_archive::certificate_codec::CertificateRecord
+impl core::clone::Clone for hologram_compiler::cache::CachedCertificate
+pub fn hologram_compiler::cache::CachedCertificate::clone(&self) -> hologram_compiler::cache::CachedCertificate
+impl core::fmt::Debug for hologram_compiler::cache::CachedCertificate
+pub fn hologram_compiler::cache::CachedCertificate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::cache::CachedCertificate
+impl core::marker::Send for hologram_compiler::cache::CachedCertificate
+impl core::marker::Sync for hologram_compiler::cache::CachedCertificate
+impl core::marker::Unpin for hologram_compiler::cache::CachedCertificate
+impl core::marker::UnsafeUnpin for hologram_compiler::cache::CachedCertificate
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CachedCertificate
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CachedCertificate
+pub struct hologram_compiler::cache::CertificateCache
+impl hologram_compiler::cache::CertificateCache
+pub fn hologram_compiler::cache::CertificateCache::get(&self, &uor_foundation::enforcement::ContentFingerprint<32>) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>
+pub fn hologram_compiler::cache::CertificateCache::get_raw(&self, &[u8; 32]) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>
+pub fn hologram_compiler::cache::CertificateCache::insert(&mut self, uor_foundation::enforcement::ContentFingerprint<32>, hologram_compiler::cache::CachedCertificate)
+pub fn hologram_compiler::cache::CertificateCache::insert_raw(&mut self, [u8; 32], hologram_compiler::cache::CachedCertificate)
+pub fn hologram_compiler::cache::CertificateCache::is_empty(&self) -> bool
+pub fn hologram_compiler::cache::CertificateCache::len(&self) -> usize
+pub fn hologram_compiler::cache::CertificateCache::new() -> Self
+impl core::default::Default for hologram_compiler::cache::CertificateCache
+pub fn hologram_compiler::cache::CertificateCache::default() -> hologram_compiler::cache::CertificateCache
+impl core::marker::Freeze for hologram_compiler::cache::CertificateCache
+impl core::marker::Send for hologram_compiler::cache::CertificateCache
+impl core::marker::Sync for hologram_compiler::cache::CertificateCache
+impl core::marker::Unpin for hologram_compiler::cache::CertificateCache
+impl core::marker::UnsafeUnpin for hologram_compiler::cache::CertificateCache
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CertificateCache
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CertificateCache
+pub mod hologram_compiler::compiler
+pub enum hologram_compiler::compiler::BackendKind
+pub hologram_compiler::compiler::BackendKind::Avx2
+pub hologram_compiler::compiler::BackendKind::Avx512
+pub hologram_compiler::compiler::BackendKind::Cpu
+pub hologram_compiler::compiler::BackendKind::Metal
+pub hologram_compiler::compiler::BackendKind::Neon
+pub hologram_compiler::compiler::BackendKind::Wgpu
+impl hologram_compiler::compiler::BackendKind
+pub const fn hologram_compiler::compiler::BackendKind::name(self) -> &'static str
+impl core::clone::Clone for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::clone(&self) -> hologram_compiler::compiler::BackendKind
+impl core::cmp::Eq for hologram_compiler::compiler::BackendKind
+impl core::cmp::PartialEq for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::eq(&self, &hologram_compiler::compiler::BackendKind) -> bool
+impl core::fmt::Debug for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_compiler::compiler::BackendKind
+impl core::marker::StructuralPartialEq for hologram_compiler::compiler::BackendKind
+impl core::marker::Freeze for hologram_compiler::compiler::BackendKind
+impl core::marker::Send for hologram_compiler::compiler::BackendKind
+impl core::marker::Sync for hologram_compiler::compiler::BackendKind
+impl core::marker::Unpin for hologram_compiler::compiler::BackendKind
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::BackendKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::BackendKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::BackendKind
+pub struct hologram_compiler::compiler::CompilationOutput
+pub hologram_compiler::compiler::CompilationOutput::archive: alloc::vec::Vec<u8>
+pub hologram_compiler::compiler::CompilationOutput::stats: hologram_compiler::compiler::CompilationStats
+impl core::marker::Freeze for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Send for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Sync for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Unpin for hologram_compiler::compiler::CompilationOutput
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationOutput
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationOutput
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationOutput
+pub struct hologram_compiler::compiler::CompilationStats
+pub hologram_compiler::compiler::CompilationStats::cache_hits: u32
+pub hologram_compiler::compiler::CompilationStats::cache_misses: u32
+pub hologram_compiler::compiler::CompilationStats::schedule_levels: u32
+pub hologram_compiler::compiler::CompilationStats::total_nodes: u32
+pub hologram_compiler::compiler::CompilationStats::validated_units: u32
+impl core::clone::Clone for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::clone(&self) -> hologram_compiler::compiler::CompilationStats
+impl core::default::Default for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::default() -> hologram_compiler::compiler::CompilationStats
+impl core::fmt::Debug for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::compiler::CompilationStats
+impl core::marker::Send for hologram_compiler::compiler::CompilationStats
+impl core::marker::Sync for hologram_compiler::compiler::CompilationStats
+impl core::marker::Unpin for hologram_compiler::compiler::CompilationStats
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationStats
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationStats
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationStats
+pub struct hologram_compiler::compiler::Compiler
+pub hologram_compiler::compiler::Compiler::cache: hologram_compiler::cache::CertificateCache
+impl hologram_compiler::compiler::Compiler
+pub fn hologram_compiler::compiler::Compiler::compile(self) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::compiler::Compiler::new(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> Self
+impl core::marker::Freeze for hologram_compiler::compiler::Compiler
+impl core::marker::Send for hologram_compiler::compiler::Compiler
+impl core::marker::Sync for hologram_compiler::compiler::Compiler
+impl core::marker::Unpin for hologram_compiler::compiler::Compiler
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::Compiler
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::Compiler
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::Compiler
+pub mod hologram_compiler::error
+pub enum hologram_compiler::error::CompileError
+pub hologram_compiler::error::CompileError::Archive(hologram_archive::error::ArchiveError)
+pub hologram_compiler::error::CompileError::ArenaOverflow(&'static str)
+pub hologram_compiler::error::CompileError::CompletenessFailure
+pub hologram_compiler::error::CompileError::GraphValidation(&'static str)
+pub hologram_compiler::error::CompileError::ShapeViolation
+pub hologram_compiler::error::CompileError::ShapeViolation::iri: &'static str
+pub hologram_compiler::error::CompileError::SourceParse(&'static str)
+pub hologram_compiler::error::CompileError::UnsupportedOp(hologram_ops::kind::OpKind)
+impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::from(hologram_archive::error::ArchiveError) -> Self
+impl core::error::Error for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::error::CompileError
+impl core::marker::Send for hologram_compiler::error::CompileError
+impl core::marker::Sync for hologram_compiler::error::CompileError
+impl core::marker::Unpin for hologram_compiler::error::CompileError
+impl core::marker::UnsafeUnpin for hologram_compiler::error::CompileError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::error::CompileError
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::error::CompileError
+pub mod hologram_compiler::lower
+pub struct hologram_compiler::lower::LoweredNode
+pub hologram_compiler::lower::LoweredNode::dtype: u8
+pub hologram_compiler::lower::LoweredNode::element_count: u64
+pub hologram_compiler::lower::LoweredNode::inputs: alloc::vec::Vec<hologram_backend::workspace::BufferRef>
+pub hologram_compiler::lower::LoweredNode::kind: hologram_ops::kind::OpKind
+pub hologram_compiler::lower::LoweredNode::output: hologram_backend::workspace::BufferRef
+pub hologram_compiler::lower::LoweredNode::quant: hologram_compiler::lower::QuantParams
+pub hologram_compiler::lower::LoweredNode::shape: hologram_compiler::lower::ShapeArgs
+pub hologram_compiler::lower::LoweredNode::witt_bits: u16
+impl core::marker::Freeze for hologram_compiler::lower::LoweredNode
+impl core::marker::Send for hologram_compiler::lower::LoweredNode
+impl core::marker::Sync for hologram_compiler::lower::LoweredNode
+impl core::marker::Unpin for hologram_compiler::lower::LoweredNode
+impl core::marker::UnsafeUnpin for hologram_compiler::lower::LoweredNode
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::LoweredNode
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::LoweredNode
+pub struct hologram_compiler::lower::QuantParams
+pub hologram_compiler::lower::QuantParams::channels: u32
+pub hologram_compiler::lower::QuantParams::inner: u32
+pub hologram_compiler::lower::QuantParams::quant_dtype: u8
+pub hologram_compiler::lower::QuantParams::scale_bits: u32
+pub hologram_compiler::lower::QuantParams::zero_point: i32
+impl core::clone::Clone for hologram_compiler::lower::QuantParams
+pub fn hologram_compiler::lower::QuantParams::clone(&self) -> hologram_compiler::lower::QuantParams
+impl core::default::Default for hologram_compiler::lower::QuantParams
+pub fn hologram_compiler::lower::QuantParams::default() -> hologram_compiler::lower::QuantParams
+impl core::fmt::Debug for hologram_compiler::lower::QuantParams
+pub fn hologram_compiler::lower::QuantParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::lower::QuantParams
+impl core::marker::Freeze for hologram_compiler::lower::QuantParams
+impl core::marker::Send for hologram_compiler::lower::QuantParams
+impl core::marker::Sync for hologram_compiler::lower::QuantParams
+impl core::marker::Unpin for hologram_compiler::lower::QuantParams
+impl core::marker::UnsafeUnpin for hologram_compiler::lower::QuantParams
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::QuantParams
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::QuantParams
+pub struct hologram_compiler::lower::ShapeArgs
+pub hologram_compiler::lower::ShapeArgs::alpha_bits: u32
+pub hologram_compiler::lower::ShapeArgs::batch: u32
+pub hologram_compiler::lower::ShapeArgs::beta_bits: u32
+pub hologram_compiler::lower::ShapeArgs::channels_in: u32
+pub hologram_compiler::lower::ShapeArgs::channels_out: u32
+pub hologram_compiler::lower::ShapeArgs::feature: u32
+pub hologram_compiler::lower::ShapeArgs::h_in: u32
+pub hologram_compiler::lower::ShapeArgs::h_out: u32
+pub hologram_compiler::lower::ShapeArgs::head_dim: u32
+pub hologram_compiler::lower::ShapeArgs::heads: u32
+pub hologram_compiler::lower::ShapeArgs::k: u32
+pub hologram_compiler::lower::ShapeArgs::k_h: u32
+pub hologram_compiler::lower::ShapeArgs::k_w: u32
+pub hologram_compiler::lower::ShapeArgs::m: u32
+pub hologram_compiler::lower::ShapeArgs::n: u32
+pub hologram_compiler::lower::ShapeArgs::norm_channels: u32
+pub hologram_compiler::lower::ShapeArgs::num_groups: u32
+pub hologram_compiler::lower::ShapeArgs::pad_h: u32
+pub hologram_compiler::lower::ShapeArgs::pad_w: u32
+pub hologram_compiler::lower::ShapeArgs::seq: u32
+pub hologram_compiler::lower::ShapeArgs::stride_h: u32
+pub hologram_compiler::lower::ShapeArgs::stride_w: u32
+pub hologram_compiler::lower::ShapeArgs::w_in: u32
+pub hologram_compiler::lower::ShapeArgs::w_out: u32
+impl hologram_compiler::lower::ShapeArgs
+pub fn hologram_compiler::lower::ShapeArgs::from_graph(&hologram_graph::graph::Graph, hologram_graph::node::NodeId, &hologram_graph::node::Node) -> Self
+impl core::clone::Clone for hologram_compiler::lower::ShapeArgs
+pub fn hologram_compiler::lower::ShapeArgs::clone(&self) -> hologram_compiler::lower::ShapeArgs
+impl core::default::Default for hologram_compiler::lower::ShapeArgs
+pub fn hologram_compiler::lower::ShapeArgs::default() -> hologram_compiler::lower::ShapeArgs
+impl core::fmt::Debug for hologram_compiler::lower::ShapeArgs
+pub fn hologram_compiler::lower::ShapeArgs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::lower::ShapeArgs
+impl core::marker::Freeze for hologram_compiler::lower::ShapeArgs
+impl core::marker::Send for hologram_compiler::lower::ShapeArgs
+impl core::marker::Sync for hologram_compiler::lower::ShapeArgs
+impl core::marker::Unpin for hologram_compiler::lower::ShapeArgs
+impl core::marker::UnsafeUnpin for hologram_compiler::lower::ShapeArgs
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::ShapeArgs
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::ShapeArgs
+pub fn hologram_compiler::lower::lower(&hologram_compiler::lower::LoweredNode) -> core::result::Result<hologram_backend::kernel_call::KernelCall, hologram_compiler::error::CompileError>
+pub mod hologram_compiler::pipeline
+pub struct hologram_compiler::pipeline::PerNodeUnit<'a>
+pub hologram_compiler::pipeline::PerNodeUnit::bindings: &'a [uor_foundation::enforcement::Binding]
+pub hologram_compiler::pipeline::PerNodeUnit::budget: u64
+pub hologram_compiler::pipeline::PerNodeUnit::root_term: &'a [hologram_ops::emit::HoloTerm]
+pub hologram_compiler::pipeline::PerNodeUnit::target_domains: &'a [uor_foundation::enums::VerificationDomain]
+pub hologram_compiler::pipeline::PerNodeUnit::witt_level: uor_foundation::enums::WittLevel
+impl<'a> core::marker::Freeze for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> !core::marker::Send for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> !core::marker::Sync for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> core::marker::Unpin for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::pipeline::PerNodeUnit<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for hologram_compiler::pipeline::PerNodeUnit<'a>
+pub fn hologram_compiler::pipeline::build_unit<'a>(&hologram_compiler::pipeline::PerNodeUnit<'a>) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::CompileUnit<'a, HOLOGRAM_INLINE_BYTES>>, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::pipeline::run_completeness(uor_foundation::enums::WittLevel) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::LiftChainCertificate<FP_MAX>>, uor_foundation::enforcement::GenericImpossibilityWitness>
+pub mod hologram_compiler::source
+pub fn hologram_compiler::source::parse(&str) -> core::result::Result<hologram_graph::graph::Graph, hologram_compiler::error::CompileError>
+pub enum hologram_compiler::BackendKind
+pub hologram_compiler::BackendKind::Avx2
+pub hologram_compiler::BackendKind::Avx512
+pub hologram_compiler::BackendKind::Cpu
+pub hologram_compiler::BackendKind::Metal
+pub hologram_compiler::BackendKind::Neon
+pub hologram_compiler::BackendKind::Wgpu
+impl hologram_compiler::compiler::BackendKind
+pub const fn hologram_compiler::compiler::BackendKind::name(self) -> &'static str
+impl core::clone::Clone for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::clone(&self) -> hologram_compiler::compiler::BackendKind
+impl core::cmp::Eq for hologram_compiler::compiler::BackendKind
+impl core::cmp::PartialEq for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::eq(&self, &hologram_compiler::compiler::BackendKind) -> bool
+impl core::fmt::Debug for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_compiler::compiler::BackendKind
+pub fn hologram_compiler::compiler::BackendKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_compiler::compiler::BackendKind
+impl core::marker::StructuralPartialEq for hologram_compiler::compiler::BackendKind
+impl core::marker::Freeze for hologram_compiler::compiler::BackendKind
+impl core::marker::Send for hologram_compiler::compiler::BackendKind
+impl core::marker::Sync for hologram_compiler::compiler::BackendKind
+impl core::marker::Unpin for hologram_compiler::compiler::BackendKind
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::BackendKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::BackendKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::BackendKind
+pub enum hologram_compiler::CompileError
+pub hologram_compiler::CompileError::Archive(hologram_archive::error::ArchiveError)
+pub hologram_compiler::CompileError::ArenaOverflow(&'static str)
+pub hologram_compiler::CompileError::CompletenessFailure
+pub hologram_compiler::CompileError::GraphValidation(&'static str)
+pub hologram_compiler::CompileError::ShapeViolation
+pub hologram_compiler::CompileError::ShapeViolation::iri: &'static str
+pub hologram_compiler::CompileError::SourceParse(&'static str)
+pub hologram_compiler::CompileError::UnsupportedOp(hologram_ops::kind::OpKind)
+impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::from(hologram_archive::error::ArchiveError) -> Self
+impl core::error::Error for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_compiler::error::CompileError
+pub fn hologram_compiler::error::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::error::CompileError
+impl core::marker::Send for hologram_compiler::error::CompileError
+impl core::marker::Sync for hologram_compiler::error::CompileError
+impl core::marker::Unpin for hologram_compiler::error::CompileError
+impl core::marker::UnsafeUnpin for hologram_compiler::error::CompileError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::error::CompileError
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::error::CompileError
+pub struct hologram_compiler::CachedCertificate
+pub hologram_compiler::CachedCertificate::record: hologram_archive::certificate_codec::CertificateRecord
+impl core::clone::Clone for hologram_compiler::cache::CachedCertificate
+pub fn hologram_compiler::cache::CachedCertificate::clone(&self) -> hologram_compiler::cache::CachedCertificate
+impl core::fmt::Debug for hologram_compiler::cache::CachedCertificate
+pub fn hologram_compiler::cache::CachedCertificate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::cache::CachedCertificate
+impl core::marker::Send for hologram_compiler::cache::CachedCertificate
+impl core::marker::Sync for hologram_compiler::cache::CachedCertificate
+impl core::marker::Unpin for hologram_compiler::cache::CachedCertificate
+impl core::marker::UnsafeUnpin for hologram_compiler::cache::CachedCertificate
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CachedCertificate
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CachedCertificate
+pub struct hologram_compiler::CertificateCache
+impl hologram_compiler::cache::CertificateCache
+pub fn hologram_compiler::cache::CertificateCache::get(&self, &uor_foundation::enforcement::ContentFingerprint<32>) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>
+pub fn hologram_compiler::cache::CertificateCache::get_raw(&self, &[u8; 32]) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>
+pub fn hologram_compiler::cache::CertificateCache::insert(&mut self, uor_foundation::enforcement::ContentFingerprint<32>, hologram_compiler::cache::CachedCertificate)
+pub fn hologram_compiler::cache::CertificateCache::insert_raw(&mut self, [u8; 32], hologram_compiler::cache::CachedCertificate)
+pub fn hologram_compiler::cache::CertificateCache::is_empty(&self) -> bool
+pub fn hologram_compiler::cache::CertificateCache::len(&self) -> usize
+pub fn hologram_compiler::cache::CertificateCache::new() -> Self
+impl core::default::Default for hologram_compiler::cache::CertificateCache
+pub fn hologram_compiler::cache::CertificateCache::default() -> hologram_compiler::cache::CertificateCache
+impl core::marker::Freeze for hologram_compiler::cache::CertificateCache
+impl core::marker::Send for hologram_compiler::cache::CertificateCache
+impl core::marker::Sync for hologram_compiler::cache::CertificateCache
+impl core::marker::Unpin for hologram_compiler::cache::CertificateCache
+impl core::marker::UnsafeUnpin for hologram_compiler::cache::CertificateCache
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CertificateCache
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CertificateCache
+pub struct hologram_compiler::CompilationOutput
+pub hologram_compiler::CompilationOutput::archive: alloc::vec::Vec<u8>
+pub hologram_compiler::CompilationOutput::stats: hologram_compiler::compiler::CompilationStats
+impl core::marker::Freeze for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Send for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Sync for hologram_compiler::compiler::CompilationOutput
+impl core::marker::Unpin for hologram_compiler::compiler::CompilationOutput
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationOutput
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationOutput
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationOutput
+pub struct hologram_compiler::CompilationStats
+pub hologram_compiler::CompilationStats::cache_hits: u32
+pub hologram_compiler::CompilationStats::cache_misses: u32
+pub hologram_compiler::CompilationStats::schedule_levels: u32
+pub hologram_compiler::CompilationStats::total_nodes: u32
+pub hologram_compiler::CompilationStats::validated_units: u32
+impl core::clone::Clone for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::clone(&self) -> hologram_compiler::compiler::CompilationStats
+impl core::default::Default for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::default() -> hologram_compiler::compiler::CompilationStats
+impl core::fmt::Debug for hologram_compiler::compiler::CompilationStats
+pub fn hologram_compiler::compiler::CompilationStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::compiler::CompilationStats
+impl core::marker::Send for hologram_compiler::compiler::CompilationStats
+impl core::marker::Sync for hologram_compiler::compiler::CompilationStats
+impl core::marker::Unpin for hologram_compiler::compiler::CompilationStats
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationStats
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationStats
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationStats
+pub struct hologram_compiler::Compiler
+pub hologram_compiler::Compiler::cache: hologram_compiler::cache::CertificateCache
+impl hologram_compiler::compiler::Compiler
+pub fn hologram_compiler::compiler::Compiler::compile(self) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::compiler::Compiler::new(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> Self
+impl core::marker::Freeze for hologram_compiler::compiler::Compiler
+impl core::marker::Send for hologram_compiler::compiler::Compiler
+impl core::marker::Sync for hologram_compiler::compiler::Compiler
+impl core::marker::Unpin for hologram_compiler::compiler::Compiler
+impl core::marker::UnsafeUnpin for hologram_compiler::compiler::Compiler
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::Compiler
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::Compiler
+pub fn hologram_compiler::compile(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::compile_from_source(&str, uor_foundation::enums::WittLevel, hologram_compiler::compiler::BackendKind) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::compile_with_backward(hologram_graph::graph::Graph, hologram_graph::node::NodeId, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<(hologram_compiler::compiler::CompilationOutput, alloc::vec::Vec<hologram_graph::node::NodeId>), hologram_compiler::error::CompileError>

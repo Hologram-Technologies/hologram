@@ -1,0 +1,58 @@
+name: Semver Gate
+
+# Enforces Rust's semantic-versioning contract on every PR: a public-API change
+# may not merge unless the workspace version is bumped enough to cover it
+# (under 0.x: breaking changes require a minor bump, additions a patch bump).
+# The published version is the rollback anchor — consumers pin
+# `tag = "vX.Y.Z"` — so the version must always tell the truth about what is
+# safe to upgrade to within a release line.
+#
+# `cargo-semver-checks` builds the public API of every workspace library crate
+# for both the PR and the target branch, classifies the diff, and fails if the
+# version delta is insufficient. Make this a required status check to enforce.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semver-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  semver:
+    name: Semver compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout PR (merge result)
+        uses: actions/checkout@v6
+        with:
+          # Full history so the action can build the baseline revision.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check semver vs target branch
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # Compare the PR's public API + declared version against the branch it
+          # targets. A breaking change with no (adequate) version bump fails.
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+          # Default features only: `all-features` would pull in the macOS-only
+          # `metal` backend (and other platform-gated surfaces) and fail to
+          # build on the Linux runner. The default std+cpu API is the contract
+          # every consumer sees; all workspace library crates are checked.
+          feature-group: default-features
