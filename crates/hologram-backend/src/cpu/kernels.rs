@@ -38,13 +38,13 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Ceil(c) => unary_w8(c, ws, identity_byte),
         KernelCall::Floor(c) => unary_w8(c, ws, identity_byte),
         KernelCall::Round(c) => unary_w8(c, ws, identity_byte),
-        KernelCall::Sigmoid(c) => unary_w8(c, ws, sigmoid_byte),
-        KernelCall::Tanh(c) => unary_w8(c, ws, tanh_byte),
-        KernelCall::Gelu(c) => unary_w8(c, ws, gelu_byte),
-        KernelCall::Silu(c) => unary_w8(c, ws, silu_byte),
+        KernelCall::Sigmoid(c) => unary_w8_act(c, ws, lut_act::SIGMOID, sigmoid_byte),
+        KernelCall::Tanh(c) => unary_w8_act(c, ws, lut_act::TANH, tanh_byte),
+        KernelCall::Gelu(c) => unary_w8_act(c, ws, lut_act::GELU, gelu_byte),
+        KernelCall::Silu(c) => unary_w8_act(c, ws, lut_act::SILU, silu_byte),
         KernelCall::Elu(c) => unary_w8(c, ws, elu_byte),
         KernelCall::Selu(c) => unary_w8(c, ws, selu_byte),
-        KernelCall::Exp(c) => unary_w8(c, ws, exp_byte),
+        KernelCall::Exp(c) => unary_w8_act(c, ws, lut_act::EXP, exp_byte),
         KernelCall::Log(c) => unary_w8(c, ws, log_byte),
         KernelCall::Log1p(c) => unary_w8(c, ws, log_byte),
         KernelCall::Sqrt(c) => unary_w8(c, ws, sqrt_byte),
@@ -55,7 +55,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::Asin(c) => unary_w8(c, ws, asin_byte),
         KernelCall::Acos(c) => unary_w8(c, ws, acos_byte),
         KernelCall::Atan(c) => unary_w8(c, ws, atan_byte),
-        KernelCall::Erf(c) => unary_w8(c, ws, erf_byte),
+        KernelCall::Erf(c) => unary_w8_act(c, ws, lut_act::ERF, erf_byte),
 
         // Elementwise binary.
         KernelCall::Div(c) => binary_w8(c, ws, div_byte),
@@ -289,6 +289,54 @@ fn unary_w8<W: Workspace>(c: &UnaryCall, ws: &mut W, f: fn(u8) -> u8) -> Result<
         out[i] = f(inp[i]);
     }
     Ok(())
+}
+
+/// 256-entry byte activation table (PM_7 Q0/CpuL1): a `u8` unary activation has
+/// only 256 possible inputs, so it is fully materialized once as `[u8; 256]` —
+/// the content-addressed, compute-once form of the function over the byte ring.
+/// Built lazily per activation id; needs `OnceLock` (std).
+#[cfg(feature = "std")]
+fn byte_act_table(act: u8, f: fn(u8) -> u8) -> &'static [u8; 256] {
+    use std::sync::OnceLock;
+    static TABLES: OnceLock<[OnceLock<[u8; 256]>; lut_act::COUNT]> = OnceLock::new();
+    let tables = TABLES.get_or_init(|| core::array::from_fn(|_| OnceLock::new()));
+    tables[act as usize].get_or_init(|| core::array::from_fn(|i| f(i as u8)))
+}
+
+/// Dispatch a byte (Q0) unary activation through its 256-entry LUT — one load
+/// per element instead of a per-element `expf`/`tanhf`. Bit-identical to
+/// `unary_w8(f)` (the table is built from `f`). The LUT cache needs `std`;
+/// under no_std the activation is computed (a compile-time choice, not a
+/// runtime fallback).
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+fn unary_w8_act<W: Workspace>(
+    c: &UnaryCall,
+    ws: &mut W,
+    act: u8,
+    f: fn(u8) -> u8,
+) -> Result<(), BackendError> {
+    #[cfg(feature = "std")]
+    {
+        let t = byte_act_table(act, f);
+        let n = c.element_count as usize;
+        let (reads, out) = ws
+            .split_borrow(&[c.input], c.output)
+            .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+        let inp = reads[0]
+            .get(..n)
+            .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
+        if out.len() < n {
+            return Err(BackendError::SlotOutOfRange(c.output.slot));
+        }
+        for i in 0..n {
+            out[i] = t[inp[i] as usize];
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        unary_w8(c, ws, f)
+    }
 }
 
 #[inline]
