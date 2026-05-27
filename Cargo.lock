@@ -658,7 +658,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "hologram-archive"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-backend"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "hologram-host",
@@ -698,7 +698,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bench"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "criterion",
  "hologram-archive",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "hologram-archive",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compiler"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-exec"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-archive",
  "hologram-backend",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-host"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ops"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-host",
  "hologram-types",
@@ -808,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-types"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-host",
  "uor-foundation",
