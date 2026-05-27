@@ -6,6 +6,12 @@ license.workspace = true
 authors.workspace = true
 description = "Hologram criterion benchmarks."
 
+# The lib carries no benchmarks; only the criterion `[[bench]]` targets do.
+# Disabling the lib's default libtest bench harness lets `cargo bench` forward
+# criterion arguments (e.g. --measurement-time) without libtest rejecting them.
+[lib]
+bench = false
+
 [dependencies]
 hologram-host     = { workspace = true }
 hologram-types    = { workspace = true }

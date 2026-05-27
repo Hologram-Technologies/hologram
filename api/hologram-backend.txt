@@ -1,0 +1,1742 @@
+pub mod hologram_backend
+pub mod hologram_backend::backend
+pub trait hologram_backend::backend::Backend
+pub type hologram_backend::backend::Backend::Bounds: uor_foundation::HostBounds
+pub type hologram_backend::backend::Backend::WS: hologram_backend::workspace::Workspace
+pub fn hologram_backend::backend::Backend::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::backend::Backend for hologram_backend::cpu::CpuBackend<W>
+pub type hologram_backend::cpu::CpuBackend<W>::Bounds = hologram_host::bounds::HologramHostBoundsCpu
+pub type hologram_backend::cpu::CpuBackend<W>::WS = W
+pub fn hologram_backend::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+pub mod hologram_backend::broadcast_op
+pub const hologram_backend::broadcast_op::ADD: u8
+pub const hologram_backend::broadcast_op::MUL: u8
+pub const hologram_backend::broadcast_op::SUB: u8
+pub mod hologram_backend::cpu
+pub mod hologram_backend::cpu::dtype
+pub const hologram_backend::cpu::dtype::DTYPE_BF16: u8
+pub const hologram_backend::cpu::dtype::DTYPE_BOOL: u8
+pub const hologram_backend::cpu::dtype::DTYPE_F16: u8
+pub const hologram_backend::cpu::dtype::DTYPE_F32: u8
+pub const hologram_backend::cpu::dtype::DTYPE_F64: u8
+pub const hologram_backend::cpu::dtype::DTYPE_I32: u8
+pub const hologram_backend::cpu::dtype::DTYPE_I4: u8
+pub const hologram_backend::cpu::dtype::DTYPE_I64: u8
+pub const hologram_backend::cpu::dtype::DTYPE_I8: u8
+pub const hologram_backend::cpu::dtype::DTYPE_U64: u8
+pub const hologram_backend::cpu::dtype::DTYPE_U8: u8
+pub const fn hologram_backend::cpu::dtype::bytes_per_element(u8) -> usize
+pub const fn hologram_backend::cpu::dtype::is_float(u8) -> bool
+pub fn hologram_backend::cpu::dtype::read_bf16(&[u8], usize) -> f32
+pub fn hologram_backend::cpu::dtype::read_f16(&[u8], usize) -> f32
+pub fn hologram_backend::cpu::dtype::read_f32(&[u8], usize) -> f32
+pub fn hologram_backend::cpu::dtype::read_float(&[u8], usize, u8) -> f32
+pub const fn hologram_backend::cpu::dtype::storage_bytes(u8, u32) -> u32
+pub fn hologram_backend::cpu::dtype::write_bf16(&mut [u8], usize, f32)
+pub fn hologram_backend::cpu::dtype::write_f16(&mut [u8], usize, f32)
+pub fn hologram_backend::cpu::dtype::write_f32(&mut [u8], usize, f32)
+pub fn hologram_backend::cpu::dtype::write_float(&mut [u8], usize, f32, u8)
+pub mod hologram_backend::cpu::lut
+pub fn hologram_backend::cpu::lut::is_lut_dtype(u8) -> bool
+pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Workspace>(&hologram_backend::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_backend::error::BackendError>
+pub mod hologram_backend::cpu::simd
+pub fn hologram_backend::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)
+pub fn hologram_backend::cpu::simd::matmul_f32_packed(&[f32], &[f32], &mut [f32], usize, usize, usize)
+pub fn hologram_backend::cpu::simd::simd_f32_add(&[f32], &[f32], &mut [f32])
+pub fn hologram_backend::cpu::simd::simd_f32_dot(&[f32], &[f32]) -> f32
+pub fn hologram_backend::cpu::simd::simd_f32_fmadd(&[f32], &[f32], &mut [f32])
+pub fn hologram_backend::cpu::simd::simd_f32_mul(&[f32], &[f32], &mut [f32])
+pub struct hologram_backend::cpu::CpuBackend<W: hologram_backend::workspace::Workspace>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::cpu::CpuBackend<W>
+pub const fn hologram_backend::cpu::CpuBackend<W>::new() -> Self
+impl<W: core::fmt::Debug + hologram_backend::workspace::Workspace> core::fmt::Debug for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<W: hologram_backend::workspace::Workspace> core::clone::Clone for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::clone(&self) -> Self
+impl<W: hologram_backend::workspace::Workspace> core::default::Default for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::default() -> Self
+impl<W: hologram_backend::workspace::Workspace> core::marker::Copy for hologram_backend::cpu::CpuBackend<W>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::backend::Backend for hologram_backend::cpu::CpuBackend<W>
+pub type hologram_backend::cpu::CpuBackend<W>::Bounds = hologram_host::bounds::HologramHostBoundsCpu
+pub type hologram_backend::cpu::CpuBackend<W>::WS = W
+pub fn hologram_backend::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+impl<W> core::marker::Freeze for hologram_backend::cpu::CpuBackend<W>
+impl<W> core::marker::Send for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Send
+impl<W> core::marker::Sync for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Sync
+impl<W> core::marker::Unpin for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Unpin
+impl<W> core::marker::UnsafeUnpin for hologram_backend::cpu::CpuBackend<W>
+impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe
+impl<W> core::panic::unwind_safe::UnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe
+pub mod hologram_backend::error
+pub enum hologram_backend::error::BackendError
+pub hologram_backend::error::BackendError::Dispatch(&'static str)
+pub hologram_backend::error::BackendError::Init(&'static str)
+pub hologram_backend::error::BackendError::ShapeMismatch
+pub hologram_backend::error::BackendError::ShapeMismatch::actual: alloc::vec::Vec<u64>
+pub hologram_backend::error::BackendError::ShapeMismatch::expected: alloc::vec::Vec<u64>
+pub hologram_backend::error::BackendError::SlotOutOfRange(u32)
+pub hologram_backend::error::BackendError::UnsupportedOp(&'static str)
+impl core::error::Error for hologram_backend::error::BackendError
+impl core::fmt::Debug for hologram_backend::error::BackendError
+pub fn hologram_backend::error::BackendError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_backend::error::BackendError
+pub fn hologram_backend::error::BackendError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_backend::error::BackendError
+impl core::marker::Send for hologram_backend::error::BackendError
+impl core::marker::Sync for hologram_backend::error::BackendError
+impl core::marker::Unpin for hologram_backend::error::BackendError
+impl core::marker::UnsafeUnpin for hologram_backend::error::BackendError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::error::BackendError
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::error::BackendError
+pub mod hologram_backend::fused_activation
+pub const hologram_backend::fused_activation::ELU: u8
+pub const hologram_backend::fused_activation::EXP: u8
+pub const hologram_backend::fused_activation::GELU: u8
+pub const hologram_backend::fused_activation::RELU: u8
+pub const hologram_backend::fused_activation::SELU: u8
+pub const hologram_backend::fused_activation::SIGMOID: u8
+pub const hologram_backend::fused_activation::SILU: u8
+pub const hologram_backend::fused_activation::TANH: u8
+pub mod hologram_backend::kernel_call
+pub mod hologram_backend::kernel_call::broadcast_op
+pub const hologram_backend::kernel_call::broadcast_op::ADD: u8
+pub const hologram_backend::kernel_call::broadcast_op::MUL: u8
+pub const hologram_backend::kernel_call::broadcast_op::SUB: u8
+pub mod hologram_backend::kernel_call::fused_activation
+pub const hologram_backend::kernel_call::fused_activation::ELU: u8
+pub const hologram_backend::kernel_call::fused_activation::EXP: u8
+pub const hologram_backend::kernel_call::fused_activation::GELU: u8
+pub const hologram_backend::kernel_call::fused_activation::RELU: u8
+pub const hologram_backend::kernel_call::fused_activation::SELU: u8
+pub const hologram_backend::kernel_call::fused_activation::SIGMOID: u8
+pub const hologram_backend::kernel_call::fused_activation::SILU: u8
+pub const hologram_backend::kernel_call::fused_activation::TANH: u8
+pub mod hologram_backend::kernel_call::lut_act
+pub const hologram_backend::kernel_call::lut_act::COUNT: usize
+pub const hologram_backend::kernel_call::lut_act::ERF: u8
+pub const hologram_backend::kernel_call::lut_act::EXP: u8
+pub const hologram_backend::kernel_call::lut_act::GELU: u8
+pub const hologram_backend::kernel_call::lut_act::SIGMOID: u8
+pub const hologram_backend::kernel_call::lut_act::SILU: u8
+pub const hologram_backend::kernel_call::lut_act::TANH: u8
+pub enum hologram_backend::kernel_call::KernelCall
+pub hologram_backend::kernel_call::KernelCall::Abs(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Acos(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Add(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::AddRmsNorm(hologram_backend::NormCall)
+pub hologram_backend::kernel_call::KernelCall::And(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Asin(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Atan(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Attention(hologram_backend::AttentionCall)
+pub hologram_backend::kernel_call::KernelCall::AvgPool2d(hologram_backend::PoolCall)
+pub hologram_backend::kernel_call::KernelCall::Bnot(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::BroadcastBinary(hologram_backend::BroadcastBinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Cast(hologram_backend::CastCall)
+pub hologram_backend::kernel_call::KernelCall::Ceil(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Clip(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Col2Im(hologram_backend::Im2ColCall)
+pub hologram_backend::kernel_call::KernelCall::Concat(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Conv2d(hologram_backend::Conv2dCall)
+pub hologram_backend::kernel_call::KernelCall::ConvTranspose2d(hologram_backend::Conv2dCall)
+pub hologram_backend::kernel_call::KernelCall::Cos(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::CumSum(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::DequantActivation(hologram_backend::DequantActivationCall)
+pub hologram_backend::kernel_call::KernelCall::Dequantize(hologram_backend::DequantizeCall)
+pub hologram_backend::kernel_call::KernelCall::Div(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Elu(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Equal(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Erf(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Exp(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Expand(hologram_backend::ExpandCall)
+pub hologram_backend::kernel_call::KernelCall::Floor(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::FusedSwiGlu(hologram_backend::MatMulCall)
+pub hologram_backend::kernel_call::KernelCall::Gather(hologram_backend::GatherCall)
+pub hologram_backend::kernel_call::KernelCall::Gelu(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Gemm(hologram_backend::GemmCall)
+pub hologram_backend::kernel_call::KernelCall::GlobalAvgPool(hologram_backend::PoolCall)
+pub hologram_backend::kernel_call::KernelCall::Greater(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::GreaterOrEqual(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::GroupNorm(hologram_backend::NormCall)
+pub hologram_backend::kernel_call::KernelCall::Im2Col(hologram_backend::Im2ColCall)
+pub hologram_backend::kernel_call::KernelCall::InstanceNorm(hologram_backend::NormCall)
+pub hologram_backend::kernel_call::KernelCall::IsNaN(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::LayerNorm(hologram_backend::NormCall)
+pub hologram_backend::kernel_call::KernelCall::Less(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::LessOrEqual(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Log(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Log1p(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::LogSoftmax(hologram_backend::SoftmaxCall)
+pub hologram_backend::kernel_call::KernelCall::Lrn(hologram_backend::LrnCall)
+pub hologram_backend::kernel_call::KernelCall::MatMul(hologram_backend::MatMulCall)
+pub hologram_backend::kernel_call::KernelCall::MatMulActivation(hologram_backend::MatMulActivationCall)
+pub hologram_backend::kernel_call::KernelCall::MatMulAdd(hologram_backend::MatMulAddCall)
+pub hologram_backend::kernel_call::KernelCall::MatMulAddActivation(hologram_backend::MatMulAddActivationCall)
+pub hologram_backend::kernel_call::KernelCall::MatMulDequant(hologram_backend::MatMulDequantCall)
+pub hologram_backend::kernel_call::KernelCall::Max(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::MaxPool2d(hologram_backend::PoolCall)
+pub hologram_backend::kernel_call::KernelCall::Min(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Mod(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Mul(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Neg(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Or(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Pad(hologram_backend::LayoutCall)
+pub hologram_backend::kernel_call::KernelCall::Pow(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Pred(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Reciprocal(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::ReduceMax(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::ReduceMean(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::ReduceMin(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::ReduceProd(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::ReduceSum(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::Relu(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Reshape(hologram_backend::LayoutCall)
+pub hologram_backend::kernel_call::KernelCall::Resize(hologram_backend::ExpandCall)
+pub hologram_backend::kernel_call::KernelCall::RmsNorm(hologram_backend::NormCall)
+pub hologram_backend::kernel_call::KernelCall::RotaryEmbedding(hologram_backend::RoPECall)
+pub hologram_backend::kernel_call::KernelCall::Round(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Selu(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Sigmoid(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Sign(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Silu(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Sin(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Slice(hologram_backend::LayoutCall)
+pub hologram_backend::kernel_call::KernelCall::Softmax(hologram_backend::SoftmaxCall)
+pub hologram_backend::kernel_call::KernelCall::Sqrt(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Sub(hologram_backend::BinaryCall)
+pub hologram_backend::kernel_call::KernelCall::Succ(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Tan(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Tanh(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::Transpose(hologram_backend::TransposeCall)
+pub hologram_backend::kernel_call::KernelCall::Where(hologram_backend::WhereCall)
+pub hologram_backend::kernel_call::KernelCall::Xor(hologram_backend::BinaryCall)
+impl hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::fused_activation(&self) -> core::option::Option<u8>
+pub fn hologram_backend::KernelCall::is_commutative(&self) -> bool
+pub fn hologram_backend::KernelCall::op_signature(&self) -> hologram_backend::OpSignature
+impl core::clone::Clone for hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::clone(&self) -> hologram_backend::KernelCall
+impl core::fmt::Debug for hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::KernelCall
+impl core::marker::Freeze for hologram_backend::KernelCall
+impl core::marker::Send for hologram_backend::KernelCall
+impl core::marker::Sync for hologram_backend::KernelCall
+impl core::marker::Unpin for hologram_backend::KernelCall
+impl core::marker::UnsafeUnpin for hologram_backend::KernelCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::KernelCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::KernelCall
+pub struct hologram_backend::kernel_call::AttentionCall
+pub hologram_backend::kernel_call::AttentionCall::batch: u32
+pub hologram_backend::kernel_call::AttentionCall::dtype: u8
+pub hologram_backend::kernel_call::AttentionCall::head_dim: u32
+pub hologram_backend::kernel_call::AttentionCall::heads: u32
+pub hologram_backend::kernel_call::AttentionCall::k: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::AttentionCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::AttentionCall::q: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::AttentionCall::seq: u32
+pub hologram_backend::kernel_call::AttentionCall::v: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::AttentionCall
+pub fn hologram_backend::AttentionCall::clone(&self) -> hologram_backend::AttentionCall
+impl core::fmt::Debug for hologram_backend::AttentionCall
+pub fn hologram_backend::AttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::AttentionCall
+impl core::marker::Freeze for hologram_backend::AttentionCall
+impl core::marker::Send for hologram_backend::AttentionCall
+impl core::marker::Sync for hologram_backend::AttentionCall
+impl core::marker::Unpin for hologram_backend::AttentionCall
+impl core::marker::UnsafeUnpin for hologram_backend::AttentionCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::AttentionCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::AttentionCall
+pub struct hologram_backend::kernel_call::BinaryCall
+pub hologram_backend::kernel_call::BinaryCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BinaryCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BinaryCall::dtype: u8
+pub hologram_backend::kernel_call::BinaryCall::element_count: u64
+pub hologram_backend::kernel_call::BinaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BinaryCall::witt_bits: u16
+impl core::clone::Clone for hologram_backend::BinaryCall
+pub fn hologram_backend::BinaryCall::clone(&self) -> hologram_backend::BinaryCall
+impl core::fmt::Debug for hologram_backend::BinaryCall
+pub fn hologram_backend::BinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::BinaryCall
+impl core::marker::Freeze for hologram_backend::BinaryCall
+impl core::marker::Send for hologram_backend::BinaryCall
+impl core::marker::Sync for hologram_backend::BinaryCall
+impl core::marker::Unpin for hologram_backend::BinaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::BinaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::BinaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::BinaryCall
+pub struct hologram_backend::kernel_call::BroadcastBinaryCall
+pub hologram_backend::kernel_call::BroadcastBinaryCall::dtype: u8
+pub hologram_backend::kernel_call::BroadcastBinaryCall::in_dims: [u32; 8]
+pub hologram_backend::kernel_call::BroadcastBinaryCall::op: u8
+pub hologram_backend::kernel_call::BroadcastBinaryCall::other: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BroadcastBinaryCall::out_dims: [u32; 8]
+pub hologram_backend::kernel_call::BroadcastBinaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BroadcastBinaryCall::rank: u8
+pub hologram_backend::kernel_call::BroadcastBinaryCall::small: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::BroadcastBinaryCall::small_is_lhs: bool
+impl core::clone::Clone for hologram_backend::BroadcastBinaryCall
+pub fn hologram_backend::BroadcastBinaryCall::clone(&self) -> hologram_backend::BroadcastBinaryCall
+impl core::fmt::Debug for hologram_backend::BroadcastBinaryCall
+pub fn hologram_backend::BroadcastBinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::BroadcastBinaryCall
+impl core::marker::Freeze for hologram_backend::BroadcastBinaryCall
+impl core::marker::Send for hologram_backend::BroadcastBinaryCall
+impl core::marker::Sync for hologram_backend::BroadcastBinaryCall
+impl core::marker::Unpin for hologram_backend::BroadcastBinaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::BroadcastBinaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::BroadcastBinaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::BroadcastBinaryCall
+pub struct hologram_backend::kernel_call::CastCall
+pub hologram_backend::kernel_call::CastCall::dst_dtype: u8
+pub hologram_backend::kernel_call::CastCall::element_count: u64
+pub hologram_backend::kernel_call::CastCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::CastCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::CastCall::src_dtype: u8
+impl core::clone::Clone for hologram_backend::CastCall
+pub fn hologram_backend::CastCall::clone(&self) -> hologram_backend::CastCall
+impl core::fmt::Debug for hologram_backend::CastCall
+pub fn hologram_backend::CastCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::CastCall
+impl core::marker::Freeze for hologram_backend::CastCall
+impl core::marker::Send for hologram_backend::CastCall
+impl core::marker::Sync for hologram_backend::CastCall
+impl core::marker::Unpin for hologram_backend::CastCall
+impl core::marker::UnsafeUnpin for hologram_backend::CastCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::CastCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::CastCall
+pub struct hologram_backend::kernel_call::Conv2dCall
+pub hologram_backend::kernel_call::Conv2dCall::batch: u32
+pub hologram_backend::kernel_call::Conv2dCall::channels_in: u32
+pub hologram_backend::kernel_call::Conv2dCall::channels_out: u32
+pub hologram_backend::kernel_call::Conv2dCall::dtype: u8
+pub hologram_backend::kernel_call::Conv2dCall::h_in: u32
+pub hologram_backend::kernel_call::Conv2dCall::h_out: u32
+pub hologram_backend::kernel_call::Conv2dCall::k_h: u32
+pub hologram_backend::kernel_call::Conv2dCall::k_w: u32
+pub hologram_backend::kernel_call::Conv2dCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::Conv2dCall::pad_h: u32
+pub hologram_backend::kernel_call::Conv2dCall::pad_w: u32
+pub hologram_backend::kernel_call::Conv2dCall::stride_h: u32
+pub hologram_backend::kernel_call::Conv2dCall::stride_w: u32
+pub hologram_backend::kernel_call::Conv2dCall::w: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::Conv2dCall::w_in: u32
+pub hologram_backend::kernel_call::Conv2dCall::w_out: u32
+pub hologram_backend::kernel_call::Conv2dCall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::Conv2dCall
+pub fn hologram_backend::Conv2dCall::clone(&self) -> hologram_backend::Conv2dCall
+impl core::fmt::Debug for hologram_backend::Conv2dCall
+pub fn hologram_backend::Conv2dCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::Conv2dCall
+impl core::marker::Freeze for hologram_backend::Conv2dCall
+impl core::marker::Send for hologram_backend::Conv2dCall
+impl core::marker::Sync for hologram_backend::Conv2dCall
+impl core::marker::Unpin for hologram_backend::Conv2dCall
+impl core::marker::UnsafeUnpin for hologram_backend::Conv2dCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Conv2dCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Conv2dCall
+pub struct hologram_backend::kernel_call::DequantActivationCall
+pub hologram_backend::kernel_call::DequantActivationCall::act: u8
+pub hologram_backend::kernel_call::DequantActivationCall::dtype: u8
+pub hologram_backend::kernel_call::DequantActivationCall::element_count: u64
+pub hologram_backend::kernel_call::DequantActivationCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantActivationCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantActivationCall::quant_dtype: u8
+pub hologram_backend::kernel_call::DequantActivationCall::scale_bits: u32
+pub hologram_backend::kernel_call::DequantActivationCall::zero_point: i32
+impl core::clone::Clone for hologram_backend::DequantActivationCall
+pub fn hologram_backend::DequantActivationCall::clone(&self) -> hologram_backend::DequantActivationCall
+impl core::fmt::Debug for hologram_backend::DequantActivationCall
+pub fn hologram_backend::DequantActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DequantActivationCall
+impl core::marker::Freeze for hologram_backend::DequantActivationCall
+impl core::marker::Send for hologram_backend::DequantActivationCall
+impl core::marker::Sync for hologram_backend::DequantActivationCall
+impl core::marker::Unpin for hologram_backend::DequantActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::DequantActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantActivationCall
+pub struct hologram_backend::kernel_call::DequantizeCall
+pub hologram_backend::kernel_call::DequantizeCall::channels: u32
+pub hologram_backend::kernel_call::DequantizeCall::dtype: u8
+pub hologram_backend::kernel_call::DequantizeCall::element_count: u64
+pub hologram_backend::kernel_call::DequantizeCall::inner: u32
+pub hologram_backend::kernel_call::DequantizeCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantizeCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantizeCall::quant_dtype: u8
+pub hologram_backend::kernel_call::DequantizeCall::scale_bits: u32
+pub hologram_backend::kernel_call::DequantizeCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantizeCall::zero_point: i32
+pub hologram_backend::kernel_call::DequantizeCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::DequantizeCall
+pub const hologram_backend::DequantizeCall::NO_VEC: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::DequantizeCall::per_channel(&self) -> bool
+impl core::clone::Clone for hologram_backend::DequantizeCall
+pub fn hologram_backend::DequantizeCall::clone(&self) -> hologram_backend::DequantizeCall
+impl core::fmt::Debug for hologram_backend::DequantizeCall
+pub fn hologram_backend::DequantizeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DequantizeCall
+impl core::marker::Freeze for hologram_backend::DequantizeCall
+impl core::marker::Send for hologram_backend::DequantizeCall
+impl core::marker::Sync for hologram_backend::DequantizeCall
+impl core::marker::Unpin for hologram_backend::DequantizeCall
+impl core::marker::UnsafeUnpin for hologram_backend::DequantizeCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantizeCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantizeCall
+pub struct hologram_backend::kernel_call::ExpandCall
+pub hologram_backend::kernel_call::ExpandCall::dtype: u8
+pub hologram_backend::kernel_call::ExpandCall::in_dims: [u32; 8]
+pub hologram_backend::kernel_call::ExpandCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::ExpandCall::out_dims: [u32; 8]
+pub hologram_backend::kernel_call::ExpandCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::ExpandCall::rank: u8
+impl core::clone::Clone for hologram_backend::ExpandCall
+pub fn hologram_backend::ExpandCall::clone(&self) -> hologram_backend::ExpandCall
+impl core::fmt::Debug for hologram_backend::ExpandCall
+pub fn hologram_backend::ExpandCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::ExpandCall
+impl core::marker::Freeze for hologram_backend::ExpandCall
+impl core::marker::Send for hologram_backend::ExpandCall
+impl core::marker::Sync for hologram_backend::ExpandCall
+impl core::marker::Unpin for hologram_backend::ExpandCall
+impl core::marker::UnsafeUnpin for hologram_backend::ExpandCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::ExpandCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::ExpandCall
+pub struct hologram_backend::kernel_call::GatherCall
+pub hologram_backend::kernel_call::GatherCall::axis_dim: u64
+pub hologram_backend::kernel_call::GatherCall::data: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::GatherCall::dtype: u8
+pub hologram_backend::kernel_call::GatherCall::idx_dtype: u8
+pub hologram_backend::kernel_call::GatherCall::indices: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::GatherCall::inner: u64
+pub hologram_backend::kernel_call::GatherCall::num_indices: u64
+pub hologram_backend::kernel_call::GatherCall::outer: u64
+pub hologram_backend::kernel_call::GatherCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::GatherCall
+pub fn hologram_backend::GatherCall::clone(&self) -> hologram_backend::GatherCall
+impl core::fmt::Debug for hologram_backend::GatherCall
+pub fn hologram_backend::GatherCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::GatherCall
+impl core::marker::Freeze for hologram_backend::GatherCall
+impl core::marker::Send for hologram_backend::GatherCall
+impl core::marker::Sync for hologram_backend::GatherCall
+impl core::marker::Unpin for hologram_backend::GatherCall
+impl core::marker::UnsafeUnpin for hologram_backend::GatherCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::GatherCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::GatherCall
+pub struct hologram_backend::kernel_call::GemmCall
+pub hologram_backend::kernel_call::GemmCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::GemmCall::alpha_bits: u64
+pub hologram_backend::kernel_call::GemmCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::GemmCall::beta_bits: u64
+pub hologram_backend::kernel_call::GemmCall::c: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::GemmCall::dtype: u8
+pub hologram_backend::kernel_call::GemmCall::k: u32
+pub hologram_backend::kernel_call::GemmCall::m: u32
+pub hologram_backend::kernel_call::GemmCall::n: u32
+pub hologram_backend::kernel_call::GemmCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::GemmCall
+pub fn hologram_backend::GemmCall::clone(&self) -> hologram_backend::GemmCall
+impl core::fmt::Debug for hologram_backend::GemmCall
+pub fn hologram_backend::GemmCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::GemmCall
+impl core::marker::Freeze for hologram_backend::GemmCall
+impl core::marker::Send for hologram_backend::GemmCall
+impl core::marker::Sync for hologram_backend::GemmCall
+impl core::marker::Unpin for hologram_backend::GemmCall
+impl core::marker::UnsafeUnpin for hologram_backend::GemmCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::GemmCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::GemmCall
+pub struct hologram_backend::kernel_call::Im2ColCall
+pub hologram_backend::kernel_call::Im2ColCall::channels: u32
+pub hologram_backend::kernel_call::Im2ColCall::dtype: u8
+pub hologram_backend::kernel_call::Im2ColCall::h_in: u32
+pub hologram_backend::kernel_call::Im2ColCall::h_out: u32
+pub hologram_backend::kernel_call::Im2ColCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::Im2ColCall::k_h: u32
+pub hologram_backend::kernel_call::Im2ColCall::k_w: u32
+pub hologram_backend::kernel_call::Im2ColCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::Im2ColCall::stride_h: u32
+pub hologram_backend::kernel_call::Im2ColCall::stride_w: u32
+pub hologram_backend::kernel_call::Im2ColCall::w_in: u32
+pub hologram_backend::kernel_call::Im2ColCall::w_out: u32
+impl core::clone::Clone for hologram_backend::Im2ColCall
+pub fn hologram_backend::Im2ColCall::clone(&self) -> hologram_backend::Im2ColCall
+impl core::fmt::Debug for hologram_backend::Im2ColCall
+pub fn hologram_backend::Im2ColCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::Im2ColCall
+impl core::marker::Freeze for hologram_backend::Im2ColCall
+impl core::marker::Send for hologram_backend::Im2ColCall
+impl core::marker::Sync for hologram_backend::Im2ColCall
+impl core::marker::Unpin for hologram_backend::Im2ColCall
+impl core::marker::UnsafeUnpin for hologram_backend::Im2ColCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Im2ColCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Im2ColCall
+pub struct hologram_backend::kernel_call::LayoutCall
+pub hologram_backend::kernel_call::LayoutCall::dtype: u8
+pub hologram_backend::kernel_call::LayoutCall::element_count: u64
+pub hologram_backend::kernel_call::LayoutCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::LayoutCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::LayoutCall
+pub fn hologram_backend::LayoutCall::clone(&self) -> hologram_backend::LayoutCall
+impl core::fmt::Debug for hologram_backend::LayoutCall
+pub fn hologram_backend::LayoutCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::LayoutCall
+impl core::marker::Freeze for hologram_backend::LayoutCall
+impl core::marker::Send for hologram_backend::LayoutCall
+impl core::marker::Sync for hologram_backend::LayoutCall
+impl core::marker::Unpin for hologram_backend::LayoutCall
+impl core::marker::UnsafeUnpin for hologram_backend::LayoutCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::LayoutCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::LayoutCall
+pub struct hologram_backend::kernel_call::LrnCall
+pub hologram_backend::kernel_call::LrnCall::alpha_bits: u32
+pub hologram_backend::kernel_call::LrnCall::batch: u32
+pub hologram_backend::kernel_call::LrnCall::beta_bits: u32
+pub hologram_backend::kernel_call::LrnCall::bias_bits: u32
+pub hologram_backend::kernel_call::LrnCall::channels: u32
+pub hologram_backend::kernel_call::LrnCall::dtype: u8
+pub hologram_backend::kernel_call::LrnCall::inner: u32
+pub hologram_backend::kernel_call::LrnCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::LrnCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::LrnCall::size: u32
+impl core::clone::Clone for hologram_backend::LrnCall
+pub fn hologram_backend::LrnCall::clone(&self) -> hologram_backend::LrnCall
+impl core::fmt::Debug for hologram_backend::LrnCall
+pub fn hologram_backend::LrnCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::LrnCall
+impl core::marker::Freeze for hologram_backend::LrnCall
+impl core::marker::Send for hologram_backend::LrnCall
+impl core::marker::Sync for hologram_backend::LrnCall
+impl core::marker::Unpin for hologram_backend::LrnCall
+impl core::marker::UnsafeUnpin for hologram_backend::LrnCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::LrnCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::LrnCall
+pub struct hologram_backend::kernel_call::MatMulActivationCall
+pub hologram_backend::kernel_call::MatMulActivationCall::act: u8
+pub hologram_backend::kernel_call::MatMulActivationCall::mm: hologram_backend::MatMulCall
+impl core::clone::Clone for hologram_backend::MatMulActivationCall
+pub fn hologram_backend::MatMulActivationCall::clone(&self) -> hologram_backend::MatMulActivationCall
+impl core::fmt::Debug for hologram_backend::MatMulActivationCall
+pub fn hologram_backend::MatMulActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulActivationCall
+impl core::marker::Freeze for hologram_backend::MatMulActivationCall
+impl core::marker::Send for hologram_backend::MatMulActivationCall
+impl core::marker::Sync for hologram_backend::MatMulActivationCall
+impl core::marker::Unpin for hologram_backend::MatMulActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulActivationCall
+pub struct hologram_backend::kernel_call::MatMulAddActivationCall
+pub hologram_backend::kernel_call::MatMulAddActivationCall::act: u8
+pub hologram_backend::kernel_call::MatMulAddActivationCall::mm: hologram_backend::MatMulCall
+pub hologram_backend::kernel_call::MatMulAddActivationCall::residual: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulAddActivationCall
+pub fn hologram_backend::MatMulAddActivationCall::clone(&self) -> hologram_backend::MatMulAddActivationCall
+impl core::fmt::Debug for hologram_backend::MatMulAddActivationCall
+pub fn hologram_backend::MatMulAddActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulAddActivationCall
+impl core::marker::Freeze for hologram_backend::MatMulAddActivationCall
+impl core::marker::Send for hologram_backend::MatMulAddActivationCall
+impl core::marker::Sync for hologram_backend::MatMulAddActivationCall
+impl core::marker::Unpin for hologram_backend::MatMulAddActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulAddActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulAddActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulAddActivationCall
+pub struct hologram_backend::kernel_call::MatMulAddCall
+pub hologram_backend::kernel_call::MatMulAddCall::mm: hologram_backend::MatMulCall
+pub hologram_backend::kernel_call::MatMulAddCall::residual: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulAddCall
+pub fn hologram_backend::MatMulAddCall::clone(&self) -> hologram_backend::MatMulAddCall
+impl core::fmt::Debug for hologram_backend::MatMulAddCall
+pub fn hologram_backend::MatMulAddCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulAddCall
+impl core::marker::Freeze for hologram_backend::MatMulAddCall
+impl core::marker::Send for hologram_backend::MatMulAddCall
+impl core::marker::Sync for hologram_backend::MatMulAddCall
+impl core::marker::Unpin for hologram_backend::MatMulAddCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulAddCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulAddCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulAddCall
+pub struct hologram_backend::kernel_call::MatMulCall
+pub hologram_backend::kernel_call::MatMulCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulCall::b_packed: bool
+pub hologram_backend::kernel_call::MatMulCall::dtype: u8
+pub hologram_backend::kernel_call::MatMulCall::k: u32
+pub hologram_backend::kernel_call::MatMulCall::m: u32
+pub hologram_backend::kernel_call::MatMulCall::n: u32
+pub hologram_backend::kernel_call::MatMulCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulCall
+pub fn hologram_backend::MatMulCall::clone(&self) -> hologram_backend::MatMulCall
+impl core::fmt::Debug for hologram_backend::MatMulCall
+pub fn hologram_backend::MatMulCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulCall
+impl core::marker::Freeze for hologram_backend::MatMulCall
+impl core::marker::Send for hologram_backend::MatMulCall
+impl core::marker::Sync for hologram_backend::MatMulCall
+impl core::marker::Unpin for hologram_backend::MatMulCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
+pub struct hologram_backend::kernel_call::MatMulDequantCall
+pub hologram_backend::kernel_call::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::channels: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::dtype: u8
+pub hologram_backend::kernel_call::MatMulDequantCall::inner: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::k: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::m: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::n: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::quant_dtype: u8
+pub hologram_backend::kernel_call::MatMulDequantCall::scale_bits: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::zero_point: i32
+pub hologram_backend::kernel_call::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::MatMulDequantCall
+pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
+impl core::clone::Clone for hologram_backend::MatMulDequantCall
+pub fn hologram_backend::MatMulDequantCall::clone(&self) -> hologram_backend::MatMulDequantCall
+impl core::fmt::Debug for hologram_backend::MatMulDequantCall
+pub fn hologram_backend::MatMulDequantCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulDequantCall
+impl core::marker::Freeze for hologram_backend::MatMulDequantCall
+impl core::marker::Send for hologram_backend::MatMulDequantCall
+impl core::marker::Sync for hologram_backend::MatMulDequantCall
+impl core::marker::Unpin for hologram_backend::MatMulDequantCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulDequantCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulDequantCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulDequantCall
+pub struct hologram_backend::kernel_call::NormCall
+pub hologram_backend::kernel_call::NormCall::batch: u32
+pub hologram_backend::kernel_call::NormCall::beta: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::NormCall::channels: u32
+pub hologram_backend::kernel_call::NormCall::dtype: u8
+pub hologram_backend::kernel_call::NormCall::epsilon_bits: u64
+pub hologram_backend::kernel_call::NormCall::feature: u32
+pub hologram_backend::kernel_call::NormCall::gamma: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::NormCall::num_groups: u32
+pub hologram_backend::kernel_call::NormCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::NormCall::residual: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::NormCall::x: hologram_backend::workspace::BufferRef
+impl hologram_backend::NormCall
+pub const hologram_backend::NormCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::NormCall::has_residual(&self) -> bool
+impl core::clone::Clone for hologram_backend::NormCall
+pub fn hologram_backend::NormCall::clone(&self) -> hologram_backend::NormCall
+impl core::fmt::Debug for hologram_backend::NormCall
+pub fn hologram_backend::NormCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::NormCall
+impl core::marker::Freeze for hologram_backend::NormCall
+impl core::marker::Send for hologram_backend::NormCall
+impl core::marker::Sync for hologram_backend::NormCall
+impl core::marker::Unpin for hologram_backend::NormCall
+impl core::marker::UnsafeUnpin for hologram_backend::NormCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::NormCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::NormCall
+pub struct hologram_backend::kernel_call::OpSignature
+pub hologram_backend::kernel_call::OpSignature::opcode: u16
+impl hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::params(&self) -> &[u8]
+impl core::clone::Clone for hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::clone(&self) -> hologram_backend::OpSignature
+impl core::fmt::Debug for hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::OpSignature
+impl core::marker::Freeze for hologram_backend::OpSignature
+impl core::marker::Send for hologram_backend::OpSignature
+impl core::marker::Sync for hologram_backend::OpSignature
+impl core::marker::Unpin for hologram_backend::OpSignature
+impl core::marker::UnsafeUnpin for hologram_backend::OpSignature
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::OpSignature
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::OpSignature
+pub struct hologram_backend::kernel_call::PoolCall
+pub hologram_backend::kernel_call::PoolCall::batch: u32
+pub hologram_backend::kernel_call::PoolCall::channels: u32
+pub hologram_backend::kernel_call::PoolCall::dtype: u8
+pub hologram_backend::kernel_call::PoolCall::h_in: u32
+pub hologram_backend::kernel_call::PoolCall::h_out: u32
+pub hologram_backend::kernel_call::PoolCall::k_h: u32
+pub hologram_backend::kernel_call::PoolCall::k_w: u32
+pub hologram_backend::kernel_call::PoolCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::PoolCall::stride_h: u32
+pub hologram_backend::kernel_call::PoolCall::stride_w: u32
+pub hologram_backend::kernel_call::PoolCall::w_in: u32
+pub hologram_backend::kernel_call::PoolCall::w_out: u32
+pub hologram_backend::kernel_call::PoolCall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::PoolCall
+pub fn hologram_backend::PoolCall::clone(&self) -> hologram_backend::PoolCall
+impl core::fmt::Debug for hologram_backend::PoolCall
+pub fn hologram_backend::PoolCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::PoolCall
+impl core::marker::Freeze for hologram_backend::PoolCall
+impl core::marker::Send for hologram_backend::PoolCall
+impl core::marker::Sync for hologram_backend::PoolCall
+impl core::marker::Unpin for hologram_backend::PoolCall
+impl core::marker::UnsafeUnpin for hologram_backend::PoolCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::PoolCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::PoolCall
+pub struct hologram_backend::kernel_call::ReduceCall
+pub hologram_backend::kernel_call::ReduceCall::axes_mask: u32
+pub hologram_backend::kernel_call::ReduceCall::dims: [u32; 8]
+pub hologram_backend::kernel_call::ReduceCall::dtype: u8
+pub hologram_backend::kernel_call::ReduceCall::element_count: u64
+pub hologram_backend::kernel_call::ReduceCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::ReduceCall::keepdims: bool
+pub hologram_backend::kernel_call::ReduceCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::ReduceCall::rank: u8
+impl core::clone::Clone for hologram_backend::ReduceCall
+pub fn hologram_backend::ReduceCall::clone(&self) -> hologram_backend::ReduceCall
+impl core::fmt::Debug for hologram_backend::ReduceCall
+pub fn hologram_backend::ReduceCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::ReduceCall
+impl core::marker::Freeze for hologram_backend::ReduceCall
+impl core::marker::Send for hologram_backend::ReduceCall
+impl core::marker::Sync for hologram_backend::ReduceCall
+impl core::marker::Unpin for hologram_backend::ReduceCall
+impl core::marker::UnsafeUnpin for hologram_backend::ReduceCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::ReduceCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::ReduceCall
+pub struct hologram_backend::kernel_call::RoPECall
+pub hologram_backend::kernel_call::RoPECall::cos: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::RoPECall::dtype: u8
+pub hologram_backend::kernel_call::RoPECall::element_count: u64
+pub hologram_backend::kernel_call::RoPECall::head_dim: u32
+pub hologram_backend::kernel_call::RoPECall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::RoPECall::sin: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::RoPECall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::RoPECall
+pub fn hologram_backend::RoPECall::clone(&self) -> hologram_backend::RoPECall
+impl core::fmt::Debug for hologram_backend::RoPECall
+pub fn hologram_backend::RoPECall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::RoPECall
+impl core::marker::Freeze for hologram_backend::RoPECall
+impl core::marker::Send for hologram_backend::RoPECall
+impl core::marker::Sync for hologram_backend::RoPECall
+impl core::marker::Unpin for hologram_backend::RoPECall
+impl core::marker::UnsafeUnpin for hologram_backend::RoPECall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::RoPECall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::RoPECall
+pub struct hologram_backend::kernel_call::SoftmaxCall
+pub hologram_backend::kernel_call::SoftmaxCall::batch: u32
+pub hologram_backend::kernel_call::SoftmaxCall::dtype: u8
+pub hologram_backend::kernel_call::SoftmaxCall::feature: u32
+pub hologram_backend::kernel_call::SoftmaxCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::SoftmaxCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::SoftmaxCall
+pub fn hologram_backend::SoftmaxCall::clone(&self) -> hologram_backend::SoftmaxCall
+impl core::fmt::Debug for hologram_backend::SoftmaxCall
+pub fn hologram_backend::SoftmaxCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::SoftmaxCall
+impl core::marker::Freeze for hologram_backend::SoftmaxCall
+impl core::marker::Send for hologram_backend::SoftmaxCall
+impl core::marker::Sync for hologram_backend::SoftmaxCall
+impl core::marker::Unpin for hologram_backend::SoftmaxCall
+impl core::marker::UnsafeUnpin for hologram_backend::SoftmaxCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::SoftmaxCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::SoftmaxCall
+pub struct hologram_backend::kernel_call::TransposeCall
+pub hologram_backend::kernel_call::TransposeCall::dims: [u32; 8]
+pub hologram_backend::kernel_call::TransposeCall::dtype: u8
+pub hologram_backend::kernel_call::TransposeCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::TransposeCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::TransposeCall::perm: [u8; 8]
+pub hologram_backend::kernel_call::TransposeCall::rank: u8
+impl core::clone::Clone for hologram_backend::TransposeCall
+pub fn hologram_backend::TransposeCall::clone(&self) -> hologram_backend::TransposeCall
+impl core::fmt::Debug for hologram_backend::TransposeCall
+pub fn hologram_backend::TransposeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::TransposeCall
+impl core::marker::Freeze for hologram_backend::TransposeCall
+impl core::marker::Send for hologram_backend::TransposeCall
+impl core::marker::Sync for hologram_backend::TransposeCall
+impl core::marker::Unpin for hologram_backend::TransposeCall
+impl core::marker::UnsafeUnpin for hologram_backend::TransposeCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::TransposeCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::TransposeCall
+pub struct hologram_backend::kernel_call::UnaryCall
+pub hologram_backend::kernel_call::UnaryCall::dtype: u8
+pub hologram_backend::kernel_call::UnaryCall::element_count: u64
+pub hologram_backend::kernel_call::UnaryCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::UnaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::UnaryCall::witt_bits: u16
+impl core::clone::Clone for hologram_backend::UnaryCall
+pub fn hologram_backend::UnaryCall::clone(&self) -> hologram_backend::UnaryCall
+impl core::fmt::Debug for hologram_backend::UnaryCall
+pub fn hologram_backend::UnaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::UnaryCall
+impl core::marker::Freeze for hologram_backend::UnaryCall
+impl core::marker::Send for hologram_backend::UnaryCall
+impl core::marker::Sync for hologram_backend::UnaryCall
+impl core::marker::Unpin for hologram_backend::UnaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::UnaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::UnaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::UnaryCall
+pub struct hologram_backend::kernel_call::WhereCall
+pub hologram_backend::kernel_call::WhereCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::WhereCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::WhereCall::cond: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::WhereCall::dtype: u8
+pub hologram_backend::kernel_call::WhereCall::element_count: u64
+pub hologram_backend::kernel_call::WhereCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::WhereCall
+pub fn hologram_backend::WhereCall::clone(&self) -> hologram_backend::WhereCall
+impl core::fmt::Debug for hologram_backend::WhereCall
+pub fn hologram_backend::WhereCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::WhereCall
+impl core::marker::Freeze for hologram_backend::WhereCall
+impl core::marker::Send for hologram_backend::WhereCall
+impl core::marker::Sync for hologram_backend::WhereCall
+impl core::marker::Unpin for hologram_backend::WhereCall
+impl core::marker::UnsafeUnpin for hologram_backend::WhereCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::WhereCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::WhereCall
+pub const hologram_backend::kernel_call::MAX_RANK: usize
+pub fn hologram_backend::kernel_call::buffers(&hologram_backend::KernelCall) -> alloc::vec::Vec<hologram_backend::workspace::BufferRef>
+pub fn hologram_backend::kernel_call::call_dtype(&hologram_backend::KernelCall) -> u8
+pub mod hologram_backend::layout
+pub const hologram_backend::layout::PANEL: usize
+pub fn hologram_backend::layout::pack_b_panels(&[f32], usize, usize) -> alloc::vec::Vec<f32>
+pub fn hologram_backend::layout::pack_b_panels_bytes(&[u8], usize, usize, usize) -> alloc::vec::Vec<u8>
+pub fn hologram_backend::layout::packed_len(usize, usize) -> usize
+pub mod hologram_backend::lut_act
+pub const hologram_backend::lut_act::COUNT: usize
+pub const hologram_backend::lut_act::ERF: u8
+pub const hologram_backend::lut_act::EXP: u8
+pub const hologram_backend::lut_act::GELU: u8
+pub const hologram_backend::lut_act::SIGMOID: u8
+pub const hologram_backend::lut_act::SILU: u8
+pub const hologram_backend::lut_act::TANH: u8
+pub mod hologram_backend::prism_axes
+pub struct hologram_backend::prism_axes::HologramF32MatmulSquare<const DIM: usize>
+impl<const DIM: usize> core::clone::Clone for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::clone(&self) -> hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::default::Default for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::default() -> hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::fmt::Debug for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const DIM: usize> core::marker::Copy for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> prism_tensor::tensor::TensorAxis for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::matmul(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const DIM: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const INLINE_BYTES: usize, const DIM: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+impl<const INLINE_BYTES: usize, const FP_MAX: usize, const DIM: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const DIM: usize> core::marker::Freeze for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Send for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Sync for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Unpin for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::UnsafeUnpin for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::panic::unwind_safe::UnwindSafe for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub struct hologram_backend::prism_axes::HologramF32VectorActivation<const N: usize>
+impl<const INLINE_BYTES: usize, const FP_MAX: usize, const N: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const INLINE_BYTES: usize, const N: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+impl<const N: usize> core::clone::Clone for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::clone(&self) -> hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::default::Default for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::default() -> hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::fmt::Debug for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const N: usize> core::marker::Copy for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> prism_tensor::activation::ActivationAxis for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::relu(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::sigmoid_q(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const N: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Freeze for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Send for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Sync for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Unpin for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::UnsafeUnpin for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::panic::unwind_safe::UnwindSafe for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub struct hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::clone::Clone for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::clone(&self) -> hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::default::Default for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::default() -> hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::fmt::Debug for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl prism_tensor::tensor::TensorAxis for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub const hologram_backend::prism_axes::HologramTensorMatmulF32::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramTensorMatmulF32::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::matmul(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl<const INLINE_BYTES: usize, const FP_MAX: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub const hologram_backend::prism_axes::HologramTensorMatmulF32::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramTensorMatmulF32::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const INLINE_BYTES: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub fn hologram_backend::prism_axes::HologramTensorMatmulF32::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+impl core::marker::Freeze for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::marker::Send for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::marker::Sync for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::marker::Unpin for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::marker::UnsafeUnpin for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::prism_axes::HologramTensorMatmulF32
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::prism_axes::HologramTensorMatmulF32
+pub const hologram_backend::prism_axes::HOLOGRAM_MATMUL_HEADER_BYTES: usize
+pub const hologram_backend::prism_axes::HOLOGRAM_MAX_ACTIVATION_LEN: usize
+pub const hologram_backend::prism_axes::HOLOGRAM_MAX_TENSOR_DIM: usize
+pub type hologram_backend::prism_axes::HologramF32Tensor16x16Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<16>
+pub type hologram_backend::prism_axes::HologramF32Tensor4x4Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<4>
+pub type hologram_backend::prism_axes::HologramF32Tensor8x8Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<8>
+pub type hologram_backend::prism_axes::HologramF32VectorActivation16 = hologram_backend::prism_axes::HologramF32VectorActivation<16>
+pub type hologram_backend::prism_axes::HologramF32VectorActivation256 = hologram_backend::prism_axes::HologramF32VectorActivation<256>
+pub type hologram_backend::prism_axes::HologramF32VectorActivation64 = hologram_backend::prism_axes::HologramF32VectorActivation<64>
+pub mod hologram_backend::workspace
+pub struct hologram_backend::workspace::BufferRef
+pub hologram_backend::workspace::BufferRef::length: u64
+pub hologram_backend::workspace::BufferRef::offset: u64
+pub hologram_backend::workspace::BufferRef::slot: u32
+impl core::clone::Clone for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::clone(&self) -> hologram_backend::workspace::BufferRef
+impl core::cmp::Eq for hologram_backend::workspace::BufferRef
+impl core::cmp::PartialEq for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::eq(&self, &hologram_backend::workspace::BufferRef) -> bool
+impl core::fmt::Debug for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_backend::workspace::BufferRef
+impl core::marker::StructuralPartialEq for hologram_backend::workspace::BufferRef
+impl core::marker::Freeze for hologram_backend::workspace::BufferRef
+impl core::marker::Send for hologram_backend::workspace::BufferRef
+impl core::marker::Sync for hologram_backend::workspace::BufferRef
+impl core::marker::Unpin for hologram_backend::workspace::BufferRef
+impl core::marker::UnsafeUnpin for hologram_backend::workspace::BufferRef
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::workspace::BufferRef
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::workspace::BufferRef
+pub trait hologram_backend::workspace::Workspace
+pub fn hologram_backend::workspace::Workspace::read(&self, hologram_backend::workspace::BufferRef) -> &[u8]
+pub fn hologram_backend::workspace::Workspace::split_borrow<'a>(&'a mut self, &[hologram_backend::workspace::BufferRef], hologram_backend::workspace::BufferRef) -> core::option::Option<(hologram_backend::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_backend::workspace::Workspace::write(&mut self, hologram_backend::workspace::BufferRef) -> &mut [u8]
+pub type hologram_backend::workspace::SplitReads<'a> = smallvec::SmallVec<[&'a [u8]; 4]>
+pub enum hologram_backend::BackendError
+pub hologram_backend::BackendError::Dispatch(&'static str)
+pub hologram_backend::BackendError::Init(&'static str)
+pub hologram_backend::BackendError::ShapeMismatch
+pub hologram_backend::BackendError::ShapeMismatch::actual: alloc::vec::Vec<u64>
+pub hologram_backend::BackendError::ShapeMismatch::expected: alloc::vec::Vec<u64>
+pub hologram_backend::BackendError::SlotOutOfRange(u32)
+pub hologram_backend::BackendError::UnsupportedOp(&'static str)
+impl core::error::Error for hologram_backend::error::BackendError
+impl core::fmt::Debug for hologram_backend::error::BackendError
+pub fn hologram_backend::error::BackendError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_backend::error::BackendError
+pub fn hologram_backend::error::BackendError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_backend::error::BackendError
+impl core::marker::Send for hologram_backend::error::BackendError
+impl core::marker::Sync for hologram_backend::error::BackendError
+impl core::marker::Unpin for hologram_backend::error::BackendError
+impl core::marker::UnsafeUnpin for hologram_backend::error::BackendError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::error::BackendError
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::error::BackendError
+pub enum hologram_backend::KernelCall
+pub hologram_backend::KernelCall::Abs(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Acos(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Add(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::AddRmsNorm(hologram_backend::NormCall)
+pub hologram_backend::KernelCall::And(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Asin(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Atan(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Attention(hologram_backend::AttentionCall)
+pub hologram_backend::KernelCall::AvgPool2d(hologram_backend::PoolCall)
+pub hologram_backend::KernelCall::Bnot(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::BroadcastBinary(hologram_backend::BroadcastBinaryCall)
+pub hologram_backend::KernelCall::Cast(hologram_backend::CastCall)
+pub hologram_backend::KernelCall::Ceil(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Clip(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Col2Im(hologram_backend::Im2ColCall)
+pub hologram_backend::KernelCall::Concat(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Conv2d(hologram_backend::Conv2dCall)
+pub hologram_backend::KernelCall::ConvTranspose2d(hologram_backend::Conv2dCall)
+pub hologram_backend::KernelCall::Cos(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::CumSum(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::DequantActivation(hologram_backend::DequantActivationCall)
+pub hologram_backend::KernelCall::Dequantize(hologram_backend::DequantizeCall)
+pub hologram_backend::KernelCall::Div(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Elu(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Equal(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Erf(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Exp(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Expand(hologram_backend::ExpandCall)
+pub hologram_backend::KernelCall::Floor(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::FusedSwiGlu(hologram_backend::MatMulCall)
+pub hologram_backend::KernelCall::Gather(hologram_backend::GatherCall)
+pub hologram_backend::KernelCall::Gelu(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Gemm(hologram_backend::GemmCall)
+pub hologram_backend::KernelCall::GlobalAvgPool(hologram_backend::PoolCall)
+pub hologram_backend::KernelCall::Greater(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::GreaterOrEqual(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::GroupNorm(hologram_backend::NormCall)
+pub hologram_backend::KernelCall::Im2Col(hologram_backend::Im2ColCall)
+pub hologram_backend::KernelCall::InstanceNorm(hologram_backend::NormCall)
+pub hologram_backend::KernelCall::IsNaN(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::LayerNorm(hologram_backend::NormCall)
+pub hologram_backend::KernelCall::Less(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::LessOrEqual(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Log(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Log1p(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::LogSoftmax(hologram_backend::SoftmaxCall)
+pub hologram_backend::KernelCall::Lrn(hologram_backend::LrnCall)
+pub hologram_backend::KernelCall::MatMul(hologram_backend::MatMulCall)
+pub hologram_backend::KernelCall::MatMulActivation(hologram_backend::MatMulActivationCall)
+pub hologram_backend::KernelCall::MatMulAdd(hologram_backend::MatMulAddCall)
+pub hologram_backend::KernelCall::MatMulAddActivation(hologram_backend::MatMulAddActivationCall)
+pub hologram_backend::KernelCall::MatMulDequant(hologram_backend::MatMulDequantCall)
+pub hologram_backend::KernelCall::Max(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::MaxPool2d(hologram_backend::PoolCall)
+pub hologram_backend::KernelCall::Min(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Mod(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Mul(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Neg(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Or(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Pad(hologram_backend::LayoutCall)
+pub hologram_backend::KernelCall::Pow(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Pred(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Reciprocal(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::ReduceMax(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::ReduceMean(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::ReduceMin(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::ReduceProd(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::ReduceSum(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::Relu(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Reshape(hologram_backend::LayoutCall)
+pub hologram_backend::KernelCall::Resize(hologram_backend::ExpandCall)
+pub hologram_backend::KernelCall::RmsNorm(hologram_backend::NormCall)
+pub hologram_backend::KernelCall::RotaryEmbedding(hologram_backend::RoPECall)
+pub hologram_backend::KernelCall::Round(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Selu(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Sigmoid(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Sign(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Silu(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Sin(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Slice(hologram_backend::LayoutCall)
+pub hologram_backend::KernelCall::Softmax(hologram_backend::SoftmaxCall)
+pub hologram_backend::KernelCall::Sqrt(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Sub(hologram_backend::BinaryCall)
+pub hologram_backend::KernelCall::Succ(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Tan(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Tanh(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::Transpose(hologram_backend::TransposeCall)
+pub hologram_backend::KernelCall::Where(hologram_backend::WhereCall)
+pub hologram_backend::KernelCall::Xor(hologram_backend::BinaryCall)
+impl hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::fused_activation(&self) -> core::option::Option<u8>
+pub fn hologram_backend::KernelCall::is_commutative(&self) -> bool
+pub fn hologram_backend::KernelCall::op_signature(&self) -> hologram_backend::OpSignature
+impl core::clone::Clone for hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::clone(&self) -> hologram_backend::KernelCall
+impl core::fmt::Debug for hologram_backend::KernelCall
+pub fn hologram_backend::KernelCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::KernelCall
+impl core::marker::Freeze for hologram_backend::KernelCall
+impl core::marker::Send for hologram_backend::KernelCall
+impl core::marker::Sync for hologram_backend::KernelCall
+impl core::marker::Unpin for hologram_backend::KernelCall
+impl core::marker::UnsafeUnpin for hologram_backend::KernelCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::KernelCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::KernelCall
+pub struct hologram_backend::AttentionCall
+pub hologram_backend::AttentionCall::batch: u32
+pub hologram_backend::AttentionCall::dtype: u8
+pub hologram_backend::AttentionCall::head_dim: u32
+pub hologram_backend::AttentionCall::heads: u32
+pub hologram_backend::AttentionCall::k: hologram_backend::workspace::BufferRef
+pub hologram_backend::AttentionCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::AttentionCall::q: hologram_backend::workspace::BufferRef
+pub hologram_backend::AttentionCall::seq: u32
+pub hologram_backend::AttentionCall::v: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::AttentionCall
+pub fn hologram_backend::AttentionCall::clone(&self) -> hologram_backend::AttentionCall
+impl core::fmt::Debug for hologram_backend::AttentionCall
+pub fn hologram_backend::AttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::AttentionCall
+impl core::marker::Freeze for hologram_backend::AttentionCall
+impl core::marker::Send for hologram_backend::AttentionCall
+impl core::marker::Sync for hologram_backend::AttentionCall
+impl core::marker::Unpin for hologram_backend::AttentionCall
+impl core::marker::UnsafeUnpin for hologram_backend::AttentionCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::AttentionCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::AttentionCall
+pub struct hologram_backend::BinaryCall
+pub hologram_backend::BinaryCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::BinaryCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::BinaryCall::dtype: u8
+pub hologram_backend::BinaryCall::element_count: u64
+pub hologram_backend::BinaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::BinaryCall::witt_bits: u16
+impl core::clone::Clone for hologram_backend::BinaryCall
+pub fn hologram_backend::BinaryCall::clone(&self) -> hologram_backend::BinaryCall
+impl core::fmt::Debug for hologram_backend::BinaryCall
+pub fn hologram_backend::BinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::BinaryCall
+impl core::marker::Freeze for hologram_backend::BinaryCall
+impl core::marker::Send for hologram_backend::BinaryCall
+impl core::marker::Sync for hologram_backend::BinaryCall
+impl core::marker::Unpin for hologram_backend::BinaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::BinaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::BinaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::BinaryCall
+pub struct hologram_backend::BroadcastBinaryCall
+pub hologram_backend::BroadcastBinaryCall::dtype: u8
+pub hologram_backend::BroadcastBinaryCall::in_dims: [u32; 8]
+pub hologram_backend::BroadcastBinaryCall::op: u8
+pub hologram_backend::BroadcastBinaryCall::other: hologram_backend::workspace::BufferRef
+pub hologram_backend::BroadcastBinaryCall::out_dims: [u32; 8]
+pub hologram_backend::BroadcastBinaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::BroadcastBinaryCall::rank: u8
+pub hologram_backend::BroadcastBinaryCall::small: hologram_backend::workspace::BufferRef
+pub hologram_backend::BroadcastBinaryCall::small_is_lhs: bool
+impl core::clone::Clone for hologram_backend::BroadcastBinaryCall
+pub fn hologram_backend::BroadcastBinaryCall::clone(&self) -> hologram_backend::BroadcastBinaryCall
+impl core::fmt::Debug for hologram_backend::BroadcastBinaryCall
+pub fn hologram_backend::BroadcastBinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::BroadcastBinaryCall
+impl core::marker::Freeze for hologram_backend::BroadcastBinaryCall
+impl core::marker::Send for hologram_backend::BroadcastBinaryCall
+impl core::marker::Sync for hologram_backend::BroadcastBinaryCall
+impl core::marker::Unpin for hologram_backend::BroadcastBinaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::BroadcastBinaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::BroadcastBinaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::BroadcastBinaryCall
+pub struct hologram_backend::BufferRef
+pub hologram_backend::BufferRef::length: u64
+pub hologram_backend::BufferRef::offset: u64
+pub hologram_backend::BufferRef::slot: u32
+impl core::clone::Clone for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::clone(&self) -> hologram_backend::workspace::BufferRef
+impl core::cmp::Eq for hologram_backend::workspace::BufferRef
+impl core::cmp::PartialEq for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::eq(&self, &hologram_backend::workspace::BufferRef) -> bool
+impl core::fmt::Debug for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_backend::workspace::BufferRef
+pub fn hologram_backend::workspace::BufferRef::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_backend::workspace::BufferRef
+impl core::marker::StructuralPartialEq for hologram_backend::workspace::BufferRef
+impl core::marker::Freeze for hologram_backend::workspace::BufferRef
+impl core::marker::Send for hologram_backend::workspace::BufferRef
+impl core::marker::Sync for hologram_backend::workspace::BufferRef
+impl core::marker::Unpin for hologram_backend::workspace::BufferRef
+impl core::marker::UnsafeUnpin for hologram_backend::workspace::BufferRef
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::workspace::BufferRef
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::workspace::BufferRef
+pub struct hologram_backend::CastCall
+pub hologram_backend::CastCall::dst_dtype: u8
+pub hologram_backend::CastCall::element_count: u64
+pub hologram_backend::CastCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::CastCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::CastCall::src_dtype: u8
+impl core::clone::Clone for hologram_backend::CastCall
+pub fn hologram_backend::CastCall::clone(&self) -> hologram_backend::CastCall
+impl core::fmt::Debug for hologram_backend::CastCall
+pub fn hologram_backend::CastCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::CastCall
+impl core::marker::Freeze for hologram_backend::CastCall
+impl core::marker::Send for hologram_backend::CastCall
+impl core::marker::Sync for hologram_backend::CastCall
+impl core::marker::Unpin for hologram_backend::CastCall
+impl core::marker::UnsafeUnpin for hologram_backend::CastCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::CastCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::CastCall
+pub struct hologram_backend::Conv2dCall
+pub hologram_backend::Conv2dCall::batch: u32
+pub hologram_backend::Conv2dCall::channels_in: u32
+pub hologram_backend::Conv2dCall::channels_out: u32
+pub hologram_backend::Conv2dCall::dtype: u8
+pub hologram_backend::Conv2dCall::h_in: u32
+pub hologram_backend::Conv2dCall::h_out: u32
+pub hologram_backend::Conv2dCall::k_h: u32
+pub hologram_backend::Conv2dCall::k_w: u32
+pub hologram_backend::Conv2dCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::Conv2dCall::pad_h: u32
+pub hologram_backend::Conv2dCall::pad_w: u32
+pub hologram_backend::Conv2dCall::stride_h: u32
+pub hologram_backend::Conv2dCall::stride_w: u32
+pub hologram_backend::Conv2dCall::w: hologram_backend::workspace::BufferRef
+pub hologram_backend::Conv2dCall::w_in: u32
+pub hologram_backend::Conv2dCall::w_out: u32
+pub hologram_backend::Conv2dCall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::Conv2dCall
+pub fn hologram_backend::Conv2dCall::clone(&self) -> hologram_backend::Conv2dCall
+impl core::fmt::Debug for hologram_backend::Conv2dCall
+pub fn hologram_backend::Conv2dCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::Conv2dCall
+impl core::marker::Freeze for hologram_backend::Conv2dCall
+impl core::marker::Send for hologram_backend::Conv2dCall
+impl core::marker::Sync for hologram_backend::Conv2dCall
+impl core::marker::Unpin for hologram_backend::Conv2dCall
+impl core::marker::UnsafeUnpin for hologram_backend::Conv2dCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Conv2dCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Conv2dCall
+pub struct hologram_backend::CpuBackend<W: hologram_backend::workspace::Workspace>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::cpu::CpuBackend<W>
+pub const fn hologram_backend::cpu::CpuBackend<W>::new() -> Self
+impl<W: core::fmt::Debug + hologram_backend::workspace::Workspace> core::fmt::Debug for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<W: hologram_backend::workspace::Workspace> core::clone::Clone for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::clone(&self) -> Self
+impl<W: hologram_backend::workspace::Workspace> core::default::Default for hologram_backend::cpu::CpuBackend<W>
+pub fn hologram_backend::cpu::CpuBackend<W>::default() -> Self
+impl<W: hologram_backend::workspace::Workspace> core::marker::Copy for hologram_backend::cpu::CpuBackend<W>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::backend::Backend for hologram_backend::cpu::CpuBackend<W>
+pub type hologram_backend::cpu::CpuBackend<W>::Bounds = hologram_host::bounds::HologramHostBoundsCpu
+pub type hologram_backend::cpu::CpuBackend<W>::WS = W
+pub fn hologram_backend::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+impl<W> core::marker::Freeze for hologram_backend::cpu::CpuBackend<W>
+impl<W> core::marker::Send for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Send
+impl<W> core::marker::Sync for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Sync
+impl<W> core::marker::Unpin for hologram_backend::cpu::CpuBackend<W> where W: core::marker::Unpin
+impl<W> core::marker::UnsafeUnpin for hologram_backend::cpu::CpuBackend<W>
+impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe
+impl<W> core::panic::unwind_safe::UnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe
+pub struct hologram_backend::DequantActivationCall
+pub hologram_backend::DequantActivationCall::act: u8
+pub hologram_backend::DequantActivationCall::dtype: u8
+pub hologram_backend::DequantActivationCall::element_count: u64
+pub hologram_backend::DequantActivationCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantActivationCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantActivationCall::quant_dtype: u8
+pub hologram_backend::DequantActivationCall::scale_bits: u32
+pub hologram_backend::DequantActivationCall::zero_point: i32
+impl core::clone::Clone for hologram_backend::DequantActivationCall
+pub fn hologram_backend::DequantActivationCall::clone(&self) -> hologram_backend::DequantActivationCall
+impl core::fmt::Debug for hologram_backend::DequantActivationCall
+pub fn hologram_backend::DequantActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DequantActivationCall
+impl core::marker::Freeze for hologram_backend::DequantActivationCall
+impl core::marker::Send for hologram_backend::DequantActivationCall
+impl core::marker::Sync for hologram_backend::DequantActivationCall
+impl core::marker::Unpin for hologram_backend::DequantActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::DequantActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantActivationCall
+pub struct hologram_backend::DequantizeCall
+pub hologram_backend::DequantizeCall::channels: u32
+pub hologram_backend::DequantizeCall::dtype: u8
+pub hologram_backend::DequantizeCall::element_count: u64
+pub hologram_backend::DequantizeCall::inner: u32
+pub hologram_backend::DequantizeCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantizeCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantizeCall::quant_dtype: u8
+pub hologram_backend::DequantizeCall::scale_bits: u32
+pub hologram_backend::DequantizeCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantizeCall::zero_point: i32
+pub hologram_backend::DequantizeCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::DequantizeCall
+pub const hologram_backend::DequantizeCall::NO_VEC: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::DequantizeCall::per_channel(&self) -> bool
+impl core::clone::Clone for hologram_backend::DequantizeCall
+pub fn hologram_backend::DequantizeCall::clone(&self) -> hologram_backend::DequantizeCall
+impl core::fmt::Debug for hologram_backend::DequantizeCall
+pub fn hologram_backend::DequantizeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DequantizeCall
+impl core::marker::Freeze for hologram_backend::DequantizeCall
+impl core::marker::Send for hologram_backend::DequantizeCall
+impl core::marker::Sync for hologram_backend::DequantizeCall
+impl core::marker::Unpin for hologram_backend::DequantizeCall
+impl core::marker::UnsafeUnpin for hologram_backend::DequantizeCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantizeCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantizeCall
+pub struct hologram_backend::ExpandCall
+pub hologram_backend::ExpandCall::dtype: u8
+pub hologram_backend::ExpandCall::in_dims: [u32; 8]
+pub hologram_backend::ExpandCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::ExpandCall::out_dims: [u32; 8]
+pub hologram_backend::ExpandCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::ExpandCall::rank: u8
+impl core::clone::Clone for hologram_backend::ExpandCall
+pub fn hologram_backend::ExpandCall::clone(&self) -> hologram_backend::ExpandCall
+impl core::fmt::Debug for hologram_backend::ExpandCall
+pub fn hologram_backend::ExpandCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::ExpandCall
+impl core::marker::Freeze for hologram_backend::ExpandCall
+impl core::marker::Send for hologram_backend::ExpandCall
+impl core::marker::Sync for hologram_backend::ExpandCall
+impl core::marker::Unpin for hologram_backend::ExpandCall
+impl core::marker::UnsafeUnpin for hologram_backend::ExpandCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::ExpandCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::ExpandCall
+pub struct hologram_backend::GatherCall
+pub hologram_backend::GatherCall::axis_dim: u64
+pub hologram_backend::GatherCall::data: hologram_backend::workspace::BufferRef
+pub hologram_backend::GatherCall::dtype: u8
+pub hologram_backend::GatherCall::idx_dtype: u8
+pub hologram_backend::GatherCall::indices: hologram_backend::workspace::BufferRef
+pub hologram_backend::GatherCall::inner: u64
+pub hologram_backend::GatherCall::num_indices: u64
+pub hologram_backend::GatherCall::outer: u64
+pub hologram_backend::GatherCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::GatherCall
+pub fn hologram_backend::GatherCall::clone(&self) -> hologram_backend::GatherCall
+impl core::fmt::Debug for hologram_backend::GatherCall
+pub fn hologram_backend::GatherCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::GatherCall
+impl core::marker::Freeze for hologram_backend::GatherCall
+impl core::marker::Send for hologram_backend::GatherCall
+impl core::marker::Sync for hologram_backend::GatherCall
+impl core::marker::Unpin for hologram_backend::GatherCall
+impl core::marker::UnsafeUnpin for hologram_backend::GatherCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::GatherCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::GatherCall
+pub struct hologram_backend::GemmCall
+pub hologram_backend::GemmCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::GemmCall::alpha_bits: u64
+pub hologram_backend::GemmCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::GemmCall::beta_bits: u64
+pub hologram_backend::GemmCall::c: hologram_backend::workspace::BufferRef
+pub hologram_backend::GemmCall::dtype: u8
+pub hologram_backend::GemmCall::k: u32
+pub hologram_backend::GemmCall::m: u32
+pub hologram_backend::GemmCall::n: u32
+pub hologram_backend::GemmCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::GemmCall
+pub fn hologram_backend::GemmCall::clone(&self) -> hologram_backend::GemmCall
+impl core::fmt::Debug for hologram_backend::GemmCall
+pub fn hologram_backend::GemmCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::GemmCall
+impl core::marker::Freeze for hologram_backend::GemmCall
+impl core::marker::Send for hologram_backend::GemmCall
+impl core::marker::Sync for hologram_backend::GemmCall
+impl core::marker::Unpin for hologram_backend::GemmCall
+impl core::marker::UnsafeUnpin for hologram_backend::GemmCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::GemmCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::GemmCall
+pub struct hologram_backend::HologramF32MatmulSquare<const DIM: usize>
+impl<const DIM: usize> core::clone::Clone for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::clone(&self) -> hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::default::Default for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::default() -> hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::fmt::Debug for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const DIM: usize> core::marker::Copy for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> prism_tensor::tensor::TensorAxis for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::matmul(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const DIM: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const INLINE_BYTES: usize, const DIM: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+impl<const INLINE_BYTES: usize, const FP_MAX: usize, const DIM: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const DIM: usize> core::marker::Freeze for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Send for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Sync for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::Unpin for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::marker::UnsafeUnpin for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+impl<const DIM: usize> core::panic::unwind_safe::UnwindSafe for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
+pub struct hologram_backend::HologramF32VectorActivation<const N: usize>
+impl<const INLINE_BYTES: usize, const FP_MAX: usize, const N: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const INLINE_BYTES: usize, const N: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+impl<const N: usize> core::clone::Clone for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::clone(&self) -> hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::default::Default for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::default() -> hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::fmt::Debug for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const N: usize> core::marker::Copy for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> prism_tensor::activation::ActivationAxis for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::AXIS_ADDRESS: &'static str
+pub const hologram_backend::prism_axes::HologramF32VectorActivation<N>::MAX_OUTPUT_BYTES: usize
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::relu(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+pub fn hologram_backend::prism_axes::HologramF32VectorActivation<N>::sigmoid_q(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>
+impl<const N: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Freeze for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Send for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Sync for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::Unpin for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::marker::UnsafeUnpin for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+impl<const N: usize> core::panic::unwind_safe::UnwindSafe for hologram_backend::prism_axes::HologramF32VectorActivation<N>
+pub struct hologram_backend::Im2ColCall
+pub hologram_backend::Im2ColCall::channels: u32
+pub hologram_backend::Im2ColCall::dtype: u8
+pub hologram_backend::Im2ColCall::h_in: u32
+pub hologram_backend::Im2ColCall::h_out: u32
+pub hologram_backend::Im2ColCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::Im2ColCall::k_h: u32
+pub hologram_backend::Im2ColCall::k_w: u32
+pub hologram_backend::Im2ColCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::Im2ColCall::stride_h: u32
+pub hologram_backend::Im2ColCall::stride_w: u32
+pub hologram_backend::Im2ColCall::w_in: u32
+pub hologram_backend::Im2ColCall::w_out: u32
+impl core::clone::Clone for hologram_backend::Im2ColCall
+pub fn hologram_backend::Im2ColCall::clone(&self) -> hologram_backend::Im2ColCall
+impl core::fmt::Debug for hologram_backend::Im2ColCall
+pub fn hologram_backend::Im2ColCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::Im2ColCall
+impl core::marker::Freeze for hologram_backend::Im2ColCall
+impl core::marker::Send for hologram_backend::Im2ColCall
+impl core::marker::Sync for hologram_backend::Im2ColCall
+impl core::marker::Unpin for hologram_backend::Im2ColCall
+impl core::marker::UnsafeUnpin for hologram_backend::Im2ColCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Im2ColCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Im2ColCall
+pub struct hologram_backend::LayoutCall
+pub hologram_backend::LayoutCall::dtype: u8
+pub hologram_backend::LayoutCall::element_count: u64
+pub hologram_backend::LayoutCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::LayoutCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::LayoutCall
+pub fn hologram_backend::LayoutCall::clone(&self) -> hologram_backend::LayoutCall
+impl core::fmt::Debug for hologram_backend::LayoutCall
+pub fn hologram_backend::LayoutCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::LayoutCall
+impl core::marker::Freeze for hologram_backend::LayoutCall
+impl core::marker::Send for hologram_backend::LayoutCall
+impl core::marker::Sync for hologram_backend::LayoutCall
+impl core::marker::Unpin for hologram_backend::LayoutCall
+impl core::marker::UnsafeUnpin for hologram_backend::LayoutCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::LayoutCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::LayoutCall
+pub struct hologram_backend::LrnCall
+pub hologram_backend::LrnCall::alpha_bits: u32
+pub hologram_backend::LrnCall::batch: u32
+pub hologram_backend::LrnCall::beta_bits: u32
+pub hologram_backend::LrnCall::bias_bits: u32
+pub hologram_backend::LrnCall::channels: u32
+pub hologram_backend::LrnCall::dtype: u8
+pub hologram_backend::LrnCall::inner: u32
+pub hologram_backend::LrnCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::LrnCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::LrnCall::size: u32
+impl core::clone::Clone for hologram_backend::LrnCall
+pub fn hologram_backend::LrnCall::clone(&self) -> hologram_backend::LrnCall
+impl core::fmt::Debug for hologram_backend::LrnCall
+pub fn hologram_backend::LrnCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::LrnCall
+impl core::marker::Freeze for hologram_backend::LrnCall
+impl core::marker::Send for hologram_backend::LrnCall
+impl core::marker::Sync for hologram_backend::LrnCall
+impl core::marker::Unpin for hologram_backend::LrnCall
+impl core::marker::UnsafeUnpin for hologram_backend::LrnCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::LrnCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::LrnCall
+pub struct hologram_backend::MatMulActivationCall
+pub hologram_backend::MatMulActivationCall::act: u8
+pub hologram_backend::MatMulActivationCall::mm: hologram_backend::MatMulCall
+impl core::clone::Clone for hologram_backend::MatMulActivationCall
+pub fn hologram_backend::MatMulActivationCall::clone(&self) -> hologram_backend::MatMulActivationCall
+impl core::fmt::Debug for hologram_backend::MatMulActivationCall
+pub fn hologram_backend::MatMulActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulActivationCall
+impl core::marker::Freeze for hologram_backend::MatMulActivationCall
+impl core::marker::Send for hologram_backend::MatMulActivationCall
+impl core::marker::Sync for hologram_backend::MatMulActivationCall
+impl core::marker::Unpin for hologram_backend::MatMulActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulActivationCall
+pub struct hologram_backend::MatMulAddActivationCall
+pub hologram_backend::MatMulAddActivationCall::act: u8
+pub hologram_backend::MatMulAddActivationCall::mm: hologram_backend::MatMulCall
+pub hologram_backend::MatMulAddActivationCall::residual: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulAddActivationCall
+pub fn hologram_backend::MatMulAddActivationCall::clone(&self) -> hologram_backend::MatMulAddActivationCall
+impl core::fmt::Debug for hologram_backend::MatMulAddActivationCall
+pub fn hologram_backend::MatMulAddActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulAddActivationCall
+impl core::marker::Freeze for hologram_backend::MatMulAddActivationCall
+impl core::marker::Send for hologram_backend::MatMulAddActivationCall
+impl core::marker::Sync for hologram_backend::MatMulAddActivationCall
+impl core::marker::Unpin for hologram_backend::MatMulAddActivationCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulAddActivationCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulAddActivationCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulAddActivationCall
+pub struct hologram_backend::MatMulAddCall
+pub hologram_backend::MatMulAddCall::mm: hologram_backend::MatMulCall
+pub hologram_backend::MatMulAddCall::residual: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulAddCall
+pub fn hologram_backend::MatMulAddCall::clone(&self) -> hologram_backend::MatMulAddCall
+impl core::fmt::Debug for hologram_backend::MatMulAddCall
+pub fn hologram_backend::MatMulAddCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulAddCall
+impl core::marker::Freeze for hologram_backend::MatMulAddCall
+impl core::marker::Send for hologram_backend::MatMulAddCall
+impl core::marker::Sync for hologram_backend::MatMulAddCall
+impl core::marker::Unpin for hologram_backend::MatMulAddCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulAddCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulAddCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulAddCall
+pub struct hologram_backend::MatMulCall
+pub hologram_backend::MatMulCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulCall::b_packed: bool
+pub hologram_backend::MatMulCall::dtype: u8
+pub hologram_backend::MatMulCall::k: u32
+pub hologram_backend::MatMulCall::m: u32
+pub hologram_backend::MatMulCall::n: u32
+pub hologram_backend::MatMulCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::MatMulCall
+pub fn hologram_backend::MatMulCall::clone(&self) -> hologram_backend::MatMulCall
+impl core::fmt::Debug for hologram_backend::MatMulCall
+pub fn hologram_backend::MatMulCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulCall
+impl core::marker::Freeze for hologram_backend::MatMulCall
+impl core::marker::Send for hologram_backend::MatMulCall
+impl core::marker::Sync for hologram_backend::MatMulCall
+impl core::marker::Unpin for hologram_backend::MatMulCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
+pub struct hologram_backend::MatMulDequantCall
+pub hologram_backend::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::channels: u32
+pub hologram_backend::MatMulDequantCall::dtype: u8
+pub hologram_backend::MatMulDequantCall::inner: u32
+pub hologram_backend::MatMulDequantCall::k: u32
+pub hologram_backend::MatMulDequantCall::m: u32
+pub hologram_backend::MatMulDequantCall::n: u32
+pub hologram_backend::MatMulDequantCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::quant_dtype: u8
+pub hologram_backend::MatMulDequantCall::scale_bits: u32
+pub hologram_backend::MatMulDequantCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::zero_point: i32
+pub hologram_backend::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::MatMulDequantCall
+pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
+impl core::clone::Clone for hologram_backend::MatMulDequantCall
+pub fn hologram_backend::MatMulDequantCall::clone(&self) -> hologram_backend::MatMulDequantCall
+impl core::fmt::Debug for hologram_backend::MatMulDequantCall
+pub fn hologram_backend::MatMulDequantCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::MatMulDequantCall
+impl core::marker::Freeze for hologram_backend::MatMulDequantCall
+impl core::marker::Send for hologram_backend::MatMulDequantCall
+impl core::marker::Sync for hologram_backend::MatMulDequantCall
+impl core::marker::Unpin for hologram_backend::MatMulDequantCall
+impl core::marker::UnsafeUnpin for hologram_backend::MatMulDequantCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulDequantCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulDequantCall
+pub struct hologram_backend::NormCall
+pub hologram_backend::NormCall::batch: u32
+pub hologram_backend::NormCall::beta: hologram_backend::workspace::BufferRef
+pub hologram_backend::NormCall::channels: u32
+pub hologram_backend::NormCall::dtype: u8
+pub hologram_backend::NormCall::epsilon_bits: u64
+pub hologram_backend::NormCall::feature: u32
+pub hologram_backend::NormCall::gamma: hologram_backend::workspace::BufferRef
+pub hologram_backend::NormCall::num_groups: u32
+pub hologram_backend::NormCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::NormCall::residual: hologram_backend::workspace::BufferRef
+pub hologram_backend::NormCall::x: hologram_backend::workspace::BufferRef
+impl hologram_backend::NormCall
+pub const hologram_backend::NormCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::NormCall::has_residual(&self) -> bool
+impl core::clone::Clone for hologram_backend::NormCall
+pub fn hologram_backend::NormCall::clone(&self) -> hologram_backend::NormCall
+impl core::fmt::Debug for hologram_backend::NormCall
+pub fn hologram_backend::NormCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::NormCall
+impl core::marker::Freeze for hologram_backend::NormCall
+impl core::marker::Send for hologram_backend::NormCall
+impl core::marker::Sync for hologram_backend::NormCall
+impl core::marker::Unpin for hologram_backend::NormCall
+impl core::marker::UnsafeUnpin for hologram_backend::NormCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::NormCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::NormCall
+pub struct hologram_backend::OpSignature
+pub hologram_backend::OpSignature::opcode: u16
+impl hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::params(&self) -> &[u8]
+impl core::clone::Clone for hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::clone(&self) -> hologram_backend::OpSignature
+impl core::fmt::Debug for hologram_backend::OpSignature
+pub fn hologram_backend::OpSignature::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::OpSignature
+impl core::marker::Freeze for hologram_backend::OpSignature
+impl core::marker::Send for hologram_backend::OpSignature
+impl core::marker::Sync for hologram_backend::OpSignature
+impl core::marker::Unpin for hologram_backend::OpSignature
+impl core::marker::UnsafeUnpin for hologram_backend::OpSignature
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::OpSignature
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::OpSignature
+pub struct hologram_backend::PoolCall
+pub hologram_backend::PoolCall::batch: u32
+pub hologram_backend::PoolCall::channels: u32
+pub hologram_backend::PoolCall::dtype: u8
+pub hologram_backend::PoolCall::h_in: u32
+pub hologram_backend::PoolCall::h_out: u32
+pub hologram_backend::PoolCall::k_h: u32
+pub hologram_backend::PoolCall::k_w: u32
+pub hologram_backend::PoolCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::PoolCall::stride_h: u32
+pub hologram_backend::PoolCall::stride_w: u32
+pub hologram_backend::PoolCall::w_in: u32
+pub hologram_backend::PoolCall::w_out: u32
+pub hologram_backend::PoolCall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::PoolCall
+pub fn hologram_backend::PoolCall::clone(&self) -> hologram_backend::PoolCall
+impl core::fmt::Debug for hologram_backend::PoolCall
+pub fn hologram_backend::PoolCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::PoolCall
+impl core::marker::Freeze for hologram_backend::PoolCall
+impl core::marker::Send for hologram_backend::PoolCall
+impl core::marker::Sync for hologram_backend::PoolCall
+impl core::marker::Unpin for hologram_backend::PoolCall
+impl core::marker::UnsafeUnpin for hologram_backend::PoolCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::PoolCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::PoolCall
+pub struct hologram_backend::ReduceCall
+pub hologram_backend::ReduceCall::axes_mask: u32
+pub hologram_backend::ReduceCall::dims: [u32; 8]
+pub hologram_backend::ReduceCall::dtype: u8
+pub hologram_backend::ReduceCall::element_count: u64
+pub hologram_backend::ReduceCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::ReduceCall::keepdims: bool
+pub hologram_backend::ReduceCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::ReduceCall::rank: u8
+impl core::clone::Clone for hologram_backend::ReduceCall
+pub fn hologram_backend::ReduceCall::clone(&self) -> hologram_backend::ReduceCall
+impl core::fmt::Debug for hologram_backend::ReduceCall
+pub fn hologram_backend::ReduceCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::ReduceCall
+impl core::marker::Freeze for hologram_backend::ReduceCall
+impl core::marker::Send for hologram_backend::ReduceCall
+impl core::marker::Sync for hologram_backend::ReduceCall
+impl core::marker::Unpin for hologram_backend::ReduceCall
+impl core::marker::UnsafeUnpin for hologram_backend::ReduceCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::ReduceCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::ReduceCall
+pub struct hologram_backend::RoPECall
+pub hologram_backend::RoPECall::cos: hologram_backend::workspace::BufferRef
+pub hologram_backend::RoPECall::dtype: u8
+pub hologram_backend::RoPECall::element_count: u64
+pub hologram_backend::RoPECall::head_dim: u32
+pub hologram_backend::RoPECall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::RoPECall::sin: hologram_backend::workspace::BufferRef
+pub hologram_backend::RoPECall::x: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::RoPECall
+pub fn hologram_backend::RoPECall::clone(&self) -> hologram_backend::RoPECall
+impl core::fmt::Debug for hologram_backend::RoPECall
+pub fn hologram_backend::RoPECall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::RoPECall
+impl core::marker::Freeze for hologram_backend::RoPECall
+impl core::marker::Send for hologram_backend::RoPECall
+impl core::marker::Sync for hologram_backend::RoPECall
+impl core::marker::Unpin for hologram_backend::RoPECall
+impl core::marker::UnsafeUnpin for hologram_backend::RoPECall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::RoPECall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::RoPECall
+pub struct hologram_backend::SoftmaxCall
+pub hologram_backend::SoftmaxCall::batch: u32
+pub hologram_backend::SoftmaxCall::dtype: u8
+pub hologram_backend::SoftmaxCall::feature: u32
+pub hologram_backend::SoftmaxCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::SoftmaxCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::SoftmaxCall
+pub fn hologram_backend::SoftmaxCall::clone(&self) -> hologram_backend::SoftmaxCall
+impl core::fmt::Debug for hologram_backend::SoftmaxCall
+pub fn hologram_backend::SoftmaxCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::SoftmaxCall
+impl core::marker::Freeze for hologram_backend::SoftmaxCall
+impl core::marker::Send for hologram_backend::SoftmaxCall
+impl core::marker::Sync for hologram_backend::SoftmaxCall
+impl core::marker::Unpin for hologram_backend::SoftmaxCall
+impl core::marker::UnsafeUnpin for hologram_backend::SoftmaxCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::SoftmaxCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::SoftmaxCall
+pub struct hologram_backend::TransposeCall
+pub hologram_backend::TransposeCall::dims: [u32; 8]
+pub hologram_backend::TransposeCall::dtype: u8
+pub hologram_backend::TransposeCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::TransposeCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::TransposeCall::perm: [u8; 8]
+pub hologram_backend::TransposeCall::rank: u8
+impl core::clone::Clone for hologram_backend::TransposeCall
+pub fn hologram_backend::TransposeCall::clone(&self) -> hologram_backend::TransposeCall
+impl core::fmt::Debug for hologram_backend::TransposeCall
+pub fn hologram_backend::TransposeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::TransposeCall
+impl core::marker::Freeze for hologram_backend::TransposeCall
+impl core::marker::Send for hologram_backend::TransposeCall
+impl core::marker::Sync for hologram_backend::TransposeCall
+impl core::marker::Unpin for hologram_backend::TransposeCall
+impl core::marker::UnsafeUnpin for hologram_backend::TransposeCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::TransposeCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::TransposeCall
+pub struct hologram_backend::UnaryCall
+pub hologram_backend::UnaryCall::dtype: u8
+pub hologram_backend::UnaryCall::element_count: u64
+pub hologram_backend::UnaryCall::input: hologram_backend::workspace::BufferRef
+pub hologram_backend::UnaryCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::UnaryCall::witt_bits: u16
+impl core::clone::Clone for hologram_backend::UnaryCall
+pub fn hologram_backend::UnaryCall::clone(&self) -> hologram_backend::UnaryCall
+impl core::fmt::Debug for hologram_backend::UnaryCall
+pub fn hologram_backend::UnaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::UnaryCall
+impl core::marker::Freeze for hologram_backend::UnaryCall
+impl core::marker::Send for hologram_backend::UnaryCall
+impl core::marker::Sync for hologram_backend::UnaryCall
+impl core::marker::Unpin for hologram_backend::UnaryCall
+impl core::marker::UnsafeUnpin for hologram_backend::UnaryCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::UnaryCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::UnaryCall
+pub struct hologram_backend::WhereCall
+pub hologram_backend::WhereCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::WhereCall::b: hologram_backend::workspace::BufferRef
+pub hologram_backend::WhereCall::cond: hologram_backend::workspace::BufferRef
+pub hologram_backend::WhereCall::dtype: u8
+pub hologram_backend::WhereCall::element_count: u64
+pub hologram_backend::WhereCall::output: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::WhereCall
+pub fn hologram_backend::WhereCall::clone(&self) -> hologram_backend::WhereCall
+impl core::fmt::Debug for hologram_backend::WhereCall
+pub fn hologram_backend::WhereCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::WhereCall
+impl core::marker::Freeze for hologram_backend::WhereCall
+impl core::marker::Send for hologram_backend::WhereCall
+impl core::marker::Sync for hologram_backend::WhereCall
+impl core::marker::Unpin for hologram_backend::WhereCall
+impl core::marker::UnsafeUnpin for hologram_backend::WhereCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::WhereCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::WhereCall
+pub const hologram_backend::HOLOGRAM_MAX_ACTIVATION_LEN: usize
+pub const hologram_backend::HOLOGRAM_MAX_TENSOR_DIM: usize
+pub const hologram_backend::MAX_RANK: usize
+pub trait hologram_backend::Backend
+pub type hologram_backend::Backend::Bounds: uor_foundation::HostBounds
+pub type hologram_backend::Backend::WS: hologram_backend::workspace::Workspace
+pub fn hologram_backend::Backend::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+impl<W: hologram_backend::workspace::Workspace> hologram_backend::backend::Backend for hologram_backend::cpu::CpuBackend<W>
+pub type hologram_backend::cpu::CpuBackend<W>::Bounds = hologram_host::bounds::HologramHostBoundsCpu
+pub type hologram_backend::cpu::CpuBackend<W>::WS = W
+pub fn hologram_backend::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_backend::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_backend::error::BackendError>
+pub trait hologram_backend::Workspace
+pub fn hologram_backend::Workspace::read(&self, hologram_backend::workspace::BufferRef) -> &[u8]
+pub fn hologram_backend::Workspace::split_borrow<'a>(&'a mut self, &[hologram_backend::workspace::BufferRef], hologram_backend::workspace::BufferRef) -> core::option::Option<(hologram_backend::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_backend::Workspace::write(&mut self, hologram_backend::workspace::BufferRef) -> &mut [u8]
+pub fn hologram_backend::buffers(&hologram_backend::KernelCall) -> alloc::vec::Vec<hologram_backend::workspace::BufferRef>
+pub fn hologram_backend::call_dtype(&hologram_backend::KernelCall) -> u8
+pub type hologram_backend::HologramF32Tensor16x16Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<16>
+pub type hologram_backend::HologramF32Tensor4x4Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<4>
+pub type hologram_backend::HologramF32Tensor8x8Matmul = hologram_backend::prism_axes::HologramF32MatmulSquare<8>
+pub type hologram_backend::HologramF32VectorActivation16 = hologram_backend::prism_axes::HologramF32VectorActivation<16>
+pub type hologram_backend::HologramF32VectorActivation256 = hologram_backend::prism_axes::HologramF32VectorActivation<256>
+pub type hologram_backend::HologramF32VectorActivation64 = hologram_backend::prism_axes::HologramF32VectorActivation<64>
+pub type hologram_backend::SplitReads<'a> = smallvec::SmallVec<[&'a [u8]; 4]>

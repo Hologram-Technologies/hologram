@@ -1,0 +1,16 @@
+pub mod hologram_ffi
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_empty(*mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_source(*const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_archive_fingerprint(std::os::raw::c_int, *mut std::os::raw::c_uchar) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_close(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_execute(std::os::raw::c_int, *const *const std::os::raw::c_uchar, *const usize, usize, *const *mut std::os::raw::c_uchar, *const usize, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_extension(std::os::raw::c_int, *const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_count(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_kernel_count(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_load(*const std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_byte_len(std::os::raw::c_int, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_count(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int

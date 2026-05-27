@@ -1,0 +1,50 @@
+name: API Snapshot Gate
+
+# The public API of every library crate is snapshotted to committed files under
+# `api/<crate>.txt`. This gate regenerates them and fails if any differs from
+# what's committed — so every public-API change (add / update / deprecate /
+# remove) lands as an explicit, reviewed diff, and an unintended change can't
+# merge. Update with `scripts/update-api-snapshots.sh` and commit the `api/`
+# diff alongside the code. Make this a required status check to enforce.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  api-snapshot:
+    name: Public-API snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # cargo-public-api builds rustdoc JSON, which is a nightly format.
+      - name: Install nightly (for rustdoc JSON)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-public-api
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+
+      - name: Check API snapshots are current
+        run: scripts/update-api-snapshots.sh --check
