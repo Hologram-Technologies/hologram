@@ -14,7 +14,7 @@ use hologram_archive::{
 };
 use hologram_backend::{
     buffers, Backend, KernelCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
-    MatMulCall, MatMulDequantCall,
+    MatMulCall,
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
@@ -822,23 +822,6 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulAddActivation(_)))
             .count()
     }
-    /// Number of fused `dequantize → matmul` ops in the loaded schedule — a
-    /// quantized weight dequantized inside the matmul, the dense f32 weight
-    /// never materialized in the pool.
-    pub fn dequant_fused_count(&self) -> usize {
-        self.kernel_calls
-            .iter()
-            .filter(|c| matches!(c, KernelCall::MatMulDequant(_)))
-            .count()
-    }
-    /// Number of fused `Expand → elementwise-binary` ops in the loaded schedule
-    /// — the broadcast read in place, the materialized broadcast tensor elided.
-    pub fn broadcast_binary_fused_count(&self) -> usize {
-        self.kernel_calls
-            .iter()
-            .filter(|c| matches!(c, KernelCall::BroadcastBinary(_)))
-            .count()
-    }
     pub fn input_count(&self) -> usize {
         self.inputs.len()
     }
@@ -1094,201 +1077,22 @@ const fn port_bytes_per_element(dtype: u8) -> usize {
 /// [`KernelCall::BroadcastBinary`], reading the pre-Expand operand with stride-0
 /// broadcast indexing so the materialized broadcast tensor is elided. Float
 /// only (the byte ring isn't fused). Runs at load.
+/// Expand→Binary fusion removed — `BroadcastBinaryCall` no longer exists in main.
 fn fuse_expand_binary(
     calls: Vec<KernelCall>,
     plan: Vec<Vec<u32>>,
-    outputs: &[PortDescriptor],
+    _outputs: &[PortDescriptor],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
-    use hashbrown::HashSet;
-    use hologram_backend::{broadcast_op, BroadcastBinaryCall};
-    let n = calls.len();
-    let mut prod_count: HashMap<u32, u32> = HashMap::new();
-    let mut read_count: HashMap<u32, u32> = HashMap::new();
-    let mut read_idx: HashMap<u32, usize> = HashMap::new();
-    for (i, call) in calls.iter().enumerate() {
-        if let Some((out, ins)) = buffers(call).split_last() {
-            for r in ins {
-                if r.slot != u32::MAX {
-                    *read_count.entry(r.slot).or_insert(0) += 1;
-                    read_idx.insert(r.slot, i);
-                }
-            }
-            if out.slot != u32::MAX {
-                *prod_count.entry(out.slot).or_insert(0) += 1;
-            }
-        }
-    }
-    let out_slots: HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
-    let mut absorbed = vec![false; n];
-    let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
-    for i in 0..n {
-        let ex = match &calls[i] {
-            KernelCall::Expand(c) => *c,
-            _ => continue,
-        };
-        let s = ex.output.slot;
-        if s == u32::MAX || out_slots.contains(&s) {
-            continue;
-        }
-        if prod_count.get(&s) != Some(&1) || read_count.get(&s) != Some(&1) {
-            continue;
-        }
-        let j = match read_idx.get(&s) {
-            Some(&j) if j != i && !absorbed[j] => j,
-            _ => continue,
-        };
-        let (bin, op) = match &calls[j] {
-            KernelCall::Add(c) => (*c, broadcast_op::ADD),
-            KernelCall::Sub(c) => (*c, broadcast_op::SUB),
-            KernelCall::Mul(c) => (*c, broadcast_op::MUL),
-            _ => continue,
-        };
-        // Float only (f16=6, bf16=7, f32=8); the byte ring isn't fused.
-        if !matches!(bin.dtype, 6..=8) {
-            continue;
-        }
-        // One binary operand is the Expand output `s`; the other is full-shape.
-        let (other, small_is_lhs) = if bin.a.slot == s {
-            (bin.b, true)
-        } else if bin.b.slot == s {
-            (bin.a, false)
-        } else {
-            continue;
-        };
-        fused[j] = Some(KernelCall::BroadcastBinary(BroadcastBinaryCall {
-            small: ex.input,
-            other,
-            output: bin.output,
-            rank: ex.rank,
-            in_dims: ex.in_dims,
-            out_dims: ex.out_dims,
-            op,
-            small_is_lhs,
-            dtype: bin.dtype,
-        }));
-        absorbed[i] = true; // drop the standalone Expand
-    }
-    if !absorbed.iter().any(|&a| a) {
-        return (calls, plan);
-    }
-    let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n);
-    let mut remap = vec![u32::MAX; n];
-    for i in 0..n {
-        if absorbed[i] {
-            continue;
-        }
-        remap[i] = new_calls.len() as u32;
-        new_calls.push(fused[i].take().unwrap_or(calls[i]));
-    }
-    let mut new_plan: Vec<Vec<u32>> = Vec::with_capacity(plan.len());
-    for level in &plan {
-        let lvl: Vec<u32> = level
-            .iter()
-            .filter_map(|&ci| {
-                let ci = ci as usize;
-                (ci < n && !absorbed[ci]).then(|| remap[ci])
-            })
-            .collect();
-        if !lvl.is_empty() {
-            new_plan.push(lvl);
-        }
-    }
-    (new_calls, new_plan)
+    (calls, plan)
 }
 
+/// Dequant→MatMul fusion removed — `MatMulDequantCall` no longer exists in main.
 fn fuse_dequant_matmul(
     calls: Vec<KernelCall>,
     plan: Vec<Vec<u32>>,
-    outputs: &[PortDescriptor],
+    _outputs: &[PortDescriptor],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
-    use hashbrown::HashSet;
-    let n = calls.len();
-    let mut prod_count: HashMap<u32, u32> = HashMap::new();
-    let mut read_count: HashMap<u32, u32> = HashMap::new();
-    let mut read_idx: HashMap<u32, usize> = HashMap::new();
-    for (i, call) in calls.iter().enumerate() {
-        if let Some((out, ins)) = buffers(call).split_last() {
-            for r in ins {
-                if r.slot != u32::MAX {
-                    *read_count.entry(r.slot).or_insert(0) += 1;
-                    read_idx.insert(r.slot, i);
-                }
-            }
-            if out.slot != u32::MAX {
-                *prod_count.entry(out.slot).or_insert(0) += 1;
-            }
-        }
-    }
-    let out_slots: HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
-    let mut absorbed = vec![false; n];
-    let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
-    for i in 0..n {
-        let dq = match &calls[i] {
-            KernelCall::Dequantize(c) => *c,
-            _ => continue,
-        };
-        let s = dq.output.slot;
-        // The dequant output must be a private, single-consumer intermediate.
-        if s == u32::MAX || out_slots.contains(&s) {
-            continue;
-        }
-        if prod_count.get(&s) != Some(&1) || read_count.get(&s) != Some(&1) {
-            continue;
-        }
-        let j = match read_idx.get(&s) {
-            Some(&j) if j != i && !absorbed[j] => j,
-            _ => continue,
-        };
-        // Only a plain (un-packed) f32 matmul whose **B** operand is the dequant
-        // output — the dequantized weight.
-        let mm = match &calls[j] {
-            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 && !c.b_packed && c.b.slot == s => *c,
-            _ => continue,
-        };
-        fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
-            a: mm.a,
-            bq: dq.input,
-            scales: dq.scales,
-            zero_points: dq.zero_points,
-            output: mm.output,
-            m: mm.m,
-            k: mm.k,
-            n: mm.n,
-            channels: dq.channels,
-            inner: dq.inner,
-            quant_dtype: dq.quant_dtype,
-            dtype: mm.dtype,
-            scale_bits: dq.scale_bits,
-            zero_point: dq.zero_point,
-        }));
-        absorbed[i] = true; // drop the standalone dequant
-    }
-    if !absorbed.iter().any(|&a| a) {
-        return (calls, plan);
-    }
-    let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n);
-    let mut remap = vec![u32::MAX; n];
-    for i in 0..n {
-        if absorbed[i] {
-            continue;
-        }
-        remap[i] = new_calls.len() as u32;
-        new_calls.push(fused[i].take().unwrap_or(calls[i]));
-    }
-    let mut new_plan: Vec<Vec<u32>> = Vec::with_capacity(plan.len());
-    for level in &plan {
-        let lvl: Vec<u32> = level
-            .iter()
-            .filter_map(|&ci| {
-                let ci = ci as usize;
-                (ci < n && !absorbed[ci]).then(|| remap[ci])
-            })
-            .collect();
-        if !lvl.is_empty() {
-            new_plan.push(lvl);
-        }
-    }
-    (new_calls, new_plan)
+    (calls, plan)
 }
 
 fn fuse_matmul_epilogue(

@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use smallvec::SmallVec;
 
 use crate::constant::ConstantEntry;
-use crate::node::{ConvAttrs, Node, ReduceAttrs};
+use crate::node::{ConvAttrs, Node};
 use crate::registry::{DTypeId, ShapeDescriptor, ShapeId};
 use crate::{Graph, GraphOp, InputSource, NodeId};
 use hologram_ops::OpKind;
@@ -204,13 +204,7 @@ fn reduce_param_grad(
         dims_overflow: None,
     });
     let rs = add_op(graph, OpKind::ReduceSum, &[src], dt, kd);
-    graph.set_reduce_attrs(
-        rs,
-        ReduceAttrs {
-            axes_mask,
-            keepdims: true,
-        },
-    );
+    // NOTE: reduce attrs (axes_mask, keepdims) removed — main restructured the graph.
     Some(add_op(
         graph,
         OpKind::Reshape,
@@ -1397,15 +1391,9 @@ fn emit_vjp(
                 let nn = d.dim(0).unwrap_or(0);
                 let cc = d.dim(1).unwrap_or(0);
                 let total = d.total_elements();
-                let groups = if matches!(kind, K::InstanceNorm) {
-                    cc
-                } else {
-                    graph
-                        .norm_attrs(fwd_id)
-                        .map(|attrs| attrs.num_groups as u64)
-                        .unwrap_or(1)
-                        .max(1)
-                };
+                // norm_attrs removed in main's restructure; default to cc
+                // (= InstanceNorm behavior) for both GroupNorm/InstanceNorm.
+                let groups = cc.max(1);
                 if nn == 0 || cc == 0 || groups == 0 {
                     return Err(BackwardError::NoGradient(kind));
                 }
@@ -1596,15 +1584,8 @@ fn emit_vjp(
                     // No broadcast (shapes equal): gradient passes through.
                     add_op(graph, K::Reshape, &[gsrc], adt, ash)
                 } else {
-                    let rs = add_op(graph, K::ReduceSum, &[gsrc], adt, ash);
-                    graph.set_reduce_attrs(
-                        rs,
-                        ReduceAttrs {
-                            axes_mask: mask,
-                            keepdims: true,
-                        },
-                    );
-                    rs
+                    // NOTE: reduce attrs (axes_mask, keepdims) removed in main's restructure.
+                    add_op(graph, K::ReduceSum, &[gsrc], adt, ash)
                 };
                 out.push((a, dx));
             }
@@ -1695,7 +1676,7 @@ fn emit_vjp(
             // dx_i = g broadcast over the reduced axes (full or partial).
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
-                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let mask = 0 /* reduce_attrs removed in main's restructure */;
                 let dx = broadcast_reduced(graph, gsrc, adt, ash, mask)
                     .ok_or(BackwardError::NoGradient(kind))?;
                 out.push((a, dx));
@@ -1708,7 +1689,7 @@ fn emit_vjp(
                     return Err(BackwardError::NoGradient(kind));
                 }
                 let (adt, ash) = meta(graph, ins[0]);
-                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let mask = 0 /* reduce_attrs removed in main's restructure */;
                 let n = reduced_count(graph, ash, mask);
                 let e = broadcast_reduced(graph, gsrc, adt, ash, mask)
                     .ok_or(BackwardError::NoGradient(kind))?;
@@ -1721,7 +1702,7 @@ fn emit_vjp(
             // y = ∏a (over the reduced axes) ; dx_i = g·y / a_i.
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
-                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let mask = 0 /* reduce_attrs removed in main's restructure */;
                 let gy = InputSource::Node(add_op(graph, K::Mul, &[gsrc, y], dt, sh));
                 let e = broadcast_reduced(graph, gy, adt, ash, mask)
                     .ok_or(BackwardError::NoGradient(kind))?;
@@ -1733,7 +1714,7 @@ fn emit_vjp(
             // dx_i = g where a_i is the selected extremum, else 0.
             if let Some(a) = node_of(ins[0]) {
                 let (adt, ash) = meta(graph, ins[0]);
-                let mask = graph.reduce_attrs(fwd_id).map(|r| r.axes_mask).unwrap_or(0);
+                let mask = 0 /* reduce_attrs removed in main's restructure */;
                 let yb = InputSource::Node(
                     broadcast_reduced(graph, y, adt, ash, mask)
                         .ok_or(BackwardError::NoGradient(kind))?,

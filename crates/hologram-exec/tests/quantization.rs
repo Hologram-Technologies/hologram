@@ -51,7 +51,6 @@ fn dequantize_int8_round_trip() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
-            axis: -1,
         },
     );
     let out = graph.add_node(Node {
@@ -122,7 +121,6 @@ fn dequantize_int8_per_channel_round_trip() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0,
             zero_point: 0,
-            axis: 0,
         },
     );
     let out = graph.add_node(Node {
@@ -176,7 +174,6 @@ fn dequantize_int4_packed_unpacks_correctly() {
             quant_dtype: DTYPE_I4,
             scale_bits: 1.0f32.to_bits(),
             zero_point: 0,
-            axis: -1,
         },
     );
     let out = graph.add_node(Node {
@@ -240,7 +237,6 @@ fn dequant_matmul_fuses_and_matches_unfused() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
-            axis: -1,
         },
     );
     let mm = graph.add_node(Node {
@@ -261,7 +257,7 @@ fn dequant_matmul_fuses_and_matches_unfused() {
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
     assert_eq!(
-        session.dequant_fused_count(),
+        session.fused_count(),
         1,
         "dequant→matmul must fuse to MatMulDequant"
     );
@@ -308,7 +304,6 @@ fn dequantize_int8_with_nonzero_zero_point() {
             quant_dtype: DTYPE_I8,
             scale_bits: 0.25f32.to_bits(),
             zero_point: 5,
-            axis: -1,
         },
     );
     let out = graph.add_node(Node {

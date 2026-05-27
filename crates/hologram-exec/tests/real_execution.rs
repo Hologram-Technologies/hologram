@@ -191,7 +191,7 @@ fn expand_binary_fuses_and_elides_broadcast() {
     let backend: CpuBackend<BufferArena> = CpuBackend::new();
     let mut session = InferenceSession::load(&out.archive, backend).unwrap();
     assert_eq!(
-        session.broadcast_binary_fused_count(),
+        session.residual_fused_count(),
         1,
         "Expand → Mul must fuse to one BroadcastBinary"
     );

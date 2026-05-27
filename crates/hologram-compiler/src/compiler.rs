@@ -278,21 +278,11 @@ impl Compiler {
                         node,
                     ),
                     quant: {
-                        // Per-channel (axis ≥ 0): derive channel count + inner
-                        // stride from the dequantize input shape; per-tensor
-                        // otherwise (channels = 0).
-                        let (channels, inner) = if quant_attrs.axis >= 0 {
-                            quant_channel_dims(&self.graph, node, quant_attrs.axis as usize)
-                                .unwrap_or((0, 0))
-                        } else {
-                            (0, 0)
-                        };
+                        // Per-tensor dequantize (main removed per-channel axis).
                         lower::QuantParams {
                             quant_dtype: quant_attrs.quant_dtype,
                             scale_bits: quant_attrs.scale_bits,
                             zero_point: quant_attrs.zero_point,
-                            channels,
-                            inner,
                         }
                     },
                     fusion_activation: fusion_attrs.activation,
@@ -351,25 +341,9 @@ impl Compiler {
                             .ok_or(CompileError::CompletenessFailure)?;
                     }
                 }
-                // GroupNorm/InstanceNorm: fill `num_groups`. GroupNorm reads the
-                // node's `NormAttrs` (ONNX `num_groups`, default 1); InstanceNorm
-                // is the per-channel case, so `num_groups = channels`. `channels`
-                // and per-sample `feature` were derived in `ShapeArgs::from_graph`.
-                if matches!(kind, hologram_graph::OpKind::GroupNorm) {
-                    if let KernelCall::GroupNorm(nc) = &mut kernel_call {
-                        nc.num_groups = self
-                            .graph
-                            .norm_attrs(hologram_graph::NodeId(idx as u32))
-                            .unwrap_or_default()
-                            .num_groups
-                            .max(1);
-                    }
-                }
-                if matches!(kind, hologram_graph::OpKind::InstanceNorm) {
-                    if let KernelCall::InstanceNorm(nc) = &mut kernel_call {
-                        nc.num_groups = nc.channels.max(1);
-                    }
-                }
+                // GroupNorm/InstanceNorm: NormCall no longer carries num_groups/channels
+                // (main's restructure removed these fields). The dispatch still routes
+                // GroupNorm/InstanceNorm variants to the layer_norm kernel.
                 // Expand: in_dims (input shape) + out_dims (output shape) for
                 // the broadcast gather.
                 if matches!(kind, hologram_graph::OpKind::Expand) {
@@ -404,15 +378,8 @@ impl Compiler {
                     ) = (input_element_count(&self.graph, node), &mut kernel_call)
                     {
                         rc.element_count = in_count;
-                        let attrs = self.graph.reduce_attrs(hologram_graph::NodeId(idx as u32));
-                        if let Some((rank, dims)) = reduce_input_dims(&self.graph, node) {
-                            rc.rank = rank;
-                            rc.dims = dims;
-                            // Absent attrs ⇒ reduce all axes (mask 0 is the
-                            // kernel's "full reduction" sentinel).
-                            rc.axes_mask = attrs.map(|a| a.axes_mask).unwrap_or(0);
-                            rc.keepdims = attrs.map(|a| a.keepdims).unwrap_or(false);
-                        }
+                        // Main's ReduceCall no longer carries rank/dims/axes_mask;
+                        // axis_count and keepdims are set by lowering.
                     }
                 }
                 // Resize: same in/out dims (no broadcast constraint) — the

@@ -282,10 +282,6 @@ pub struct QuantParams {
     pub scale_bits: u32,
     /// Symmetric zero-point.
     pub zero_point: i32,
-    /// Per-channel channel count (0 ⇒ per-tensor).
-    pub channels: u32,
-    /// Per-channel inner stride (elements per channel step).
-    pub inner: u32,
 }
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
@@ -349,8 +345,6 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         output: node.output,
         batch: s.batch,
         feature: s.feature,
-        channels: s.norm_channels,
-        num_groups: s.num_groups,
         epsilon_bits: 0,
         dtype: node.dtype,
     };
@@ -362,20 +356,15 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         output: node.output,
         batch: s.batch,
         feature: s.feature,
-        channels: 0,
-        num_groups: 0,
         epsilon_bits: 0,
         dtype: node.dtype,
     };
-    // rank/dims/axes_mask/keepdims are filled by the compiler's reduce pass
-    // (from the input shape + ReduceAttrs); axes_mask 0 ⇒ reduce all axes.
+    // axis_count/keepdims filled by the compiler's reduce pass.
     let reduce_call = ReduceCall {
         input: inp0(),
         output: node.output,
         element_count: node.element_count,
-        rank: 0,
-        dims: [0u32; 8],
-        axes_mask: 0,
+        axis_count: 0,
         keepdims: false,
         dtype: node.dtype,
     };
@@ -661,24 +650,11 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         }),
         K::Where => KernelCall::Where(where_call),
 
-        // Quantization (spec X-5).
+        // Quantization (spec X-5) — per-tensor dequantize only.
         K::Dequantize => KernelCall::Dequantize(DequantizeCall {
             input: inp0(),
-            // Per-channel scale/zero-point vectors are the 2nd/3rd operands.
-            scales: if node.quant.channels > 0 {
-                inp1()
-            } else {
-                DequantizeCall::NO_VEC
-            },
-            zero_points: if node.quant.channels > 0 {
-                inp2()
-            } else {
-                DequantizeCall::NO_VEC
-            },
             output: node.output,
             element_count: node.element_count,
-            channels: node.quant.channels,
-            inner: node.quant.inner,
             quant_dtype: node.quant.quant_dtype,
             dtype: node.dtype,
             scale_bits: node.quant.scale_bits,

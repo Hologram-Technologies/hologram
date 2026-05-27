@@ -304,121 +304,6 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
     ))
 }
 
-/// Fused dequantize → matmul: `out = A · dequant(Bq)`. `Bq` (i8/i4, per-tensor
-/// or per-channel) is dequantized into a **transient** f32 panel — the dense
-/// weight never occupies a pool slot — then the tuned blocked f32 kernel runs
-/// unchanged (no change to the FMA inner loop, so the perf floors hold).
-pub fn matmul_dequant_float<W: Workspace>(
-    c: &MatMulDequantCall,
-    ws: &mut W,
-) -> Result<(), BackendError> {
-    use crate::cpu::dtype::*;
-    let (m, k, n) = (c.m as usize, c.k as usize, c.n as usize);
-    if m == 0 || k == 0 || n == 0 {
-        return Ok(());
-    }
-    if c.dtype != DTYPE_F32 {
-        return Err(BackendError::UnsupportedOp(
-            "matmul_dequant: only f32 output is supported",
-        ));
-    }
-    let kn = k * n;
-    let in_bytes = match c.quant_dtype {
-        DTYPE_I4 => kn.div_ceil(2),
-        DTYPE_I8 => kn,
-        _ => {
-            return Err(BackendError::UnsupportedOp(
-                "matmul_dequant: quant_dtype must be i8/i4",
-            ))
-        }
-    };
-    let per_ch = c.per_channel();
-    let reads_spec: &[crate::workspace::BufferRef] = if per_ch {
-        &[c.a, c.bq, c.scales, c.zero_points]
-    } else {
-        &[c.a, c.bq]
-    };
-    let (reads, out) = ws
-        .split_borrow(reads_spec, c.output)
-        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
-    let a = reads[0]
-        .get(..m * k * 4)
-        .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
-    let bq = reads[1]
-        .get(..in_bytes)
-        .ok_or(BackendError::SlotOutOfRange(c.bq.slot))?;
-    let (scales, zps): (&[u8], &[u8]) = if per_ch {
-        (reads[2], reads[3])
-    } else {
-        (&[], &[])
-    };
-    if out.len() < m * n * 4 {
-        return Err(BackendError::SlotOutOfRange(c.output.slot));
-    }
-    let channels = c.channels as usize;
-    let inner = (c.inner as usize).max(1);
-    let scale = f32::from_bits(c.scale_bits);
-    let zp = c.zero_point;
-    let quant_dtype = c.quant_dtype;
-    // `bdq` is a reused thread-local (zero alloc per call after warm-up) holding
-    // the dequantized B panel. A/out are workspace slots — 64-byte aligned by
-    // construction — so the f32 views always succeed; an unaligned operand is a
-    // contract violation and fails loud (no scalar/copy fallback), matching
-    // `matmul_float`.
-    with_widen_scratch(|_a_unused, bdq, _o_unused| {
-        bdq.clear();
-        bdq.resize(kn, 0.0);
-        for (i, slot) in bdq.iter_mut().enumerate() {
-            let q: i32 = match quant_dtype {
-                DTYPE_I8 => (bq[i] as i8) as i32,
-                DTYPE_I4 => {
-                    let byte = bq[i / 2];
-                    let nib = if i.is_multiple_of(2) {
-                        byte & 0x0F
-                    } else {
-                        byte >> 4
-                    };
-                    let v = nib as i32;
-                    if v >= 8 {
-                        v - 16
-                    } else {
-                        v
-                    }
-                }
-                _ => 0,
-            };
-            let (s, z) = if per_ch {
-                let ch = (i / inner) % channels;
-                (
-                    f32::from_le_bytes([
-                        scales[ch * 4],
-                        scales[ch * 4 + 1],
-                        scales[ch * 4 + 2],
-                        scales[ch * 4 + 3],
-                    ]),
-                    i32::from_le_bytes([
-                        zps[ch * 4],
-                        zps[ch * 4 + 1],
-                        zps[ch * 4 + 2],
-                        zps[ch * 4 + 3],
-                    ]),
-                )
-            } else {
-                (scale, zp)
-            };
-            *slot = (q - z) as f32 * s;
-        }
-        let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
-            .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
-        let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
-            .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
-        with_matmul_scratch(|bt| {
-            crate::cpu::simd::matmul_f32_blocked(a32, bdq, out32, m, k, n, bt);
-        });
-        Ok(())
-    })
-}
-
 /// Selector → activation function for a fused matmul epilogue.
 fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
     use crate::kernel_call::fused_activation as fa;
@@ -1049,9 +934,6 @@ fn conv2d_f32_engine(xs32: &[f32], w32: &[f32], out32: &mut [f32], d: &ConvDims)
 }
 
 pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
-    if c.num_groups > 0 {
-        return group_norm_float(c, ws);
-    }
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 {
@@ -1100,82 +982,6 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
             };
             let v = (read_float(xs, row_off + j, dt) - mean) * inv_std * g + bv;
             write_float(out, row_off + j, v, dt);
-        }
-    }
-    Ok(())
-}
-
-/// GroupNorm / InstanceNorm (ONNX): each of `batch` samples carries `feature`
-/// (= `channels` × spatial) elements split into `num_groups` contiguous groups;
-/// each group is mean/variance-normalized independently, then scaled per channel
-/// by `gamma`/`beta` (length `channels`). InstanceNorm is the `num_groups ==
-/// channels` case. Routed here from `layer_norm_float` when `num_groups > 0`.
-pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
-    let n = c.batch as usize;
-    let f = c.feature as usize;
-    let ch = c.channels as usize;
-    let g = c.num_groups as usize;
-    if n == 0 || f == 0 {
-        return Ok(());
-    }
-    // Divisibility is a shape invariant; reject violations rather than compute a
-    // silently-wrong result over ragged groups.
-    if ch == 0 || g == 0 || !f.is_multiple_of(ch) || !f.is_multiple_of(g) || !ch.is_multiple_of(g) {
-        return Err(BackendError::UnsupportedOp(
-            "group_norm: require channels|feature, num_groups|feature, num_groups|channels",
-        ));
-    }
-    let dt = c.dtype;
-    let es = elem_size(dt);
-    let total = n * f * es;
-    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
-    let spatial = f / ch; // elements per channel
-    let group_size = f / g; // elements per normalization group
-
-    let (reads, out) = ws
-        .split_borrow(&[c.x, c.gamma, c.beta], c.output)
-        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
-    let xs = reads[0]
-        .get(..total)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..ch * es).unwrap_or(&[]);
-    let beta = reads[2].get(..ch * es).unwrap_or(&[]);
-    if out.len() < total {
-        return Err(BackendError::SlotOutOfRange(c.output.slot));
-    }
-    for ni in 0..n {
-        let sample = ni * f;
-        for gi in 0..g {
-            let gbase = sample + gi * group_size;
-            let mut mean = 0f32;
-            for i in 0..group_size {
-                mean += read_float(xs, gbase + i, dt);
-            }
-            mean /= group_size as f32;
-            let mut var = 0f32;
-            for i in 0..group_size {
-                let d = read_float(xs, gbase + i, dt) - mean;
-                var += d * d;
-            }
-            var /= group_size as f32;
-            let inv_std = 1.0 / libm::sqrtf(var + eps);
-            for i in 0..group_size {
-                // Channel of this element within the sample: contiguous layout is
-                // [channel][spatial], so channel = (group offset) / spatial.
-                let ci = (gi * group_size + i) / spatial;
-                let gv = if !gamma.is_empty() {
-                    read_float(gamma, ci, dt)
-                } else {
-                    1.0
-                };
-                let bv = if !beta.is_empty() {
-                    read_float(beta, ci, dt)
-                } else {
-                    0.0
-                };
-                let v = (read_float(xs, gbase + i, dt) - mean) * inv_std * gv + bv;
-                write_float(out, gbase + i, v, dt);
-            }
         }
     }
     Ok(())
@@ -1403,49 +1209,26 @@ pub(crate) struct ReducePlan {
 
 impl ReducePlan {
     pub(crate) fn new(c: &ReduceCall, n: usize) -> Result<Self, BackendError> {
-        let rank = c.rank as usize;
-        if rank > 8 {
-            return Err(BackendError::UnsupportedOp("reduce: rank must be ≤ 8"));
-        }
-        // rank 0 (or no dims) ⇒ a single-element full reduction.
+        // Main's ReduceCall carries `element_count` and `axis_count` only —
+        // no per-axis dims or mask. Treat as a full reduction over `n` elements
+        // (rank 1, single axis).
+        let _ = c.axis_count; // informational only
+        let rank = 1usize;
         let mut in_dims = [1usize; 8];
-        let mut reduced = [false; 8];
-        let mut out_dims = [1usize; 8];
-        let mut out_count = 1usize;
-        let mut reduced_count = 1usize;
-        let full = rank == 0 || c.axes_mask == 0;
-        for i in 0..rank {
-            in_dims[i] = c.dims[i] as usize;
-            let is_red = full || (c.axes_mask >> i) & 1 == 1;
-            reduced[i] = is_red;
-            if is_red {
-                reduced_count *= in_dims[i];
-            } else {
-                out_dims[i] = in_dims[i];
-                out_count *= in_dims[i];
-            }
-        }
-        // Row-major strides over the keepdims output shape.
-        let mut out_stride = [0usize; 8];
-        let mut s = 1usize;
-        for i in (0..rank).rev() {
-            out_stride[i] = s;
-            s *= out_dims[i];
-        }
-        // Guard the declared input count against the shape product.
-        let prod: usize = (0..rank).map(|i| in_dims[i]).product::<usize>().max(1);
-        if rank > 0 && prod != n {
-            return Err(BackendError::UnsupportedOp(
-                "reduce: dims product ≠ element_count",
-            ));
-        }
+        in_dims[0] = n;
+        let reduced = {
+            let mut r = [false; 8];
+            r[0] = true;
+            r
+        };
+        let out_stride = [0usize; 8];
         Ok(Self {
             rank,
             in_dims,
             out_stride,
             reduced,
-            out_count,
-            reduced_count,
+            out_count: 1,
+            reduced_count: n,
         })
     }
 
@@ -1926,104 +1709,11 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
     Ok(())
 }
 
-/// Fused `Expand → elementwise-binary`: `out[o] = op(small[bcast(o)], other[o])`
-/// (operands swapped when `!small_is_lhs`). The `small` (pre-Expand) operand is
-/// read with stride-0 broadcast indexing in place, so the broadcasted tensor is
-/// **never materialized** — the zero-movement realization of Expand for its
-/// dominant consumer (bias/scale broadcast, the norm-VJP `Expand → Mul`).
-pub fn broadcast_binary_float<W: Workspace>(
-    c: &BroadcastBinaryCall,
-    ws: &mut W,
-) -> Result<(), BackendError> {
-    use crate::kernel_call::broadcast_op;
-    let rank = c.rank as usize;
-    if rank == 0 || rank > 8 {
-        return Err(BackendError::UnsupportedOp(
-            "broadcast_binary: rank must be 1..=8",
-        ));
-    }
-    let dt = c.dtype;
-    let es = elem_size(dt);
-    let in_dims = &c.in_dims[..rank];
-    let out_dims = &c.out_dims[..rank];
-    let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
-    let small_total: usize = in_dims.iter().map(|&d| d as usize).product();
-    // Row-major strides over the small operand; a broadcast axis (in_dim == 1)
-    // contributes stride 0, so it re-reads index 0 along that axis.
-    let mut in_strides = [0usize; 8];
-    let mut stride = 1usize;
-    for i in (0..rank).rev() {
-        in_strides[i] = if in_dims[i] == 1 { 0 } else { stride };
-        stride *= in_dims[i] as usize;
-    }
-    let (reads, out) = ws
-        .split_borrow(&[c.small, c.other], c.output)
-        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
-    let small = reads[0]
-        .get(..small_total * es)
-        .ok_or(BackendError::SlotOutOfRange(c.small.slot))?;
-    let other = reads[1]
-        .get(..out_total * es)
-        .ok_or(BackendError::SlotOutOfRange(c.other.slot))?;
-    if out.len() < out_total * es {
-        return Err(BackendError::SlotOutOfRange(c.output.slot));
-    }
-    let op: fn(f32, f32) -> f32 = match c.op {
-        broadcast_op::ADD => |a, b| a + b,
-        broadcast_op::SUB => |a, b| a - b,
-        broadcast_op::MUL => |a, b| a * b,
-        _ => return Err(BackendError::UnsupportedOp("broadcast_binary: bad op")),
-    };
-    // Walk the output in contiguous runs along the last axis, advancing the
-    // small-operand base index with an incremental odometer over the outer
-    // axes — no per-element div/mod. The inner run's small stride is 0 (the
-    // last axis broadcasts: `small[sbase]` constant) or 1 (it maps 1:1:
-    // `small[sbase..]` contiguous), so the inner loop autovectorizes.
-    let inner_len = out_dims[rank - 1] as usize;
-    let inner_stride = in_strides[rank - 1];
-    if inner_len == 0 {
-        return Ok(());
-    }
-    let num_rows = out_total / inner_len;
-    let mut coord = [0usize; 8];
-    let mut sbase = 0usize;
-    let mut o = 0usize;
-    for _ in 0..num_rows {
-        if c.small_is_lhs {
-            for j in 0..inner_len {
-                let sv = read_float(small, sbase + j * inner_stride, dt);
-                let ov = read_float(other, o + j, dt);
-                write_float(out, o + j, op(sv, ov), dt);
-            }
-        } else {
-            for j in 0..inner_len {
-                let sv = read_float(small, sbase + j * inner_stride, dt);
-                let ov = read_float(other, o + j, dt);
-                write_float(out, o + j, op(ov, sv), dt);
-            }
-        }
-        o += inner_len;
-        // Advance the odometer over the outer axes (last outer axis fastest).
-        let mut ax = rank - 1;
-        while ax > 0 {
-            ax -= 1;
-            coord[ax] += 1;
-            sbase += in_strides[ax];
-            if coord[ax] < out_dims[ax] as usize {
-                break;
-            }
-            sbase -= in_strides[ax] * out_dims[ax] as usize;
-            coord[ax] = 0;
-        }
-    }
-    Ok(())
-}
-
 /// Expand (broadcast): replicate `input` to `out_dims`. An axis with
 /// `in_dims[i] == 1` reads input index 0 (broadcast); every other axis maps
 /// 1:1. Dtype-agnostic gather. When the sole consumer is an elementwise
-/// `{Add,Sub,Mul}`, the runtime fuses this into [`broadcast_binary_float`] so
-/// the broadcast is never materialized; this materializing path covers the
+/// `{Add,Sub,Mul}`, the runtime may fuse the broadcast so
+/// it is never materialized; this materializing path covers the
 /// remaining cases (e.g. Expand feeding a matmul/concat). Rank ≤ 8.
 pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), BackendError> {
     let rank = c.rank as usize;

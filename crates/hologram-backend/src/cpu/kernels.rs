@@ -159,12 +159,6 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
         KernelCall::MatMulAddActivation(c) => ff::matmul_add_activation_float(c, ws),
-        KernelCall::MatMulDequant(c) => ff::matmul_dequant_float(c, ws),
-        // The Expand→binary fusion only fires for float dtypes (handled by the
-        // float fast path above); a byte-domain broadcast-binary is not emitted.
-        KernelCall::BroadcastBinary(_) => Err(BackendError::UnsupportedOp(
-            "broadcast_binary: float-only (byte-domain broadcast not fused)",
-        )),
     }
 }
 
@@ -178,57 +172,15 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
         DTYPE_I8 => n,
         _ => return Err(BackendError::SlotOutOfRange(c.input.slot)),
     };
-    // Per-channel reads the scale (f32) and zero-point (i32) vectors as extra
-    // operands; per-tensor uses the scalar fields. `(scales, zps)` is empty in
-    // per-tensor mode.
-    let per_ch = c.per_channel();
-    let reads_spec: &[crate::workspace::BufferRef] = if per_ch {
-        &[c.input, c.scales, c.zero_points]
-    } else {
-        &[c.input]
-    };
+    // Per-tensor scale and zero-point from the call payload.
     let (reads, out) = ws
-        .split_borrow(reads_spec, c.output)
+        .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let inp = reads[0]
         .get(..in_bytes_needed)
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
-    let (scales, zps): (&[u8], &[u8]) = if per_ch {
-        (reads[1], reads[2])
-    } else {
-        (&[], &[])
-    };
-    let channels = c.channels as usize;
-    let inner = (c.inner as usize).max(1);
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
-    // Per-channel scale/zero-point for element `i` (channel = (i/inner)%channels).
-    let ch_scale = |i: usize| -> f32 {
-        if per_ch {
-            let ch = (i / inner) % channels;
-            f32::from_le_bytes([
-                scales[ch * 4],
-                scales[ch * 4 + 1],
-                scales[ch * 4 + 2],
-                scales[ch * 4 + 3],
-            ])
-        } else {
-            scale
-        }
-    };
-    let ch_zp = |i: usize| -> i32 {
-        if per_ch {
-            let ch = (i / inner) % channels;
-            i32::from_le_bytes([
-                zps[ch * 4],
-                zps[ch * 4 + 1],
-                zps[ch * 4 + 2],
-                zps[ch * 4 + 3],
-            ])
-        } else {
-            zp
-        }
-    };
 
     // Compute the dequantized f32 value for element index `i`.
     let dequant_at = |i: usize| -> f32 {
@@ -252,7 +204,7 @@ fn dequantize<W: Workspace>(c: &DequantizeCall, ws: &mut W) -> Result<(), Backen
             }
             _ => 0,
         };
-        (q - ch_zp(i)) as f32 * ch_scale(i)
+        (q - zp) as f32 * scale
     };
 
     let bytes_per_out = match c.dtype {
@@ -443,9 +395,6 @@ fn conv2d_w8<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), BackendErro
 
 /// LayerNorm (byte-domain reference): subtract mean, scale by gamma, add beta.
 fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
-    if c.num_groups > 0 {
-        return group_norm_w8(c, ws);
-    }
     let bsz = c.batch as usize;
     let f = c.feature as usize;
     if bsz == 0 || f == 0 {
@@ -471,55 +420,6 @@ fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendEr
             let g = *gamma.get(j).unwrap_or(&1);
             let bv = *beta.get(j).unwrap_or(&0);
             out[bi * f + j] = centered.wrapping_mul(g).wrapping_add(bv);
-        }
-    }
-    Ok(())
-}
-
-/// GroupNorm / InstanceNorm (byte-domain reference): per-sample, per-group
-/// mean subtraction with per-channel `gamma`/`beta`. Mirrors `group_norm_float`
-/// over the wrapping byte ring.
-fn group_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
-    let n = c.batch as usize;
-    let f = c.feature as usize;
-    let ch = c.channels as usize;
-    let g = c.num_groups as usize;
-    if n == 0 || f == 0 {
-        return Ok(());
-    }
-    if ch == 0 || g == 0 || !f.is_multiple_of(ch) || !f.is_multiple_of(g) || !ch.is_multiple_of(g) {
-        return Err(BackendError::UnsupportedOp(
-            "group_norm: require channels|feature, num_groups|feature, num_groups|channels",
-        ));
-    }
-    let spatial = f / ch;
-    let group_size = f / g;
-    let (reads, out) = ws
-        .split_borrow(&[c.x, c.gamma, c.beta], c.output)
-        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
-    let xs = reads[0]
-        .get(..n * f)
-        .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..ch).unwrap_or(&[]);
-    let beta = reads[2].get(..ch).unwrap_or(&[]);
-    if out.len() < n * f {
-        return Err(BackendError::SlotOutOfRange(c.output.slot));
-    }
-    for ni in 0..n {
-        let sample = ni * f;
-        for gi in 0..g {
-            let gbase = sample + gi * group_size;
-            let grp = &xs[gbase..gbase + group_size];
-            let mean =
-                grp.iter().fold(0u32, |a, b| a.wrapping_add(*b as u32)) / group_size.max(1) as u32;
-            let mean = (mean & 0xFF) as u8;
-            for i in 0..group_size {
-                let ci = (gi * group_size + i) / spatial;
-                let centered = grp[i].wrapping_sub(mean);
-                let gv = *gamma.get(ci).unwrap_or(&1);
-                let bv = *beta.get(ci).unwrap_or(&0);
-                out[gbase + i] = centered.wrapping_mul(gv).wrapping_add(bv);
-            }
         }
     }
     Ok(())
@@ -1528,8 +1428,6 @@ fn try_dispatch_float<W: Workspace>(
         K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
         K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
         K::MatMulAddActivation(c) => Some(ff::matmul_add_activation_float(c, ws)),
-        K::MatMulDequant(c) => Some(ff::matmul_dequant_float(c, ws)),
-        K::BroadcastBinary(c) if is_float(c.dtype) => Some(ff::broadcast_binary_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
         // operands, but `MatMulCall` carries one (`b`). It cannot be computed

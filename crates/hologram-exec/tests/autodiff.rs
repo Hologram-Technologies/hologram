@@ -395,12 +395,11 @@ fn check_norm(op: OpKind, x: &[f32], rows: u64, cols: u64, affine3: bool, tol: f
 
 /// Grad-check a grouped norm (GroupNorm/InstanceNorm) on a real `[N,C,H,W]`
 /// tensor with a **non-uniform per-channel γ/β** (so the channel-broadcast and
-/// per-group statistics are actually exercised). For GroupNorm, `num_groups` is
-/// attached via `NormAttrs`; InstanceNorm derives it (= C) at compile time, so
-/// `num_groups` is ignored there.
-fn check_group_norm(op: OpKind, x: &[f32], n: u64, c: u64, h: u64, w: u64, num_groups: u32) {
+/// per-group statistics are actually exercised). The compiler now derives
+/// group count from the input shape; InstanceNorm derives it (= C) at compile
+/// time.
+fn check_group_norm(op: OpKind, x: &[f32], n: u64, c: u64, h: u64, w: u64, _num_groups: u32) {
     use hologram_graph::constant::ConstantEntry;
-    use hologram_graph::NormAttrs;
     let cc = c as usize;
     let wt: Vec<f32> = (0..x.len()).map(|i| 0.4 + 0.25 * (i % 3) as f32).collect();
     let gamma: Vec<f32> = (0..cc).map(|i| 0.7 + 0.3 * i as f32).collect();
@@ -438,9 +437,6 @@ fn check_group_norm(op: OpKind, x: &[f32], n: u64, c: u64, h: u64, w: u64, num_g
             output_dtype: DTypeId(F32),
             output_shape: sh,
         });
-        if matches!(op, OpKind::GroupNorm) {
-            g.set_norm_attrs(nrm, NormAttrs { num_groups });
-        }
         let wc = g.constants_mut().insert(ConstantEntry {
             bytes: le(&wt),
             dtype: DTypeId(F32),
@@ -505,9 +501,8 @@ fn group_norm_gradients_match_finite_difference() {
 /// Grad-check an axis reduction: `sum( reduce_axes(x) ⊙ w )` w.r.t. `x`, with a
 /// fixed non-uniform `w` on the reduced (keepdims) output so the broadcast-back
 /// gradient is exercised non-trivially.
-fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u32, tol: f32) {
+fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], _axes_mask: u32, tol: f32) {
     use hologram_graph::constant::ConstantEntry;
-    use hologram_graph::ReduceAttrs;
     let to_sd = |d: &[u64]| match d {
         [a, b, c] => ShapeDescriptor::rank3(*a, *b, *c),
         _ => unreachable!("test uses rank-3 shapes"),
@@ -531,13 +526,6 @@ fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u
             output_dtype: DTypeId(F32),
             output_shape: osh,
         });
-        g.set_reduce_attrs(
-            r,
-            ReduceAttrs {
-                axes_mask,
-                keepdims: true,
-            },
-        );
         let wc = g.constants_mut().insert(ConstantEntry {
             bytes: le(&w),
             dtype: DTypeId(F32),
@@ -574,7 +562,7 @@ fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u
         let nd = (sum(&xp) - sum(&xm)) / (2.0 * eps);
         assert!(
             (da[j] - nd).abs() <= tol + tol * nd.abs(),
-            "{op:?} mask={axes_mask:#b} grad[{j}]: {} vs {nd}",
+            "{op:?} grad[{j}]: {} vs {nd}",
             da[j]
         );
     }
@@ -583,7 +571,6 @@ fn check_axis_reduce(op: OpKind, in_dims: &[u64], out_dims: &[u64], axes_mask: u
 #[test]
 fn norm_parameter_gradients_match_finite_difference() {
     use hologram_graph::registry::ShapeDescriptor;
-    use hologram_graph::NormAttrs;
     // Trainable γ/β (graph inputs, not constants): grad-check dx, dγ, dβ all at
     // once via the all-input `gradcheck`.
     let x2 = [0.5f32, -1.0, 2.0, 0.3, 1.2, -0.4]; // [2,3]
@@ -668,7 +655,6 @@ fn norm_parameter_gradients_match_finite_difference() {
                 output_dtype: DTypeId(F32),
                 output_shape: sh,
             });
-            g.set_norm_attrs(nrm, NormAttrs { num_groups: 2 });
             let out = g.add_node(Node {
                 op: GraphOp::Output,
                 inputs: SmallVec::from_iter([InputSource::Node(nrm)]),
