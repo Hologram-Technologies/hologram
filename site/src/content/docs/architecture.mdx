@@ -1,104 +1,85 @@
 ---
 title: Architecture
-description: System layers, component responsibilities, and design principles.
+description: Execution model, LUT materialization, fusion, and the .holo format.
 ---
 
-Hologram is structured as a stack of focused layers. Each layer has a single responsibility and depends only on the layer below it.
+Hologram is a content-addressed, UOR-native tensor runtime. A tensor graph is compiled to a `.holo` archive and executed through a runtime where every value carries a UOR-ADDR κ-label. Identical computation is addressed once and reused — memoized, deduplicated, and replayed — rather than recomputed.
 
-## System Layers
+## Content-addressed execution
 
-### LUT & Ring Layer
+The runtime is one content-addressed buffer pool. A value lives in a single aligned buffer; a slot *binds* to it by κ-label.
 
-The foundation. All activation functions and pointwise arithmetic are precomputed into static `[u8; 256]` lookup tables at compile time. Values are encoded as elements of integer rings (Q0, Q1) — no floats on hot paths.
+- Re-executing identical inputs rebinds rather than recomputes — a graph-level memo hit is O(1) in graph size.
+- Constants are pinned for the session's lifetime.
+- `BufferArena` is the pool: an aligned buffer pool that backs both intermediate values and pinned constants.
 
-- Activation tables: relu, sigmoid, tanh, gelu, sin, cos, and more
-- `ByteRing` — u8 arithmetic with wraparound, closed under add/mul/neg
-- Encoding schemes: `AngleEncoding`, `SignedEncoding`, `RawEncoding`
-- `ElementWiseView` — applies a LUT to a slice in-place (SIMD-accelerated)
-- `no_std + alloc` compatible; compiles for `wasm32-unknown-unknown`
+This is the "performance is content-addressing, not micro-optimization" principle: redundant compute is eliminated by identity, not by hand-tuning.
 
-### Expression Graph Layer
+## LUT materialization over finite quantum domains
 
-Models are expressed as directed acyclic graphs of typed operations. The graph layer handles construction, validation, and optimization before anything runs.
+A pure function over a finite quantum domain is its own content-addressed table, built bit-identically from the reference implementation:
 
-- `HoloGraph` — DAG of `Node` + `Edge` values, each node wrapping a `PrimOp`
-- Fusion passes: constant folding, CSE, view fusion
-- Scheduling: topological sort → level assignment for parallel execution
-- Fluent `GraphBuilder` API for programmatic graph construction
+- **f16 / bf16 transcendentals** (Sigmoid, Tanh, GELU, SiLU, Exp, Erf): the 16-bit domain has 65536 points, so the activation is materialized once as a `[u16; 65536]` table (128 KB, L2-resident). Dispatch is one lookup instead of `widen → transcendental → narrow` — ~28× faster on bf16 GELU, bit-identical.
+- **Byte (≤8-bit) domain**: a 256-entry table.
+- **Quantized inference**: a `Dequantize → activation` chain stores f32 but its *realized* domain is the quantized source's (256 for i8, 16 for i4), so it densifies into a ≤256-entry table indexed by the quantized byte — ~27× faster, keyed on realized information content rather than storage width.
+- **f32** is computed (a 4 GB table is infeasible); reuse is structural, via the κ-label memo at the graph level.
 
-### Compiler Pipeline
+## Fusion
 
-Transforms a `HoloGraph` into an executable schedule artifact.
+Fusion happens in two stages — compile-time rewriting and load-time content-addressed passes — so intermediates are never separately materialized.
 
-1. Graph validation
-2. Constant folding
-3. Common subexpression elimination (CSE)
-4. View fusion
-5. Topological sort + level assignment
-6. Liveness analysis (minimizes peak buffer memory)
-7. Schedule serialization into a `.holo` archive
+### Compile-time
 
-### Archive & Loading Layer
+The graph is desugared to primitive ops and algebraically elided:
 
-Models are stored in `.holo` binary archives — a three-section format (header, graph, weights) using `rkyv` for zero-copy deserialization.
+- Bit-exact-sound identities and involutions are removed.
+- `Reshape` becomes a relabel rather than a copy.
+- Dead-code elimination drops unreachable nodes.
 
-```
-┌──────────────────┐
-│  Header (fixed)  │  Magic bytes, version, section offsets
-├──────────────────┤
-│  Graph section   │  Serialized HoloGraph (rkyv)
-├──────────────────┤
-│  Weight section  │  Quantized weight tensors (rkyv) + SHA-256 checksum
-└──────────────────┘
-```
+### Load-time content-addressed passes
 
-Weights are memory-mapped at load time — no copying. `BytesLoader` covers in-memory slices for WASM.
+At session load, fusion passes collapse sub-graphs:
 
-### Execution Layer
+- **Matmul epilogue** — `MatMul` / `Conv2d` absorb a following activation and/or bias add (`MatMulActivation`, `MatMulAddActivation`), applied in-register.
+- **Dequantize → matmul** (`MatMulDequant`) — the quantized weight is dequantized inside the kernel; the dense f32 weight is never materialized.
+- **Dequantize → activation** — densified to a quantized-domain table (above).
+- **Expand → elementwise-binary** (`BroadcastBinary`) — the broadcast operand is read with stride-0 indexing in place; the broadcast tensor is never built (zero-movement).
 
-Drives inference level by level. Nodes at the same level are independent and run in parallel (Rayon, feature-gated).
+## Matmul
 
-```
-Level 0: [node_A, node_B]   ← parallel
-Level 1: [node_C]           ← depends on A + B
-Level 2: [node_D, node_E]   ← parallel
-```
+f32 matmul is a cache-oblivious blocked SIMD kernel (AVX-512 → AVX2 → NEON → portable scalar, selected at runtime) with compile-time panel-packed constant weights (zero runtime copy). Quantized weights (i8 / i4) flow through the fused `MatMulDequant` path. f16 / bf16 widen into the same f32 engine — no scalar fallback; f64 is rejected loudly.
 
-Each node dispatch is a KV lookup: `(op_id, encoded_input) → encoded_output`. `BufferArena` provides a bump-allocator for intermediate activations, reset between calls.
+## Memory tiers (optional)
 
-**LUT-GEMM**: matrix multiplication is decomposed into row-wise LUT lookups summed via `PsumBook` — eliminating FLOP entirely for quantized weights.
+With the `tiered-exec` feature, the PM_7 pass classifies each value's memory tier by its quantum level, adding memory-affinity classification and observability without changing numerical results.
 
-### Async & Streaming
+## The `.holo` archive
 
-Tokio-based async wrappers around the compiler and executor. The `InferenceStream` type yields partial outputs as a `Stream`, enabling incremental results for large models.
+Models are stored in `.holo` binary archives: a sectioned format addressed by UOR-ADDR κ-labels with a BLAKE3 footer. `HoloWriter` produces archives; `HoloLoader` reads them. Archives also carry the warm-start fold — the constant-only cone is materialized into the archive so the runtime cache is never cold on first execution.
 
-### C & WASM Bindings
+Model parts compose as κ-labels via `address::address_ring` and `address::compose_model` (a commutative product, giving order-independent model identity).
 
-- **C ABI** — opaque handles, generated header via `cbindgen`, error propagation via `hologram_last_error()`
-- **WASM** — `wasm-bindgen` bindings exposing `HologramSession` as a JavaScript class
+## C & WASM bindings
+
+`hologram-ffi` exposes the pipeline through a C ABI: a session is referenced by an integer handle into a process-local table (`hologram_session_load` / `_execute` / `_close`, `hologram_compile_source`). Built for `wasm32-unknown-unknown` with `--features wasm`, the same FFI powers the browser demo.
 
 ## Design Principles
 
-### O(1) Compute
+### Content-addressing, not micro-optimization
 
-Every activation and pointwise op is a single array index. No branching, no transcendental functions at inference time.
+Redundant compute is eliminated by identity. The same κ-label addresses the same value once; reuse is memoization, deduplication, and replay.
 
-### Ring Algebra
+### Compute-once tables
 
-Weights and activations are encoded as integer ring elements. Arithmetic is closed — no float promotion needed.
+A pure function over a finite quantum domain is materialized once as a lookup table, bit-identical to compute. Information content (the realized domain), not storage width, decides the table size.
 
-### KV-Dispatch
+### One float engine, no fallback
 
-Operation ID + encoded operands → precomputed result. The KV registry stores all reachable `(op, input) → output` pairs upfront.
-
-### Zero-Copy Loading
-
-Model weights are mmap'd from `.holo` archives and validated in-place. No deserialization heap allocation.
+f16 / bf16 widen into the single f32 engine; f64 is rejected loudly. There is no scalar fallback for the float engine.
 
 ## Conventions
 
 - Max 3 function arguments; builder pattern for more.
 - Functions ≤ 15 lines.
-- `macro_rules!` for repeated trait implementations.
 - No TODOs, stubs, or `unimplemented!()`.
-- Single archive format version — no backwards compatibility shims.
+- Serialisation uses rkyv exclusively; no serde.

@@ -1,9 +1,9 @@
 ---
 title: Hologram
-description: O(1) neural network inference via precomputed lookup tables and KV-dispatch.
+description: A content-addressed, UOR-native tensor runtime.
 template: splash
 hero:
-  tagline: O(1) neural network inference via precomputed lookup tables and KV-dispatch.
+  tagline: A content-addressed, UOR-native tensor runtime — address identical computation once, reuse it everywhere.
   actions:
     - text: Getting Started
       link: guides/getting-started/
@@ -14,26 +14,48 @@ hero:
       variant: minimal
 ---
 
-Hologram is a v2 rewrite targeting extreme inference speed by replacing floating-point arithmetic with integer LUT lookups and key-value dispatch, built on [`uor-foundation`](https://github.com/UOR-Foundation/uor-foundation) v3.5.0.
+Hologram compiles a tensor graph to a `.holo` archive and executes it through a content-addressed runtime: every value carries a UOR-ADDR κ-label, so identical computation is addressed once and reused (memoized, deduplicated, replayed) instead of recomputed. The same `.holo` archive runs on x86_64, WebAssembly (`no_std`), and ARM bare-metal.
 
 ## Core Idea
 
-Instead of computing `f(x)` at runtime, every activation and arithmetic operation is resolved as a table lookup:
+The runtime is one content-addressed buffer pool. A value lives in a single aligned buffer; a slot *binds* to it by κ-label. Re-executing identical inputs rebinds rather than recomputes — a graph-level memo hit is O(1) in graph size — and constants are pinned for the session's lifetime. Performance comes from content-addressing, not micro-optimization: redundant compute is eliminated by identity.
+
+Where a function has a finite quantum domain it is **materialized once as a lookup table** — the compute-once form of the function, built bit-identically from the reference implementation:
 
 ```
-result = LUT[encoded_input]   // O(1), integer index
+result = LUT[encoded_input]   // O(1), bit-identical to compute
 ```
 
-Weights are quantized to integer ring elements. Matrix multiplication becomes a sum of LUT lookups (`LUT-GEMM`), eliminating floating-point entirely on hot paths.
+- **f16 / bf16 transcendentals** (Sigmoid, Tanh, GELU, SiLU, Exp, Erf): the 16-bit domain has 65536 points, so the activation is materialized once as a `[u16; 65536]` table (128 KB, L2-resident) — **~28× faster** on bf16 GELU.
+- **Byte (≤8-bit) domain**: a 256-entry table.
+- **Quantized inference**: a `Dequantize → activation` chain densifies into a ≤256-entry table keyed on the quantized byte — **~27× faster**.
+- **f32** is computed (a 4 GB table is infeasible); reuse is structural, via the κ-label memo at the graph level.
 
 ## Capabilities
 
 | Feature | What it does |
 |---------|-------------|
-| **Activation Lookup** | All activation functions precomputed into static arrays — each inference call is one integer index |
-| **LUT-GEMM** | Matrix multiplication via LUT row-sum accumulation — no floating-point on hot paths |
-| **Zero-Copy Loading** | `.holo` archives are memory-mapped and deserialized without copying bytes |
-| **Graph Fusion** | Constant folding, CSE, and view fusion reduce ops before execution |
-| **Parallel Execution** | Independent graph nodes execute in parallel across Rayon threads |
-| **Async & Streaming** | Tokio-based async inference with incremental output streaming |
-| **Cross-Platform** | `no_std` core, C ABI, and WASM bindings for embedded and browser targets |
+| **Content-addressed execution** | Every value carries a UOR-ADDR κ-label; identical computation is addressed once and replayed in O(1) |
+| **LUT materialization** | Pure functions over a finite quantum domain become a static table, bit-identical to compute |
+| **Fusion** | Compile-time desugar + algebraic elision, plus load-time content-addressed fusion (matmul epilogue, dequant→matmul, dequant→activation, broadcast→binary) |
+| **Cache-oblivious matmul** | Blocked SIMD kernel (AVX-512 → AVX2 → NEON → scalar) with compile-time panel-packed constant weights |
+| **Warm start** | The constant-only cone is folded into the archive so the runtime cache is never cold |
+| **Cross-platform** | `no_std` + `alloc` library stack, a C ABI, and WASM bindings for embedded and browser targets |
+
+## Workspace crates
+
+Eleven crates make up the workspace; depend on the individual crates you need — there is no umbrella crate.
+
+| Crate | Role |
+|---|---|
+| `hologram-host` | Platform/host bounds (register widths, capacities) |
+| `hologram-types` | Shared types: dtype tags, memory tiers |
+| `hologram-ops` | UOR-native op taxonomy, semantics, backward rules |
+| `hologram-graph` | Tensor graph IR, desugaring, algebraic elision, scheduling |
+| `hologram-compiler` | Graph → `.holo` (lowering, fusion, workspace planning) |
+| `hologram-archive` | `.holo` binary format, UOR-ADDR κ-labels, BLAKE3 footer |
+| `hologram-backend` | Kernel backends (CPU SIMD + LUT; optional wgpu / Metal) |
+| `hologram-exec` | Content-addressed executor, buffer pool, warm-start |
+| `hologram-ffi` | C ABI bindings |
+| `hologram-cli` | `hologram compile` / `execute` / `inspect` / `bench` |
+| `hologram-bench` | Criterion benchmark suites |

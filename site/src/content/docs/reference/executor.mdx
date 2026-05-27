@@ -1,66 +1,71 @@
 ---
-title: Executor & KV-Dispatch
-description: Level-by-level KV-lookup execution, buffer arena, and LUT-GEMM.
+title: Executor & Content-Addressed Execution
+description: Synchronous inference over one content-addressed buffer pool, with κ-label memoization.
 ---
 
-KV-lookup executor, buffer arena, and parallel level execution.
+`hologram-exec` runs a compiled `.holo` archive. Execution is **synchronous**
+— there is no async API and no streaming. The runtime is `no_std + alloc` by
+default so inference runs in wasm and on embedded targets; the `std` feature
+adds host-only amenities.
 
 ## Execution Model
 
-Execution proceeds level by level. Nodes at the same level are independent and execute in parallel when the `parallel` feature is enabled.
+Execution rides on **one content-addressed buffer pool** (`BufferArena`). A
+value lives in exactly one 64-byte-aligned buffer; a slot *binds* to that
+buffer rather than copying it — so the runtime is zero-movement. Buffers fall
+into two classes:
 
+- **pinned** — model constants/weights, deduped by content κ-label, resident for the session
+- **transient** — boundary inputs, intermediates, and outputs, held in a byte-bounded two-generation pool
+
+Every value carries a UOR-ADDR κ-label (71 bytes). A computed value's label is
+derived by ordered composition of its operands' labels — cost `O(operands)`,
+independent of tensor size. Because the kernels are deterministic, an identical
+derivation always yields identical content, so:
+
+- A whole-graph **re-execution** whose input ports content-address to a key already in the graph memo returns the cached output addresses without walking the graph — O(1) in graph size.
+- A shared sub-graph (common prefix / CSE within one run) is recognized and its kernel dispatch is elided.
+
+Warm-start (`WarmStore`) pins the constant-only cone's materialized results so
+the runtime cache is never cold.
+
+## Types
+
+- `InferenceSession<B>` — the loaded model; `B: SessionBackend`
+- `BufferArena` — the content-addressed buffer pool (implements the backend's `Workspace`)
+- `InputBuffer<'a>` — `{ bytes: &'a [u8] }`, a borrowed input tensor
+- `OutputBuffer` — `{ bytes: Vec<u8> }`, an owned output tensor
+- `WarmStore` / `MemWarmStore` / `FileWarmStore` (the last requires `std`)
+- `ExecError` — the runtime's error type
+
+## Loading & executing
+
+```rust
+use hologram_exec::{InferenceSession, BufferArena, InputBuffer};
+use hologram_backend::CpuBackend;
+
+let backend: CpuBackend<BufferArena> = CpuBackend::new();
+let mut session = InferenceSession::load(&archive, backend)?;
+
+let outputs = session.execute(&[InputBuffer { bytes: &input_bytes }])?;
+let result: &[u8] = &outputs[0].bytes;
 ```
-Schedule level 0: [node_A, node_B]   ← parallel
-Schedule level 1: [node_C]           ← depends on A + B
-Schedule level 2: [node_D, node_E]   ← parallel
-```
 
-Each node dispatch is a KV lookup: `(op_id, encoded_inputs) → encoded_output`.
+## Accessors
 
-## Components
-
-### `eval`
-
-- `Executor` — drives level-by-level execution given a schedule and KV registry
-- `ScheduleBridge` — adapts `hologram-archive` entrypoints to the executor's input format
-
-### `kv`
-
-- `KvRegistry` — maps `(op_id, input_key) → output_value` for all ops in the model
-- `KvStore` — underlying hash map storage for the registry
-
-### `buffer`
-
-- `BufferArena` — bump-allocator arena for intermediate activation buffers; reset between inference calls with no per-call heap allocation
-
-### `mmap`
-
-Helpers for accessing weight tensors via memory-mapped pointers from the archive.
-
-### `parallel`
-
-Rayon thread-pool configuration for parallel level execution (feature-gated `parallel`).
-
-## LUT-GEMM
-
-LUT-based matrix multiplication — no floating-point operations:
-
-- `matmul` — core LUT-GEMM routine
-- `parallel` — Rayon-parallel tile decomposition
-- `PsumBook` — partial sum accumulator for LUT-GEMM
-- `quantize` — weight quantization helpers for GEMM inputs
+| Method | Returns |
+|--------|---------|
+| `input_count()` | declared input ports |
+| `output_count()` | declared output ports |
+| `kernel_count()` | kernel calls in the loaded archive |
+| `resident_bytes()` | bytes currently resident in the pool |
+| `resident_count()` | resident buffers in the pool |
+| `content_store_len()` | distinct content-addressed entries |
 
 ## Feature Gates
 
 | Feature | Effect |
 |---------|--------|
-| `parallel` | Enables Rayon parallel execution across nodes in a level |
-
-## Example
-
-```rust
-use hologram_exec::eval::Executor;
-
-let executor = Executor::from_entrypoint(entrypoint)?;
-let output = executor.run(&input_buffer)?;
-```
+| `std` | Host-only amenities, including `FileWarmStore` |
+| `parallel` | Forwards to the backend's intra-kernel parallelism (one dispatch uses every core) |
+| `tiered-exec` | PM_7 memory-tier coherence types |

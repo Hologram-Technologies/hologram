@@ -1,81 +1,106 @@
 # Hologram
 
-**O(1) compute acceleration via precomputed lookup tables**
+**A content-addressed, UOR-native tensor runtime**
 
-[![CI](https://github.com/UOR-Foundation/hologram/actions/workflows/ci.yml/badge.svg)](https://github.com/UOR-Foundation/hologram/actions/workflows/ci.yml)
+[![CI](https://github.com/Hologram-Technologies/hologram/actions/workflows/ci.yml/badge.svg)](https://github.com/Hologram-Technologies/hologram/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Hologram replaces iterative computation with single-cycle array lookups. Any unary function — activation, trigonometric, logarithmic — is precomputed into a 256-entry table. Chains of such operations are fused at compile time into a single table, so `sigmoid(relu(gelu(x)))` costs the same as `identity(x)`. Quantized matrix multiplication is implemented via partial-sum booklets (LUT-GEMM), enabling GPU-free neural network inference with 16–256× fewer FLOPs than naive float matmul.
-
-The pipeline runs on x86_64, WebAssembly, and ARM bare-metal (`no_std`) with the same `.holo` archive format across all targets.
+Hologram compiles a tensor graph to a `.holo` archive and executes it through a
+content-addressed runtime: every value carries a UOR-ADDR κ-label, so identical
+computation is addressed once and reused (memoized, deduplicated, replayed)
+instead of recomputed. Where a function has a finite quantum domain it is
+**materialized once as a lookup table** — the compute-once form of the function —
+and dispatched in O(1). The same `.holo` archive runs on x86_64, WebAssembly, and
+ARM bare-metal (`no_std`).
 
 ---
 
 ## How it works
 
-### Pi-F-lambda encoding
+### Content-addressed execution
 
-Continuous values are mapped into the byte domain, operated on in O(1), then mapped back:
+The runtime is one content-addressed buffer pool. A value lives in a single
+aligned buffer; a slot *binds* to it by κ-label. Re-executing identical inputs
+rebinds rather than recomputes (a graph-level memo hit is O(1) in graph size),
+and constants are pinned for the session's lifetime. This is the "performance is
+content-addressing, not micro-optimization" principle: redundant compute is
+eliminated by identity, not by hand-tuning.
 
-```
-f64 ──[embed: pi]──► u8 ──[LUT: F]──► u8 ──[lift: lambda]──► f64
-      AngleEncoding        sin/cos             SignedEncoding
-      SignedEncoding       relu/sigmoid        UnsignedEncoding
-      UnsignedEncoding     gelu/silu/exp …
-```
+### LUT materialization over finite quantum domains
 
-Four encoding strategies cover periodic (angle), signed-range (signed), unit-interval (unsigned), and pass-through (raw) domains.
+A pure function over a finite quantum domain is its own content-addressed table,
+built bit-identically from the reference implementation:
 
-### Compile-time fusion
+- **f16 / bf16 transcendentals** (Sigmoid, Tanh, GELU, SiLU, Exp, Erf): the
+  16-bit domain has 65536 points, so the activation is materialized once as a
+  `[u16; 65536]` table (128 KB, L2-resident). Dispatch is one lookup instead of
+  `widen → transcendental → narrow` — **~28× faster** on bf16 GELU, bit-identical.
+- **Byte (≤8-bit) domain**: a 256-entry table.
+- **Quantized inference**: a `Dequantize → activation` chain stores f32 but its
+  *realized* domain is the quantized source's (256 for i8, 16 for i4), so it
+  densifies into a ≤256-entry table indexed by the quantized byte — **~27×**
+  faster, keyed on realized information content rather than storage width.
+- **f32** is computed (a 4 GB table is infeasible); reuse is structural, via the
+  κ-label memo at the graph level.
 
-Five optimisation passes run during graph compilation, before any code executes:
+### Fusion
 
-1. **Constant folding** — ops on compile-time constants are evaluated and replaced with a single `Const` node.
-2. **View fusion (Q0)** — chains of byte-domain unary ops are composed into a single 256-byte lookup table. Involutions like `Neg∘Neg` cancel to zero-cost identity.
-3. **Q1 view fusion** — same composition for 16-bit ring operations (128 KB table). Never fuses across ring-level boundaries.
-4. **Epilogue fusion** — `MatMul`, `Conv2d`, and normalisation ops absorb their successor activation (and optional bias add) so the activation is applied in-register, eliminating intermediate buffers.
-5. **Common subexpression elimination** — duplicate subexpressions are hash-deduplicated.
+Compile-time, the graph is desugared to primitive ops and algebraically elided
+(bit-exact-sound identities / involutions / `Reshape` relabels + dead-code
+elimination). At session load, content-addressed fusion passes collapse
+sub-graphs so intermediates are never separately materialized:
 
-View fusion example:
+- **Matmul epilogue** — `MatMul` / `Conv2d` absorb a following activation and/or
+  bias add (`MatMulActivation`, `MatMulAddActivation`), applied in-register.
+- **Dequantize → matmul** (`MatMulDequant`) — the quantized weight is
+  dequantized inside the kernel; the dense f32 weight is never materialized.
+- **Dequantize → activation** — densified to a quantized-domain table (above).
+- **Expand → elementwise-binary** (`BroadcastBinary`) — the broadcast operand is
+  read with stride-0 indexing in place; the broadcast tensor is never built.
 
-```rust
-let fused = view_sin.then(view_relu).then(view_sigmoid);
-// fused.apply(x) performs one array access regardless of chain length
-```
+### Matmul
 
-Epilogue fusion is the biggest memory-bandwidth win: in Stable Diffusion's UNet (512×512, 320 channels), Conv2d + Activation fusion saves ~7.7 GB of memory traffic per inference step across 23 ResNet blocks.
-
-### LUT-GEMM
-
-Quantized weight matrices are stored as 4-bit or 8-bit indices into a codebook. Matrix–vector products are computed by accumulating precomputed partial sums rather than multiply-accumulate, achieving constant FLOP reduction over the matrix rank.
+f32 matmul is a cache-oblivious blocked SIMD kernel (AVX-512 → AVX2 → NEON →
+portable scalar, selected at runtime) with compile-time panel-packed constant
+weights (zero runtime copy). Quantized weights (i8 / i4) flow through the fused
+`MatMulDequant` path. f16 / bf16 widen into the same f32 engine — no scalar
+fallback; f64 is rejected loudly.
 
 ---
 
 ## Workspace crates
 
-| Crate | Role | `no_std` | Key types |
-|---|---|:---:|---|
-| `hologram-core` | LUT tables, `ElementWiseView`, ring algebra, encoding | ✓ | `ElementWiseView`, `ByteRing`, `LutOp`, `PrimOp`, `AngleEncoding` |
-| `hologram-graph` | Expression graph, subgraphs, fusion passes, scheduling | — | `Graph`, `GraphBuilder`, `GraphOp`, `ExecutionSchedule` |
-| `hologram-archive` | `.holo` binary format, rkyv zero-copy, mmap | — | `HoloWriter`, `HoloLoader`, `HoloHeader`, `WeightDType` |
-| `hologram-exec` | KV-lookup executor, buffer arena, LUT-GEMM kernels | — | `KvExecutor`, `KvStore`, `BufferArena`, `QuantizedWeights4/8` |
-| `hologram-compiler` | Graph → optimised `.holo` (liveness, workspace planning) | — | `CompilerBuilder`, `CompilationStats`, `WorkspaceLayout` |
-| `hologram-async` | Tokio async/await wrappers for compile + execute | — | `AsyncCompiler`, `AsyncExecutor` |
-| `hologram-ffi` | C ABI (`cbindgen`) and WASM (`wasm-bindgen`) bindings | — | `HoloGraphBuilder`, `wasm_execute` |
-| `hologram-cli` | `hologram compile / execute / bench` subcommands | — | — |
-| `hologram-bench` | Criterion benchmarks (12 suites) | — | — |
+Every library crate is `no_std` + `alloc` by default and exposes a `std` feature
+for host builds.
 
-The root `hologram` crate re-exports the full public API as a single dependency.
+| Crate | Role | Key types |
+|---|---|---|
+| `hologram-host` | Platform/host bounds (register widths, capacities) | `HologramHostBounds` |
+| `hologram-types` | Shared types: dtype tags, memory tiers | `MemoryTier` |
+| `hologram-ops` | UOR-native op taxonomy + semantics + backward rules | `Op`, `SemanticOp`, `OpCategory`, `BackwardRule` |
+| `hologram-graph` | Tensor graph IR, desugaring, algebraic elision, scheduling | `Graph`, `Node`, `GraphOp`, `OpKind`, `ConstantStore`, `ExecutionSchedule` |
+| `hologram-compiler` | Graph → `.holo` (lowering, fusion, workspace planning) | `Compiler`, `compile`, `BackendKind`, `source` |
+| `hologram-archive` | `.holo` binary format, UOR-ADDR κ-labels, BLAKE3 footer | `HoloWriter`, `HoloLoader`, `address::{address_ring, compose_model}` |
+| `hologram-backend` | Kernel backends (CPU SIMD + LUT; optional wgpu/Metal) | `CpuBackend`, `Backend`, `KernelCall`, `Workspace` |
+| `hologram-exec` | Content-addressed executor, buffer pool, warm-start | `InferenceSession`, `BufferArena`, `InputBuffer`, `WarmStore` |
+| `hologram-ffi` | C ABI bindings (`hologram_session_*`) | C functions |
+| `hologram-cli` | `hologram compile` / `inspect` subcommands | — |
+| `hologram-bench` | Criterion benchmark suites | — |
+
+Depend on the individual crates you need (e.g. `hologram-compiler`,
+`hologram-exec`, `hologram-backend`); there is no umbrella crate.
 
 ---
 
 ## Quick start
 
-Add to `Cargo.toml`:
+Add the crates you need to `Cargo.toml`:
 
 ```toml
 [dependencies]
-hologram = { git = "https://github.com/UOR-Foundation/hologram" }
+hologram-compiler = { git = "https://github.com/Hologram-Technologies/hologram" }
+hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram" }
+hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram" }
 ```
 
 Run the end-to-end pipeline example, which parses a graph, compiles it to a
@@ -150,15 +175,15 @@ wasm and on embedded targets) and exposes a `std` feature for host builds.
 | `wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
 | `metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
 | `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
-| `async` | `hologram-exec` | — | Async execution wrapper (implies `std`) |
-| `cli` | — | `hologram` binary (`hologram-cli`) |
-| `wasm` | — | `wasm-bindgen` JS exports (implies `ffi`) |
-| `full` | — | All of the above |
+| `tiered-exec` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
+| `parallel` | `hologram-backend` | ✓ | Rayon parallel level execution |
+| `wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
 
-For `no_std` targets disable `std` and `simd`:
+For `no_std` targets (wasm / embedded) disable default features on the library
+crates:
 
 ```toml
-hologram = { ..., default-features = false, features = ["parallel"] }
+hologram-backend = { ..., default-features = false }
 ```
 
 ---
@@ -172,201 +197,78 @@ hologram = { ..., default-features = false, features = ["parallel"] }
 | `x86_64-pc-windows-msvc` | Full | CI-tested on Windows |
 | `wasm32-unknown-unknown` | Full | Browser + WASM runtime, `no_std` |
 | `aarch64-unknown-linux-gnu` | Full | CI cross-compiled |
-| `thumbv7em-none-eabihf` | Core | `no_std`, no heap — `hologram-core` only |
-
----
-
-## Profiling
-
-Enable the `profile` feature to collect per-op timing, per-level breakdown, and shape propagation overhead during execution:
-
-```bash
-cargo run --features profile,cli -p hologram -- run model.holo --prompt "Hello"
-```
-
-The profile summary is printed to stderr when execution completes:
-
-```
-═══════════════════════════════════════════════════════════════
-  EXECUTION PROFILE
-═══════════════════════════════════════════════════════════════
-  Total wall time: 1234.567ms
-
-  OP TIMING (sorted by total time)
-  ─────────────────────────────────────────────────────────────
-  Op                    Calls   Total(ms)    Avg(µs)  Out(MB)  Pct(%)
-  ─────────────────────────────────────────────────────────────
-  MatMul                   64    890.123     13908.2    24.50    72.1%
-  Attention                32    210.456      6576.8    12.25    17.0%
-  RMSNorm                  64     45.678       713.7     6.00     3.7%
-  ...
-
-  LEVEL TIMING (top 10 by dispatch time)
-  ─────────────────────────────────────────────────────────────
-  Level    Nodes     Shape(ms)  Dispatch(ms)
-  ─────────────────────────────────────────────────────────────
-      0        3        0.012        0.045
-     12        5        0.008       42.315
-  ...
-═══════════════════════════════════════════════════════════════
-```
-
-The profiling infrastructure has zero overhead when the `profile` feature is disabled. On macOS with Apple Silicon, enable `accelerate` alongside `profile` to benchmark with BLAS-accelerated MatMul and Attention:
-
-```bash
-cargo run --features profile,accelerate,cli -p hologram -- run model.holo --prompt "Hello"
-```
+| `thumbv7em-none-eabihf` | Core | `no_std` + `alloc` — library crates (no CLI / host I/O) |
 
 ---
 
 ## Benchmarks
 
-Twelve Criterion suites cover every layer:
+Criterion suites under `hologram-bench` (`just bench`, or `cargo bench -p
+hologram-bench --bench <suite>`):
 
 | Suite | Measures |
 |---|---|
-| `lut` | Table generation, single-byte apply, 21 `LutOp` variants |
-| `view` | Composition chains, SIMD `apply_slice`, rkyv round-trip |
-| `kv_dispatch` | `KvStore` unary/binary at 256 B – 64 KB |
-| `executor` | Linear, diamond, and wide-parallel graph topologies |
-| `lut_gemm` | Q4/Q8 matmul at 16×16 – 256×256; quantisation overhead |
-| `compiler` | Full compile pipeline at 10/50/100 nodes |
-| `fusion` | Constant fold + CSE + view fusion at 10 – 1 000 nodes |
-| `archive` | `HoloWriter` build + `HoloLoader` round-trip |
-| `q1` | 16-bit quantum scaling vs Q0 and f64 |
-| `async_exec` | Tokio batch execution throughput |
-| `async_stream` | Token-streaming scheduling |
-| `ffi` | C/WASM interface call overhead |
+| `matmul` | f32 blocked-SIMD matmul throughput across sizes |
+| `production` | End-to-end MLP stack (cold + content-addressed served) |
+| `fusion` | Fused vs unfused kernels (matmul epilogue, dequant, broadcast) |
+| `lut_activation` | f16/bf16 LUT vs computed transcendentals |
+| `dequant_activation` | Densified `Dequantize → activation` vs unfused |
+| `content_reuse` | Content-addressed memo hit vs recompute |
+| `tiered_executor` | Per-execute dispatch overhead (PM_7 tiering) |
+| `compiler` | Compile pipeline |
+| `decode_step` | Archive decode + session load |
 
-```bash
-just bench                        # run all
-cargo bench -p hologram-bench lut_gemm  # specific suite
-```
-
-CI publishes benchmark results to the docs site on every push to `main`.
+Recorded results live in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ---
 
 ## CLI
 
-```bash
-# compile a graph description to a .holo archive
-hologram compile graph.json --output model.holo
-
-# execute a .holo archive with named inputs
-hologram execute model.holo --input x=data.bin
-
-# profile execution
-hologram bench model.holo
-```
-
-Install from workspace:
+`hologram-cli` builds the `hologram` binary:
 
 ```bash
-cargo install --path . --features cli
+# compile hologram-source (or an empty graph) to a .holo archive
+hologram compile --source graph.txt --output model.holo
+
+# inspect an archive's section table
+hologram inspect --archive model.holo
+
+# execute against zero-byte inputs; prints each output port's byte length
+hologram execute --archive model.holo
+
+# micro-bench: run an archive N times, report wall-clock per iteration
+hologram bench --archive model.holo --iterations 100
+```
+
+Install:
+
+```bash
+cargo install --path crates/hologram-cli
 ```
 
 ---
 
-## Configuration
+## C FFI
 
-Hologram loads settings from TOML config files. Files are checked in priority order (highest first):
-
-1. `--config <path>` flag (explicit override)
-2. `.hologram/config.toml` in the current directory (project-local)
-3. `~/.hologram/config.toml` (user-global)
-4. Built-in defaults
-
-### Example `~/.hologram/config.toml`
-
-```toml
-[cache]
-# Directory for decompressed archive caches.
-# Compressed archives are decompressed once on first run,
-# then mmap'd from cache for instant loading.
-# Default: cache next to the archive file.
-dir = "~/.hologram/cache"
-
-[archive]
-# Whether to compress weights/graph in new archives.
-# false = larger files but instant mmap loading (default).
-# true  = smaller files but requires decompression on load.
-compress_weights = false
-compress_graph = false
-
-[inference]
-# Default inference parameters (overridden by CLI flags).
-temperature = 0.7
-top_k = 40
-max_tokens = 128
-```
-
-### Programmatic access
-
-```rust
-use hologram::config::HologramConfig;
-
-// Load from standard locations (~/.hologram/config.toml, .hologram/config.toml)
-let config = HologramConfig::load();
-
-// Load from a specific file
-let config = HologramConfig::load_file(Path::new("my-config.toml"))
-    .unwrap_or_default();
-
-// Access settings
-if let Some(cache_dir) = config.cache_dir() {
-    println!("Cache: {}", cache_dir.display());
-}
-```
-
----
-
-## Archive loading
-
-Hologram archives (`.holo`) support two loading modes:
-
-| Mode | Archive type | Load time | Memory |
-|------|-------------|-----------|--------|
-| **Zero-copy mmap** | Uncompressed | Instant | On-demand (page faults) |
-| **Decompress + cache** | Compressed | First run: seconds. Subsequent: instant | Cache file on disk |
-
-By default, `HoloWriter` produces uncompressed archives for instant loading. Use `.compress_weights()` and `.compress_graph()` for smaller archives (e.g., for distribution), and the runtime will decompress once to a cache file.
-
-```rust
-// Uncompressed (default) — instant mmap loading
-let archive = HoloWriter::new()
-    .set_graph(&graph)
-    .set_weights(weights)
-    .build()?;
-
-// Compressed — smaller file, decompressed on first load
-let archive = HoloWriter::new()
-    .set_graph(&graph)
-    .set_weights(weights)
-    .compress_weights()
-    .compress_graph()
-    .build()?;
-```
-
----
-
-## C FFI & WebAssembly
-
-`hologram-ffi` exposes the full pipeline via a C ABI. Headers are generated automatically by `cbindgen`:
+`hologram-ffi` exposes the pipeline through a C ABI. A session is referenced by
+an integer handle into a process-local table:
 
 ```c
-#include "include/hologram.h"
+// compile hologram-source into a .holo archive (written to `out`)
+int len = hologram_compile_source(src, src_len, out, out_capacity);
 
-HoloGraphBuilder *b = hologram_graph_builder_new();
-HoloGraphNode    x = hologram_input(b, "x");
-HoloGraphNode    y = hologram_lut(b, x, HOLO_LUT_RELU);
-hologram_output(b, "y", y);
-HoloArchive *archive = hologram_compile(b);
-hologram_graph_builder_free(b);
-// … execute, free …
+// load an archive into a session, returning a handle (or a negative error)
+int h = hologram_session_load(archive, archive_len);
+int in_count  = hologram_session_input_count(h);
+int out_count = hologram_session_output_count(h);
+
+// execute (inputs/outputs marshalled as byte buffers), then release
+hologram_session_execute(h, /* … */);
+hologram_session_close(h);
 ```
 
-The same crate builds to a WASM module with `wasm-bindgen` JS exports when compiled with `--features wasm`.
+Built for `wasm32-unknown-unknown` with `--features wasm`; the browser demo
+under `site/` loads the resulting module.
 
 ---
 

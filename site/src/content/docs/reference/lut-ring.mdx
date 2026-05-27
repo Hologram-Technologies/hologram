@@ -1,61 +1,59 @@
 ---
-title: LUT Tables & Ring Algebra
-description: Precomputed lookup tables, integer ring types, encoding schemes, and element-wise views.
+title: LUT Materialization
+description: Materializing a pure function over a finite quantum domain as a content-addressed table — bit-identical to compute.
 ---
 
-Zero-dependency `no_std` building blocks: precomputed LUT tables, integer ring arithmetic, encoding, and element-wise views.
+A pure, deterministic function over a *finite* quantum domain can be
+materialized **once** as a content-addressed table and thereafter evaluated by
+a single lookup per element. The table is bit-identical to running the
+reference computation — it is the same function, precomputed — so it is a fast
+path, not an approximation. This is hologram's "compute once, look up forever"
+strategy, applied wherever the realized input domain is small enough to
+enumerate.
 
-## Lookup Tables
+## f16 / bf16 transcendentals
 
-### `lut`
+IEEE `f16` and `bf16` are 16-bit (Prism quantum level Q1): every input is one
+of 65536 bit patterns. A transcendental activation (GELU, sigmoid, tanh, exp,
+erf, …) is therefore materialized as a `[u16; 65536]` table — 128 KB,
+L2-resident — built lazily once per `(activation, dtype)` in
+`crates/hologram-backend/src/cpu/lut.rs`. Each element becomes one table load.
 
-Precomputed lookup tables for all supported activation functions.
+The table entries are computed from the same reference activation the
+non-LUT path uses, so the result is bit-identical. In practice this is a large
+win: bf16 GELU over 1M elements runs in roughly 712 µs versus ~20 ms computed
+(≈28× faster).
 
-- `LutOp` — enum of all supported operations (relu, sigmoid, tanh, gelu, sin, cos, etc.)
-- `Lut` — wrapper around a `&'static [u8; 256]` table, indexed by `Q0` encoded value
-- `activation/` — tables for basic, math, modern, and scientific activations
-- `arith` — arithmetic operations (add, mul, sub) as LUT wrappers
-- `q0` — stratum lookup (quantization level mapping)
+## Byte (Q0) activations
 
-### `view`
+A `u8` unary activation has only 256 possible inputs, so it is fully
+materialized as a `[u8; 256]` table — the content-addressed, compute-once form
+of the function over the byte ring. Byte Sigmoid / Tanh / Gelu / Silu / Exp /
+Erf all dispatch through their 256-entry table, one load per element,
+bit-identical to computing per element.
 
-`ElementWiseView` — applies a LUT to a slice in-place. SIMD-accelerated when the `simd` feature is enabled.
+## Quantized `Dequantize → activation`
 
-### `buffer`
+When a `Dequantize` feeds directly into a unary activation, the *whole*
+composition `activation((q − zero_point) · scale)` is a pure function of the
+quantized byte `q`. Because `i8` has ≤256 distinct inputs (`i4` ≤16), the
+fused op is densified into a `[f32]` table of ≤256 entries keyed on the
+quantized byte, regardless of element count. Every output is then one lookup.
+This is the f16/bf16 LUT strategy keyed on the **realized** quantum level
+rather than the f32 storage width — a full f32 table would be 4 GB and
+infeasible, but the realized domain here is bounded at 256 entries, so it
+scales to any tensor size. Bit-identical to `dequantize → f32 → activation`;
+roughly 27× faster for i8 → GELU over 1M elements.
 
-`StaticBuf<N>` — fixed-size stack-allocated buffer for zero-alloc hot paths.
+## What stays computed
 
-## Ring Types
+`f32` is **not** tabulated — its domain is 2³² values, too large to
+materialize, so f32 activations are computed directly. The lookup-table path is
+chosen at the realized quantum level (Q0 byte, Q1 16-bit, or the quantized
+domain), never as a blanket replacement.
 
-### `q1`
+## `no_std` compatibility
 
-Fixed-point Q1 type — one bit integer, one bit fraction.
-
-- `Q1Datum` — the Q1 value type
-- Ring operations: add, mul, neg
-- Encoding/decoding to/from `u8`
-- Activation functions mirroring the LUT module but operating on Q1
-
-### `ring`
-
-Ring algebra traits and `ByteRing` — the `u8` ring with wraparound arithmetic.
-
-## Encoding
-
-Encoding schemes for mapping float values into integer ring elements.
-
-| Type | Range | Maps to |
-|------|-------|---------|
-| `AngleEncoding` | `[-π, π]` | `[0, 255]` |
-| `SignedEncoding` | `[-128, 127]` | `[0, 255]` |
-| `UnsignedEncoding` | `[0, 255]` | `[0, 255]` |
-| `RawEncoding` | — | Direct `u8` passthrough |
-
-## Primitive Operations
-
-- `op` — `LutOp` (re-export) and `PrimOp` — primitive operation enum used by the graph layer
-- `datum` — `Datum` — unified value type wrapping Q0/Q1 encoded values
-
-## `no_std` Compatibility
-
-Compiles for `wasm32-unknown-unknown` and `no_std + alloc` targets. LUT tables are `static` arrays — no heap allocation occurs in lookup functions.
+The crates compile for `wasm32-unknown-unknown` and `no_std + alloc`. The LUT
+caches use `OnceLock` and therefore need `std`; under `no_std` the activation
+is computed instead — a compile-time choice, not a runtime fallback.
