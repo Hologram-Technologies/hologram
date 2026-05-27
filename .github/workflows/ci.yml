@@ -212,7 +212,23 @@ jobs:
           cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
           cargo test --release -p hologram-exec --test performance -- --nocapture
 
-  # Job 10: Verify all quality gates passed
+  # Job 10: Quality-gate tooling tests — the gates' own Python/shell logic
+  # (regression compare, benchmark lifecycle, best-of-N, API changelog, and the
+  # release API-history flow). No Rust toolchain needed, so it's fast.
+  tooling-tests:
+    name: Quality-gate tooling tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Tooling unit tests
+        run: python3 scripts/test_quality_gates.py
+      - name: Release API-history flow test
+        run: bash scripts/test-release-tooling.sh
+
+  # Job 11: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()
@@ -224,6 +240,7 @@ jobs:
       - security
       - cross-targets
       - vv
+      - tooling-tests
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

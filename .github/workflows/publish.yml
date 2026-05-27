@@ -35,7 +35,8 @@ jobs:
       - name: Extract version from Cargo.toml
         id: version
         run: |
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "hologram") | .version')
+          # The shared workspace version (no package is named `hologram`).
+          VERSION=$(scripts/workspace-version.sh)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Verify versions match
@@ -147,7 +148,7 @@ jobs:
   # Create GitHub Release with binaries
   # Note: GitHub Packages does not currently support native Cargo registries
   # Users should consume these crates via git dependencies:
-  #   hologram = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v0.1.0" }
+  #   hologram-exec = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v0.1.0" }
   release:
     name: Create GitHub Release
     needs: [verify, build-binaries]
@@ -188,11 +189,10 @@ jobs:
 
           ```toml
           [dependencies]
-          hologram = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
-
-          # Or for specific crates:
-          hologram-core = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
-          hologramr = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          # Depend on the specific crates you need (all share one version):
+          hologram-compiler = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
           ```
 
           #### CLI Binary
@@ -232,7 +232,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "1. **Git Dependency** (Recommended for Libraries)" >> $GITHUB_STEP_SUMMARY
           echo "   \`\`\`toml" >> $GITHUB_STEP_SUMMARY
-          echo "   hologram = { git = \"https://github.com/Hologram-Technologies/hologram\", tag = \"v${{ needs.verify.outputs.version }}\" }" >> $GITHUB_STEP_SUMMARY
+          echo "   hologram-exec = { git = \"https://github.com/Hologram-Technologies/hologram\", tag = \"v${{ needs.verify.outputs.version }}\" }" >> $GITHUB_STEP_SUMMARY
           echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "2. **Binary Download** (For CLI Tool)" >> $GITHUB_STEP_SUMMARY
