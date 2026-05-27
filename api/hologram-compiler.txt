@@ -166,6 +166,7 @@ pub struct hologram_compiler::lower::ShapeArgs
 pub hologram_compiler::lower::ShapeArgs::alpha_bits: u32
 pub hologram_compiler::lower::ShapeArgs::batch: u32
 pub hologram_compiler::lower::ShapeArgs::beta_bits: u32
+pub hologram_compiler::lower::ShapeArgs::causal: bool
 pub hologram_compiler::lower::ShapeArgs::channels_in: u32
 pub hologram_compiler::lower::ShapeArgs::channels_out: u32
 pub hologram_compiler::lower::ShapeArgs::feature: u32
@@ -176,12 +177,14 @@ pub hologram_compiler::lower::ShapeArgs::heads: u32
 pub hologram_compiler::lower::ShapeArgs::k: u32
 pub hologram_compiler::lower::ShapeArgs::k_h: u32
 pub hologram_compiler::lower::ShapeArgs::k_w: u32
+pub hologram_compiler::lower::ShapeArgs::kv_heads: u32
 pub hologram_compiler::lower::ShapeArgs::m: u32
 pub hologram_compiler::lower::ShapeArgs::n: u32
 pub hologram_compiler::lower::ShapeArgs::norm_channels: u32
 pub hologram_compiler::lower::ShapeArgs::num_groups: u32
 pub hologram_compiler::lower::ShapeArgs::pad_h: u32
 pub hologram_compiler::lower::ShapeArgs::pad_w: u32
+pub hologram_compiler::lower::ShapeArgs::scale_bits: u32
 pub hologram_compiler::lower::ShapeArgs::seq: u32
 pub hologram_compiler::lower::ShapeArgs::stride_h: u32
 pub hologram_compiler::lower::ShapeArgs::stride_w: u32

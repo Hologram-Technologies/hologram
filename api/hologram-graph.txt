@@ -65,6 +65,7 @@ pub fn hologram_graph::graph::Graph::add_named_input(&mut self, hologram_graph::
 pub fn hologram_graph::graph::Graph::add_named_output(&mut self, hologram_graph::node::NodeId, impl core::convert::Into<alloc::string::String>)
 pub fn hologram_graph::graph::Graph::add_node(&mut self, hologram_graph::node::Node) -> hologram_graph::node::NodeId
 pub fn hologram_graph::graph::Graph::add_output(&mut self, hologram_graph::node::NodeId)
+pub fn hologram_graph::graph::Graph::attention_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::AttentionAttrs>
 pub fn hologram_graph::graph::Graph::compute_schedule(&mut self)
 pub fn hologram_graph::graph::Graph::constants(&self) -> &hologram_graph::constant::ConstantStore
 pub fn hologram_graph::graph::Graph::constants_mut(&mut self) -> &mut hologram_graph::constant::ConstantStore
@@ -88,6 +89,7 @@ pub fn hologram_graph::graph::Graph::outputs(&self) -> &[hologram_graph::node::N
 pub fn hologram_graph::graph::Graph::quant_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::QuantAttrs>
 pub fn hologram_graph::graph::Graph::reduce_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::ReduceAttrs>
 pub fn hologram_graph::graph::Graph::schedule(&self) -> core::option::Option<&hologram_graph::schedule::Schedule>
+pub fn hologram_graph::graph::Graph::set_attention_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::AttentionAttrs)
 pub fn hologram_graph::graph::Graph::set_conv_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::ConvAttrs)
 pub fn hologram_graph::graph::Graph::set_gather_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GatherAttrs)
 pub fn hologram_graph::graph::Graph::set_gemm_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GemmAttrs)
@@ -155,6 +157,29 @@ impl core::marker::Unpin for hologram_graph::node::InputSource
 impl core::marker::UnsafeUnpin for hologram_graph::node::InputSource
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::InputSource
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::InputSource
+pub struct hologram_graph::node::AttentionAttrs
+pub hologram_graph::node::AttentionAttrs::causal: bool
+pub hologram_graph::node::AttentionAttrs::scale_bits: u32
+impl core::clone::Clone for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::clone(&self) -> hologram_graph::node::AttentionAttrs
+impl core::cmp::Eq for hologram_graph::node::AttentionAttrs
+impl core::cmp::PartialEq for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::eq(&self, &hologram_graph::node::AttentionAttrs) -> bool
+impl core::default::Default for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::default() -> hologram_graph::node::AttentionAttrs
+impl core::fmt::Debug for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_graph::node::AttentionAttrs
+impl core::marker::StructuralPartialEq for hologram_graph::node::AttentionAttrs
+impl core::marker::Freeze for hologram_graph::node::AttentionAttrs
+impl core::marker::Send for hologram_graph::node::AttentionAttrs
+impl core::marker::Sync for hologram_graph::node::AttentionAttrs
+impl core::marker::Unpin for hologram_graph::node::AttentionAttrs
+impl core::marker::UnsafeUnpin for hologram_graph::node::AttentionAttrs
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::AttentionAttrs
+impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::AttentionAttrs
 pub struct hologram_graph::node::ConstantId(pub u32)
 impl core::clone::Clone for hologram_graph::node::ConstantId
 pub fn hologram_graph::node::ConstantId::clone(&self) -> hologram_graph::node::ConstantId
@@ -556,6 +581,29 @@ impl core::marker::Unpin for hologram_graph::node::InputSource
 impl core::marker::UnsafeUnpin for hologram_graph::node::InputSource
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::InputSource
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::InputSource
+pub struct hologram_graph::AttentionAttrs
+pub hologram_graph::AttentionAttrs::causal: bool
+pub hologram_graph::AttentionAttrs::scale_bits: u32
+impl core::clone::Clone for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::clone(&self) -> hologram_graph::node::AttentionAttrs
+impl core::cmp::Eq for hologram_graph::node::AttentionAttrs
+impl core::cmp::PartialEq for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::eq(&self, &hologram_graph::node::AttentionAttrs) -> bool
+impl core::default::Default for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::default() -> hologram_graph::node::AttentionAttrs
+impl core::fmt::Debug for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_graph::node::AttentionAttrs
+pub fn hologram_graph::node::AttentionAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_graph::node::AttentionAttrs
+impl core::marker::StructuralPartialEq for hologram_graph::node::AttentionAttrs
+impl core::marker::Freeze for hologram_graph::node::AttentionAttrs
+impl core::marker::Send for hologram_graph::node::AttentionAttrs
+impl core::marker::Sync for hologram_graph::node::AttentionAttrs
+impl core::marker::Unpin for hologram_graph::node::AttentionAttrs
+impl core::marker::UnsafeUnpin for hologram_graph::node::AttentionAttrs
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::AttentionAttrs
+impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::AttentionAttrs
 pub struct hologram_graph::ConstantId(pub u32)
 impl core::clone::Clone for hologram_graph::node::ConstantId
 pub fn hologram_graph::node::ConstantId::clone(&self) -> hologram_graph::node::ConstantId
@@ -702,6 +750,7 @@ pub fn hologram_graph::graph::Graph::add_named_input(&mut self, hologram_graph::
 pub fn hologram_graph::graph::Graph::add_named_output(&mut self, hologram_graph::node::NodeId, impl core::convert::Into<alloc::string::String>)
 pub fn hologram_graph::graph::Graph::add_node(&mut self, hologram_graph::node::Node) -> hologram_graph::node::NodeId
 pub fn hologram_graph::graph::Graph::add_output(&mut self, hologram_graph::node::NodeId)
+pub fn hologram_graph::graph::Graph::attention_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::AttentionAttrs>
 pub fn hologram_graph::graph::Graph::compute_schedule(&mut self)
 pub fn hologram_graph::graph::Graph::constants(&self) -> &hologram_graph::constant::ConstantStore
 pub fn hologram_graph::graph::Graph::constants_mut(&mut self) -> &mut hologram_graph::constant::ConstantStore
@@ -725,6 +774,7 @@ pub fn hologram_graph::graph::Graph::outputs(&self) -> &[hologram_graph::node::N
 pub fn hologram_graph::graph::Graph::quant_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::QuantAttrs>
 pub fn hologram_graph::graph::Graph::reduce_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::ReduceAttrs>
 pub fn hologram_graph::graph::Graph::schedule(&self) -> core::option::Option<&hologram_graph::schedule::Schedule>
+pub fn hologram_graph::graph::Graph::set_attention_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::AttentionAttrs)
 pub fn hologram_graph::graph::Graph::set_conv_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::ConvAttrs)
 pub fn hologram_graph::graph::Graph::set_gather_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GatherAttrs)
 pub fn hologram_graph::graph::Graph::set_gemm_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GemmAttrs)

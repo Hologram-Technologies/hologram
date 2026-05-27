@@ -1394,7 +1394,11 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     // Grouped-query attention: K/V carry `kv_heads` heads (0 ⇒ multi-head ==
     // heads). Each query head maps to kv head `hi / (h / hkv)`; require an even
     // grouping so the mapping is exact (no silent-wrong).
-    let hkv = if c.kv_heads == 0 { h } else { c.kv_heads as usize };
+    let hkv = if c.kv_heads == 0 {
+        h
+    } else {
+        c.kv_heads as usize
+    };
     if hkv == 0 || !h.is_multiple_of(hkv) {
         return Err(BackendError::UnsupportedOp(
             "attention: heads must be a multiple of kv_heads (grouped-query)",
@@ -1475,7 +1479,6 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
 /// Scaled dot-product attention on f32 slices (the shared engine core for every
 /// attention dtype). Scores via contiguous `simd_f32_dot`; context via
 /// contiguous AXPY. The per-row score buffer is the reused matmul scratch.
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn attention_f32_engine(
     q32: &[f32],
