@@ -697,6 +697,9 @@ impl Graph {
             for (nid, _) in self.reduce_attrs.iter_mut() {
                 *nid = NodeId(dmap[nid.0 as usize]);
             }
+            for (nid, _) in self.gather_attrs.iter_mut() {
+                *nid = NodeId(dmap[nid.0 as usize]);
+            }
             self.nodes = compact;
         }
 
