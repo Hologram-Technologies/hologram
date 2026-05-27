@@ -78,14 +78,14 @@ for host builds.
 |---|---|---|
 | `hologram-host` | Platform/host bounds (register widths, capacities) | `HologramHostBounds` |
 | `hologram-types` | Shared types: dtype tags, memory tiers | `MemoryTier` |
-| `hologram-ops` | UOR-native op taxonomy + semantics + backward rules | `Op`, `SemanticOp`, `OpCategory`, `BackwardRule` |
+| `hologram-ops` | UOR-native op taxonomy + per-op reference semantics | `OpKind`, `ReferenceEvaluator`, `emit_op_term` |
 | `hologram-graph` | Tensor graph IR, desugaring, algebraic elision, scheduling | `Graph`, `Node`, `GraphOp`, `OpKind`, `ConstantStore`, `ExecutionSchedule` |
 | `hologram-compiler` | Graph → `.holo` (lowering, fusion, workspace planning) | `Compiler`, `compile`, `BackendKind`, `source` |
 | `hologram-archive` | `.holo` binary format, UOR-ADDR κ-labels, BLAKE3 footer | `HoloWriter`, `HoloLoader`, `address::{address_ring, compose_model}` |
 | `hologram-backend` | Kernel backends (CPU SIMD + LUT; optional wgpu/Metal) | `CpuBackend`, `Backend`, `KernelCall`, `Workspace` |
 | `hologram-exec` | Content-addressed executor, buffer pool, warm-start | `InferenceSession`, `BufferArena`, `InputBuffer`, `WarmStore` |
 | `hologram-ffi` | C ABI bindings (`hologram_session_*`) | C functions |
-| `hologram-cli` | `hologram compile` / `inspect` subcommands | — |
+| `hologram-cli` | `hologram` binary: `compile` / `execute` / `inspect` / `bench` | — |
 | `hologram-bench` | Criterion benchmark suites | — |
 
 Depend on the individual crates you need (e.g. `hologram-compiler`,
