@@ -83,6 +83,7 @@ fn detect_path() -> u8 {
     {
         return 4;
     }
+    #[allow(unreachable_code)]
     1
 }
 
