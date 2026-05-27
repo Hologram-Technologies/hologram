@@ -268,7 +268,8 @@ pub struct LoweredNode {
 /// dequantize node's 2nd/3rd operands; `inner` = elements per channel step).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct QuantParams {
-    /// Source quantized dtype: `DTYPE_I8` (2) or `DTYPE_I4` (10).
+    /// Source quantized dtype: `DTYPE_U8` (1), `DTYPE_I8` (2), or `DTYPE_I4`
+    /// (10). `u8` is ONNX's default asymmetric quantization type.
     pub quant_dtype: u8,
     /// `f32::to_bits` of the per-tensor scale.
     pub scale_bits: u32,

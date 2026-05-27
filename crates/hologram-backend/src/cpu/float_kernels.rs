@@ -325,10 +325,10 @@ pub fn matmul_dequant_float<W: Workspace>(
     let kn = k * n;
     let in_bytes = match c.quant_dtype {
         DTYPE_I4 => kn.div_ceil(2),
-        DTYPE_I8 => kn,
+        DTYPE_I8 | DTYPE_U8 => kn,
         _ => {
             return Err(BackendError::UnsupportedOp(
-                "matmul_dequant: quant_dtype must be i8/i4",
+                "matmul_dequant: quant_dtype must be i8/u8/i4",
             ))
         }
     };
@@ -371,6 +371,7 @@ pub fn matmul_dequant_float<W: Workspace>(
         for (i, slot) in bdq.iter_mut().enumerate() {
             let q: i32 = match quant_dtype {
                 DTYPE_I8 => (bq[i] as i8) as i32,
+                DTYPE_U8 => bq[i] as i32,
                 DTYPE_I4 => {
                     let byte = bq[i / 2];
                     let nib = if i.is_multiple_of(2) {
