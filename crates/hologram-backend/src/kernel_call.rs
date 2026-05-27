@@ -422,6 +422,14 @@ pub struct AttentionCall {
     pub heads: u32,
     pub seq: u32,
     pub head_dim: u32,
+    /// Key/value head count for grouped-query attention. `0` ⇒ multi-head
+    /// (`kv_heads == heads`). Each query head `h` reads kv head
+    /// `h / (heads / kv_heads)`; K/V buffers hold `kv_heads` heads, not `heads`.
+    pub kv_heads: u32,
+    /// Causal (autoregressive) masking: query `i` attends only to keys `j ≤ i`.
+    pub causal: bool,
+    /// `f32::to_bits` of the softmax score multiplier; `0` ⇒ default `1/√head_dim`.
+    pub scale_bits: u32,
     pub dtype: u8,
 }
 
@@ -753,6 +761,9 @@ fn p_attention(c: &AttentionCall) -> Pb {
         .u32(c.heads)
         .u32(c.seq)
         .u32(c.head_dim)
+        .u32(c.kv_heads)
+        .u8(c.causal as u8)
+        .u32(c.scale_bits)
         .u8(c.dtype)
 }
 fn p_where(c: &WhereCall) -> Pb {

@@ -186,3 +186,18 @@ pub struct ReduceAttrs {
 pub struct GatherAttrs {
     pub axis: i32,
 }
+
+/// Attention semantics that are NOT derivable from operand shapes: whether the
+/// attention is causal (lower-triangular score mask) and an optional softmax
+/// score multiplier. Stored sparsely on `Graph::attention_attrs` keyed by
+/// `NodeId`, like the other op attributes. `scale_bits == 0` ⇒ the default
+/// `1/√head_dim`. Grouped-query `kv_heads` is NOT carried here — the compiler
+/// derives it from the K operand's head dimension.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct AttentionAttrs {
+    /// Causal (autoregressive) attention: query `i` attends only to keys
+    /// `j ≤ i`. Set by the importer/fusion for decoder LMs.
+    pub causal: bool,
+    /// `f32::to_bits` of the softmax score multiplier; `0` ⇒ default `1/√d`.
+    pub scale_bits: u32,
+}

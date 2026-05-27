@@ -281,6 +281,9 @@ fn attention_hotpath_is_zero_alloc() {
             heads: ah as u32,
             seq: asq as u32,
             head_dim: ad as u32,
+            kv_heads: 0,
+            causal: false,
+            scale_bits: 0,
             dtype: DTYPE_F32,
         }),
         vec![

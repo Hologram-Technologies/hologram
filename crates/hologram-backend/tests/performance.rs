@@ -219,6 +219,9 @@ fn pv3_conv_and_attention_throughput_floors() {
         heads: ah as u32,
         seq: asq as u32,
         head_dim: ad as u32,
+        kv_heads: 0,
+        causal: false,
+        scale_bits: 0,
         dtype: DTYPE_F32,
     });
     let attn_slots = vec![
