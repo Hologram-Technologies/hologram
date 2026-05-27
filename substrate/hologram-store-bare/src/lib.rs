@@ -7,7 +7,7 @@
 //! (reopening the same device). Passes the **shared TCK** identically to the mem/redb backends.
 //!
 //! `KappaStore` is sync but [`BlockDevice`] I/O is async, so device futures are driven by a minimal
-//! `no_std` [`block_on`] (busy-poll) — immediately-ready on a RAM disk, interrupt-completing on real
+//! `no_std` `block_on` (busy-poll) — immediately-ready on a RAM disk, interrupt-completing on real
 //! hardware. The whole-image persistence here is the correctness-equivalent of the §5.2 B-tree +
 //! extent allocator (which is the scale optimization, tracked separately — cf. redb inline-all).
 
