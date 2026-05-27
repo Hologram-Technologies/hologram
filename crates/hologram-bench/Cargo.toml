@@ -58,3 +58,7 @@ harness = false
 [[bench]]
 name = "lut_activation"
 harness = false
+
+[[bench]]
+name = "dequant_activation"
+harness = false

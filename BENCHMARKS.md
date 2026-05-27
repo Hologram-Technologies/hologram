@@ -81,6 +81,22 @@ one load instead of `widen → exp/tanh → narrow`. Bit-identical to compute.
 Byte (Q0) Sigmoid/Tanh/Gelu/Silu/Exp/Erf likewise dispatch via a 256-byte table.
 The table is built once (`OnceLock`); the loop scales to any element count.
 
+### Densification keyed on the realized quantum level (quantized inference)
+
+The same win, generalized off the 16-bit storage domain: a `Dequantize →
+activation` chain stores f32 (no table — f32 is 2³²) but its *realized* domain is
+the quantized source's (256 for i8, 16 for i4). `activation((q − zp)·scale)`
+densifies into a ≤256-entry table indexed by the quantized byte
+(`KernelCall::DequantActivation`), bit-identical to the unfused pair.
+
+| activation (1M i8 elements) | unfused (dequant + scalar) | **densified table** | speedup |
+|---|---|---|---|
+| i8 → GELU | 18.9 ms | **695 µs** | **~27×** (≈1.44 G elem/s vs 53 M) |
+
+This removes the scalar transcendental path for the f32 quantized-inference case;
+the table tracks the quantum domain (≤256), not the f32 storage domain, so it
+scales to any element count. Per-tensor; fired by a runtime fusion pass.
+
 ### No regression vs main (dropped the branch's slower fusion engine)
 
 | workload | this branch | original PR branch |

@@ -284,6 +284,69 @@ fn dequant_matmul_fuses_and_matches_unfused() {
 }
 
 #[test]
+fn dequant_gelu_fuses_to_densified_table() {
+    // Dequantize(i8, per-tensor) → Gelu. The dequant output is an f32
+    // intermediate whose realized domain is the i8 source (256 values), so the
+    // composition densifies into one quantized-domain table — the PM_7 LUT win
+    // applied to the f32 quantized-inference path. Must fuse and stay correct.
+    let mut graph = Graph::new();
+    let shape = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let q_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: shape,
+    });
+    graph.add_input(q_in);
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(q_in)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.5f32.to_bits(),
+            zero_point: 0,
+            axis: -1,
+        },
+    );
+    let act = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Gelu),
+        inputs: SmallVec::from_iter([InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(act)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    });
+    graph.add_output(out);
+
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+    assert_eq!(
+        session.dequant_activation_fused_count(),
+        1,
+        "dequant→gelu must densify to one DequantActivation"
+    );
+
+    // q = [-2, 0, 2, 4] → dequant [-1, 0, 1, 2] → gelu(·).
+    let q_bytes: Vec<u8> = vec![(-2i8) as u8, 0, 2, 4];
+    let outputs = session.execute(&[InputBuffer { bytes: &q_bytes }]).unwrap();
+    let result = le_to_f32(&outputs[0].bytes);
+    let gelu = |x: f32| 0.5 * x * (1.0 + (0.797_884_6 * (x + 0.044_715 * x * x * x)).tanh());
+    for (g, x) in result.iter().zip([-1.0f32, 0.0, 1.0, 2.0]) {
+        assert!((g - gelu(x)).abs() < 1e-5, "got {result:?}");
+    }
+}
+
+#[test]
 fn dequantize_int8_with_nonzero_zero_point() {
     // Asymmetric INT8: scale = 0.25, zp = 5 → y = (q − 5) · 0.25
     // q = [5, 9, 13, 1] → [0.0, 1.0, 2.0, -1.0]

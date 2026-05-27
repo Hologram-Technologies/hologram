@@ -106,6 +106,31 @@ GELU over 1M elements is ~28× faster** (743 µs LUT vs 20.7 ms compute). The
 table cache uses `OnceLock` (std); under no_std the activation is computed (a
 compile-time choice, not a runtime fallback).
 
+### Densification keyed on the *realized* quantum level (generalized)
+
+The 16-bit LUT serves only data whose **storage width** is the quantum level. But
+PM_7's thesis is that the tier follows the **realized information content**, not
+the storage dtype — and a value can carry far less information than its storage
+implies. The dominant case is **quantized inference**: a `DequantizeLinear`
+output is stored as f32 (so it would take the scalar transcendental path — f32
+has no table), yet its realized domain is the quantized source's: **256 values
+for `i8`, 16 for `i4`**. So `activation((q − zero_point)·scale)` is a pure
+function of the quantized byte and densifies into a ≤256-entry table indexed by
+`q` — the same materialize-once-and-reuse strategy, now keyed on the realized
+quantum level so it **scales to the f32-stored path** that the LUT could not
+reach.
+
+This is realized as the runtime fusion `Dequantize → {Sigmoid,Tanh,Gelu,Silu,
+Exp,Erf}` → `KernelCall::DequantActivation` (per-tensor; one global scale ⇒ one
+table), built bit-identically from the same reference activations and validated
+**bit-for-bit** against the unfused `Dequantize → activation` pair. The table
+size tracks the quantum domain (≤256), never the f32 storage domain (2³²), so it
+scales to any element count. Measured: **i8→GELU over 1M elements is ~27×
+faster** (695 µs densified table vs 18.9 ms dequant + scalar GELU). This removes
+the scalar transcendental path for the common quantized-inference case — the
+generalization of "densify a finite quantum domain" from a single 16-bit dtype to
+any value whose realized quantum level is small.
+
 ## Formal Grounding
 
 | Property | Basis |
