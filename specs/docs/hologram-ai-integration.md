@@ -125,8 +125,24 @@ address-level surface so values flow by κ-label and are never rehashed:
   output.
 
 Port sizing helpers: `input_byte_len(i)` / `output_byte_len(i)` and
-`input_ports()` / `output_ports()` (each `PortDescriptor` carries `slot`,
-`element_count`, `dtype`).
+`input_ports()` / `output_ports()` (each `PortDescriptor` carries `name`, `slot`,
+`element_count`, `dtype`, and full `shape`).
+
+Multi-input models (e.g. `input_ids` / `attention_mask` / `pixel_values`) are
+addressed **by identity, not by guessing positions**:
+`input_port_by_name(name) -> Option<(usize, &PortDescriptor)>` and
+`output_port_by_name(name)` map a model's semantic port names to the `execute`
+positions. Builders register the names with `Graph::add_named_input(node, name)` /
+`Graph::add_named_output(node, name)` (the older `add_input`/`add_output` still
+work and leave the name empty).
+
+Producer-defined metadata travels with the archive as **open `Extension`
+sections** — a length-prefixed string `key` + arbitrary `bytes`, repeatable, one
+per key. A frontend attaches a tokenizer, generation config, class labels, or a
+calibration table via `Graph::add_extension(key, bytes)` (flows through
+`compile()`) and reads them back at runtime with
+`session.extension(key) -> Option<&[u8]>` / `session.extension_keys()`. The format
+does not enumerate consumers, so hologram-ai owns the key namespace.
 
 ## 4. Observability
 
@@ -207,6 +223,13 @@ The compiler reads a node's `QuantAttrs` (`quant_dtype`, `scale_bits`,
 Constant quantized weights are folded at warm-start (no runtime dequant); a
 runtime dequant feeding a matmul is the dynamic case the fusion targets.
 
+`Dequantize` is quantization-specific — it decodes a packed `i4`/`i8`/`u8` value
+with scale/zero-point. A general numeric dtype conversion (e.g. an `i32`/`i64`
+index or count → float) is `Cast`, **not** `Dequantize`. Likewise, an embedding
+lookup lowers to a first-class `Gather` (`out[…,i,…] = data[…,indices[i],…]`, a
+direct indexed row copy), not a `OneHot(indices) · table` matmul — the matmul form
+does `axis_dim×` more work.
+
 ## 7. Op mapping
 
 hologram-ai's lowering targets `hologram_graph::OpKind` (the canonical op set
@@ -224,7 +247,9 @@ defined in `hologram-ops`). Construct nodes as `GraphOp::Op(OpKind::…)`. There
 | Attention (fused) | `Attention` |
 | SwiGLU (fused) | `FusedSwiGlu` |
 | Rotary position embedding | `RotaryEmbedding` |
-| Dequantize | `Dequantize` |
+| Embedding lookup | `Gather` (first-class, *not* `OneHot · MatMul`) |
+| Numeric dtype conversion (int→float, etc.) | `Cast` (*not* `Dequantize`) |
+| Dequantize a *quantized* weight | `Dequantize` (`i4`/`i8`/`u8` only — quantization-specific) |
 | Layout / shape | `Reshape`, `Transpose`, `Concat`, `Slice`, `Pad`, `Expand`, `Resize` |
 | Reductions | `ReduceSum`, `ReduceMean`, `ReduceMax`, `ReduceMin`, `ReduceProd` |
 | Convolution / pooling | `Conv2d`, `ConvTranspose2d`, `MaxPool2d`, `AvgPool2d`, `GlobalAvgPool` |

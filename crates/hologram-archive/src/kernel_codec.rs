@@ -9,9 +9,9 @@
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantActivationCall,
-    DequantizeCall, ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall,
-    MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall,
-    UnaryCall, WhereCall,
+    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
+    MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
+    TransposeCall, UnaryCall, WhereCall,
 };
 
 const D_NEG: u16 = 1;
@@ -104,6 +104,8 @@ const D_MMAA: u16 = 108;
 const D_MMDQ: u16 = 111;
 const D_BCBIN: u16 = 112;
 const D_DQACT: u16 = 113;
+const D_GATHER: u16 = 114;
+const D_CAST: u16 = 115;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -447,6 +449,18 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u16(out, D_WHERE);
             put_where(out, c);
         }
+        K::Gather(c) => {
+            put_u16(out, D_GATHER);
+            put_gather(out, c);
+        }
+        K::Cast(c) => {
+            put_u16(out, D_CAST);
+            put_buf(out, c.input);
+            put_buf(out, c.output);
+            put_u64(out, c.element_count);
+            put_u8(out, c.src_dtype);
+            put_u8(out, c.dst_dtype);
+        }
 
         K::Dequantize(c) => {
             put_u16(out, D_DEQ);
@@ -550,6 +564,17 @@ fn put_im2col(out: &mut Vec<u8>, c: &Im2ColCall) {
     put_u32(out, c.k_w);
     put_u32(out, c.stride_h);
     put_u32(out, c.stride_w);
+    put_u8(out, c.dtype);
+}
+fn put_gather(out: &mut Vec<u8>, c: &GatherCall) {
+    put_buf(out, c.data);
+    put_buf(out, c.indices);
+    put_buf(out, c.output);
+    put_u64(out, c.outer);
+    put_u64(out, c.axis_dim);
+    put_u64(out, c.inner);
+    put_u64(out, c.num_indices);
+    put_u8(out, c.idx_dtype);
     put_u8(out, c.dtype);
 }
 fn put_conv(out: &mut Vec<u8>, c: &Conv2dCall) {

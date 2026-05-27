@@ -1,7 +1,11 @@
 //! `.holo` binary layout (spec X.1).
 
 pub const MAGIC: [u8; 4] = *b"HOLO";
-pub const FORMAT_VERSION: u16 = 1;
+/// `.holo` format version. **v2** enriched the `Inputs`/`Outputs` port wire
+/// format with a port `name` and full `shape`, and added the open
+/// [`SectionKind::Extension`] section. v1 archives (flat unnamed ports, no
+/// extensions) are not loadable by this build.
+pub const FORMAT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -26,6 +30,13 @@ pub enum SectionKind {
     /// transitive inputs are all constants. Pinned at load under their
     /// labels so the runtime cache is never cold. See `warm_codec`.
     WarmStart = 13,
+    /// Open producer-defined metadata: a length-prefixed string `key` followed
+    /// by arbitrary `bytes`. **Repeatable** — one section per key (tokenizer,
+    /// generation config, class labels, calibration tables, provenance, …). The
+    /// runtime carries extensions opaquely; a consumer fetches them by key. This
+    /// is the format's escape hatch so arbitrary use-cases need not extend this
+    /// closed enum.
+    Extension = 14,
 }
 
 #[derive(Debug, Clone, Copy)]

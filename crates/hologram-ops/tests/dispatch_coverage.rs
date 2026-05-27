@@ -140,6 +140,8 @@ const ALL_OP_KINDS: &[OpKind] = &[
     OpKind::Clip,
     OpKind::Lrn,
     OpKind::Where,
+    OpKind::Gather,
+    OpKind::Cast,
     OpKind::Im2Col,
     OpKind::Col2Im,
     OpKind::Dequantize,
@@ -156,9 +158,11 @@ fn every_op_kind_dispatches_to_a_well_formed_tree() {
 fn op_kind_catalog_size_matches_spec() {
     // Locks the catalog cardinality. The 26 backward `*Grad` markers were
     // removed when autodiff moved to forward-op composition; `Im2Col`/`Col2Im`
-    // were added as the conv-composition layout primitives. Adjust if and only
-    // if the catalog is intentionally extended.
-    assert_eq!(ALL_OP_KINDS.len(), 81);
+    // were added as the conv-composition layout primitives; `Gather` was added
+    // as the runtime-indexed embedding/data-movement primitive; `Cast` as the
+    // general numeric int↔float conversion. Adjust if and only if the catalog
+    // is intentionally extended.
+    assert_eq!(ALL_OP_KINDS.len(), 83);
 }
 
 #[test]

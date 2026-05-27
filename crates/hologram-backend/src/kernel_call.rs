@@ -211,6 +211,54 @@ pub struct Im2ColCall {
     pub dtype: u8,
 }
 
+/// Runtime-indexed Gather (ONNX `Gather` / embedding lookup). The `data` tensor
+/// is flattened to `[outer, axis_dim, inner]` — the product of the dims before
+/// `axis`, the gathered axis itself, and the product of the dims after it (in
+/// elements) — and `indices` holds `num_indices` integers (`i32`/`i64`;
+/// ONNX-style negative indices wrap by `axis_dim`). The output is
+/// `[outer, num_indices, inner]` with `out[o, k, :] = data[o, indices[k], :]`.
+///
+/// This is a pure data-movement map (no arithmetic) realized as a direct
+/// indexed copy — `O(outer·num_indices·inner)` — that is **bit-identical** to,
+/// and replaces, the `OneHot(indices)·data` matmul a frontend would otherwise
+/// emit (which does `axis_dim×` more work and materializes the one-hot). The
+/// numeric contract is the kernel's, V&V'd against the ONNX Gather spec.
+#[derive(Debug, Clone, Copy)]
+pub struct GatherCall {
+    pub data: BufferRef,
+    pub indices: BufferRef,
+    pub output: BufferRef,
+    /// Product of `data` dims before `axis` (1 when `axis == 0`).
+    pub outer: u64,
+    /// Size of the gathered axis (`data.dim(axis)`) — the valid index range.
+    pub axis_dim: u64,
+    /// Product of `data` dims after `axis`, in elements (the row width copied).
+    pub inner: u64,
+    /// Number of gathered indices (product of the `indices` shape).
+    pub num_indices: u64,
+    /// Index dtype: `DTYPE_I32` or `DTYPE_I64`.
+    pub idx_dtype: u8,
+    /// Element dtype of `data`/`output` (drives the per-element byte width).
+    pub dtype: u8,
+}
+
+/// Numeric dtype conversion (ONNX `Cast`). The abstract value is preserved
+/// while the representation changes: int→float (exact within the destination's
+/// mantissa), float→int (truncates toward zero), int↔int (width change), and
+/// float↔float (width change, e.g. f32→f16). `element_count` is unchanged. This
+/// is the general numeric converter — `Dequantize` is the narrower op that
+/// decodes a *quantized* value with scale/zero-point.
+#[derive(Debug, Clone, Copy)]
+pub struct CastCall {
+    pub input: BufferRef,
+    pub output: BufferRef,
+    pub element_count: u64,
+    /// Source element dtype (the input operand's dtype).
+    pub src_dtype: u8,
+    /// Destination element dtype (the node's output dtype).
+    pub dst_dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NormCall {
     pub x: BufferRef,
@@ -832,6 +880,10 @@ pub enum KernelCall {
     Clip(UnaryCall),
     Lrn(LrnCall),
     Where(WhereCall),
+    /// Runtime-indexed Gather / embedding lookup (see [`GatherCall`]).
+    Gather(GatherCall),
+    /// Numeric dtype conversion (see [`CastCall`]).
+    Cast(CastCall),
 
     // Quantization (spec X-5)
     Dequantize(DequantizeCall),
@@ -975,6 +1027,19 @@ impl KernelCall {
             K::Clip(c) => p_unary(c).done(75),
             K::Lrn(c) => p_lrn(c).done(76),
             K::Where(c) => p_where(c).done(77),
+            K::Gather(c) => Pb::new()
+                .u64(c.outer)
+                .u64(c.axis_dim)
+                .u64(c.inner)
+                .u64(c.num_indices)
+                .u8(c.idx_dtype)
+                .u8(c.dtype)
+                .done(114),
+            K::Cast(c) => Pb::new()
+                .u64(c.element_count)
+                .u8(c.src_dtype)
+                .u8(c.dst_dtype)
+                .done(115),
             K::Dequantize(c) => p_dequant(c).done(104),
             K::DequantActivation(c) => Pb::new()
                 .u64(c.element_count)
@@ -1118,6 +1183,10 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
+        K::Gather(c) => vec![c.data, c.indices, c.output],
+
+        K::Cast(c) => vec![c.input, c.output],
+
         K::Dequantize(c) if c.per_channel() => vec![c.input, c.scales, c.zero_points, c.output],
         K::Dequantize(c) => vec![c.input, c.output],
         K::DequantActivation(c) => vec![c.input, c.output],
@@ -1224,6 +1293,12 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::Attention(c) => c.dtype,
 
         K::Where(c) => c.dtype,
+
+        K::Gather(c) => c.dtype,
+
+        // The destination dtype is what the kernel produces; the input dtype is
+        // carried separately in `src_dtype`.
+        K::Cast(c) => c.dst_dtype,
 
         K::Dequantize(c) => c.dtype,
         K::DequantActivation(c) => c.dtype,

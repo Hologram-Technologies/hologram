@@ -265,6 +265,124 @@ pub unsafe extern "C" fn hologram_session_close(handle: c_int) -> c_int {
     -1
 }
 
+/// Copy input port `i`'s semantic name (UTF-8, e.g. `"input_ids"`) into `out`.
+/// Returns the **total name length** (snprintf-style; a value > `out_capacity`
+/// means truncated, retry with a larger buffer), or -1 on error / `i` out of
+/// range. An unnamed port returns 0.
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_input_name(
+    handle: c_int,
+    i: usize,
+    out: *mut c_uchar,
+    out_capacity: usize,
+) -> c_int {
+    with_session(handle, |s| {
+        copy_port_name(s.input_ports(), i, out, out_capacity)
+    })
+}
+
+/// Copy output port `i`'s semantic name into `out` (see
+/// [`hologram_session_input_name`]).
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_output_name(
+    handle: c_int,
+    i: usize,
+    out: *mut c_uchar,
+    out_capacity: usize,
+) -> c_int {
+    with_session(handle, |s| {
+        copy_port_name(s.output_ports(), i, out, out_capacity)
+    })
+}
+
+/// Write input port `i`'s shape dims into `out_dims` (up to `max_dims`) and
+/// return the **rank** (snprintf-style; a value > `max_dims` means the shape
+/// was truncated). Returns -1 on error / `i` out of range.
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_input_shape(
+    handle: c_int,
+    i: usize,
+    out_dims: *mut u64,
+    max_dims: usize,
+) -> c_int {
+    with_session(handle, |s| {
+        copy_port_shape(s.input_ports(), i, out_dims, max_dims)
+    })
+}
+
+/// Write output port `i`'s shape dims into `out_dims` (see
+/// [`hologram_session_input_shape`]).
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_output_shape(
+    handle: c_int,
+    i: usize,
+    out_dims: *mut u64,
+    max_dims: usize,
+) -> c_int {
+    with_session(handle, |s| {
+        copy_port_shape(s.output_ports(), i, out_dims, max_dims)
+    })
+}
+
+/// Copy the producer-metadata extension stored under the UTF-8 key
+/// `key_ptr`/`key_len` into `out`. Returns the **total byte length**
+/// (snprintf-style), or -1 if the key is absent / on error.
+#[no_mangle]
+pub unsafe extern "C" fn hologram_session_extension(
+    handle: c_int,
+    key_ptr: *const c_uchar,
+    key_len: usize,
+    out: *mut c_uchar,
+    out_capacity: usize,
+) -> c_int {
+    if key_ptr.is_null() {
+        return -1;
+    }
+    let key = match std::str::from_utf8(std::slice::from_raw_parts(key_ptr, key_len)) {
+        Ok(k) => k,
+        Err(_) => return -1,
+    };
+    with_session(handle, |s| match s.extension(key) {
+        Some(bytes) => {
+            if !out.is_null() {
+                let n = bytes.len().min(out_capacity);
+                std::slice::from_raw_parts_mut(out, n).copy_from_slice(&bytes[..n]);
+            }
+            bytes.len() as c_int
+        }
+        None => -1,
+    })
+}
+
+unsafe fn copy_port_name(
+    ports: &[hologram_archive::PortDescriptor],
+    i: usize,
+    out: *mut c_uchar,
+    out_capacity: usize,
+) -> c_int {
+    let Some(p) = ports.get(i) else { return -1 };
+    let name = p.name.as_bytes();
+    if !out.is_null() {
+        let n = name.len().min(out_capacity);
+        std::slice::from_raw_parts_mut(out, n).copy_from_slice(&name[..n]);
+    }
+    name.len() as c_int
+}
+
+unsafe fn copy_port_shape(
+    ports: &[hologram_archive::PortDescriptor],
+    i: usize,
+    out_dims: *mut u64,
+    max_dims: usize,
+) -> c_int {
+    let Some(p) = ports.get(i) else { return -1 };
+    if !out_dims.is_null() {
+        let n = p.shape.len().min(max_dims);
+        std::slice::from_raw_parts_mut(out_dims, n).copy_from_slice(&p.shape[..n]);
+    }
+    p.shape.len() as c_int
+}
+
 fn with_session<F: FnOnce(&Session) -> c_int>(handle: c_int, f: F) -> c_int {
     if handle < 0 {
         return -1;

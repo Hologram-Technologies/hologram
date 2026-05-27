@@ -1,5 +1,6 @@
 //! Archive writer (spec X.2).
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::error::ArchiveError;
@@ -8,15 +9,25 @@ use crate::weight::WeightStore;
 use hologram_backend::KernelCall;
 use hologram_graph::{Schedule, ShapeRegistry};
 
-/// Single input/output port descriptor: which workspace slot the runtime
-/// fills (input) or reads (output), and how many bytes it carries.
-#[derive(Debug, Clone, Copy)]
+/// A graph input/output port's identity: which workspace slot the runtime
+/// fills (input) or reads (output), its semantic `name`, dtype, and full
+/// `shape`. The name and shape let a caller map model inputs
+/// (`input_ids`/`attention_mask`/`pixel_values`/…) to ports and know their
+/// dimensions — multi-input models can't be driven positionally alone. Both
+/// ONNX and GGUF carry these, and `.holo` now preserves them.
+#[derive(Debug, Clone, Default)]
 pub struct PortDescriptor {
+    /// Semantic port name (e.g. `"input_ids"`). Empty string ⇒ unnamed.
+    pub name: String,
     pub slot: u32,
-    /// Element count. `u64` so tensors with more than 4.29 B elements
-    /// don't overflow (ADR-060: no fixed ceiling).
+    /// Total element count = product of `shape` (authoritative for buffer
+    /// sizing). `u64` so tensors with more than 4.29 B elements don't overflow
+    /// (ADR-060: no fixed ceiling).
     pub element_count: u64,
     pub dtype: u8,
+    /// Full row-major shape. Empty ⇒ rank unknown (a scalar or a producer whose
+    /// shape wasn't registered); `element_count` remains authoritative.
+    pub shape: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -33,6 +44,9 @@ pub struct HoloWriter {
     constants: Vec<crate::constant_codec::ConstantEntry>,
     /// Per-level kernel-call indices (spec VIII.2).
     exec_plan: Vec<Vec<u32>>,
+    /// Open producer-defined metadata sections (`key`, `bytes`); one
+    /// `SectionKind::Extension` section each. See [`HoloWriter::add_extension`].
+    extensions: Vec<(String, Vec<u8>)>,
 }
 
 impl HoloWriter {
@@ -72,6 +86,12 @@ impl HoloWriter {
     }
     pub fn set_exec_plan(&mut self, levels: Vec<Vec<u32>>) {
         self.exec_plan = levels;
+    }
+    /// Attach an open producer-defined metadata section under `key` (tokenizer,
+    /// generation config, class labels, …). Repeatable; the runtime stores it
+    /// opaquely and a consumer fetches it by key.
+    pub fn add_extension(&mut self, key: impl Into<String>, bytes: Vec<u8>) {
+        self.extensions.push((key.into(), bytes));
     }
 
     /// Serialize the archive into an in-memory buffer.
@@ -115,6 +135,10 @@ impl HoloWriter {
         }
         if !self.exec_plan.is_empty() {
             payloads.push((SectionKind::ExecPlan, encode_exec_plan(&self.exec_plan)));
+        }
+        // Open producer metadata: one Extension section per key.
+        for (key, bytes) in &self.extensions {
+            payloads.push((SectionKind::Extension, encode_extension(key, bytes)));
         }
 
         // Compute layout.
@@ -166,18 +190,38 @@ fn encode_kernel_calls(calls: &[KernelCall]) -> Vec<u8> {
     crate::kernel_codec::encode_calls(calls)
 }
 
+/// Extension section wire format: `key_len(u16) key(utf8) bytes(..)`. The
+/// matching reader is `HoloLoader::extensions` (zero-copy borrow).
+fn encode_extension(key: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + key.len() + bytes.len());
+    out.extend_from_slice(&(key.len() as u16).to_le_bytes());
+    out.extend_from_slice(key.as_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// Per-port wire format (FORMAT_VERSION ≥ 2):
+/// `name_len(u16) name(utf8) slot(u32) element_count(u64) dtype(u8)
+///  rank(u8) dims(u64 × rank)`.
 fn encode_ports(ports: &[PortDescriptor]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + ports.len() * 13);
+    let mut out = Vec::with_capacity(4 + ports.len() * 24);
     out.extend_from_slice(&(ports.len() as u32).to_le_bytes());
     for p in ports {
+        let name = p.name.as_bytes();
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(name);
         out.extend_from_slice(&p.slot.to_le_bytes());
         out.extend_from_slice(&p.element_count.to_le_bytes());
         out.push(p.dtype);
+        out.push(p.shape.len() as u8);
+        for &d in &p.shape {
+            out.extend_from_slice(&d.to_le_bytes());
+        }
     }
     out
 }
 
-/// Decode a `PortDescriptor` slice from a section payload.
+/// Decode a `PortDescriptor` slice from a section payload (FORMAT_VERSION ≥ 2).
 pub fn decode_ports(bytes: &[u8]) -> Result<Vec<PortDescriptor>, ArchiveError> {
     if bytes.len() < 4 {
         return Err(ArchiveError::Truncated {
@@ -188,23 +232,48 @@ pub fn decode_ports(bytes: &[u8]) -> Result<Vec<PortDescriptor>, ArchiveError> {
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
     let mut out = Vec::with_capacity(count);
     let mut cursor = 4usize;
-    for _ in 0..count {
-        if cursor + 13 > bytes.len() {
-            return Err(ArchiveError::Truncated {
-                needed: cursor + 13,
-                actual: bytes.len(),
-            });
+    let need = |cur: usize, n: usize, total: usize| -> Result<(), ArchiveError> {
+        if cur + n > total {
+            Err(ArchiveError::Truncated {
+                needed: cur + n,
+                actual: total,
+            })
+        } else {
+            Ok(())
         }
+    };
+    for _ in 0..count {
+        need(cursor, 2, bytes.len())?;
+        let name_len = u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+        cursor += 2;
+        need(cursor, name_len, bytes.len())?;
+        let name = core::str::from_utf8(&bytes[cursor..cursor + name_len])
+            .map_err(|_| ArchiveError::Io("port name is not valid UTF-8"))?
+            .into();
+        cursor += name_len;
+        need(cursor, 13, bytes.len())?;
         let slot = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         cursor += 4;
         let element_count = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
         cursor += 8;
         let dtype = bytes[cursor];
         cursor += 1;
+        let rank = bytes[cursor] as usize;
+        cursor += 1;
+        need(cursor, rank * 8, bytes.len())?;
+        let mut shape = Vec::with_capacity(rank);
+        for _ in 0..rank {
+            shape.push(u64::from_le_bytes(
+                bytes[cursor..cursor + 8].try_into().unwrap(),
+            ));
+            cursor += 8;
+        }
         out.push(PortDescriptor {
+            name,
             slot,
             element_count,
             dtype,
+            shape,
         });
     }
     Ok(out)

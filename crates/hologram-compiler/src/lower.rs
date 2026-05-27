@@ -4,9 +4,9 @@ use alloc::vec::Vec;
 
 use crate::error::CompileError;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, Conv2dCall, DequantizeCall, ExpandCall, GemmCall,
-    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
-    RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DequantizeCall, ExpandCall,
+    GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, NormCall,
+    PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -603,6 +603,29 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
             dtype: node.dtype,
         }),
         K::Where => KernelCall::Where(where_call),
+        // outer/axis_dim/inner/num_indices/idx_dtype filled by the compiler's
+        // gather pass (from the data + indices shapes and the GatherAttrs axis);
+        // a fresh call is geometry-0 until then.
+        K::Gather => KernelCall::Gather(GatherCall {
+            data: inp0(),
+            indices: inp1(),
+            output: node.output,
+            outer: 0,
+            axis_dim: 0,
+            inner: 0,
+            num_indices: 0,
+            idx_dtype: 0,
+            dtype: node.dtype,
+        }),
+        // src_dtype filled by the compiler's cast pass (from the input
+        // operand's dtype); dst_dtype is this node's output dtype.
+        K::Cast => KernelCall::Cast(CastCall {
+            input: inp0(),
+            output: node.output,
+            element_count: node.element_count,
+            src_dtype: 0,
+            dst_dtype: node.dtype,
+        }),
 
         // Quantization (spec X-5).
         K::Dequantize => KernelCall::Dequantize(DequantizeCall {

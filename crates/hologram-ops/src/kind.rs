@@ -117,6 +117,26 @@ pub enum OpKind {
     Clip,
     Lrn,
     Where,
+    /// Gather rows of `data` along `axis` selected by a runtime integer
+    /// `indices` operand (ONNX Gather / embedding lookup): `out[…,i,…] =
+    /// data[…,indices[i],…]`. A pure data-movement map like [`Im2Col`](Self::Im2Col),
+    /// but the index permutation is a runtime operand rather than fixed
+    /// geometry — so it is layout-only (no arithmetic Term) and its numeric
+    /// contract is the kernel's, V&V'd against the ONNX spec and the
+    /// `OneHot·MatMul` reference it replaces (`O(outer·idx·inner)` indexed
+    /// copy vs the one-hot matmul's `O(outer·idx·axis·inner)`).
+    Gather,
+
+    // Numeric conversion
+    /// Numeric dtype conversion (ONNX `Cast`): the abstract value is preserved
+    /// while the representation changes — int↔float, float↔float width, and
+    /// int↔int width (float→int truncates toward zero). The formal spec is the
+    /// identity on values (`y = x`); the per-dtype byte conversion is the
+    /// kernel's contract (V&V'd against ONNX Cast), exactly as `Dequantize`'s
+    /// spec is the affine chain while the widening is the kernel's. This is the
+    /// general int→float primitive — distinct from `Dequantize`, which decodes
+    /// a *quantized* value with scale/zero-point.
+    Cast,
 
     // Quantization (spec X-5)
     Dequantize,
@@ -207,6 +227,8 @@ impl OpKind {
             Clip => "clip",
             Lrn => "lrn",
             Where => "where",
+            Gather => "gather",
+            Cast => "cast",
             Dequantize => "dequantize",
         }
     }
@@ -223,6 +245,7 @@ impl OpKind {
                 | OpKind::Expand
                 | OpKind::Im2Col
                 | OpKind::Col2Im
+                | OpKind::Gather
         )
     }
 
@@ -319,11 +342,12 @@ impl OpKind {
 
             K::Clip => P::And,
             K::Where => P::Or,
+            K::Cast => P::Mul,
             K::Dequantize => P::Mul,
 
             // Layout (no-compute) — anchor at the identity-equivalent And.
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => P::And,
-            K::Im2Col | K::Col2Im => P::And,
+            K::Im2Col | K::Col2Im | K::Gather => P::And,
         }
     }
 
@@ -347,7 +371,7 @@ impl OpKind {
             | K::Or => 4,
 
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => 2,
-            K::Im2Col | K::Col2Im => 2,
+            K::Im2Col | K::Col2Im | K::Gather => 2,
 
             K::Equal
             | K::Less
@@ -417,6 +441,8 @@ impl OpKind {
             K::Attention => 96,
 
             K::Dequantize => 8,
+
+            K::Cast => 4,
         }
     }
 
@@ -475,6 +501,7 @@ impl OpKind {
             | K::Expand
             | K::Im2Col
             | K::Col2Im
+            | K::Cast
             | K::Dequantize => 1,
 
             // Binary forms.
@@ -499,7 +526,9 @@ impl OpKind {
             | K::Conv2d
             | K::ConvTranspose2d
             | K::FusedSwiGlu
-            | K::AddRmsNorm => 2,
+            | K::AddRmsNorm
+            // Gather(data, indices): the runtime index operand is the 2nd arg.
+            | K::Gather => 2,
 
             // Ternary forms.
             K::Gemm

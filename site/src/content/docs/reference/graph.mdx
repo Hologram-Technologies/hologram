@@ -12,7 +12,7 @@ reference earlier nodes, constants, or graph-input ports.
 - `Graph` — the append-only node list, shape registry, and constant store
 - `Node` — `{ op: GraphOp, inputs: SmallVec<[InputSource; 4]>, output_dtype: DTypeId, output_shape: ShapeId }`
 - `GraphOp` — `Input`, `Output`, `Op(OpKind)`, or `Constant(ConstantId)`
-- `OpKind` — the closed op catalog (re-exported from `hologram_ops`): `Relu`, `Sigmoid`, `MatMul`, `Gemm`, `Conv2d`, `LayerNorm`, `Softmax`, `Attention`, and many more
+- `OpKind` — the closed op catalog (re-exported from `hologram_ops`): `Relu`, `Sigmoid`, `MatMul`, `Gemm`, `Conv2d`, `LayerNorm`, `Softmax`, `Attention`, `Gather` (runtime-indexed embedding lookup), `Cast` (numeric dtype conversion), and many more
 - `InputSource` — `Node(NodeId)`, `Constant(ConstantId)`, or `GraphInput(u32)`
 - `NodeId` / `ConstantId` — opaque handles
 - `ConstantStore` — inline constant tensors
@@ -59,6 +59,20 @@ let out = g.add_node(Node {
 });
 g.add_output(out);
 ```
+
+## Named ports & extensions
+
+`g.add_input(node)` / `g.add_output(node)` register a port with an empty name. To
+give a port a semantic identity (so a multi-input model can be addressed by name
+rather than position), use `g.add_named_input(node, "input_ids")` /
+`g.add_named_output(node, "logits")` — the name and the node's shape travel into
+the archive's `PortDescriptor` and surface at runtime through
+`InferenceSession::input_port_by_name` / `output_port_by_name`.
+
+Producer-defined metadata (tokenizer, generation config, class labels, calibration
+tables, provenance) is attached with `g.add_extension(key, bytes)`; it flows
+through `compile()` into an open, repeatable `Extension` archive section and is
+read back at runtime via `InferenceSession::extension(key)` / `extension_keys()`.
 
 ## Shapes & constants
 

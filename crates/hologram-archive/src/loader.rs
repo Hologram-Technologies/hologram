@@ -28,6 +28,43 @@ impl<'a> LoadedPlan<'a> {
     pub fn sections(&self) -> &[SectionRef] {
         &self.sections
     }
+
+    /// Every `Extension` section, parsed to `(key, bytes)` in archive order
+    /// (zero-copy: `bytes` borrows the archive). Open producer metadata
+    /// (tokenizer, generation config, …); the runtime carries it opaquely.
+    pub fn extensions(&self) -> Result<alloc::vec::Vec<(&'a str, &'a [u8])>, ArchiveError> {
+        let mut out = alloc::vec::Vec::new();
+        for s in &self.sections {
+            if s.kind != SectionKind::Extension {
+                continue;
+            }
+            let start = s.offset as usize;
+            let end = start + s.length as usize;
+            let payload = self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
+                needed: end,
+                actual: self.bytes.len(),
+            })?;
+            if payload.len() < 2 {
+                return Err(ArchiveError::Truncated {
+                    needed: 2,
+                    actual: payload.len(),
+                });
+            }
+            let key_len = u16::from_le_bytes(payload[..2].try_into().unwrap()) as usize;
+            let key = payload
+                .get(2..2 + key_len)
+                .ok_or(ArchiveError::Truncated {
+                    needed: 2 + key_len,
+                    actual: payload.len(),
+                })
+                .and_then(|b| {
+                    core::str::from_utf8(b)
+                        .map_err(|_| ArchiveError::Io("extension key is not valid UTF-8"))
+                })?;
+            out.push((key, &payload[2 + key_len..]));
+        }
+        Ok(out)
+    }
 }
 
 pub struct HoloLoader<'a> {
@@ -146,6 +183,7 @@ impl<'a> HoloLoader<'a> {
                 11 => SectionKind::Constants,
                 12 => SectionKind::ExecPlan,
                 13 => SectionKind::WarmStart,
+                14 => SectionKind::Extension,
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)

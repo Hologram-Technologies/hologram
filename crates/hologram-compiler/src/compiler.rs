@@ -413,6 +413,31 @@ impl Compiler {
                         ec.out_dims = out_dims;
                     }
                 }
+                // Gather: flatten the data shape to [outer, axis_dim, inner]
+                // around the GatherAttrs axis, and count the indices — the
+                // kernel's indexed-copy geometry. `idx_dtype` is the indices
+                // operand's dtype (i32/i64).
+                if matches!(kind, hologram_graph::OpKind::Gather) {
+                    if let KernelCall::Gather(gc) = &mut kernel_call {
+                        let (outer, axis_dim, inner, num_indices, idx_dtype) =
+                            gather_plan(&self.graph, node, hologram_graph::NodeId(idx as u32))
+                                .ok_or(CompileError::CompletenessFailure)?;
+                        gc.outer = outer;
+                        gc.axis_dim = axis_dim;
+                        gc.inner = inner;
+                        gc.num_indices = num_indices;
+                        gc.idx_dtype = idx_dtype;
+                    }
+                }
+                // Cast: the destination dtype is the node's output dtype (set at
+                // lowering); fill the source dtype from the input operand so the
+                // kernel knows both ends of the numeric conversion.
+                if matches!(kind, hologram_graph::OpKind::Cast) {
+                    if let KernelCall::Cast(cc) = &mut kernel_call {
+                        cc.src_dtype = operand_dtype(&self.graph, node, 0)
+                            .ok_or(CompileError::CompletenessFailure)?;
+                    }
+                }
                 // Pad = placement into a zeroed buffer: write the data into the
                 // output's interior [lo, lo+data) (axis-0). The fresh output
                 // buffer is zeroed, so the pad regions remain zero.
@@ -570,13 +595,16 @@ impl Compiler {
             .inputs()
             .iter()
             .copied()
-            .map(|id| {
+            .enumerate()
+            .map(|(port_i, id)| {
                 let idx = id.0 as usize;
                 let n = self.graph.nodes().get(idx);
                 PortDescriptor {
+                    name: self.graph.input_name(port_i).into(),
                     slot: idx as u32,
                     element_count: element_counts.get(idx).copied().unwrap_or(0),
                     dtype: n.map(|n| n.output_dtype.0).unwrap_or(0),
+                    shape: n.map(|n| shape_dims(&self.graph, n)).unwrap_or_default(),
                 }
             })
             .collect();
@@ -586,7 +614,8 @@ impl Compiler {
             .outputs()
             .iter()
             .copied()
-            .map(|id| {
+            .enumerate()
+            .map(|(port_i, id)| {
                 use hologram_graph::{InputSource, NodeId};
                 let idx = id.0 as usize;
                 let n = self.graph.nodes().get(idx);
@@ -632,15 +661,27 @@ impl Compiler {
                     element_counts.get(idx).copied().unwrap_or(0),
                     n.map(|n| n.output_dtype.0),
                 ));
+                // Output shape: the Output node carries the result shape on its
+                // own `output_shape`, so read it directly (it equals the
+                // producer's shape).
+                let shape = n.map(|n| shape_dims(&self.graph, n)).unwrap_or_default();
                 PortDescriptor {
+                    name: self.graph.output_name(port_i).into(),
                     slot,
                     element_count,
                     dtype: dtype.or_else(|| n.map(|n| n.output_dtype.0)).unwrap_or(0),
+                    shape,
                 }
             })
             .collect();
         writer.set_inputs(inputs);
         writer.set_outputs(outputs);
+
+        // Open producer metadata (tokenizer, generation config, …): embed each
+        // as an archive Extension section, carried opaquely to the runtime.
+        for (key, bytes) in self.graph.extensions() {
+            writer.add_extension(key.clone(), bytes.clone());
+        }
 
         // Emit constants: each entry pre-fills a workspace slot with the
         // constant's bytes at session-load time. Small bodies are
@@ -1208,4 +1249,95 @@ fn transpose_plan(
         }
     }
     Some((rank as u8, dims, perm))
+}
+
+/// Resolve a Gather's indexed-copy geometry from the data + indices shapes and
+/// the node's `GatherAttrs` axis. Returns `(outer, axis_dim, inner,
+/// num_indices, idx_dtype)`: the data tensor is flattened to
+/// `[outer, axis_dim, inner]` (the product of the dims before `axis`, the
+/// gathered axis, and the product of the dims after, in elements), and
+/// `num_indices` is the product of the indices shape. `idx_dtype` is the
+/// indices operand's dtype (`i32`/`i64`). `None` for a missing shape, an
+/// out-of-range axis, or an overflowing product (so a malformed Gather fails
+/// loud rather than gathering garbage).
+/// The row-major shape (dims) of a node's `output_shape`, for the port
+/// descriptors. Empty if the shape isn't registered (the flat element count
+/// stays authoritative).
+fn shape_dims(graph: &Graph, node: &hologram_graph::Node) -> alloc::vec::Vec<u64> {
+    match graph.shape_registry().get(node.output_shape) {
+        Some(d) => (0..d.rank as usize).filter_map(|i| d.dim(i)).collect(),
+        None => alloc::vec::Vec::new(),
+    }
+}
+
+/// The dtype of a node's `idx`-th input operand (resolving through node /
+/// constant / graph-input sources). Used to fill a `Cast`'s source dtype and a
+/// `Gather`'s index dtype from the operands the op consumes.
+fn operand_dtype(graph: &Graph, node: &hologram_graph::Node, idx: usize) -> Option<u8> {
+    use hologram_graph::{InputSource, NodeId};
+    match node.inputs.get(idx).copied()? {
+        InputSource::Node(NodeId(id)) => graph.nodes().get(id as usize).map(|n| n.output_dtype.0),
+        InputSource::Constant(cid) => graph.constants().get(cid).map(|e| e.dtype.0),
+        InputSource::GraphInput(g) => {
+            let &NodeId(j) = graph.inputs().get(g as usize)?;
+            graph.nodes().get(j as usize).map(|n| n.output_dtype.0)
+        }
+    }
+}
+
+fn gather_plan(
+    graph: &Graph,
+    node: &hologram_graph::Node,
+    node_id: hologram_graph::NodeId,
+) -> Option<(u64, u64, u64, u64, u8)> {
+    use hologram_graph::{InputSource, NodeId};
+    let reg = graph.shape_registry();
+    let operand = |i: usize| -> Option<(hologram_graph::ShapeDescriptor, u8)> {
+        match node.inputs.get(i).copied()? {
+            InputSource::Node(NodeId(id)) => {
+                let n = graph.nodes().get(id as usize)?;
+                Some((reg.get(n.output_shape).cloned()?, n.output_dtype.0))
+            }
+            InputSource::Constant(cid) => {
+                let e = graph.constants().get(cid)?;
+                Some((reg.get(e.shape).cloned()?, e.dtype.0))
+            }
+            InputSource::GraphInput(g) => {
+                let &NodeId(j) = graph.inputs().get(g as usize)?;
+                let n = graph.nodes().get(j as usize)?;
+                Some((reg.get(n.output_shape).cloned()?, n.output_dtype.0))
+            }
+        }
+    };
+    let (data, _) = operand(0)?;
+    let (indices, idx_dtype) = operand(1)?;
+    let rank = data.rank as usize;
+    if rank == 0 {
+        return None;
+    }
+    // Normalize the axis (ONNX permits a negative axis counting from the end).
+    let axis_raw = graph.gather_attrs(node_id).map(|a| a.axis).unwrap_or(0);
+    let axis = if axis_raw < 0 {
+        axis_raw + rank as i32
+    } else {
+        axis_raw
+    };
+    if axis < 0 || axis as usize >= rank {
+        return None;
+    }
+    let axis = axis as usize;
+    let mut outer: u64 = 1;
+    for i in 0..axis {
+        outer = outer.checked_mul(data.dim(i)?)?;
+    }
+    let axis_dim = data.dim(axis)?;
+    let mut inner: u64 = 1;
+    for i in (axis + 1)..rank {
+        inner = inner.checked_mul(data.dim(i)?)?;
+    }
+    let mut num_indices: u64 = 1;
+    for i in 0..indices.rank as usize {
+        num_indices = num_indices.checked_mul(indices.dim(i)?)?;
+    }
+    Some((outer, axis_dim, inner, num_indices, idx_dtype))
 }

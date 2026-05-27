@@ -141,6 +141,15 @@ pub fn emit_op_term<const CAP: usize>(
         K::Clip => utility::emit_clip(arena, level, a0),
         K::Lrn => utility::emit_lrn(arena, level, a0),
         K::Where => utility::emit_where(arena, level, a0, a1, a2),
+        // Gather is a runtime-indexed data-movement map (like im2col/col2im):
+        // its Term is a single relabel Variable over the data operand — the
+        // index permutation is supplied at runtime and realized by the kernel,
+        // whose numeric contract is V&V'd against the ONNX Gather spec.
+        K::Gather => layout::emit_layout_relabel(arena, level, a0),
+
+        // Numeric conversion: value-identity `Mul(x, 1)`; the dtype byte
+        // conversion is the kernel's contract (V&V'd against ONNX Cast).
+        K::Cast => quantization::emit_cast(arena, level, a0),
 
         // Quantization (spec X-5).
         K::Dequantize => quantization::emit_dequantize(arena, level, a0),

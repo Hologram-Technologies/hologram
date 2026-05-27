@@ -258,6 +258,8 @@ fn parse_op_kind(name: &str) -> Option<hologram_graph::OpKind> {
         K::Clip,
         K::Lrn,
         K::Where,
+        K::Gather,
+        K::Cast,
         K::Dequantize,
     ];
     ALL.iter().copied().find(|k| k.name() == name)

@@ -23,7 +23,7 @@ footer over all preceding bytes. `hologram-archive` is `no_std + alloc`; the
 └──────────────────────────────────┘
 ```
 
-The header is `magic` (`b"HOLO"`), `format_version` (currently `1`), `flags`
+The header is `magic` (`b"HOLO"`), `format_version` (currently `2`), `flags`
 (u16), and `section_count` (u16). Each section-table entry (`SectionRef`) is a
 `kind` byte (plus padding), an 8-byte `offset`, and an 8-byte `length` pointing
 into the payload region.
@@ -47,9 +47,17 @@ The section kinds (enum `SectionKind` in `format.rs`):
 | 11 | `Constants` | Inline constant bodies or references into `Weights` |
 | 12 | `ExecPlan` | Per-level kernel-call indices (executor walks these directly) |
 | 13 | `WarmStart` | Constant-only cone κ-labels (and, at fold depth, materialized results) |
+| 14 | `Extension` | Open, repeatable producer-defined metadata: a length-prefixed string `key` + arbitrary `bytes` (tokenizer, generation config, class labels, calibration tables, provenance, …) |
 
-A `PortDescriptor` carries `{ slot: u32, element_count: u64, dtype: u8 }` — the
-runtime uses it to map caller tensors into the workspace's slot numbering.
+A `PortDescriptor` carries `{ name: String, slot: u32, element_count: u64, dtype: u8, shape: Vec<u64> }`
+— the runtime uses it to map caller tensors into the workspace's slot numbering.
+The semantic `name` (e.g. `"input_ids"`, `"logits"`) and full `shape` let
+multi-input models be addressed by identity rather than position
+(`InferenceSession::input_port_by_name` / `output_port_by_name`).
+
+`Extension` sections are accessed at runtime via `InferenceSession::extension(key)`
+and `extension_keys()`, and written with `Graph::add_extension(key, bytes)` (or
+`HoloWriter::add_extension`).
 
 Constants over a 4 KiB inline threshold become *references* (slot + dtype +
 32-byte fingerprint) into the deduped `Weights` pool; smaller literals are

@@ -3,11 +3,11 @@
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantActivationCall,
-    DequantizeCall, ExpandCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
-    MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall,
-    NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
-    MAX_RANK,
+    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, CastCall, Conv2dCall,
+    DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall,
+    KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
+    MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
+    TransposeCall, UnaryCall, WhereCall, MAX_RANK,
 };
 
 /// Cursor over a section payload.
@@ -176,6 +176,14 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         111 => K::MatMulDequant(read_matmul_dequant(cur)?),
         112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
         113 => K::DequantActivation(read_dequant_activation(cur)?),
+        114 => K::Gather(read_gather(cur)?),
+        115 => K::Cast(CastCall {
+            input: cur.buf()?,
+            output: cur.buf()?,
+            element_count: cur.u64()?,
+            src_dtype: cur.u8()?,
+            dst_dtype: cur.u8()?,
+        }),
         _ => return Err(ArchiveError::Io("unknown KernelCall discriminant")),
     })
 }
@@ -297,6 +305,19 @@ fn read_im2col(c: &mut Cursor<'_>) -> Result<Im2ColCall, ArchiveError> {
         k_w: c.u32()?,
         stride_h: c.u32()?,
         stride_w: c.u32()?,
+        dtype: c.u8()?,
+    })
+}
+fn read_gather(c: &mut Cursor<'_>) -> Result<GatherCall, ArchiveError> {
+    Ok(GatherCall {
+        data: c.buf()?,
+        indices: c.buf()?,
+        output: c.buf()?,
+        outer: c.u64()?,
+        axis_dim: c.u64()?,
+        inner: c.u64()?,
+        num_indices: c.u64()?,
+        idx_dtype: c.u8()?,
         dtype: c.u8()?,
     })
 }
