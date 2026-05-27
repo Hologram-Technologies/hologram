@@ -134,14 +134,12 @@ pub struct InferenceSession<B: SessionBackend> {
 /// whether it is a pure-layout op. Recomputed at load — no stored assignment.
 #[cfg(feature = "tiered-exec")]
 fn call_tier(call: &KernelCall) -> hologram_types::MemoryTier {
-    let dt = hologram_backend::call_dtype(call);
-    let bpe = port_bytes_per_element(dt).max(1);
+    // Quantum level = the dtype's bit-width (byte=8, f16/bf16=16, f32=32). The
+    // tier is a pure function of it — no element-count or other size threshold,
+    // so tiering is identical at any workload size.
+    let bpe = port_bytes_per_element(hologram_backend::call_dtype(call)).max(1);
     let witt_bits = (bpe * 8).min(u16::MAX as usize) as u16;
-    let element_count = hologram_backend::buffers(call)
-        .last()
-        .map(|b| b.length / bpe as u64)
-        .unwrap_or(0);
-    hologram_types::MemoryTier::from_witt(witt_bits, element_count, is_layout_only_call(call))
+    hologram_types::MemoryTier::from_witt(witt_bits, is_layout_only_call(call))
 }
 
 /// Pure-layout kernels (relabel / re-index / placement) — no arithmetic, so

@@ -23,13 +23,22 @@ pub enum MemoryTier {
 }
 
 impl MemoryTier {
-    /// Assign a tier from Witt bit-width and element count.
+    /// Assign a tier from the datum's **quantum level** (Witt bit-width) — a
+    /// pure function of the quantum level (PM_7's thesis), with no element-count
+    /// cutoff or other arbitrary threshold, so it scales to any workload size:
     ///
-    /// Layout-only ops (reshape, transpose, identity) always stay on CPU
-    /// regardless of bit-width. Small element counts stay on CPU because
-    /// GPU launch overhead would dominate.
+    /// - Q0 (≤8-bit): the domain has ≤256 points → fully tabled, L1-resident.
+    /// - Q1 (9–16-bit): ≤65536 points → 128 KB table, L2-resident.
+    /// - Q2 (17–24-bit): too large to fully table → algorithmic, main memory.
+    /// - Q3+ (≥25-bit, incl. f32): algorithmic, accelerator-class (`Device`).
+    ///
+    /// Layout-only ops (reshape, transpose, identity) carry no compute, so they
+    /// stay CPU-resident regardless of quantum level. Whether a `Device`-tier op
+    /// *actually* dispatches to an accelerator vs CPU is a routing decision
+    /// (`TierPolicy`), not a property of the datum — keeping this a pure,
+    /// size-independent function.
     #[inline]
-    pub const fn from_witt(witt_bits: u16, element_count: u64, is_layout_only: bool) -> Self {
+    pub const fn from_witt(witt_bits: u16, is_layout_only: bool) -> Self {
         if is_layout_only {
             return Self::CpuMain;
         }
@@ -37,13 +46,7 @@ impl MemoryTier {
             0..=8 => Self::CpuL1,
             9..=16 => Self::CpuL2,
             17..=24 => Self::CpuMain,
-            _ => {
-                if element_count < 1024 {
-                    Self::CpuMain
-                } else {
-                    Self::Device
-                }
-            }
+            _ => Self::Device,
         }
     }
 

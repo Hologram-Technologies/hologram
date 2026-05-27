@@ -75,14 +75,17 @@ On unified-memory hardware (Apple Silicon), all migrations are no-ops.
 
 ### Execution
 
-`HybridExecutor` routes calls by tier:
-- `CpuL1 | CpuL2 | CpuMain` → CPU backend
-- `Device` → GPU/accelerator backend
+What ships and acts today is the **Q0/Q1 LUT acceleration** below — the
+concrete realization of the `CpuL1`/`CpuL2` tiers — plus the load-time tier
+classification + observability (`tier_report`). These are wired and exercised.
 
-For single-backend sessions (CPU-only, or Metal where the same backend
-handles both), the tier routing is informational — correctness is identical
-to `Executor::run_levels`. The infrastructure exists so that adding a
-discrete GPU backend requires only wiring a second backend instance.
+Device routing (dispatching `Device`-tier ops to a discrete accelerator) is a
+**future extension**, not shipped here: there is no second backend to route to
+on CPU, so a `MigrationBackend`/`HybridExecutor` scaffold would be dead code.
+When a real device backend lands, it consumes the existing substrate — the
+per-call tiers + the coherence migration schedule — to decide uploads/downloads
+at level boundaries; no new tiering machinery is needed. We do not carry an
+unused trait in the meantime (no skeleton).
 
 ### Q1 LUT-accelerated activations (realized)
 

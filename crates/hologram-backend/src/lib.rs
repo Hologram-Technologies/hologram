@@ -18,7 +18,6 @@ pub mod error;
 pub mod kernel_call;
 pub mod layout;
 pub mod prism_axes;
-pub mod tiered;
 pub mod workspace;
 
 #[cfg(feature = "cpu")]
