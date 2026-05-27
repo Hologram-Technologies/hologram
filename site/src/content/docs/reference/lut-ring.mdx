@@ -45,6 +45,11 @@ infeasible, but the realized domain here is bounded at 256 entries, so it
 scales to any tensor size. Bit-identical to `dequantize → f32 → activation`;
 roughly 27× faster for i8 → GELU over 1M elements.
 
+The supported quantized source types are **`i8`, `u8`, and `i4`** — `u8` is
+ONNX's default asymmetric quantization type (the byte is read unsigned, with a
+mid-range zero-point). The signed/unsigned interpretation differs, but the
+densified-table dispatch is identical.
+
 ## What stays computed
 
 `f32` is **not** tabulated — its domain is 2³² values, too large to

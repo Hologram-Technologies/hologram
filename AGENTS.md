@@ -43,74 +43,67 @@ site/           — Astro documentation website + wasm demo
 3. Run `cargo clippy -- -D warnings` before committing Rust changes
 4. Use a consistent naming prefix for all crate names
 
-### Runtime Performance (hologram-exec)
-- **Zero allocation in hot paths**: shape resolution runs per-node per-level (thousands of times per inference). No `Vec` allocations inside shape-resolution functions except when constructing the output shape itself.
-- **Prefer compile-time solutions over runtime inference**: stale-shape recovery in `ShapeContext` is a fallback; the correct long-term fix is ensuring the compiler emits accurate shapes via the ONNX Shape Oracle (see plan). Do not grow `shape_resolve.rs` with new per-op heuristics — add oracle coverage instead.
-- **No speculative corrections**: `correct_stale_shape` scans at most `ndim` integers (≤8 for all current ops). It must not call external functions, allocate, or recurse.
-- **Fast-path first**: the common case is that compiled shapes are correct. All correction logic must be guarded by a cheap identity check (`prod == actual_count`) that short-circuits to a no-op.
-- **Avoid growing shape_resolve.rs**: new op support belongs in the compiler's shape oracle, not in runtime shape inference. If a new op's output shape cannot be expressed via `ShapeSpec`, add a `ShapeSpec` variant rather than a new `resolve_*` function.
-- **All ops must dispatch through `TapeKernel`**: every operation — float, quantized, fused, or custom — must have a corresponding `TapeKernel` variant and go through `dispatch_kernel()`. Do not introduce op execution paths that bypass the tape (e.g., ad-hoc closures, `Box<dyn Fn>`, or direct kernel calls outside the enum match). New ops require a new `TapeKernel` variant in `tape.rs` and a mapping in `tape_builder.rs`.
+### Runtime Performance (hologram-exec / hologram-backend)
+- **Zero allocation in hot paths**: `InferenceSession::execute` (`hologram-exec/src/session.rs`) dispatches one `KernelCall` per scheduled node, potentially thousands of times per inference. A κ-label miss must write into a recycled transient buffer reclaimed from the `BufferArena` pool — no `Vec::new`/`Box::new`/`to_vec`/`String::new` inside the dispatch loop.
+- **Result caching is the κ-label memo, not a side store**: identical computation is addressed once by κ-label; before computing, the pool checks whether the output label is resident (pinned or transient) and rebinds the slot if so (an O(1) elision). Do not add a separate result cache, KV store, or HashMap on the hot path — the `BufferArena` pool *is* the cache.
+- **Prefer compile-time solutions over runtime inference**: shapes are resolved at compile time and carried inside the `KernelCall`/`.holo` archive. There is no runtime shape-inference module; do not add per-op shape heuristics at execution time. If a new op's output shape cannot be expressed by the compiler's shape machinery, extend that, not the executor.
+- **Fast-path first**: the common case is that compiled shapes and κ-labels are correct. Any recovery/validation logic must be guarded by a cheap check that short-circuits to a no-op.
+- **All ops must dispatch through `KernelCall`**: every operation — float, quantized, fused, or custom — must have a corresponding `KernelCall` variant (`hologram-backend/src/kernel_call.rs`) and be handled by the backend's exhaustive `match` (`CpuBackend::dispatch`, `hologram-backend/src/cpu.rs`). Do not introduce execution paths that bypass the enum (no ad-hoc closures, `Box<dyn Fn>`, function-pointer tables, or boxed/dyn kernels). New ops require a new `KernelCall` variant and a `dispatch` arm; there is no tape and no virtual dispatch.
 
-### Canonical ops (hologram-ops) and Transformation Chains (hologram-transform)
+### Canonical ops (hologram-ops) and the `KernelCall` dispatch layer
 
 These rules apply to the canonical-op stack (ADR-044, ADR-045) and the
-transform / planner / executor layer on top of it (ADR-043).
+`hologram-exec` / `hologram-backend` execution layer that runs on top of
+it.
 
 - **`hologram-ops` is the single source of truth for ops.** Every
   canonical op's full definition — marker struct, `Op` trait impl,
   `Call` struct, kernel function(s), and (when Plan 074 lands) LUT
   generator — lives in one file under `hologram-ops/src/kernels/<op>.rs`.
-  Do not split an op's definition across crates. The `SemanticOp`
-  enum, dispatch macro, `KernelCall` enum, and `dispatch()` function
+  Do not split an op's definition across crates. The op taxonomy is
+  `OpKind` plus the per-op marker types in `hologram-ops`; the
+  `KernelCall` enum (`hologram-backend/src/kernel_call.rs`) and the
+  backend `dispatch()` (`CpuBackend::dispatch`, `hologram-backend/src/cpu.rs`)
   are the small touch points that route to the per-op file; everything
   else is local to that file.
 - **Adding a new op is a checklist, not a search.** New op = new
-  `kernels/<op>.rs` file with the full definition + variant in
-  `SemanticOp` (with macro arm) + variant in `KernelCall` (with
-  `dispatch` arm) + planner arm + builder method + integration test.
-  No edits in `hologram-graph`, `hologram-exec`, or `hologram-backend`
-  unless that op needs a non-canonical lowering.
-- **`SemanticOp` is the closed serialisation surface.** Variants are
-  on the wire format. Adding/removing/reordering variants is a
-  graph-archive-format change.
-- **No virtual dispatch in `dispatch()`.** `KernelCall` is an enum
-  matched exhaustively. Do not add `Box<dyn Kernel>`, function-pointer
-  tables, or trait-object kernel registries on the hot path.
-
-The rules below apply specifically to the chain → plan → execute
-layer in `hologram-transform`:
-
-- **LUT is identity, never execution.** Address layers (`AddressRef`,
-  `TensorId`, `RegionId`, `LayoutId`) describe *which* object — never *how*
-  to compute it. Do not embed kernel pointers, function pointers, or
-  workspace handles in address types.
-- **Transform descriptors are semantic only.** `TransformNode` and
-  `TransformChain` must not allocate a workspace, hold a buffer, or perform
-  any computation. They are pure descriptors safe to clone and rewrite.
-- **Backward computation is planned, not traversed.** Backward passes must
-  be emitted as ordinary `KernelCall`s by the planner. The executor must
-  never traverse a graph to compute gradients at runtime.
-- **No heap allocations in executor hot paths.** `Executor::run_forward`
-  and `Executor::run_backward` must not call `Vec::new`, `Box::new`,
-  `to_vec`, `String::new`, or any allocator-touching API inside the kernel
-  loop. Allocations belong in the planner.
+  `kernels/<op>.rs` file with the full definition + `OpKind`/marker entry
+  in `hologram-ops` + variant in `KernelCall` (with `dispatch` arm) +
+  compiler lowering + integration test. No incidental edits in
+  `hologram-graph` or `hologram-exec` unless that op needs a non-canonical
+  lowering.
+- **`OpKind` and `KernelCall` are closed surfaces.** `KernelCall` variants
+  are on the `.holo` wire format; `OpKind` is the graph IR vocabulary.
+  Adding/removing/reordering variants is an archive-format change.
+- **No virtual dispatch in the backend.** `KernelCall` is an enum matched
+  exhaustively by `CpuBackend::dispatch`. Do not add `Box<dyn Kernel>`,
+  function-pointer tables, or trait-object kernel registries on the hot
+  path. There is no tape and no boxed/dyn kernel layer.
+- **κ-labels (LUT/AddressRef) are identity, never execution.** Address
+  layers describe *which* value — never *how* to compute it. Do not embed
+  kernel pointers, function pointers, or workspace/buffer handles in
+  address or label types.
+- **Backward computation is planned, not traversed.** Reverse-mode
+  autodiff is forward-op composition: backward passes are emitted as
+  ordinary `KernelCall`s ahead of time. The session must never traverse a
+  graph to compute gradients at runtime.
+- **No heap allocations in executor hot paths.** The `InferenceSession::execute`
+  dispatch loop must not call `Vec::new`, `Box::new`, `to_vec`,
+  `String::new`, or any allocator-touching API per `KernelCall`.
+  Allocations belong at load/compile time.
 - **No runtime algorithm selection inside kernels.** Choosing between
-  variants (e.g., padded vs unpadded MatMul) is a planner-time decision
-  that produces a different `KernelCall` variant. Kernels must not branch
-  on shape or dtype to pick an algorithm.
-- **No virtual dispatch in kernels.** `KernelCall` is an enum; dispatch is
-  `match`. Do not introduce `Box<dyn Kernel>`, function-pointer arrays, or
-  trait-object kernel registries on the hot path.
-- **No TODOs or `unimplemented!()` stubs in `hologram-transform`.** Every
-  public item must be fully implemented or removed.
+  variants (e.g., padded vs unpadded MatMul) is a compile/load-time
+  decision that produces a different `KernelCall` variant. Kernels must
+  not branch on shape or dtype to pick an algorithm.
+- **No TODOs or `unimplemented!()` stubs in `hologram-exec` / `hologram-backend`.**
+  Every public item must be fully implemented or removed.
 - **Functions ≤ 15 lines and ≤ 3 args.** When a function naturally needs
-  more arguments, introduce a builder struct or a parameter struct. The
-  planner and executor are deliberately written this way.
+  more arguments, introduce a builder struct or a parameter struct.
 - **Every public item must have tests.** New `KernelCall` variants must be
-  exercised end-to-end (chain → plan → execute) in the crate's test suite.
+  exercised end-to-end (graph → compile → execute) in the test suite.
 - **Docs and specs must be updated with behaviour changes.** Any new op,
-  backward rule, or kernel variant requires an update to ADR-043 (or a new
-  ADR) and the matching plan.
+  backward rule, or `KernelCall` variant requires an update to the
+  relevant ADR (or a new ADR) and `specs/docs/architecture.md`.
 
 ## Problem-Solving Philosophy
 

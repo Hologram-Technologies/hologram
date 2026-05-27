@@ -26,9 +26,9 @@ Prism identity PP_1 states:
 ```
 
 The composed pipeline (dispatch → inference → accumulation → composition) collapses to a single
-O(1) resolution on a **saturated context**. Hologram's `DispatchContext` is this saturated context:
-all shapes, dtypes, and constants are resolved at compile time, so every execution is a single KV
-lookup.
+O(1) resolution on a **saturated context**. Hologram's compiled `.holo` archive is this saturated
+context: all shapes, dtypes, and constants are resolved at compile time, so identical computation is
+addressed once by its κ-label and a graph-level memo hit is O(1) in graph size.
 
 **Derivation chain** (each step traces to a UOR Foundation axiom):
 
@@ -37,19 +37,19 @@ lookup.
 | 0 | PI_3 (inference monotonicity) | SR_1 (freeCount non-increasing) | Shape propagation only converges |
 | 1 | PA_1 (accumulation associativity) | SR_10 (Church-Rosser confluence) | Parallel level order doesn't affect final state |
 | 2 | PL_3 (lease completeness recovery) | MC_6 (full coverage → σ=1) | All levels compose back to full saturation |
-| 3 | PK_2 (composition O(1) resolution) | MC_7 (stepCount=0 on saturated context) | KV lookup is O(1) |
+| 3 | PK_2 (composition O(1) resolution) | MC_7 (stepCount=0 on saturated context) | κ-label memo hit is O(1) |
 
 ### Additional Identities in Use
 
 | Prism Identity | Foundation Basis | Hologram Component |
 |---------------|-----------------|-------------------|
 | PA_4 (base binding preservation) | SR_1 + bitmask OR irreversibility | `DispatchContext` immutability; PM_5 rollback |
-| PI_1 (inference idempotence) | CC_1 + SC_5 | `KvStore` result caching |
+| PI_1 (inference idempotence) | CC_1 + SC_5 | κ-label result memoization in the `BufferArena` pool |
 | PD_1 (dispatch determinism) | AD_1 (addressing bijection) | `float_dispatch.rs` determinism |
 | PD_2 (dispatch type safety) | CB_5 (fiber sufficiency) | dtype-gated dispatch |
 | PL_2 (lease disjointness) | SR_9 (ContextLease fiber disjointness) | `ParallelLevel` isolation |
 | PX_5 (infeasibility detection) | CB_5 + SR_5 (ContradictionBoundary) | `CompileError` taxonomy |
-| PM_5 (transaction atomicity) | PA_4 (base preservation = free rollback) | `KvExecutor::execute()` error contract |
+| PM_5 (transaction atomicity) | PA_4 (base preservation = free rollback) | `InferenceSession::execute()` error contract |
 | PK_3 (parallelism bound) | MC_8 (work ≤ ⌈n/k⌉ for k leases) | Level fusion quality criterion |
 
 ---
@@ -61,8 +61,8 @@ deployment guarantees:
 
 | Space | Prism Definition | Hologram Crates |
 |-------|-----------------|-----------------|
-| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-core`, `hologram-ops`, `hologram-graph`, `hologram-archive` |
-| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-async` |
+| **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-host`, `hologram-types`, `hologram-ops`, `hologram-graph`, `hologram-archive` |
+| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-backend` |
 | **user** | Application-configurable; exposed at system boundaries | `hologram-ffi`, `hologram-cli`, `hologram-bench` |
 
 **Rule**: kernel crates must not depend on bridge or user crates. Bridge crates must not depend on
@@ -72,18 +72,21 @@ user crates. This enforces the one-way information flow required by the Prism sp
 
 ## Crate Dependency Graph
 
+The workspace is 11 crates (`hologram-core`, `hologram-async`, and
+`hologram-transform` were earlier-design crates that no longer exist):
+
 ```
-hologram-core (kernel)
-    └── hologram-ops (kernel)
-            ├── hologram-graph (kernel)
-            │       └── hologram-archive (kernel)
-            │               └── hologram-exec (bridge)
-            │               │       └── hologram-compiler (bridge)
-            │               │               └── hologram-async (bridge)
-            │               │                       └── hologram-ffi (user)
-            │               │                       └── hologram-cli (user)
-            │               └── hologram-bench (user)
-            └── hologram-transform (kernel)
+hologram-host ─┐
+hologram-types ┤
+               └── hologram-ops (kernel: canonical op vocabulary)
+                       └── hologram-graph (kernel: tensor graph IR)
+                               └── hologram-archive (kernel: .holo format, κ-labels)
+                                       ├── hologram-backend (bridge: CPU/GPU kernels)
+                                       └── hologram-exec (bridge: content-addressed executor)
+                                               └── hologram-compiler (bridge: graph → .holo)
+                                                       ├── hologram-ffi (user: C ABI)
+                                                       └── hologram-cli (user: CLI)
+                                       └── hologram-bench (user: benchmarks)
 ```
 
 `hologram-ops` is the canonical semantic operation vocabulary. It describes
@@ -95,11 +98,15 @@ execution-compatibility encoding during the migration.
 
 ---
 
-## Tape Execution Pipeline
+## Content-Addressed Execution Pipeline
 
-Hologram compiles a dataflow graph into a flat, pre-resolved instruction tape where every data path
-is an integer index into a buffer arena. This eliminates per-node op matching, HashMap lookups, and
-vtable indirection at execution time — realising the PP_1 O(1) resolution claim.
+Hologram compiles a dataflow graph into a `.holo` archive of `KernelCall`s plus an execution
+schedule. At load time the archive is decoded and the load-time fusion passes run; at execution
+time the backend dispatches each `KernelCall` against a single content-addressed buffer pool. Every
+value carries a UOR-ADDR κ-label, a slot *binds* to a buffer by that label, and identical
+computation is memoized rather than recomputed. This eliminates per-node op matching against the
+graph, HashMap lookups on the hot path, and vtable indirection at execution time — realising the
+PP_1 O(1) resolution claim.
 
 ### Stage 1: Graph — Edges Define Data Paths
 
@@ -109,73 +116,85 @@ an `output_port`. The graph exposes `predecessors()` and `successors()` for trav
 
 **Key types**: `Node`, `InputSlot`, `InputSource` (`hologram-graph/src/graph/node.rs`)
 
-### Stage 2: Schedule — Paths Become Parallel Levels
+### Stage 2: Schedule — Paths Become an Ordered Plan
 
 A modified Kahn's topological sort partitions the graph into `ParallelLevel`s. Nodes within a level
-have no mutual dependencies and can execute concurrently. This satisfies **PL_2 (lease
-disjointness)**: nodes in a level hold non-overlapping buffer leases, and all predecessors reside in
-strictly earlier levels.
+have no mutual dependencies, and all predecessors reside in strictly earlier levels. This satisfies
+**PL_2 (lease disjointness)**: nodes in a level hold non-overlapping buffer leases. The flattened
+level order is the deterministic execution schedule carried in the archive.
 
 Critical-path analysis (DP over the topological order) computes the longest dependency chain, giving
 the parallelism ratio `total_nodes / critical_path_length`.
 
 **Key types**: `ExecutionSchedule`, `ParallelLevel` (`hologram-graph/src/schedule/`)
 
-### Stage 3: Tape Compilation — Paths Become Arena Indices
+### Stage 3: Compilation — Ops Become `KernelCall`s
 
-`build_tape()` compiles the schedule into a flat `EnumTape`:
+The compiler lowers each scheduled graph op (`OpKind`, and its per-op marker type in
+`hologram-ops`) into a variant of the `KernelCall` enum (`hologram-backend/src/kernel_call.rs`).
+A `KernelCall` is a fully-resolved, self-describing instruction: it carries the operand κ-labels,
+the resolved shapes/dtypes, and the output label. There is no boxed trait object and no runtime
+shape-inference module — shapes are resolved at compile time and travel inside the `KernelCall`.
 
-```
-EnumTape {
-    instructions: Vec<TapeInstruction>,   // flat array in execution order
-    level_offsets: Vec<usize>,            // boundaries between parallel levels
-}
-```
+The compiler emits these `KernelCall`s plus the schedule into a `.holo` archive. All graph edges are
+resolved to κ-labels at this stage; no graph traversal occurs at runtime.
 
-Each `TapeInstruction` pre-resolves all data routing:
+**Key types**: `OpKind` and per-op marker types (`hologram-ops`), `KernelCall`
+(`hologram-backend/src/kernel_call.rs`), `.holo` archive (`hologram-archive`)
 
-| Field | Purpose |
-|-------|---------|
-| `kernel: TapeKernel` | Operation as an enum variant (not boxed trait) |
-| `input_indices: Vec<u32>` | Arena slots to read inputs from |
-| `output_idx: u32` | Arena slot to store the result |
-| `passthrough: bool` | Zero-copy move (identity/reshape ops) |
-| `can_reuse_input: bool` | In-place mutation for single-consumer unary ops |
-| `weight_offset_hint: u32` | Prefetch hint for LUT-GEMM weight pages |
-| `output_byte_hint: u32` | Pre-computed output size for arena pre-warming |
+### Stage 4: Load — Decode + Fuse
 
-All graph edges are resolved to integer indices at this stage. No graph traversal occurs at runtime.
+`InferenceSession::load` (`hologram-exec/src/session.rs`) decodes the archive, then runs the
+load-time content-addressed fusion passes (see below). The result is the ordered list of
+`KernelCall`s the session will dispatch, with constants pinned into the pool for the session
+lifetime. Warm-start may pre-populate the pool from a persisted κ-store (`WarmStore`), so the
+compiled object is never cold.
 
-**Key types**: `EnumTape`, `TapeInstruction`, `TapeKernel` (`hologram-exec/src/tape.rs`),
-`build_tape()` (`hologram-exec/src/tape_builder.rs`)
+**Key types**: `InferenceSession`, `WarmStore` (`hologram-exec/src/session.rs`,
+`hologram-exec/src/warm.rs`)
 
-### Stage 4: Execution — Index-Based Data Routing
+### Stage 5: Execution — κ-Label Binding Against the Pool
 
-`BufferArena` is a flat `Vec<Option<ArenaBuffer>>` indexed by `NodeId::index()`, giving O(1) lookup
-without hashing. The executor processes instructions level-by-level, selecting one of four fast
-paths per instruction:
+`InferenceSession::execute` dispatches each `KernelCall` against `BufferArena`
+(`hologram-exec/src/buffer.rs`), the single content-addressed buffer pool. A value lives in exactly
+one aligned buffer; a slot *binds* to it by κ-label. The pool holds two buffer classes:
 
-| Fast Path | Condition | Mechanism |
-|-----------|-----------|-----------|
-| Passthrough | `passthrough = true` | `arena.move_slot(src → dst)` — zero-copy |
-| In-place unary | `can_reuse_input = true` | Mutate input buffer, then move slot |
-| Inline dispatch | Simple unary/binary ops | Direct f32 access, compute into recycled buffer |
-| General dispatch | Everything else | Gather input refs into SmallVec, dispatch to backend |
+| Class | Purpose | Lifetime |
+|-------|---------|----------|
+| pinned | model constants/weights, deduped by content κ-label | session lifetime |
+| transient | activations, byte-bounded so memory holds for arbitrary models | reused/recycled |
 
-After arena pre-warming (`prewarm_arena()`), steady-state execution is **zero-allocation**: the
-`swap_insert_with_elem_size()` method exchanges output buffers with the arena's existing allocation,
-so the kernel writes into a recycled `Vec<u8>` and the arena reclaims the old one.
+The CPU backend (`CpuBackend`, `hologram-backend/src/cpu.rs`) dispatches by an **exhaustive `match`
+over `KernelCall`** — no virtual dispatch, no function-pointer tables, no runtime algorithm
+selection. Before computing, the pool checks whether the output κ-label is already resident
+(pinned or transient); if so the compute is **elided** and the slot rebinds to the existing buffer
+(the κ-label memo). This is the single mechanism behind result caching — there is no separate KV
+store.
 
-The executor also **prefetches ahead**: while instruction N executes, instruction N+1's input data
-and weight pages are prefetched into cache.
+Steady-state execution is **zero-allocation** on the hot path: a κ-label miss writes into a recycled
+transient buffer reclaimed from the pool rather than allocating a fresh one. Identical computation
+across nodes (or across runs, via warm-start) is an O(1) rebind.
 
-**Key types**: `BufferArena`, `ArenaBuffer` (`hologram-exec/src/buffer/arena.rs`)
+**Key types**: `BufferArena` (`hologram-exec/src/buffer.rs`), `CpuBackend`
+(`hologram-backend/src/cpu.rs`)
 
-### Fusion — Path Shortening
+### Fusion — Content-Addressed Path Shortening
 
-Before tape compilation, a single topological pass applies five complementary optimisation passes
-that shorten the graph, eliminate intermediate buffers, and reduce dispatch overhead. Topological
-order guarantees that predecessors are processed before their successors, so both forward-looking
+Fusion happens in two phases. The compiler first desugars composite ops to primitives and applies
+**algebraic elision** (bit-exact-sound identities/involutions, Reshape relabel, DCE) — compute the
+κ-label algebra proves unnecessary is removed. Then, at load time, content-addressed fusion passes
+collapse adjacent `KernelCall`s into fused variants that elide the intermediate buffer:
+
+| Pattern | Fused `KernelCall` |
+|---------|--------------------|
+| MatMul → Activation | `MatMulActivation` |
+| MatMul → Add(bias) → Activation | `MatMulAddActivation` |
+| Dequantize → MatMul | `MatMulDequant` (never materialises the dense f32 weight) |
+| Dequantize → Activation | `DequantActivation` |
+| Expand → elementwise-binary | `BroadcastBinary` (zero-movement Expand) |
+
+A single topological pass over the graph also applies constant folding, view fusion, and CSE.
+Topological order guarantees predecessors are processed before successors, so forward-looking
 (epilogue) and backward-walking (view) fusions compose correctly in one pass.
 
 **Key entry point**: `fusion::fuse()` (`hologram-graph/src/fusion/mod.rs`)
@@ -252,24 +271,23 @@ successors of a duplicate node are rewired to the canonical node.
 
 **Key file**: `hologram-graph/src/fusion/cse.rs`
 
-#### Fusion → Tape mapping
+#### Fusion → `KernelCall` mapping
 
-The fused graph is lowered into a flat tape of `TapeKernel` instructions. Each fused graph node
-maps to a specific kernel variant — `LutView`, `LutView16`, `InlineMatMulActivation`,
-`InlineConv2dBiasActivation`, `FusedRmsNormActivation`, etc. — so the executor sees fully
-resolved instructions with **zero pattern-detection overhead** at runtime.
+Each fused graph node maps to a specific `KernelCall` variant — the view-fusion tables, the
+epilogue variants (`MatMulActivation`, `MatMulAddActivation`), the quantized variants
+(`MatMulDequant`, `DequantActivation`), and `BroadcastBinary` — so the backend sees fully resolved
+instructions with **zero pattern-detection overhead** at runtime.
 
-**Key types**: `TapeKernel` (`hologram-exec/src/tape.rs`), tape builder
-(`hologram-exec/src/tape_builder.rs`)
+**Key types**: `KernelCall` (`hologram-backend/src/kernel_call.rs`); load-time fusion in
+`InferenceSession::load` (`hologram-exec/src/session.rs`)
 
 ### Prism Grounding
 
-The tape pipeline realises several Prism identities:
+The content-addressed pipeline realises several Prism identities:
 
-- **PP_1** — Pre-resolution of all paths at compile time means execution is a single O(1) lookup
-  per instruction on the saturated context (the arena + tape).
-- **PL_2** — Level boundaries in `level_offsets` guarantee buffer-lease disjointness within each
-  level.
+- **PP_1** — Pre-resolution of all paths at compile time means execution is a single O(1) κ-label
+  rebind/memo per `KernelCall` on the saturated context (the archive + buffer pool).
+- **PL_2** — Schedule level boundaries guarantee buffer-lease disjointness within each level.
 - **PA_1** — Accumulation associativity means the order of operations within a level does not affect
   the final result, enabling safe parallelism.
 
@@ -299,7 +317,7 @@ there is no separate imperative pipeline.
 | 2 | Factorize (Ω²) | `stage_factorize` | Fusion passes: constant folding, view fusion, CSE |
 | 3 | Resolve (Ω³) | `stage_resolve` | Build execution schedule via Kahn's algorithm |
 | 4 | Attest (Ω⁴) | `stage_attest` | Liveness analysis, workspace planning, QEDL boundaries, assertion verification |
-| 5 | Extract (Ω⁵) | `stage_extract` | Build execution tape from graph + schedule |
+| 5 | Extract (Ω⁵) | `stage_extract` | Build the `KernelCall` sequence from graph + schedule |
 | 6 | Converge (π) | `stage_convergence` | Emit `.holo` archive with LayerHeader + CompileUnitMeta sections |
 
 ### Certificate Memoization
@@ -333,7 +351,8 @@ Hologram implements UOR's quantum level hierarchy for ring-arithmetic accelerati
 | Q3 | 32 | Z/4294967296Z | Algorithmic only (17 GB full LUT infeasible) |
 | Q4+ | 40+ | Z/2^nZ | Algorithmic with optional LRU cache |
 
-Q0 and Q1 are fully realised in `hologram-core`. Q2+ are algorithmic fallbacks.
+Q0 and Q1 are fully realised as lookup tables in `hologram-backend` (`cpu::lut`).
+Q2+ are computed algorithmically.
 
 ---
 

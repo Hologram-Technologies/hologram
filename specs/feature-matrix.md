@@ -1,115 +1,123 @@
-# Feature Matrix — Hologram Target Compatibility
+# Feature Matrix — Hologram Target Compatibility (v0.5.0)
 
-## hologram-core feature flags
+All library crates are `no_std` + `alloc` by default. A `std` feature opts in
+to the host build (std error surface, host-only backends, mmap, diagnostics).
+Backends are selected by **Cargo feature**, not by `build.rs` autodetection.
 
-| Feature      | Description                                        | Default |
-|--------------|----------------------------------------------------|---------|
-| `std`        | Enables std + serialize + rkyv validation          | on      |
-| `serialize`  | rkyv Archive/Serialize/Deserialize derives + alloc | off     |
-| `simd`       | SIMD-accelerated LUT paths (x86 AVX2/SSE4.2)      | on      |
-| `no_alloc`   | Marker for StaticBuf-only usage (no heap)          | off     |
+## Library defaults
 
-## hologram-exec feature flags
+| Trait | Value |
+|-------|-------|
+| Default environment | `no_std` + `alloc` |
+| Host build | enable each crate's `std` feature |
+| Backend selection | explicit Cargo feature (`cpu` / `parallel` / `wgpu` / `metal`) |
 
-| Feature       | Description                                         | Default |
-|---------------|-----------------------------------------------------|---------|
-| `std`         | Standard library support                            | on      |
-| `parallel`    | Rayon-based parallel level execution                | off     |
-| `accelerate`  | macOS Accelerate BLAS for MatMul                    | on (macOS) |
-| `profile`     | Per-op timing + intermediate capture                | off     |
+## Crate feature flags
 
-## Compute Backend Availability
+### hologram-backend
 
-Backends are auto-detected at build time by `build.rs` — no manual feature flags needed.
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `cpu` | CPU backend (cache-oblivious recursive matmul, monomorphic kernels) | on |
+| `parallel` | Multi-core level execution via an in-tree std-thread worker pool (no external dep); single-thread path is byte-identical | on |
+| `std` | Host std support (enables std-only backends and amenities) | on |
+| `wgpu` | WebGPU backend; implies `std` | off |
+| `metal` | Apple GPU backend; implies `std` (macOS) | off |
 
-| Backend | Auto-detected when | GPU kernels | Zero-copy arena | Status |
-|---------|--------------------|-------------|-----------------|--------|
-| **CPU** | Always | N/A (SIMD autovectorization) | N/A | Production |
-| **Metal** | `target_os = "macos"` | 16 kernels (9 unary, 4 binary, SGEMM, softmax, RmsNorm) | MTLBuffer via ArenaBuffer::Metal | Production |
-| **WebGPU** | `target_arch = "wasm32"` | Stub (returns Skipped) | Not yet | Planned |
-| **CUDA** | `CUDA_HOME` set or `nvcc` on PATH | Stub (returns Skipped) | Not yet | Planned |
+`cpu` is the default compute backend; `parallel` is on by default and is
+intra-kernel (a single `dispatch` fans its disjoint output tiles across cores).
+`wgpu` and `metal` are host-only and each pull `std`.
 
-### Backend Priority (Auto selection)
+### hologram-exec
 
-Metal > WebGPU > CUDA > CPU
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `std` | Host std error surface; forwards `std` to backend/archive/compiler | on |
+| `tiered-exec` | PM_7 memory-affinity tier classification + observability | off |
+| `parallel` | Forwards to `hologram-backend/parallel` (intra-kernel multi-core) | off |
 
-### Metal GPU Dispatch Thresholds
+### hologram-archive
 
-| Op type | Min buffer for GPU dispatch | Below threshold |
-|---------|---------------------------|-----------------|
-| Elementwise unary/binary | 4 MB (1M floats) | CPU monomorphized SIMD |
-| MatMul | 128x128 output (64KB) | Accelerate BLAS |
-| Softmax / RmsNorm | 4 MB | CPU dispatch |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `std` | Host std support (mmap via `memmap2`, std forwarding) | on |
+| `model-formats` | GGUF / ONNX UOR-ADDR realizations (`uor-addr/gguf`, `uor-addr/onnx`) for hologram-ai | off |
+| `compression` | (reserved) | off |
 
-## Execution Paths
+### hologram-compiler
 
-| Path | Build cost | Per-inference cost | Allocation | Backend support |
-|------|-----------|-------------------|------------|-----------------|
-| `execute_tape` (EnumTape) | Tape build once | O(1) dispatch per op | Zero (swap-insert) | CPU + Metal + GPU |
-| `execute_plan` (KvExecutor) | Schedule per call | O(n) match chain | Per-node Vec | CPU only |
-| `execute_bytes` | Parse + schedule | O(n) match chain | Per-node Vec | CPU only |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `std` | Host std support; enables `tracing` diagnostics + std error surface | on |
 
-### Tape Dispatch Optimization Levels
+### hologram-ffi
 
-| Level | Ops covered | Overhead per op |
-|-------|-------------|-----------------|
-| Inline dispatch (Phase 9a) | Relu, Neg, Abs, Sigmoid, Silu, Tanh, Gelu, Exp, Reciprocal, Add, Mul, Sub, Div, MatMul, Softmax, RmsNorm | ~0 ns |
-| Generic Float dispatch | All other FloatOps | ~60 ns (backend check + category match) |
-| Byte-domain LUT | Lut, FusedView, Prim | ~30 ns (direct table apply) |
-| LUT-GEMM | MatMulLut4, MatMulLut8 | ~100 ns (weight cache lookup) |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `wasm` | WebAssembly build of the C-ABI FFI | off |
 
-## Cross-compilation Targets
+### hologram-host
 
-| Feature        | x86_64-linux | aarch64-macos | wasm32 (no_std) | thumbv7em (ARM) | esp32 |
-|----------------|:------------:|:-------------:|:---------------:|:---------------:|:-----:|
-| `std`          | yes           | yes            | no               | no               | no     |
-| `serialize`    | yes           | yes            | no               | no               | no     |
-| `simd`         | AVX2/SSE4.2  | NEON           | partial (simd128)| no               | no     |
-| `no_alloc`     | yes           | yes            | yes              | yes              | yes    |
-| StaticBuf      | yes           | yes            | yes              | yes              | yes    |
-| LUT tables     | yes           | yes            | yes              | yes              | yes    |
-| rkyv 0.8       | yes           | yes            | no               | no               | no     |
-| rayon parallel | yes           | yes            | no               | no               | no     |
-| Metal GPU      | no            | yes (auto)     | no               | no               | no     |
-| Accelerate BLAS| no            | yes (auto)     | no               | no               | no     |
-| EnumTape       | yes           | yes            | yes (no Metal)   | no               | no     |
-| KV cache       | yes           | yes            | yes              | no               | no     |
-| TinyVec inputs | yes           | yes            | yes              | yes              | yes    |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `std` | Host std support | off |
 
-## Build Recipes
+### hologram-graph / hologram-ops / hologram-types
+
+These crates are `no_std` + `alloc` with no optional features (`default = []`).
+
+There is **no** `accelerate`, `profile`, `serialize`, `no_alloc`, or `simd`
+feature, and there is **no** `hologram-core` crate. GPU backends are gated by
+the `wgpu` / `metal` Cargo features rather than detected at build time.
+
+## Target-compatibility matrix
+
+| Target | Env | CPU | parallel | wgpu | metal | std |
+|--------|-----|:---:|:--------:|:----:|:-----:|:---:|
+| `x86_64` (AVX2 / AVX-512) | std | yes | yes | yes | no | yes |
+| `aarch64` (NEON) | std | yes | yes | yes | macOS only | yes |
+| macOS (`aarch64`/`x86_64`) | std | yes | yes | yes | yes | yes |
+| Windows (`x86_64`) | std | yes | yes | yes | no | yes |
+| `wasm32-unknown-unknown` | no_std + alloc | yes | no | no | no | no |
+| `thumbv7em-none-eabi` (embedded) | no_std + alloc | yes | no | no | no | no |
+
+Notes:
+- `no_std` targets (`wasm32-unknown-unknown`, `thumbv7em-none-eabi`) run the
+  CPU backend single-threaded; `parallel`, the GPU backends, mmap, and the std
+  error surface require `std`.
+- `metal` is available only on macOS; `wgpu` is the portable GPU path on
+  std-capable desktop targets.
+
+## Execution model
+
+There is **no** `KvExecutor` and **no** `execute_plan` / tape API. The executor
+is the content-addressed `InferenceSession`
+(`crates/hologram-exec/src/session.rs`) running over a single `BufferArena`
+content-addressed buffer pool (`crates/hologram-exec/src/buffer.rs`): a value
+lives in one aligned buffer and a slot binds to it; reuse rebinds, constants
+are pinned, and residency checks elide redundant compute. The compiler lowers
+the graph IR (`hologram_graph::OpKind`) into a sequence of `KernelCall`s
+(`crates/hologram-backend/src/kernel_call.rs`) that the CPU backend dispatches
+by exhaustive match.
+
+## Build recipes
 
 ```bash
-# Standard build (std + serialize + simd + accelerate on macOS)
-just build
+# Host build (std + cpu + parallel)
+cargo build
 
-# WASM no_std (no rkyv, no std, LUTs + StaticBuf only)
-just wasm-nostd
+# WebGPU on desktop
+cargo build -p hologram-backend --features wgpu
 
-# ARM bare-metal (Cortex-M4F, no_std)
-just embedded
+# Apple GPU (macOS)
+cargo build -p hologram-backend --features metal
 
-# Full CI (fmt + clippy + tests)
-just ci
+# no_std core (wasm / embedded): default-features off, no std
+cargo build -p hologram-backend --no-default-features --features cpu
 
-# Run benchmarks
-just bench
+# WebAssembly FFI
+cargo build -p hologram-ffi --features wasm
+
+# Benches with the multi-core worker pool engaged
+cargo bench -p hologram-bench --features parallel
 ```
-
-## Binary Size Estimates (hologram-core, release, no_std)
-
-| Target           | Approx .text size |
-|------------------|-------------------|
-| wasm32-unknown   | ~40 KB            |
-| thumbv7em-none   | ~35 KB            |
-
-These are below the 100 KB Sprint 8 target. The dominant sections are
-the precomputed LUT tables in `.rodata` (~64 KB for full Q0 tables).
-
-## Performance Summary (Sprint 15-16)
-
-| Benchmark | KvExecutor | EnumTape | Speedup |
-|-----------|-----------|----------|---------|
-| Relu 64KB | 44.6 µs | 3.3 µs | 13.5x |
-| Linear chain (4 ops, 256B) | 7.5 µs | 1.2 µs | 6.3x |
-| Diamond (5 ops, 256B) | 11.4 µs | — | — |
-| Wide parallel (17 ops, 256B) | 34.4 µs | — | — |

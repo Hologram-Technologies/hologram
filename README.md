@@ -37,7 +37,7 @@ built bit-identically from the reference implementation:
   `widen → transcendental → narrow` — **~28× faster** on bf16 GELU, bit-identical.
 - **Byte (≤8-bit) domain**: a 256-entry table.
 - **Quantized inference**: a `Dequantize → activation` chain stores f32 but its
-  *realized* domain is the quantized source's (256 for i8, 16 for i4), so it
+  *realized* domain is the quantized source's (256 for i8/u8, 16 for i4), so it
   densifies into a ≤256-entry table indexed by the quantized byte — **~27×**
   faster, keyed on realized information content rather than storage width.
 - **f32** is computed (a 4 GB table is infeasible); reuse is structural, via the
@@ -62,9 +62,10 @@ sub-graphs so intermediates are never separately materialized:
 
 f32 matmul is a cache-oblivious blocked SIMD kernel (AVX-512 → AVX2 → NEON →
 portable scalar, selected at runtime) with compile-time panel-packed constant
-weights (zero runtime copy). Quantized weights (i8 / i4) flow through the fused
-`MatMulDequant` path. f16 / bf16 widen into the same f32 engine — no scalar
-fallback; f64 is rejected loudly.
+weights (zero runtime copy). Quantized weights — **i8, u8 (ONNX's default
+asymmetric type), and i4** — flow through the fused `MatMulDequant` path, with
+per-tensor or per-channel scale/zero-point. f16 / bf16 widen into the same f32
+engine — no scalar fallback; f64 is rejected loudly.
 
 ---
 
