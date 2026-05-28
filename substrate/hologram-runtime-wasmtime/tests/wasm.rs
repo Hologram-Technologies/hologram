@@ -106,6 +106,7 @@ fn runtime_drives_a_real_wasm_container_through_suspend_resume() {
                     subscribe_channels: vec![],
                     memory_max_bytes: 1 << 20,
                     cpu_time_per_event_ms: 100,
+                    priority_weight: 0,
                 })
                 .canonicalize(),
             )
@@ -178,6 +179,7 @@ fn container_uses_capability_gated_host_storage_imports() {
                     subscribe_channels: vec![],
                     memory_max_bytes: 1 << 20,
                     cpu_time_per_event_ms: 100,
+                    priority_weight: 0,
                 })
                 .canonicalize(),
             )
@@ -252,6 +254,7 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
                         subscribe_channels: subs,
                         memory_max_bytes: 1 << 20,
                         cpu_time_per_event_ms: 100,
+                        priority_weight: 0,
                     })
                     .canonicalize(),
                 )

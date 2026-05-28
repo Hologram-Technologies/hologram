@@ -27,7 +27,9 @@ use hologram_substrate_core::{
 use wasmtime::{Caller, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 pub mod block;
+pub mod network;
 pub use block::WasmBlockDevice;
+pub use network::WasmNetworkInterface;
 
 const PAGE: usize = 64 * 1024;
 
@@ -540,6 +542,12 @@ impl ContainerEngine for WasmtimeEngine {
     }
     fn memory_bytes(&self, inst: &WasmInstance) -> u64 {
         inst.memory.data_size(&inst.store) as u64
+    }
+    fn storage_used(&self, inst: &WasmInstance) -> u64 {
+        inst.store.data().storage_used
+    }
+    fn restore_storage_used(&self, inst: &mut WasmInstance, used: u64) {
+        inst.store.data_mut().storage_used = used;
     }
     fn drain_intents(&self, inst: &mut WasmInstance) -> ContainerIntents {
         let s = inst.store.data_mut();

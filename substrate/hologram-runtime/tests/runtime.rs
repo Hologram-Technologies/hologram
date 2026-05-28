@@ -6,7 +6,8 @@ use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_store_mem::MemKappaStore;
 use hologram_substrate_core::{
-    Capabilities, ContainerRuntime, ContainerState, KappaLabel71, KappaStore, Realization,
+    Capabilities, ContainerHandle, ContainerRuntime, ContainerState, KappaLabel71, KappaStore,
+    Realization,
 };
 
 fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
@@ -19,6 +20,7 @@ fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
         subscribe_channels: vec![],
         memory_max_bytes: 1 << 20,
         cpu_time_per_event_ms: 100,
+        priority_weight: 0,
     }
 }
 
@@ -161,6 +163,49 @@ fn cr_revocation_refuses_subsequent_operations() {
 }
 
 #[test]
+fn rv_transitive_revoke_cascades_through_delegation() {
+    // arch §11.8: revoking the grandparent's caps cascades through the κ-graph Delegation cone —
+    // A → B → C, revoke(A) refuses C's future operations because Delegation κ-edges connect them.
+    pollster::block_on(async {
+        let store = MemKappaStore::new();
+        let r = store.put("blake3", b"shared-root").unwrap();
+        let (cid, caps_a) = provision(&store, b"<wasm>", b"", caps(&[r], 1000, false));
+        let caps_b = store
+            .put(
+                "blake3",
+                &CapabilitySet::new(caps(&[r], 500, false)).canonicalize(),
+            )
+            .unwrap();
+        let caps_c = store
+            .put(
+                "blake3",
+                &CapabilitySet::new(caps(&[r], 100, false)).canonicalize(),
+            )
+            .unwrap();
+
+        let rt = Runtime::new(MockEngine, store);
+        let a = rt.spawn(&cid, &caps_a).await.unwrap();
+        let b = rt.spawn_child(a, &cid, &caps_b).unwrap();
+        // C is spawned under B (NOT under A) — the cascade must traverse the κ-graph two hops.
+        let _c = rt.spawn_child(b, &cid, &caps_c).unwrap();
+
+        // Before revoke: all three operate normally.
+        assert!(rt.deliver_event(a, b"ok").is_ok());
+        // Revoking A cascades through the Delegation κ-graph: B AND C become unable to operate.
+        rt.revoke(&caps_a);
+        assert!(rt.deliver_event(a, b"nope").is_err(), "A directly revoked");
+        assert!(
+            rt.spawn(&cid, &caps_b).await.is_err(),
+            "B refused — descendant of A in the delegation cone"
+        );
+        assert!(
+            rt.spawn(&cid, &caps_c).await.is_err(),
+            "C refused — two-hop descendant via the κ-graph"
+        );
+    });
+}
+
+#[test]
 fn cr_cross_runtime_migration_from_snapshot() {
     pollster::block_on(async {
         // Peer A: spawn, run, suspend → snapshot κ.
@@ -201,6 +246,7 @@ fn caps_chan(publish: &[KappaLabel71], subscribe: &[KappaLabel71]) -> Capabiliti
         subscribe_channels: subscribe.to_vec(),
         memory_max_bytes: 1 << 20,
         cpu_time_per_event_ms: 100,
+        priority_weight: 0,
     }
 }
 
@@ -304,6 +350,56 @@ fn ch_subscription_persists_across_suspend_resume() {
             rt.delivered_callbacks(subh2)
                 .contains(&(7, payload.as_array().to_vec())),
             "message published during suspension replayed on resume"
+        );
+    });
+}
+
+fn caps_weighted(weight: u32) -> Capabilities {
+    Capabilities {
+        storage_roots: vec![],
+        storage_quota_bytes: 0,
+        network_fetch: false,
+        network_announce: false,
+        publish_channels: vec![],
+        subscribe_channels: vec![],
+        memory_max_bytes: 1 << 20,
+        cpu_time_per_event_ms: 100,
+        priority_weight: weight,
+    }
+}
+
+#[test]
+fn sc_drr_fairness_over_uortime() {
+    // arch §11.7: a deficit-round-robin scheduler keyed by `(handle, UorTime)` — NOT wall-clock —
+    // delivers events at a ratio matching `priority_weight`. With weights {1, 1, 4} and quantum=1
+    // we expect roughly {1, 1, 4} events per round. No backoff timing involved: the order is
+    // deterministic over uor-native quantities.
+    pollster::block_on(async {
+        let store = MemKappaStore::new();
+        let (cid_lo1, ck_lo1) = provision(&store, b"<wasm>", b"", caps_weighted(1));
+        let (cid_lo2, ck_lo2) = provision(&store, b"<wasm>", b"", caps_weighted(1));
+        let (cid_hi, ck_hi) = provision(&store, b"<wasm>", b"", caps_weighted(4));
+        let rt = Runtime::new(MockEngine, store);
+        let lo1 = rt.spawn(&cid_lo1, &ck_lo1).await.unwrap();
+        let lo2 = rt.spawn(&cid_lo2, &ck_lo2).await.unwrap();
+        let hi = rt.spawn(&cid_hi, &ck_hi).await.unwrap();
+
+        // Flood every container with ample work (50 events each).
+        for _ in 0..50 {
+            rt.enqueue_event(lo1, b"e".to_vec()).unwrap();
+            rt.enqueue_event(lo2, b"e".to_vec()).unwrap();
+            rt.enqueue_event(hi, b"e".to_vec()).unwrap();
+        }
+
+        // One round at quantum=1 should serve {1, 1, 4} (deficit covers exactly the weight).
+        let r1 = rt.pump_round(1);
+        let count = |h: ContainerHandle| r1.iter().filter(|(x, _)| *x == h).count();
+        assert_eq!(count(lo1), 1, "weight 1 → 1 event/round");
+        assert_eq!(count(lo2), 1, "weight 1 → 1 event/round");
+        assert_eq!(
+            count(hi),
+            4,
+            "weight 4 → 4 events/round (no starvation either way)"
         );
     });
 }

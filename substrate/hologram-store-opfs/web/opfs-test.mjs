@@ -74,6 +74,45 @@ try {
   if (r3 !== null) fail("absent κ did not return null");
   else console.log("OPFS-TEST: absent κ → null OK");
 
+  // 4) OPFS GC (arch §11.5): put two unrelated κ-labels; pin only one; gc; the unpinned one is
+  //    removed. The pinned one (and its reachable closure, walked through the realization
+  //    registry) survives.
+  const r4 = await page.evaluate(async () => {
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    const kept = enc.encode("kept-by-pin");
+    const orphan = enc.encode("orphan-to-collect");
+    const kKept = await window.hg.opfs_put(kept);
+    const kOrphan = await window.hg.opfs_put(orphan);
+    const before = await window.hg.opfs_iterate();
+    const deleted = await window.hg.opfs_gc([kKept]);
+    const after = await window.hg.opfs_iterate();
+    const stillKept = await window.hg.opfs_get(kKept);
+    const stillOrphan = await window.hg.opfs_get(kOrphan);
+    return {
+      kKept,
+      kOrphan,
+      beforeCount: before.length,
+      afterCount: after.length,
+      deleted,
+      keptPresent: stillKept ? dec.decode(stillKept) : null,
+      orphanPresent: stillOrphan ? dec.decode(stillOrphan) : null,
+      afterContainsKept: after.includes(kKept),
+      afterContainsOrphan: after.includes(kOrphan),
+    };
+  });
+  if (r4.deleted < 1) fail(`gc should have deleted ≥1 orphan, got ${r4.deleted}`);
+  else if (r4.keptPresent !== "kept-by-pin") fail(`pinned κ was lost; got ${r4.keptPresent}`);
+  else if (r4.orphanPresent !== null) fail("orphan κ survived gc");
+  else if (r4.afterContainsOrphan) fail("orphan κ still listed by iterate after gc");
+  else if (!r4.afterContainsKept) fail("pinned κ no longer listed by iterate after gc");
+  else
+    console.log(
+      "OPFS-GC-TEST: PASS — gc retained pin, evicted",
+      r4.deleted,
+      "orphan(s)"
+    );
+
   if (!process.exitCode) console.log("OPFS-TEST: PASS");
 } catch (e) {
   fail(String(e));

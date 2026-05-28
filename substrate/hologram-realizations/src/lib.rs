@@ -180,6 +180,7 @@ impl CapabilitySet {
         p.extend_from_slice(&c.storage_quota_bytes.to_le_bytes());
         p.extend_from_slice(&c.memory_max_bytes.to_le_bytes());
         p.extend_from_slice(&c.cpu_time_per_event_ms.to_le_bytes());
+        p.extend_from_slice(&c.priority_weight.to_le_bytes());
         p.push((c.network_fetch as u8) | ((c.network_announce as u8) << 1));
         (refs, p)
     }
@@ -201,6 +202,7 @@ impl CapabilitySet {
         let storage_quota_bytes = read_u64(&payload, &mut cur)?;
         let memory_max_bytes = read_u64(&payload, &mut cur)?;
         let cpu_time_per_event_ms = read_u64(&payload, &mut cur)?;
+        let priority_weight = read_u32(&payload, &mut cur)?;
         let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
         Ok(Capabilities {
             storage_roots: refs[..ns].to_vec(),
@@ -209,6 +211,7 @@ impl CapabilitySet {
             storage_quota_bytes,
             memory_max_bytes,
             cpu_time_per_event_ms,
+            priority_weight,
             network_fetch: flags & 1 != 0,
             network_announce: flags & 2 != 0,
         })
@@ -219,12 +222,15 @@ realization!(
     "https://hologram.foundation/realization/capability-set"
 );
 
-/// `https://hologram.foundation/realization/snapshot` — suspended container state (spec §4.7).
-/// Operands: the Container ID and the prior snapshot (the suspend/resume chain). Payload: opaque
-/// linear-memory/globals/cursor digest (the bytes themselves are stored separately by κ).
+/// `https://hologram.foundation/realization/snapshot` — suspended container state (spec §4.7,
+/// arch §11.6). Operands: the Container ID and the prior snapshot (the suspend/resume chain).
+/// Payload: the **storage-quota ledger** (`storage_used`, 8 bytes LE) followed by the opaque
+/// linear-memory / globals / cursor digest. Carrying `storage_used` here is what keeps the
+/// container's storage quota honest across suspend/resume (arch §11.6): the κ binds the ledger.
 pub struct Snapshot {
     pub container_id: KappaLabel71,
     pub previous: Option<KappaLabel71>,
+    pub storage_used: u64,
     pub state_payload: Vec<u8>,
 }
 impl Snapshot {
@@ -233,7 +239,22 @@ impl Snapshot {
         if let Some(p) = self.previous {
             refs.push(p);
         }
-        (refs, self.state_payload.clone())
+        let mut payload = Vec::with_capacity(8 + self.state_payload.len());
+        payload.extend_from_slice(&self.storage_used.to_le_bytes());
+        payload.extend_from_slice(&self.state_payload);
+        (refs, payload)
+    }
+}
+
+impl Snapshot {
+    /// Parse a Snapshot's payload (as returned by [`payload_of`]) into `(storage_used, mem_bytes)`.
+    /// Returns `RealizationError::Truncated` if the payload is shorter than the 8-byte ledger.
+    pub fn parse_payload(bytes: &[u8]) -> Result<(u64, &[u8]), RealizationError> {
+        if bytes.len() < 8 {
+            return Err(RealizationError::Truncated);
+        }
+        let arr: [u8; 8] = bytes[..8].try_into().unwrap();
+        Ok((u64::from_le_bytes(arr), &bytes[8..]))
     }
 }
 realization!(Snapshot, "https://hologram.foundation/realization/snapshot");
@@ -314,6 +335,26 @@ impl Route {
 }
 realization!(Route, "https://hologram.foundation/realization/route");
 
+/// `https://hologram.foundation/realization/delegation` — a parent → child **capability-delegation
+/// edge** in the κ-graph (arch §11.8). Minted by the runtime on `spawn_child(parent, child_caps)`
+/// so the parent-child relation is *expressed in the κ-graph* rather than a side-channel map. The
+/// transitive-revoke walk recovers the delegation cone by the inverse projection over Delegation
+/// references: `revoke(κ_p)` ⇒ revoke every `child_caps` reachable from `parent_caps == κ_p`.
+/// Operands: [parent_caps, child_caps].
+pub struct Delegation {
+    pub parent_caps: KappaLabel71,
+    pub child_caps: KappaLabel71,
+}
+impl Delegation {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (alloc::vec![self.parent_caps, self.child_caps], Vec::new())
+    }
+}
+realization!(
+    Delegation,
+    "https://hologram.foundation/realization/delegation"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use hologram_substrate_core::{Realization, RealizationId, RefExtractor};
@@ -334,6 +375,7 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     (ErrorEvent::IRI, <ErrorEvent as Realization>::references),
     (Channel::IRI, <Channel as Realization>::references),
     (Route::IRI, <Route as Realization>::references),
+    (Delegation::IRI, <Delegation as Realization>::references),
 ];
 
 #[cfg(test)]
@@ -362,6 +404,7 @@ mod tests {
         let s = Snapshot {
             container_id: k(b"cid"),
             previous: Some(k(b"prev")),
+            storage_used: 0,
             state_payload: alloc::vec![1, 2, 3],
         };
         let bytes = s.canonicalize();

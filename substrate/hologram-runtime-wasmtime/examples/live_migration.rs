@@ -54,6 +54,7 @@ fn provision(
                 subscribe_channels: vec![],
                 memory_max_bytes: 0,
                 cpu_time_per_event_ms: 100,
+                priority_weight: 0,
             })
             .canonicalize(),
         )

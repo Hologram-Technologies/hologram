@@ -294,7 +294,11 @@ impl KappaSync for HttpKappaSync {
         out
     }
     async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
-        Ok(())
+        // HTTP-CAS doesn't carry libp2p multiaddrs; FederatedKappaSync routes those to the libp2p
+        // backend (arch §11.2). Returning Err here makes the routing unambiguous.
+        Err(SyncError::BackendFailure(
+            "http does not consume libp2p multiaddrs — use FederatedKappaSync",
+        ))
     }
     async fn add_gateway(&self, url: &str) -> Result<(), SyncError> {
         self.gateways.lock().unwrap().push(url.to_string());

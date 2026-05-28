@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-host"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -183,9 +183,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hologram-realizations"
+version = "0.6.0"
+dependencies = [
+ "hologram-substrate-core",
+]
+
+[[package]]
 name = "hologram-store-opfs"
 version = "0.5.0"
 dependencies = [
+ "hologram-realizations",
  "hologram-substrate-core",
  "js-sys",
  "wasm-bindgen",
@@ -195,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hashbrown",

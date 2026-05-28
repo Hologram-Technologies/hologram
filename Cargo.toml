@@ -65,9 +65,9 @@ redb               = "4"
 # meta-crate unconditionally locks its full optional dependency set
 # (libp2p-dns / libp2p-mdns → hickory-proto), which `cargo audit` flags on a
 # whole-lockfile scan even when those features are never compiled. We use only
-# request-response over TCP+Noise+Yamux with no peer discovery, so we depend on
-# exactly those sub-crates — the DNS/mDNS resolver (and its advisories) never
-# enters the dependency graph.
+# request-response + Kademlia DHT over TCP+Noise+Yamux, so we depend on exactly
+# those sub-crates — the DNS/mDNS resolver (and its advisories) never enters the
+# dependency graph.
 libp2p-swarm            = { version = "0.47", features = ["tokio", "macros"] }
 libp2p-core             = { version = "0.43" }
 libp2p-tcp              = { version = "0.44", features = ["tokio"] }
@@ -75,6 +75,8 @@ libp2p-noise            = { version = "0.46" }
 libp2p-yamux            = { version = "0.47" }
 libp2p-request-response = { version = "0.29", features = ["cbor"] }
 libp2p-identity         = { version = "0.2", features = ["ed25519", "rand"] }
+libp2p-kad              = { version = "0.48" }
+serde                   = { version = "1", features = ["derive"] }
 futures            = "0.3"
 wasmtime           = { version = "45", default-features = false, features = ["cranelift", "runtime"] }
 

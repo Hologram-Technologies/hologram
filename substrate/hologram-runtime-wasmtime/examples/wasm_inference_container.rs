@@ -61,6 +61,7 @@ fn main() {
                     subscribe_channels: vec![],
                     memory_max_bytes: 4 << 20,
                     cpu_time_per_event_ms: 1000,
+                    priority_weight: 0,
                 })
                 .canonicalize(),
             )

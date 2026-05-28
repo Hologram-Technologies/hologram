@@ -1351,6 +1351,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1416,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bare-hal"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "pollster",
@@ -1523,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net-http"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hologram-store-mem",
@@ -1533,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net-libp2p"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1541,11 +1547,13 @@ dependencies = [
  "hologram-substrate-core",
  "libp2p-core",
  "libp2p-identity",
+ "libp2p-kad",
  "libp2p-noise",
  "libp2p-request-response",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-yamux",
+ "serde",
  "tokio",
 ]
 
@@ -1563,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-realizations"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-substrate-core",
  "uor-addr",
@@ -1571,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1585,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime-wasmtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hologram-bare-hal",
@@ -1602,19 +1610,21 @@ dependencies = [
 
 [[package]]
 name = "hologram-store-bare"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-bare-hal",
+ "hologram-host",
  "hologram-realizations",
  "hologram-substrate-core",
  "hologram-substrate-tck",
+ "pollster",
  "spin",
 ]
 
 [[package]]
 name = "hologram-store-mem"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1628,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store-native"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-realizations",
  "hologram-substrate-core",
@@ -1638,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "hologram-net-http",
@@ -1653,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1663,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-tck"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-substrate-core",
 ]
@@ -2016,6 +2026,33 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "libp2p-kad"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d3fd632a5872ec804d37e7413ceea20588f69d027a0fa3c46f82574f4dee60"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "either",
+ "fnv",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "quick-protobuf",
+ "quick-protobuf-codec",
+ "rand 0.8.6",
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.18",
+ "tracing",
+ "uint",
+ "web-time",
 ]
 
 [[package]]
@@ -2726,6 +2763,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-protobuf-codec"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15a0580ab32b169745d7a39db2ba969226ca16738931be152a3209b409de2474"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "quick-protobuf",
+ "thiserror 1.0.69",
+ "unsigned-varint 0.8.0",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3409,6 +3459,18 @@ name = "typenum"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
+
+[[package]]
+name = "uint"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "909988d098b2f738727b161a106cfc7cab00c539c2687a8836f8e565976fb53e"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "hex",
+ "static_assertions",
+]
 
 [[package]]
 name = "unicode-ident"
