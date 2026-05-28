@@ -14,6 +14,14 @@ uor-addr      = { workspace = true, features = ["alloc"] }
 async-trait   = { workspace = true }
 hashbrown     = { workspace = true }
 
+[dev-dependencies]
+# Independent reference implementations for the AS class differential KAT (V&V import-form B per
+# `specs/docs/container-substrate-vv.md` — the substrate's σ-axis path must produce the same
+# digests as upstream `blake3` / `sha2` / `sha3`).
+blake3 = "1"
+sha2   = "0.10"
+sha3   = "0.10"
+
 [features]
 default = ["std"]
 std = ["uor-addr/std", "hologram-host/std"]

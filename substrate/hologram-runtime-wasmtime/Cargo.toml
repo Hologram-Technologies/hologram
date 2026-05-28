@@ -9,10 +9,15 @@ description = "Wasmtime ContainerEngine backend (spec §7.2 Option A): instantia
 [dependencies]
 hologram-runtime        = { workspace = true }
 hologram-substrate-core = { workspace = true }
+hologram-realizations   = { workspace = true }
 hologram-bare-hal       = { workspace = true }
 wasmtime                = { workspace = true }
 async-trait             = { workspace = true }
 spin                    = { workspace = true }
+# RFC 8439 ChaCha20 CSPRNG for container entropy (spec §8.2). Replaces the previous deterministic
+# splitmix64 seed; the V&V class **EN** asserts byte-identity with the IETF RFC 8439 KAT vector.
+rand_chacha             = { version = "0.3", default-features = false }
+rand_core               = { version = "0.6", default-features = false, features = ["getrandom"] }
 
 [dev-dependencies]
 hologram-store-mem    = { workspace = true }

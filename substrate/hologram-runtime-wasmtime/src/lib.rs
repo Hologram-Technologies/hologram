@@ -24,6 +24,8 @@ use hologram_runtime::{ContainerEngine, ContainerIntents, HostContext};
 use hologram_substrate_core::{
     references, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry, RuntimeError,
 };
+use rand_chacha::ChaCha20Rng;
+use rand_core::{RngCore, SeedableRng};
 use wasmtime::{Caller, Engine, Extern, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 pub mod block;
@@ -42,10 +44,19 @@ struct HostState {
     /// Buffered channel intents (applied, capability-gated, by the runtime after the call).
     published: Vec<(KappaLabel71, KappaLabel71)>,
     subscribed: Vec<(KappaLabel71, u32)>,
+    /// `sync_announce(κ)` — κs the container requested to advertise on the network (§4.4).
+    announces: Vec<KappaLabel71>,
+    /// `sync_fetch_request(κ)` — κs the container requested to fetch from the network (§4.4).
+    fetches: Vec<KappaLabel71>,
+    /// `spawn_child(cid, caps)` — child containers the container requested to spawn (§4.5).
+    child_spawns: Vec<(KappaLabel71, KappaLabel71)>,
+    /// `diagnostics(class, code, ctx)` — error events the container emitted (§7.5).
+    diagnostics: Vec<(u8, u32, Option<KappaLabel71>)>,
     /// UorTime is computational (ADR-058): a monotonic per-engine progress counter, not wall-clock.
     rewrite_steps: u64,
-    /// Entropy stream state (splitmix64; a production backend uses a hardware CSPRNG, spec §8.2).
-    rng: u64,
+    /// **ChaCha20** (RFC 8439) CSPRNG state — the container's entropy stream. Seeded at instantiation
+    /// from the host's `getrandom` (production) or a fixed nonce + key for hermetic tests.
+    rng: ChaCha20Rng,
     /// Resource accounting (§7.6): linear-memory limiter, storage-quota ledger, per-event fuel.
     limits: wasmtime::StoreLimits,
     storage_quota: u64, // 0 = unbounded
@@ -349,24 +360,16 @@ impl WasmtimeEngine {
             )
             .map_err(ifail)?;
 
-        // entropy(out_ptr, len) — fill `len` bytes from the instance's stream.
+        // entropy(out_ptr, len) — fill `len` bytes from the container's **ChaCha20** stream
+        // (RFC 8439 / spec §8.2). The IETF KAT (V&V class EN) asserts byte-identity with the
+        // reference vector; the previous splitmix64 was not cryptographic.
         linker
             .func_wrap(
                 "hologram",
                 "entropy",
                 |mut caller: Caller<'_, HostState>, out_ptr: i32, len: i32| {
-                    let mut bytes = Vec::with_capacity(len as usize);
-                    {
-                        let s = caller.data_mut();
-                        for _ in 0..len {
-                            // splitmix64
-                            s.rng = s.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                            let mut z = s.rng;
-                            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-                            bytes.push((z ^ (z >> 31)) as u8);
-                        }
-                    }
+                    let mut bytes = alloc_zeroed(len as usize);
+                    caller.data_mut().rng.fill_bytes(&mut bytes);
                     let Some(mem) = mem_of(&mut caller) else {
                         return;
                     };
@@ -380,8 +383,99 @@ impl WasmtimeEngine {
             )
             .map_err(ifail)?;
 
+        // sync_announce(kappa_ptr) — buffer a network-announce intent for the runtime (§4.4 + arch
+        // §11.1). The runtime applies it via `KappaSync::announce` on the next network tick.
+        linker
+            .func_wrap(
+                "hologram",
+                "sync_announce",
+                |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else {
+                        return -1;
+                    };
+                    caller.data_mut().announces.push(k);
+                    0
+                },
+            )
+            .map_err(ifail)?;
+
+        // sync_fetch_request(kappa_ptr) — buffer a network-fetch intent (§4.4). The runtime
+        // fetches + verifies + caches the bytes; the container's next event sees them locally.
+        linker
+            .func_wrap(
+                "hologram",
+                "sync_fetch_request",
+                |mut caller: Caller<'_, HostState>, kappa_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let Some(k) = read_kappa(&mem, &caller, kappa_ptr) else {
+                        return -1;
+                    };
+                    caller.data_mut().fetches.push(k);
+                    0
+                },
+            )
+            .map_err(ifail)?;
+
+        // spawn_child(cid_ptr, caps_ptr) — buffer a child-spawn intent (§4.5 / §10.7). The runtime
+        // applies it through its own `spawn_child`, which enforces delegation containment via the
+        // `admits` SubtypingLattice relation.
+        linker
+            .func_wrap(
+                "hologram",
+                "spawn_child",
+                |mut caller: Caller<'_, HostState>, cid_ptr: i32, caps_ptr: i32| -> i32 {
+                    let Some(mem) = mem_of(&mut caller) else {
+                        return -1;
+                    };
+                    let (Some(cid), Some(caps)) = (
+                        read_kappa(&mem, &caller, cid_ptr),
+                        read_kappa(&mem, &caller, caps_ptr),
+                    ) else {
+                        return -1;
+                    };
+                    caller.data_mut().child_spawns.push((cid, caps));
+                    0
+                },
+            )
+            .map_err(ifail)?;
+
+        // diagnostics(class, code, ctx_ptr) — emit an `ErrorEvent` realization (spec §7.5). The
+        // runtime mints the event, threads `predecessor` to the source container's chain head,
+        // and puts it into the store. `ctx_ptr == 0` ⇒ no context κ (e.g. a tagless error).
+        linker
+            .func_wrap(
+                "hologram",
+                "diagnostics",
+                |mut caller: Caller<'_, HostState>, class: i32, code: i32, ctx_ptr: i32| -> i32 {
+                    let ctx = if ctx_ptr == 0 {
+                        None
+                    } else {
+                        let Some(mem) = mem_of(&mut caller) else {
+                            return -1;
+                        };
+                        read_kappa(&mem, &caller, ctx_ptr)
+                    };
+                    caller
+                        .data_mut()
+                        .diagnostics
+                        .push((class as u8, code as u32, ctx));
+                    0
+                },
+            )
+            .map_err(ifail)?;
+
         Ok(linker)
     }
+}
+
+/// Zero-initialised byte buffer of length `n` (used by the entropy stream).
+fn alloc_zeroed(n: usize) -> Vec<u8> {
+    vec![0u8; n]
 }
 
 /// A live Wasm container instance: its `Store` (host state), the module instance, and `memory`.
@@ -452,6 +546,15 @@ impl ContainerEngine for WasmtimeEngine {
     fn instantiate(&self, code: &[u8], ctx: &HostContext) -> Result<WasmInstance, RuntimeError> {
         let module = Module::new(&self.engine, code)
             .map_err(|_| RuntimeError::InstantiationFailed("invalid wasm module"))?;
+        // ChaCha20 (RFC 8439) seeded from `getrandom` (the host's CSPRNG) — the entropy stream a
+        // container observes via `hologram.entropy` is cryptographic, not the prior splitmix64
+        // placeholder (spec §8.2 + AS class).
+        let mut seed = [0u8; 32];
+        if rand_core::OsRng.try_fill_bytes(&mut seed).is_err() {
+            // `getrandom` failure on this host is fail-loud — the substrate refuses a container
+            // that would silently fall back to a weak stream (SPINE-6 / no-fallback).
+            return Err(RuntimeError::InstantiationFailed("getrandom unavailable"));
+        }
         let host = HostState {
             store: ctx.store.clone(),
             roots: ctx.storage_roots.clone(),
@@ -459,10 +562,12 @@ impl ContainerEngine for WasmtimeEngine {
             log: Vec::new(),
             published: Vec::new(),
             subscribed: Vec::new(),
+            announces: Vec::new(),
+            fetches: Vec::new(),
+            child_spawns: Vec::new(),
+            diagnostics: Vec::new(),
             rewrite_steps: 0,
-            // Seed the entropy stream from the container's identity-ish context (deterministic per
-            // instance here; a production backend seeds from a hardware RNG, spec §8.2).
-            rng: ctx.storage_roots.len() as u64 ^ 0xD1B5_4A32_D192_ED03,
+            rng: ChaCha20Rng::from_seed(seed),
             // Memory bound (§7.6): cap linear-memory growth at memory_max_bytes; 0 = unbounded.
             limits: if ctx.memory_max_bytes > 0 {
                 wasmtime::StoreLimitsBuilder::new()
@@ -554,6 +659,10 @@ impl ContainerEngine for WasmtimeEngine {
         ContainerIntents {
             published: core::mem::take(&mut s.published),
             subscribed: core::mem::take(&mut s.subscribed),
+            announces: core::mem::take(&mut s.announces),
+            fetches: core::mem::take(&mut s.fetches),
+            child_spawns: core::mem::take(&mut s.child_spawns),
+            diagnostics: core::mem::take(&mut s.diagnostics),
         }
     }
 }

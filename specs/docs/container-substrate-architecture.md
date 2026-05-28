@@ -647,3 +647,91 @@ A `WasmNetworkInterface` mirrors `WasmBlockDevice` (§3): a HAL `NetworkInterfac
 the symmetric pattern across HAL surfaces; the V&V class **NI** asserts the *codemodule-κ → live
 driver-backed device* path runs end-to-end (a hosted driver actually transports bytes through the
 binding).
+
+**RX waker bridge** (`register_rx_waker`). Production NICs are IRQ-driven, not poll-driven. The
+driver imports `hologram.notify_rx()` from the host; when its IRQ fires (or the loopback test's
+TX-then-RX path completes), the driver calls this import, which sets the RX-ready signal and
+wakes any task registered via `NetworkInterface::register_rx_waker`. A lost-wakeup guard wakes the
+task immediately if it registers after `notify_rx` has already fired.
+
+---
+
+## 12. Phase-2 completions — completeness audit
+
+After Phase 1 (PR #25) landed every storage/network/runtime headline feature, a crate-by-crate
+audit identified the remaining narrow areas and arbitrary defaults. Phase 2 closes them — every
+addition is uor-native, every gap has an external-authority V&V test.
+
+### 12.1 Multi-axis σ-axis registry (architecture §3.1 G-B1, V&V class **AS**)
+
+All five axes uor-addr 0.2.0 ships are now first-class verification primitives — not just blake3:
+
+- `verify_kappa` / `verify_kappa_axis` dispatch across `blake3` / `sha256` / `sha3-256` /
+  `keccak256` / `sha512` via `prism::crypto`'s hashers.
+- `address_bytes_axis(axis, bytes) -> Vec<u8>` returns the variable-width on-the-wire κ-label
+  (71/73/74/135 bytes per axis).
+- `KappaStore::put_axis` / `get_axis` / `contains_axis` accept any axis; the reference
+  `MemKappaStore` opts in for all five (other backends keep the blake3-only hot path as
+  declared in ADR-052).
+- The TCK gains `axis_polymorphic_round_trip` so every backend that opts in is asserted to
+  round-trip on all five axes.
+- **External V&V**: the AS class differential-tests each axis against the upstream reference
+  crates (`blake3`, `sha2::{Sha256,Sha512}`, `sha3::{Sha3_256,Keccak256}`) AND the FIPS 180-4 /
+  FIPS 202 / Ethereum Keccak KAT vectors. A byte-level disagreement fails CI.
+
+### 12.2 Container ABI completeness (spec §4.4, V&V class **CR-live**)
+
+Every spec §4.4 host import is now wired in `runtime-wasmtime`:
+
+- `sync_announce(kappa_ptr)` — buffers a `KappaSync::announce` intent. Drained by the network tick.
+- `sync_fetch_request(kappa_ptr)` — buffers a `KappaSync::fetch` intent. The runtime fetches,
+  verifies on receipt, caches locally; the next event sees the κ via `storage_get`. No
+  sync-on-async deadlock — the intent-buffer pattern keeps the Wasm import synchronous.
+- `spawn_child(cid_ptr, caps_ptr)` — buffers a child-spawn intent. Applied through the runtime's
+  own `spawn_child`, which enforces delegation containment (`Capabilities::admits`).
+- `diagnostics(class, code, ctx_ptr)` — mints an `ErrorEvent` realization threaded into the
+  source container's error-log chain (SPINE-3 append-only).
+
+The container ABI is now spec-complete; `ContainerIntents` carries the new buffers; `Runtime`
+gains `with_sync(...)` for wiring the network layer and `process_pending_network()` for the
+network event-loop tick.
+
+### 12.3 Capability containment — 0=unbounded fix (architecture §3.4)
+
+The naive `child ≤ parent` rule on `storage_quota_bytes` / `memory_max_bytes` /
+`cpu_time_per_event_ms` silently widened authority: a child requesting unbounded (0) was accepted
+under a bounded parent because `0 < N`. `Capabilities::admits` now applies a `budget_admits`
+predicate: an unbounded parent admits any child; a bounded parent admits only a non-zero child
+with `child ≤ parent`. This closes the silent-widening hole; the CR test battery asserts both
+the admit and refuse directions.
+
+### 12.4 Container entropy — ChaCha20 CSPRNG (spec §8.2, V&V class **EN**)
+
+The `hologram.entropy(out_ptr, len)` import is now backed by **ChaCha20** (RFC 8439), seeded at
+container instantiation from the host's `getrandom` (`rand_core::OsRng`). The previous
+splitmix64 placeholder is gone — `getrandom` unavailability now fails loud
+(`RuntimeError::InstantiationFailed("getrandom unavailable")`, SPINE-6 no-fallback). Independent
+container instances observe independent streams (asserted by `entropy_import_is_cryptographic_rfc_8439_chacha20`).
+
+### 12.5 NIC RX waker bridge (architecture §11.9)
+
+`NetworkInterface::register_rx_waker` is no longer a no-op. The Wasm network driver imports
+`hologram.notify_rx()`; calling it sets the RX-ready signal and wakes any registered task. A
+lost-wakeup guard wakes immediately if registration races behind `notify_rx`. The NI V&V test
+asserts both the wake-on-notify and the no-lost-wakeup-on-late-register paths.
+
+### 12.6 Measured-boot driver κ (architecture §6.4, V&V class **BOOT**)
+
+The UEFI binary previously verified κ against an embedded placeholder string — tautological.
+`build.rs` now compiles a real Wasm block-device driver from a WAT source, computes its blake3
+κ, and emits both to `$OUT_DIR`. The boot path `include_bytes!`-es the driver and
+`include_str!`-es the expected κ; runtime re-derives κ and compares. Tampering with the embedded
+bytes post-build is caught at boot. This is the **measured-boot** anchor for the substrate.
+
+### 12.7 Bare-metal extent free-list (architecture §11.3, V&V class **BT**)
+
+`hologram-store-bare`'s allocator previously bump-only; GC evictions leaked LBAs. v3 of the
+header format adds `free_head_lba` + `free_head_digest`, persisting a chained page of free
+extents. The allocator is now **best-fit** over the free list, with bump as the fallback. The
+free list survives reboots; the BT class asserts post-GC reuse + reboot persistence of the
+free-list state.

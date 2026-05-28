@@ -17,10 +17,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::{HashMap, HashSet};
-use hologram_realizations::{CapabilitySet, ContainerManifest, Delegation, Snapshot};
+use hologram_realizations::{CapabilitySet, ContainerManifest, Delegation, ErrorEvent, Snapshot};
 use hologram_substrate_core::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
-    Realization, RealizationRegistry, RuntimeError,
+    KappaSync, Realization, RealizationRegistry, RuntimeError,
 };
 use spin::Mutex;
 
@@ -94,14 +94,30 @@ struct Entry<I> {
     caps: Capabilities,
 }
 
-/// Channel `publish`/`subscribe` calls a container made through its import surface, buffered by the
-/// engine and applied (capability-gated) by the runtime after the call.
+/// Side effects a container requested through its import surface during the last call. The runtime
+/// applies them **with capability enforcement** (§10.4) after the engine returns, so the engine
+/// itself does no gating. The intent-buffer pattern keeps the container ABI synchronous (Wasm host
+/// functions are sync) while async network/spawn work runs after.
 #[derive(Default)]
 pub struct ContainerIntents {
-    /// `(channel κ, payload κ)` pairs the container published.
+    /// `(channel κ, payload κ)` pairs the container published (`publish` import).
     pub published: Vec<(KappaLabel71, KappaLabel71)>,
-    /// `(channel κ, callback_id)` pairs the container subscribed.
+    /// `(channel κ, callback_id)` pairs the container subscribed (`subscribe` import).
     pub subscribed: Vec<(KappaLabel71, u32)>,
+    /// κ-labels the container asked to **announce** to the network (`sync_announce` import,
+    /// spec §4.4 + arch §11.1). Applied by the runtime via `KappaSync::announce` after the call.
+    pub announces: Vec<KappaLabel71>,
+    /// κ-labels the container asked to **fetch** from the network (`sync_fetch_request` import).
+    /// Applied via `KappaSync::fetch` + verify-on-receipt + local-store cache; the resolved bytes
+    /// become visible to the next event via `storage_get` (no sync-on-async deadlock).
+    pub fetches: Vec<KappaLabel71>,
+    /// `(child container-id κ, child capability-set κ)` pairs the container requested to spawn as
+    /// a child (`spawn_child` import). Applied via the runtime's `spawn_child` (admits check).
+    pub child_spawns: Vec<(KappaLabel71, KappaLabel71)>,
+    /// Structured diagnostic events the container raised (`diagnostics` import, spec §7.5). Each is
+    /// `(classification, code, optional context κ)`. The runtime mints an `ErrorEvent` realization
+    /// per intent and threads it into the source container's error-log chain.
+    pub diagnostics: Vec<(u8, u32, Option<KappaLabel71>)>,
 }
 
 /// A persistent subscription (spec §10.11). Keyed by **Container ID** (not the ephemeral handle) so
@@ -134,6 +150,28 @@ pub struct Runtime<E: ContainerEngine, S: KappaStore> {
     queues: Mutex<HashMap<u64, EventQueue>>,
     // A spin Mutex counter, not AtomicU64 — Cortex-M (thumbv7em) has no 64-bit atomics (G-D1).
     next: Mutex<u64>,
+    /// Optional network layer (spec §6) — wired by `with_sync(...)` to enable `sync_announce` /
+    /// `sync_fetch_request` container imports + auto-fetch on event delivery. `None` ⇒ no-network
+    /// runtime (the existing hermetic semantics).
+    sync: Option<Arc<dyn KappaSync>>,
+    /// Per-container error-log chain heads (Container ID → most-recent ErrorEvent κ). Threaded
+    /// through `predecessor` so the append-only history is recoverable (SPINE-3 / spec §7.5).
+    error_log_heads: Mutex<HashMap<[u8; 71], KappaLabel71>>,
+    /// Async network intents queued by `deliver_event`. The caller drives the actual `KappaSync`
+    /// calls via [`Runtime::process_pending_network`] (a tick of the network event loop).
+    pending_network: Mutex<Vec<NetworkIntent>>,
+}
+
+/// A network side-effect the container requested through its `sync_*` imports (spec §4.4). The
+/// runtime queues these synchronously during `deliver_event` and applies them via
+/// [`Runtime::process_pending_network`] on the network event loop.
+#[derive(Clone, Debug)]
+pub enum NetworkIntent {
+    /// `sync_announce` — best-effort `KappaSync::announce`.
+    Announce(KappaLabel71),
+    /// `sync_fetch_request` — `KappaSync::fetch` + verify-on-receipt + local-store cache. The
+    /// resolved bytes become visible to the next event via `storage_get`.
+    Fetch(KappaLabel71),
 }
 
 fn be(_e: hologram_substrate_core::StoreError) -> RuntimeError {
@@ -151,7 +189,19 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             subs: Mutex::new(Vec::new()),
             queues: Mutex::new(HashMap::new()),
             next: Mutex::new(1),
+            sync: None,
+            error_log_heads: Mutex::new(HashMap::new()),
+            pending_network: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Wire a network layer (a [`KappaSync`]) so containers' `sync_announce` / `sync_fetch_request`
+    /// imports become live and the runtime auto-fetches event payload κs that aren't local. Calling
+    /// twice replaces the prior sync (the last writer wins, by design — federation chains compose
+    /// inside the supplied sync).
+    pub fn with_sync(mut self, sync: Arc<dyn KappaSync>) -> Self {
+        self.sync = Some(sync);
+        self
     }
 
     /// Publish a payload κ to a channel κ (spec §4.4) — capability-gated on the publisher's
@@ -364,6 +414,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         let code = self.engine.event(&mut entry.inst, event_kappa);
         entry.info.memory_bytes = self.engine.memory_bytes(&entry.inst);
         let intents = self.engine.drain_intents(&mut entry.inst);
+        let source_container_id = entry.info.container_id;
         drop(table);
         // Apply the container's channel intents with capability enforcement (§10.4); an
         // unauthorized publish/subscribe is silently dropped (the gate returns Err).
@@ -373,7 +424,92 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         for (channel, callback_id) in intents.subscribed {
             let _ = self.subscribe(handle, &channel, callback_id);
         }
+        // Apply spawn_child intents with delegation containment (admits check) inside spawn_child.
+        for (cid, caps) in intents.child_spawns {
+            let _ = self.spawn_child(handle, &cid, &caps);
+        }
+        // Apply diagnostics: mint an ErrorEvent realization, thread the predecessor (SPINE-3 chain),
+        // put it in the store. The Container ID identifies the source; the chain head moves forward.
+        for (class, code_field, ctx) in intents.diagnostics {
+            let _ = self.emit_diagnostic(&source_container_id, class, code_field, ctx);
+        }
+        // Queue async network intents — the network event loop drives them via
+        // `process_pending_network`. The container's storage_get on the next event sees fetched
+        // bytes; no synchronous-on-async deadlock.
+        {
+            let mut q = self.pending_network.lock();
+            for k in intents.announces {
+                q.push(NetworkIntent::Announce(k));
+            }
+            for k in intents.fetches {
+                q.push(NetworkIntent::Fetch(k));
+            }
+        }
         Ok(code)
+    }
+
+    /// Mint an [`ErrorEvent`] realization for a diagnostic the container raised (spec §7.5), thread
+    /// it into the source container's append-only error log (predecessor = prior head), put into
+    /// the store. Returns the new chain head.
+    pub fn emit_diagnostic(
+        &self,
+        source_container_id: &KappaLabel71,
+        classification: u8,
+        code: u32,
+        context: Option<KappaLabel71>,
+    ) -> Result<KappaLabel71, RuntimeError> {
+        let mut heads = self.error_log_heads.lock();
+        let predecessor = heads.get(source_container_id.as_array()).copied();
+        let mut payload = Vec::with_capacity(5);
+        payload.push(classification);
+        payload.extend_from_slice(&code.to_le_bytes());
+        let event = ErrorEvent {
+            source: *source_container_id,
+            predecessor,
+            context,
+            class_code_payload: payload,
+        };
+        let k = self
+            .store
+            .put("blake3", &event.canonicalize())
+            .map_err(be)?;
+        heads.insert(*source_container_id.as_array(), k);
+        Ok(k)
+    }
+
+    /// Drive one tick of the network event loop: apply every queued `sync_announce` and
+    /// `sync_fetch_request` intent (spec §6 / arch §11.1). Idempotent — pending stay queued until a
+    /// `sync` is wired via [`with_sync`]; once wired, every intent is applied. The next event a
+    /// container processes can `storage_get` newly-fetched κs from the local store.
+    pub async fn process_pending_network(&self) -> usize {
+        let Some(sync) = &self.sync else {
+            return 0;
+        };
+        let intents: Vec<NetworkIntent> = {
+            let mut q = self.pending_network.lock();
+            core::mem::take(&mut *q)
+        };
+        let count = intents.len();
+        for intent in intents {
+            match intent {
+                NetworkIntent::Announce(k) => sync.announce(&k).await,
+                NetworkIntent::Fetch(k) => {
+                    // `get_with_fetch` performs verify-on-receipt + caches the bytes locally.
+                    let _ = hologram_substrate_core::get_with_fetch(
+                        self.store.as_ref(),
+                        sync.as_ref(),
+                        &k,
+                    )
+                    .await;
+                }
+            }
+        }
+        count
+    }
+
+    /// Test introspection: how many network intents are queued (post-deliver_event, pre-pump).
+    pub fn pending_network_count(&self) -> usize {
+        self.pending_network.lock().len()
     }
 
     /// Spawn a **child** container with a derived capability set — the enforcement point for

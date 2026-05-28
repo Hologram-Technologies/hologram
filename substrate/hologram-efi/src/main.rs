@@ -17,19 +17,35 @@ use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{address_bytes, verify_kappa, GarbageCollect, KappaStore, Realization};
 use uefi::prelude::*;
 
+/// The block-device driver bytes assembled at build time (a real Wasm module — `read`/`write`/
+/// `flush` over a `$DISK` region in linear memory; same shape as the runtime-wasmtime DU test).
+/// `build.rs` compiles the WAT and writes both the bytes and the expected blake3 κ to OUT_DIR.
+const DRIVER_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/driver.wasm"));
+/// The κ-label `build.rs` recorded for `DRIVER_BYTES` — the **measured-boot anchor**. The runtime
+/// re-derives κ and compares; tampering with the embedded bytes post-build is caught here.
+const EXPECTED_DRIVER_KAPPA: &str = include_str!(concat!(env!("OUT_DIR"), "/driver.kappa"));
+
 /// Run the storage bring-up checks; return `true` iff all pass.
 fn engine_selfcheck() -> bool {
     // Import + verify the block-device DRIVER before using the device (the authority gate, §6.4):
-    // a driver is a κ-addressed codemodule; the booted engine re-derives its κ and refuses to bind
-    // a device whose driver doesn't verify. (A networked boot fetches these bytes by κ from a peer;
-    // here they are embedded, but the verify path is identical.)
-    let driver_bytes = b"<hologram block-device driver codemodule>";
+    // a driver is a κ-addressed codemodule; the booted engine re-derives its κ and compares against
+    // the build-recorded expected κ — a genuine **measured-boot** check (not a tautology). A
+    // production network boot fetches these bytes by κ from a peer; here they are embedded, but
+    // the κ-comparison is identical.
+    let driver_bytes = DRIVER_BYTES;
     let driver_k = address_bytes(driver_bytes);
+    if driver_k.as_str() != EXPECTED_DRIVER_KAPPA {
+        uefi::println!("HOLOGRAM-BM: step=driver-κ-mismatch FAIL");
+        return false;
+    }
     if verify_kappa(driver_bytes, &driver_k) != Ok(true) {
         uefi::println!("HOLOGRAM-BM: step=driver-verify FAIL");
         return false;
     }
-    uefi::println!("HOLOGRAM-BM: driver κ verified — binding device");
+    uefi::println!(
+        "HOLOGRAM-BM: driver κ verified ({} bytes) — binding device",
+        driver_bytes.len()
+    );
 
     // The block device the verified driver provides (RAM-backed in this boot; a real boot binds
     // NVMe/AHCI/virtio-blk — each itself an imported, verified driver codemodule).

@@ -6,8 +6,8 @@
 //! realization registry's `references()` exactly as the in-memory reference does, and the crate
 //! passes the **same TCK** as `hologram-store-mem`.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use hologram_substrate_core::{
     address_bytes, references, Bytes, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry,
@@ -22,9 +22,13 @@ fn backend(_e: impl core::fmt::Debug) -> StoreError {
     StoreError::BackendFailure("redb")
 }
 
-/// redb-backed content-addressed store. `Send + Sync` (redb `Database` is).
+/// redb-backed content-addressed store. `Send + Sync` (redb `Database` is). A read-through
+/// **`Arc` cache** above redb makes `get` honor the SP zero-copy floor (consecutive gets of the
+/// same κ share storage; the architecture §4 contract). The cache is unbounded — content is
+/// content-addressed, so duplicate bytes dedup; a bounded LRU is a future optimization.
 pub struct NativeKappaStore {
     db: Database,
+    cache: Mutex<HashMap<[u8; 71], Bytes>>,
 }
 
 impl NativeKappaStore {
@@ -50,7 +54,10 @@ impl NativeKappaStore {
             tx.open_table(PINNED).map_err(backend)?;
         }
         tx.commit().map_err(backend)?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            cache: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Reachability-based GC (spec §5.3 / §10.8): retain every κ reachable from a pinned root via
@@ -72,6 +79,13 @@ impl NativeKappaStore {
             }
         }
         tx.commit().map_err(backend)?;
+        // Invalidate evicted entries in the read-through Arc cache so subsequent gets see absence.
+        {
+            let mut cache = self.cache.lock().unwrap();
+            for k in &to_evict {
+                cache.remove(k);
+            }
+        }
         Ok(to_evict.len())
     }
 
@@ -122,11 +136,26 @@ impl KappaStore for NativeKappaStore {
     }
 
     fn get(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
+        // Arc cache (SP zero-copy floor): consecutive `get`s of the same κ return the same Arc.
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(b) = cache.get(kappa.as_array()) {
+                return Ok(Some(b.clone()));
+            }
+        }
         let tx = self.db.begin_read().map_err(backend)?;
         let t = tx.open_table(BLOBS).map_err(backend)?;
-        Ok(t.get(kappa.as_array().as_slice())
+        let bytes_opt = t
+            .get(kappa.as_array().as_slice())
             .map_err(backend)?
-            .map(|v| Arc::from(v.value())))
+            .map(|v| Arc::<[u8]>::from(v.value()));
+        if let Some(b) = &bytes_opt {
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(*kappa.as_array(), b.clone());
+        }
+        Ok(bytes_opt)
     }
 
     fn contains(&self, kappa: &KappaLabel71) -> bool {
