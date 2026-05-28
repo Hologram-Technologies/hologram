@@ -12,7 +12,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 use hashbrown::{HashMap, HashSet};
 use hologram_substrate_core::{
-    references, Bytes, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry, StoreError,
+    address_bytes_axis, references, Bytes, KappaLabel, KappaLabel71, KappaStore,
+    RealizationRegistry, StoreError,
 };
 use spin::Mutex;
 
@@ -20,8 +21,12 @@ type Key = [u8; 71];
 
 #[derive(Default)]
 struct Inner {
+    /// Hologram-canonical (blake3 / sha256) — 71-byte κ-labels (the hot path).
     blobs: HashMap<Key, Bytes>,
     pinned: HashSet<Key>,
+    /// Foreign-axis content (sha3-256 / keccak256 / sha512), keyed by variable-width
+    /// on-the-wire κ-label bytes (architecture §3.1 G-B1).
+    blobs_wide: HashMap<Vec<u8>, Bytes>,
 }
 
 /// In-memory content-addressed store. `Send + Sync` via `spin::Mutex` (no_std-uniform).
@@ -73,19 +78,62 @@ impl MemKappaStore {
 
 impl KappaStore for MemKappaStore {
     fn put(&self, axis: &str, canonical_bytes: &[u8]) -> Result<KappaLabel71, StoreError> {
-        // Reference store mints on the blake3 σ-axis (substrate-artifact axis). Other axes are
-        // fail-loud (no fallback, SPINE-6) until their hashers are wired.
-        if axis != "blake3" {
-            return Err(StoreError::UnknownAxis);
+        // Hot path: 71-byte axes (blake3 / sha256). Wider axes go through `put_axis`.
+        let label_bytes =
+            address_bytes_axis(axis, canonical_bytes).map_err(|_| StoreError::UnknownAxis)?;
+        if label_bytes.len() != 71 {
+            return Err(StoreError::UnknownAxis); // wider axis: use put_axis
         }
-        let kappa = hologram_substrate_core::address_bytes(canonical_bytes);
-        let key = *kappa.as_array();
+        let arr: [u8; 71] = label_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| StoreError::InvalidKappa)?;
+        let kappa = KappaLabel::from_bytes(&arr).map_err(|_| StoreError::InvalidKappa)?;
         let mut g = self.inner.lock();
         // Idempotent (spec §10.2): identical bytes ⇒ same κ, no duplicate write.
-        if !g.blobs.contains_key(&key) {
-            g.blobs.insert(key, Bytes::from(canonical_bytes.to_vec()));
+        if !g.blobs.contains_key(&arr) {
+            g.blobs.insert(arr, Bytes::from(canonical_bytes.to_vec()));
         }
         Ok(kappa)
+    }
+
+    fn put_axis(&self, axis: &str, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
+        let label = address_bytes_axis(axis, bytes).map_err(|_| StoreError::UnknownAxis)?;
+        let mut g = self.inner.lock();
+        if label.len() == 71 {
+            let arr: [u8; 71] = label.as_slice().try_into().unwrap();
+            if !g.blobs.contains_key(&arr) {
+                g.blobs.insert(arr, Bytes::from(bytes.to_vec()));
+            }
+        } else if !g.blobs_wide.contains_key(&label) {
+            g.blobs_wide
+                .insert(label.clone(), Bytes::from(bytes.to_vec()));
+        }
+        Ok(label)
+    }
+
+    fn get_axis(&self, label_bytes: &[u8]) -> Result<Option<Bytes>, StoreError> {
+        let g = self.inner.lock();
+        if label_bytes.len() == 71 {
+            if let Ok(arr) = <[u8; 71]>::try_from(label_bytes) {
+                if let Some(b) = g.blobs.get(&arr) {
+                    return Ok(Some(b.clone()));
+                }
+            }
+        }
+        Ok(g.blobs_wide.get(label_bytes).cloned())
+    }
+
+    fn contains_axis(&self, label_bytes: &[u8]) -> bool {
+        let g = self.inner.lock();
+        if label_bytes.len() == 71 {
+            if let Ok(arr) = <[u8; 71]>::try_from(label_bytes) {
+                if g.blobs.contains_key(&arr) {
+                    return true;
+                }
+            }
+        }
+        g.blobs_wide.contains_key(label_bytes)
     }
 
     fn get(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {

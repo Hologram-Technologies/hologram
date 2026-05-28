@@ -3,22 +3,46 @@
 //! `mtu`, `transmit`, `receive`, and holds RX queue state in its own linear memory; the host moves
 //! frame bytes through a fixed scratch region (the same pattern as [`WasmBlockDevice`]).
 //!
+//! **RX waker bridge**: production NICs are IRQ-driven, not poll-driven. The driver imports
+//! `hologram.notify_rx()` from the host; when its IRQ fires (or the loopback RX queue becomes
+//! non-empty), the driver calls this import, which wakes any task registered via
+//! [`NetworkInterface::register_rx_waker`]. Symmetric with the block-device read-completion
+//! waker model in the bare-metal HAL.
+//!
 //! This closes the HAL driver-import path on the network side: V&V class **NI** asserts a
 //! codemodule-κ → live driver-backed device round-trip, symmetric to the **DU** class for block
 //! devices (`runtime/tests/driver_import.rs` + `runtime-wasmtime/tests/driver_backed_device.rs`).
 
+use alloc::sync::Arc;
 use core::task::Waker;
 use hologram_bare_hal::{NetworkInterface, NicError};
 use hologram_substrate_core::RuntimeError;
 use spin::Mutex;
-use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
+use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
+
+extern crate alloc;
 
 /// Host scratch pointer in the driver's linear memory for TX/RX transfers. Symmetric with
 /// `WasmBlockDevice::IO_PTR`.
 const IO_PTR: i32 = 0x2000;
 
+/// Host side of the RX-ready signal: a slot the driver's `notify_rx` import fires + the registered
+/// task waker. Shared between the driver's host state and the `NetworkInterface` API.
+#[derive(Default)]
+struct RxSignal {
+    /// `true` if the driver fired `notify_rx` since the last `receive` call (one-shot, cleared on
+    /// drain). Acts as a non-blocking interrupt-status bit.
+    pending: bool,
+    waker: Option<Waker>,
+}
+
+/// Host state available to the driver's `notify_rx` import — a clone of the shared `RxSignal`.
+struct DriverHost {
+    rx_signal: Arc<Mutex<RxSignal>>,
+}
+
 struct Driver {
-    store: Store<()>,
+    store: Store<DriverHost>,
     memory: Memory,
     /// `transmit(ptr, len) -> i32` — bytes already staged at `[ptr..ptr+len]`; returns bytes written.
     transmit: TypedFunc<(i32, i32), i32>,
@@ -32,6 +56,7 @@ pub struct WasmNetworkInterface {
     inner: Mutex<Driver>,
     mac: [u8; 6],
     mtu: u32,
+    rx_signal: Arc<Mutex<RxSignal>>,
 }
 
 fn ifail(_e: impl core::fmt::Debug) -> RuntimeError {
@@ -39,12 +64,31 @@ fn ifail(_e: impl core::fmt::Debug) -> RuntimeError {
 }
 
 impl WasmNetworkInterface {
-    /// Instantiate a (verified) driver module's bytes and bind it as a network interface.
+    /// Instantiate a (verified) driver module's bytes and bind it as a network interface. The host
+    /// exposes `hologram.notify_rx()` to the driver — calling it sets the RX-ready signal and
+    /// wakes any task registered via [`NetworkInterface::register_rx_waker`].
     pub fn from_code(code: &[u8]) -> Result<Self, RuntimeError> {
         let engine = Engine::default();
         let module = Module::new(&engine, code).map_err(ifail)?;
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[]).map_err(ifail)?;
+        let rx_signal = Arc::new(Mutex::new(RxSignal::default()));
+        let mut store = Store::new(
+            &engine,
+            DriverHost {
+                rx_signal: rx_signal.clone(),
+            },
+        );
+        // Wire the `hologram.notify_rx` host import — called by the driver when RX is ready.
+        let mut linker = Linker::new(&engine);
+        linker
+            .func_wrap("hologram", "notify_rx", |caller: Caller<'_, DriverHost>| {
+                let mut s = caller.data().rx_signal.lock();
+                s.pending = true;
+                if let Some(w) = s.waker.take() {
+                    w.wake();
+                }
+            })
+            .map_err(ifail)?;
+        let instance = linker.instantiate(&mut store, &module).map_err(ifail)?;
         let memory =
             instance
                 .get_memory(&mut store, "memory")
@@ -83,7 +127,14 @@ impl WasmNetworkInterface {
             }),
             mac,
             mtu,
+            rx_signal,
         })
+    }
+
+    /// Was an RX-ready signal pending since the last `receive`? Diagnostic helper for tests; the
+    /// production poll model uses [`NetworkInterface::register_rx_waker`].
+    pub fn rx_pending(&self) -> bool {
+        self.rx_signal.lock().pending
     }
 }
 
@@ -133,10 +184,19 @@ impl NetworkInterface for WasmNetworkInterface {
         let src = d.memory.data(&d.store);
         let frame = src.get(off..off + n).ok_or(NicError::HardwareFault(5))?;
         buffer[..n].copy_from_slice(frame);
+        // Drained — clear the one-shot RX-ready bit. The next `notify_rx` re-arms it.
+        self.rx_signal.lock().pending = false;
         Ok(n)
     }
-    fn register_rx_waker(&self, _waker: Waker) {
-        // The driver-import test fixture is poll-based; production NICs use IRQ-driven wakers
-        // dispatched via the driver's own `register_rx_waker` (a follow-on host import).
+    fn register_rx_waker(&self, waker: Waker) {
+        // Production: when the driver later calls its `hologram.notify_rx` import (an IRQ
+        // surrogate), the host wakes this task. If a signal is already pending (the driver
+        // notified before the task registered), wake immediately to avoid a lost-wakeup race.
+        let mut s = self.rx_signal.lock();
+        if s.pending {
+            waker.wake();
+        } else {
+            s.waker = Some(waker);
+        }
     }
 }

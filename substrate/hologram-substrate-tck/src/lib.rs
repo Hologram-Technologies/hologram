@@ -12,7 +12,7 @@
 
 extern crate alloc;
 
-use hologram_substrate_core::{address_bytes, KappaStore};
+use hologram_substrate_core::{address_bytes, KappaStore, StoreError};
 
 /// Run the full trait-level conformance battery against `store`. Panics on the first violation
 /// (intended to be called from a `#[test]`). The store must start empty for the count assertions.
@@ -22,6 +22,8 @@ pub fn store_battery(store: &dyn KappaStore) {
     unknown_axis_fails_loud(store);
     pin_unpin(store);
     content_roundtrip(store);
+    axis_polymorphic_round_trip(store);
+    zero_copy_get_returns_arc_handle(store);
 }
 
 /// ST-2 / spec §10.2 — identical `(axis, bytes)` ⇒ identical κ-label, no duplicate write.
@@ -46,11 +48,59 @@ pub fn eviction_tolerant_get(store: &dyn KappaStore) {
 }
 
 /// SPINE-6 — an unwired σ-axis is rejected, never silently coerced (no fallback).
+/// uor-addr 0.2.0 ships blake3 / sha256 / sha3-256 / keccak256 / sha512; any axis outside that
+/// registry must Err. `md5` is the canonical out-of-registry example.
 pub fn unknown_axis_fails_loud(store: &dyn KappaStore) {
     assert!(
-        store.put("sha256", b"tck").is_err(),
-        "an unsupported σ-axis must fail loud, not fall back to blake3"
+        store.put("md5", b"tck").is_err(),
+        "an unsupported σ-axis must fail loud, not fall back"
     );
+    assert!(
+        store.put_axis("md5", b"tck").is_err(),
+        "axis-polymorphic surface also fails loud on an unsupported σ-axis"
+    );
+}
+
+/// AS — axis-polymorphic stored content (architecture §3.1 G-B1). The reference backend opts in to
+/// `put_axis`/`get_axis` for all five uor-addr-supported axes; a foreign-axis κ stored on this
+/// substrate must round-trip identically to bytes received from any other axis-compliant peer.
+pub fn axis_polymorphic_round_trip(store: &dyn KappaStore) {
+    let bytes = b"axis-polymorphic-tck-fixture".as_slice();
+    for axis in &["blake3", "sha256", "sha3-256", "keccak256", "sha512"] {
+        match store.put_axis(axis, bytes) {
+            Ok(label) => {
+                assert!(
+                    store.contains_axis(&label),
+                    "{axis}: contains_axis after put_axis"
+                );
+                let got = store.get_axis(&label).unwrap().unwrap();
+                assert_eq!(
+                    got.as_ref(),
+                    bytes,
+                    "{axis}: get_axis round-trips the stored bytes"
+                );
+            }
+            // Backend may opt out — UnknownAxis is the documented default. But for the reference
+            // store-mem battery, this branch must NOT be taken for any of the five axes.
+            Err(StoreError::UnknownAxis) => {}
+            Err(e) => panic!("{axis}: put_axis raised an unexpected error: {:?}", e),
+        }
+    }
+}
+
+/// SP — `get` returns a cheap `Arc<[u8]>` handle; consecutive `get`s of the same κ share storage
+/// (no per-call byte copy). The architecture §4 SP zero-copy floor: get is O(1) bookkeeping over
+/// the same buffer, **never a memcpy of the payload**. Verified by Arc-pointer identity.
+pub fn zero_copy_get_returns_arc_handle(store: &dyn KappaStore) {
+    let k = store.put("blake3", b"tck-zero-copy-sentinel").unwrap();
+    let a = store.get(&k).unwrap().unwrap();
+    let b = store.get(&k).unwrap().unwrap();
+    assert!(
+        alloc::sync::Arc::ptr_eq(&a, &b),
+        "consecutive get(κ) calls must share the same Arc — zero-copy SP floor"
+    );
+    // The content matches what we put — sanity, not the zero-copy assertion.
+    assert_eq!(a.as_ref(), b"tck-zero-copy-sentinel");
 }
 
 /// ST / spec §5.3 — pin establishes a root, unpin removes it; unpin of a non-pinned κ is an error.

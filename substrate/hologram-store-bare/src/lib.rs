@@ -38,7 +38,10 @@ use hologram_substrate_core::{
 use spin::Mutex;
 
 const MAGIC: &[u8; 8] = b"HGRMBARE";
-const VERSION: u64 = 2;
+/// Header format version. v2 introduced the dual-buffered headers + κ-page chain (PR #25).
+/// v3 adds the persistent **free-extent list** (arch §11.3, this PR) so GC reclamation survives
+/// reboots and the bump allocator can reuse evicted LBAs.
+const VERSION: u64 = 3;
 const PAGE_SECTORS: u64 = 8; // 8 × 512 B = 4 KiB pages
 const NULL_LBA: u64 = u64::MAX;
 type Key = [u8; 71];
@@ -87,6 +90,10 @@ struct Inner {
     gen: u64,
     /// Which header slot holds the active root (false=A=LBA0, true=B=LBA1). The other is staged.
     active_slot_b: bool,
+    /// Free extents the allocator can reuse before bumping the cursor (arch §11.3 "free-list").
+    /// Each entry: `(lba, sectors)` for a previously-allocated extent whose κ was evicted. The
+    /// allocator searches this list on `alloc` and falls back to bump when no fit exists.
+    free_extents: Vec<(u64, u32)>,
 }
 
 /// A `KappaStore` persisted on a raw block device.
@@ -142,6 +149,7 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             alloc_cursor: h.alloc_cursor.max(FIRST_ALLOC_LBA),
             gen: h.gen,
             active_slot_b: slot_b,
+            free_extents: Vec::new(),
         };
 
         // Walk the leaf chain; verify each page's κ against the parent's recorded digest.
@@ -175,6 +183,24 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             let (keys, next_lba, next_digest) = parse_pins(&page)?;
             for k in keys {
                 inner.pinned.insert(k);
+            }
+            lba = next_lba;
+            expected = next_digest;
+        }
+
+        // Walk the free-extent chain (arch §11.3).
+        let mut lba = h.free_head_lba;
+        let mut expected = h.free_head_digest;
+        while lba != NULL_LBA {
+            let (page, digest) = Self::read_page(device, lba)?;
+            if digest != expected {
+                return Err(StoreError::BackendFailure(
+                    "free page κ mismatch — index corrupted",
+                ));
+            }
+            let (entries, next_lba, next_digest) = parse_free(&page)?;
+            for e in entries {
+                inner.free_extents.push(e);
             }
             lba = next_lba;
             expected = next_digest;
@@ -226,8 +252,39 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
         Ok((buf, digest))
     }
 
-    /// Allocate `sectors` sectors starting at the current cursor; advance cursor.
+    /// Allocate `sectors` sectors. First reuses a freed extent (exact fit, or splits a larger one
+    /// in-place); falls back to bumping `alloc_cursor`. The free-list is uor-native: every entry
+    /// corresponds to an LBA whose κ has been evicted, so the bookkeeping is recoverable from the
+    /// store's eviction record (no side-channel ledger).
     fn alloc(inner: &mut Inner, sectors: u32) -> u64 {
+        // Best-fit: prefer exact, else smallest-larger to minimise residual fragmentation. With
+        // entries assumed sorted by sectors descending isn't strictly necessary; the list is
+        // typically small. We do a single pass.
+        let mut best: Option<usize> = None;
+        for (i, &(_, sec)) in inner.free_extents.iter().enumerate() {
+            if sec < sectors {
+                continue;
+            }
+            match best {
+                None => best = Some(i),
+                Some(j) if inner.free_extents[j].1 > sec => best = Some(i),
+                _ => {}
+            }
+            if sec == sectors {
+                break;
+            }
+        }
+        if let Some(i) = best {
+            let (lba, sec) = inner.free_extents[i];
+            if sec == sectors {
+                inner.free_extents.swap_remove(i);
+                return lba;
+            }
+            // Split: take the prefix, leave the suffix as a smaller free extent.
+            inner.free_extents[i] = (lba + sectors as u64, sec - sectors);
+            return lba;
+        }
+        // Fallback: bump.
         let lba = inner.alloc_cursor;
         inner.alloc_cursor += sectors as u64;
         lba
@@ -326,6 +383,31 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             (head_lba, head_digest)
         };
 
+        // 3b. CoW-write the free-extent chain (arch §11.3). Clone the entries so the borrow of
+        // `inner.free_extents` ends before we call `alloc` (which mutates `inner.alloc_cursor`).
+        let free_per_page = (pb - FREE_HEADER_BYTES) / FREE_ENTRY_BYTES;
+        let free_snapshot: Vec<(u64, u32)> = inner.free_extents.clone();
+        let free_chunks: Vec<&[(u64, u32)]> = free_snapshot.chunks(free_per_page.max(1)).collect();
+        let (free_head_lba, free_head_digest) = if free_chunks.is_empty() {
+            (NULL_LBA, [0u8; 32])
+        } else {
+            let mut next_lba = NULL_LBA;
+            let mut next_digest: Digest = [0; 32];
+            let mut head_lba = 0u64;
+            let mut head_digest: Digest = [0; 32];
+            for chunk in free_chunks.iter().rev() {
+                let lba = Self::alloc(inner, PAGE_SECTORS as u32);
+                let page = build_free_page(chunk, next_lba, &next_digest, pb);
+                let digest = blake3_digest(&page);
+                block_on(self.device.write(lba, PAGE_SECTORS as u32, &page)).map_err(backend)?;
+                next_lba = lba;
+                next_digest = digest;
+                head_lba = lba;
+                head_digest = digest;
+            }
+            (head_lba, head_digest)
+        };
+
         // 4. Flush all data + page writes to ensure durability before the header swap.
         block_on(self.device.flush()).map_err(backend)?;
 
@@ -344,6 +426,8 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             leaf_head_digest,
             pinned_head_lba,
             pinned_head_digest,
+            free_head_lba,
+            free_head_digest,
         };
         let mut buf = vec![0u8; Self::ss(&self.device)];
         header.write(&mut buf);
@@ -358,6 +442,8 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
     }
 
     /// Reachability GC (spec §5.3 / §10.8) — identical semantics to the other backends; persists.
+    /// Evicted κ's extents (LBA + sector count) are pushed to the free-list so future puts can
+    /// reuse them (arch §11.3) — no LBA leak even on long-running stores.
     pub fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, StoreError> {
         let mut inner = self.inner.lock();
         let mut live: HashSet<Key> = HashSet::new();
@@ -375,11 +461,22 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             }
         }
         let before = inner.cache.len();
+        // Identify evicted κs to reclaim their extents.
+        let evicted_keys: Vec<Key> = inner
+            .cache
+            .keys()
+            .copied()
+            .filter(|k| !live.contains(k))
+            .collect();
+        let mut reclaimed: Vec<(u64, u32)> = Vec::new();
+        for k in &evicted_keys {
+            if let Some((lba, sec)) = inner.entries.remove(k) {
+                reclaimed.push((lba, sec));
+            }
+        }
         inner.cache.retain(|k, _| live.contains(k));
-        // Drop entries for evicted blobs too — they'll be omitted from the next leaf chain. The
-        // old extents are leaked LBAs (a real follow-on would mark them in a free-list, see arch
-        // §11.3 future work).
-        inner.entries.retain(|k, _| live.contains(k));
+        // Merge into the free list.
+        inner.free_extents.extend(reclaimed);
         let evicted = before - inner.cache.len();
         self.flush(&mut inner)?;
         Ok(evicted)
@@ -472,6 +569,9 @@ struct Header {
     leaf_head_digest: Digest,
     pinned_head_lba: u64,
     pinned_head_digest: Digest,
+    /// Head of the **free-extent list** page chain (arch §11.3). `NULL_LBA` ⇒ no free extents.
+    free_head_lba: u64,
+    free_head_digest: Digest,
 }
 
 impl Header {
@@ -492,6 +592,9 @@ impl Header {
         let pinned_head_lba = u64::from_le_bytes(buf[72..80].try_into().ok()?);
         let mut pinned_head_digest = [0u8; 32];
         pinned_head_digest.copy_from_slice(&buf[80..112]);
+        let free_head_lba = u64::from_le_bytes(buf[112..120].try_into().ok()?);
+        let mut free_head_digest = [0u8; 32];
+        free_head_digest.copy_from_slice(&buf[120..152]);
         Some(Self {
             gen,
             alloc_cursor,
@@ -499,6 +602,8 @@ impl Header {
             leaf_head_digest,
             pinned_head_lba,
             pinned_head_digest,
+            free_head_lba,
+            free_head_digest,
         })
     }
 
@@ -511,7 +616,58 @@ impl Header {
         buf[40..72].copy_from_slice(&self.leaf_head_digest);
         buf[72..80].copy_from_slice(&self.pinned_head_lba.to_le_bytes());
         buf[80..112].copy_from_slice(&self.pinned_head_digest);
+        buf[112..120].copy_from_slice(&self.free_head_lba.to_le_bytes());
+        buf[120..152].copy_from_slice(&self.free_head_digest);
     }
+}
+
+// Free-extent page layout: u16 num_entries | u64 next_lba | [32 B next_digest] | (lba u64, sec u32)*
+const FREE_HEADER_BYTES: usize = 2 + 8 + 32;
+const FREE_ENTRY_BYTES: usize = 8 + 4;
+
+fn build_free_page(
+    entries: &[(u64, u32)],
+    next_lba: u64,
+    next_digest: &Digest,
+    page_size: usize,
+) -> Vec<u8> {
+    let mut page = vec![0u8; page_size];
+    page[..2].copy_from_slice(&(entries.len() as u16).to_le_bytes());
+    page[2..10].copy_from_slice(&next_lba.to_le_bytes());
+    page[10..42].copy_from_slice(next_digest);
+    let mut off = FREE_HEADER_BYTES;
+    for (lba, sec) in entries {
+        page[off..off + 8].copy_from_slice(&lba.to_le_bytes());
+        off += 8;
+        page[off..off + 4].copy_from_slice(&sec.to_le_bytes());
+        off += 4;
+    }
+    page
+}
+
+type FreeParse = (Vec<(u64, u32)>, u64, Digest);
+
+fn parse_free(page: &[u8]) -> Result<FreeParse, StoreError> {
+    if page.len() < FREE_HEADER_BYTES {
+        return Err(StoreError::BackendFailure("free page short"));
+    }
+    let n = u16::from_le_bytes(page[..2].try_into().unwrap()) as usize;
+    let next_lba = u64::from_le_bytes(page[2..10].try_into().unwrap());
+    let mut next_digest = [0u8; 32];
+    next_digest.copy_from_slice(&page[10..42]);
+    let mut out = Vec::with_capacity(n);
+    let mut off = FREE_HEADER_BYTES;
+    for _ in 0..n {
+        if off + FREE_ENTRY_BYTES > page.len() {
+            return Err(StoreError::BackendFailure("free entries overflow"));
+        }
+        let lba = u64::from_le_bytes(page[off..off + 8].try_into().unwrap());
+        off += 8;
+        let sec = u32::from_le_bytes(page[off..off + 4].try_into().unwrap());
+        off += 4;
+        out.push((lba, sec));
+    }
+    Ok((out, next_lba, next_digest))
 }
 
 // Leaf layout: u16 num_entries | u64 next_lba | [32 B next_digest] | entries...
@@ -640,6 +796,8 @@ mod unit {
             leaf_head_digest: [0x55; 32],
             pinned_head_lba: 24,
             pinned_head_digest: [0xAA; 32],
+            free_head_lba: 32,
+            free_head_digest: [0xCC; 32],
         };
         let mut buf = std::vec![0u8; 512];
         h.write(&mut buf);
@@ -650,5 +808,18 @@ mod unit {
         assert_eq!(back.pinned_head_lba, 24);
         assert_eq!(back.leaf_head_digest, [0x55; 32]);
         assert_eq!(back.pinned_head_digest, [0xAA; 32]);
+        assert_eq!(back.free_head_lba, 32);
+        assert_eq!(back.free_head_digest, [0xCC; 32]);
+    }
+
+    #[test]
+    fn free_page_round_trip() {
+        let entries = std::vec![(100u64, 4u32), (200u64, 8u32), (300u64, 16u32)];
+        let next_digest = [0xBB; 32];
+        let page = build_free_page(&entries, 42, &next_digest, 4096);
+        let (parsed, next_lba, parsed_next_digest) = parse_free(&page).unwrap();
+        assert_eq!(parsed, entries);
+        assert_eq!(next_lba, 42);
+        assert_eq!(parsed_next_digest, next_digest);
     }
 }

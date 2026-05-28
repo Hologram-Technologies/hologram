@@ -83,16 +83,36 @@ pub enum AccessError {
 
 // ───────────────────────────── κ-addressing (SPINE-4, G-E1) ─────────────────────────────
 
-/// σ-axis re-derivation and κ-minting. Reuses `hologram-host`'s `HologramHasher`
-/// (= `prism::crypto::Blake3Hasher`) — the path validated byte-for-byte against the BLAKE3
-/// reference (root AS class) — without importing `hologram-archive` (G-E1).
+/// σ-axis re-derivation and κ-minting. Reuses **`prism::crypto`** (via `hologram-host`) for the
+/// full uor-addr 0.2.0 axis registry — `blake3` (default, hologram ADR-052), `sha256`, `sha3-256`,
+/// `keccak256`, `sha512` — without importing `hologram-archive` (G-E1). All five axes are first-
+/// class: the substrate's own realizations are blake3 (ADR-052), but stored content keys are
+/// **axis-polymorphic** (architecture §3.1 G-B1) and verified through this dispatcher.
 pub mod kappa {
     use super::{AxisError, KappaLabel71};
+    use alloc::vec::Vec;
+    use hologram_host::prism::crypto::{
+        Blake3Hasher, Keccak256Hasher, Sha256Hasher, Sha3_256Hasher, Sha512Hasher,
+    };
     use hologram_host::prism::vocabulary::Hasher;
-    use hologram_host::HologramHasher;
     use uor_addr::KappaLabel;
 
     const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    /// Width of the on-the-wire κ-label for an axis: `len(axis) + 1 (':') + 2·digest_bytes`.
+    /// uor-addr 0.2.0 axes: blake3=71, sha256=71, sha3-256=73, keccak256=74, sha512=135.
+    pub const MAX_LABEL_BYTES: usize = 135;
+
+    /// Render a digest as the canonical `<axis>:<hex>` ASCII bytes (variable width per §3.1).
+    fn render(prefix: &str, digest: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(prefix.len() + digest.len() * 2);
+        out.extend_from_slice(prefix.as_bytes());
+        for &b in digest {
+            out.push(HEX[(b >> 4) as usize]);
+            out.push(HEX[(b & 0x0f) as usize]);
+        }
+        out
+    }
 
     /// Render a 32-byte BLAKE3 digest as the canonical 71-byte `blake3:<64 hex>` κ-label.
     /// Byte-identical to `hologram-archive::address.rs::blake3_kappa`.
@@ -108,10 +128,40 @@ pub mod kappa {
 
     /// Content-address opaque bytes on the BLAKE3 σ-axis (the *leaf* identity). Equal bytes ⇒
     /// equal κ-label (the canonical dedup key). Byte-identical to `hologram-archive::address_bytes`.
+    /// The hologram-canonical path: realization artifacts mint here (ADR-052).
     #[must_use]
     pub fn address_bytes(bytes: &[u8]) -> KappaLabel71 {
-        let digest: [u8; 32] = HologramHasher::initial().fold_bytes(bytes).finalize();
+        let digest: [u8; 32] = Blake3Hasher::initial().fold_bytes(bytes).finalize();
         blake3_kappa(&digest)
+    }
+
+    /// **Axis-polymorphic** content addressing — re-derives `bytes` through the σ-axis named by
+    /// `axis` and returns the variable-width `<axis>:<hex>` κ-label bytes (architecture §3.1 G-B1).
+    /// Unknown axes fail loud ([`AxisError::UnsupportedAxis`], SPINE-6).
+    pub fn address_bytes_axis(axis: &str, bytes: &[u8]) -> Result<Vec<u8>, AxisError> {
+        match axis {
+            "blake3" => Ok(render(
+                "blake3:",
+                &Blake3Hasher::initial().fold_bytes(bytes).finalize(),
+            )),
+            "sha256" => Ok(render(
+                "sha256:",
+                &Sha256Hasher::initial().fold_bytes(bytes).finalize(),
+            )),
+            "sha3-256" => Ok(render(
+                "sha3-256:",
+                &Sha3_256Hasher::initial().fold_bytes(bytes).finalize(),
+            )),
+            "keccak256" => Ok(render(
+                "keccak256:",
+                &Keccak256Hasher::initial().fold_bytes(bytes).finalize(),
+            )),
+            "sha512" => Ok(render(
+                "sha512:",
+                &Sha512Hasher::initial().fold_bytes(bytes).finalize(),
+            )),
+            _ => Err(AxisError::UnsupportedAxis),
+        }
     }
 
     /// Order-sensitive derivation key over a `domain` tag and operand labels — the SPINE-3
@@ -119,7 +169,7 @@ pub mod kappa {
     /// `hologram-realizations` via uor-addr composition). `f(A,B) ≠ f(B,A)`.
     #[must_use]
     pub fn derive_label(domain: &[u8], inputs: &[KappaLabel71]) -> KappaLabel71 {
-        let mut h = HologramHasher::initial().fold_bytes(domain);
+        let mut h = Blake3Hasher::initial().fold_bytes(domain);
         for l in inputs {
             h = h.fold_bytes(l.as_bytes());
         }
@@ -127,17 +177,30 @@ pub mod kappa {
     }
 
     /// Re-derive `bytes` through the σ-axis named by `kappa`'s prefix and compare the digest
-    /// (SPINE-4 / spec §8.0). Pure; the universal cross-check under every received byte.
-    /// Unknown axes fail loud ([`AxisError::UnsupportedAxis`]) — never a silent accept (SPINE-6).
+    /// (SPINE-4 / spec §8.0). Pure; the universal cross-check under every received byte. The
+    /// `KappaLabel71` carries blake3 or sha256 (both 71-byte form); wider axes (sha3-256/keccak256/
+    /// sha512) use [`verify_kappa_axis`] over the on-the-wire bytes directly.
     pub fn verify_kappa(bytes: &[u8], kappa: &KappaLabel71) -> Result<bool, AxisError> {
-        match kappa.sigma_axis() {
-            Some("blake3") => Ok(&address_bytes(bytes) == kappa),
-            Some(_) => Err(AxisError::UnsupportedAxis),
-            None => Err(AxisError::Malformed),
-        }
+        verify_kappa_axis(bytes, kappa.as_array())
+    }
+
+    /// Re-derive `bytes` through the σ-axis named by the first `<axis>:` prefix of `label_bytes`
+    /// and compare. Handles **all five axes** (variable width 71..135). For multi-axis stored
+    /// content: pass the on-the-wire bytes of the κ-label.
+    pub fn verify_kappa_axis(bytes: &[u8], label_bytes: &[u8]) -> Result<bool, AxisError> {
+        let colon = label_bytes
+            .iter()
+            .position(|&b| b == b':')
+            .ok_or(AxisError::Malformed)?;
+        let axis = core::str::from_utf8(&label_bytes[..colon]).map_err(|_| AxisError::Malformed)?;
+        let derived = address_bytes_axis(axis, bytes)?;
+        Ok(derived.as_slice() == label_bytes)
     }
 }
-pub use kappa::{address_bytes, derive_label, verify_kappa};
+pub use kappa::{
+    address_bytes, address_bytes_axis, derive_label, verify_kappa, verify_kappa_axis,
+    MAX_LABEL_BYTES,
+};
 
 // ───────────────────────────── realizations (SPINE-2 / SPINE-3) ─────────────────────────────
 
@@ -251,12 +314,20 @@ impl Capabilities {
         fn subset(a: &[KappaLabel71], b: &[KappaLabel71]) -> bool {
             a.iter().all(|x| b.contains(x))
         }
+        // Budget containment under the **0 = unbounded** convention (spec §7.6 / arch §3.4):
+        // - parent unbounded (parent = 0) admits any child.
+        // - parent bounded (parent ≠ 0) requires child also bounded (child ≠ 0) AND child ≤ parent.
+        // The naive `child ≤ parent` rule would incorrectly accept child=0 (unbounded) under
+        // parent=N (bounded) because 0 < N — silently widening authority. This guards against it.
+        fn budget_admits(parent: u64, child: u64) -> bool {
+            parent == 0 || (child != 0 && child <= parent)
+        }
         subset(&derived.storage_roots, &self.storage_roots)
             && subset(&derived.publish_channels, &self.publish_channels)
             && subset(&derived.subscribe_channels, &self.subscribe_channels)
-            && derived.storage_quota_bytes <= self.storage_quota_bytes
-            && derived.memory_max_bytes <= self.memory_max_bytes
-            && derived.cpu_time_per_event_ms <= self.cpu_time_per_event_ms
+            && budget_admits(self.storage_quota_bytes, derived.storage_quota_bytes)
+            && budget_admits(self.memory_max_bytes, derived.memory_max_bytes)
+            && budget_admits(self.cpu_time_per_event_ms, derived.cpu_time_per_event_ms)
             && derived.priority_weight <= self.priority_weight.max(1)
             // A flag may be granted by the child only if the parent holds it.
             && (!derived.network_fetch || self.network_fetch)
@@ -287,6 +358,32 @@ pub trait KappaStore: Send + Sync {
     fn pinned_roots(&self) -> Vec<KappaLabel71>;
     fn approximate_count(&self) -> usize;
     fn approximate_bytes(&self) -> u64;
+
+    // ─── axis-polymorphic surface (architecture §3.1 G-B1) ─────────────────────────────────
+    // Hologram realizations are blake3 by ADR-052 (the canonical hot path uses [`put`]/[`get`]).
+    // The `*_axis` methods accept **any uor-addr-supported σ-axis** (blake3 / sha256 / sha3-256 /
+    // keccak256 / sha512) and address stored content by its variable-width on-the-wire bytes —
+    // for foreign-axis content flowing across the substrate's boundary, never invented locally.
+    //
+    // Backends that don't support multi-axis storage return `UnknownAxis` from `put_axis` (the
+    // default). The reference [`hologram_store_mem::MemKappaStore`] opts in for all five axes,
+    // verified against the upstream BLAKE3/`sha2`/`sha3` reference crates (V&V AS class).
+
+    /// Multi-axis put: re-derive `bytes` through `axis` and store under the on-the-wire label.
+    /// Returns the variable-width κ-label bytes (71/73/74/135). Default: unsupported.
+    fn put_axis(&self, _axis: &str, _bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
+        Err(StoreError::UnknownAxis)
+    }
+
+    /// Multi-axis get by on-the-wire κ-label bytes (variable width). Default: unsupported.
+    fn get_axis(&self, _label_bytes: &[u8]) -> Result<Option<Bytes>, StoreError> {
+        Err(StoreError::UnknownAxis)
+    }
+
+    /// Multi-axis presence. Default: not present.
+    fn contains_axis(&self, _label_bytes: &[u8]) -> bool {
+        false
+    }
 }
 
 /// Reachability-based eviction (spec §5.3 / §10.8). Deliberately **separate** from [`KappaStore`]:
@@ -407,6 +504,230 @@ mod tests {
         assert_ne!(derive_label(b"op", &[a, b]), derive_label(b"op", &[b, a]));
     }
 
+    // ── AS — σ-axis correctness against external KAT vectors (architecture §3.1 G-B1) ──
+
+    /// Render bytes as lowercase ASCII hex (helper for the KAT assertions).
+    fn hex_bytes(b: &[u8]) -> alloc::string::String {
+        use alloc::string::String;
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut s = String::with_capacity(b.len() * 2);
+        for &x in b {
+            s.push(HEX[(x >> 4) as usize] as char);
+            s.push(HEX[(x & 0xf) as usize] as char);
+        }
+        s
+    }
+
+    #[test]
+    fn as_blake3_axis_matches_blake3_reference_crate() {
+        // Differential test: the substrate's blake3 path must produce the SAME 32-byte digest as
+        // the independent `blake3` reference crate (vendored test). The hologram σ-axis goes through
+        // `prism::crypto::Blake3Hasher`; this asserts byte-identity with the upstream `blake3 = "1"`.
+        let inputs: &[&[u8]] = &[b"", b"abc", b"hologram-substrate"];
+        for &input in inputs {
+            let ours = address_bytes_axis("blake3", input).unwrap();
+            let theirs = ::blake3::hash(input);
+            let mut expected = alloc::string::String::from("blake3:");
+            for &b in theirs.as_bytes() {
+                use core::fmt::Write;
+                let _ = write!(expected, "{:02x}", b);
+            }
+            assert_eq!(
+                core::str::from_utf8(&ours).unwrap(),
+                expected,
+                "BLAKE3 differential disagreement on input {:?}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn as_sha256_axis_matches_fips180_4_kat() {
+        // FIPS 180-4 / NIST CAVS KAT vectors for SHA-256
+        // empty: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        // "abc":  ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+        let empty = address_bytes_axis("sha256", b"").unwrap();
+        let abc = address_bytes_axis("sha256", b"abc").unwrap();
+        assert_eq!(
+            core::str::from_utf8(&empty).unwrap(),
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            core::str::from_utf8(&abc).unwrap(),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn as_sha3_256_axis_matches_fips202_kat() {
+        // FIPS 202 / NIST KAT vectors for SHA3-256
+        // empty: a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a
+        // "abc":  3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532
+        let empty = address_bytes_axis("sha3-256", b"").unwrap();
+        let abc = address_bytes_axis("sha3-256", b"abc").unwrap();
+        assert_eq!(
+            core::str::from_utf8(&empty).unwrap(),
+            "sha3-256:a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
+        );
+        assert_eq!(
+            core::str::from_utf8(&abc).unwrap(),
+            "sha3-256:3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+        );
+    }
+
+    #[test]
+    fn as_keccak256_axis_matches_ethereum_kat() {
+        // Keccak-256 (pre-FIPS-202 finalist; widely used in Ethereum):
+        // empty: c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+        // "abc":  4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45
+        let empty = address_bytes_axis("keccak256", b"").unwrap();
+        let abc = address_bytes_axis("keccak256", b"abc").unwrap();
+        assert_eq!(
+            core::str::from_utf8(&empty).unwrap(),
+            "keccak256:c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        );
+        assert_eq!(
+            core::str::from_utf8(&abc).unwrap(),
+            "keccak256:4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
+        );
+    }
+
+    #[test]
+    fn as_sha512_axis_matches_fips180_4_kat() {
+        // FIPS 180-4 KAT vectors for SHA-512 ("abc"):
+        // ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a
+        // 2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+        let abc = address_bytes_axis("sha512", b"abc").unwrap();
+        assert_eq!(
+            core::str::from_utf8(&abc).unwrap(),
+            "sha512:ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+        );
+    }
+
+    #[test]
+    fn as_sha256_axis_differentials_with_sha2_reference_crate() {
+        // Differential: every byte-string from a small corpus must produce the same sha256 digest
+        // through our σ-axis as the upstream RustCrypto `sha2` crate (FIPS 180-4 reference impl).
+        use sha2::Digest;
+        for &input in &[
+            b"".as_ref(),
+            b"abc".as_ref(),
+            b"hologram-substrate-multi-axis-conformance".as_ref(),
+            &[0xffu8; 256][..],
+        ] {
+            let ours = address_bytes_axis("sha256", input).unwrap();
+            let theirs = sha2::Sha256::digest(input);
+            let mut expected = alloc::string::String::from("sha256:");
+            for &b in theirs.iter() {
+                use core::fmt::Write;
+                let _ = write!(expected, "{:02x}", b);
+            }
+            assert_eq!(
+                core::str::from_utf8(&ours).unwrap(),
+                expected,
+                "sha256 differential disagreement on input of len {}",
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn as_sha3_256_axis_differentials_with_sha3_reference_crate() {
+        // Differential: every byte-string must produce the same sha3-256 digest through our σ-axis
+        // as the upstream `sha3` crate (NIST FIPS 202 reference impl).
+        use sha3::Digest;
+        for &input in &[
+            b"".as_ref(),
+            b"abc".as_ref(),
+            b"hologram-multi-axis-fips202".as_ref(),
+        ] {
+            let ours = address_bytes_axis("sha3-256", input).unwrap();
+            let theirs = sha3::Sha3_256::digest(input);
+            let mut expected = alloc::string::String::from("sha3-256:");
+            for &b in theirs.iter() {
+                use core::fmt::Write;
+                let _ = write!(expected, "{:02x}", b);
+            }
+            assert_eq!(core::str::from_utf8(&ours).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn as_keccak256_axis_differentials_with_sha3_reference_crate() {
+        // Differential against `sha3::Keccak256` (the pre-FIPS-202 sponge variant; Ethereum uses
+        // this construction). Confirms the substrate's keccak path is interop-compatible with the
+        // standard upstream implementation.
+        use sha3::Digest;
+        for &input in &[b"".as_ref(), b"abc".as_ref(), b"keccak-eth-compat".as_ref()] {
+            let ours = address_bytes_axis("keccak256", input).unwrap();
+            let theirs = sha3::Keccak256::digest(input);
+            let mut expected = alloc::string::String::from("keccak256:");
+            for &b in theirs.iter() {
+                use core::fmt::Write;
+                let _ = write!(expected, "{:02x}", b);
+            }
+            assert_eq!(core::str::from_utf8(&ours).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn as_sha512_axis_differentials_with_sha2_reference_crate() {
+        use sha2::Digest;
+        for &input in &[b"".as_ref(), b"abc".as_ref(), &[0xa5u8; 1024][..]] {
+            let ours = address_bytes_axis("sha512", input).unwrap();
+            let theirs = sha2::Sha512::digest(input);
+            let mut expected = alloc::string::String::from("sha512:");
+            for &b in theirs.iter() {
+                use core::fmt::Write;
+                let _ = write!(expected, "{:02x}", b);
+            }
+            assert_eq!(core::str::from_utf8(&ours).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn verify_kappa_axis_handles_all_five_axes() {
+        for axis in &["blake3", "sha256", "sha3-256", "keccak256", "sha512"] {
+            let bytes = b"hologram-substrate-multi-axis";
+            let label = address_bytes_axis(axis, bytes).unwrap();
+            assert!(
+                verify_kappa_axis(bytes, &label).unwrap(),
+                "{axis} verify must accept the bytes that produced it"
+            );
+            // Tampered bytes are rejected.
+            assert!(
+                !verify_kappa_axis(b"tampered", &label).unwrap(),
+                "{axis} verify must reject tampered bytes"
+            );
+        }
+        // Unknown axis fails loud (SPINE-6 no-fallback).
+        assert_eq!(
+            address_bytes_axis("md5", b""),
+            Err(AxisError::UnsupportedAxis)
+        );
+    }
+
+    #[test]
+    fn as_label_widths_match_uor_addr_geometry() {
+        // architecture §3.1 / uor-addr bounds: blake3=71, sha256=71, sha3-256=73, keccak256=74,
+        // sha512=135. Re-derive empty bytes through each axis and assert the on-the-wire width.
+        assert_eq!(address_bytes_axis("blake3", b"").unwrap().len(), 71);
+        assert_eq!(address_bytes_axis("sha256", b"").unwrap().len(), 71);
+        assert_eq!(address_bytes_axis("sha3-256", b"").unwrap().len(), 73);
+        assert_eq!(address_bytes_axis("keccak256", b"").unwrap().len(), 74);
+        assert_eq!(address_bytes_axis("sha512", b"").unwrap().len(), 135);
+        const _: () = assert!(135 == MAX_LABEL_BYTES);
+    }
+
+    /// Confirm the rendering uses lowercase hex (the canonical κ-label form).
+    #[test]
+    fn as_label_uses_lowercase_hex_canonical_form() {
+        let v = address_bytes_axis("sha256", b"abc").unwrap();
+        let s = core::str::from_utf8(&v).unwrap();
+        assert!(s.chars().all(|c| !c.is_uppercase()));
+        let _ = hex_bytes(b"\x00\x0f\xff"); // exercise helper
+    }
+
     // ── CR — capability delegation containment (SubtypingLattice relation, §3.4 / §10.7) ──
 
     use alloc::vec;
@@ -460,9 +781,27 @@ mod tests {
         assert!(!parent.admits(&caps(&[b"r1"], 9999, false)));
         // A network flag the parent lacks.
         assert!(!parent.admits(&caps(&[b"r1"], 500, true)));
-        // A properly narrowed child IS admitted.
+        // A properly narrowed child IS admitted (equal quota — same bound).
+        assert!(parent.admits(&caps(&[b"r1"], 500, false)));
+        // A strictly tighter quota IS admitted.
         assert!(parent.admits(&caps(&[b"r1"], 100, false)));
-        assert!(parent.admits(&caps(&[], 0, false)));
+        // Empty storage roots are tighter than {r1} — admitted under the subset rule.
+        assert!(parent.admits(&caps(&[], 100, false)));
+        // **0 = unbounded** semantics (arch §3.4 + spec §7.6): a child requesting unbounded under
+        // a bounded parent is OVER-broad (refused). The naive `child ≤ parent` rule would have
+        // wrongly admitted this — `budget_admits` guards against the silent widening.
+        assert!(!parent.admits(&caps(&[b"r1"], 0, false)));
+        assert!(!parent.admits(&caps(&[], 0, false)));
+    }
+
+    #[test]
+    fn cr_unbounded_parent_admits_any_child_budget() {
+        // Conversely, an unbounded parent (quota=0) admits any child quota, including unbounded.
+        let unbounded_parent = caps(&[b"r"], 0, false);
+        assert!(unbounded_parent.admits(&caps(&[b"r"], 0, false)));
+        assert!(unbounded_parent.admits(&caps(&[b"r"], 1 << 20, false)));
+        assert!(unbounded_parent.admits(&caps(&[b"r"], u64::MAX, false)));
+        assert!(unbounded_parent.admits(&caps(&[], 100, false)));
     }
 }
 

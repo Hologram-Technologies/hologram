@@ -76,9 +76,29 @@ fn st_get_absent_is_none_not_error_and_no_delete_primitive() {
 
 #[test]
 fn st_unknown_axis_fails_loud_no_fallback() {
-    // SPINE-6: an unwired σ-axis is rejected, never silently coerced to blake3.
+    // SPINE-6: an axis outside the uor-addr 0.2.0 registry is rejected, never coerced.
     let store = MemKappaStore::new();
-    assert!(store.put("sha256", b"x").is_err());
+    assert!(store.put("md5", b"x").is_err());
+    assert!(store.put_axis("md5", b"x").is_err());
+}
+
+#[test]
+fn as_mem_supports_all_five_uor_addr_axes() {
+    // Architecture §3.1 G-B1: stored content keys are axis-polymorphic. The reference store opts
+    // in to all five axes that uor-addr 0.2.0 ships; every put_axis round-trips through get_axis.
+    let store = MemKappaStore::new();
+    for axis in &["blake3", "sha256", "sha3-256", "keccak256", "sha512"] {
+        let payload = format!("payload-for-{axis}").into_bytes();
+        let label = store
+            .put_axis(axis, &payload)
+            .unwrap_or_else(|e| panic!("{axis} put_axis failed: {:?}", e));
+        assert!(store.contains_axis(&label), "{axis}: contains_axis");
+        assert_eq!(
+            store.get_axis(&label).unwrap().unwrap().as_ref(),
+            payload.as_slice(),
+            "{axis}: round-trips"
+        );
+    }
 }
 
 #[test]

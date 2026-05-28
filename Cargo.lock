@@ -1603,6 +1603,8 @@ dependencies = [
  "hologram-store-mem",
  "hologram-substrate-core",
  "pollster",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "spin",
  "wasmtime",
  "wat",
@@ -1666,8 +1668,11 @@ name = "hologram-substrate-core"
 version = "0.6.0"
 dependencies = [
  "async-trait",
+ "blake3",
  "hashbrown 0.15.5",
  "hologram-host",
+ "sha2",
+ "sha3",
  "uor-addr",
 ]
 
