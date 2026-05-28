@@ -39,9 +39,11 @@ use spin::Mutex;
 
 const MAGIC: &[u8; 8] = b"HGRMBARE";
 /// Header format version. v2 introduced the dual-buffered headers + κ-page chain (PR #25).
-/// v3 adds the persistent **free-extent list** (arch §11.3, this PR) so GC reclamation survives
-/// reboots and the bump allocator can reuse evicted LBAs.
-const VERSION: u64 = 3;
+/// v3 adds the persistent **free-extent list** (arch §11.3) so GC reclamation survives reboots.
+/// v4 adds the **reboot-monotonic epoch** (arch §9 G-C1 → §11.3): on every successful `open`
+/// the epoch is bumped, so the pair `(reboot_epoch, gen)` is a total order over all writes ever
+/// made to the device — the cross-reboot ordering UorTime "since boot" cannot provide.
+const VERSION: u64 = 4;
 const PAGE_SECTORS: u64 = 8; // 8 × 512 B = 4 KiB pages
 const NULL_LBA: u64 = u64::MAX;
 type Key = [u8; 71];
@@ -94,6 +96,10 @@ struct Inner {
     /// Each entry: `(lba, sectors)` for a previously-allocated extent whose κ was evicted. The
     /// allocator searches this list on `alloc` and falls back to bump when no fit exists.
     free_extents: Vec<(u64, u32)>,
+    /// Reboot-monotonic epoch (G-C1): incremented on each successful `open` and persisted on
+    /// every flush. Pair `(reboot_epoch, gen)` is a total order over all writes to this device,
+    /// usable to order any two persisted runtime-state copies across reboots.
+    reboot_epoch: u64,
 }
 
 /// A `KappaStore` persisted on a raw block device.
@@ -117,6 +123,18 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
         })
     }
 
+    /// Current reboot epoch (G-C1): the monotonic counter that increments on every successful
+    /// `open` of a previously-formatted device. Pair `(reboot_epoch, generation)` gives a total
+    /// ordering on any two persisted runtime-state copies, including across reboots.
+    pub fn reboot_epoch(&self) -> u64 {
+        self.inner.lock().reboot_epoch
+    }
+
+    /// Current write generation (monotonic per epoch — bumped on each `flush`).
+    pub fn generation(&self) -> u64 {
+        self.inner.lock().gen
+    }
+
     fn ss(device: &D) -> usize {
         device.sector_size() as usize
     }
@@ -135,9 +153,11 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             (None, None) => None,
         };
         let Some((slot_b, h)) = chosen else {
-            // Unformatted device: start fresh, cursor past the header reservation.
+            // Unformatted device: start fresh, cursor past the header reservation. Reboot epoch 1
+            // is the first epoch ever (open of a fresh device == one reboot).
             return Ok(Inner {
                 alloc_cursor: FIRST_ALLOC_LBA,
+                reboot_epoch: 1,
                 ..Default::default()
             });
         };
@@ -150,6 +170,9 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             gen: h.gen,
             active_slot_b: slot_b,
             free_extents: Vec::new(),
+            // G-C1: every successful open bumps the reboot epoch. The pair `(reboot_epoch, gen)`
+            // is the total ordering on persisted runtime-state copies.
+            reboot_epoch: h.reboot_epoch.saturating_add(1),
         };
 
         // Walk the leaf chain; verify each page's κ against the parent's recorded digest.
@@ -428,6 +451,7 @@ impl<D: BlockDevice> BareMetalKappaStore<D> {
             pinned_head_digest,
             free_head_lba,
             free_head_digest,
+            reboot_epoch: inner.reboot_epoch,
         };
         let mut buf = vec![0u8; Self::ss(&self.device)];
         header.write(&mut buf);
@@ -572,6 +596,9 @@ struct Header {
     /// Head of the **free-extent list** page chain (arch §11.3). `NULL_LBA` ⇒ no free extents.
     free_head_lba: u64,
     free_head_digest: Digest,
+    /// **Reboot-monotonic epoch** (G-C1): bumped on every open; the pair `(reboot_epoch, gen)`
+    /// is the total ordering on writes across reboots.
+    reboot_epoch: u64,
 }
 
 impl Header {
@@ -595,6 +622,7 @@ impl Header {
         let free_head_lba = u64::from_le_bytes(buf[112..120].try_into().ok()?);
         let mut free_head_digest = [0u8; 32];
         free_head_digest.copy_from_slice(&buf[120..152]);
+        let reboot_epoch = u64::from_le_bytes(buf[152..160].try_into().ok()?);
         Some(Self {
             gen,
             alloc_cursor,
@@ -604,6 +632,7 @@ impl Header {
             pinned_head_digest,
             free_head_lba,
             free_head_digest,
+            reboot_epoch,
         })
     }
 
@@ -618,6 +647,7 @@ impl Header {
         buf[80..112].copy_from_slice(&self.pinned_head_digest);
         buf[112..120].copy_from_slice(&self.free_head_lba.to_le_bytes());
         buf[120..152].copy_from_slice(&self.free_head_digest);
+        buf[152..160].copy_from_slice(&self.reboot_epoch.to_le_bytes());
     }
 }
 
@@ -798,6 +828,7 @@ mod unit {
             pinned_head_digest: [0xAA; 32],
             free_head_lba: 32,
             free_head_digest: [0xCC; 32],
+            reboot_epoch: 42,
         };
         let mut buf = std::vec![0u8; 512];
         h.write(&mut buf);
@@ -810,6 +841,7 @@ mod unit {
         assert_eq!(back.pinned_head_digest, [0xAA; 32]);
         assert_eq!(back.free_head_lba, 32);
         assert_eq!(back.free_head_digest, [0xCC; 32]);
+        assert_eq!(back.reboot_epoch, 42);
     }
 
     #[test]

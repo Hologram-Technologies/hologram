@@ -55,7 +55,7 @@ impl KappaSync for MockPeer {
     async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
         Vec::new()
     }
-    async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
+    async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
         Ok(())
     }
     async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {

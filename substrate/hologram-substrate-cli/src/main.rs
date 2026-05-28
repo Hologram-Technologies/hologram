@@ -1,6 +1,7 @@
 //! The `hologram` node binary (spec §9.2). Thin shell: parse args + read files, then delegate to
 //! `hologram_substrate_cli::run` against a native redb store. Container/network verbs
-//! (`spawn`/`serve`) arrive with the Wasmtime engine / libp2p transport backends.
+//! (`spawn`/`serve`) arrive with the Wasmtime engine / uor-native TCP transport
+//! (`hologram-net-tcp`) backends.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -62,10 +63,17 @@ enum Verb {
         #[arg(long)]
         event: Option<PathBuf>,
     },
-    /// Run the HTTP-CAS gateway over this node's store (spec §6.5). Blocks until terminated.
+    /// Run the HTTP-CAS gateway over this node's store (spec §6.5). When `--tcp` is set,
+    /// **also** runs the uor-native TCP transport (`hologram-net-tcp`, κ-XOR Kademlia) on that
+    /// address — peers federate via either or both. Blocks until terminated.
     Serve {
+        /// HTTP-CAS listen address (`host:port`).
         #[arg(long, default_value = "127.0.0.1:8080")]
         listen: String,
+        /// Optional uor-native TCP listen address (`host:port`). When set, a `TcpKappaSync` is
+        /// bound here in parallel to the HTTP-CAS gateway — same store, two wire protocols.
+        #[arg(long)]
+        tcp: Option<String>,
     },
     /// Mint a Capability Set κ-label (grants + budgets). Empty by default.
     Caps {
@@ -162,7 +170,7 @@ fn main() -> ExitCode {
             caps,
             event,
         } => run_spawn(&cli.store, &container, &caps, event),
-        Verb::Serve { listen } => run_serve(&cli.store, &listen),
+        Verb::Serve { listen, tcp } => run_serve(&cli.store, &listen, tcp.as_deref()),
         // Storage/addressing verbs.
         other => {
             let store = match NativeKappaStore::open(&cli.store) {
@@ -228,13 +236,16 @@ fn run_spawn(
     })
 }
 
-/// `hologram serve` — run the HTTP-CAS gateway over this node's store; block until terminated.
-fn run_serve(store_path: &std::path::Path, listen: &str) -> ExitCode {
+/// `hologram serve` — run the HTTP-CAS gateway over this node's store. With `--tcp <addr>`,
+/// **also** binds a uor-native `TcpKappaSync` (`hologram-net-tcp`, κ-XOR Kademlia) over the
+/// same store, so the node federates via both wire protocols in parallel. Blocks until
+/// terminated.
+fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> ExitCode {
     let store = match NativeKappaStore::open(store_path) {
         Ok(s) => std::sync::Arc::new(s),
         Err(e) => return fail(format!("open store: {e:?}")),
     };
-    let server = match hologram_net_http::live::serve_addr(store, listen, false) {
+    let server = match hologram_net_http::live::serve_addr(store.clone(), listen, false) {
         Ok(s) => s,
         Err(e) => return fail(format!("listen on {listen}: {e}")),
     };
@@ -242,6 +253,39 @@ fn run_serve(store_path: &std::path::Path, listen: &str) -> ExitCode {
         "hologram: HTTP-CAS gateway on http://{}/cas/{{kappa}}",
         server.addr()
     );
+
+    // Optionally bind the uor-native TCP transport on the same store.
+    if let Some(tcp_addr) = tcp {
+        let addr: std::net::SocketAddr = match tcp_addr.parse() {
+            Ok(a) => a,
+            Err(_) => return fail(format!("tcp addr: invalid host:port `{tcp_addr}`")),
+        };
+        // Spawn a single-threaded tokio runtime for the TCP transport (the HTTP server is on its
+        // own thread already). The TCP transport's accept loop + DHT machinery live here.
+        let store_for_tcp =
+            store.clone() as std::sync::Arc<dyn hologram_substrate_core::KappaStore>;
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async move {
+                match hologram_net_tcp::TcpKappaSync::bind(addr, store_for_tcp).await {
+                    Ok(sync) => {
+                        eprintln!(
+                            "hologram: TCP transport on tcp://{} — peer id κ = {}",
+                            sync.local_addr(),
+                            sync.local_id().as_str()
+                        );
+                        // Park forever; the accept loop runs in spawned tasks.
+                        std::future::pending::<()>().await
+                    }
+                    Err(e) => eprintln!("hologram: tcp bind failed: {e:?}"),
+                }
+            });
+        });
+    }
+
     // Park; the server thread handles requests until the process is terminated.
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));

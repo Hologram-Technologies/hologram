@@ -133,8 +133,12 @@ Each is restated as a conformance item in §7.
 - **SPINE-6 — No fallback, no arbitrary cap.** When a uor-native path exists, the substrate takes it
   and only it. No "fast path that bypasses addressing," no non-canonical serialization for
   "convenience," no hardcoded size/type/count ceiling that the κ-label graph does not itself imply.
-  Limits are resource budgets (capability-scoped, §4.5), never structural shortcuts. **Arbitrary
-  workloads are the requirement, not a goal** — a container is opaque Wasm + κ-addressed state.
+  Limits are resource budgets (capability-scoped, §4.5), never structural shortcuts. **Workloads
+  are arbitrary up to the host substrate's expressible-Wasm envelope:** on WASI/native and browser
+  substrates, anything Wasm + the spec §4.4 import surface can express; on bare-metal there is no
+  native-subprocess escape hatch (G-C3) — a container *is* Wasm + κ-addressed state, never a
+  shell-out. The runtime refuses any container whose manifest declares an import outside the §4.4
+  surface (`hologram.*` only); this is the structural enforcement of the workload bound.
 
 ---
 
@@ -152,16 +156,16 @@ performance floors that hold the reused primitives to hologram's contract.
 | Crate | Role | std? | Phase |
 |---|---|---|---|
 | `hologram-substrate-core` | Trait surfaces (`KappaStore`, `KappaSync`, `ContainerRuntime`), supporting types, `Capabilities`, `verify_kappa`, σ-axis registry, `Realization`+`references()` registry, `get_with_fetch`. | `#![no_std]`+`alloc`, executor-agnostic | 0 |
-| `hologram-realizations` | The 8 canonical-form realizations + `references()` extractors + TC-05 witnesses. | `#![no_std]`+`alloc` | 0 |
+| `hologram-realizations` | The 8 universal + 9 bare-metal sibling realizations (D1) + `ChainCompaction` barrier (B2) + `references()` extractors + TC-05 witnesses. | `#![no_std]`+`alloc` | 0 |
 | `hologram-store-mem` | `MemKappaStore` reference impl (also the conformance fixture). | `#![no_std]`+`alloc` | 0 |
-| `hologram-store-native` | redb index + sharded blob store (spec §5.5). | std | 1 |
+| `hologram-store-native` | redb index + **sharded blob store (spec §5.5)** + size-bounded LRU read-through cache (SP §4). | std | 1 |
 | `hologram-store-opfs` | OPFS/IndexedDB backend (spec §5.4). | wasm | 4 |
-| `hologram-store-bare` | Block-device LBA backend (bare-metal §5). | `#![no_std]`+`alloc` | 0 (skeleton) |
+| `hologram-store-bare` | **Merkle B-tree** of κ → extent over a raw `BlockDevice`; dual-buffered headers + CoW + persistent free-list (BT) + reboot-monotonic epoch (B1). | `#![no_std]`+`alloc` | 0 ✅ |
 | `hologram-net-http` | HTTP-CAS client + server (spec §6.3). | std | 2 |
-| `hologram-net-libp2p` | rust-libp2p `KappaSync` (Kademlia + gossipsub). | std | 2 |
-| `hologram-net-bare` | smoltcp + no_std libp2p fork (bare-metal §6). | `#![no_std]`+`alloc` | 0 (skeleton) |
+| `hologram-net-tcp` | **uor-native** TCP `KappaSync`: κ-XOR Kademlia DHT over raw TCP; peer identity = κ of `PeerEndpoint` realization (no PeerIds, no Multiaddrs — SPINE-1). Replaced the previous libp2p crate, whose PeerId / Multiaddr layer was a second non-κ naming surface. | std | 2 ✅ |
+| `hologram-net-bare` | no_std [`KappaSync`] over the HAL `NetworkInterface` (bare-metal §6) — C2; frame-codec + verify-on-receipt. Same wire as `hologram-net-tcp` on std hosts; no libp2p layer. | `#![no_std]`+`alloc` | 0 ✅ |
 | `hologram-runtime-wasmtime` | `ContainerRuntime` via Wasmtime (native). | std | 3 |
-| `hologram-runtime-bare` | Wasmtime-no_std / interpreter (bare-metal §7). | `#![no_std]`+`alloc` | 0 (skeleton) |
+| `hologram-runtime-bare` | **wasmi** Wasm interpreter, no_std (bare-metal §7) — C1; implements the `ContainerEngine` seam symmetric to `runtime-wasmtime`. | `#![no_std]`+`alloc` | 0 ✅ |
 | `hologram-bare-hal` | `BlockDevice`/`NetworkInterface` HAL traits (bare-metal §3.2.1). | `#![no_std]`+`alloc` | 0 |
 | `hologram-substrate-cli` | `hologram serve/spawn/list/...` (spec §9.2). | std | 4 |
 
@@ -331,11 +335,13 @@ three backends, and a container produces **byte-identical κ-labels for byte-ide
 streams** on all three.
 
 - **Above the backend boundary:** single source (core + realizations + HAL traits).
-- **Below it:** per-substrate backends. Browser = OPFS + js-libp2p + Service-Worker CAS gateway;
-  WASI/native = redb + rust-libp2p + axum; bare-metal = block-device LBA store + smoltcp + no_std
-  libp2p/rustls/Wasmtime forks, booting from UEFI (`hologram.efi`), HAL traits `BlockDevice` /
-  `NetworkInterface` (bare-metal §3.2.1). Bare-metal is built to the same trait surfaces from the
-  start; the no_std fork strategy (libp2p/rustls/Wasmtime) is an explicit, tracked dependency.
+- **Below it:** per-substrate backends. Browser = OPFS + uor-native TCP-over-WebTransport (when
+  Wasmtime/`waitAsync` lands; currently OPFS-only via the bridge) + Service-Worker CAS gateway;
+  WASI/native = redb + `hologram-net-tcp` (κ-XOR Kademlia, no libp2p) + axum; bare-metal =
+  block-device LBA store + smoltcp + `hologram-net-bare` (HAL `NetworkInterface` frame codec, no
+  libp2p) + Wasmi interpreter (`hologram-runtime-bare`), booting from UEFI (`hologram.efi`), HAL
+  traits `BlockDevice` / `NetworkInterface` (bare-metal §3.2.1). Bare-metal is built to the same
+  trait surfaces from the start.
 - The single piece that is *not* substrate-portable is the `#[global_allocator]` binding at each
   binary's entry site (bare-metal §4.2).
 
@@ -354,7 +360,7 @@ conformance fixture.
    model end-to-end.
 2. **Phase 1 — Storage.** `hologram-store-native` (redb), reachability + GC, SP benches, conformance
    ST/§10.2/§10.5/§10.8.
-3. **Phase 2 — Network.** HTTP-CAS first (client+server), then libp2p. NW/§10.3/§10.6.
+3. **Phase 2 — Network.** HTTP-CAS first (client+server), then uor-native TCP (κ-XOR Kademlia, peer-identity-by-κ — no libp2p PeerId/Multiaddr second naming surface). NW/§10.3/§10.6.
 4. **Phase 3 — Runtime.** Wasmtime backend, lifecycle, snapshot, capabilities/delegation/revocation.
    CR/§10.1/§10.4/§10.7/§10.11/§10.12.
 5. **Phase 4 — CLI + browser + tripling proof** (§10.16).
@@ -376,10 +382,10 @@ existing table form.
 | **RZ** | realization-IRI tagging (§10.9), `references()` presence (§10.10), and the **bounded-reuse** rule — store/route crates reuse `hologram-host`/`-archive` but the tensor compute engine is absent from their `cargo tree` | spec §10.9/§10.10, Appendix B |
 | **TR** | substrate-tripling byte-identity (§10.16) + no_std discipline (§10.14) + no-OS (§10.13) + crash safety (§10.15) + hardware probing (§10.17) | bare-metal §10 |
 | **SP** | substrate performance floors (§4): zero-copy get, idempotent-put no-write, bounded reachability walk, streaming HTTP-CAS | criterion / `just perf` |
-| **DHT** | content discovery without a coordinator: Kademlia `PROVIDE`/`GET_PROVIDERS` over κ-label keys; `announce(κ)` is `start_providing(κ)`; `fetch` falls through to DHT providers (§11.1) | libp2p-kad over Kademlia paper |
-| **FED** | hierarchical multi-source `KappaSync` over **hologram peers only** (local → libp2p peer → HTTP-CAS peer), verify-on-receipt at every hop, `add_gateway` wires another hologram CAS-serving peer (§11.2) | each hop reuses NW class authority |
+| **DHT** | content discovery without a coordinator: κ-XOR Kademlia `PROVIDE`/`GET_PROVIDERS` over κ keys; peer identity = κ of `PeerEndpoint` (no PeerIds — SPINE-1); `announce(κ)` issues `Provide` to the K-closest peers; `fetch` walks K-closest then `GetProviders` (§11.1) | Kademlia paper (Maymounkov & Mazières) + substrate's own `hologram-net-tcp` wire spec |
+| **FED** | hierarchical multi-source `KappaSync` over **hologram peers only** (local → uor-native TCP peer (§11.1) → HTTP-CAS peer), verify-on-receipt at every hop, `add_gateway` wires another hologram CAS-serving peer (§11.2) | each hop reuses NW class authority |
 | **BT** | bare-metal store: **Merkle B-tree** of κ → extent (every page has its own κ; the store state is one root κ); CoW write-discipline; crash-atomic root flip (§11.3) | spec §5.2 + crash-safety §10.15 |
-| **AR** | archival cold tier = **bare-metal hologram peer** participating in the federation chain (same `/cas/<κ>` + libp2p RR transports as hot peers; durable across reboots via the §11.3 B-tree + §11.9 NIC driver-import); no external hosting (§11.4) | NW class authority + BM class (bare-metal substrate) |
+| **AR** | archival cold tier = **bare-metal hologram peer** participating in the federation chain (same `/cas/<κ>` + uor-native TCP transports as hot peers; durable across reboots via the §11.3 B-tree + §11.9 NIC driver-import); no external hosting (§11.4) | NW class authority + BM class (bare-metal substrate) |
 | **OG** | OPFS reachability GC in real Chromium: mark from pins through `references()`, delete unreachable files (§11.5) | structural projection (SPINE-3) |
 | **QC** | storage quota carries through suspend/resume: `storage_used` lives in the `Snapshot` payload's canonical bytes; the snapshot κ binds it (§11.6) | SPINE-1 (authority in graph) |
 | **SC** | cross-container scheduling fairness: per-container weight (capability field) + deficit round-robin over UorTime ordering — **no wall-clock** (§11.7) | ADR-058 + DRR fair-queueing |
@@ -427,17 +433,17 @@ existing table form.
 | G-B1 | `KappaLabel<71>` can't be multi-axis (width is per-axis: 71/73/74/135). **Confirmed:** substrate artifacts = blake3 `<71>` (ADR-052); stored-content keys axis-polymorphic (`<axis>:<hex>` / `MAX_LABEL_BYTES`=135 form). | `[resolved]` §3.1 |
 | G-B2 | `sha256d` is not in uor-addr 0.2.0 — removed from the axis registry. | `[fixed]` §3.1 |
 | G-B3 | `spawn(.., Capabilities)` struct violates SPINE-1 (authority not in graph). Changed to a Capability Set **κ-label**. | `[fixed]` §3.2 |
-| G-B4 | `WarmStore::put(&mut self)` ≠ `KappaStore::put(&self)`; reuse needs interior mutability. | `[track]` Phase 0 |
+| G-B4 | `WarmStore::put(&mut self)` ≠ `KappaStore::put(&self)`; reuse needs interior mutability. | `[resolved]` every `KappaStore` impl uses interior mutability (`Mutex<Inner>`); no `&mut self` mismatch remains in the substrate. |
 | G-B5 | "Every κ-label is TC-05-replayable" is false — `derive_label` (hot path) is unwitnessed; only boundary artifacts are. | `[fixed]` §3.2 note |
 
 **C. Spec-internal defects**
 
 | ID | Finding | Status |
 |---|---|---|
-| G-C1 | UorTime is "since boot" (resets) yet bare-metal §4.5/§5.5 selects the runtime-state copy by "latest UorTime" — cannot order across reboots. Needs a reboot-monotonic generation counter. | `[track]` Phase 5; flag upstream |
-| G-C2 | Browser `KappaStore` "sync" contradicts the kv-worker-behind-async-MessageChannel design. Must specify which side is sync and how the boundary is bridged (e.g. `SharedArrayBuffer`+`Atomics.wait`). | `[track]` Phase 4 |
-| G-C3 | "Arbitrary workloads" is bounded on bare-metal (no native subprocess → Wasm-expressible only). Qualify the mandate. | `[track]` |
-| G-C4 | Error-log ordered-product + republished runtime-state are unbounded chains with no compaction policy. | `[track]` Phase 1/3 |
+| G-C1 | UorTime is "since boot" (resets) yet bare-metal §4.5/§5.5 selects the runtime-state copy by "latest UorTime" — cannot order across reboots. Needs a reboot-monotonic generation counter. | `[resolved]` B1 — `BareMetalKappaStore` header v4 persists `reboot_epoch`, bumped on every `open`. `RuntimeStateRegion` realization (D1) carries the pair `(reboot_epoch, generation)` — a total order over all writes across reboots. Witness: `store-bare/tests/reboot_epoch.rs`. |
+| G-C2 | Browser `KappaStore` "sync" contradicts the kv-worker-behind-async-MessageChannel design. Must specify which side is sync and how the boundary is bridged (e.g. `SharedArrayBuffer`+`Atomics.wait`). | `[resolved]` B3 — `hologram-store-opfs::bridge` defines a `SharedArrayBuffer`-backed protocol. Main-thread `SyncOpfsBridge` writes a request, `Atomics::wait`s; paired Worker (`web/bridge-worker.mjs`) constructs a `BridgeWorker`, dispatches via the existing async `opfs_put`/`opfs_get`, writes the response, `Atomics::notify`s. Verify-on-receipt is preserved across the boundary. |
+| G-C3 | "Arbitrary workloads" is bounded on bare-metal (no native subprocess → Wasm-expressible only). Qualify the mandate. | `[resolved]` SPINE-6 carries the qualification ("Wasm + §4.4 import surface only"); runtime refuses non-§4.4 imports at instantiate. |
+| G-C4 | Error-log ordered-product + republished runtime-state are unbounded chains with no compaction policy. | `[resolved]` B2 — `Runtime::set_error_log_threshold` + `ChainCompaction` realization (zero operands; GC reclaims the old tail). Default depth = 128; `0` ⇒ unbounded (opt-in, SPINE-6). Witness: `runtime/tests/chain_compaction.rs`. |
 
 **E. Dependency-graph findings (discovered during implementation)**
 
@@ -449,7 +455,7 @@ existing table form.
 
 | ID | Assumption | Status |
 |---|---|---|
-| G-D1 | async-trait `Send + Sync` bound vs embassy's typically `!Send` single-core futures (bare-metal) — may force a `?Send`/local variant. | `[track]` Phase 0 |
+| G-D1 | async-trait `Send + Sync` bound vs embassy's typically `!Send` single-core futures (bare-metal) — may force a `?Send`/local variant. | `[resolved]` B4 — `LocalKappaSync` + `LocalContainerRuntime` are `#[async_trait(?Send)]` siblings of the multi-core traits; embassy executors implement these. Disjoint by design — std hosts don't silently degrade to `!Send`. Witness: `substrate-core::tests::local_kappa_sync_accepts_non_send_implementors`. |
 | G-D2 | `bytes::Bytes` needs atomics (ok on thumbv7em; not guaranteed on every bare-metal target). | `[track]` Phase 0 |
 | G-D3 | redb is std-only — must never enter a no_std build. | `[track]` Phase 1 |
 | G-D4 | Storage→realizations coupling: reachability needs a runtime IRI→extractor registry (static fn-pointer table on no_std) — make the dependency explicit. | `[track]` Phase 0/1 |
@@ -526,22 +532,35 @@ Phase 0 left as a stub or a coordinator-bound design. Every entry here is uor-na
 κ-label, relations by κ-graph composition, decisions by structural projection. No wall-clock, no
 side-channel ACLs, no traditional ID maps.
 
-### 11.1 Network discovery — Kademlia DHT (no umbrella)
+### 11.1 Network discovery — κ-XOR Kademlia DHT, **uor-native**, no libp2p
 
-`announce(κ)` and `discover(prefix, limit)` are implemented over libp2p-kad **sub-crate** (matching
-§0.1's no-umbrella discipline that removed `hickory-proto` from the graph). The DHT key is `κ.as_bytes()` —
-the κ-label IS the routing key, no parallel naming scheme. Two behaviours coexist on one swarm:
+`announce(κ)` and `discover(prefix, limit)` are implemented in `hologram-net-tcp` over a κ-XOR
+Kademlia DHT layered on a raw TCP transport. The architecture rejected libp2p because its
+PeerId (Ed25519-derived) + Multiaddr layer are a **second naming surface** alongside κ-labels —
+SPINE-1 forbids that. The replacement keeps the Kademlia *algorithm* (XOR-over-content-keys is
+uor-aligned by construction) and drops everything else:
 
-- **`kad`** — `start_providing(κ)` on announce; `get_providers(κ)` on fetch fall-through. A peer
-  joining only needs one **bootstrap** peer to converge.
-- **`request_response`** — once a provider is found, the κ payload is pulled over the existing
-  `/hologram/cas/1` RR protocol, **verified on receipt** (SPINE-4). The wire envelope generalizes to
-  a tagged request: `Req::Get(κ)` (existing) or `Req::List{prefix, limit}` (new) — `discover` does a
-  `get_closest_peers(prefix)` then a `Req::List` RR to each closest peer; results are merged + deduped
-  + truncated to `limit`. Every byte received still re-derives through the σ-axis.
+- **Identity is κ.** A peer's identity is `address_bytes(PeerEndpoint.canonicalize())` —
+  the κ of a [`PeerEndpoint`](../../substrate/hologram-realizations/src/lib.rs) realization
+  carrying the transport address. There are no PeerIds on the wire.
+- **Routing is κ-XOR.** 256 k-buckets indexed by the *decoded* 32-byte blake3 digest portion
+  of κ; standard Kademlia `find_node` walk (α=3, K=20). `xor_distance` is the standard metric.
+- **Provide / get_providers.** `announce(κ)` performs a κ-XOR walk to the K closest peers and
+  sends them `DHT_PROVIDE(content_κ, our_endpoint_payload)` — they record the provider entry.
+  `fetch(κ)` walks toward κ, calls `get_providers(κ)` on each closest hop, then dials each
+  provider directly to fetch the bytes (verify-on-receipt — SPINE-4).
+- **Wire format.** Length-prefixed `u32 LE len | u8 kind | payload`. Kinds are append-only
+  (SPINE-5). `Kind::FetchReq / FetchResOk / FetchRes404 / Announce / Provide / FindNodeReq /
+  FindNodeRes / GetProvidersReq / GetProvidersRes`. No Noise handshake — content integrity is
+  provided by σ-axis verification at the application layer; transport encryption is a separate
+  concern that can be added by wrapping `TcpStream` without changing the protocol.
+- **Bootstrap.** `add_peer("host:port")` parses the address, computes its `PeerEndpoint` κ,
+  inserts it in the routing table, and runs the Kademlia bootstrap step (find_node toward our
+  own id). `add_peer` rejects Multiaddr-style strings fail-loud (SPINE-1).
 
-This is genuinely coordinator-free content discovery; the Kademlia distance metric *is* uor-aligned
-(XOR over content keys is a structural relation, not a registry lookup).
+This is genuinely coordinator-free content discovery, and the entire transport graph is now
+κ-native: every routable identity is a κ, every wire-level lookup carries κ-labels, every
+returned byte verifies by σ-axis re-derivation.
 
 ### 11.2 Federated multi-source — hierarchical `KappaSync`
 
@@ -550,14 +569,15 @@ external hosting. `FederatedKappaSync` chains **hologram peers** (the only kind 
 priority order, using the two intra-network transports the substrate defines:
 
 1. **Local store** (zero-RTT, the existing `get_with_fetch` short-circuit).
-2. **libp2p peers** (`LibPeer` — DHT-augmented per §11.1, request-response over TCP+Noise+Yamux).
-3. **HTTP-CAS peers** (`HttpKappaSync` — `add_gateway(url)` actually wires one here, no longer a
-   stub). A "gateway" in this context is itself a hologram node serving `/cas/<κ>` (spec §6.5) —
-   not a bridge to anything else.
+2. **TCP peers** (`TcpKappaSync` from `hologram-net-tcp` — κ-XOR Kademlia DHT per §11.1, raw
+   TCP framing, peer identity = κ of `PeerEndpoint`). Replaces the prior libp2p layer.
+3. **HTTP-CAS peers** (`HttpKappaSync` — `add_gateway(url)` wires one here). A "gateway" in
+   this context is itself a hologram node serving `/cas/<κ>` (spec §6.5) — not a bridge to
+   anything else.
 
 At every hop the bytes are re-derived through the σ-axis (SPINE-4); a forging peer is rejected, the
-chain continues. `add_peer`/`add_gateway` route into the correct sub-sync by input shape (multiaddr
-→ libp2p; URL → HTTP-CAS).
+chain continues. `add_peer`/`add_gateway` route into the correct sub-sync by input shape
+(`host:port` → TCP; URL → HTTP-CAS).
 
 ### 11.3 Bare-metal storage — **Merkle B-tree** of κ → extent
 
@@ -588,7 +608,7 @@ the `NetworkInterface` driver-import of §11.9), serving the substrate's CAS at 
 The whole stack is uor-native and self-contained:
 
 - **The wire is the same.** A bare-metal archival peer speaks the same `/cas/<κ>` (spec §6.5) and
-  libp2p request-response (§11.1) protocols as a hot RAM peer or a redb-backed warm peer. It is
+  uor-native TCP framing (§11.1) protocols as a hot RAM peer or a redb-backed warm peer. It is
   indistinguishable on the wire — it's just slower per-fetch but vastly larger and durable across
   reboots (TR class).
 - **Why bare-metal makes archival possible.** A no-OS hologram node owns its block devices and
@@ -735,3 +755,30 @@ header format adds `free_head_lba` + `free_head_digest`, persisting a chained pa
 extents. The allocator is now **best-fit** over the free list, with bump as the fallback. The
 free list survives reboots; the BT class asserts post-GC reuse + reboot persistence of the
 free-list state.
+
+### 12.8 Native store — uor-native sharding + bounded read-through cache (spec §5.5, V&V class **SP**)
+
+`hologram-store-native` is no longer "inline-all is correctness-equivalent." The §5.5 file-sharding
+split is now the production path, and the read-through cache is no longer unbounded:
+
+- **Sharding.** Content larger than `SHARD_THRESHOLD` (64 KiB) is split into `SHARD_SIZE` (64 KiB)
+  pieces; each shard is itself content-addressed (`address_bytes(shard)`) and stored in the
+  `INLINE` table. The top-level κ maps in the `SHARDED` table to a packed manifest of
+  `(shard_κ, shard_size)` entries. Reassembly fetches each shard and concatenates. The user-facing
+  κ is `address_bytes(whole content)` — no wire-visible change. Identical shards across distinct
+  blobs **dedup automatically** by content-address — the uor-native property of which inline-all
+  was only a degenerate case. (Witness:
+  `hologram-store-native/tests/sharding_and_cache.rs::g2_*`.)
+- **Bounded LRU.** The read-through Arc cache is now a **size-aware doubly-linked LRU** with a
+  byte budget set per-store by `CacheConfig::cache_max_bytes` (default `256 MiB`; explicit
+  override via `NativeKappaStore::open_with_config`). When the next `get` would push the total
+  cached payload past the budget, the LRU evicts least-recently-used entries first. The
+  persistent store is **unaffected** — eviction is local to the cache. A `cache_max_bytes = 0`
+  is rejected at construction (the SP zero-copy floor requires a cache; fail-loud per SPINE-6).
+  The cap is a *resource budget*, not a structural cap on what is storable — the persistent
+  store grows freely; only resident bytes in RAM are bounded. (Witness:
+  `hologram-store-native/tests/sharding_and_cache.rs::g1_*`.)
+- **GC interaction.** Reachability walks reassemble sharded κs to extract their `references()`,
+  exactly as the inline case. Eviction of an unreachable sharded κ removes its fragments —
+  **unless a still-reachable sharded κ shares them by content-address**, in which case the
+  shared shard stays. Cache entries for evicted κs are invalidated, no stale reads.

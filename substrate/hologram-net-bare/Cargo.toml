@@ -1,0 +1,23 @@
+[package]
+name = "hologram-net-bare"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Bare-metal KappaSync for the Hologram substrate (architecture §2, C2). A no_std network layer over the HAL NetworkInterface — symmetric to hologram-net-http and hologram-net-tcp for std hosts; same uor-native wire on every substrate. Targets thumbv7em-none-eabi and x86_64-unknown-none."
+
+[dependencies]
+hologram-substrate-core = { workspace = true }
+hologram-bare-hal       = { workspace = true }
+spin                    = { workspace = true }
+hashbrown               = { workspace = true }
+async-trait             = { workspace = true }
+
+[dev-dependencies]
+hologram-store-mem    = { workspace = true }
+hologram-realizations = { workspace = true }
+pollster              = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-substrate-core/std"]

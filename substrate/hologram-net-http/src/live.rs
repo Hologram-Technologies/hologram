@@ -1,8 +1,8 @@
 //! Live HTTP/1.1 CAS transport over `std::net` — no async runtime, no heavy HTTP crate. The
 //! server answers `GET /cas/{kappa}` from a [`KappaStore`]; the client ([`HttpKappaSync`]) is a
 //! [`KappaSync`] that fetches from configured gateways and **verifies every byte on receipt**
-//! (SPINE-4 / §6.4). This is the verifiable realization of the §6.3 protocol; libp2p peer discovery
-//! layers above it.
+//! (SPINE-4 / §6.4). This is the verifiable realization of the §6.3 protocol; the uor-native TCP
+//! transport (`hologram-net-tcp`) layers κ-XOR Kademlia content discovery above it.
 
 extern crate std;
 
@@ -268,8 +268,11 @@ impl KappaSync for HttpKappaSync {
         }
     }
     async fn announce(&self, _kappa: &KappaLabel71) {
-        // HTTP transport: announcement is gossip, the libp2p layer's job; here a no-op (a node is
-        // discovered by querying its prefix endpoint). PUT-publication is a gateway-specific opt-in.
+        // HTTP-CAS is **pull-only by design** (spec §6.3): a peer becomes discoverable when
+        // remotes GET its `/cas/?prefix=` endpoint, not via a push announcement. The DHT-style
+        // `Provide` push lives on the uor-native TCP transport (`hologram-net-tcp`, DHT class).
+        // This is the architected behavior — not a stub: announce on HTTP-CAS has no wire effect
+        // because the protocol has no announcement wire.
     }
     async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71> {
         let prefix_str = prefix
@@ -293,11 +296,12 @@ impl KappaSync for HttpKappaSync {
         }
         out
     }
-    async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
-        // HTTP-CAS doesn't carry libp2p multiaddrs; FederatedKappaSync routes those to the libp2p
-        // backend (arch §11.2). Returning Err here makes the routing unambiguous.
+    async fn add_peer(&self, _addr: &str) -> Result<(), SyncError> {
+        // HTTP-CAS doesn't consume `host:port` peers; `FederatedKappaSync` routes those to the
+        // `hologram-net-tcp` backend (arch §11.2). Returning Err here makes the routing
+        // unambiguous — peers go to TCP, gateways come here.
         Err(SyncError::BackendFailure(
-            "http does not consume libp2p multiaddrs — use FederatedKappaSync",
+            "http does not consume host:port peers — use FederatedKappaSync",
         ))
     }
     async fn add_gateway(&self, url: &str) -> Result<(), SyncError> {

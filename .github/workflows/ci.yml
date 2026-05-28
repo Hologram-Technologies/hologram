@@ -257,8 +257,9 @@ jobs:
           cargo test \
             -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
             -p hologram-store-mem -p hologram-store-native -p hologram-store-bare \
-            -p hologram-net-http -p hologram-net-libp2p -p hologram-runtime \
-            -p hologram-runtime-wasmtime -p hologram-substrate-cli -p hologram-bare-hal
+            -p hologram-net-http -p hologram-net-tcp -p hologram-runtime \
+            -p hologram-runtime-wasmtime -p hologram-substrate-cli -p hologram-bare-hal \
+            -p hologram-runtime-bare -p hologram-net-bare
 
       - name: Live HTTP-CAS transport (NW class, --features live)
         run: cargo test -p hologram-net-http --features live
@@ -267,8 +268,9 @@ jobs:
         run: |
           set -euo pipefail
           for c in hologram-store-mem hologram-store-native hologram-store-bare \
-                   hologram-net-http hologram-net-libp2p hologram-runtime \
-                   hologram-runtime-wasmtime hologram-substrate-cli; do
+                   hologram-net-http hologram-net-tcp hologram-runtime \
+                   hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare \
+                   hologram-substrate-cli; do
             if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
               echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
             fi
@@ -279,10 +281,12 @@ jobs:
         run: |
           cargo build --target wasm32-unknown-unknown --no-default-features \
             -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime
+            -p hologram-net-http -p hologram-runtime \
+            -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
           cargo build --target thumbv7em-none-eabi --no-default-features \
             -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare
+            -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
+            -p hologram-net-bare
 
       - name: Real-world examples (runnable capability narratives)
         run: |
