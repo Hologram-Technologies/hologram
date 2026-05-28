@@ -15,8 +15,8 @@ use hologram_substrate_core::{
 use std::sync::Arc;
 
 /// Trivial adapter: present any local [`KappaStore`] as a [`KappaSync`] so the federation chain
-/// can include in-process peers. A real cluster would wrap each store behind `serve(...)` (HTTP) or
-/// a `LibPeer` (libp2p) — both are KappaSyncs already.
+/// can include in-process peers. A real cluster would wrap each store behind `serve(...)` (HTTP)
+/// or a `TcpKappaSync` (the uor-native `hologram-net-tcp` transport) — both are KappaSyncs.
 struct StoreAsSync<S: KappaStore + Send + Sync>(Arc<S>);
 
 #[async_trait]
@@ -28,7 +28,7 @@ impl<S: KappaStore + Send + Sync + 'static> KappaSync for StoreAsSync<S> {
     async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
         Vec::new()
     }
-    async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
+    async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
         Err(SyncError::BackendFailure("local"))
     }
     async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {

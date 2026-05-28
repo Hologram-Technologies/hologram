@@ -23,7 +23,9 @@ members = [
     "substrate/hologram-substrate-cli",
     "substrate/hologram-bare-hal",
     "substrate/hologram-store-bare",
-    "substrate/hologram-net-libp2p",
+    "substrate/hologram-runtime-bare",
+    "substrate/hologram-net-bare",
+    "substrate/hologram-net-tcp",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
@@ -57,25 +59,17 @@ hologram-runtime        = { path = "substrate/hologram-runtime", default-feature
 hologram-runtime-wasmtime = { path = "substrate/hologram-runtime-wasmtime" }
 hologram-bare-hal       = { path = "substrate/hologram-bare-hal", default-features = false }
 hologram-store-bare     = { path = "substrate/hologram-store-bare", default-features = false }
+hologram-runtime-bare   = { path = "substrate/hologram-runtime-bare", default-features = false }
+hologram-net-bare       = { path = "substrate/hologram-net-bare", default-features = false }
+hologram-net-tcp        = { path = "substrate/hologram-net-tcp" }
 
 async-trait        = "0.1"
 spin               = { version = "0.9", default-features = false, features = ["spin_mutex"] }
 redb               = "4"
-# libp2p, by specific sub-crates rather than the umbrella crate. The `libp2p`
-# meta-crate unconditionally locks its full optional dependency set
-# (libp2p-dns / libp2p-mdns → hickory-proto), which `cargo audit` flags on a
-# whole-lockfile scan even when those features are never compiled. We use only
-# request-response + Kademlia DHT over TCP+Noise+Yamux, so we depend on exactly
-# those sub-crates — the DNS/mDNS resolver (and its advisories) never enters the
-# dependency graph.
-libp2p-swarm            = { version = "0.47", features = ["tokio", "macros"] }
-libp2p-core             = { version = "0.43" }
-libp2p-tcp              = { version = "0.44", features = ["tokio"] }
-libp2p-noise            = { version = "0.46" }
-libp2p-yamux            = { version = "0.47" }
-libp2p-request-response = { version = "0.29", features = ["cbor"] }
-libp2p-identity         = { version = "0.2", features = ["ed25519", "rand"] }
-libp2p-kad              = { version = "0.48" }
+# libp2p was removed from the substrate's transport graph. Its PeerId + Multiaddr layer is a
+# second, non-κ naming surface (SPINE-1 violation) — we replaced it with a pure-κ TCP
+# transport: `hologram-net-tcp` (κ-XOR Kademlia, peers identified by `address_bytes(PeerEndpoint)`,
+# verify-on-receipt at every hop). See architecture §11.1.
 serde                   = { version = "1", features = ["derive"] }
 futures            = "0.3"
 wasmtime           = { version = "45", default-features = false, features = ["cranelift", "runtime"] }

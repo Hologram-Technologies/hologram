@@ -546,6 +546,17 @@ impl ContainerEngine for WasmtimeEngine {
     fn instantiate(&self, code: &[u8], ctx: &HostContext) -> Result<WasmInstance, RuntimeError> {
         let module = Module::new(&self.engine, code)
             .map_err(|_| RuntimeError::InstantiationFailed("invalid wasm module"))?;
+        // SPINE-6 / G-C3 — qualified workload bounds. The substrate refuses any container whose
+        // module declares an import outside the spec §4.4 `hologram.*` surface; non-host-import
+        // imports (WASI, env, …) would be unmediated escape hatches. This makes the workload
+        // bound *structural*, not a comment.
+        for imp in module.imports() {
+            if imp.module() != "hologram" {
+                return Err(RuntimeError::InstantiationFailed(
+                    "container declares an import outside the spec §4.4 host surface",
+                ));
+            }
+        }
         // ChaCha20 (RFC 8439) seeded from `getrandom` (the host's CSPRNG) — the entropy stream a
         // container observes via `hologram.entropy` is cryptographic, not the prior splitmix64
         // placeholder (spec §8.2 + AS class).

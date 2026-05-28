@@ -13,3 +13,8 @@ redb = { workspace = true }
 [dev-dependencies]
 hologram-substrate-tck = { workspace = true }
 hologram-realizations  = { workspace = true }
+criterion              = { workspace = true }
+
+[[bench]]
+name = "sp_floors"
+harness = false

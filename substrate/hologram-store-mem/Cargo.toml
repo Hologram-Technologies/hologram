@@ -19,7 +19,13 @@ hologram-substrate-tck = { workspace = true }
 blake3 = "1"
 async-trait = { workspace = true }
 pollster = { workspace = true }
+criterion = { workspace = true }
 
 [features]
 default = ["std"]
 std = ["hologram-substrate-core/std"]
+
+[[bench]]
+name = "sp_floors"
+harness = false
+required-features = ["std"]

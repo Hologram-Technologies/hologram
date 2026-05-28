@@ -19,6 +19,13 @@ uefi = { version = "0.35", features = ["alloc", "global_allocator", "panic_handl
 # Force pure-Rust BLAKE3 (no x86 assembly .o) so the σ-axis links into a PE/UEFI binary.
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 
+[features]
+default = []
+# Enable enumeration of UEFI `SimpleNetwork` handles in the hardware probe. Off by default because
+# the protocol type is not exposed in every uefi-crate feature combination; on builds where it is,
+# turn this on to count NICs alongside block devices.
+probe-nics = []
+
 [build-dependencies]
 # Build-time driver assembly: compile a real WAT → Wasm and compute its blake3 κ, so the runtime's
 # `verify_kappa` step is a meaningful **measured boot** check (mismatch ⇒ FAIL), not a tautology.

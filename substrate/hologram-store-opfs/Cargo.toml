@@ -28,6 +28,8 @@ features = [
     "File",
     "Blob",
     "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
 ]
 
 [profile.release]

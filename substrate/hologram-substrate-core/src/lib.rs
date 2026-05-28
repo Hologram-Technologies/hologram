@@ -406,8 +406,47 @@ pub trait KappaSync: Send + Sync {
     async fn announce(&self, kappa: &KappaLabel71);
     /// Discover κ-labels other peers hold (prefix-filtered, up to `limit`).
     async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71>;
-    async fn add_peer(&self, multiaddr: &str) -> Result<(), SyncError>;
+    async fn add_peer(&self, peer_addr: &str) -> Result<(), SyncError>;
     async fn add_gateway(&self, url: &str) -> Result<(), SyncError>;
+}
+
+/// **Local (`?Send`) variant** of [`KappaSync`] for **single-core async executors** like embassy
+/// on bare-metal (arch §9 G-D1). Embassy's futures are typically `!Send`; the standard
+/// [`KappaSync`] trait's `Send + Sync` bound rules them out. `LocalKappaSync` drops both bounds
+/// — implementors may hold non-`Send` state and produce non-`Send` futures.
+///
+/// Std hosts use [`KappaSync`]; bare-metal embassy hosts use [`LocalKappaSync`]. A blanket impl
+/// (`impl<T: KappaSync> LocalKappaSync for T`) is intentionally *not* provided — keeping the two
+/// traits disjoint forces each call site to pick the executor model explicitly (no silent
+/// degradation of the multi-core Send guarantee on std hosts).
+#[async_trait::async_trait(?Send)]
+pub trait LocalKappaSync {
+    async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError>;
+    async fn announce(&self, kappa: &KappaLabel71);
+    async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71>;
+    async fn add_peer(&self, peer_addr: &str) -> Result<(), SyncError>;
+    async fn add_gateway(&self, url: &str) -> Result<(), SyncError>;
+}
+
+/// `?Send` analog of [`get_with_fetch`] for embassy / single-core executors. Same SPINE-4
+/// re-derivation discipline (verify-on-receipt + cache under κ's σ-axis).
+pub async fn local_get_with_fetch(
+    store: &dyn KappaStore,
+    sync: &dyn LocalKappaSync,
+    kappa: &KappaLabel71,
+) -> Result<Option<Bytes>, AccessError> {
+    if let Some(bytes) = store.get(kappa).map_err(AccessError::StoreFailure)? {
+        return Ok(Some(bytes));
+    }
+    let fetched = sync.fetch(kappa).await.map_err(AccessError::SyncFailure)?;
+    if let Some(bytes) = &fetched {
+        if !verify_kappa(bytes, kappa).map_err(|_| AccessError::VerificationFailed)? {
+            return Err(AccessError::VerificationFailed);
+        }
+        let axis = kappa.sigma_axis().ok_or(AccessError::VerificationFailed)?;
+        store.put(axis, bytes).map_err(AccessError::StoreFailure)?;
+    }
+    Ok(fetched)
 }
 
 /// Eviction-tolerant read (spec §5.2): local store first, else fetch + **verify on receipt**
@@ -479,6 +518,28 @@ pub trait ContainerRuntime: Send + Sync {
     fn info(&self, handle: ContainerHandle) -> Option<ContainerInfo>;
 }
 
+/// **Local (`?Send`) variant** of [`ContainerRuntime`] for **embassy / single-core async**
+/// executors on bare-metal (arch §9 G-D1). Implementors may hold non-`Send` state and produce
+/// non-`Send` futures. Disjoint from [`ContainerRuntime`] by design — std hosts use the multi-
+/// core surface; bare-metal embassy hosts opt into the local one explicitly.
+#[async_trait::async_trait(?Send)]
+pub trait LocalContainerRuntime {
+    async fn spawn(
+        &self,
+        container_id: &KappaLabel71,
+        capabilities: &KappaLabel71,
+    ) -> Result<ContainerHandle, RuntimeError>;
+    async fn suspend(&self, handle: ContainerHandle) -> Result<KappaLabel71, RuntimeError>;
+    async fn resume(
+        &self,
+        snapshot: &KappaLabel71,
+        capabilities: &KappaLabel71,
+    ) -> Result<ContainerHandle, RuntimeError>;
+    async fn terminate(&self, handle: ContainerHandle) -> Result<(), RuntimeError>;
+    fn list(&self) -> Vec<ContainerHandle>;
+    fn info(&self, handle: ContainerHandle) -> Option<ContainerInfo>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +563,35 @@ mod tests {
         let a = address_bytes(b"a");
         let b = address_bytes(b"b");
         assert_ne!(derive_label(b"op", &[a, b]), derive_label(b"op", &[b, a]));
+    }
+
+    /// B4 / G-D1 — `LocalKappaSync` exists and accepts `!Send` implementors. The bound here is
+    /// structural: this test is "compiles" — if `LocalKappaSync` retained `Send + Sync` bounds it
+    /// would fail to compile against a `Rc`-bearing impl (Rc is `!Send`).
+    #[test]
+    fn local_kappa_sync_accepts_non_send_implementors() {
+        use alloc::rc::Rc;
+        struct NotSend {
+            _state: Rc<u32>,
+        }
+        #[async_trait::async_trait(?Send)]
+        impl LocalKappaSync for NotSend {
+            async fn fetch(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+                Ok(None)
+            }
+            async fn announce(&self, _kappa: &KappaLabel71) {}
+            async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
+                Vec::new()
+            }
+            async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
+                Ok(())
+            }
+            async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+                Ok(())
+            }
+        }
+        // If this compiles, the trait is `?Send`-implementable. The Rc proves it.
+        let _s = NotSend { _state: Rc::new(0) };
     }
 
     // ── AS — σ-axis correctness against external KAT vectors (architecture §3.1 G-B1) ──
@@ -811,8 +901,9 @@ mod tests {
 /// multi-source. A `fetch` tries each backend in order, applying each backend's own
 /// verify-on-receipt (SPINE-4) at every hop; the first hit wins. `add_peer` and `add_gateway` are
 /// routed by input shape: the first backend that accepts it wins, the rest err. This is how the
-/// substrate composes libp2p peer transport + HTTP-CAS + IPFS-gateway + S3-prefix into one read
-/// path without any backend privileged over another.
+/// substrate composes its uor-native TCP transport (`hologram-net-tcp`) + HTTP-CAS gateways
+/// (`hologram-net-http`) + the local store into one read path without any backend privileged
+/// over another.
 ///
 /// Backends are immutable post-construction; reuse / extension is a `new` with the additional
 /// `Arc`. The internal `add_*` mutations on individual backends still work as normal.
@@ -880,10 +971,10 @@ impl KappaSync for FederatedKappaSync {
         out
     }
 
-    async fn add_peer(&self, multiaddr: &str) -> Result<(), SyncError> {
+    async fn add_peer(&self, peer_addr: &str) -> Result<(), SyncError> {
         let mut last = SyncError::AllSourcesFailed;
         for b in &self.backends {
-            match b.add_peer(multiaddr).await {
+            match b.add_peer(peer_addr).await {
                 Ok(()) => return Ok(()),
                 Err(e) => last = e,
             }
@@ -961,7 +1052,7 @@ mod federated_tests {
         async fn discover(&self, _prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71> {
             self.table.keys().take(limit).copied().collect()
         }
-        async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
+        async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
             if self.accepts_peer {
                 Ok(())
             } else {

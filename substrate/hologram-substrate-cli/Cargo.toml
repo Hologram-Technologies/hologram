@@ -21,8 +21,10 @@ hologram-store-native     = { workspace = true }
 hologram-runtime          = { workspace = true }
 hologram-runtime-wasmtime = { workspace = true }
 hologram-net-http         = { workspace = true, features = ["live"] }
+hologram-net-tcp          = { workspace = true }
 clap     = { workspace = true }
 pollster = { workspace = true }
+tokio    = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
 hologram-store-mem = { workspace = true }

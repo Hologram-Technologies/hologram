@@ -17,7 +17,9 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::{HashMap, HashSet};
-use hologram_realizations::{CapabilitySet, ContainerManifest, Delegation, ErrorEvent, Snapshot};
+use hologram_realizations::{
+    CapabilitySet, ChainCompaction, ContainerManifest, Delegation, ErrorEvent, Snapshot,
+};
 use hologram_substrate_core::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
     KappaSync, Realization, RealizationRegistry, RuntimeError,
@@ -157,9 +159,37 @@ pub struct Runtime<E: ContainerEngine, S: KappaStore> {
     /// Per-container error-log chain heads (Container ID → most-recent ErrorEvent κ). Threaded
     /// through `predecessor` so the append-only history is recoverable (SPINE-3 / spec §7.5).
     error_log_heads: Mutex<HashMap<[u8; 71], KappaLabel71>>,
+    /// Per-container error-log chain *depth* since the last compaction (arch §9 G-C4 → §11). When
+    /// the depth would exceed `error_log_threshold`, the next `emit_diagnostic` folds the chain
+    /// into a `ChainCompaction` κ (no operands → GC reclaims the old tail) and resets to 0.
+    error_log_depth: Mutex<HashMap<[u8; 71], u32>>,
+    /// Chain-compaction threshold (depth at which the next event's predecessor becomes a
+    /// `ChainCompaction` barrier rather than the prior head). `0 ⇒ unbounded` (SPINE-6, opt-in).
+    /// Default `DEFAULT_ERROR_LOG_THRESHOLD = 128`.
+    error_log_threshold: Mutex<u32>,
     /// Async network intents queued by `deliver_event`. The caller drives the actual `KappaSync`
     /// calls via [`Runtime::process_pending_network`] (a tick of the network event loop).
     pending_network: Mutex<Vec<NetworkIntent>>,
+}
+
+/// Default error-log chain depth before the next emit folds the tail into a `ChainCompaction`
+/// barrier. Operators tune via [`Runtime::set_error_log_threshold`]; `0` disables compaction
+/// (the architecture's `[track]`-resolved policy for G-C4 — unbounded only by explicit opt-in).
+pub const DEFAULT_ERROR_LOG_THRESHOLD: u32 = 128;
+
+/// `ErrorEvent` classification space (the `class:u8` field of the payload). The architecture
+/// reserves the low byte; runtime-emitted denials use the `0x10..=0x1F` band so an auditor can
+/// tell a container's own `diagnostics(...)` (default 0x01) from a runtime-minted capability
+/// refusal at-a-glance. Append-only — never renumber an existing class (SPINE-5).
+pub mod diag_class {
+    /// Container-emitted diagnostic via the `diagnostics(class, code, ctx)` host import.
+    pub const CONTAINER_EMITTED: u8 = 0x01;
+    /// Runtime refused a `publish` intent (channel not in `publish_channels`).
+    pub const PUBLISH_DENIED: u8 = 0x10;
+    /// Runtime refused a `subscribe` intent (channel not in `subscribe_channels`).
+    pub const SUBSCRIBE_DENIED: u8 = 0x11;
+    /// Runtime refused a `spawn_child` intent (caps not admitted under parent — `admits` failed).
+    pub const SPAWN_CHILD_DENIED: u8 = 0x12;
 }
 
 /// A network side-effect the container requested through its `sync_*` imports (spec §4.4). The
@@ -191,8 +221,17 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             next: Mutex::new(1),
             sync: None,
             error_log_heads: Mutex::new(HashMap::new()),
+            error_log_depth: Mutex::new(HashMap::new()),
+            error_log_threshold: Mutex::new(DEFAULT_ERROR_LOG_THRESHOLD),
             pending_network: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Set the error-log chain-compaction threshold (arch §9 G-C4 → §11): when the depth of a
+    /// container's error-log chain would exceed `threshold`, the next `emit_diagnostic` folds
+    /// the tail into a `ChainCompaction` κ. `0` ⇒ unbounded (opt-in, SPINE-6).
+    pub fn set_error_log_threshold(&self, threshold: u32) {
+        *self.error_log_threshold.lock() = threshold;
     }
 
     /// Wire a network layer (a [`KappaSync`]) so containers' `sync_announce` / `sync_fetch_request`
@@ -206,7 +245,8 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
 
     /// Publish a payload κ to a channel κ (spec §4.4) — capability-gated on the publisher's
     /// `publish_channels`. Structurally adds a Route κ (endpoint=channel, target=payload) to the
-    /// graph, appends to the channel's ordered history, and delivers to current subscribers.
+    /// graph, appends to the channel's ordered history, **announces the Route κ to the network
+    /// layer (F1, cross-peer fanout) if a sync is wired**, and delivers to current subscribers.
     /// Returns the Route κ-label.
     pub fn publish(
         &self,
@@ -243,8 +283,69 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             .store
             .put("blake3", &route.canonicalize())
             .map_err(be)?;
+        // F1 — cross-peer fanout: queue an `announce(route_k)` intent if a network layer is wired.
+        // The next `process_pending_network` tick announces over `KappaSync::announce`; peers
+        // subscribed to this channel pull the Route via `poll_channel_fanout`.
+        if self.sync.is_some() {
+            self.pending_network
+                .lock()
+                .push(NetworkIntent::Announce(route_k));
+        }
         self.pump();
         Ok(route_k)
+    }
+
+    /// Poll the network for new Route κs targeting `channel`, deliver them to local subscribers.
+    /// This is the **subscriber side** of cross-peer channel fanout (F1) — the symmetric counterpart
+    /// to `publish`'s `announce`. Returns the number of remote Routes newly delivered locally.
+    ///
+    /// Implementation: discover the κs the network currently advertises (DHT/peer set),
+    /// `get_with_fetch` each, verify on receipt (σ-axis re-derivation, SPINE-4), and append any
+    /// whose `Route.endpoint == channel` to the local channel history. The existing `pump()`
+    /// then walks the per-subscription cursors and delivers to running containers.
+    pub async fn poll_channel_fanout(&self, channel: &KappaLabel71) -> Result<usize, RuntimeError> {
+        self.poll_channel_fanout_with_limit(channel, usize::MAX)
+            .await
+    }
+
+    /// Same as [`poll_channel_fanout`] with an explicit `limit` on the number of candidate κs
+    /// to consider in one pass. `usize::MAX` ⇒ no cap (the structural cap is whatever the
+    /// underlying `KappaSync::discover` returns). The caller picks the bound; this method
+    /// imposes none of its own (SPINE-6).
+    pub async fn poll_channel_fanout_with_limit(
+        &self,
+        channel: &KappaLabel71,
+        limit: usize,
+    ) -> Result<usize, RuntimeError> {
+        let Some(sync) = &self.sync else {
+            return Ok(0);
+        };
+        // The DHT prefix hint is the full channel κ — peers may match on any prefix length, so
+        // we hand them the whole thing and let them decide. (No magic-number prefix slice.)
+        let prefix_bytes = channel.as_array();
+        let candidates = sync.discover(Some(prefix_bytes), limit).await;
+        let mut delivered = 0usize;
+        for k in candidates {
+            // Fetch + verify-on-receipt + cache locally.
+            let fetched =
+                hologram_substrate_core::get_with_fetch(self.store.as_ref(), sync.as_ref(), &k)
+                    .await;
+            let Ok(Some(bytes)) = fetched else { continue };
+            // Try parsing as a Route; deliver only if its endpoint matches `channel`.
+            if let Ok(refs) = hologram_realizations::Route::references(bytes.as_ref()) {
+                if refs.len() == 2 && refs[0] == *channel {
+                    let target = refs[1];
+                    let mut channels = self.channels.lock();
+                    let log = channels.entry(*channel.as_array()).or_default();
+                    if !log.contains(&target) {
+                        log.push(target);
+                        delivered += 1;
+                    }
+                }
+            }
+        }
+        self.pump();
+        Ok(delivered)
     }
 
     /// Subscribe a container to a channel κ (capability-gated on `subscribe_channels`). The
@@ -314,6 +415,13 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         let h = *n;
         *n += 1;
         h
+    }
+
+    /// Expose the runtime's store as a shared `Arc` so external infrastructure (e.g. a
+    /// cross-peer KappaSync adapter, a serving HTTP-CAS endpoint) can read the same store the
+    /// runtime is writing to.
+    pub fn store_arc(&self) -> Arc<S> {
+        self.store.clone()
     }
 
     pub fn store(&self) -> &S {
@@ -416,17 +524,43 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         let intents = self.engine.drain_intents(&mut entry.inst);
         let source_container_id = entry.info.container_id;
         drop(table);
-        // Apply the container's channel intents with capability enforcement (§10.4); an
-        // unauthorized publish/subscribe is silently dropped (the gate returns Err).
+        // Apply the container's channel intents with capability enforcement (§10.4). A denied
+        // intent is **not** observable to the container itself (capability hygiene — leaking a
+        // denial would let the container probe for channels it can't access), but it IS minted
+        // as a runtime ErrorEvent so the substrate operator sees it in the audit trail. The
+        // diagnostic's `class` distinguishes container-emitted (0x01) from runtime denials
+        // (0x10..0x12). This closes the prior silent-drop hole (SPINE-6 audit-trail rule).
         for (channel, payload) in intents.published {
-            let _ = self.publish(handle, &channel, &payload);
+            if self.publish(handle, &channel, &payload).is_err() {
+                let _ = self.emit_diagnostic(
+                    &source_container_id,
+                    diag_class::PUBLISH_DENIED,
+                    0,
+                    Some(channel),
+                );
+                let _ = payload; // payload is observed only on success
+            }
         }
         for (channel, callback_id) in intents.subscribed {
-            let _ = self.subscribe(handle, &channel, callback_id);
+            if self.subscribe(handle, &channel, callback_id).is_err() {
+                let _ = self.emit_diagnostic(
+                    &source_container_id,
+                    diag_class::SUBSCRIBE_DENIED,
+                    callback_id,
+                    Some(channel),
+                );
+            }
         }
         // Apply spawn_child intents with delegation containment (admits check) inside spawn_child.
         for (cid, caps) in intents.child_spawns {
-            let _ = self.spawn_child(handle, &cid, &caps);
+            if self.spawn_child(handle, &cid, &caps).is_err() {
+                let _ = self.emit_diagnostic(
+                    &source_container_id,
+                    diag_class::SPAWN_CHILD_DENIED,
+                    0,
+                    Some(cid),
+                );
+            }
         }
         // Apply diagnostics: mint an ErrorEvent realization, thread the predecessor (SPINE-3 chain),
         // put it in the store. The Container ID identifies the source; the chain head moves forward.
@@ -459,7 +593,38 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         context: Option<KappaLabel71>,
     ) -> Result<KappaLabel71, RuntimeError> {
         let mut heads = self.error_log_heads.lock();
-        let predecessor = heads.get(source_container_id.as_array()).copied();
+        let mut depths = self.error_log_depth.lock();
+        let threshold = *self.error_log_threshold.lock();
+        let prior_head = heads.get(source_container_id.as_array()).copied();
+        let current_depth = *depths.get(source_container_id.as_array()).unwrap_or(&0);
+
+        // Chain-compaction barrier (G-C4): when the depth has reached the threshold, the next
+        // event's predecessor becomes a `ChainCompaction` κ that *breaks* the predecessor chain.
+        // The old tail is no longer reachable from any pinned root, so the store's reachability
+        // GC will reclaim it (SPINE-5). The barrier's payload is content-bound to the boundary
+        // (head κ + depth) — an auditor sees the count and the boundary κ but not the entries.
+        let (predecessor, new_depth) =
+            if threshold > 0 && current_depth >= threshold && prior_head.is_some() {
+                let mut summary_input: Vec<u8> = Vec::with_capacity(71 + 4);
+                if let Some(h) = &prior_head {
+                    summary_input.extend_from_slice(h.as_array());
+                }
+                summary_input.extend_from_slice(&current_depth.to_le_bytes());
+                let barrier = ChainCompaction {
+                    fold_count: current_depth,
+                    // The on-the-wire 71-byte κ-label form is the content-bound summary — same
+                    // determinism as a raw blake3 digest, no hex-decode round-trip required.
+                    boundary: hologram_substrate_core::address_bytes(&summary_input),
+                };
+                let barrier_kappa = self
+                    .store
+                    .put("blake3", &barrier.canonicalize())
+                    .map_err(be)?;
+                (Some(barrier_kappa), 1u32)
+            } else {
+                (prior_head, current_depth.saturating_add(1))
+            };
+
         let mut payload = Vec::with_capacity(5);
         payload.push(classification);
         payload.extend_from_slice(&code.to_le_bytes());
@@ -474,6 +639,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             .put("blake3", &event.canonicalize())
             .map_err(be)?;
         heads.insert(*source_container_id.as_array(), k);
+        depths.insert(*source_container_id.as_array(), new_depth);
         Ok(k)
     }
 

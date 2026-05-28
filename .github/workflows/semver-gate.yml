@@ -61,4 +61,4 @@ jobs:
           # crate cannot break an API that did not previously exist). Exclude them
           # until they ship in a release; thereafter they are gated like any other.
           # Comma-separated package list (takes effect because `package` is unset).
-          exclude: "hologram-substrate-core,hologram-realizations,hologram-substrate-tck,hologram-store-mem,hologram-store-native,hologram-store-bare,hologram-net-http,hologram-net-libp2p,hologram-runtime,hologram-runtime-wasmtime,hologram-substrate-cli,hologram-bare-hal"
+          exclude: "hologram-substrate-core,hologram-realizations,hologram-substrate-tck,hologram-store-mem,hologram-store-native,hologram-store-bare,hologram-net-http,hologram-net-tcp,hologram-net-bare,hologram-runtime,hologram-runtime-wasmtime,hologram-runtime-bare,hologram-substrate-cli,hologram-bare-hal"

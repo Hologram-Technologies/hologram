@@ -29,9 +29,12 @@ parallel:
 
 # Performance V&V (class PV) — release-only budgets; no silent bottleneck.
 # `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
+# Also runs the deployment-substrate SP-class criterion floors (G1/G2 native store, mem zero-copy).
 perf:
     cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
     cargo test --release -p hologram-exec --test performance -- --nocapture
+    cargo bench -p hologram-store-native --bench sp_floors -- --quick
+    cargo bench -p hologram-store-mem --bench sp_floors -- --quick
 
 # Run all tests
 test:
@@ -65,7 +68,8 @@ wasm:
     # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-        -p hologram-net-http -p hologram-runtime
+        -p hologram-net-http -p hologram-runtime \
+        -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
 
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
@@ -77,19 +81,20 @@ embedded:
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
         -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-        -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare
+        -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
+        -p hologram-net-bare
 
 # Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
 # + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
     cargo test -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-        -p hologram-store-mem -p hologram-store-native -p hologram-net-http -p hologram-runtime \
-        -p hologram-substrate-cli -p hologram-runtime-wasmtime -p hologram-bare-hal \
-        -p hologram-store-bare
+        -p hologram-store-mem -p hologram-store-native -p hologram-net-http -p hologram-net-tcp \
+        -p hologram-runtime -p hologram-substrate-cli -p hologram-runtime-wasmtime \
+        -p hologram-bare-hal -p hologram-store-bare -p hologram-runtime-bare -p hologram-net-bare
     cargo test -p hologram-net-http --features live   # live HTTP-CAS transport
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-store-mem hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-substrate-cli; do \
+    @for c in hologram-store-mem hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare hologram-substrate-cli; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done

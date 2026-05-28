@@ -4,8 +4,9 @@
 //! The **protocol layer** of the Network Layer: map `/cas/{kappa}` requests to/from a
 //! [`KappaStore`], format responses, and **verify received bytes by σ-axis re-derivation**
 //! (SPINE-4 / §10.3). This is pure and hermetically testable (per the V&V hermetic-first policy);
-//! the live transport (axum server / reqwest+libp2p client) is a thin shell layered on top in
-//! Phase 2 — it does not change these bytes (§10.6 wire-format byte-identity).
+//! the live transport (a thin `std::net::TcpListener` server + client in
+//! [`live`](crate::live)) is layered on top — it does not change these bytes (§10.6
+//! wire-format byte-identity).
 
 extern crate alloc;
 
