@@ -7,8 +7,10 @@
 //! The κ-addressing is the *same* `hologram-substrate-core` path the other substrates use — so a κ
 //! minted in the browser is byte-identical to one minted on native/bare-metal (substrate-tripling).
 
-use hologram_substrate_core::{address_bytes, verify_kappa, KappaLabel};
-use js_sys::Uint8Array;
+extern crate alloc;
+
+use hologram_substrate_core::{address_bytes, references, verify_kappa, KappaLabel, KappaLabel71};
+use js_sys::{Array, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -80,4 +82,125 @@ pub async fn opfs_get(kappa: String) -> Result<JsValue, JsValue> {
         return Err(JsValue::from_str("OPFS content failed σ-axis verification"));
     }
     Ok(Uint8Array::from(bytes.as_slice()).into())
+}
+
+// ───────────────────────────── OPFS GC (arch §11.5) ─────────────────────────────
+
+/// Reverse `file_name`: turn a `_`-encoded OPFS file name back into the canonical κ-label. Returns
+/// `None` if the name doesn't parse as a κ.
+fn name_to_kappa(name: &str) -> Option<KappaLabel71> {
+    let original = name.replacen('_', ":", 1);
+    let arr: [u8; 71] = original.as_bytes().try_into().ok()?;
+    KappaLabel::from_bytes(&arr).ok()
+}
+
+/// List every κ-label currently held in OPFS. The browser's `FileSystemDirectoryHandle` exposes an
+/// async iterator over `[name, handle]` entries; we walk it via the JS `keys()` async iterator.
+#[wasm_bindgen]
+pub async fn opfs_iterate() -> Result<JsValue, JsValue> {
+    let dir = opfs_root().await?;
+    // `dir.keys()` returns an async iterator yielding the file names. Iterating it requires the
+    // JS-level `next()` calls (chrome supports this on FileSystemDirectoryHandle).
+    let keys_fn = Reflect::get(&dir, &JsValue::from_str("keys"))?;
+    let keys_fn = keys_fn
+        .dyn_into::<js_sys::Function>()
+        .map_err(|_| JsValue::from_str("dir.keys is not a function"))?;
+    let iterator = keys_fn.call0(&dir)?;
+    let next_fn = Reflect::get(&iterator, &JsValue::from_str("next"))?;
+    let next_fn = next_fn
+        .dyn_into::<js_sys::Function>()
+        .map_err(|_| JsValue::from_str("iterator.next is not a function"))?;
+    let out = Array::new();
+    loop {
+        let result_promise = next_fn.call0(&iterator)?;
+        let result = JsFuture::from(js_sys::Promise::from(result_promise)).await?;
+        let done = Reflect::get(&result, &JsValue::from_str("done"))?;
+        if done.is_truthy() {
+            break;
+        }
+        let name = Reflect::get(&result, &JsValue::from_str("value"))?;
+        if let Some(name_str) = name.as_string() {
+            if let Some(k) = name_to_kappa(&name_str) {
+                out.push(&JsValue::from_str(k.as_str()));
+            }
+        }
+    }
+    Ok(out.into())
+}
+
+/// Remove the file backing `kappa` from OPFS. Returns `true` if a file was removed, `false` if it
+/// wasn't present.
+#[wasm_bindgen]
+pub async fn opfs_delete(kappa: String) -> Result<bool, JsValue> {
+    let dir = opfs_root().await?;
+    match JsFuture::from(dir.remove_entry(&file_name(&kappa))).await {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Reachability walk + sweep (arch §11.5). `pins` is the durable root set; the walk follows each
+/// pin's `references()` via the realization registry recursively (SPINE-3) and deletes every OPFS
+/// file whose κ is not in the resulting reachable set. Returns the count of files deleted.
+#[wasm_bindgen]
+pub async fn opfs_gc(pins: JsValue) -> Result<u32, JsValue> {
+    // Parse the JS array of κ-label strings into KappaLabel71s.
+    let pins_arr: Array = pins
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("opfs_gc: pins must be an array of κ-label strings"))?;
+    let mut roots: alloc::vec::Vec<KappaLabel71> = alloc::vec::Vec::new();
+    for v in pins_arr.iter() {
+        let s = v
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("opfs_gc: pin entry not a string"))?;
+        let arr: [u8; 71] = s
+            .as_bytes()
+            .try_into()
+            .map_err(|_| JsValue::from_str("opfs_gc: pin κ wrong length"))?;
+        roots.push(
+            KappaLabel::from_bytes(&arr)
+                .map_err(|_| JsValue::from_str("opfs_gc: pin κ malformed"))?,
+        );
+    }
+
+    // Mark: BFS through references() from each pin.
+    use alloc::collections::BTreeSet;
+    let mut reachable: BTreeSet<[u8; 71]> = BTreeSet::new();
+    let mut frontier: alloc::vec::Vec<KappaLabel71> = roots.clone();
+    while let Some(k) = frontier.pop() {
+        if !reachable.insert(*k.as_array()) {
+            continue;
+        }
+        // Read bytes from OPFS; if absent (e.g. a pin not yet locally cached) skip.
+        let bytes = match opfs_get(k.as_str().to_string()).await {
+            Ok(v) if !v.is_null() => Uint8Array::new(&v).to_vec(),
+            _ => continue,
+        };
+        if let Ok(refs) = references(&bytes, hologram_realizations::REGISTRY) {
+            for r in refs {
+                if !reachable.contains(r.as_array()) {
+                    frontier.push(r);
+                }
+            }
+        }
+    }
+
+    // Sweep: enumerate OPFS files; delete those whose κ isn't reachable.
+    let listed = opfs_iterate().await?;
+    let listed: Array = listed.dyn_into().unwrap();
+    let mut deleted = 0u32;
+    for v in listed.iter() {
+        if let Some(s) = v.as_string() {
+            let arr: [u8; 71] = match s.as_bytes().try_into() {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            if !reachable.contains(&arr) {
+                if opfs_delete(s).await? {
+                    deleted += 1;
+                }
+            }
+        }
+    }
+    Ok(deleted)
 }

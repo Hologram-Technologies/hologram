@@ -20,6 +20,7 @@ fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {
         subscribe_channels: vec![],
         memory_max_bytes: mem_max,
         cpu_time_per_event_ms: cpu_ms,
+        priority_weight: 0,
     }
 }
 
@@ -148,5 +149,51 @@ fn storage_quota_bounds_what_a_container_persists() {
             "over-quota put refused"
         );
         assert!(!rt.store().contains(&address_bytes(&big)));
+    });
+}
+
+#[test]
+fn qc_quota_carries_across_suspend_resume() {
+    // arch §11.6: `storage_used` lives in the `Snapshot` payload (the κ binds it), so a container
+    // cannot escape its quota by suspending after a near-budget run and resuming with a fresh ledger.
+    const PUT: &str = r#"
+    (module
+      (import "hologram" "storage_put" (func $put (param i32 i32 i32) (result i32)))
+      (memory (export "memory") 2)
+      (func (export "hg_init") (param i32 i32) (result i32) (i32.const 0))
+      (func (export "hg_suspend") (result i32) (i32.const 0))
+      (func (export "hg_resume")  (result i32) (i32.const 0))
+      (func (export "hg_event") (param i32 i32) (result i32)
+        (call $put (i32.const 0) (local.get 1) (i32.const 600))))"#;
+    pollster::block_on(async {
+        let store = MemKappaStore::new();
+        // Quota of 8 bytes — enough for one 5-byte put, not enough for a second.
+        let (cid, ck) = provision(
+            &store,
+            b"qc",
+            &wat::parse_str(PUT).unwrap(),
+            caps(0, 100, 8),
+        );
+        let rt = Runtime::new(WasmtimeEngine::new(), store);
+        let h = rt.spawn(&cid, &ck).await.unwrap();
+        assert_eq!(rt.deliver_event(h, b"12345").unwrap(), 0, "5-byte put fits");
+
+        // Suspend. If the snapshot doesn't carry the storage_used ledger (5), a malicious
+        // container could resume with a fresh budget and put another 5 bytes despite quota=8.
+        let snap = rt.suspend(h).await.unwrap();
+
+        let h2 = rt.resume(&snap, &ck).await.unwrap();
+        // A second 5-byte put now is OVER quota (used=5 of 8; +5 = 10 > 8) and must be refused.
+        // Without the §11.6 ledger carry, this would succeed — that's the quota escape.
+        let next = rt.deliver_event(h2, b"abcde").unwrap();
+        assert_eq!(
+            next,
+            u32::MAX,
+            "over-quota put after resume refused — ledger survived suspend/resume"
+        );
+        assert!(!rt.store().contains(&address_bytes(b"abcde")));
+
+        // The earlier 12345 put IS still in the store (it was within quota at the time).
+        assert!(rt.store().contains(&address_bytes(b"12345")));
     });
 }

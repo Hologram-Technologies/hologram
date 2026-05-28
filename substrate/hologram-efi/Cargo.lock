@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bare-hal"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "spin",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-host"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -186,24 +186,25 @@ dependencies = [
 
 [[package]]
 name = "hologram-realizations"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hologram-substrate-core",
 ]
 
 [[package]]
 name = "hologram-store-bare"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hashbrown",
  "hologram-bare-hal",
+ "hologram-host",
  "hologram-substrate-core",
  "spin",
 ]
 
 [[package]]
 name = "hologram-substrate-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "hashbrown",

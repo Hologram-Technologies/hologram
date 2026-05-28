@@ -224,6 +224,11 @@ pub struct Capabilities {
     pub subscribe_channels: Vec<KappaLabel71>,
     pub memory_max_bytes: u64,
     pub cpu_time_per_event_ms: u64,
+    /// **DRR fair-scheduling weight** (arch §11.7). The runtime's `pump_round` adds
+    /// `priority_weight × quantum` of deficit per round; a misbehaving container cannot starve
+    /// others. `0` is treated as `1` (default; equal share). Containment: a child's weight may not
+    /// exceed its parent's — high priority cannot be amplified by delegation.
+    pub priority_weight: u32,
 }
 
 impl Capabilities {
@@ -252,6 +257,7 @@ impl Capabilities {
             && derived.storage_quota_bytes <= self.storage_quota_bytes
             && derived.memory_max_bytes <= self.memory_max_bytes
             && derived.cpu_time_per_event_ms <= self.cpu_time_per_event_ms
+            && derived.priority_weight <= self.priority_weight.max(1)
             // A flag may be granted by the child only if the parent holds it.
             && (!derived.network_fetch || self.network_fetch)
             && (!derived.network_announce || self.network_announce)
@@ -415,6 +421,7 @@ mod tests {
             subscribe_channels: vec![],
             memory_max_bytes: 1 << 20,
             cpu_time_per_event_ms: 100,
+            priority_weight: 0,
         }
     }
 
@@ -456,5 +463,261 @@ mod tests {
         // A properly narrowed child IS admitted.
         assert!(parent.admits(&caps(&[b"r1"], 100, false)));
         assert!(parent.admits(&caps(&[], 0, false)));
+    }
+}
+
+// ───────────────────────────── FederatedKappaSync (arch §11.2) ─────────────────────────────
+
+/// A hierarchical [`KappaSync`] over multiple backends — the architecture §11.2 federated
+/// multi-source. A `fetch` tries each backend in order, applying each backend's own
+/// verify-on-receipt (SPINE-4) at every hop; the first hit wins. `add_peer` and `add_gateway` are
+/// routed by input shape: the first backend that accepts it wins, the rest err. This is how the
+/// substrate composes libp2p peer transport + HTTP-CAS + IPFS-gateway + S3-prefix into one read
+/// path without any backend privileged over another.
+///
+/// Backends are immutable post-construction; reuse / extension is a `new` with the additional
+/// `Arc`. The internal `add_*` mutations on individual backends still work as normal.
+pub struct FederatedKappaSync {
+    backends: Vec<Arc<dyn KappaSync>>,
+}
+
+impl FederatedKappaSync {
+    pub fn new(backends: Vec<Arc<dyn KappaSync>>) -> Self {
+        Self { backends }
+    }
+
+    /// Number of backends in the chain.
+    pub fn len(&self) -> usize {
+        self.backends.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.backends.is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl KappaSync for FederatedKappaSync {
+    async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+        if self.backends.is_empty() {
+            return Err(SyncError::NotEnabled);
+        }
+        let mut sticky: Option<SyncError> = None;
+        for b in &self.backends {
+            match b.fetch(kappa).await {
+                Ok(Some(bytes)) => return Ok(Some(bytes)),
+                Ok(None) => {}
+                Err(SyncError::NotEnabled) | Err(SyncError::AllSourcesFailed) => {}
+                // A real error (e.g. VerificationFailed = a forging hop) — remember it so the
+                // caller knows the network had bytes that didn't match the κ — but keep walking,
+                // a later honest hop may still satisfy the fetch.
+                Err(e) => sticky = Some(e),
+            }
+        }
+        match sticky {
+            Some(e) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    async fn announce(&self, kappa: &KappaLabel71) {
+        for b in &self.backends {
+            b.announce(kappa).await;
+        }
+    }
+
+    async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71> {
+        let mut out: Vec<KappaLabel71> = Vec::new();
+        for b in &self.backends {
+            for k in b.discover(prefix, limit).await {
+                if !out.iter().any(|x| x == &k) {
+                    out.push(k);
+                }
+                if out.len() >= limit {
+                    return out;
+                }
+            }
+        }
+        out
+    }
+
+    async fn add_peer(&self, multiaddr: &str) -> Result<(), SyncError> {
+        let mut last = SyncError::AllSourcesFailed;
+        for b in &self.backends {
+            match b.add_peer(multiaddr).await {
+                Ok(()) => return Ok(()),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn add_gateway(&self, url: &str) -> Result<(), SyncError> {
+        let mut last = SyncError::AllSourcesFailed;
+        for b in &self.backends {
+            match b.add_gateway(url).await {
+                Ok(()) => return Ok(()),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+}
+
+#[cfg(test)]
+mod federated_tests {
+    use super::*;
+    use alloc::string::ToString;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock backend with a fixed value table; tracks how many fetches it served.
+    struct Mock {
+        name: String,
+        table: hashbrown::HashMap<KappaLabel71, Bytes>,
+        fetches: AtomicUsize,
+        accepts_peer: bool,
+        accepts_gateway: bool,
+        forges: bool,
+    }
+    impl Mock {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                table: hashbrown::HashMap::new(),
+                fetches: AtomicUsize::new(0),
+                accepts_peer: false,
+                accepts_gateway: false,
+                forges: false,
+            }
+        }
+        fn insert(mut self, k: KappaLabel71, v: &[u8]) -> Self {
+            self.table.insert(k, Arc::<[u8]>::from(v));
+            self
+        }
+        fn peer(mut self) -> Self {
+            self.accepts_peer = true;
+            self
+        }
+        fn gateway(mut self) -> Self {
+            self.accepts_gateway = true;
+            self
+        }
+        fn forge(mut self) -> Self {
+            self.forges = true;
+            self
+        }
+    }
+    #[async_trait::async_trait]
+    impl KappaSync for Mock {
+        async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+            self.fetches.fetch_add(1, Ordering::Relaxed);
+            if self.forges {
+                // Pretend to serve random bytes — the σ-axis would catch them. Federation should
+                // skip this hop and keep walking the chain.
+                return Err(SyncError::VerificationFailed);
+            }
+            Ok(self.table.get(kappa).cloned())
+        }
+        async fn announce(&self, _kappa: &KappaLabel71) {}
+        async fn discover(&self, _prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71> {
+            self.table.keys().take(limit).copied().collect()
+        }
+        async fn add_peer(&self, _multiaddr: &str) -> Result<(), SyncError> {
+            if self.accepts_peer {
+                Ok(())
+            } else {
+                Err(SyncError::BackendFailure("not a peer backend"))
+            }
+        }
+        async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+            if self.accepts_gateway {
+                Ok(())
+            } else {
+                Err(SyncError::BackendFailure("not a gateway backend"))
+            }
+        }
+    }
+
+    fn kappa_of(bytes: &[u8]) -> KappaLabel71 {
+        kappa::address_bytes(bytes)
+    }
+
+    fn run<F: core::future::Future>(mut f: F) -> F::Output {
+        // Minimal block_on for the test (no extra runtime). The mock backends complete
+        // synchronously, so the future polls Ready on the first turn.
+        use core::pin::Pin;
+        use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        const VT: RawWakerVTable = RawWakerVTable::new(
+            |_| RawWaker::new(core::ptr::null(), &VT),
+            |_| {},
+            |_| {},
+            |_| {},
+        );
+        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VT)) };
+        let mut cx = Context::from_waker(&waker);
+        // SAFETY: `f` lives on our stack frame and we never move it after this point.
+        let mut pinned = unsafe { Pin::new_unchecked(&mut f) };
+        loop {
+            match pinned.as_mut().poll(&mut cx) {
+                Poll::Ready(v) => return v,
+                Poll::Pending => {}
+            }
+        }
+    }
+
+    #[test]
+    fn fed_fetch_walks_chain_until_a_hit() {
+        let bytes_a = b"alpha".as_ref();
+        let bytes_b = b"beta".as_ref();
+        let ka = kappa_of(bytes_a);
+        let kb = kappa_of(bytes_b);
+        // First backend has only κ_a; second has κ_b. The federation must find both.
+        let m1 = Arc::new(Mock::new("hot").insert(ka, bytes_a));
+        let m2 = Arc::new(Mock::new("cold").insert(kb, bytes_b));
+        let fed = FederatedKappaSync::new(alloc::vec![m1.clone(), m2.clone()]);
+        let a = run(fed.fetch(&ka)).unwrap().unwrap();
+        let b = run(fed.fetch(&kb)).unwrap().unwrap();
+        assert_eq!(a.as_ref(), bytes_a);
+        assert_eq!(b.as_ref(), bytes_b);
+        // The hot backend was tried first; the cold backend was only tried for κ_b.
+        assert_eq!(m1.fetches.load(Ordering::Relaxed), 2);
+        assert_eq!(m2.fetches.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn fed_skips_forging_hop_and_surfaces_to_caller() {
+        let bytes = b"genuine".as_ref();
+        let k = kappa_of(bytes);
+        let forger = Arc::new(Mock::new("forger").forge());
+        let honest = Arc::new(Mock::new("honest").insert(k, bytes));
+        let fed = FederatedKappaSync::new(alloc::vec![forger, honest]);
+        let got = run(fed.fetch(&k)).unwrap().unwrap();
+        assert_eq!(
+            got.as_ref(),
+            bytes,
+            "honest hop after forger still resolves"
+        );
+    }
+
+    #[test]
+    fn fed_routes_add_peer_and_add_gateway_by_input_shape() {
+        let peer_only = Arc::new(Mock::new("peer").peer());
+        let gateway_only = Arc::new(Mock::new("gw").gateway());
+        let fed = FederatedKappaSync::new(alloc::vec![peer_only, gateway_only]);
+        assert!(run(fed.add_peer("/ip4/127.0.0.1/tcp/4001/p2p/12D3K...")).is_ok());
+        assert!(run(fed.add_gateway("https://gateway.example/")).is_ok());
+    }
+
+    #[test]
+    fn fed_empty_chain_is_not_enabled() {
+        let fed = FederatedKappaSync::new(Vec::new());
+        let k = kappa_of(b"x");
+        assert_eq!(run(fed.fetch(&k)), Err(SyncError::NotEnabled));
+    }
+
+    // Silence dead-code warnings on the Mock `name` field in non-test builds.
+    #[allow(dead_code)]
+    fn _name_used(m: &Mock) -> &str {
+        m.name.as_str()
     }
 }

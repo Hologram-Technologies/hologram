@@ -17,7 +17,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::{HashMap, HashSet};
-use hologram_realizations::{CapabilitySet, ContainerManifest, Snapshot};
+use hologram_realizations::{CapabilitySet, ContainerManifest, Delegation, Snapshot};
 use hologram_substrate_core::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
     Realization, RealizationRegistry, RuntimeError,
@@ -78,6 +78,14 @@ pub trait ContainerEngine: Send + Sync {
     fn restore_memory(&self, inst: &mut Self::Instance, mem: &[u8]);
     /// Current linear-memory size (for `ContainerInfo`/budgets).
     fn memory_bytes(&self, inst: &Self::Instance) -> u64;
+    /// Bytes already charged against this container's storage quota (arch §11.6). Carried through
+    /// the `Snapshot` payload so the ledger survives suspend/resume; default 0 for engines that
+    /// don't enforce a storage quota.
+    fn storage_used(&self, _inst: &Self::Instance) -> u64 {
+        0
+    }
+    /// Restore the storage-quota ledger from a resumed snapshot (arch §11.6).
+    fn restore_storage_used(&self, _inst: &mut Self::Instance, _used: u64) {}
 }
 
 struct Entry<I> {
@@ -105,6 +113,14 @@ struct Sub {
     cursor: usize,
 }
 
+/// Per-container event queue + deficit counter for the DRR scheduler (arch §11.7). Idle queues
+/// don't accumulate deficit — fairness is over containers with pending work, not over absolute time.
+#[derive(Default)]
+struct EventQueue {
+    pending: Vec<Vec<u8>>,
+    deficit: u64,
+}
+
 /// The substrate-portable runtime over an engine `E` and a store `S`.
 pub struct Runtime<E: ContainerEngine, S: KappaStore> {
     engine: E,
@@ -114,6 +130,8 @@ pub struct Runtime<E: ContainerEngine, S: KappaStore> {
     // Channel bus (spec §4.4): per-channel ordered published payloads + persistent subscriptions.
     channels: Mutex<HashMap<[u8; 71], Vec<KappaLabel71>>>,
     subs: Mutex<Vec<Sub>>,
+    // Per-container DRR queues — populated by `enqueue_event`, drained by `pump_round` (arch §11.7).
+    queues: Mutex<HashMap<u64, EventQueue>>,
     // A spin Mutex counter, not AtomicU64 — Cortex-M (thumbv7em) has no 64-bit atomics (G-D1).
     next: Mutex<u64>,
 }
@@ -131,6 +149,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             revoked: Mutex::new(HashSet::new()),
             channels: Mutex::new(HashMap::new()),
             subs: Mutex::new(Vec::new()),
+            queues: Mutex::new(HashMap::new()),
             next: Mutex::new(1),
         }
     }
@@ -271,7 +290,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         container_id: &KappaLabel71,
         caps_kappa: &KappaLabel71,
         caps: Capabilities,
-        restore: Option<&[u8]>,
+        restore: Option<(&[u8], u64)>,
         current_snapshot: Option<KappaLabel71>,
     ) -> Result<ContainerHandle, RuntimeError> {
         let manifest = self
@@ -298,8 +317,9 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         };
         let mut inst = self.engine.instantiate(code.as_ref(), &ctx)?;
         match restore {
-            Some(mem) => {
+            Some((mem, storage_used)) => {
                 self.engine.restore_memory(&mut inst, mem);
+                self.engine.restore_storage_used(&mut inst, storage_used);
                 self.engine.resume(&mut inst);
             }
             None => {
@@ -365,25 +385,145 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         child_container_id: &KappaLabel71,
         derived_caps_kappa: &KappaLabel71,
     ) -> Result<ContainerHandle, RuntimeError> {
-        let parent_caps = {
+        let (parent_caps, parent_caps_kappa) = {
             let table = self.table.lock();
-            table
+            let entry = table
                 .get(&parent.0)
-                .ok_or(RuntimeError::ContainerIdNotFound)?
-                .caps
-                .clone()
+                .ok_or(RuntimeError::ContainerIdNotFound)?;
+            (entry.caps.clone(), entry.info.capabilities_kappa)
         };
         let derived = self.resolve_caps(derived_caps_kappa)?;
         if !parent_caps.admits(&derived) {
             return Err(RuntimeError::CapabilityVerificationFailed);
         }
+        // Express the parent → child delegation as a κ-graph edge (arch §11.8). The Delegation κ
+        // lives in the store; revoke walks the inverse projection to cascade through descendants.
+        let delegation = Delegation {
+            parent_caps: parent_caps_kappa,
+            child_caps: *derived_caps_kappa,
+        };
+        let _ = self
+            .store
+            .put("blake3", &delegation.canonicalize())
+            .map_err(be)?;
         self.instantiate_from(child_container_id, derived_caps_kappa, derived, None, None)
     }
 
-    /// Revoke a capability set (spec §10.12): subsequent imports/events from any container holding
-    /// it are refused. The κ-labels it already produced remain (append-only).
+    /// Compute the **transitive delegation cone** of `root_caps` — every `child_caps` reachable
+    /// from `root_caps` via `Delegation{parent,child}` edges in the κ-graph. The κ-graph IS the
+    /// authority (no side-channel map); on each call we recover the cone by walking the store's
+    /// Delegation realizations (arch §11.8).
+    fn delegation_cone(&self, root_caps: &KappaLabel71) -> HashSet<[u8; 71]> {
+        let mut cone: HashSet<[u8; 71]> = HashSet::new();
+        cone.insert(*root_caps.as_array());
+        // Snapshot the Delegation edges currently in the store.
+        let mut edges: Vec<([u8; 71], [u8; 71])> = Vec::new();
+        for k in self.store.iterate() {
+            if let Ok(Some(b)) = self.store.get(&k) {
+                let bytes = b.as_ref();
+                if bytes.starts_with(Delegation::IRI.as_bytes()) {
+                    if let Ok(refs) = <Delegation as Realization>::references(bytes) {
+                        if refs.len() == 2 {
+                            edges.push((*refs[0].as_array(), *refs[1].as_array()));
+                        }
+                    }
+                }
+            }
+        }
+        // Fixpoint: repeatedly add child_caps for edges whose parent is in the cone.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (p, c) in &edges {
+                if cone.contains(p) && !cone.contains(c) {
+                    cone.insert(*c);
+                    changed = true;
+                }
+            }
+        }
+        cone
+    }
+
+    /// Enqueue an event for fair DRR delivery via [`pump_round`] (arch §11.7) — the multi-tenant
+    /// scheduling path. The direct [`deliver_event`] still works for single-container immediate
+    /// delivery; this is the entry point when many containers compete for cycles.
+    pub fn enqueue_event(&self, h: ContainerHandle, payload: Vec<u8>) -> Result<(), RuntimeError> {
+        let table = self.table.lock();
+        if !table.contains_key(&h.0) {
+            return Err(RuntimeError::ContainerIdNotFound);
+        }
+        drop(table);
+        self.queues
+            .lock()
+            .entry(h.0)
+            .or_default()
+            .pending
+            .push(payload);
+        Ok(())
+    }
+
+    /// Run one **deficit round-robin** scheduling round (arch §11.7). For each container with
+    /// queued events (visited in handle / UorTime order — ADR-058, **no wall-clock**), add
+    /// `priority_weight × quantum` deficit and dispatch events while the deficit covers their cost
+    /// (one unit per event). Idle queues don't accumulate deficit, so a periodically-quiet
+    /// container can't burst. Returns the `(handle, event_return_code)` tuples actually delivered
+    /// this round.
+    pub fn pump_round(&self, quantum: u32) -> Vec<(ContainerHandle, u32)> {
+        let mut delivered = Vec::new();
+        // Snapshot handles in UorTime order (handles are minted monotonically; sorting is
+        // deterministic given that ordering).
+        let mut handles: Vec<u64> = self.table.lock().keys().copied().collect();
+        handles.sort_unstable();
+
+        for h in handles {
+            // Skip revoked containers — no work for a denied principal.
+            let (weight, revoked) = {
+                let table = self.table.lock();
+                let Some(e) = table.get(&h) else {
+                    continue;
+                };
+                let r = self
+                    .revoked
+                    .lock()
+                    .contains(e.info.capabilities_kappa.as_array());
+                (e.caps.priority_weight.max(1) as u64, r)
+            };
+            if revoked {
+                continue;
+            }
+
+            // Pull pending events under deficit budget.
+            let mut to_deliver: Vec<Vec<u8>> = Vec::new();
+            {
+                let mut queues = self.queues.lock();
+                let q = queues.entry(h).or_default();
+                if q.pending.is_empty() {
+                    q.deficit = 0; // idle: reset (no burst on next ready)
+                    continue;
+                }
+                q.deficit = q.deficit.saturating_add(weight * quantum as u64);
+                while q.deficit > 0 && !q.pending.is_empty() {
+                    q.deficit -= 1;
+                    to_deliver.push(q.pending.remove(0));
+                }
+            }
+            for payload in to_deliver {
+                if let Ok(code) = self.deliver_event(ContainerHandle(h), &payload) {
+                    delivered.push((ContainerHandle(h), code));
+                }
+            }
+        }
+        delivered
+    }
+
+    /// Revoke a capability set (spec §10.12 + arch §11.8): subsequent imports/events from the
+    /// revoked caps **and from every descendant minted under it via `spawn_child`** are refused.
+    /// The κ-labels it already produced remain in the store (append-only); only future operations
+    /// authorized by the revoked cone are denied.
     pub fn revoke(&self, caps_kappa: &KappaLabel71) {
-        self.revoked.lock().insert(*caps_kappa.as_array());
+        let cone = self.delegation_cone(caps_kappa);
+        let mut revoked = self.revoked.lock();
+        revoked.extend(cone);
     }
 }
 
@@ -407,9 +547,11 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static>
             .ok_or(RuntimeError::ContainerIdNotFound)?;
         self.engine.suspend(&mut entry.inst);
         let mem = self.engine.snapshot_memory(&entry.inst);
+        let storage_used = self.engine.storage_used(&entry.inst);
         let snapshot = Snapshot {
             container_id: entry.info.container_id,
             previous: entry.info.current_snapshot,
+            storage_used,
             state_payload: mem,
         };
         let snapshot_k = self
@@ -435,13 +577,16 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static>
         let refs =
             Snapshot::references(snap_bytes.as_ref()).map_err(|_| RuntimeError::SnapshotInvalid)?;
         let container_id = *refs.first().ok_or(RuntimeError::SnapshotInvalid)?;
-        let mem = hologram_realizations::payload_of(Snapshot::IRI, snap_bytes.as_ref())
+        let payload = hologram_realizations::payload_of(Snapshot::IRI, snap_bytes.as_ref())
             .map_err(|_| RuntimeError::SnapshotInvalid)?;
+        let (storage_used, mem) =
+            Snapshot::parse_payload(&payload).map_err(|_| RuntimeError::SnapshotInvalid)?;
+        let mem = mem.to_vec();
         let handle = self.instantiate_from(
             &container_id,
             capabilities,
             caps,
-            Some(&mem),
+            Some((&mem, storage_used)),
             Some(*snapshot),
         )?;
         // Replay any channel messages published while this container was suspended (§10.11).

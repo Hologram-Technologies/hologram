@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 authors = { workspace = true }
-description = "libp2p KappaSync transport (spec §6.2): κ-label fetch over a request-response protocol on TCP+Noise+Yamux, with verify-on-receipt. The peer-to-peer transport beneath the Network Layer."
+description = "libp2p KappaSync transport (spec §6.2 + §11.1): κ-label fetch over request-response on TCP+Noise+Yamux, with verify-on-receipt, AND content discovery via Kademlia DHT (announce=start_providing, fetch falls through to get_providers, discover=get_closest_peers+List). The peer-to-peer transport beneath the Network Layer."
 
 [dependencies]
 hologram-substrate-core = { workspace = true }
@@ -15,6 +15,8 @@ libp2p-noise = { workspace = true }
 libp2p-yamux = { workspace = true }
 libp2p-request-response = { workspace = true }
 libp2p-identity = { workspace = true }
+libp2p-kad = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures = { workspace = true }
 async-trait = { workspace = true }

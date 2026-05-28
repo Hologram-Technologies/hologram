@@ -27,6 +27,7 @@ fn caps_with(
         storage_quota_bytes: 0,
         memory_max_bytes: 0,
         cpu_time_per_event_ms: 0,
+        priority_weight: 0,
         network_fetch: false,
         network_announce: false,
     }
@@ -101,6 +102,7 @@ fn llm_container_lifecycle_and_trustless_migration() {
         let snapshot = Snapshot {
             container_id,
             previous: None,
+            storage_used: 0,
             state_payload: b"<linear-memory+globals+cursor>".to_vec(),
         };
         let snapshot_k = peer_a.put("blake3", &snapshot.canonicalize()).unwrap();

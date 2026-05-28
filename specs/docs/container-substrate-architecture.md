@@ -376,6 +376,15 @@ existing table form.
 | **RZ** | realization-IRI tagging (§10.9), `references()` presence (§10.10), and the **bounded-reuse** rule — store/route crates reuse `hologram-host`/`-archive` but the tensor compute engine is absent from their `cargo tree` | spec §10.9/§10.10, Appendix B |
 | **TR** | substrate-tripling byte-identity (§10.16) + no_std discipline (§10.14) + no-OS (§10.13) + crash safety (§10.15) + hardware probing (§10.17) | bare-metal §10 |
 | **SP** | substrate performance floors (§4): zero-copy get, idempotent-put no-write, bounded reachability walk, streaming HTTP-CAS | criterion / `just perf` |
+| **DHT** | content discovery without a coordinator: Kademlia `PROVIDE`/`GET_PROVIDERS` over κ-label keys; `announce(κ)` is `start_providing(κ)`; `fetch` falls through to DHT providers (§11.1) | libp2p-kad over Kademlia paper |
+| **FED** | hierarchical multi-source `KappaSync` over **hologram peers only** (local → libp2p peer → HTTP-CAS peer), verify-on-receipt at every hop, `add_gateway` wires another hologram CAS-serving peer (§11.2) | each hop reuses NW class authority |
+| **BT** | bare-metal store: **Merkle B-tree** of κ → extent (every page has its own κ; the store state is one root κ); CoW write-discipline; crash-atomic root flip (§11.3) | spec §5.2 + crash-safety §10.15 |
+| **AR** | archival cold tier = **bare-metal hologram peer** participating in the federation chain (same `/cas/<κ>` + libp2p RR transports as hot peers; durable across reboots via the §11.3 B-tree + §11.9 NIC driver-import); no external hosting (§11.4) | NW class authority + BM class (bare-metal substrate) |
+| **OG** | OPFS reachability GC in real Chromium: mark from pins through `references()`, delete unreachable files (§11.5) | structural projection (SPINE-3) |
+| **QC** | storage quota carries through suspend/resume: `storage_used` lives in the `Snapshot` payload's canonical bytes; the snapshot κ binds it (§11.6) | SPINE-1 (authority in graph) |
+| **SC** | cross-container scheduling fairness: per-container weight (capability field) + deficit round-robin over UorTime ordering — **no wall-clock** (§11.7) | ADR-058 + DRR fair-queueing |
+| **RV** | transitive revoke as a κ-graph walk: a `Delegation{parent_caps,child_caps}` realization is minted on `spawn_child`; revoking `caps_κ` walks its delegation cone via `references()` and revokes the entire subtree (§11.8) | SPINE-3 inverse projection |
+| **NI** | `NetworkInterface` driver-import: codemodule κ-label → `WasmNetworkInterface` HAL binding → real packet I/O; mirrors `WasmBlockDevice` for HAL surface parity (§11.9) | uor-addr `codemodule` |
 
 ---
 
@@ -507,3 +516,134 @@ imports hologram's `PrismModel`s as a κ-addressed Wasm library. The *same* cont
 *byte-identical* κ-labels on browser, native, and bare-metal (the σ-axis is the one BLAKE3 path,
 validated against the reference), so a workload is portable by construction — bounded only by what
 Wasm can express (on bare-metal, no native-subprocess escape hatch; G-C3).
+
+---
+
+## 11. Substrate completions — implementation depth
+
+Phase 0 landed the contract; this section is the **implementation depth** of every surface that
+Phase 0 left as a stub or a coordinator-bound design. Every entry here is uor-native — identity by
+κ-label, relations by κ-graph composition, decisions by structural projection. No wall-clock, no
+side-channel ACLs, no traditional ID maps.
+
+### 11.1 Network discovery — Kademlia DHT (no umbrella)
+
+`announce(κ)` and `discover(prefix, limit)` are implemented over libp2p-kad **sub-crate** (matching
+§0.1's no-umbrella discipline that removed `hickory-proto` from the graph). The DHT key is `κ.as_bytes()` —
+the κ-label IS the routing key, no parallel naming scheme. Two behaviours coexist on one swarm:
+
+- **`kad`** — `start_providing(κ)` on announce; `get_providers(κ)` on fetch fall-through. A peer
+  joining only needs one **bootstrap** peer to converge.
+- **`request_response`** — once a provider is found, the κ payload is pulled over the existing
+  `/hologram/cas/1` RR protocol, **verified on receipt** (SPINE-4). The wire envelope generalizes to
+  a tagged request: `Req::Get(κ)` (existing) or `Req::List{prefix, limit}` (new) — `discover` does a
+  `get_closest_peers(prefix)` then a `Req::List` RR to each closest peer; results are merged + deduped
+  + truncated to `limit`. Every byte received still re-derives through the σ-axis.
+
+This is genuinely coordinator-free content discovery; the Kademlia distance metric *is* uor-aligned
+(XOR over content keys is a structural relation, not a registry lookup).
+
+### 11.2 Federated multi-source — hierarchical `KappaSync`
+
+The hologram network is **self-contained** — it is its own storage + transport, not a client of
+external hosting. `FederatedKappaSync` chains **hologram peers** (the only kind there is) in
+priority order, using the two intra-network transports the substrate defines:
+
+1. **Local store** (zero-RTT, the existing `get_with_fetch` short-circuit).
+2. **libp2p peers** (`LibPeer` — DHT-augmented per §11.1, request-response over TCP+Noise+Yamux).
+3. **HTTP-CAS peers** (`HttpKappaSync` — `add_gateway(url)` actually wires one here, no longer a
+   stub). A "gateway" in this context is itself a hologram node serving `/cas/<κ>` (spec §6.5) —
+   not a bridge to anything else.
+
+At every hop the bytes are re-derived through the σ-axis (SPINE-4); a forging peer is rejected, the
+chain continues. `add_peer`/`add_gateway` route into the correct sub-sync by input shape (multiaddr
+→ libp2p; URL → HTTP-CAS).
+
+### 11.3 Bare-metal storage — **Merkle B-tree** of κ → extent
+
+`hologram-store-bare`'s persistent layout is a **Merkle B-tree** (copy-on-write), not a
+traditional LBA-pointer index:
+
+- Every page (leaf or internal) is a κ-labeled record; children are referenced by κ-label, not LBA.
+  The whole index *is* a κ-graph; the *store state* is one **root κ** held in the header sector.
+- Data extents are bump-allocated sectors holding put-payloads; a leaf entry is
+  `(κ_content, extent_lba, sectors)`.
+- A bitmap of allocated sectors lives at a fixed early offset.
+- Writes are copy-on-write: every modified page allocates fresh sectors, parent pointers update upward,
+  and the **header sector (single-sector atomic write)** is the last write — flipping the root κ
+  atomically commits the entire transaction. A torn write reverts to the previous root κ on reopen.
+- GC walks the B-tree from pinned κ-roots, computes the reachable extent set, and frees the rest in
+  the bitmap.
+
+This subsumes the §5.2 deferred "B-tree + extent allocator" and is more uor-native than the spec
+proposed: there is no side-channel naming — every node IS a κ.
+
+### 11.4 Archival cold tier — **hologram bare-metal peers**
+
+The hologram substrate does **not** delegate storage to external services (S3, IPFS, etc.) — it
+**is** the storage network, end-to-end. The archival cold tier is what the **bare-metal
+substrate** uniquely enables: a hologram node running directly on bare hardware (UEFI boot →
+engine bring-up → `BareMetalKappaStore` over a raw `BlockDevice` + the Merkle B-tree of §11.3 +
+the `NetworkInterface` driver-import of §11.9), serving the substrate's CAS at hardware capacity.
+The whole stack is uor-native and self-contained:
+
+- **The wire is the same.** A bare-metal archival peer speaks the same `/cas/<κ>` (spec §6.5) and
+  libp2p request-response (§11.1) protocols as a hot RAM peer or a redb-backed warm peer. It is
+  indistinguishable on the wire — it's just slower per-fetch but vastly larger and durable across
+  reboots (TR class).
+- **Why bare-metal makes archival possible.** A no-OS hologram node owns its block devices and
+  NICs directly via codemodule-imported drivers (§11.9 + DU class), so it can be deployed on
+  commodity disk hardware **without renting an OS-hosted service**. This is what closes the
+  external-hosting gap: durability scales with disk count, not vendor contracts.
+- **Replication is automatic.** Cache-on-fetch + `announce(κ)` (§11.1) means once N peers hold κ
+  the network has factor-N durability without coordination. Archival peers favor this through
+  their capability profile (ample `storage_quota_bytes`, `network_announce = true`).
+- **Cold-tier latency** is achieved by ordering the federation chain (§11.2) hot RAM → warm redb →
+  cold bare-metal, so an archival peer is queried only on hot/warm misses.
+
+No new transport is required: a "cold peer" is the same `LibPeer`/`HttpKappaSync` interface — the
+distinguishing element is the **substrate** it runs on (bare-metal, §3.2.1 HAL · §10 BM class · §11.3
+B-tree · §11.9 NIC driver-import). Verification of this end-to-end role lives in the **AR** V&V
+class — a federated fetch resolves through a bare-metal peer as the cold tail of the chain.
+
+### 11.5 OPFS garbage collection
+
+`hologram-store-opfs` implements `GarbageCollect::gc()` in the browser: list every file in the OPFS
+root; mark from `pinned_roots()` through `references()` (the registry walk reused from native
+stores); delete files not in the marked set. Verified end-to-end in real Chromium via the existing
+Playwright harness (`opfs-test.mjs` extended with a GC scenario).
+
+### 11.6 Quota carried across suspend/resume
+
+The `Snapshot` realization payload now carries `storage_used: u64` alongside the linear-memory
+image, globals, and cursor. The snapshot κ binds it (SPINE-1: authority in the graph). On resume,
+the engine restores `storage_used` into `HostState`. A container cannot escape its quota by
+suspending and resuming with a fresh ledger.
+
+### 11.7 Cross-container scheduling — DRR over UorTime
+
+`Capabilities` gains a `priority_weight: u32` field (0 = default = 1). The runtime's event delivery
+runs **deficit round-robin** (DRR) keyed by `(container_κ, UorTime)`:
+
+- Each container holds a deficit counter; the scheduler adds `priority_weight × quantum` per round.
+- Eligible containers (with queued events) are served in `UorTime` order (ADR-058 — a monotonic
+  per-engine progress counter, **not wall-clock**), pulling events while the deficit covers their
+  cost (`cpu_time_per_event_ms`).
+- A misbehaving container cannot starve others; the order is deterministic over uor-native quantities.
+
+### 11.8 Transitive revoke — Delegation as a κ-graph edge
+
+A new `Delegation{parent_caps: κ, child_caps: κ}` realization is minted on `spawn_child(parent, child_cid, child_caps)`
+and put into the store. The runtime's revoke set is the reachable closure over the inverse projection:
+`revoke(κ_p)` walks every Delegation whose `parent_caps == κ_p`, recursively, refusing future spawn/resume
+for any descendant caps. Parent → child is now expressed in the κ-graph, recoverable by `references()` —
+not in a side-channel `HashMap`.
+
+### 11.9 `NetworkInterface` driver-import
+
+A `WasmNetworkInterface` mirrors `WasmBlockDevice` (§3): a HAL `NetworkInterface` whose
+`send`/`recv` route through an imported Wasm driver loaded by **codemodule κ-label** (uor-addr
+`codemodule` — the same authority block-device drivers come from). The codemodule-κ → HAL binding is
+the symmetric pattern across HAL surfaces; the V&V class **NI** asserts the *codemodule-κ → live
+driver-backed device* path runs end-to-end (a hosted driver actually transports bytes through the
+binding).

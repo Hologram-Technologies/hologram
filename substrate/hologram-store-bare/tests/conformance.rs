@@ -1,7 +1,7 @@
 //! The bare-metal block-device store runs the **same TCK** as mem/redb (integration), plus
 //! format/reachability/**reboot persistence** end-to-end over a RAM block device.
 
-use hologram_bare_hal::RamBlockDevice;
+use hologram_bare_hal::{BlockDevice, RamBlockDevice};
 use hologram_realizations::{ContainerManifest, REGISTRY};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{KappaStore, Realization};
@@ -60,5 +60,65 @@ fn bare_persists_across_reboot() {
     assert!(
         rebooted.pinned_roots().contains(&pinned),
         "pinned roots survive reboot"
+    );
+}
+
+#[test]
+fn bt_many_entries_round_trip_across_multiple_leaf_pages() {
+    // arch §11.3: leaf-page chain handles arbitrary entry counts; round-trip across reboots must
+    // hold for stores spanning multiple pages.
+    use hologram_bare_hal::RamBlockDevice;
+    let device = RamBlockDevice::new(512, 4096);
+    let store = BareMetalKappaStore::open(device.clone()).unwrap();
+    let mut kappas = Vec::new();
+    for i in 0..120u32 {
+        let payload = std::format!("entry-{i}-with-some-bytes");
+        let k = store.put("blake3", payload.as_bytes()).unwrap();
+        kappas.push((k, payload));
+    }
+    drop(store);
+    let rebooted = BareMetalKappaStore::open(device).unwrap();
+    for (k, expected) in &kappas {
+        let got = rebooted.get(k).unwrap().unwrap();
+        assert_eq!(got.as_ref(), expected.as_bytes(), "round-trip after reboot");
+    }
+    assert_eq!(rebooted.approximate_count(), kappas.len());
+}
+
+#[test]
+fn bt_torn_header_write_reverts_to_prior_root() {
+    // arch §11.3: dual-buffered headers + alternating writes. Corrupting the most-recently-written
+    // header simulates a torn write — the previous header (older `gen`, but valid) wins on reopen,
+    // so the store reverts to the prior committed state atomically.
+    use hologram_bare_hal::RamBlockDevice;
+    let device = RamBlockDevice::new(512, 4096);
+    let store = BareMetalKappaStore::open(device.clone()).unwrap();
+    let k_a = store.put("blake3", b"committed-before-torn-write").unwrap();
+    let k_b = store.put("blake3", b"committed-after-too").unwrap();
+    drop(store);
+
+    // Identify the most-recently-written header by gen, then garble its magic.
+    pollster::block_on(async {
+        let mut buf_a = std::vec![0u8; 512];
+        let mut buf_b = std::vec![0u8; 512];
+        device.read(0, 1, &mut buf_a).await.unwrap();
+        device.read(1, 1, &mut buf_b).await.unwrap();
+        let gen_a = u64::from_le_bytes(buf_a[16..24].try_into().unwrap());
+        let gen_b = u64::from_le_bytes(buf_b[16..24].try_into().unwrap());
+        let recent_lba = if gen_b > gen_a { 1 } else { 0 };
+        let garbage = std::vec![0u8; 512];
+        device.write(recent_lba, 1, &garbage).await.unwrap();
+    });
+
+    // Reopen — the corrupted header is rejected; the older valid header wins. That header was
+    // committed after k_a but BEFORE k_b → we expect k_a to survive and k_b to be reverted.
+    let rebooted = BareMetalKappaStore::open(device).unwrap();
+    assert!(
+        rebooted.contains(&k_a),
+        "the prior committed state survives (k_a present)"
+    );
+    assert!(
+        !rebooted.contains(&k_b),
+        "the post-corruption commit is discarded — reverted to prior gen"
     );
 }

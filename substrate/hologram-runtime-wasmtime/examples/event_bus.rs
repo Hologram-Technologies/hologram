@@ -21,6 +21,7 @@ fn caps(publish: Vec<KappaLabel71>, subscribe: Vec<KappaLabel71>) -> Capabilitie
         subscribe_channels: subscribe,
         memory_max_bytes: 0,
         cpu_time_per_event_ms: 0,
+        priority_weight: 0,
     }
 }
 

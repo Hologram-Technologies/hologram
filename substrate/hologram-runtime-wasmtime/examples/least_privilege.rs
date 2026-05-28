@@ -22,6 +22,7 @@ fn caps(roots: Vec<KappaLabel71>, quota: u64) -> Capabilities {
         subscribe_channels: vec![],
         memory_max_bytes: 0,
         cpu_time_per_event_ms: 0,
+        priority_weight: 0,
     }
 }
 

@@ -140,6 +140,7 @@ fn build(verb: Verb) -> Result<Command, String> {
                 storage_quota_bytes: quota,
                 memory_max_bytes: memory_max,
                 cpu_time_per_event_ms: cpu_ms,
+                priority_weight: 0,
                 network_fetch: fetch,
                 network_announce: announce,
             })
