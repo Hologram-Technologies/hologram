@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the performance gate locally: benchmark the current working tree against a
 # baseline ref (default: origin/main) and report regressions + benchmark-
-# lifecycle violations, exactly as `perf-gate.yml` does (best-of-N min, the
-# cv-floor noise model, and the manifest lifecycle gate).
+# lifecycle violations, exactly as `perf-gate.yml` does (interleaved best-of-N
+# min, the cv-floor noise model, and the manifest lifecycle gate).
 #
 # Usage:
 #   scripts/perf-gate-local.sh [BASELINE_REF] [RUNS] [THRESHOLD] [NOISE_SIGMAS] [CV_FLOOR]
@@ -30,12 +30,11 @@ BASE_SHA="$(git rev-parse "$BASELINE_REF")"
 WORKTREE="$(mktemp -d)"
 trap 'git worktree remove --force "$WORKTREE" 2>/dev/null || true; rm -rf "$WORKTREE"' EXIT
 
-echo "==> Benchmarking current tree (PR side), best-of-$RUNS…"
-scripts/run-benches.sh "$ROOT/pr-bench.json" "$RUNS"
-
-echo "==> Benchmarking baseline $BASELINE_REF ($BASE_SHA), best-of-$RUNS…"
+echo "==> Benchmarking current tree vs $BASELINE_REF ($BASE_SHA), interleaved best-of-$RUNS…"
 git worktree add --detach "$WORKTREE" "$BASE_SHA"
-( cd "$WORKTREE" && "$ROOT/scripts/run-benches.sh" "$ROOT/base-bench.json" "$RUNS" "$ROOT/scripts" )
+scripts/interleave-bench-gate.sh \
+  "$ROOT" "$WORKTREE" "$ROOT/scripts" "$RUNS" \
+  "$ROOT/pr-bench.json" "$ROOT/base-bench.json"
 
 BASE_MANIFEST_ARG=()
 [ -f "$WORKTREE/benches/manifest.toml" ] && BASE_MANIFEST_ARG=(--baseline-manifest "$WORKTREE/benches/manifest.toml")

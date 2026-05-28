@@ -122,11 +122,12 @@ never consults them. Per-execute dispatch is unchanged:
 ## Regression gate (CI)
 
 PRs to `main` are gated by [`.github/workflows/perf-gate.yml`](.github/workflows/perf-gate.yml).
-The job benchmarks the **PR merge result** and the **target branch tip**
-back-to-back on the same runner (controlling for machine variance), aggregates
-each with [`scripts/aggregate-benchmarks.py`](scripts/aggregate-benchmarks.py),
-then runs [`scripts/compare-benchmarks.py`](scripts/compare-benchmarks.py),
-which **fails the job** if any benchmark's median regresses past the gate.
+The job **interleaves** the **PR merge result** and the **target branch tip** on
+the same runner — each round benchmarks both seconds apart, so the runner's
+throughput drift cancels rather than reading as a regression — then reduces each
+side to its per-benchmark minimum median across rounds and runs
+[`scripts/compare-benchmarks.py`](scripts/compare-benchmarks.py), which **fails
+the job** if any benchmark's median regresses past the gate.
 
 A regression must clear two bars, so CI noise doesn't block honest PRs:
 

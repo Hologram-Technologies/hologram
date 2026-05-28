@@ -20,8 +20,15 @@ import sys
 
 
 def reduce_min(runs):
-    """runs: list of aggregated bench.json dicts → one merged dict (min median)."""
-    best = {}  # name -> bench dict with the smallest median seen
+    """runs: list of aggregated bench.json dicts → one merged dict.
+
+    Per benchmark, `median_ns` is the **minimum** median across rounds (the
+    least-contended estimate of the true cost), and `max_ns` is the **maximum**
+    median across rounds — the observed run-to-run spread, which the gate uses
+    as a data-driven, per-benchmark noise band (so an intrinsically noisy
+    microbenchmark widens its own tolerance instead of false-failing)."""
+    best = {}  # name -> bench dict carrying the smallest median seen
+    hi = {}  # name -> largest median seen across rounds
     for data in runs:
         for b in data.get("benchmarks", []):
             name, median = b.get("name"), b.get("median_ns")
@@ -29,12 +36,18 @@ def reduce_min(runs):
                 continue
             if name not in best or median < best[name]["median_ns"]:
                 best[name] = b
+            hi[name] = max(hi.get(name, median), median)
     meta = runs[0] if runs else {}
+    out = []
+    for n in sorted(best):
+        b = dict(best[n])
+        b["max_ns"] = hi[n]
+        out.append(b)
     return {
         "sha": meta.get("sha", ""),
         "timestamp": meta.get("timestamp", ""),
         "reduction": f"min-of-{len(runs)}",
-        "benchmarks": [best[n] for n in sorted(best)],
+        "benchmarks": out,
     }
 
 

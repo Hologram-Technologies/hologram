@@ -45,19 +45,28 @@ gates below and ties them into one contract.
 A PR may not regress benchmarked performance relative to the branch it targets.
 
 `perf-gate.yml` benchmarks the **PR merge result** and the **target-branch tip**
-back-to-back on the *same runner* (controlling for machine variance — comparing
-against numbers from a different VM is too noisy), aggregates each with
-`scripts/aggregate-benchmarks.py`, and runs `scripts/compare-benchmarks.py` as a
-gating step.
+on the *same runner* (comparing against numbers from a different VM is too
+noisy), then `scripts/compare-benchmarks.py` gates on the per-benchmark median.
 
-A regression must clear **two** bars, so CI jitter never blocks an honest PR:
+To stop the runner's own throughput drift from reading as a regression, the two
+trees are **interleaved** (`scripts/interleave-bench-gate.sh`): each round
+benchmarks the baseline then the PR seconds apart — so any drift in that round
+hits both sides equally — and each side is then reduced to its per-benchmark
+**minimum** median across rounds (`scripts/bench-reduce-min.py`), which discards
+transient contention spikes. A two-phase comparison (all PR runs, then all
+baseline runs minutes later) is what lets cross-phase drift masquerade as a
+regression; interleaving removes that.
+
+A regression must then clear **two** further bars, so residual CI jitter never
+blocks an honest PR:
 
 1. **Relative**: `pr_median > base_median × (1 + threshold)` — default **10%**.
-2. **Noise**: the slowdown also exceeds `noise-sigmas × √(base_std² + pr_std²)` —
-   default **2σ**, i.e. it's outside the measured jitter.
+2. **Noise**: the slowdown also exceeds `noise-sigmas × max(measured std,
+   cv-floor × base_median)` — default **2σ** of a noise floor of **7%** of the
+   baseline (shared-runner variance the per-run std underestimates).
 
-Both are env-tunable (`REGRESSION_THRESHOLD`, `NOISE_SIGMAS`). `main` publishes
-its post-merge numbers separately via `benchmarks.yml`.
+All env-tunable (`REGRESSION_THRESHOLD`, `NOISE_SIGMAS`, `CV_FLOOR`, `BENCH_RUNS`).
+`main` publishes its post-merge numbers separately via `benchmarks.yml`.
 
 ## Benchmark lifecycle (deprecation gate)
 
