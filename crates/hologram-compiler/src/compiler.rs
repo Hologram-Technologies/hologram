@@ -266,7 +266,7 @@ impl Compiler {
                         &self.graph,
                         hologram_graph::NodeId(idx as u32),
                         node,
-                    ),
+                    )?,
                     quant: {
                         // Per-channel (axis ≥ 0): derive channel count + inner
                         // stride from the dequantize input shape; per-tensor
