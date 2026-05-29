@@ -10,13 +10,18 @@ use hologram_compiler::{compile_from_source, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
+// Representative decode-step shapes. `q :32x32 · k :32x32 → qk :32x32`,
+// `attn :32x32 · v :32x32 → ctx :32x32`. Inputs are 32×32 f32 = 4 KiB each,
+// matching the zero buffer used in `bench_execute`. Shape annotations are
+// **required** for MatMul/Gemm operands — the kernel is strictly 2-D and
+// `ShapeArgs::from_graph` refuses missing dims (no silent m=k=n=0 no-op).
 const DECODE_STEP_SOURCE: &str = r"
-input q
-input k
-input v
-op matmul q k as=qk
+input q :32x32
+input k :32x32
+input v :32x32
+op matmul q k :32x32 as=qk
 op softmax qk as=attn
-op matmul attn v as=ctx
+op matmul attn v :32x32 as=ctx
 op layer_norm ctx as=normed
 op relu normed as=out
 output out
