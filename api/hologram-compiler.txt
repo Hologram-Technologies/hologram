@@ -191,7 +191,7 @@ pub hologram_compiler::lower::ShapeArgs::stride_w: u32
 pub hologram_compiler::lower::ShapeArgs::w_in: u32
 pub hologram_compiler::lower::ShapeArgs::w_out: u32
 impl hologram_compiler::lower::ShapeArgs
-pub fn hologram_compiler::lower::ShapeArgs::from_graph(&hologram_graph::graph::Graph, hologram_graph::node::NodeId, &hologram_graph::node::Node) -> Self
+pub fn hologram_compiler::lower::ShapeArgs::from_graph(&hologram_graph::graph::Graph, hologram_graph::node::NodeId, &hologram_graph::node::Node) -> core::result::Result<Self, hologram_compiler::error::CompileError>
 impl core::clone::Clone for hologram_compiler::lower::ShapeArgs
 pub fn hologram_compiler::lower::ShapeArgs::clone(&self) -> hologram_compiler::lower::ShapeArgs
 impl core::default::Default for hologram_compiler::lower::ShapeArgs
