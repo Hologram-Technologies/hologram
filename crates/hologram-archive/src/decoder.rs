@@ -493,6 +493,9 @@ fn read_attn(c: &mut Cursor<'_>) -> Result<AttentionCall, ArchiveError> {
         heads: c.u32()?,
         seq: c.u32()?,
         head_dim: c.u32()?,
+        kv_heads: c.u32()?,
+        causal: c.u8()? != 0,
+        scale_bits: c.u32()?,
         dtype: c.u8()?,
     })
 }

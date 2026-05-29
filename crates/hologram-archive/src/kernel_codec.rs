@@ -703,6 +703,9 @@ fn put_attn(out: &mut Vec<u8>, c: &AttentionCall) {
     put_u32(out, c.heads);
     put_u32(out, c.seq);
     put_u32(out, c.head_dim);
+    put_u32(out, c.kv_heads);
+    put_u8(out, c.causal as u8);
+    put_u32(out, c.scale_bits);
     put_u8(out, c.dtype);
 }
 fn put_where(out: &mut Vec<u8>, c: &WhereCall) {

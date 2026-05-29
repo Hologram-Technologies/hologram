@@ -66,17 +66,14 @@ jobs:
             .
             baseline
 
-      - name: Benchmark PR (merge result, best-of-N)
+      - name: Benchmark PR + baseline (interleaved best-of-N)
         run: |
-          scripts/run-benches.sh "$GITHUB_WORKSPACE/pr-bench.json" "$BENCH_RUNS"
-
-      - name: Benchmark target baseline (best-of-N)
-        working-directory: baseline
-        run: |
-          # Use the PR's scripts (the baseline checkout predates them); the
-          # runner enumerates the baseline's own bench targets.
-          "$GITHUB_WORKSPACE/scripts/run-benches.sh" \
-            "$GITHUB_WORKSPACE/base-bench.json" "$BENCH_RUNS" "$GITHUB_WORKSPACE/scripts"
+          # Interleave the two trees round-by-round on this one runner so the
+          # runner's throughput drift hits both sides equally (a two-phase
+          # comparison mistakes that drift for a regression — see the script).
+          scripts/interleave-bench-gate.sh \
+            "$GITHUB_WORKSPACE" baseline "$GITHUB_WORKSPACE/scripts" "$BENCH_RUNS" \
+            "$GITHUB_WORKSPACE/pr-bench.json" "$GITHUB_WORKSPACE/base-bench.json"
 
       - name: Compare and gate
         run: |
@@ -102,6 +99,4 @@ jobs:
           path: |
             base-bench.json
             pr-bench.json
-            pr-bench-output.txt
-            base-bench-output.txt
           retention-days: 14

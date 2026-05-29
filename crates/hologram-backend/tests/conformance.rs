@@ -751,6 +751,9 @@ fn kc8_attention_conforms_across_scale() {
                 heads: h as u32,
                 seq: s as u32,
                 head_dim: d as u32,
+                kv_heads: 0,
+                causal: false,
+                scale_bits: 0,
                 dtype: DTYPE_F32,
             }),
             vec![
@@ -768,6 +771,161 @@ fn kc8_attention_conforms_across_scale() {
             s,
             &got,
             &ref_attention(&q, &k, &v, b, h, s, d),
+            1e-4,
+        );
+    }
+}
+
+/// Reference SDPA with causal masking, grouped-query head mapping, and an
+/// explicit score divisor — mirrors `attention_f32_engine`. Query head `hi`
+/// reads kv head `hi / (h / hkv)`; `scale_div` is the softmax divisor (the
+/// kernel's `scale`); causal masks keys `kj > qi`.
+#[allow(clippy::too_many_arguments)]
+fn ref_attention_full(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    b: usize,
+    h: usize,
+    hkv: usize,
+    s: usize,
+    d: usize,
+    scale_div: f64,
+    causal: bool,
+) -> Vec<f32> {
+    let group = h / hkv;
+    let mut o = vec![0f32; b * h * s * d];
+    for bi in 0..b {
+        for hi in 0..h {
+            let q_off = (bi * h + hi) * s * d;
+            let kv_off = (bi * hkv + hi / group) * s * d;
+            for qi in 0..s {
+                let mut scores = vec![f64::NEG_INFINITY; s];
+                for (kj, sc) in scores.iter_mut().enumerate() {
+                    if causal && kj > qi {
+                        continue; // masked → stays -inf → weight 0
+                    }
+                    let mut acc = 0f64;
+                    for di in 0..d {
+                        acc +=
+                            f64::from(q[q_off + qi * d + di]) * f64::from(k[kv_off + kj * d + di]);
+                    }
+                    *sc = acc / scale_div;
+                }
+                let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let exps: Vec<f64> = scores.iter().map(|&sc| (sc - max).exp()).collect();
+                let sum: f64 = exps.iter().sum();
+                for di in 0..d {
+                    let mut acc = 0f64;
+                    for (kj, &e) in exps.iter().enumerate() {
+                        acc += (e / sum) * f64::from(v[kv_off + kj * d + di]);
+                    }
+                    o[q_off + qi * d + di] = acc as f32;
+                }
+            }
+        }
+    }
+    o
+}
+
+/// KC-8c: causal masking, grouped-query attention, and an explicit scale —
+/// the SmolLM2-class decoder path. Each case is checked against the reference
+/// above; defaults `(kv_heads=0, causal=false, scale_bits=0)` are already
+/// covered by `kc8_attention_conforms_across_scale`.
+#[test]
+fn kc8c_attention_causal_gqa_scale_conforms() {
+    struct Case {
+        b: usize,
+        h: usize,
+        hkv: usize,
+        s: usize,
+        d: usize,
+        causal: bool,
+        scale_mult: Option<f32>, // None ⇒ default 1/√d divisor
+    }
+    let cases = [
+        // Causal MHA (kv_heads defaulted to heads via 0 in the call).
+        Case {
+            b: 1,
+            h: 4,
+            hkv: 4,
+            s: 16,
+            d: 8,
+            causal: true,
+            scale_mult: None,
+        },
+        // Grouped-query, non-causal: 8 query heads share 2 kv heads.
+        Case {
+            b: 2,
+            h: 8,
+            hkv: 2,
+            s: 12,
+            d: 16,
+            causal: false,
+            scale_mult: None,
+        },
+        // Causal + grouped-query + explicit score multiplier (the decoder path).
+        Case {
+            b: 1,
+            h: 6,
+            hkv: 3,
+            s: 24,
+            d: 16,
+            causal: true,
+            scale_mult: Some(0.125),
+        },
+        // Causal + grouped-query with a single kv head (MQA) + odd seq.
+        Case {
+            b: 1,
+            h: 8,
+            hkv: 1,
+            s: 31,
+            d: 8,
+            causal: true,
+            scale_mult: None,
+        },
+    ];
+    for (idx, c) in cases.iter().enumerate() {
+        let qn = c.b * c.h * c.s * c.d;
+        let kvn = c.b * c.hkv * c.s * c.d;
+        let q = fill(qn, 0x8c0 + idx as u64);
+        let k = fill(kvn, 0x8d0 + idx as u64);
+        let v = fill(kvn, 0x8e0 + idx as u64);
+        let scale_bits = c.scale_mult.map(|m| m.to_bits()).unwrap_or(0);
+        let scale_div = match c.scale_mult {
+            Some(m) => 1.0 / m as f64,
+            None => (c.d as f64).sqrt().max(1.0),
+        };
+        let got = run(
+            KernelCall::Attention(AttentionCall {
+                q: buf(0),
+                k: buf(1),
+                v: buf(2),
+                output: buf(3),
+                batch: c.b as u32,
+                heads: c.h as u32,
+                seq: c.s as u32,
+                head_dim: c.d as u32,
+                kv_heads: if c.hkv == c.h { 0 } else { c.hkv as u32 },
+                causal: c.causal,
+                scale_bits,
+                dtype: DTYPE_F32,
+            }),
+            vec![
+                f32_to_le(&q),
+                f32_to_le(&k),
+                f32_to_le(&v),
+                vec![0u8; qn * 4],
+            ],
+            3,
+        );
+        check(
+            "attention_causal_gqa",
+            c.b,
+            c.h,
+            c.s,
+            &got,
+            &ref_attention_full(&q, &k, &v, c.b, c.h, c.hkv, c.s, c.d, scale_div, c.causal),
             1e-4,
         );
     }
@@ -1215,6 +1373,9 @@ fn kc8b_bf16_attention_routes_through_engine() {
         heads: ah as u32,
         seq: asq as u32,
         head_dim: ad as u32,
+        kv_heads: 0,
+        causal: false,
+        scale_bits: 0,
         dtype: DTYPE_BF16,
     });
     let mut backend: CpuBackend<TestWorkspace> = CpuBackend::new();

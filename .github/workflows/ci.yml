@@ -228,7 +228,138 @@ jobs:
       - name: Release API-history flow test
         run: bash scripts/test-release-tooling.sh
 
-  # Job 11: Verify all quality gates passed
+  # Job 11: Deployment-substrate V&V — the container substrate's own conformance
+  # catalog (CR/ST/SP/NW/HAL/CM/DI/RB/TR/SPINE classes; see
+  # specs/docs/container-substrate-vv.md), which `cargo test --workspace` does
+  # not fully exercise: the live HTTP-CAS transport (--features live), the RZ
+  # gate (the tensor compute engine must be absent from store/route crates), the
+  # no_std tri-target builds, and the runnable real-world examples. Mirrors the
+  # `vv-substrate` + `examples` recipes of the Justfile.
+  substrate:
+    name: Substrate V&V (storage · runtime · network)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, thumbv7em-none-eabi
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: substrate
+
+      - name: Conformance + worked-example battery
+        run: |
+          cargo test \
+            -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
+            -p hologram-store-mem -p hologram-store-native -p hologram-store-bare \
+            -p hologram-net-http -p hologram-net-tcp -p hologram-runtime \
+            -p hologram-runtime-wasmtime -p hologram-substrate-cli -p hologram-bare-hal \
+            -p hologram-runtime-bare -p hologram-net-bare
+
+      - name: Live HTTP-CAS transport (NW class, --features live)
+        run: cargo test -p hologram-net-http --features live
+
+      - name: RZ gate — compute engine absent from store/route crates
+        run: |
+          set -euo pipefail
+          for c in hologram-store-mem hologram-store-native hologram-store-bare \
+                   hologram-net-http hologram-net-tcp hologram-runtime \
+                   hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare \
+                   hologram-substrate-cli; do
+            if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
+              echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
+            fi
+            echo "  $c: RZ ok"
+          done
+
+      - name: no_std tri-target — substrate builds for browser + bare-metal (TR class)
+        run: |
+          cargo build --target wasm32-unknown-unknown --no-default-features \
+            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+            -p hologram-net-http -p hologram-runtime \
+            -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
+          cargo build --target thumbv7em-none-eabi --no-default-features \
+            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+            -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
+            -p hologram-net-bare
+
+      - name: Real-world examples (runnable capability narratives)
+        run: |
+          for ex in cas_artifact_cache event_bus least_privilege wasm_inference_container live_migration; do
+            cargo run -q -p hologram-runtime-wasmtime --example "$ex"
+          done
+
+  # Job 12: End-to-end bare-metal boot (BOOT class) — build hologram.efi and boot
+  # it in QEMU/OVMF with no OS underneath, asserting the engine's storage
+  # self-check prints PASS on the UEFI console. Mirrors the `uefi-boot` recipe.
+  substrate-uefi-boot:
+    name: Bare-metal UEFI boot (QEMU/OVMF)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+
+      - name: Install QEMU + OVMF firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: substrate-uefi
+          workspaces: substrate/hologram-efi
+
+      - name: Boot hologram.efi and assert PASS
+        run: ./scripts/uefi-boot-test.sh
+
+  # Job 13: End-to-end browser OPFS store (OPFS class) — build the wasm32 store,
+  # generate JS glue, and exercise put/get round-trip + reload persistence +
+  # verify-on-receipt in real Chromium via Playwright. Mirrors the `opfs-test` recipe.
+  substrate-opfs:
+    name: Browser OPFS store (Chromium/Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: substrate-opfs
+
+      - name: Install wasm-bindgen-cli (pinned to the crate's wasm-bindgen)
+        run: cargo install wasm-bindgen-cli --version 0.2.122 --locked
+
+      - name: Install Playwright Chromium
+        run: |
+          cd substrate/hologram-store-opfs/web
+          npm install
+          npx --yes playwright install --with-deps chromium
+
+      - name: Run OPFS test in Chromium
+        run: ./scripts/opfs-browser-test.sh
+
+  # Job 14: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()
@@ -241,6 +372,9 @@ jobs:
       - cross-targets
       - vv
       - tooling-tests
+      - substrate
+      - substrate-uefi-boot
+      - substrate-opfs
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

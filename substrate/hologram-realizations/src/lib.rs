@@ -1,0 +1,911 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+//! # hologram-realizations
+//!
+//! The Hologram deployment-substrate canonical-form realizations (spec Appendix B). Each is
+//! **IRI-tagged** (SPINE-2), **embeds its operand κ-labels** in a uniform layout, and exposes
+//! [`references`](hologram_substrate_core::Realization::references) as the *inverse projection*
+//! recovering exactly those operands (SPINE-3). Identity is the leaf κ-label of the
+//! operand-embedding canonical form (architecture §3.3 / G-A2: the witnessed-composition binding
+//! is a tracked upgrade — uor-addr ships only commutative `compose_g2_product_blake3`, and the
+//! ordered PrismModel lives behind the compute engine, excluded by RZ).
+
+extern crate alloc;
+
+use alloc::vec::Vec;
+use hologram_substrate_core::{
+    address_bytes, Capabilities, KappaLabel, KappaLabel71, RealizationError, References,
+};
+
+// ───────────────────── uniform operand-embedding layout (SPINE-2/3) ─────────────────────
+
+const KAPPA71: usize = 71;
+
+/// Encode a realization's canonical form: `IRI ‖ 0x00 ‖ u32(n_refs) ‖ n_refs×κ71 ‖ u32(len) ‖ payload`.
+/// The embedded κ-labels are the artifact's reachability edges; the payload carries axis-typed
+/// scalar/opaque content that does not itself name κ-labels.
+fn encode(iri: &str, refs: &[KappaLabel71], payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(iri.len() + 1 + 8 + refs.len() * KAPPA71 + payload.len());
+    out.extend_from_slice(iri.as_bytes());
+    out.push(0);
+    out.extend_from_slice(&(refs.len() as u32).to_le_bytes());
+    for r in refs {
+        out.extend_from_slice(r.as_array());
+    }
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Generic inverse projection (SPINE-3): validate the leading IRI, then recover exactly the
+/// embedded operand κ-labels. Used by every realization's `references()`.
+fn extract_refs(iri: &str, bytes: &[u8]) -> Result<References, RealizationError> {
+    let nul = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or(RealizationError::Malformed)?;
+    if &bytes[..nul] != iri.as_bytes() {
+        return Err(RealizationError::WrongIri);
+    }
+    let mut cur = nul + 1;
+    let n = read_u32(bytes, &mut cur)? as usize;
+    let mut refs = Vec::with_capacity(n);
+    for _ in 0..n {
+        let end = cur
+            .checked_add(KAPPA71)
+            .ok_or(RealizationError::Truncated)?;
+        let arr: [u8; KAPPA71] = bytes
+            .get(cur..end)
+            .ok_or(RealizationError::Truncated)?
+            .try_into()
+            .map_err(|_| RealizationError::Truncated)?;
+        refs.push(KappaLabel::from_bytes(&arr).map_err(|_| RealizationError::Malformed)?);
+        cur = end;
+    }
+    Ok(refs)
+}
+
+fn read_u32(bytes: &[u8], cur: &mut usize) -> Result<u32, RealizationError> {
+    let end = cur.checked_add(4).ok_or(RealizationError::Truncated)?;
+    let arr: [u8; 4] = bytes
+        .get(*cur..end)
+        .ok_or(RealizationError::Truncated)?
+        .try_into()
+        .map_err(|_| RealizationError::Truncated)?;
+    *cur = end;
+    Ok(u32::from_le_bytes(arr))
+}
+
+fn read_u64(bytes: &[u8], cur: &mut usize) -> Result<u64, RealizationError> {
+    let end = cur.checked_add(8).ok_or(RealizationError::Truncated)?;
+    let arr: [u8; 8] = bytes
+        .get(*cur..end)
+        .ok_or(RealizationError::Truncated)?
+        .try_into()
+        .map_err(|_| RealizationError::Truncated)?;
+    *cur = end;
+    Ok(u64::from_le_bytes(arr))
+}
+
+/// The opaque payload a realization's canonical form carries after its embedded operand κ-labels
+/// (the inverse of `encode`'s payload region) — used to recover a snapshot's linear-memory digest
+/// or a capability set's scalar budgets.
+pub fn payload_of(iri: &str, bytes: &[u8]) -> Result<alloc::vec::Vec<u8>, RealizationError> {
+    let nul = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or(RealizationError::Malformed)?;
+    if &bytes[..nul] != iri.as_bytes() {
+        return Err(RealizationError::WrongIri);
+    }
+    let mut cur = nul + 1;
+    let n = read_u32(bytes, &mut cur)? as usize;
+    cur = cur
+        .checked_add(n * KAPPA71)
+        .ok_or(RealizationError::Truncated)?;
+    let len = read_u32(bytes, &mut cur)? as usize;
+    let end = cur.checked_add(len).ok_or(RealizationError::Truncated)?;
+    Ok(bytes
+        .get(cur..end)
+        .ok_or(RealizationError::Truncated)?
+        .to_vec())
+}
+
+/// Macro: a realization whose `references()` is the generic inverse projection over its IRI.
+macro_rules! realization {
+    ($ty:ty, $iri:literal) => {
+        impl hologram_substrate_core::Realization for $ty {
+            const IRI: hologram_substrate_core::RealizationId = $iri;
+            fn canonicalize(&self) -> Vec<u8> {
+                let (refs, payload) = self.parts();
+                encode($iri, &refs, &payload)
+            }
+            fn references(canonical_bytes: &[u8]) -> Result<References, RealizationError> {
+                extract_refs($iri, canonical_bytes)
+            }
+        }
+        impl $ty {
+            /// The realization's leaf κ-label (content address of the operand-embedding form).
+            pub fn kappa(&self) -> KappaLabel71 {
+                use hologram_substrate_core::Realization;
+                address_bytes(&self.canonicalize())
+            }
+        }
+    };
+}
+
+// ───────────────────────────── the realizations (spec Appendix B) ─────────────────────────────
+
+/// `https://hologram.foundation/realization/container-manifest` — the Container ID *is* the
+/// manifest (spec §4.1). Operands: code module, initial state, instantiation parameters.
+pub struct ContainerManifest {
+    pub code: KappaLabel71,
+    pub initial_state: KappaLabel71,
+    pub parameters: KappaLabel71,
+}
+impl ContainerManifest {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (
+            alloc::vec![self.code, self.initial_state, self.parameters],
+            Vec::new(),
+        )
+    }
+}
+realization!(
+    ContainerManifest,
+    "https://hologram.foundation/realization/container-manifest"
+);
+
+/// `https://hologram.foundation/realization/capability-set` — a container's authority (spec §4.5).
+/// Operands are the κ-labels it grants access to (storage roots, publish/subscribe channels) —
+/// the reachability roots; payload carries the scalar budgets/flags. **Delegation containment**
+/// (TypeInclusion/SubtypingLattice, §3.4) is a runtime/Phase-3 concern and is *not* faked here.
+pub struct CapabilitySet {
+    pub caps: Capabilities,
+}
+impl CapabilitySet {
+    pub fn new(caps: Capabilities) -> Self {
+        Self { caps }
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let c = &self.caps;
+        let mut refs = Vec::new();
+        refs.extend_from_slice(&c.storage_roots);
+        refs.extend_from_slice(&c.publish_channels);
+        refs.extend_from_slice(&c.subscribe_channels);
+        // Payload encodes the group counts (so the refs split back into the three sets) + budgets.
+        let mut p = Vec::new();
+        p.extend_from_slice(&(c.storage_roots.len() as u32).to_le_bytes());
+        p.extend_from_slice(&(c.publish_channels.len() as u32).to_le_bytes());
+        p.extend_from_slice(&(c.subscribe_channels.len() as u32).to_le_bytes());
+        p.extend_from_slice(&c.storage_quota_bytes.to_le_bytes());
+        p.extend_from_slice(&c.memory_max_bytes.to_le_bytes());
+        p.extend_from_slice(&c.cpu_time_per_event_ms.to_le_bytes());
+        p.extend_from_slice(&c.priority_weight.to_le_bytes());
+        p.push((c.network_fetch as u8) | ((c.network_announce as u8) << 1));
+        (refs, p)
+    }
+    /// Decode a capability-set canonical form back to its [`Capabilities`] view — the inverse of
+    /// `canonicalize`. The runtime decodes the spawn'd caps κ-label to enforce `admits` (CR).
+    pub fn to_capabilities(bytes: &[u8]) -> Result<Capabilities, RealizationError> {
+        let refs = <Self as hologram_substrate_core::Realization>::references(bytes)?;
+        let payload = payload_of(
+            "https://hologram.foundation/realization/capability-set",
+            bytes,
+        )?;
+        let mut cur = 0usize;
+        let ns = read_u32(&payload, &mut cur)? as usize;
+        let np = read_u32(&payload, &mut cur)? as usize;
+        let nsub = read_u32(&payload, &mut cur)? as usize;
+        if ns + np + nsub != refs.len() {
+            return Err(RealizationError::Malformed);
+        }
+        let storage_quota_bytes = read_u64(&payload, &mut cur)?;
+        let memory_max_bytes = read_u64(&payload, &mut cur)?;
+        let cpu_time_per_event_ms = read_u64(&payload, &mut cur)?;
+        let priority_weight = read_u32(&payload, &mut cur)?;
+        let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
+        Ok(Capabilities {
+            storage_roots: refs[..ns].to_vec(),
+            publish_channels: refs[ns..ns + np].to_vec(),
+            subscribe_channels: refs[ns + np..].to_vec(),
+            storage_quota_bytes,
+            memory_max_bytes,
+            cpu_time_per_event_ms,
+            priority_weight,
+            network_fetch: flags & 1 != 0,
+            network_announce: flags & 2 != 0,
+        })
+    }
+}
+realization!(
+    CapabilitySet,
+    "https://hologram.foundation/realization/capability-set"
+);
+
+/// `https://hologram.foundation/realization/snapshot` — suspended container state (spec §4.7,
+/// arch §11.6). Operands: the Container ID and the prior snapshot (the suspend/resume chain).
+/// Payload: the **storage-quota ledger** (`storage_used`, 8 bytes LE) followed by the opaque
+/// linear-memory / globals / cursor digest. Carrying `storage_used` here is what keeps the
+/// container's storage quota honest across suspend/resume (arch §11.6): the κ binds the ledger.
+pub struct Snapshot {
+    pub container_id: KappaLabel71,
+    pub previous: Option<KappaLabel71>,
+    pub storage_used: u64,
+    pub state_payload: Vec<u8>,
+}
+impl Snapshot {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.container_id];
+        if let Some(p) = self.previous {
+            refs.push(p);
+        }
+        let mut payload = Vec::with_capacity(8 + self.state_payload.len());
+        payload.extend_from_slice(&self.storage_used.to_le_bytes());
+        payload.extend_from_slice(&self.state_payload);
+        (refs, payload)
+    }
+}
+
+impl Snapshot {
+    /// Parse a Snapshot's payload (as returned by [`payload_of`]) into `(storage_used, mem_bytes)`.
+    /// Returns `RealizationError::Truncated` if the payload is shorter than the 8-byte ledger.
+    pub fn parse_payload(bytes: &[u8]) -> Result<(u64, &[u8]), RealizationError> {
+        if bytes.len() < 8 {
+            return Err(RealizationError::Truncated);
+        }
+        let arr: [u8; 8] = bytes[..8].try_into().unwrap();
+        Ok((u64::from_le_bytes(arr), &bytes[8..]))
+    }
+}
+realization!(Snapshot, "https://hologram.foundation/realization/snapshot");
+
+/// `https://hologram.foundation/realization/runtime-state` — the runtime's durable root (spec §7.2).
+/// Operands: peer keyed ID, error-log root, active container IDs. Payload: scalar counters.
+pub struct RuntimeState {
+    pub peer_keyed_id: KappaLabel71,
+    pub error_log_root: KappaLabel71,
+    pub active_containers: Vec<KappaLabel71>,
+    pub counters_payload: Vec<u8>,
+}
+impl RuntimeState {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.peer_keyed_id, self.error_log_root];
+        refs.extend_from_slice(&self.active_containers);
+        (refs, self.counters_payload.clone())
+    }
+}
+realization!(
+    RuntimeState,
+    "https://hologram.foundation/realization/runtime-state"
+);
+
+/// `https://hologram.foundation/realization/error-event` — an error occurrence (spec §7.5).
+/// Operands: the source Container ID, the predecessor error-event (the append-only log chain),
+/// and an optional payload-context κ. Payload: classification + code.
+pub struct ErrorEvent {
+    pub source: KappaLabel71,
+    pub predecessor: Option<KappaLabel71>,
+    pub context: Option<KappaLabel71>,
+    /// `[classification:u8][code:u32]`.
+    pub class_code_payload: Vec<u8>,
+}
+impl ErrorEvent {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.source];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        if let Some(c) = self.context {
+            refs.push(c);
+        }
+        (refs, self.class_code_payload.clone())
+    }
+}
+realization!(
+    ErrorEvent,
+    "https://hologram.foundation/realization/error-event"
+);
+
+/// `https://hologram.foundation/realization/channel` — a channel declaration (spec §4.4).
+/// Operand: the payload type-shape κ (if any). Payload: name + retention + peer-scope.
+pub struct Channel {
+    pub type_shape: Option<KappaLabel71>,
+    pub decl_payload: Vec<u8>,
+}
+impl Channel {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let refs = self.type_shape.map(|t| alloc::vec![t]).unwrap_or_default();
+        (refs, self.decl_payload.clone())
+    }
+}
+realization!(Channel, "https://hologram.foundation/realization/channel");
+
+/// `https://hologram.foundation/realization/route` — the keyed-ID / data-bus primitive (spec §4.4):
+/// publishing a payload κ to a channel κ is structurally adding a Route whose `endpoint` is the
+/// channel and whose `target` is the published κ. Channels are append-only by construction — a
+/// channel's message history is the set of Routes with that endpoint. Operands: [endpoint, target].
+pub struct Route {
+    pub endpoint: KappaLabel71,
+    pub target: KappaLabel71,
+}
+impl Route {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (alloc::vec![self.endpoint, self.target], Vec::new())
+    }
+}
+realization!(Route, "https://hologram.foundation/realization/route");
+
+/// `https://hologram.foundation/realization/peer-endpoint` — a **peer's transport address**,
+/// content-addressed (architecture §11.1 / NW-tcp). A peer's identity κ on the network is the
+/// κ of this realization; the `transport_payload` carries the wire form `proto:u8 | port:u16
+/// LE | host_bytes` so a receiver can dial back without needing PeerIds or Multiaddrs (the
+/// non-uor-native naming surfaces the substrate replaced libp2p with). No operands — the
+/// endpoint is a leaf identity.
+///
+/// **Wire format**: `proto:u8 | port:u16 LE | host_bytes`. Proto byte distinguishes:
+///   - `0` = TCPv4, host is 4 bytes (total 7 bytes)
+///   - `1` = TCPv6, host is 16 bytes (total 19 bytes)
+///
+/// Both protos are first-class — neither silently falls back to the other (SPINE-6).
+pub struct PeerEndpoint {
+    /// `proto:u8 | port:u16 LE | host_bytes (4 or 16 depending on proto)`.
+    pub transport_payload: Vec<u8>,
+}
+impl PeerEndpoint {
+    /// Wire byte for TCPv4.
+    pub const PROTO_TCP4: u8 = 0;
+    /// Wire byte for TCPv6.
+    pub const PROTO_TCP6: u8 = 1;
+
+    /// Build a TCPv4 endpoint payload from `(host, port)`.
+    pub fn tcp4(host: [u8; 4], port: u16) -> Self {
+        let mut payload = Vec::with_capacity(1 + 2 + 4);
+        payload.push(Self::PROTO_TCP4);
+        payload.extend_from_slice(&port.to_le_bytes());
+        payload.extend_from_slice(&host);
+        Self {
+            transport_payload: payload,
+        }
+    }
+    /// Build a TCPv6 endpoint payload from `(host, port)`.
+    pub fn tcp6(host: [u8; 16], port: u16) -> Self {
+        let mut payload = Vec::with_capacity(1 + 2 + 16);
+        payload.push(Self::PROTO_TCP6);
+        payload.extend_from_slice(&port.to_le_bytes());
+        payload.extend_from_slice(&host);
+        Self {
+            transport_payload: payload,
+        }
+    }
+    /// Parse a TCPv4 endpoint back to `(host, port)`. Returns `None` for other protos / malformed
+    /// payloads — the caller is expected to dispatch on `[0]` first if it accepts both protos.
+    pub fn parse_tcp4(bytes: &[u8]) -> Option<([u8; 4], u16)> {
+        if bytes.len() != 1 + 2 + 4 || bytes[0] != Self::PROTO_TCP4 {
+            return None;
+        }
+        let port = u16::from_le_bytes([bytes[1], bytes[2]]);
+        let mut host = [0u8; 4];
+        host.copy_from_slice(&bytes[3..7]);
+        Some((host, port))
+    }
+    /// Parse a TCPv6 endpoint back to `(host, port)`.
+    pub fn parse_tcp6(bytes: &[u8]) -> Option<([u8; 16], u16)> {
+        if bytes.len() != 1 + 2 + 16 || bytes[0] != Self::PROTO_TCP6 {
+            return None;
+        }
+        let port = u16::from_le_bytes([bytes[1], bytes[2]]);
+        let mut host = [0u8; 16];
+        host.copy_from_slice(&bytes[3..19]);
+        Some((host, port))
+    }
+    /// Total on-the-wire payload size given the proto byte (`proto:u8 | port:u16 | host`).
+    /// Returns `None` for unknown protos.
+    pub fn payload_size_for_proto(proto: u8) -> Option<usize> {
+        match proto {
+            Self::PROTO_TCP4 => Some(1 + 2 + 4),
+            Self::PROTO_TCP6 => Some(1 + 2 + 16),
+            _ => None,
+        }
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (Vec::new(), self.transport_payload.clone())
+    }
+}
+realization!(
+    PeerEndpoint,
+    "https://hologram.foundation/realization/peer-endpoint"
+);
+
+/// `https://hologram.foundation/realization/chain-compaction` — a **chain-compaction barrier**
+/// (architecture §9 G-C4 → §11). Used to bound the unbounded predecessor chains of `ErrorEvent`
+/// (and any other realization that chains by `predecessor`). Operands: **none** — by design,
+/// a compaction barrier *breaks* the predecessor pointer chain so the older tail becomes
+/// unreachable from any pinned root and the storage backend's reachability GC reclaims it
+/// (SPINE-5). Payload: `fold_count:u32 LE | boundary:KappaLabel71` — a content-bound summary
+/// of the folded segment; the `boundary` κ is `address_bytes(head_κ || fold_count)` so an
+/// auditor can prove "exactly K events ending at this boundary were compacted here" but
+/// cannot recover the individual entries.
+pub struct ChainCompaction {
+    pub fold_count: u32,
+    pub boundary: KappaLabel71,
+}
+impl ChainCompaction {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        // The boundary κ is part of the *payload* (content-bound metadata), not the operand
+        // set, because reachability via `references()` must stop at the compaction barrier —
+        // that's the entire point of the bound.
+        let mut payload = Vec::with_capacity(4 + 71);
+        payload.extend_from_slice(&self.fold_count.to_le_bytes());
+        payload.extend_from_slice(self.boundary.as_array());
+        (Vec::new(), payload)
+    }
+}
+realization!(
+    ChainCompaction,
+    "https://hologram.foundation/realization/chain-compaction"
+);
+
+/// `https://hologram.foundation/realization/delegation` — a parent → child **capability-delegation
+/// edge** in the κ-graph (arch §11.8). Minted by the runtime on `spawn_child(parent, child_caps)`
+/// so the parent-child relation is *expressed in the κ-graph* rather than a side-channel map. The
+/// transitive-revoke walk recovers the delegation cone by the inverse projection over Delegation
+/// references: `revoke(κ_p)` ⇒ revoke every `child_caps` reachable from `parent_caps == κ_p`.
+/// Operands: [parent_caps, child_caps].
+pub struct Delegation {
+    pub parent_caps: KappaLabel71,
+    pub child_caps: KappaLabel71,
+}
+impl Delegation {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (alloc::vec![self.parent_caps, self.child_caps], Vec::new())
+    }
+}
+realization!(
+    Delegation,
+    "https://hologram.foundation/realization/delegation"
+);
+
+// ─────────────────── bare-metal sibling realizations (arch §3.3) ───────────────────
+// Each adopts the same operand-embedding canonical form as the universal realizations above,
+// so reachability walks, GC, and verify-on-receipt work uniformly across substrates.
+
+/// `https://hologram.foundation/realization/bare-metal-storage-format` — the on-disk layout
+/// descriptor (bare-metal §5). Operands: the boot-config κ (the substrate's measured-boot
+/// anchor). Payload: format version, sector size, block count, header A/B LBAs, pinned-list
+/// head LBA, free-extent head LBA. Pinned in the on-disk header so the format is **self-
+/// describing** — a fresh peer can recover the substrate by reading this realization first.
+pub struct BareMetalStorageFormat {
+    pub boot_config: KappaLabel71,
+    /// `version:u32 LE | sector_size:u32 LE | block_count:u64 LE | header_a:u64 LE |
+    ///  header_b:u64 LE | pinned_head:u64 LE | free_head:u64 LE`.
+    pub layout_payload: Vec<u8>,
+}
+impl BareMetalStorageFormat {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (alloc::vec![self.boot_config], self.layout_payload.clone())
+    }
+}
+realization!(
+    BareMetalStorageFormat,
+    "https://hologram.foundation/realization/bare-metal-storage-format"
+);
+
+/// `https://hologram.foundation/realization/runtime-state-region` — a *physical region* holding
+/// a [`RuntimeState`] copy on disk (bare-metal §4.5). Operand: the RuntimeState κ that this
+/// region currently materializes. Payload: `region_lba:u64 LE | region_sectors:u32 LE |
+/// generation:u64 LE | reboot_epoch:u64 LE`. The pair (`generation`, `reboot_epoch`) is the
+/// **reboot-monotonic ordering** that resolves G-C1: two regions are compared by `reboot_epoch`
+/// first (which is persisted and incremented on each boot) and `generation` within an epoch,
+/// not by UorTime (which resets across reboots).
+pub struct RuntimeStateRegion {
+    pub state: KappaLabel71,
+    /// `region_lba | region_sectors | generation | reboot_epoch` LE.
+    pub region_payload: Vec<u8>,
+}
+impl RuntimeStateRegion {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (alloc::vec![self.state], self.region_payload.clone())
+    }
+    /// Decode `(region_lba, region_sectors, generation, reboot_epoch)` from the region payload.
+    pub fn decode(bytes: &[u8]) -> Result<(u64, u32, u64, u64), RealizationError> {
+        let p = payload_of(
+            "https://hologram.foundation/realization/runtime-state-region",
+            bytes,
+        )?;
+        let mut cur = 0usize;
+        let lba = read_u64(&p, &mut cur)?;
+        let sectors = read_u32(&p, &mut cur)?;
+        let gen_ = read_u64(&p, &mut cur)?;
+        let epoch = read_u64(&p, &mut cur)?;
+        Ok((lba, sectors, gen_, epoch))
+    }
+}
+realization!(
+    RuntimeStateRegion,
+    "https://hologram.foundation/realization/runtime-state-region"
+);
+
+/// `https://hologram.foundation/realization/hardware-inventory` — the set of HAL devices a
+/// bare-metal node has bound, recorded as a κ-graph node at boot (TR class §10.17). Operands:
+/// one κ per bound device (each device is itself a codemodule κ — its driver). Payload:
+/// `n_block:u32 LE | n_nic:u32 LE` describing how to partition the operand list.
+pub struct HardwareInventory {
+    /// Block-device driver κs.
+    pub block_devices: Vec<KappaLabel71>,
+    /// NIC driver κs.
+    pub nics: Vec<KappaLabel71>,
+}
+impl HardwareInventory {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = Vec::with_capacity(self.block_devices.len() + self.nics.len());
+        refs.extend_from_slice(&self.block_devices);
+        refs.extend_from_slice(&self.nics);
+        let mut p = Vec::with_capacity(8);
+        p.extend_from_slice(&(self.block_devices.len() as u32).to_le_bytes());
+        p.extend_from_slice(&(self.nics.len() as u32).to_le_bytes());
+        (refs, p)
+    }
+}
+realization!(
+    HardwareInventory,
+    "https://hologram.foundation/realization/hardware-inventory"
+);
+
+/// `https://hologram.foundation/realization/crash-record` — a captured fault (bare-metal §7.5).
+/// Operand: the source RuntimeState κ at crash time; an optional predecessor crash κ chains the
+/// post-mortem log. Payload: `(class:u8, code:u32, reboot_epoch:u64, message_bytes)`.
+pub struct CrashRecord {
+    pub source_state: KappaLabel71,
+    pub predecessor: Option<KappaLabel71>,
+    pub crash_payload: Vec<u8>,
+}
+impl CrashRecord {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.source_state];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        (refs, self.crash_payload.clone())
+    }
+}
+realization!(
+    CrashRecord,
+    "https://hologram.foundation/realization/crash-record"
+);
+
+/// `https://hologram.foundation/realization/diagnostic-lba-record` — one diagnostic-log line
+/// written to the dedicated diagnostic LBA region (bare-metal §7.6). Operand: the source
+/// RuntimeState κ that emitted it; optional predecessor κ chains the diagnostic stream.
+/// Payload: `severity:u8 | code:u32 | reboot_epoch:u64 | message`. Append-only by SPINE-5.
+pub struct DiagnosticLbaRecord {
+    pub source_state: KappaLabel71,
+    pub predecessor: Option<KappaLabel71>,
+    pub diag_payload: Vec<u8>,
+}
+impl DiagnosticLbaRecord {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.source_state];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        (refs, self.diag_payload.clone())
+    }
+}
+realization!(
+    DiagnosticLbaRecord,
+    "https://hologram.foundation/realization/diagnostic-lba-record"
+);
+
+/// `https://hologram.foundation/realization/intent-log-record` — an intent-log entry used
+/// during crash recovery (bare-metal §5.5). Operands: the affected resource κs (typically the
+/// content κ being put / pinned). Payload: `opcode:u8 | params...`. The intent log makes the
+/// crash recovery O(1) — the recover path replays only un-committed intents.
+pub struct IntentLogRecord {
+    pub affected: Vec<KappaLabel71>,
+    pub intent_payload: Vec<u8>,
+}
+impl IntentLogRecord {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (self.affected.clone(), self.intent_payload.clone())
+    }
+}
+realization!(
+    IntentLogRecord,
+    "https://hologram.foundation/realization/intent-log-record"
+);
+
+/// `https://hologram.foundation/realization/gc-mark-state` — a checkpoint of an in-progress
+/// reachability-GC mark phase (bare-metal §5.5). Operands: the frontier κs still to walk.
+/// Payload: `phase:u8 | marked_count:u64 | evicted_count:u64` (counters). The realization
+/// makes long-running GC resumable across reboots — pick up the mark phase from this κ.
+pub struct GcMarkState {
+    pub frontier: Vec<KappaLabel71>,
+    pub gc_payload: Vec<u8>,
+}
+impl GcMarkState {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (self.frontier.clone(), self.gc_payload.clone())
+    }
+}
+realization!(
+    GcMarkState,
+    "https://hologram.foundation/realization/gc-mark-state"
+);
+
+/// `https://hologram.foundation/realization/hardware-abstraction-traits` — a κ-addressed
+/// declaration of the HAL trait surface a bare-metal substrate honors (BlockDevice,
+/// NetworkInterface). Operands: codemodule κs for each trait's reference implementation (so a
+/// fresh peer can locate, verify, and load the reference adapters by κ alone). Payload:
+/// `n_trait_impls:u32 | trait_names...` (length-prefixed names).
+pub struct HardwareAbstractionTraits {
+    pub trait_impls: Vec<KappaLabel71>,
+    pub traits_payload: Vec<u8>,
+}
+impl HardwareAbstractionTraits {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (self.trait_impls.clone(), self.traits_payload.clone())
+    }
+}
+realization!(
+    HardwareAbstractionTraits,
+    "https://hologram.foundation/realization/hardware-abstraction-traits"
+);
+
+/// `https://hologram.foundation/realization/boot-config` — the **measured-boot** anchor of a
+/// bare-metal node (arch §12.6 generalized). Operands: the block-device driver κ, the NIC
+/// driver κ, the hardware-abstraction-traits κ, and an optional initial RuntimeState κ.
+/// Payload: `policy_bits:u32 LE | initial_reboot_epoch:u64 LE`. The container substrate verifies
+/// every driver κ recorded here against the σ-axis at bring-up; a tampered binary fails to boot.
+pub struct BootConfig {
+    pub block_driver: KappaLabel71,
+    pub nic_driver: KappaLabel71,
+    pub hal_traits: KappaLabel71,
+    pub initial_state: Option<KappaLabel71>,
+    /// `policy_bits:u32 LE | initial_reboot_epoch:u64 LE`.
+    pub boot_payload: Vec<u8>,
+}
+impl BootConfig {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.block_driver, self.nic_driver, self.hal_traits];
+        if let Some(s) = self.initial_state {
+            refs.push(s);
+        }
+        (refs, self.boot_payload.clone())
+    }
+}
+realization!(
+    BootConfig,
+    "https://hologram.foundation/realization/boot-config"
+);
+
+// ───────────────────────────── registry (G-D4) ─────────────────────────────
+
+use hologram_substrate_core::{Realization, RealizationId, RefExtractor};
+
+/// The IRI → reference-extractor table the storage backend borrows for reachability walks
+/// (spec §5.3). One row per realization above. Static (no_std-friendly).
+pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
+    (
+        ContainerManifest::IRI,
+        <ContainerManifest as Realization>::references,
+    ),
+    (
+        CapabilitySet::IRI,
+        <CapabilitySet as Realization>::references,
+    ),
+    (Snapshot::IRI, <Snapshot as Realization>::references),
+    (RuntimeState::IRI, <RuntimeState as Realization>::references),
+    (ErrorEvent::IRI, <ErrorEvent as Realization>::references),
+    (Channel::IRI, <Channel as Realization>::references),
+    (Route::IRI, <Route as Realization>::references),
+    (Delegation::IRI, <Delegation as Realization>::references),
+    (
+        ChainCompaction::IRI,
+        <ChainCompaction as Realization>::references,
+    ),
+    (PeerEndpoint::IRI, <PeerEndpoint as Realization>::references),
+    // Bare-metal sibling realizations (arch §3.3, D1).
+    (
+        BareMetalStorageFormat::IRI,
+        <BareMetalStorageFormat as Realization>::references,
+    ),
+    (
+        RuntimeStateRegion::IRI,
+        <RuntimeStateRegion as Realization>::references,
+    ),
+    (
+        HardwareInventory::IRI,
+        <HardwareInventory as Realization>::references,
+    ),
+    (CrashRecord::IRI, <CrashRecord as Realization>::references),
+    (
+        DiagnosticLbaRecord::IRI,
+        <DiagnosticLbaRecord as Realization>::references,
+    ),
+    (
+        IntentLogRecord::IRI,
+        <IntentLogRecord as Realization>::references,
+    ),
+    (GcMarkState::IRI, <GcMarkState as Realization>::references),
+    (
+        HardwareAbstractionTraits::IRI,
+        <HardwareAbstractionTraits as Realization>::references,
+    ),
+    (BootConfig::IRI, <BootConfig as Realization>::references),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hologram_substrate_core::{references, Realization};
+
+    fn k(seed: &[u8]) -> KappaLabel71 {
+        address_bytes(seed)
+    }
+
+    #[test]
+    fn manifest_references_are_exactly_the_embedded_operands() {
+        let m = ContainerManifest {
+            code: k(b"code"),
+            initial_state: k(b"state"),
+            parameters: k(b"params"),
+        };
+        let bytes = m.canonicalize();
+        let refs = ContainerManifest::references(&bytes).unwrap();
+        assert_eq!(refs, alloc::vec![k(b"code"), k(b"state"), k(b"params")]);
+    }
+
+    #[test]
+    fn registry_dispatch_recovers_references_without_knowing_the_type() {
+        let s = Snapshot {
+            container_id: k(b"cid"),
+            previous: Some(k(b"prev")),
+            storage_used: 0,
+            state_payload: alloc::vec![1, 2, 3],
+        };
+        let bytes = s.canonicalize();
+        // The store only sees bytes + the registry; it recovers edges via the embedded IRI.
+        let refs = references(&bytes, REGISTRY).unwrap();
+        assert_eq!(refs, alloc::vec![k(b"cid"), k(b"prev")]);
+    }
+
+    #[test]
+    fn wrong_iri_is_rejected() {
+        let c = Channel {
+            type_shape: None,
+            decl_payload: alloc::vec![9],
+        };
+        let mut bytes = c.canonicalize();
+        bytes[0] = b'X';
+        assert!(Channel::references(&bytes).is_err());
+    }
+
+    #[test]
+    fn bare_metal_storage_format_round_trips_through_registry() {
+        let f = BareMetalStorageFormat {
+            boot_config: k(b"boot"),
+            layout_payload: alloc::vec![1, 2, 3, 4],
+        };
+        let bytes = f.canonicalize();
+        let refs = references(&bytes, REGISTRY).unwrap();
+        assert_eq!(refs, alloc::vec![k(b"boot")]);
+    }
+
+    #[test]
+    fn runtime_state_region_decodes_reboot_epoch_and_generation() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&42u64.to_le_bytes()); // region_lba
+        payload.extend_from_slice(&8u32.to_le_bytes()); // sectors
+        payload.extend_from_slice(&17u64.to_le_bytes()); // generation
+        payload.extend_from_slice(&3u64.to_le_bytes()); // reboot_epoch
+        let r = RuntimeStateRegion {
+            state: k(b"state"),
+            region_payload: payload,
+        };
+        let bytes = r.canonicalize();
+        let (lba, sectors, gen_, epoch) = RuntimeStateRegion::decode(&bytes).unwrap();
+        assert_eq!((lba, sectors, gen_, epoch), (42, 8, 17, 3));
+    }
+
+    #[test]
+    fn hardware_inventory_partitions_operands_correctly() {
+        let inv = HardwareInventory {
+            block_devices: alloc::vec![k(b"blk0"), k(b"blk1")],
+            nics: alloc::vec![k(b"nic0")],
+        };
+        let bytes = inv.canonicalize();
+        let refs = HardwareInventory::references(&bytes).unwrap();
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0], k(b"blk0"));
+        assert_eq!(refs[2], k(b"nic0"));
+    }
+
+    #[test]
+    fn crash_diagnostic_and_intent_chain_via_references() {
+        let cr = CrashRecord {
+            source_state: k(b"st"),
+            predecessor: Some(k(b"prev")),
+            crash_payload: alloc::vec![0xff],
+        };
+        assert_eq!(
+            CrashRecord::references(&cr.canonicalize()).unwrap(),
+            alloc::vec![k(b"st"), k(b"prev")]
+        );
+        let dr = DiagnosticLbaRecord {
+            source_state: k(b"st"),
+            predecessor: None,
+            diag_payload: alloc::vec![1],
+        };
+        assert_eq!(
+            DiagnosticLbaRecord::references(&dr.canonicalize()).unwrap(),
+            alloc::vec![k(b"st")]
+        );
+        let il = IntentLogRecord {
+            affected: alloc::vec![k(b"a"), k(b"b")],
+            intent_payload: alloc::vec![0x10, 0, 0, 0],
+        };
+        assert_eq!(
+            IntentLogRecord::references(&il.canonicalize()).unwrap(),
+            alloc::vec![k(b"a"), k(b"b")]
+        );
+    }
+
+    #[test]
+    fn boot_config_canonicalizes_with_optional_initial_state() {
+        let bc = BootConfig {
+            block_driver: k(b"blk-drv"),
+            nic_driver: k(b"nic-drv"),
+            hal_traits: k(b"hal"),
+            initial_state: Some(k(b"rs0")),
+            boot_payload: alloc::vec![0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let refs = BootConfig::references(&bc.canonicalize()).unwrap();
+        assert_eq!(refs.len(), 4);
+        assert_eq!(refs[0], k(b"blk-drv"));
+        assert_eq!(refs[1], k(b"nic-drv"));
+        assert_eq!(refs[2], k(b"hal"));
+        assert_eq!(refs[3], k(b"rs0"));
+    }
+
+    #[test]
+    fn registry_covers_all_nine_bare_metal_sibling_iris() {
+        let nine = [
+            BareMetalStorageFormat::IRI,
+            RuntimeStateRegion::IRI,
+            HardwareInventory::IRI,
+            CrashRecord::IRI,
+            DiagnosticLbaRecord::IRI,
+            IntentLogRecord::IRI,
+            GcMarkState::IRI,
+            HardwareAbstractionTraits::IRI,
+            BootConfig::IRI,
+        ];
+        for iri in &nine {
+            assert!(
+                REGISTRY.iter().any(|(reg_iri, _)| reg_iri == iri),
+                "{iri} missing from REGISTRY"
+            );
+        }
+    }
+
+    #[test]
+    fn identity_is_deterministic_and_binds_operands() {
+        let a = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"s"),
+            parameters: k(b"p"),
+        };
+        let b = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"s"),
+            parameters: k(b"p"),
+        };
+        let c = ContainerManifest {
+            code: k(b"c"),
+            initial_state: k(b"DIFFERENT"),
+            parameters: k(b"p"),
+        };
+        assert_eq!(a.kappa(), b.kappa());
+        assert_ne!(a.kappa(), c.kappa());
+    }
+}

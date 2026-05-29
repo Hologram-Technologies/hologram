@@ -16,3 +16,5 @@ external
 opencode.jsonc
 .opencode
 __pycache__/
+**/node_modules/
+substrate/hologram-store-opfs/web/pkg/

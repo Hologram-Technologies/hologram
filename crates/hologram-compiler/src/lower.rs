@@ -48,6 +48,11 @@ pub struct ShapeArgs {
     pub heads: u32,
     pub seq: u32,
     pub head_dim: u32,
+    /// Grouped-query kv head count (0 ⇒ multi-head == heads).
+    pub kv_heads: u32,
+    /// Causal masking + softmax scale (`scale_bits` 0 ⇒ default 1/√d).
+    pub causal: bool,
+    pub scale_bits: u32,
 
     // Gemm scalars (`Y = α·A·B + β·C`); `f32::to_bits`.
     pub alpha_bits: u32,
@@ -193,12 +198,23 @@ impl ShapeArgs {
             }
         }
 
-        // Attention: input rank-4 [batch, heads, seq, head_dim].
+        // Attention: input rank-4 [batch, heads, seq, head_dim]. The kv head
+        // count comes from K (operand 1) — grouped-query attention has fewer
+        // kv heads than query heads; causal + scale ride on AttentionAttrs.
         if let Some(s) = &in0 {
             if s.rank == 4 && a.batch != 0 {
                 a.heads = s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
                 a.seq = s.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
                 a.head_dim = s.dim(3).unwrap_or(0).min(u32::MAX as u64) as u32;
+                a.kv_heads = in1
+                    .as_ref()
+                    .filter(|k| k.rank == 4)
+                    .and_then(|k| k.dim(1))
+                    .map(|kvh| kvh.min(u32::MAX as u64) as u32)
+                    .unwrap_or(a.heads);
+                let attn = graph.attention_attrs(node_id).unwrap_or_default();
+                a.causal = attn.causal;
+                a.scale_bits = attn.scale_bits;
             }
         }
 
@@ -446,6 +462,9 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         heads: s.heads,
         seq: s.seq,
         head_dim: s.head_dim,
+        kv_heads: s.kv_heads,
+        causal: s.causal,
+        scale_bits: s.scale_bits,
         dtype: node.dtype,
     };
     let im2col_call = Im2ColCall {

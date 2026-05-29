@@ -338,8 +338,15 @@ fn dequant_activation<W: Workspace>(
                 };
                 *slot = f((q - zp) as f32 * scale);
             }
-            for i in 0..n {
-                write_f32(out, i, table[inp[i] as usize]);
+            // Cast the output once to `&mut [f32]` so each iter is a single
+            // direct store (vs the per-element `to_le_bytes` + `copy_from_slice`
+            // through `write_f32`), and walk in lock-step with `inp` via zipped
+            // iterators so the loop is bounds-check-free and presents a clean
+            // vectorizable pattern to LLVM — code is also less sensitive to
+            // surrounding-crate changes than the indexed form.
+            let out_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut out[..n * 4]);
+            for (o, &b) in out_f32.iter_mut().zip(inp[..n].iter()) {
+                *o = table[b as usize];
             }
         }
         DTYPE_I4 => {

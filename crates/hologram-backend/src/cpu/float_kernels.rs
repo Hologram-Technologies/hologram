@@ -1391,25 +1391,52 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     if b == 0 || h == 0 || s == 0 || d == 0 {
         return Ok(());
     }
+    // Grouped-query attention: K/V carry `kv_heads` heads (0 ⇒ multi-head ==
+    // heads). Each query head maps to kv head `hi / (h / hkv)`; require an even
+    // grouping so the mapping is exact (no silent-wrong).
+    let hkv = if c.kv_heads == 0 {
+        h
+    } else {
+        c.kv_heads as usize
+    };
+    if hkv == 0 || !h.is_multiple_of(hkv) {
+        return Err(BackendError::UnsupportedOp(
+            "attention: heads must be a multiple of kv_heads (grouped-query)",
+        ));
+    }
     let dt = c.dtype;
     let es = elem_size(dt);
-    let total = b * h * s * d;
+    let q_total = b * h * s * d;
+    let kv_total = b * hkv * s * d;
     let (reads, out) = ws
         .split_borrow(&[c.q, c.k, c.v], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let q = reads[0]
-        .get(..total * es)
+        .get(..q_total * es)
         .ok_or(BackendError::SlotOutOfRange(c.q.slot))?;
     let kk = reads[1]
-        .get(..total * es)
+        .get(..kv_total * es)
         .ok_or(BackendError::SlotOutOfRange(c.k.slot))?;
     let v = reads[2]
-        .get(..total * es)
+        .get(..kv_total * es)
         .ok_or(BackendError::SlotOutOfRange(c.v.slot))?;
-    if out.len() < total * es {
+    if out.len() < q_total * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
-    let scale = libm::sqrtf(d as f32).max(1.0);
+    // Softmax score divisor: explicit multiplier (its reciprocal) when given,
+    // else the standard `1/√head_dim`.
+    let scale = match c.scale_bits {
+        0 => libm::sqrtf(d as f32).max(1.0),
+        bits => {
+            let m = f32::from_bits(bits);
+            if m > 0.0 {
+                1.0 / m
+            } else {
+                libm::sqrtf(d as f32).max(1.0)
+            }
+        }
+    };
+    let causal = c.causal;
 
     // Scaled dot-product attention is two matmuls per (batch, head): QKᵀ scores
     // and the P·V context. Every supported float dtype runs through the one f32
@@ -1423,7 +1450,7 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
             bytemuck::cast_slice::<u8, f32>(v),
             bytemuck::cast_slice_mut::<u8, f32>(out),
         );
-        attention_f32_engine(q32, k32, v32, out32, b, h, s, d, scale);
+        attention_f32_engine(q32, k32, v32, out32, b, h, hkv, s, d, scale, causal);
         return Ok(());
     }
     if dt != DTYPE_BF16 && dt != DTYPE_F16 {
@@ -1434,14 +1461,14 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
     // f16 / bf16: widen Q/K/V to f32, run the engine, narrow the result.
     with_widen4_scratch(|q32, k32, v32, o32| {
         q32.clear();
-        q32.extend((0..total).map(|i| read_float(q, i, dt)));
+        q32.extend((0..q_total).map(|i| read_float(q, i, dt)));
         k32.clear();
-        k32.extend((0..total).map(|i| read_float(kk, i, dt)));
+        k32.extend((0..kv_total).map(|i| read_float(kk, i, dt)));
         v32.clear();
-        v32.extend((0..total).map(|i| read_float(v, i, dt)));
+        v32.extend((0..kv_total).map(|i| read_float(v, i, dt)));
         o32.clear();
-        o32.resize(total, 0.0);
-        attention_f32_engine(q32, k32, v32, o32, b, h, s, d, scale);
+        o32.resize(q_total, 0.0);
+        attention_f32_engine(q32, k32, v32, o32, b, h, hkv, s, d, scale, causal);
         for (i, &val) in o32.iter().enumerate() {
             write_float(out, i, val, dt);
         }
@@ -1460,20 +1487,31 @@ fn attention_f32_engine(
     out32: &mut [f32],
     b: usize,
     h: usize,
+    hkv: usize,
     s: usize,
     d: usize,
     scale: f32,
+    causal: bool,
 ) {
+    // Grouped-query mapping: consecutive `group` query heads share one kv head.
+    let group = h / hkv;
     with_matmul_scratch(|scores| {
         for bi in 0..b {
             for hi in 0..h {
-                let head_off = (bi * h + hi) * s * d;
+                let q_off = (bi * h + hi) * s * d;
+                // K/V are indexed by the kv head this query head reads.
+                let kv_off = (bi * hkv + hi / group) * s * d;
                 for qi in 0..s {
-                    let qrow = &q32[head_off + qi * d..head_off + qi * d + d];
+                    let qrow = &q32[q_off + qi * d..q_off + qi * d + d];
                     scores.clear();
                     scores.resize(s, 0.0);
                     for (kj, score) in scores.iter_mut().enumerate() {
-                        let krow = &k32[head_off + kj * d..head_off + kj * d + d];
+                        // Causal mask: query qi attends only to keys kj ≤ qi.
+                        if causal && kj > qi {
+                            *score = f32::NEG_INFINITY;
+                            continue;
+                        }
+                        let krow = &k32[kv_off + kj * d..kv_off + kj * d + d];
                         *score = crate::cpu::simd::simd_f32_dot(qrow, krow) / scale;
                     }
                     let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -1483,11 +1521,11 @@ fn attention_f32_engine(
                         sum += *sc;
                     }
                     let denom = sum.max(1e-30);
-                    let orow = &mut out32[head_off + qi * d..head_off + qi * d + d];
+                    let orow = &mut out32[q_off + qi * d..q_off + qi * d + d];
                     orow.fill(0.0);
                     for (kj, &sc) in scores.iter().enumerate() {
                         let p = sc / denom;
-                        let vrow = &v32[head_off + kj * d..head_off + kj * d + d];
+                        let vrow = &v32[kv_off + kj * d..kv_off + kj * d + d];
                         for (o, &vv) in orow.iter_mut().zip(vrow) {
                             *o += p * vv;
                         }

@@ -10,14 +10,19 @@
 //! tensors between a fixed byte arena and a separate content store on every
 //! node; that movement is gone.
 //!
-//! Two buffer classes, byte-bounded so memory holds for arbitrary models
-//! and run lengths (ADR-060, SC-3):
+//! Two buffer classes, bounded so memory holds for arbitrary models and run
+//! lengths (ADR-060, SC-3) — by the computation's structure, not a hardcoded
+//! byte cap:
 //!
 //! * **pinned** — model constants/weights, deduped by content κ-label,
 //!   resident for the session (the model's inherent footprint);
 //! * **transient** — boundary inputs, intermediates, outputs — held in a
-//!   two-generation pool: a value retained past `budget` bytes ages a whole
-//!   generation out (recompute on a later miss, never a wrong answer).
+//!   two-generation pool whose generations rotate at each **walk** boundary
+//!   (one `execute`): the finished walk ages to `previous` (kept so the next
+//!   walk's unchanged prefix reuses it by label), the older generation is
+//!   released (recompute on a later miss, never a wrong answer). Resident
+//!   transient is the last two walks' working sets, which scales with the
+//!   model and window — no fixed limit.
 //!
 //! Alignment: every buffer is 64-byte aligned (x86-64 cache line, AVX-512
 //! ZMM, `bytemuck::cast_slice::<u8,f32>` zero-copy).
@@ -39,11 +44,6 @@ pub struct SlotSpan {
     /// Byte length of the slot.
     pub length: u64,
 }
-
-/// Default transient byte budget per generation (256 MiB). Resident
-/// transient bytes are bounded by `2 * budget`; pinned constants are
-/// separate and model-bounded.
-pub const DEFAULT_POOL_BUDGET: usize = 256 << 20;
 
 const ARENA_ALIGN: usize = 64;
 
@@ -68,11 +68,20 @@ impl AlignedBytes {
         }
     }
 
-    /// Reuse this buffer for a value of `len` bytes, reallocating only if
-    /// the existing capacity is too small. Zero-fills so a kernel that
-    /// writes only a logical prefix leaves a deterministic tail.
+    /// Reuse this buffer for a value of `len` bytes, reallocating if the
+    /// existing capacity is too small **or** far too large. Zero-fills so a
+    /// kernel that writes only a logical prefix leaves a deterministic tail.
+    ///
+    /// The free list is size-blind (LIFO), so recycling buffers across slots of
+    /// differing sizes would otherwise ratchet every buffer's capacity up to the
+    /// largest value it ever held and never release it — the backing arena grows
+    /// unboundedly over a long autoregressive run even though the *count* of
+    /// buffers is fixed. Releasing a buffer that is more than 2× oversized caps
+    /// each buffer's capacity at ~2× its current use, bounding the arena to the
+    /// working set (the realloc only fires on a large size mismatch).
     fn reset_to(&mut self, len: usize) {
-        if len > self.cap {
+        let want_cap = len.max(ARENA_ALIGN).next_multiple_of(ARENA_ALIGN);
+        if len > self.cap || self.cap > want_cap.saturating_mul(2) {
             *self = Self::zeroed(len);
         } else {
             self.len = len;
@@ -136,22 +145,25 @@ pub struct BufferArena {
     /// only for a **view** slot (a zero-movement `ProjectField`/Slice that
     /// aliases a sub-region of a parent buffer). Reset to 0 each walk.
     slot_off: Vec<usize>,
-    // Content-addressed residency (label → bufs index), byte-bounded.
+    // Pinned content-addressed residency (label → bufs index): model
+    // constants/weights, resident for the session, deduped by κ-label.
     pinned: HashMap<ContentLabel, usize>,
+    // Two-generation content-addressed residency (label → bufs index). The
+    // generation boundary is the *walk* (one `execute`), not a byte budget:
+    // `current` is the in-progress walk's values, `previous` the last walk's
+    // (kept so the next walk's unchanged prefix reuses them by label — the
+    // content-addressed elision that replaces a KV-cache). Rotated in
+    // `rebind_reset`. Resident transient is the last two walks' working sets —
+    // it scales with the model and window, with no fixed cap.
     current: HashMap<ContentLabel, usize>,
     previous: HashMap<ContentLabel, usize>,
-    current_bytes: usize,
-    budget: usize,
 }
 
 const UNBOUND: usize = usize::MAX;
 
 impl BufferArena {
     pub fn new() -> Self {
-        Self {
-            budget: DEFAULT_POOL_BUDGET,
-            ..Self::default()
-        }
+        Self::default()
     }
 
     /// Construct a fixed arena: one buffer per slot, each bound to itself.
@@ -177,8 +189,6 @@ impl BufferArena {
             pinned: HashMap::new(),
             current: HashMap::new(),
             previous: HashMap::new(),
-            current_bytes: 0,
-            budget: DEFAULT_POOL_BUDGET,
         }
     }
 
@@ -262,14 +272,56 @@ impl BufferArena {
 // ─── Content-addressed pool operations (driven by the executor) ──────────
 
 impl BufferArena {
-    /// Set the transient byte budget per generation.
-    pub fn set_budget(&mut self, budget: usize) {
-        self.budget = budget.max(1);
-    }
-
-    /// Reset the slot→buffer binding table to `n` unbound slots, keeping
-    /// the resident buffer pool intact. Called at the start of a walk.
+    /// Start a new walk: rotate the content-addressed generations and reset the
+    /// slot→buffer binding table to `n` unbound slots.
+    ///
+    /// The generation boundary is the **walk** (one `execute`), not a byte
+    /// budget — eviction is driven by the computation's structure, so the pool
+    /// scales with the model and window with no hardcoded cap. The finished
+    /// walk's values (`current`) age to `previous` (kept resident so the next
+    /// walk's unchanged prefix reuses them by label — content-addressed elision,
+    /// the KV-cache replacement); the older generation is released. Resident
+    /// transient is therefore the last two walks' working sets.
+    ///
+    /// Within a walk nothing is evicted, so every value the walk produces stays
+    /// available to its consumers and to output collection — correct for a graph
+    /// of any size (no mid-walk drop of a still-live value).
     pub fn rebind_reset(&mut self, n: usize) {
+        // Rotate: drop the older generation, age the finished walk into it.
+        let dropped = core::mem::take(&mut self.previous);
+        core::mem::swap(&mut self.current, &mut self.previous);
+        // `current` is now the taken-empty map; `previous` is the finished walk.
+
+        // Reclaim every buffer no longer reachable: the dropped generation's
+        // buffers, plus any slot-only scratch — an un-addressable node's output
+        // is bound to a slot but never retained under a label, so once we clear
+        // the bindings it would leak (not in any label map, not on the free
+        // list). A buffer is still needed only if pinned or in the kept
+        // generation (`previous`); slot binding alone does not keep it, since we
+        // clear the bindings here.
+        let kept: alloc::collections::BTreeSet<usize> = self
+            .pinned
+            .values()
+            .chain(self.previous.values())
+            .copied()
+            .collect();
+        let mut reclaim: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        for (_, bi) in dropped {
+            if !kept.contains(&bi) {
+                reclaim.insert(bi);
+            }
+        }
+        for &bi in &self.slot_buf {
+            if bi != UNBOUND && !kept.contains(&bi) {
+                reclaim.insert(bi);
+            }
+        }
+        for bi in reclaim {
+            if !self.free.contains(&bi) {
+                self.free.push(bi);
+            }
+        }
+
         self.slot_buf.clear();
         self.slot_buf.resize(n, UNBOUND);
         // Views are per-walk; clear all offsets so a recycled slot is a plain
@@ -355,7 +407,6 @@ impl BufferArena {
         if self.resident(&label) {
             return;
         }
-        self.roll_if_needed(bytes.len());
         let bi = match self.free.pop() {
             Some(bi) => {
                 self.bufs[bi].reset_to(bytes.len());
@@ -367,7 +418,6 @@ impl BufferArena {
             }
         };
         self.bufs[bi].as_mut_slice().copy_from_slice(bytes);
-        self.current_bytes = self.current_bytes.saturating_add(bytes.len());
         self.current.insert(label, bi);
     }
 
@@ -382,9 +432,6 @@ impl BufferArena {
         if self.pinned.contains_key(&label) || self.current.contains_key(&label) {
             return;
         }
-        let len = self.bufs[bi].len;
-        self.roll_if_needed(len);
-        self.current_bytes = self.current_bytes.saturating_add(len);
         self.current.insert(label, bi);
     }
 
@@ -436,36 +483,6 @@ impl BufferArena {
             }
         }
         total
-    }
-
-    /// Age `current` → `previous` (recycling the dropped generation's
-    /// buffers) when adding `incoming` bytes would exceed the budget, so
-    /// resident transient bytes stay ≤ `2 * budget` for any run length.
-    fn roll_if_needed(&mut self, incoming: usize) {
-        if self.current_bytes.saturating_add(incoming) <= self.budget || self.current.is_empty() {
-            return;
-        }
-        // Recycle the outgoing `previous` generation's buffers (deduped;
-        // only those no longer referenced by a pinned/current label or a
-        // live slot binding).
-        let dropped = core::mem::take(&mut self.previous);
-        let mut freed: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
-        for (_, bi) in dropped {
-            if freed.insert(bi) && !self.bufs_index_live(bi) {
-                self.free.push(bi);
-            }
-        }
-        core::mem::swap(&mut self.current, &mut self.previous);
-        self.current.clear();
-        self.current_bytes = 0;
-    }
-
-    /// Is buffer index `bi` referenced by a pinned/current label or a live
-    /// slot binding? (Then it must not be recycled.)
-    fn bufs_index_live(&self, bi: usize) -> bool {
-        self.pinned.values().any(|&v| v == bi)
-            || self.current.values().any(|&v| v == bi)
-            || self.slot_buf.contains(&bi)
     }
 }
 
@@ -573,37 +590,44 @@ mod tests {
         assert_eq!(pool.read_slot(1).unwrap(), &[42, 3, 4, 5]);
     }
 
-    /// SC-3: transient pool bytes stay bounded across an arbitrarily long
-    /// run of distinct interned values (generational eviction), so memory
-    /// holds regardless of run length.
+    /// SC-3: transient pool bytes stay bounded across an arbitrarily long run.
+    /// Generations rotate at the walk boundary (`rebind_reset`), not on a byte
+    /// budget, so resident transient is exactly the last two walks' working sets
+    /// regardless of run length — bounded with no hardcoded cap.
     #[test]
     fn transient_bytes_are_bounded_regardless_of_run_length() {
-        let budget = 4096;
         let mut pool = BufferArena::new();
-        pool.set_budget(budget);
-        for i in 0..100_000u32 {
-            let mut p = [7u8; 256];
-            p[0] = i as u8;
-            p[1] = (i >> 8) as u8;
-            pool.store_unbound(address_bytes(&p), &p);
+        let per_walk = 16usize;
+        let val = 256usize;
+        for walk in 0..100_000u32 {
+            pool.rebind_reset(0); // walk boundary: rotate generations
+            for j in 0..per_walk {
+                let mut p = [7u8; 256];
+                p[0] = walk as u8;
+                p[1] = (walk >> 8) as u8;
+                p[2] = j as u8;
+                pool.store_unbound(address_bytes(&p), &p);
+            }
         }
+        // Two generations (this walk + the previous), each `per_walk` distinct
+        // values; nothing older survives. Independent of the 100k run length.
         assert!(
-            pool.transient_bytes() <= 2 * budget + 320,
-            "resident transient {} exceeded 2*budget",
+            pool.transient_bytes() <= 2 * per_walk * val + 320,
+            "resident transient {} exceeded two walks",
             pool.transient_bytes()
         );
     }
 
     /// A pinned value survives arbitrary transient churn (zero movement,
-    /// never evicted).
+    /// never evicted) across any number of walk rotations.
     #[test]
     fn pinned_survives_transient_churn() {
         let mut pool = BufferArena::new();
-        pool.set_budget(1024);
         let w = address_bytes(b"model-weight");
         pool.pin_bytes(w, b"model-weight");
-        for i in 0..100_000u32 {
-            let b = i.to_le_bytes();
+        for walk in 0..100_000u32 {
+            pool.rebind_reset(0);
+            let b = walk.to_le_bytes();
             pool.store_unbound(address_bytes(&b), &b);
         }
         assert_eq!(pool.resolve(&w), Some(b"model-weight".as_slice()));

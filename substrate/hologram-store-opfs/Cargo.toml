@@ -1,0 +1,36 @@
+[package]
+name = "hologram-store-opfs"
+version = "0.5.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+description = "Browser OPFS KappaStore (spec §5.4): κ→bytes persisted in the Origin Private File System, addressed by hologram's σ-axis. wasm32 + web-sys; verified in a real browser via Playwright."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hologram-substrate-core = { path = "../hologram-substrate-core", default-features = false }
+hologram-realizations    = { path = "../hologram-realizations", default-features = false }
+wasm-bindgen = "=0.2.122"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "Navigator",
+    "StorageManager",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetFileOptions",
+    "FileSystemWritableFileStream",
+    "File",
+    "Blob",
+    "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+]
+
+[profile.release]
+opt-level = "s"

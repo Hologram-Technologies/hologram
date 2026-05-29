@@ -11,7 +11,6 @@ pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::ad
 pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
 pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
-pub fn hologram_exec::buffer::BufferArena::set_budget(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
 pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl hologram_exec::buffer::BufferArena
@@ -72,7 +71,6 @@ impl core::marker::Unpin for hologram_exec::buffer::SlotSpan
 impl core::marker::UnsafeUnpin for hologram_exec::buffer::SlotSpan
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::SlotSpan
 impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::SlotSpan
-pub const hologram_exec::buffer::DEFAULT_POOL_BUDGET: usize
 pub mod hologram_exec::error
 pub enum hologram_exec::error::ExecError
 pub hologram_exec::error::ExecError::Archive(hologram_archive::error::ArchiveError)
@@ -241,7 +239,6 @@ pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::ad
 pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
 pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
-pub fn hologram_exec::buffer::BufferArena::set_budget(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
 pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl hologram_exec::buffer::BufferArena
