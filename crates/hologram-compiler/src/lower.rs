@@ -64,7 +64,15 @@ impl ShapeArgs {
     /// output shape descriptors. `node_id` is consulted for sparse-keyed
     /// per-node attributes (`Graph::conv_attrs`, etc.); pass the node's
     /// own id.
-    pub fn from_graph(graph: &Graph, node_id: NodeId, node: &Node) -> Self {
+    ///
+    /// Fails loud (refuse-not-fabricate) when a `MatMul`/`Gemm` node carries
+    /// operands the kernel cannot honor — rank ≠ 2 or unknown contraction
+    /// dims. The matmul kernel is strictly 2-D `[M, K]·[K, N] → [M, N]`;
+    /// a rank-3 `[batch, seq, hidden]` operand would silently collapse to
+    /// `m=batch, k=seq, n=B[1]` and read only `m*k` floats from an
+    /// activation tens of thousands of elements long. The fix is at the
+    /// emitter — flatten the leading batch dims into `m` before lowering.
+    pub fn from_graph(graph: &Graph, node_id: NodeId, node: &Node) -> Result<Self, CompileError> {
         let reg = graph.shape_registry();
         let out = reg.get(node.output_shape).cloned();
         let in_shape = |idx: usize| -> Option<hologram_graph::ShapeDescriptor> {
@@ -94,12 +102,51 @@ impl ShapeArgs {
         let mut a = Self::default();
 
         // MatMul / Gemm: A is rank-2 [M, K]; B is rank-2 [K, N]; out is [M, N].
-        if let (Some(a_s), Some(b_s)) = (&in0, &in1) {
-            if a_s.rank >= 2 && b_s.rank >= 2 {
-                a.m = a_s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
-                a.k = a_s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
-                a.n = b_s.dim(1).unwrap_or(0).min(u32::MAX as u64) as u32;
+        //
+        // Refuse-not-fabricate on rank≠2: the previous `rank >= 2` guard
+        // combined with `dim(0)/dim(1)` silently mis-inferred m/k/n for a
+        // rank-3 activation (the canonical `[batch, seq, hidden]`
+        // transformer layout), producing a kernel that read only `m*k`
+        // floats from a tensor tens of thousands of elements long. Emitters
+        // must flatten batch dims into m before lowering. Unknown
+        // contraction dims (`dim(.) == None`) likewise become a hard error
+        // — a zero contraction silently fired a no-op kernel.
+        let is_matmul = matches!(
+            node.op,
+            hologram_graph::GraphOp::Op(OpKind::MatMul | OpKind::Gemm)
+        );
+        if is_matmul {
+            let a_s = in0.as_ref().ok_or(CompileError::ShapeViolation {
+                iri: "matmul-shape-missing-a",
+            })?;
+            let b_s = in1.as_ref().ok_or(CompileError::ShapeViolation {
+                iri: "matmul-shape-missing-b",
+            })?;
+            if a_s.rank != 2 || b_s.rank != 2 {
+                return Err(CompileError::ShapeViolation {
+                    iri: "matmul-rank-must-be-2",
+                });
             }
+            let m = a_s.dim(0).ok_or(CompileError::ShapeViolation {
+                iri: "matmul-m-unknown",
+            })?;
+            let k_a = a_s.dim(1).ok_or(CompileError::ShapeViolation {
+                iri: "matmul-k-unknown-a",
+            })?;
+            let k_b = b_s.dim(0).ok_or(CompileError::ShapeViolation {
+                iri: "matmul-k-unknown-b",
+            })?;
+            let n = b_s.dim(1).ok_or(CompileError::ShapeViolation {
+                iri: "matmul-n-unknown",
+            })?;
+            if k_a != k_b {
+                return Err(CompileError::ShapeViolation {
+                    iri: "matmul-k-mismatch",
+                });
+            }
+            a.m = m.min(u32::MAX as u64) as u32;
+            a.k = k_a.min(u32::MAX as u64) as u32;
+            a.n = n.min(u32::MAX as u64) as u32;
         }
 
         // Conv2d / Pool: input X is rank-4 [batch, ch_in, h_in, w_in];
@@ -257,7 +304,7 @@ impl ShapeArgs {
             }
         }
 
-        a
+        Ok(a)
     }
 }
 
