@@ -16,6 +16,7 @@
 | **MA** | Model addressing vs format spec + cross-tool + replay | conformance tests vs GGUF/ONNX |
 | **KC** | Kernel numeric conformance vs ONNX op spec + IEEE-754 | conformance tests vs reference vectors/runtime |
 | **CA** | Content-addressed execution operates on κ-labels, verifiably | exec tests + replay |
+| **RF** | Refinement execution is bounded, deterministic, and label-addressed | exec refinement tests |
 | **SG** | Sub-graph addressing — shared computation is recognized by κ-label and elided | exec reuse tests (dispatch counting) |
 | **FU** | Content-addressed fusion — composable sub-graphs collapse to one κ-addressed op, eliding intermediates | exec fusion tests (fused/kernel counts + f64 ref) |
 | **WS** | Warm-start — the compiled object carries the constant-derivation lattice (+ materialized fold results) so the runtime cache is never cold; warm ≡ cold byte-identically | compiler/exec tests (baked==derived, cone-complete, dispatch elision, warm==cold) |
@@ -93,6 +94,14 @@
 | **CA-1** | `execute_addressed` operates on κ-labels end-to-end; identical input addresses return cached output addresses without recompute or rehash. | exec test | `hologram-exec/tests/content_addressed.rs::addressed_io_matches_byte_io_and_never_rehashes` | ✅ |
 | **CA-2** | Memoized output ≡ recomputed output, byte-identical (cross-validation of the reuse path). | exec test | `…::identical_reexecution_is_fully_memoized` (+ byte path) | ✅ |
 | **CA-3** | Derived/output κ-labels are built by **witnessed composition** of the input addresses (a CS-G2 fold from a per-graph/port identity base, via uor-addr's `compose_g2_product_blake3`, as `prism-btc` demonstrates) — carrying a replayable TC-05 witness, not a bare derivation hash. Determinism + order-sensitivity are *proven* by the suite. An `InferenceSession`'s **output-port** addresses are minted this way (the witnessed composition of the producing node's operand labels with its op signature) — the replayable boundary address. Interior nodes use the cheap, order-sensitive `derive_label` reuse key (see SG) so the prism-pipeline grounding cost is paid once per output, not per node. | archive replay test + exec | `hologram-archive/tests/conformance.rs::ca3_derived_address_carries_replayable_witness`, `::ca3_derivation_is_deterministic_and_order_sensitive` | ✅ |
+
+## RF — Refinement execution
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **RF-1** | A refinement plan is a bounded execution strategy over an addressed session, not a graph op or backend kernel. It validates an explicit or derived state contract before execution and feeds pass outputs back as next-pass κ-label inputs. | exec integration tests | `hologram-exec/tests/refinement.rs::successful_label_convergence_on_identity_graph`, `::successful_byte_convergence_after_two_relu_passes`, `::explicit_state_contract_matches_session`, `::explicit_state_contract_rejects_shape_mismatch` | ✅ |
+| **RF-2** | Validation failure and repair are terminally bounded: normal pass exhaustion reports `PassBoundReached`, and retry repair reports `Repaired(..)` or `RepairBoundReached` without an unbounded loop. | exec integration tests | `…::validation_failure_returns_pass_bound_status`, `…::repair_flow_uses_bounded_retry_pass` | ✅ |
+| **RF-3** | Refinement is deterministic and does not mutate the loaded graph schedule or grow resident memory without bound across repeated runs. | exec integration tests | `…::planner_generated_plan_runs_deterministically`, `…::refinement_does_not_mutate_loaded_graph_schedule`, `…::repeated_refinement_keeps_resident_memory_bounded` | ✅ |
 
 ## SG — Sub-graph content addressing (reuse beyond whole-graph exact match)
 

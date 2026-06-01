@@ -54,6 +54,26 @@ Content addressing every node adds no measurable cost to the compute path; the
 three fusion passes (matmul-epilogue, dequant→matmul, expand→binary) run once at
 load and are O(calls), no-ops when nothing matches.
 
+## Refinement prototype notes
+
+The compiled refinement strategy adds no backend dispatch path. A refinement
+pass is a normal `InferenceSession::execute_addressed` call; pass-to-pass state
+flows by κ-label. Prototype overhead is therefore:
+
+| component | bound |
+|---|---|
+| pass loop | O(`max_passes + repair_passes`) over plan constants |
+| per pass | normal addressed execution cost |
+| `StableLabels` validator | O(number of state ports) |
+| `StableBytes` validator | O(logical state bytes), zero-copy slice comparison |
+| reporting | fixed counters plus final labels |
+
+`RefinementReport` records total passes, repair passes, dispatched kernels,
+resident-reuse skips, final labels, and resident-memory counters. No dedicated
+Criterion benchmark is added for the prototype; once the archive/API shape is
+stable, useful benchmark cases are one-pass identity label convergence,
+two-pass byte convergence, repair retry, and graph-memo refinement replay.
+
 ## Fusion micro-benchmarks (fused vs unfused, head-to-head)
 
 | pattern | unfused | fused | note |
