@@ -63,19 +63,25 @@ deployment guarantees:
 |-------|-----------------|-----------------|
 | **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-host`, `hologram-types`, `hologram-ops`, `hologram-graph`, `hologram-archive` |
 | **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-backend` |
-| **user** | Application-configurable; exposed at system boundaries | `hologram-ffi`, `hologram-cli`, `hologram-bench` |
+| **user** | Application-configurable; exposed at system boundaries | `hologram` facade, `hologram-ffi`, `hologram-cli`, `hologram-bench` |
 
 **Rule**: kernel crates must not depend on bridge or user crates. Bridge crates must not depend on
 user crates. This enforces the one-way information flow required by the Prism space hierarchy.
+The root `hologram` package is a user-facing facade only: it contains no
+execution logic, is not a dependency of the implementation crates, and exposes
+each workspace crate through optional same-named features.
 
 ---
 
 ## Crate Dependency Graph
 
-The workspace is 11 crates (`hologram-core`, `hologram-async`, and
-`hologram-transform` were earlier-design crates that no longer exist):
+The workspace has the root `hologram` facade package plus 11 implementation
+crates (`hologram-core`, `hologram-async`, and `hologram-transform` were
+earlier-design crates that no longer exist):
 
 ```
+hologram (user facade; optional feature-gated re-exports)
+        │
 hologram-host ─┐
 hologram-types ┤
                └── hologram-ops (kernel: canonical op vocabulary)

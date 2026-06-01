@@ -24,6 +24,7 @@ mkdir -p api
 # Library crates that carry a public-API contract (skip the CLI binary and the
 # bench harness, which expose no consumed library surface).
 CRATES=(
+  hologram
   hologram-types
   hologram-host
   hologram-ops

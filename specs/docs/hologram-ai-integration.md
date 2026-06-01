@@ -11,13 +11,15 @@ parsing, graph lowering, tokenization, sampling).
 
 The integration surface is small and stable:
 
-1. Build (or lower a model into) a `hologram_graph::Graph`.
-2. Compile it to a `.holo` archive with `hologram-compiler`.
-3. Load + execute the archive with `hologram-exec`'s `InferenceSession`.
+1. Build (or lower a model into) a `hologram::graph::Graph`.
+2. Compile it to a `.holo` archive with `hologram::compiler`.
+3. Load + execute the archive with `hologram::exec`'s `InferenceSession`.
 4. Read back raw output bytes.
 
-There is **no umbrella `hologram` crate** — depend on the individual crates
-listed below.
+Use the root `hologram` facade crate and enable the crate surfaces needed by the
+integration. The implementation crates remain available for consumers that need
+direct dependencies, but the facade is the recommended application-author
+surface.
 
 > **Migration note (removed architecture).** Earlier drafts described a "tape
 > execution path" (`build_tape_from_plan` / `execute_tape` / `EnumTape` /
@@ -29,44 +31,45 @@ listed below.
 
 ## 1. Crates and features
 
-| Crate | Role |
-|-------|------|
-| `hologram-compiler` | `Graph` → `.holo` archive (`Compiler` / `compile`). |
-| `hologram-exec` | Load + run an archive (`InferenceSession`, `BufferArena`, `InputBuffer`/`OutputBuffer`). |
-| `hologram-backend` | Compute backends (`CpuBackend`, plus optional GPU). |
-| `hologram-archive` | `.holo` format + content addressing (`address_ring`, `compose_model`); model-file realization under the `model-formats` feature. |
-| `hologram-graph` | The op graph (`Graph`, `Node`, `GraphOp`, `OpKind`). Re-exported through the compiler's inputs. |
+| Facade module | Backing crate | Role |
+|---|---|---|
+| `hologram::compiler` | `hologram-compiler` | `Graph` → `.holo` archive (`Compiler` / `compile`). |
+| `hologram::exec` | `hologram-exec` | Load + run an archive (`InferenceSession`, `BufferArena`, `InputBuffer`/`OutputBuffer`). |
+| `hologram::backend` | `hologram-backend` | Compute backends (`CpuBackend`, plus optional GPU). |
+| `hologram::archive` | `hologram-archive` | `.holo` format + content addressing (`address_ring`, `compose_model`); model-file realization under the `archive-model-formats` feature. |
+| `hologram::graph` | `hologram-graph` | The op graph (`Graph`, `Node`, `GraphOp`, `OpKind`). Re-exported through the compiler's inputs. |
 
 ```toml
 [dependencies]
-hologram-compiler = "0.5"
-hologram-exec     = "0.5"
-hologram-backend  = "0.5"
-hologram-archive  = { version = "0.5", features = ["model-formats"] }
+hologram = {
+  version = "0.6",
+  features = ["archive", "archive-model-formats", "backend", "compiler", "exec", "graph"],
+}
 ```
 
 Relevant Cargo features:
 
-- `hologram-archive/model-formats` — enables `hologram_archive::{onnx, gguf}`
+- `archive-model-formats` — enables `hologram::archive::{onnx, gguf}`
   (UOR-ADDR realization of ONNX / GGUF model files; see §5). Off by default.
-- `hologram-exec/tiered-exec` — enables `InferenceSession::tier_report()` and the
+- `exec-tiered` — enables `InferenceSession::tier_report()` and the
   PM_7 memory-tier accessors (see §4). Off by default.
-- `hologram-exec/parallel` — intra-kernel multi-core dispatch (forwards to
-  `hologram-backend/parallel`).
-- `hologram-backend` GPU features `wgpu` / `metal` — optional GPU backends
+- `exec-parallel` — intra-kernel multi-core dispatch (forwards to
+  `backend-parallel`).
+- `backend-wgpu` / `backend-metal` — optional GPU backends
   (`CpuBackend` is always available; GPU is opt-in, *not* autodetected).
 
 ## 2. Compile a graph to a `.holo` archive
 
-A graph is built with `hologram_graph` (there is no fluent `GraphBuilder` in the
-Rust API — construct `Node`s directly, or lower your model IR into a `Graph`).
+A graph is built with `hologram::graph` (there is no fluent `GraphBuilder` in
+the Rust API — construct `Node`s directly, or lower your model IR into a
+`Graph`).
 Then compile it:
 
 ```rust
-use hologram_compiler::{compile, BackendKind, CompilationOutput};
+use hologram::compiler::{compile, BackendKind, CompilationOutput};
 use prism::vocabulary::WittLevel;
 
-// `graph: hologram_graph::Graph` produced by hologram-ai's lowering.
+// `graph: hologram::graph::Graph` produced by hologram-ai's lowering.
 let out: CompilationOutput = compile(graph, BackendKind::Cpu, WittLevel::W32)?;
 let archive: Vec<u8> = out.archive;        // the `.holo` bytes
 // out.stats: CompilationStats { total_nodes, schedule_levels, cache_hits, ... }
@@ -75,7 +78,7 @@ let archive: Vec<u8> = out.archive;        // the `.holo` bytes
 The builder form is equivalent and exposes the per-compile certificate cache:
 
 ```rust
-use hologram_compiler::{Compiler, BackendKind};
+use hologram::compiler::{BackendKind, Compiler};
 use prism::vocabulary::WittLevel;
 
 let out = Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile()?;
@@ -99,8 +102,8 @@ Execution is **synchronous**. Load the archive with a backend, then call
 `OutputBuffer.bytes`.
 
 ```rust
-use hologram_backend::CpuBackend;
-use hologram_exec::{BufferArena, InferenceSession, InputBuffer, OutputBuffer};
+use hologram::backend::CpuBackend;
+use hologram::exec::{BufferArena, InferenceSession, InputBuffer, OutputBuffer};
 
 // Backend is generic over the workspace; the session uses `BufferArena`.
 let backend: CpuBackend<BufferArena> = CpuBackend::new();
@@ -175,10 +178,10 @@ the graph memo in O(1) (no walk, no movement); identical sub-graphs / weights
 collapse to one buffer.
 
 For model **identity** (decomposition → composition), use
-`hologram_archive::address`:
+`hologram::archive::address`:
 
 ```rust
-use hologram_archive::address::{address_ring, compose_model};
+use hologram::archive::address::{address_ring, compose_model};
 
 // Address each part (an Amendment-43 ring element) to a κ-label, then fold
 // the parts into one model identity. compose_model uses the CS-G2 *commutative*
@@ -194,7 +197,7 @@ internal memo key), and `derive_label_witnessed` (replayable TC-05 boundary
 address). The full per-axis surface (sha256, sha3-256, …) is re-exported via
 `address::{ring, composition}`.
 
-With the `model-formats` feature, `hologram_archive::{onnx, gguf}` (UOR-ADDR's
+With the `archive-model-formats` feature, `hologram::archive::{onnx, gguf}` (UOR-ADDR's
 ONNX / GGUF realizations) address a *model file* into κ-labels. Note these
 **address** model files — they do not lower them into a `Graph`. Parsing a model
 into hologram's op graph is hologram-ai's responsibility.
@@ -232,8 +235,8 @@ does `axis_dim×` more work.
 
 ## 7. Op mapping
 
-hologram-ai's lowering targets `hologram_graph::OpKind` (the canonical op set
-defined in `hologram-ops`). Construct nodes as `GraphOp::Op(OpKind::…)`. There is
+hologram-ai's lowering targets `hologram::graph::OpKind` (the canonical op set
+defined in `hologram::ops`). Construct nodes as `GraphOp::Op(OpKind::…)`. There is
 **no `Float(FloatOp::…)` encoding** — use the `OpKind` variants directly.
 
 | AI operation | `OpKind` |
@@ -262,8 +265,8 @@ it; `f64` is rejected. (See `hologram-ops` for the authoritative `OpKind` list.)
 hologram provides the compile + execute engine only. hologram-ai implements:
 
 - **Model parsers** — ONNX, safetensors, GGUF → an in-memory model IR. (hologram's
-  `model-formats` addresses these files but does not parse them into graphs.)
-- **Graph lowering** — model IR → `hologram_graph::Graph` (mapping ops to the
+  `archive-model-formats` addresses these files but does not parse them into graphs.)
+- **Graph lowering** — model IR → `hologram::graph::Graph` (mapping ops to the
   `OpKind` set in §7).
 - **Tokenization & sampling** — BPE / SentencePiece, top-k / top-p / temperature,
   and the token-by-token generation loop (driving `execute` / `execute_addressed`).

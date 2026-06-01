@@ -1,6 +1,6 @@
 //! `InferenceSession` (spec VIII.1).
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use hashbrown::HashMap;
 use smallvec::SmallVec;

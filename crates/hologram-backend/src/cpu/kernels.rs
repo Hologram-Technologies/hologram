@@ -522,12 +522,10 @@ fn cast<W: Workspace>(c: &crate::kernel_call::CastCall, ws: &mut W) -> Result<()
         match (src_is_float, dst_is_float) {
             (true, true) => store_float(out, i, c.dst_dtype, load_float(inp, i, c.src_dtype)),
             // float→int: ONNX truncates toward zero.
-            (true, false) => store_int(
-                out,
-                i,
-                c.dst_dtype,
-                load_float(inp, i, c.src_dtype).trunc() as i64,
-            ),
+            (true, false) => {
+                let truncated = libm::trunc(load_float(inp, i, c.src_dtype));
+                store_int(out, i, c.dst_dtype, truncated as i64);
+            }
             (false, true) => store_float(out, i, c.dst_dtype, load_int(inp, i, c.src_dtype) as f64),
             (false, false) => store_int(out, i, c.dst_dtype, load_int(inp, i, c.src_dtype)),
         }

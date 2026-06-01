@@ -935,6 +935,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "hologram"
+version = "0.6.0"
+dependencies = [
+ "hologram-archive",
+ "hologram-backend",
+ "hologram-bench",
+ "hologram-cli",
+ "hologram-compiler",
+ "hologram-exec",
+ "hologram-ffi",
+ "hologram-graph",
+ "hologram-host",
+ "hologram-ops",
+ "hologram-types",
+]
+
+[[package]]
 name = "hologram-archive"
 version = "0.6.0"
 dependencies = [
