@@ -55,13 +55,15 @@ jobs:
           node-version: "22"
 
       - name: Install package dependencies
-        run: npm --prefix sdk/typescript install
+        working-directory: sdk/typescript
+        run: npm install
 
       - name: Typecheck and pack
+        working-directory: sdk/typescript
         run: |
-          npm --prefix sdk/typescript run typecheck
-          npm --prefix sdk/typescript run test:golden
-          npm --prefix sdk/typescript run pack:check
+          npm run typecheck
+          npm run test:golden
+          npm run pack:check
 
       - name: Smoke installed package
         shell: bash
@@ -95,13 +97,17 @@ jobs:
           cache-on-failure: true
           key: sdk-native-${{ matrix.os }}
 
-      - name: Install package dependencies
-        run: |
-          npm --prefix sdk/typescript install
-          npm --prefix sdk/typescript/native install --ignore-scripts --legacy-peer-deps
+      - name: Install SDK dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Install native package dependencies
+        working-directory: sdk/typescript/native
+        run: npm install --ignore-scripts --legacy-peer-deps
 
       - name: Build and smoke native addon
-        run: npm --prefix sdk/typescript/native run smoke:native
+        working-directory: sdk/typescript/native
+        run: npm run smoke:native
 
       - name: Pack native artifacts
         shell: bash
@@ -143,16 +149,20 @@ jobs:
           cache-on-failure: true
           key: sdk-wasm
 
-      - name: Install package dependencies
-        run: |
-          npm --prefix sdk/typescript install
-          npm --prefix sdk/typescript/wasm install --ignore-scripts --legacy-peer-deps
+      - name: Install SDK dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Install WASM package dependencies
+        working-directory: sdk/typescript/wasm
+        run: npm install --ignore-scripts --legacy-peer-deps
 
       - name: Typecheck and check wasm driver
+        working-directory: sdk/typescript/wasm
         run: |
-          npm --prefix sdk/typescript/wasm run typecheck
-          npm --prefix sdk/typescript/wasm run check:driver
-          npm --prefix sdk/typescript/wasm run pack:check
+          npm run typecheck
+          npm run check:driver
+          npm run pack:check
 
       - name: Smoke installed package
         shell: bash
