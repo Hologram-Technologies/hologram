@@ -11,6 +11,7 @@ use crate::source::{
     SourceDiagnostic, SourceDocument, SourceLanguage, SourceParseOptions, SourceProgram,
 };
 pub use hologram::HologramFrontend;
+use hologram_graph::Graph;
 pub use python::PythonFrontend;
 pub use rust::RustFrontend;
 pub use typescript::TypeScriptFrontend;
@@ -74,6 +75,14 @@ pub fn parse_document(
     frontend_for_language(language)
         .ok_or(CompileError::SourceParse("source language unsupported"))?
         .parse_document(source)
+}
+
+pub(crate) fn looks_like_hologram_v2(source: &str) -> bool {
+    hologram::looks_like_v2(source)
+}
+
+pub(crate) fn parse_legacy_hologram_graph(source: &str) -> Result<Graph, CompileError> {
+    hologram::parse_legacy_graph(source)
 }
 
 /// Parse source text into a document with source-position diagnostics.

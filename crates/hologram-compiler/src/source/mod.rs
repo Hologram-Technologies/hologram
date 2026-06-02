@@ -50,8 +50,12 @@ pub enum SourceLanguage {
 
 /// Parse native Hologram source and lower it directly to a graph.
 pub fn parse(source: &str) -> Result<Graph, CompileError> {
-    let program = parse_ir(source, SourceLanguage::Hologram)?;
-    lower::lower_program(program)
+    if frontends::looks_like_hologram_v2(source) {
+        let program = parse_ir(source, SourceLanguage::Hologram)?;
+        lower::lower_program(program)
+    } else {
+        frontends::parse_legacy_hologram_graph(source)
+    }
 }
 
 /// Parse source text into a document containing one or more graph regions.

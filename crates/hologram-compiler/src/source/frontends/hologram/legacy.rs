@@ -1,5 +1,6 @@
 //! Legacy line-oriented Hologram source parser.
 
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::error::CompileError;
@@ -9,12 +10,27 @@ use crate::source::ir::{
 };
 use crate::source::op_table;
 use crate::source::{diagnostic, SourceDiagnostic};
-use hologram_graph::registry::ShapeDescriptor;
+use hologram_graph::constant::ConstantEntry;
+use hologram_graph::node::Node;
+use hologram_graph::registry::{DTypeId, ShapeDescriptor, ShapeId};
+use hologram_graph::{Graph, GraphOp, InputSource};
 use nom::bytes::complete::take_while1;
 use nom::character::complete::space1;
 use nom::combinator::all_consuming;
 use nom::multi::separated_list1;
 use nom::{Err as NomErr, IResult, Parser};
+use smallvec::SmallVec;
+
+const DTYPE_F32: u8 = 8;
+
+/// Parse legacy source directly into the graph IR.
+pub fn parse_graph(source: &str) -> Result<Graph, CompileError> {
+    let mut parser = GraphParser::new();
+    for line in source.lines() {
+        parser.parse_line(line)?;
+    }
+    Ok(parser.finish())
+}
 
 /// Parse legacy source into the common source IR with diagnostics.
 pub fn parse_program_diagnostic(source: &str) -> Result<SourceProgram, SourceDiagnostic> {
@@ -69,6 +85,12 @@ fn parse_tokens_diagnostic(
         .map_err(|err| token_diagnostic(line_number, base_column, input, err))
 }
 
+fn parse_tokens(input: &str) -> Result<Vec<&str>, CompileError> {
+    token_list(input)
+        .map(|(_, tokens)| tokens)
+        .map_err(|_| CompileError::SourceParse("source: bad tokens"))
+}
+
 fn token_list(input: &str) -> IResult<&str, Vec<&str>> {
     all_consuming(separated_list1(space1, token)).parse(input)
 }
@@ -94,6 +116,205 @@ fn token_diagnostic(
         NomErr::Incomplete(_) => {
             diagnostic::from_line(line_number, base_column, input, "source: bad tokens")
         }
+    }
+}
+
+struct GraphParser {
+    graph: Graph,
+    names: hashbrown::HashMap<String, InputSource>,
+}
+
+impl GraphParser {
+    fn new() -> Self {
+        Self {
+            graph: Graph::new(),
+            names: hashbrown::HashMap::new(),
+        }
+    }
+
+    fn parse_line(&mut self, line: &str) -> Result<(), CompileError> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return Ok(());
+        }
+        let tokens = parse_tokens(trimmed)?;
+        let mut cursor = TokenCursor::new(tokens);
+        let head = cursor.next("empty line")?;
+        self.parse_directive(head, cursor)
+    }
+
+    fn finish(self) -> Graph {
+        self.graph
+    }
+}
+
+impl GraphParser {
+    fn parse_directive(&mut self, head: &str, tokens: TokenCursor<'_>) -> Result<(), CompileError> {
+        match head {
+            "input" => self.parse_input(tokens),
+            "const" => self.parse_const(tokens),
+            "output" => self.parse_output(tokens),
+            "op" => self.parse_op(tokens),
+            _ => Err(CompileError::SourceParse("unknown directive")),
+        }
+    }
+
+    fn parse_input(&mut self, mut tokens: TokenCursor<'_>) -> Result<(), CompileError> {
+        let name = tokens.next("input: missing name")?;
+        let shape = self.optional_shape(tokens.optional(), "input: bad shape")?;
+        let id = self.graph.add_node(input_node(shape));
+        self.graph.add_input(id);
+        self.names.insert(name.to_string(), InputSource::Node(id));
+        Ok(())
+    }
+
+    fn parse_const(&mut self, mut tokens: TokenCursor<'_>) -> Result<(), CompileError> {
+        let name = tokens.next("const: missing name")?.to_string();
+        let shape = self.next_shape(&mut tokens, "const: missing shape", "const: bad shape")?;
+        expect_const_equals(&mut tokens)?;
+        let literal = parse_f32_values(tokens.next("const: missing values")?)?;
+        let id = self
+            .graph
+            .constants_mut()
+            .insert(const_entry(literal, shape));
+        self.names.insert(name, InputSource::Constant(id));
+        Ok(())
+    }
+
+    fn parse_output(&mut self, mut tokens: TokenCursor<'_>) -> Result<(), CompileError> {
+        let src = self.output_source(tokens.next("output: missing name")?)?;
+        let id = self.graph.add_node(output_node(src));
+        self.graph.add_output(id);
+        Ok(())
+    }
+
+    fn parse_op(&mut self, mut tokens: TokenCursor<'_>) -> Result<(), CompileError> {
+        let op = parse_op_kind(tokens.next("op: missing op name")?)?;
+        let tail = self.parse_graph_op_tail(op, tokens)?;
+        let id = self.graph.add_node(op_node(op, tail.inputs, tail.shape));
+        if let Some(alias) = tail.alias {
+            self.names.insert(alias, InputSource::Node(id));
+        }
+        Ok(())
+    }
+}
+
+impl GraphParser {
+    fn parse_graph_op_tail(
+        &mut self,
+        op: hologram_graph::OpKind,
+        mut tokens: TokenCursor<'_>,
+    ) -> Result<GraphOpTail, CompileError> {
+        let mut tail = GraphOpTail::new(op);
+        while let Some(tok) = tokens.optional() {
+            tail.push(tok, self)?;
+        }
+        Ok(tail)
+    }
+
+    fn source(&self, name: &str) -> Result<InputSource, CompileError> {
+        self.names
+            .get(name)
+            .copied()
+            .ok_or(CompileError::SourceParse("op: unresolved input"))
+    }
+
+    fn output_source(&self, name: &str) -> Result<hologram_graph::NodeId, CompileError> {
+        match self.names.get(name) {
+            Some(InputSource::Node(id)) => Ok(*id),
+            _ => Err(CompileError::SourceParse("output: unknown/!node source")),
+        }
+    }
+
+    fn optional_shape(
+        &mut self,
+        tok: Option<&str>,
+        err: &'static str,
+    ) -> Result<ShapeId, CompileError> {
+        match tok {
+            Some(tok) => self.shape_id(parse_shape(tok, err)?),
+            None => Ok(ShapeId(0)),
+        }
+    }
+
+    fn next_shape(
+        &mut self,
+        tokens: &mut TokenCursor<'_>,
+        missing: &'static str,
+        bad: &'static str,
+    ) -> Result<ShapeId, CompileError> {
+        let shape = parse_shape(tokens.next(missing)?, bad)?;
+        self.shape_id(shape)
+    }
+
+    fn shape_id(&mut self, shape: ShapeDescriptor) -> Result<ShapeId, CompileError> {
+        Ok(self.graph.shape_registry_mut().intern(shape))
+    }
+}
+
+struct GraphOpTail {
+    inputs: SmallVec<[InputSource; 4]>,
+    alias: Option<String>,
+    shape: ShapeId,
+}
+
+impl GraphOpTail {
+    fn new(_op: hologram_graph::OpKind) -> Self {
+        Self {
+            inputs: SmallVec::new(),
+            alias: None,
+            shape: ShapeId(0),
+        }
+    }
+
+    fn push(&mut self, tok: &str, parser: &mut GraphParser) -> Result<(), CompileError> {
+        if let Some(rest) = tok.strip_prefix("as=") {
+            self.alias = Some(rest.to_string());
+        } else if tok.starts_with(':') {
+            self.shape = parser.shape_id(parse_shape(tok, "op: bad shape")?)?;
+        } else {
+            self.inputs.push(parser.source(tok)?);
+        }
+        Ok(())
+    }
+}
+
+fn parse_op_kind(op: &str) -> Result<hologram_graph::OpKind, CompileError> {
+    op_table::parse(op).ok_or(CompileError::SourceParse("op: unknown op kind"))
+}
+
+fn input_node(shape: ShapeId) -> Node {
+    Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    }
+}
+
+fn output_node(src: hologram_graph::NodeId) -> Node {
+    Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(src)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: ShapeId(0),
+    }
+}
+
+fn op_node(op: hologram_graph::OpKind, inputs: SmallVec<[InputSource; 4]>, shape: ShapeId) -> Node {
+    Node {
+        op: GraphOp::Op(op),
+        inputs,
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: shape,
+    }
+}
+
+fn const_entry(literal: SourceTensorLiteral, shape: ShapeId) -> ConstantEntry {
+    ConstantEntry {
+        bytes: literal.bytes,
+        dtype: DTypeId(DTYPE_F32),
+        shape,
     }
 }
 
