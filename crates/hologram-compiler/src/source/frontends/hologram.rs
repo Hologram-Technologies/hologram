@@ -14,6 +14,7 @@ use crate::source::ir::{
 use crate::source::op_table;
 use crate::source::{diagnostic, SourceDiagnostic, SourceDocument, SourceLanguage};
 use hologram_graph::registry::ShapeDescriptor;
+use hologram_graph::Graph;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while, take_while1};
 use nom::character::complete::{char, digit1, space0, space1};
@@ -51,6 +52,11 @@ impl SourceFrontend for HologramFrontend {
 /// Return whether source appears to use the native v2 DSL.
 pub fn looks_like_v2(source: &str) -> bool {
     source.lines().map(str::trim).any(is_v2_line)
+}
+
+/// Parse legacy Hologram source directly into graph IR.
+pub(crate) fn parse_legacy_graph(source: &str) -> Result<Graph, CompileError> {
+    legacy::parse_graph(source)
 }
 
 /// Parse native v2 Hologram source into source IR with diagnostics.
