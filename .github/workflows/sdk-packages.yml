@@ -55,13 +55,13 @@ jobs:
           node-version: "22"
 
       - name: Install package dependencies
-        run: npm install --prefix sdk/typescript
+        run: npm --prefix sdk/typescript install
 
       - name: Typecheck and pack
         run: |
-          npm run --prefix sdk/typescript typecheck
-          npm run --prefix sdk/typescript test:golden
-          npm run --prefix sdk/typescript pack:check
+          npm --prefix sdk/typescript run typecheck
+          npm --prefix sdk/typescript run test:golden
+          npm --prefix sdk/typescript run pack:check
 
       - name: Smoke installed package
         shell: bash
@@ -97,11 +97,11 @@ jobs:
 
       - name: Install package dependencies
         run: |
-          npm install --prefix sdk/typescript
-          npm install --prefix sdk/typescript/native --ignore-scripts --legacy-peer-deps
+          npm --prefix sdk/typescript install
+          npm --prefix sdk/typescript/native install --ignore-scripts --legacy-peer-deps
 
       - name: Build and smoke native addon
-        run: npm run --prefix sdk/typescript/native smoke:native
+        run: npm --prefix sdk/typescript/native run smoke:native
 
       - name: Pack native artifacts
         shell: bash
@@ -145,14 +145,14 @@ jobs:
 
       - name: Install package dependencies
         run: |
-          npm install --prefix sdk/typescript
-          npm install --prefix sdk/typescript/wasm --ignore-scripts --legacy-peer-deps
+          npm --prefix sdk/typescript install
+          npm --prefix sdk/typescript/wasm install --ignore-scripts --legacy-peer-deps
 
       - name: Typecheck and check wasm driver
         run: |
-          npm run --prefix sdk/typescript/wasm typecheck
-          npm run --prefix sdk/typescript/wasm check:driver
-          npm run --prefix sdk/typescript/wasm pack:check
+          npm --prefix sdk/typescript/wasm run typecheck
+          npm --prefix sdk/typescript/wasm run check:driver
+          npm --prefix sdk/typescript/wasm run pack:check
 
       - name: Smoke installed package
         shell: bash
