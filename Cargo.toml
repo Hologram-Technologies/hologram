@@ -26,7 +26,6 @@ members = [
     "substrate/hologram-runtime-bare",
     "substrate/hologram-net-bare",
     "substrate/hologram-net-tcp",
-    "sdk/typescript/native/native",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
@@ -34,6 +33,7 @@ members = [
 exclude = [
     "substrate/hologram-efi",
     "substrate/hologram-store-opfs",
+    "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
 ]
 

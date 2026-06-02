@@ -6,12 +6,16 @@ const TYPESCRIPT: &str = include_str!("../../../sdk/typescript/src/generated.ts"
 
 #[test]
 fn generated_python_is_current() {
-    assert_eq!(PYTHON, sdk::generate_python());
+    assert_eq!(normalized(PYTHON), sdk::generate_python());
 }
 
 #[test]
 fn generated_typescript_is_current() {
-    assert_eq!(TYPESCRIPT, sdk::generate_typescript());
+    assert_eq!(normalized(TYPESCRIPT), sdk::generate_typescript());
+}
+
+fn normalized(s: &str) -> String {
+    s.replace("\r\n", "\n")
 }
 
 #[test]

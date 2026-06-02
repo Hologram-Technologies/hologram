@@ -28,7 +28,7 @@
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
     "test:golden": "npm run build && node test/golden.mjs",
-    "test:types": "npm run build && tsc --strict --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck test/types.ts",
+    "test:types": "npm run build && tsc --ignoreConfig --strict --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck test/types.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run"
   },
