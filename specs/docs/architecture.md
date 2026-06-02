@@ -354,14 +354,66 @@ All compilation routes through the 7-stage cascade engine (`hologram-cascade`), 
 the UOR cascade pipeline from uor-foundation v0.1.3. The cascade is the sole compilation path;
 there is no separate imperative pipeline.
 
+### Source Frontend Boundary
+
+Source parsing is a compile-time frontend concern. Native Hologram source,
+Python, TypeScript, and Rust frontends parse into the same document-level
+contract before anything reaches the graph compiler:
+
+```text
+source text -> SourceDocument -> selected SourceProgram -> Graph -> Compiler
+```
+
+`SourceDocument` may contain multiple graph regions extracted from a larger host
+file. `SourceParseOptions` selects the graph by name; if no graph is selected,
+a document with one graph is accepted and a document with multiple graphs fails
+loudly as ambiguous. Host-language frontends may ignore unrelated application
+code, but unsupported statements inside an inferred graph region must fail
+loudly.
+
+Python support is feature-gated behind `frontend-python` and parses the Python
+AST without importing or executing user code. Its current accepted subset is
+restricted to Hologram builder calls (`h.input`, `h.const` / `h.constant`,
+`h.ops.<op>`, and `h.output`) with literal shape/dtype/value metadata and the
+shared source op-attribute table used by native Hologram source.
+
+TypeScript support is feature-gated behind `frontend-typescript` and parses the
+TypeScript AST without importing or executing user code. Its current accepted
+subset mirrors Python through object-literal call options: `h.input`,
+`h.const` / `h.constant`, `h.ops.<op>`, and `h.output` with literal
+shape/dtype/value metadata and the shared source op-attribute table.
+
+Rust support is feature-gated behind `frontend-rust` and parses the Rust AST
+with `syn` without compiling or executing user code. Its current accepted
+subset mirrors the other host frontends through helper-call options:
+`h.input`, `h.constant` / `h.const_`, `h.ops().<op>`, and `h.output` with
+literal shape/dtype/value metadata and the shared source op-attribute table.
+
+No source-language metadata, parser spans, dynamic attribute maps, or frontend
+dispatch survives into `hologram-graph`, `.holo` archives, `hologram-backend`,
+or `hologram-exec`; those layers see only the closed graph/`KernelCall`
+vocabulary.
+
+Inline constants are for tests and small source examples. Large weights should
+enter through a shared source/SDK external tensor reference contract so bytes
+are validated, loaded, packed, and archived once rather than copied through
+host-language source literals; see
+[External Tensor References](external-tensor-references.md).
+
 ### Entry Points
 
 | Entry Point | Use Case |
 |-------------|----------|
-| `compile(graph)` | Raw Graph — wraps in CompileUnit via `unit_from_graph()` → cascade |
-| `CompilerBuilder::from_unit(unit, graph)` | Pre-built CompileUnit + pre-lowered Graph → cascade |
-| `CompilerBuilder::from_source(source, ...)` | UOR term language → parse → preflight → lower → cascade |
-| `compile_from_source(source, ...)` | Convenience wrapper for `from_source` |
+| `compile(graph)` / `Compiler::new(graph, ...)` | Pre-built `Graph` → cascade |
+| `source::parse(source)` | Compatibility path: native Hologram source → `Graph` |
+| `source::parse_document(source, language)` | Source text → `SourceDocument` with zero or more graph regions |
+| `source::parse_ir_with_options(source, language, options)` | Source text + graph selection → `SourceProgram` |
+| `source::lower_ir(&program)` | `SourceProgram` → `Graph` |
+| `compile_from_source(source, ...)` | Convenience wrapper for native Hologram source |
+| `compile_from_source_language(source, language, ...)` | Convenience wrapper for a language-aware source path when graph selection is not needed |
+
+The CLI mirrors this boundary with `hologram compile --source-language <lang>`
+and `--graph <name>` for embedded or multi-graph source files.
 
 ### 7 Cascade Stages
 

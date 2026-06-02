@@ -31,6 +31,50 @@ archive length; a return value greater than `out_capacity` means the output was
 truncated and the caller should retry with a larger buffer (truncation is never
 reported as success). Both compile for the CPU backend.
 
+SDKs can also bypass source parsing and construct the same source program
+through `hologram_source_builder_*` functions. The builder ABI supports inputs,
+inline constants, external tensor references, ops, output aliases, compile, and
+free. Python and TypeScript SDKs use this path instead of parsing host source.
+
+Language SDKs expose the same native Hologram `.txt` source path through
+package-level helpers:
+
+```python
+import hologram as hg
+
+archive = hg.compile_source_file("graph.txt")
+```
+
+```ts
+import { compileSource } from "@hologram/sdk";
+import { compileSourceFile, createNativeBinding } from "@hologram/native";
+
+const native = createNativeBinding();
+const archive = await compileSourceFile("graph.txt", native);
+const inlineArchive = await compileSource("input x\nop relu x as=y\noutput y\n", native);
+```
+
+## Errors
+
+FFI functions return negative values on failure. After a failure, callers read
+the thread-local diagnostic with:
+
+```c
+int code = hologram_last_error_code();
+const char *message = hologram_last_error_message();
+size_t line = hologram_last_error_line();
+size_t column = hologram_last_error_column();
+const char *rejected = hologram_last_error_rejected();
+```
+
+The stable code categories are `PARSE` (1), `GRAPH` (2), `UNSUPPORTED_OP` (3),
+`BAD_ATTR` (4), `SHAPE` (5), `EXTERNAL_TENSOR` (6), `ARCHIVE_LOAD` (7),
+`EXECUTION` (8), `ABI_MISMATCH` (9), `INVALID_ARGUMENT` (10),
+`UNSUPPORTED_DTYPE` (11), and `COMPILE` (12). Language SDKs map these codes to
+typed exceptions/classes with the numeric `code` preserved.
+When source spans are available, SDK errors also preserve `line`, `column`, and
+`rejected` fields.
+
 ## Inspecting a session
 
 ```c
@@ -40,9 +84,15 @@ int hologram_session_kernel_count(int handle);
 
 // Byte length the i-th output port will produce — pre-size buffers with this.
 int hologram_session_output_byte_len(int handle, size_t i);
+int hologram_session_input_dtype(int handle, size_t i);
+int hologram_session_output_dtype(int handle, size_t i);
 
 // Copy the archive's canonical 32-byte BLAKE3 fingerprint into `out` (>= 32 bytes).
 int hologram_session_archive_fingerprint(int handle, unsigned char *out);
+
+// Copy producer-defined metadata by key; returns full byte length or -1.
+int hologram_session_extension(int handle, const unsigned char *key, size_t key_len,
+                               unsigned char *out, size_t out_capacity);
 ```
 
 These return `-1` on an invalid handle.

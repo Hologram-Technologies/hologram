@@ -1,5 +1,227 @@
 # Sprint Tracking
 
+## Sprint 38: Source IR and Multi-Language Frontends (ACTIVE)
+
+**Plan:** [plans/075-source-ir-language-frontends.md](plans/075-source-ir-language-frontends.md)
+
+Goal: replace `hologram-compiler::source`'s hand-rolled direct
+`source -> Graph` parser with a staged
+`source -> SourceDocument -> SourceProgram -> Graph` pipeline, then add explicit
+Python, TypeScript, and Rust frontends that lower through the same IR without
+executing user code.
+
+- [x] **0.1**: Plan 075 drafted with source-IR boundary, parser strategy,
+  host-language contracts, compatibility API, phases, and acceptance criteria.
+- [x] **1.1**: Define `SourceProgram` / `SourceItem` / `SourceExpr` /
+  `SourceType` / span diagnostics in `hologram-compiler::source::ir`.
+- [x] **1.2**: Move name resolution, shape interning, constant insertion,
+  output creation, and sparse op-attribute attachment into a shared
+  `SourceProgram -> Graph` lowerer.
+- [x] **1.2a**: Preserve the zero-copy/O(1) runtime contract: source spans,
+  language tags, parser ASTs, and symbol names disappear before backend
+  lowering; execution receives only resolved graph/archive structures.
+- [x] **1.2b**: Add symbol interning and direct tensor-literal-to-bytes parsing
+  so source lowering avoids per-token string churn and avoids
+  `Vec<f32> -> Vec<u8>` double materialization for constants.
+- [x] **1.3**: Preserve `source::parse(&str) -> Result<Graph, CompileError>`
+  and `compile_from_source` by routing the legacy grammar through the new IR.
+- [x] **2.1**: Replace `split_whitespace` with a real native parser
+  (preferred: `nom`, to preserve `no_std + alloc`).
+- [x] **2.2**: Add native v2 syntax subset for typed tensors, bracket shapes,
+  tensor literals, call expressions, and `let`.
+- [x] **2.2a**: Add named attributes to native v2 syntax.
+- [x] **2.2b**: Move source op-name parsing to the canonical `OpKind::ALL`
+  catalog instead of a compiler-local hand-maintained list; generate
+  `OpKind`, `OpKind::ALL`, and `OpKind::name()` from one catalog declaration.
+- [x] **2.2c**: Add `SourceDiagnostic` and diagnostic parse entry points that
+  report line, column, kind, and rejected token while preserving
+  `CompileError::SourceParse` compatibility.
+- [x] **3.1**: Update CLI language selection now that `SourceLanguage`,
+  `parse_ir`, `lower_ir`, and `compile_from_source_language` exist.
+- [x] **3.1a**: Add a `SourceFrontend` adapter boundary under
+  `source/frontends/`; `nom` remains the native Hologram DSL parser, while
+  Python/TypeScript/Rust and future Go/C/PHP/etc. frontends use parser
+  adapters appropriate to each language. Frontend metadata owns language
+  aliases and filename extensions so CLI detection does not hard-code them.
+- [x] **3.1b**: Add `SourceDocument`, `SourceGraph`, and
+  `SourceParseOptions` so frontends can extract Hologram graph regions from
+  larger host-language files before selecting a single `SourceProgram` for
+  lowering.
+- [x] **3.1c**: Add `hologram-cli compile --graph <name>` and route CLI source
+  compilation through `parse_ir_with_options` so multi-graph documents fail
+  loud unless the graph selection is explicit.
+- [x] **3.1d**: Document the graph-inference policy: safe inference is limited
+  to AST-only detection of known Hologram builder usage; unrelated host code is
+  ignored; unsupported statements inside inferred graph candidates fail loudly.
+- [x] **4.1**: Add restricted AST-based Python frontend behind an explicit
+  `frontend-python` feature using `rustpython-parser`.
+- [x] **4.1a**: Extract named Python `SourceGraph`s from top-level functions
+  with unambiguous `h.input` / `h.const` / `h.ops.<op>` / `h.output` builder
+  usage while ignoring unrelated host-language code.
+- [x] **4.1d**: Document Python compile flags, accepted builder calls, graph
+  selection, and the AST-only/no-execution boundary in the README and site
+  docs.
+- [x] **4.1b**: Add source-position diagnostics for rejected Python AST nodes.
+- [x] **4.1c**: Add Python op-attribute parsing beyond `shape` / `dtype`.
+- [x] **5.1**: Add restricted AST-based TypeScript frontend behind an explicit
+  feature flag.
+- [x] **6.1**: Add restricted AST-based Rust frontend behind an explicit
+  feature flag.
+- [x] **7.1**: Add cross-frontend equivalence tests proving native, Python,
+  TypeScript, and Rust sources lower to equivalent IR/graphs/archives.
+- [x] **7.1a**: Add negative dependency checks proving `source::*` types do not
+  leak into exec/backend/archive runtime structures.
+- [x] **7.1b**: Add source-lowering microbenchmarks for large graph and constant
+  parsing.
+- [x] **7.1c**: Design external tensor references for large weights so
+  host-language frontends do not force model data through inline source
+  literals.
+- [x] **7.2**: Update `specs/docs/architecture.md`, site compiler docs, and
+  README after the source frontend architecture lands.
+- [x] **8.1 / Plan 076**: Reconcile the FFI header with the implemented Rust
+  FFI surface and add a stable source/graph builder ABI.
+  - [x] **8.1a**: Replace stale checked-in C header declarations with the
+    implemented compile/session/source-builder FFI surface.
+  - [x] **8.1b**: Add opaque source builder handle plus `input`, `op`,
+    `output`, `compile`, and `free` functions backed by `SourceProgram`.
+  - [x] **8.1c**: Add ABI version and basic thread-local error message
+    functions for SDK callers.
+  - [x] **8.1d**: Add C ABI tests for source-builder compile round-trip and
+    rejected-op error reporting.
+  - [x] **8.1e**: Add inline constants and external tensor references to the
+    builder ABI.
+  - [x] **8.1f**: Replace generic builder failures with stable SDK-facing
+    error categories.
+- [x] **8.2 / Plan 076**: Add versioned ABI, structured error, ownership, and
+  exported-symbol compatibility contracts for SDK consumers.
+  - [x] **8.2a**: Add archive-format version query and feature-probing API for
+    additive SDK capability checks.
+  - [x] **8.2b**: Document pointer, buffer, builder, session, and error-message
+    ownership/lifetime rules.
+  - [x] **8.2c**: Add C header symbol/constant snapshot tests.
+  - [x] **8.2d**: Document ABI version, feature string, and `.holo` format
+    compatibility rules.
+- [x] **8.3 / Plan 076**: Generate low-level Python and TypeScript bindings
+  from canonical op/dtype/attribute metadata.
+  - [x] **8.3a**: Add `hologram-ffi::sdk` metadata derived from
+    `OpKind::ALL`, dtype constants, required feature strings, and source attr
+    metadata.
+  - [x] **8.3b**: Generate checked-in low-level Python and TypeScript SDK
+    metadata/helper files under `sdk/`.
+  - [x] **8.3c**: Add a generator entry point for refreshing SDK binding
+    files from canonical Rust metadata.
+  - [x] **8.3d**: Add generated-file freshness and canonical-op coverage
+    tests.
+- [x] **8.4 / Plan 076**: Build human chainable Python and TypeScript SDKs on
+  top of the generated bindings.
+  - [x] **8.4a**: Add `sdk/python/hologram` with chainable `Graph` /
+    `Tensor`, `input`, inline `const`, `const_ref`, output aliases, native
+    feature checks, and `Graph.op(...)` escape hatch.
+  - [x] **8.4b**: Add Python stdlib tests using a fake native source-builder
+    binding.
+  - [x] **8.4c**: Add `sdk/typescript/src` with generated-op proxy tensor
+    calls, `Graph.op(...)`, `constRef`, output aliases, and async compile over
+    a native binding protocol.
+  - [x] **8.4d**: Validate the TypeScript SDK entry point with `tsc --strict`.
+- [ ] **8.5 / Plan 076**: Package PyPI wheels, npm native/WASM packages, and
+  browser-safe TypeScript distribution artifacts.
+  - [x] **8.5a**: Add Python SDK package metadata, typed-package marker, and
+    package-surface smoke test.
+  - [x] **8.5b**: Add `@hologram/sdk` npm package metadata, TypeScript build
+    config, ESM export map, and browser-safe package README.
+  - [x] **8.5c**: Document native N-API/WASM package boundaries and the shared
+    `NativeBinding` protocol expected by the human SDKs.
+  - [x] **8.5d**: Add `@hologram/native` and `@hologram/wasm` adapter packages
+    over the SDK `NativeBinding` protocol, with ABI/feature checks, output
+    alias support, constant-byte conversion, and package dry-run checks.
+  - [x] **8.5e**: Implement the actual N-API binary and WASM driver surfaces
+    consumed by the adapter packages.
+  - [x] **8.5f**: Add platform prebuild/release matrix and installed-package
+    smoke checks.
+- [x] **8.6 / Plan 076**: Add cross-language SDK/parser conformance tests,
+  including external tensor references.
+  - [x] **8.6a**: Add a golden external-weight matmul witness proving
+    `SourceProgram` file-backed constants lower to the same graph/archive as
+    inline native `.txt` constants.
+  - [x] **8.6b**: Add a C/FFI source-builder witness proving SDK-facing
+    `const_ref` compilation produces the same archive as native `.txt`.
+  - [x] **8.6c**: Add Python and TypeScript SDK golden tests proving the human
+    APIs emit the same builder contract for `input`, `const_ref` / `constRef`,
+    `matmul`, and output aliases.
+  - [x] **8.6d**: Run the parser conformance suite with
+    `frontend-python,frontend-typescript,frontend-rust` enabled.
+- [x] **8.7 / Plan 076**: Add a real Python native wheel binding over the FFI
+  source-builder ABI.
+  - [x] **8.7a**: Add `_hologram.py` ctypes bindings for source-builder,
+    version, feature, and error APIs.
+  - [x] **8.7b**: Bundle the `hologram-ffi` cdylib into platform-specific
+    Python wheels via the package build hook.
+  - [x] **8.7c**: Check ABI version, archive format version, and required
+    feature strings before native builder use.
+  - [x] **8.7d**: Add Python native and installed-wheel smoke tests that compile
+    a graph through the bundled library.
+- [x] **8.8 / Plan 076**: Add Python SDK session load/execute wrappers on top
+  of the FFI session ABI.
+  - [x] **8.8a**: Add `hg.Session.load(...)` with context-managed close and
+    finalization.
+  - [x] **8.8b**: Expose session input/output counts, port names, port shapes,
+    output byte lengths, kernel count, and archive fingerprint.
+  - [x] **8.8c**: Add `Session.execute(...)` for named input mappings and
+    ordered byte-buffer sequences, returning output-name keyed bytes.
+  - [x] **8.8d**: Extend Python native and installed-wheel smoke coverage from
+    compile-only to compile/load/execute.
+- [x] **8.9 / Plan 076**: Add TypeScript SDK session load/execute wrappers on
+  top of the native and WASM driver session surfaces.
+  - [x] **8.9a**: Add `Session.load(...)` to `@hologram/sdk` over optional
+    `NativeBinding.sessionLoad`.
+  - [x] **8.9b**: Add session load, introspection, execute, and close methods
+    to `@hologram/native` and its N-API addon.
+  - [x] **8.9c**: Add the same session surface to `@hologram/wasm` and the
+    wasm-bindgen driver.
+  - [x] **8.9d**: Extend SDK golden, native addon, native installed-package,
+    and WASM installed-package smokes from compile-only to compile/load/execute.
+- [x] **8.10 / Plan 076**: Map stable FFI error categories to Python and
+  TypeScript SDK error classes.
+  - [x] **8.10a**: Add Python `hologram.errors` taxonomy and map native
+    archive load, external tensor, execution, ABI, invalid argument, and SDK
+    validation failures to typed exceptions with stable `.code` values.
+  - [x] **8.10b**: Add TypeScript `@hologram/sdk` error classes, `ERROR_*`
+    constants, and `errorFromCode(...)`.
+  - [x] **8.10c**: Map native N-API and WASM adapter driver errors into the
+    shared TypeScript SDK classes.
+  - [x] **8.10d**: Cover bad archives, bad external tensor references, missing
+    inputs, and execution failures in focused Python, TypeScript golden, and
+    installed-package smoke tests.
+  - [x] **8.10e**: Re-export generated `TensorRef` and
+    `LowLevelGraphBuilder` from `@hologram/sdk` and add a declaration-output
+    type smoke test for the public TypeScript package surface.
+- [x] **8.11 / Plan 076**: Finish SDK/FFI diagnostics, metadata, external
+  tensor policy, and docs cleanup.
+  - [x] **8.11a**: Expose source-position diagnostics through FFI, Python,
+    N-API, and WASM adapters.
+  - [x] **8.11b**: Expose session input/output dtypes and metadata extensions
+    through Python and TypeScript SDK sessions.
+  - [x] **8.11c**: Add Node finalizer backstops for source-builder and session
+    handles.
+  - [x] **8.11d**: Generate richer op metadata, Python op wrappers, and
+    TypeScript generated method / attr option types from canonical metadata.
+  - [x] **8.11e**: Add `HOLOGRAM_EXTERNAL_TENSOR_ROOT` compile-root policy and
+    tests proving external tensors are embedded at compile time.
+  - [x] **8.11f**: Update README, SDK docs, FFI contract docs, external tensor
+    docs, and website reference/configuration docs.
+- [x] **8.12 / Plan 076**: Add SDK convenience wrappers for native Hologram
+  `.txt` source compilation.
+  - [x] **8.12a**: Add Python `compile_source(...)` and
+    `compile_source_file("graph.txt")` over `hologram_compile_source`.
+  - [x] **8.12b**: Add shared TypeScript `compileSource(source, binding)` plus
+    N-API and WASM driver `compileSource` methods.
+  - [x] **8.12c**: Add Node-only `@hologram/native`
+    `compileSourceFile("graph.txt", binding)`.
+  - [x] **8.12d**: Cover source-string, `.txt` file, public type, native addon,
+    installed-package, and WASM adapter paths in focused tests.
+  - [x] **8.12e**: Update README, SDK docs, and website docs with `.txt`
+    source-helper usage.
+
 ## Sprint 37: Single Source of Truth for Ops (ACTIVE)
 
 **ADR:** [adrs/045-ops-as-single-source-of-truth.md](adrs/045-ops-as-single-source-of-truth.md)

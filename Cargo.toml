@@ -26,11 +26,16 @@ members = [
     "substrate/hologram-runtime-bare",
     "substrate/hologram-net-bare",
     "substrate/hologram-net-tcp",
+    "sdk/typescript/native/native",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
 # target-specific — excluded from the host workspace; built explicitly (boot test / Playwright test).
-exclude = ["substrate/hologram-efi", "substrate/hologram-store-opfs"]
+exclude = [
+    "substrate/hologram-efi",
+    "substrate/hologram-store-opfs",
+    "sdk/typescript/wasm/driver",
+]
 
 [workspace.package]
 version = "0.6.0"
@@ -96,6 +101,13 @@ libm        = "0.2"
 memmap2     = "0.9"
 tracing     = "0.1"
 hashbrown   = "0.15"
+nom         = { version = "8.0.0", default-features = false, features = ["alloc"] }
+proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
+rustpython-parser = { version = "0.4.0", default-features = false, features = ["location", "malachite-bigint"] }
+syn = { version = "2", default-features = false, features = ["clone-impls", "full", "parsing", "printing"] }
+swc_common        = "23.0.0"
+swc_ecma_ast      = "25.0.0"
+swc_ecma_parser   = "41.0.0"
 
 [profile.release]
 lto = true
