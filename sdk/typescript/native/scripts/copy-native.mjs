@@ -11,7 +11,7 @@ const destination = join(pkg, "dist", "hologram.node");
 
 mkdirSync(dirname(destination), { recursive: true });
 copyFileSync(source, destination);
-console.log(`copied ${source} -> ${destination}`);
+console.error(`copied ${source} -> ${destination}`);
 
 function libraryName() {
   if (process.platform === "darwin") {

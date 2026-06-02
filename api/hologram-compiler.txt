@@ -224,7 +224,553 @@ impl<'a> !core::panic::unwind_safe::UnwindSafe for hologram_compiler::pipeline::
 pub fn hologram_compiler::pipeline::build_unit<'a>(&hologram_compiler::pipeline::PerNodeUnit<'a>) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::CompileUnit<'a, HOLOGRAM_INLINE_BYTES>>, hologram_compiler::error::CompileError>
 pub fn hologram_compiler::pipeline::run_completeness(uor_foundation::enums::WittLevel) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::LiftChainCertificate<FP_MAX>>, uor_foundation::enforcement::GenericImpossibilityWitness>
 pub mod hologram_compiler::source
+pub enum hologram_compiler::source::SourceExpr
+pub hologram_compiler::source::SourceExpr::OpCall(alloc::boxed::Box<hologram_compiler::source::SourceOpCall>)
+pub hologram_compiler::source::SourceExpr::Ref(hologram_compiler::source::SourceSymbol)
+pub hologram_compiler::source::SourceExpr::TensorLiteral(hologram_compiler::source::SourceTensorLiteral)
+impl core::clone::Clone for hologram_compiler::source::SourceExpr
+pub fn hologram_compiler::source::SourceExpr::clone(&self) -> hologram_compiler::source::SourceExpr
+impl core::fmt::Debug for hologram_compiler::source::SourceExpr
+pub fn hologram_compiler::source::SourceExpr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceExpr
+impl core::marker::Send for hologram_compiler::source::SourceExpr
+impl core::marker::Sync for hologram_compiler::source::SourceExpr
+impl core::marker::Unpin for hologram_compiler::source::SourceExpr
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExpr
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExpr
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExpr
+pub enum hologram_compiler::source::SourceExternalTensorLocation
+pub hologram_compiler::source::SourceExternalTensorLocation::File(alloc::string::String)
+impl core::clone::Clone for hologram_compiler::source::SourceExternalTensorLocation
+pub fn hologram_compiler::source::SourceExternalTensorLocation::clone(&self) -> hologram_compiler::source::SourceExternalTensorLocation
+impl core::fmt::Debug for hologram_compiler::source::SourceExternalTensorLocation
+pub fn hologram_compiler::source::SourceExternalTensorLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceExternalTensorLocation
+impl core::marker::Send for hologram_compiler::source::SourceExternalTensorLocation
+impl core::marker::Sync for hologram_compiler::source::SourceExternalTensorLocation
+impl core::marker::Unpin for hologram_compiler::source::SourceExternalTensorLocation
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalTensorLocation
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalTensorLocation
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalTensorLocation
+pub enum hologram_compiler::source::SourceItem
+pub hologram_compiler::source::SourceItem::Binding(hologram_compiler::source::SourceBinding)
+pub hologram_compiler::source::SourceItem::Const(hologram_compiler::source::SourceConst)
+pub hologram_compiler::source::SourceItem::ExternalConst(hologram_compiler::source::SourceExternalConst)
+pub hologram_compiler::source::SourceItem::Input(hologram_compiler::source::SourceInput)
+pub hologram_compiler::source::SourceItem::Output(hologram_compiler::source::SourceOutput)
+impl core::clone::Clone for hologram_compiler::source::SourceItem
+pub fn hologram_compiler::source::SourceItem::clone(&self) -> hologram_compiler::source::SourceItem
+impl core::fmt::Debug for hologram_compiler::source::SourceItem
+pub fn hologram_compiler::source::SourceItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceItem
+impl core::marker::Send for hologram_compiler::source::SourceItem
+impl core::marker::Sync for hologram_compiler::source::SourceItem
+impl core::marker::Unpin for hologram_compiler::source::SourceItem
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceItem
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceItem
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceItem
+pub enum hologram_compiler::source::SourceLanguage
+pub hologram_compiler::source::SourceLanguage::Hologram
+pub hologram_compiler::source::SourceLanguage::Python
+pub hologram_compiler::source::SourceLanguage::Rust
+pub hologram_compiler::source::SourceLanguage::TypeScript
+impl core::clone::Clone for hologram_compiler::source::SourceLanguage
+pub fn hologram_compiler::source::SourceLanguage::clone(&self) -> hologram_compiler::source::SourceLanguage
+impl core::cmp::Eq for hologram_compiler::source::SourceLanguage
+impl core::cmp::PartialEq for hologram_compiler::source::SourceLanguage
+pub fn hologram_compiler::source::SourceLanguage::eq(&self, &hologram_compiler::source::SourceLanguage) -> bool
+impl core::fmt::Debug for hologram_compiler::source::SourceLanguage
+pub fn hologram_compiler::source::SourceLanguage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::SourceLanguage
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceLanguage
+impl core::marker::Freeze for hologram_compiler::source::SourceLanguage
+impl core::marker::Send for hologram_compiler::source::SourceLanguage
+impl core::marker::Sync for hologram_compiler::source::SourceLanguage
+impl core::marker::Unpin for hologram_compiler::source::SourceLanguage
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceLanguage
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceLanguage
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceLanguage
+pub struct hologram_compiler::source::HologramFrontend
+impl core::clone::Clone for hologram_compiler::source::HologramFrontend
+pub fn hologram_compiler::source::HologramFrontend::clone(&self) -> hologram_compiler::source::HologramFrontend
+impl core::default::Default for hologram_compiler::source::HologramFrontend
+pub fn hologram_compiler::source::HologramFrontend::default() -> hologram_compiler::source::HologramFrontend
+impl core::fmt::Debug for hologram_compiler::source::HologramFrontend
+pub fn hologram_compiler::source::HologramFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::HologramFrontend
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::HologramFrontend
+pub const hologram_compiler::source::HologramFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::HologramFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::HologramFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::HologramFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::HologramFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl core::marker::Freeze for hologram_compiler::source::HologramFrontend
+impl core::marker::Send for hologram_compiler::source::HologramFrontend
+impl core::marker::Sync for hologram_compiler::source::HologramFrontend
+impl core::marker::Unpin for hologram_compiler::source::HologramFrontend
+impl core::marker::UnsafeUnpin for hologram_compiler::source::HologramFrontend
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::HologramFrontend
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::HologramFrontend
+pub struct hologram_compiler::source::PythonFrontend
+impl core::clone::Clone for hologram_compiler::source::PythonFrontend
+pub fn hologram_compiler::source::PythonFrontend::clone(&self) -> hologram_compiler::source::PythonFrontend
+impl core::default::Default for hologram_compiler::source::PythonFrontend
+pub fn hologram_compiler::source::PythonFrontend::default() -> hologram_compiler::source::PythonFrontend
+impl core::fmt::Debug for hologram_compiler::source::PythonFrontend
+pub fn hologram_compiler::source::PythonFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::PythonFrontend
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::PythonFrontend
+pub const hologram_compiler::source::PythonFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::PythonFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::PythonFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::PythonFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::PythonFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl core::marker::Freeze for hologram_compiler::source::PythonFrontend
+impl core::marker::Send for hologram_compiler::source::PythonFrontend
+impl core::marker::Sync for hologram_compiler::source::PythonFrontend
+impl core::marker::Unpin for hologram_compiler::source::PythonFrontend
+impl core::marker::UnsafeUnpin for hologram_compiler::source::PythonFrontend
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::PythonFrontend
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::PythonFrontend
+pub struct hologram_compiler::source::RustFrontend
+impl core::clone::Clone for hologram_compiler::source::RustFrontend
+pub fn hologram_compiler::source::RustFrontend::clone(&self) -> hologram_compiler::source::RustFrontend
+impl core::default::Default for hologram_compiler::source::RustFrontend
+pub fn hologram_compiler::source::RustFrontend::default() -> hologram_compiler::source::RustFrontend
+impl core::fmt::Debug for hologram_compiler::source::RustFrontend
+pub fn hologram_compiler::source::RustFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::RustFrontend
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::RustFrontend
+pub const hologram_compiler::source::RustFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::RustFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::RustFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::RustFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::RustFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl core::marker::Freeze for hologram_compiler::source::RustFrontend
+impl core::marker::Send for hologram_compiler::source::RustFrontend
+impl core::marker::Sync for hologram_compiler::source::RustFrontend
+impl core::marker::Unpin for hologram_compiler::source::RustFrontend
+impl core::marker::UnsafeUnpin for hologram_compiler::source::RustFrontend
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::RustFrontend
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::RustFrontend
+pub struct hologram_compiler::source::SourceAttrs
+pub hologram_compiler::source::SourceAttrs::attention: core::option::Option<hologram_graph::node::AttentionAttrs>
+pub hologram_compiler::source::SourceAttrs::conv: core::option::Option<hologram_graph::node::ConvAttrs>
+pub hologram_compiler::source::SourceAttrs::gather: core::option::Option<hologram_graph::node::GatherAttrs>
+pub hologram_compiler::source::SourceAttrs::gemm: core::option::Option<hologram_graph::node::GemmAttrs>
+pub hologram_compiler::source::SourceAttrs::lrn: core::option::Option<hologram_graph::node::LrnAttrs>
+pub hologram_compiler::source::SourceAttrs::norm: core::option::Option<hologram_graph::node::NormAttrs>
+pub hologram_compiler::source::SourceAttrs::quant: core::option::Option<hologram_graph::node::QuantAttrs>
+pub hologram_compiler::source::SourceAttrs::reduce: core::option::Option<hologram_graph::node::ReduceAttrs>
+impl core::clone::Clone for hologram_compiler::source::SourceAttrs
+pub fn hologram_compiler::source::SourceAttrs::clone(&self) -> hologram_compiler::source::SourceAttrs
+impl core::cmp::Eq for hologram_compiler::source::SourceAttrs
+impl core::cmp::PartialEq for hologram_compiler::source::SourceAttrs
+pub fn hologram_compiler::source::SourceAttrs::eq(&self, &hologram_compiler::source::SourceAttrs) -> bool
+impl core::default::Default for hologram_compiler::source::SourceAttrs
+pub fn hologram_compiler::source::SourceAttrs::default() -> hologram_compiler::source::SourceAttrs
+impl core::fmt::Debug for hologram_compiler::source::SourceAttrs
+pub fn hologram_compiler::source::SourceAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::SourceAttrs
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceAttrs
+impl core::marker::Freeze for hologram_compiler::source::SourceAttrs
+impl core::marker::Send for hologram_compiler::source::SourceAttrs
+impl core::marker::Sync for hologram_compiler::source::SourceAttrs
+impl core::marker::Unpin for hologram_compiler::source::SourceAttrs
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceAttrs
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceAttrs
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceAttrs
+pub struct hologram_compiler::source::SourceBinding
+pub hologram_compiler::source::SourceBinding::expr: hologram_compiler::source::SourceExpr
+pub hologram_compiler::source::SourceBinding::name: core::option::Option<hologram_compiler::source::SourceSymbol>
+pub hologram_compiler::source::SourceBinding::span: hologram_compiler::source::SourceSpan
+impl hologram_compiler::source::SourceBinding
+pub fn hologram_compiler::source::SourceBinding::op(core::option::Option<hologram_compiler::source::SourceSymbol>, hologram_compiler::source::SourceOpCall) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceBinding
+pub fn hologram_compiler::source::SourceBinding::clone(&self) -> hologram_compiler::source::SourceBinding
+impl core::fmt::Debug for hologram_compiler::source::SourceBinding
+pub fn hologram_compiler::source::SourceBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceBinding
+impl core::marker::Send for hologram_compiler::source::SourceBinding
+impl core::marker::Sync for hologram_compiler::source::SourceBinding
+impl core::marker::Unpin for hologram_compiler::source::SourceBinding
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceBinding
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceBinding
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceBinding
+pub struct hologram_compiler::source::SourceConst
+pub hologram_compiler::source::SourceConst::literal: hologram_compiler::source::SourceTensorLiteral
+pub hologram_compiler::source::SourceConst::name: hologram_compiler::source::SourceSymbol
+pub hologram_compiler::source::SourceConst::span: hologram_compiler::source::SourceSpan
+pub hologram_compiler::source::SourceConst::ty: hologram_compiler::source::SourceType
+impl hologram_compiler::source::SourceConst
+pub fn hologram_compiler::source::SourceConst::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType, hologram_compiler::source::SourceTensorLiteral) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceConst
+pub fn hologram_compiler::source::SourceConst::clone(&self) -> hologram_compiler::source::SourceConst
+impl core::fmt::Debug for hologram_compiler::source::SourceConst
+pub fn hologram_compiler::source::SourceConst::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceConst
+impl core::marker::Send for hologram_compiler::source::SourceConst
+impl core::marker::Sync for hologram_compiler::source::SourceConst
+impl core::marker::Unpin for hologram_compiler::source::SourceConst
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceConst
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceConst
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceConst
+pub struct hologram_compiler::source::SourceDiagnostic
+pub hologram_compiler::source::SourceDiagnostic::column: usize
+pub hologram_compiler::source::SourceDiagnostic::kind: &'static str
+pub hologram_compiler::source::SourceDiagnostic::line: usize
+pub hologram_compiler::source::SourceDiagnostic::rejected: alloc::string::String
+impl hologram_compiler::source::SourceDiagnostic
+pub fn hologram_compiler::source::SourceDiagnostic::global(&'static str) -> Self
+pub fn hologram_compiler::source::SourceDiagnostic::into_compile_error(self) -> hologram_compiler::error::CompileError
+pub fn hologram_compiler::source::SourceDiagnostic::new(usize, usize, &'static str, alloc::string::String) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceDiagnostic
+pub fn hologram_compiler::source::SourceDiagnostic::clone(&self) -> hologram_compiler::source::SourceDiagnostic
+impl core::cmp::Eq for hologram_compiler::source::SourceDiagnostic
+impl core::cmp::PartialEq for hologram_compiler::source::SourceDiagnostic
+pub fn hologram_compiler::source::SourceDiagnostic::eq(&self, &hologram_compiler::source::SourceDiagnostic) -> bool
+impl core::fmt::Debug for hologram_compiler::source::SourceDiagnostic
+pub fn hologram_compiler::source::SourceDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceDiagnostic
+impl core::marker::Freeze for hologram_compiler::source::SourceDiagnostic
+impl core::marker::Send for hologram_compiler::source::SourceDiagnostic
+impl core::marker::Sync for hologram_compiler::source::SourceDiagnostic
+impl core::marker::Unpin for hologram_compiler::source::SourceDiagnostic
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceDiagnostic
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceDiagnostic
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceDiagnostic
+pub struct hologram_compiler::source::SourceDocument
+impl hologram_compiler::source::SourceDocument
+pub fn hologram_compiler::source::SourceDocument::graphs(&self) -> &[hologram_compiler::source::SourceGraph]
+pub fn hologram_compiler::source::SourceDocument::new() -> Self
+pub fn hologram_compiler::source::SourceDocument::push(&mut self, hologram_compiler::source::SourceGraph)
+pub fn hologram_compiler::source::SourceDocument::select(self, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::SourceDocument::select_diagnostic(self, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::SourceDocument::single(hologram_compiler::source::SourceProgram) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceDocument
+pub fn hologram_compiler::source::SourceDocument::clone(&self) -> hologram_compiler::source::SourceDocument
+impl core::default::Default for hologram_compiler::source::SourceDocument
+pub fn hologram_compiler::source::SourceDocument::default() -> hologram_compiler::source::SourceDocument
+impl core::fmt::Debug for hologram_compiler::source::SourceDocument
+pub fn hologram_compiler::source::SourceDocument::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceDocument
+impl core::marker::Send for hologram_compiler::source::SourceDocument
+impl core::marker::Sync for hologram_compiler::source::SourceDocument
+impl core::marker::Unpin for hologram_compiler::source::SourceDocument
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceDocument
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceDocument
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceDocument
+pub struct hologram_compiler::source::SourceExternalConst
+pub hologram_compiler::source::SourceExternalConst::name: hologram_compiler::source::SourceSymbol
+pub hologram_compiler::source::SourceExternalConst::reference: hologram_compiler::source::SourceExternalTensor
+pub hologram_compiler::source::SourceExternalConst::span: hologram_compiler::source::SourceSpan
+pub hologram_compiler::source::SourceExternalConst::ty: hologram_compiler::source::SourceType
+impl hologram_compiler::source::SourceExternalConst
+pub fn hologram_compiler::source::SourceExternalConst::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType, hologram_compiler::source::SourceExternalTensor) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceExternalConst
+pub fn hologram_compiler::source::SourceExternalConst::clone(&self) -> hologram_compiler::source::SourceExternalConst
+impl core::fmt::Debug for hologram_compiler::source::SourceExternalConst
+pub fn hologram_compiler::source::SourceExternalConst::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceExternalConst
+impl core::marker::Send for hologram_compiler::source::SourceExternalConst
+impl core::marker::Sync for hologram_compiler::source::SourceExternalConst
+impl core::marker::Unpin for hologram_compiler::source::SourceExternalConst
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalConst
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalConst
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalConst
+pub struct hologram_compiler::source::SourceExternalTensor
+pub hologram_compiler::source::SourceExternalTensor::byte_len: u64
+pub hologram_compiler::source::SourceExternalTensor::byte_offset: u64
+pub hologram_compiler::source::SourceExternalTensor::content_hash: [u8; 32]
+pub hologram_compiler::source::SourceExternalTensor::location: hologram_compiler::source::SourceExternalTensorLocation
+impl hologram_compiler::source::SourceExternalTensor
+pub fn hologram_compiler::source::SourceExternalTensor::file(impl core::convert::Into<alloc::string::String>, u64, u64, [u8; 32]) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceExternalTensor
+pub fn hologram_compiler::source::SourceExternalTensor::clone(&self) -> hologram_compiler::source::SourceExternalTensor
+impl core::fmt::Debug for hologram_compiler::source::SourceExternalTensor
+pub fn hologram_compiler::source::SourceExternalTensor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceExternalTensor
+impl core::marker::Send for hologram_compiler::source::SourceExternalTensor
+impl core::marker::Sync for hologram_compiler::source::SourceExternalTensor
+impl core::marker::Unpin for hologram_compiler::source::SourceExternalTensor
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalTensor
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalTensor
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalTensor
+pub struct hologram_compiler::source::SourceFrontendInfo
+impl hologram_compiler::source::SourceFrontendInfo
+pub const fn hologram_compiler::source::SourceFrontendInfo::extensions(self) -> &'static [&'static str]
+pub const fn hologram_compiler::source::SourceFrontendInfo::language(self) -> hologram_compiler::source::SourceLanguage
+pub fn hologram_compiler::source::SourceFrontendInfo::matches_extension(self, &str) -> bool
+pub fn hologram_compiler::source::SourceFrontendInfo::matches_name(self, &str) -> bool
+pub const fn hologram_compiler::source::SourceFrontendInfo::names(self) -> &'static [&'static str]
+pub const fn hologram_compiler::source::SourceFrontendInfo::new(hologram_compiler::source::SourceLanguage, &'static [&'static str], &'static [&'static str]) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::SourceFrontendInfo::clone(&self) -> hologram_compiler::source::SourceFrontendInfo
+impl core::fmt::Debug for hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::SourceFrontendInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::SourceFrontendInfo
+impl core::marker::Freeze for hologram_compiler::source::SourceFrontendInfo
+impl core::marker::Send for hologram_compiler::source::SourceFrontendInfo
+impl core::marker::Sync for hologram_compiler::source::SourceFrontendInfo
+impl core::marker::Unpin for hologram_compiler::source::SourceFrontendInfo
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceFrontendInfo
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceFrontendInfo
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceFrontendInfo
+pub struct hologram_compiler::source::SourceGraph
+pub hologram_compiler::source::SourceGraph::name: core::option::Option<alloc::string::String>
+pub hologram_compiler::source::SourceGraph::program: hologram_compiler::source::SourceProgram
+pub hologram_compiler::source::SourceGraph::span: hologram_compiler::source::SourceSpan
+impl hologram_compiler::source::SourceGraph
+pub fn hologram_compiler::source::SourceGraph::anonymous(hologram_compiler::source::SourceProgram) -> Self
+pub fn hologram_compiler::source::SourceGraph::named(impl core::convert::Into<alloc::string::String>, hologram_compiler::source::SourceProgram) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceGraph
+pub fn hologram_compiler::source::SourceGraph::clone(&self) -> hologram_compiler::source::SourceGraph
+impl core::fmt::Debug for hologram_compiler::source::SourceGraph
+pub fn hologram_compiler::source::SourceGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceGraph
+impl core::marker::Send for hologram_compiler::source::SourceGraph
+impl core::marker::Sync for hologram_compiler::source::SourceGraph
+impl core::marker::Unpin for hologram_compiler::source::SourceGraph
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceGraph
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceGraph
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceGraph
+pub struct hologram_compiler::source::SourceInput
+pub hologram_compiler::source::SourceInput::name: hologram_compiler::source::SourceSymbol
+pub hologram_compiler::source::SourceInput::span: hologram_compiler::source::SourceSpan
+pub hologram_compiler::source::SourceInput::ty: hologram_compiler::source::SourceType
+impl hologram_compiler::source::SourceInput
+pub fn hologram_compiler::source::SourceInput::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceInput
+pub fn hologram_compiler::source::SourceInput::clone(&self) -> hologram_compiler::source::SourceInput
+impl core::fmt::Debug for hologram_compiler::source::SourceInput
+pub fn hologram_compiler::source::SourceInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceInput
+impl core::marker::Send for hologram_compiler::source::SourceInput
+impl core::marker::Sync for hologram_compiler::source::SourceInput
+impl core::marker::Unpin for hologram_compiler::source::SourceInput
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceInput
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceInput
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceInput
+pub struct hologram_compiler::source::SourceOpCall
+pub hologram_compiler::source::SourceOpCall::attrs: hologram_compiler::source::SourceAttrs
+pub hologram_compiler::source::SourceOpCall::inputs: alloc::vec::Vec<hologram_compiler::source::SourceSymbol>
+pub hologram_compiler::source::SourceOpCall::op: hologram_ops::kind::OpKind
+pub hologram_compiler::source::SourceOpCall::span: hologram_compiler::source::SourceSpan
+pub hologram_compiler::source::SourceOpCall::ty: core::option::Option<hologram_compiler::source::SourceType>
+impl hologram_compiler::source::SourceOpCall
+pub fn hologram_compiler::source::SourceOpCall::new(hologram_ops::kind::OpKind, alloc::vec::Vec<hologram_compiler::source::SourceSymbol>, core::option::Option<hologram_compiler::source::SourceType>) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceOpCall
+pub fn hologram_compiler::source::SourceOpCall::clone(&self) -> hologram_compiler::source::SourceOpCall
+impl core::fmt::Debug for hologram_compiler::source::SourceOpCall
+pub fn hologram_compiler::source::SourceOpCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceOpCall
+impl core::marker::Send for hologram_compiler::source::SourceOpCall
+impl core::marker::Sync for hologram_compiler::source::SourceOpCall
+impl core::marker::Unpin for hologram_compiler::source::SourceOpCall
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceOpCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceOpCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceOpCall
+pub struct hologram_compiler::source::SourceOutput
+pub hologram_compiler::source::SourceOutput::name: hologram_compiler::source::SourceSymbol
+pub hologram_compiler::source::SourceOutput::port_name: core::option::Option<hologram_compiler::source::SourceSymbol>
+pub hologram_compiler::source::SourceOutput::span: hologram_compiler::source::SourceSpan
+impl hologram_compiler::source::SourceOutput
+pub fn hologram_compiler::source::SourceOutput::new(hologram_compiler::source::SourceSymbol) -> Self
+pub fn hologram_compiler::source::SourceOutput::with_port_name(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceSymbol) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceOutput
+pub fn hologram_compiler::source::SourceOutput::clone(&self) -> hologram_compiler::source::SourceOutput
+impl core::fmt::Debug for hologram_compiler::source::SourceOutput
+pub fn hologram_compiler::source::SourceOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceOutput
+impl core::marker::Send for hologram_compiler::source::SourceOutput
+impl core::marker::Sync for hologram_compiler::source::SourceOutput
+impl core::marker::Unpin for hologram_compiler::source::SourceOutput
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceOutput
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceOutput
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceOutput
+pub struct hologram_compiler::source::SourceParseOptions
+impl hologram_compiler::source::SourceParseOptions
+pub fn hologram_compiler::source::SourceParseOptions::graph(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn hologram_compiler::source::SourceParseOptions::graph_name(&self) -> core::option::Option<&str>
+pub fn hologram_compiler::source::SourceParseOptions::new() -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceParseOptions
+pub fn hologram_compiler::source::SourceParseOptions::clone(&self) -> hologram_compiler::source::SourceParseOptions
+impl core::cmp::Eq for hologram_compiler::source::SourceParseOptions
+impl core::cmp::PartialEq for hologram_compiler::source::SourceParseOptions
+pub fn hologram_compiler::source::SourceParseOptions::eq(&self, &hologram_compiler::source::SourceParseOptions) -> bool
+impl core::default::Default for hologram_compiler::source::SourceParseOptions
+pub fn hologram_compiler::source::SourceParseOptions::default() -> hologram_compiler::source::SourceParseOptions
+impl core::fmt::Debug for hologram_compiler::source::SourceParseOptions
+pub fn hologram_compiler::source::SourceParseOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceParseOptions
+impl core::marker::Freeze for hologram_compiler::source::SourceParseOptions
+impl core::marker::Send for hologram_compiler::source::SourceParseOptions
+impl core::marker::Sync for hologram_compiler::source::SourceParseOptions
+impl core::marker::Unpin for hologram_compiler::source::SourceParseOptions
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceParseOptions
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceParseOptions
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceParseOptions
+pub struct hologram_compiler::source::SourceProgram
+impl hologram_compiler::source::SourceProgram
+pub fn hologram_compiler::source::SourceProgram::intern(&mut self, &str) -> hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceProgram::items(&self) -> &[hologram_compiler::source::SourceItem]
+pub fn hologram_compiler::source::SourceProgram::new() -> Self
+pub fn hologram_compiler::source::SourceProgram::push(&mut self, hologram_compiler::source::SourceItem)
+pub fn hologram_compiler::source::SourceProgram::symbol_name(&self, hologram_compiler::source::SourceSymbol) -> core::option::Option<&str>
+impl core::clone::Clone for hologram_compiler::source::SourceProgram
+pub fn hologram_compiler::source::SourceProgram::clone(&self) -> hologram_compiler::source::SourceProgram
+impl core::default::Default for hologram_compiler::source::SourceProgram
+pub fn hologram_compiler::source::SourceProgram::default() -> hologram_compiler::source::SourceProgram
+impl core::fmt::Debug for hologram_compiler::source::SourceProgram
+pub fn hologram_compiler::source::SourceProgram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceProgram
+impl core::marker::Send for hologram_compiler::source::SourceProgram
+impl core::marker::Sync for hologram_compiler::source::SourceProgram
+impl core::marker::Unpin for hologram_compiler::source::SourceProgram
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceProgram
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceProgram
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceProgram
+pub struct hologram_compiler::source::SourceSpan
+pub hologram_compiler::source::SourceSpan::len: usize
+pub hologram_compiler::source::SourceSpan::start: usize
+impl hologram_compiler::source::SourceSpan
+pub const fn hologram_compiler::source::SourceSpan::empty() -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceSpan
+pub fn hologram_compiler::source::SourceSpan::clone(&self) -> hologram_compiler::source::SourceSpan
+impl core::cmp::Eq for hologram_compiler::source::SourceSpan
+impl core::cmp::PartialEq for hologram_compiler::source::SourceSpan
+pub fn hologram_compiler::source::SourceSpan::eq(&self, &hologram_compiler::source::SourceSpan) -> bool
+impl core::default::Default for hologram_compiler::source::SourceSpan
+pub fn hologram_compiler::source::SourceSpan::default() -> hologram_compiler::source::SourceSpan
+impl core::fmt::Debug for hologram_compiler::source::SourceSpan
+pub fn hologram_compiler::source::SourceSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::SourceSpan
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceSpan
+impl core::marker::Freeze for hologram_compiler::source::SourceSpan
+impl core::marker::Send for hologram_compiler::source::SourceSpan
+impl core::marker::Sync for hologram_compiler::source::SourceSpan
+impl core::marker::Unpin for hologram_compiler::source::SourceSpan
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceSpan
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceSpan
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceSpan
+pub struct hologram_compiler::source::SourceSymbol(pub u32)
+impl core::clone::Clone for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::clone(&self) -> hologram_compiler::source::SourceSymbol
+impl core::cmp::Eq for hologram_compiler::source::SourceSymbol
+impl core::cmp::Ord for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::cmp(&self, &hologram_compiler::source::SourceSymbol) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::eq(&self, &hologram_compiler::source::SourceSymbol) -> bool
+impl core::cmp::PartialOrd for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::partial_cmp(&self, &hologram_compiler::source::SourceSymbol) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_compiler::source::SourceSymbol
+pub fn hologram_compiler::source::SourceSymbol::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_compiler::source::SourceSymbol
+impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceSymbol
+impl core::marker::Freeze for hologram_compiler::source::SourceSymbol
+impl core::marker::Send for hologram_compiler::source::SourceSymbol
+impl core::marker::Sync for hologram_compiler::source::SourceSymbol
+impl core::marker::Unpin for hologram_compiler::source::SourceSymbol
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceSymbol
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceSymbol
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceSymbol
+pub struct hologram_compiler::source::SourceTensorLiteral
+pub hologram_compiler::source::SourceTensorLiteral::bytes: alloc::vec::Vec<u8>
+pub hologram_compiler::source::SourceTensorLiteral::value_count: usize
+impl hologram_compiler::source::SourceTensorLiteral
+pub fn hologram_compiler::source::SourceTensorLiteral::new(alloc::vec::Vec<u8>, usize) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceTensorLiteral
+pub fn hologram_compiler::source::SourceTensorLiteral::clone(&self) -> hologram_compiler::source::SourceTensorLiteral
+impl core::fmt::Debug for hologram_compiler::source::SourceTensorLiteral
+pub fn hologram_compiler::source::SourceTensorLiteral::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceTensorLiteral
+impl core::marker::Send for hologram_compiler::source::SourceTensorLiteral
+impl core::marker::Sync for hologram_compiler::source::SourceTensorLiteral
+impl core::marker::Unpin for hologram_compiler::source::SourceTensorLiteral
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceTensorLiteral
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceTensorLiteral
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceTensorLiteral
+pub struct hologram_compiler::source::SourceType
+pub hologram_compiler::source::SourceType::dtype: hologram_graph::registry::DTypeId
+pub hologram_compiler::source::SourceType::shape: core::option::Option<hologram_graph::registry::ShapeDescriptor>
+impl hologram_compiler::source::SourceType
+pub const fn hologram_compiler::source::SourceType::f32(core::option::Option<hologram_graph::registry::ShapeDescriptor>) -> Self
+impl core::clone::Clone for hologram_compiler::source::SourceType
+pub fn hologram_compiler::source::SourceType::clone(&self) -> hologram_compiler::source::SourceType
+impl core::fmt::Debug for hologram_compiler::source::SourceType
+pub fn hologram_compiler::source::SourceType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_compiler::source::SourceType
+impl core::marker::Send for hologram_compiler::source::SourceType
+impl core::marker::Sync for hologram_compiler::source::SourceType
+impl core::marker::Unpin for hologram_compiler::source::SourceType
+impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceType
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceType
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceType
+pub struct hologram_compiler::source::TypeScriptFrontend
+impl core::clone::Clone for hologram_compiler::source::TypeScriptFrontend
+pub fn hologram_compiler::source::TypeScriptFrontend::clone(&self) -> hologram_compiler::source::TypeScriptFrontend
+impl core::default::Default for hologram_compiler::source::TypeScriptFrontend
+pub fn hologram_compiler::source::TypeScriptFrontend::default() -> hologram_compiler::source::TypeScriptFrontend
+impl core::fmt::Debug for hologram_compiler::source::TypeScriptFrontend
+pub fn hologram_compiler::source::TypeScriptFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_compiler::source::TypeScriptFrontend
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::TypeScriptFrontend
+pub const hologram_compiler::source::TypeScriptFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl core::marker::Freeze for hologram_compiler::source::TypeScriptFrontend
+impl core::marker::Send for hologram_compiler::source::TypeScriptFrontend
+impl core::marker::Sync for hologram_compiler::source::TypeScriptFrontend
+impl core::marker::Unpin for hologram_compiler::source::TypeScriptFrontend
+impl core::marker::UnsafeUnpin for hologram_compiler::source::TypeScriptFrontend
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::TypeScriptFrontend
+impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::TypeScriptFrontend
+pub trait hologram_compiler::source::SourceFrontend: core::default::Default
+pub const hologram_compiler::source::SourceFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::SourceFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::SourceFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::SourceFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::SourceFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::HologramFrontend
+pub const hologram_compiler::source::HologramFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::HologramFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::HologramFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::HologramFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::HologramFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::PythonFrontend
+pub const hologram_compiler::source::PythonFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::PythonFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::PythonFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::PythonFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::PythonFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::RustFrontend
+pub const hologram_compiler::source::RustFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::RustFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::RustFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::RustFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::RustFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::TypeScriptFrontend
+pub const hologram_compiler::source::TypeScriptFrontend::INFO: hologram_compiler::source::SourceFrontendInfo
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::lower_ir(&hologram_compiler::source::SourceProgram) -> core::result::Result<hologram_graph::graph::Graph, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::op_attr_names(hologram_ops::kind::OpKind) -> &'static [&'static str]
 pub fn hologram_compiler::source::parse(&str) -> core::result::Result<hologram_graph::graph::Graph, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::parse_document(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::parse_document_diagnostic(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::parse_ir(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::parse_ir_diagnostic(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::parse_ir_diagnostic_with_options(&str, hologram_compiler::source::SourceLanguage, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>
+pub fn hologram_compiler::source::parse_ir_with_options(&str, hologram_compiler::source::SourceLanguage, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::resolve_source_language(core::option::Option<&str>, core::option::Option<&str>) -> core::result::Result<hologram_compiler::source::SourceLanguage, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::source::source_language_from_extension(&str) -> core::option::Option<hologram_compiler::source::SourceLanguage>
+pub fn hologram_compiler::source::source_language_from_name(&str) -> core::option::Option<hologram_compiler::source::SourceLanguage>
 pub enum hologram_compiler::BackendKind
 pub hologram_compiler::BackendKind::Avx2
 pub hologram_compiler::BackendKind::Avx512
@@ -350,4 +896,5 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::Co
 impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::Compiler
 pub fn hologram_compiler::compile(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
 pub fn hologram_compiler::compile_from_source(&str, uor_foundation::enums::WittLevel, hologram_compiler::compiler::BackendKind) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::compile_from_source_language(&str, hologram_compiler::source::SourceLanguage, uor_foundation::enums::WittLevel, hologram_compiler::compiler::BackendKind) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>
 pub fn hologram_compiler::compile_with_backward(hologram_graph::graph::Graph, hologram_graph::node::NodeId, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<(hologram_compiler::compiler::CompilationOutput, alloc::vec::Vec<hologram_graph::node::NodeId>), hologram_compiler::error::CompileError>

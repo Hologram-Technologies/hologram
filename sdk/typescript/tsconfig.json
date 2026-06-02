@@ -3,6 +3,7 @@
     "declaration": true,
     "declarationMap": true,
     "exactOptionalPropertyTypes": false,
+    "ignoreDeprecations": "6.0",
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "node",

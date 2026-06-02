@@ -14,7 +14,10 @@
   },
   "files": [
     "dist",
-    "native",
+    "native/Cargo.lock",
+    "native/Cargo.toml",
+    "native/build.rs",
+    "native/src",
     "README.md",
     "package.json"
   ],
