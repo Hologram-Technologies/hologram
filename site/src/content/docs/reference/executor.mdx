@@ -35,6 +35,13 @@ the runtime cache is never cold.
 - `BufferArena` — the content-addressed buffer pool (implements the backend's `Workspace`)
 - `InputBuffer<'a>` — `{ bytes: &'a [u8] }`, a borrowed input tensor
 - `OutputBuffer` — `{ bytes: Vec<u8> }`, an owned output tensor
+- `RefinementPlan` — pass budget, validators, and repair policy
+- `RefinementStateContract` — explicit state port contract for planner-generated plans
+- `RefinementRunner<'a, B>` — a borrowed runner over an existing session
+- `CompiledRefinement<B>` — owning convenience wrapper for a session and plan
+- `ValidatorKind` — built-in pass-boundary validators such as `StableLabels` and `StableBytes`
+- `RepairPolicy` — bounded repair behavior
+- `RefinementReport` — final status, pass counts, labels, counters, and resident-memory data
 - `WarmStore` / `MemWarmStore` / `FileWarmStore` (the last requires `std`)
 - `ExecError` — the runtime's error type
 
@@ -50,6 +57,35 @@ let mut session = InferenceSession::load(&archive, backend)?;
 let outputs = session.execute(&[InputBuffer { bytes: &input_bytes }])?;
 let result: &[u8] = &outputs[0].bytes;
 ```
+
+## Refinement execution
+
+Refinement is a bounded execution strategy around `execute_addressed`, not a
+graph op or backend kernel. The session's input and output state ports must
+match in arity, dtype, shape, element count, and byte length so each pass output
+can become the next pass input.
+
+Planner-generated plans can attach a `RefinementStateContract`; otherwise the
+runtime derives the contract from the session ports.
+
+```rust
+use hologram_exec::{
+    InputBuffer, RefinementPlan, RepairPolicy, ValidatorKind,
+};
+
+let plan = RefinementPlan::builder(2)
+    .validator(ValidatorKind::StableBytes)
+    .repair_policy(RepairPolicy::RetryPass { extra_passes: 1 })
+    .build()?;
+
+let report = plan.execute(
+    &mut session,
+    &[InputBuffer { bytes: &state_bytes }],
+)?;
+```
+
+`StableLabels` is O(number of state ports). `StableBytes` compares resolved
+arena slices without copying tensors, but it scans logical state bytes.
 
 ## Accessors
 

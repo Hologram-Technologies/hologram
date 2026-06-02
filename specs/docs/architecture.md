@@ -184,6 +184,55 @@ across nodes (or across runs, via warm-start) is an O(1) rebind.
 **Key types**: `BufferArena` (`hologram-exec/src/buffer.rs`), `CpuBackend`
 (`hologram-backend/src/cpu.rs`)
 
+### Refinement Execution Strategy
+
+Refinement is a bounded execution strategy over compiled sessions. It is not a
+new graph node, canonical op, or backend kernel. A `RefinementPlan` runs
+against an already-loaded `InferenceSession`; callers may either borrow an
+existing session through `RefinementPlan::execute` / `bind` or use the owning
+`CompiledRefinement` convenience wrapper. Each pass invokes
+`InferenceSession::execute_addressed`, then feeds the returned output κ-labels
+back as the next pass input labels.
+
+The state contract is validated before execution. A plan may carry an explicit
+`RefinementStateContract`; otherwise the runtime derives one from the session's
+input/output ports. The session must have the same number of input and output
+state ports, and each corresponding port must match in dtype, element count,
+shape, and logical byte length. This preserves planner/executor separation:
+shape repair and state-layout changes belong in the compiler or external
+planner, not in the runtime loop.
+
+Refinement validators run only at pass boundaries:
+
+| Validator | Cost class | Meaning |
+|-----------|------------|---------|
+| `StableLabels` | O(number of state ports) | Accepts when output labels exactly match input labels |
+| `StableBytes` | O(state bytes) | Accepts when logical state bytes match exactly |
+
+`StableBytes` is zero-copy: it compares resolved `BufferArena` slices without
+copying tensors. It is not O(1) in state size, so strict O(1) profiles should
+prefer label or metadata validators. The distinction matters because output
+labels are witnessed derivation labels; an idempotent byte transform can be
+byte-stable while producing a different derivation label.
+
+Repair is explicit and bounded. The prototype supports `RepairPolicy::None`
+and `RepairPolicy::RetryPass { extra_passes }`, which retries the same compiled
+pass after the normal pass budget is exhausted. Repair attempts are reported
+separately from normal passes.
+
+Refinement differs from normal graph execution by adding a bounded outer
+strategy around graph execution. It differs from iterative agent loops because
+the pass count, validators, and repair budget are fixed plan constants. It
+differs from diffusion models because Hologram does not own sampling,
+denoising, tokenization, or model policy; it only provides a deterministic
+bounded convergence substrate that downstream planners such as `hologram-ai`
+can target.
+
+Future multi-pass validation and repair graphs require shared-pool execution
+or explicit label import. Separate `InferenceSession`s currently own separate
+`BufferArena`s, so a label produced by one session is not automatically
+resident in another.
+
 ### Fusion — Content-Addressed Path Shortening
 
 Fusion happens in two phases. The compiler first desugars composite ops to primitives and applies
