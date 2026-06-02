@@ -104,6 +104,18 @@ hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram" 
 hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram" }
 ```
 
+Enable host-language source frontends on `hologram-compiler` when your build
+needs to parse embedded Hologram graph functions from Python, TypeScript, or
+Rust source files:
+
+```toml
+[dependencies]
+hologram-compiler = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["frontend-python", "frontend-typescript", "frontend-rust"],
+}
+```
+
 Run the end-to-end pipeline example, which parses a graph, compiles it to a
 `.holo` archive, executes it on the CPU backend, and mints + composes
 UOR-ADDR κ-labels:
@@ -115,12 +127,12 @@ cargo run -p hologram-cli --example pipeline
 Minimal usage — compile a graph to a `.holo` archive and execute it:
 
 ```rust
-use hologram_compiler::{source, BackendKind, Compiler};
 use hologram_backend::CpuBackend;
+use hologram_compiler::{source, BackendKind, Compiler};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
-// Parse a line-oriented hologram source into a Graph and compile it.
+// Parse native Hologram source into a Graph and compile it.
 let graph = source::parse("input x\nop relu x as=y\noutput y\n").unwrap();
 let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
     .compile()
@@ -134,6 +146,249 @@ let inputs: Vec<InputBuffer> =
     (0..session.input_count()).map(|_| InputBuffer { bytes: &zeros }).collect();
 let outputs = session.execute(&inputs).unwrap();
 ```
+
+### Source frontends
+
+Hologram source frontends all lower through the same compile-time boundary:
+
+```text
+source text -> SourceDocument -> selected SourceProgram -> Graph -> Compiler
+```
+
+Native Hologram source is always available. Python, TypeScript, and Rust
+frontends are feature-gated and host-only. They parse the host language AST and
+extract restricted Hologram builder functions from larger application files;
+they do not import, compile, link, evaluate, or execute host-language code.
+Unrelated functions are ignored. Unsupported statements inside an inferred graph
+function fail loudly with source-position diagnostics.
+
+The CLI detects source language from the file extension (`.txt`, `.py`, `.ts`,
+`.tsx`, `.rs`). Use `--source-language <lang>` only when overriding detection or
+when the file uses an unusual extension. If a source file contains one inferred
+graph function, `--graph` can be omitted. If it contains multiple graph
+functions, pass `--graph <name>` to select one.
+
+Programmatic graph selection uses `SourceParseOptions`:
+
+```rust
+use hologram_compiler::source::{self, SourceLanguage, SourceParseOptions};
+use hologram_compiler::{BackendKind, Compiler};
+use prism::vocabulary::WittLevel;
+
+let options = SourceParseOptions::new().graph("encoder");
+let program = source::parse_ir_with_options(
+    python_source,
+    SourceLanguage::Python,
+    &options,
+)?;
+let graph = source::lower_ir(&program)?;
+let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile()?;
+```
+
+When graph selection is not needed, use `compile_from_source_language`:
+
+```rust
+use hologram_compiler::source::SourceLanguage;
+use hologram_compiler::{compile_from_source_language, BackendKind};
+use prism::vocabulary::WittLevel;
+
+let output = compile_from_source_language(
+    python_source,
+    SourceLanguage::Python,
+    WittLevel::W32,
+    BackendKind::Cpu,
+)?;
+```
+
+### Python source frontend
+
+The Python frontend is feature-gated behind `frontend-python`. It parses Python
+source as an AST and extracts only restricted Hologram builder functions; it
+does not import, evaluate, or execute user Python code. Unrelated application
+code is ignored, one inferred graph compiles by default, and files with multiple
+graph functions require `--graph`.
+
+```python
+def ordinary_app_code():
+    return 42
+
+def encoder(h):
+    x = h.input("x", dtype="f32", shape=[2, 3])
+    w = h.const("w", shape=[3, 2], values=[1, 2, 3, 4, 5, 6])
+    y = h.ops.matmul(x, w, shape=[2, 2])
+    h.output("y", y)
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py \
+  --graph encoder \
+  --output model.holo
+```
+
+Current Python support covers `h.input`, `h.const` / `h.constant`,
+`h.ops.<op>`, and `h.output` with literal `shape`, `dtype`, constant `values`,
+and the same op attributes accepted by native Hologram source.
+
+For files without a `.py` extension, pass `--source-language python`
+explicitly.
+
+### TypeScript source frontend
+
+The TypeScript frontend is feature-gated behind `frontend-typescript`. It uses
+the TypeScript AST to extract restricted Hologram builder functions from normal
+`.ts` / `.tsx` files; it does not execute user code. Plain or exported
+functions with builder usage become named graph regions, unrelated application
+code is ignored, and files with multiple graph functions require `--graph`.
+
+```ts
+function ordinaryAppCode() {
+    return 42;
+}
+
+export function encoder(h: HologramBuilder) {
+    const x = h.input("x", { dtype: "f32", shape: [2, 3] });
+    const w = h.const("w", { shape: [3, 2], values: [1, 2, 3, 4, 5, 6] });
+    const y = h.ops.matmul(x, w, { shape: [2, 2] });
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-typescript -- compile \
+  --source graph.ts \
+  --graph encoder \
+  --output model.holo
+```
+
+Current TypeScript support covers `h.input`, `h.const` / `h.constant`,
+`h.ops.<op>`, and `h.output` with object-literal `shape`, `dtype`, constant
+`values`, and the same op attributes accepted by native Hologram source.
+
+For files without a `.ts` or `.tsx` extension, pass `--source-language
+typescript` explicitly.
+
+### Rust source frontend
+
+The Rust frontend is feature-gated behind `frontend-rust`. It uses `syn` to
+parse Rust source as an AST and extracts only restricted Hologram builder
+functions; it does not compile, link, or execute user Rust code. Plain or
+exported functions with builder usage become named graph regions, unrelated
+application code is ignored, and files with multiple graph functions require
+`--graph`.
+
+```rust
+fn ordinary_app_code() -> i32 {
+    42
+}
+
+pub fn encoder(h: &mut HologramBuilder) {
+    let x = h.input("x", dtype("f32"), shape([2, 3]));
+    let w = h.constant("w", shape([3, 2]), values([1, 2, 3, 4, 5, 6]));
+    let y = h.ops().matmul(x, w, shape([2, 2]));
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-rust -- compile \
+  --source graph.rs \
+  --graph encoder \
+  --output model.holo
+```
+
+Current Rust support covers `h.input`, `h.constant` / `h.const_`,
+`h.ops().<op>`, and `h.output` with helper-call `shape`, `dtype`, constant
+`values`, and the same op attributes accepted by native Hologram source.
+
+For files without a `.rs` extension, pass `--source-language rust` explicitly.
+
+### SDK packages
+
+Source frontends parse explicit graph regions from host-language files. SDKs
+build the same graph contract directly. The initial package scaffolds live under
+[`sdk/`](sdk/):
+
+The demos below use only package-root exports: Python re-exports `Graph`,
+`Session`, `f32`, `compile_source`, and `compile_source_file` from
+`hologram`; TypeScript re-exports `Graph`, `Session`, `f32`, and
+`compileSource` from `@hologram/sdk`; the Node adapter re-exports
+`createNativeBinding` and `compileSourceFile` from `@hologram/native`; the
+WASM adapter re-exports `loadWasmBinding` and `createWasmBinding` from
+`@hologram/wasm`.
+
+```python
+import hologram as hg
+
+g = hg.Graph("encoder")
+x = g.input("x", dtype=hg.f32, shape=[2, 3])
+w = g.const_ref("w", dtype=hg.f32, shape=[3, 2], file="weights.bin", blake3="0" * 64)
+y = x.matmul(w, shape=[2, 2]).relu()
+archive = g.output("y", y).compile()
+
+with hg.Session.load(archive) as session:
+    assert session.input_dtype(0) == hg.f32
+    assert session.output_dtype(0) == hg.f32
+    outputs = session.execute({"x": input_bytes})
+    y_bytes = outputs["y"]
+```
+
+```ts
+import { Graph, Session, f32 } from "@hologram/sdk";
+import { createNativeBinding } from "@hologram/native";
+
+const native = createNativeBinding();
+const g = new Graph("encoder");
+const x = g.input("x", { dtype: f32, shape: [2, 3] });
+const w = g.constRef("w", {
+  dtype: f32,
+  shape: [3, 2],
+  file: "weights.bin",
+  blake3: "0".repeat(64),
+});
+const y = x.matmul(w, { shape: [2, 2] }).relu();
+const archive = await g.output("y", y).compile(native);
+const session = await Session.load(archive, native);
+console.log(session.inputDType(0), session.outputDType(0));
+const outputs = await session.execute({ x: inputBytes });
+await session.close();
+```
+
+Python packages as `hologram` from `sdk/python/`; TypeScript packages as
+`@hologram/sdk` from `sdk/typescript/`. `@hologram/native` provides the Node
+N-API binding, while `@hologram/wasm` provides the browser-safe adapter plus
+WASM driver crate. The prebuild and installed-package smoke matrix is tracked
+in [`sdk/PREBUILD.md`](sdk/PREBUILD.md).
+
+SDKs also expose native Hologram `.txt` source compilation through the same
+FFI boundary:
+
+```python
+archive = hg.compile_source_file("graph.txt")
+```
+
+```ts
+import { compileSource } from "@hologram/sdk";
+import { compileSourceFile, createNativeBinding } from "@hologram/native";
+
+const native = createNativeBinding();
+const archive = await compileSourceFile("graph.txt", native);
+const inlineArchive = await compileSource("input x\nop relu x as=y\noutput y\n", native);
+```
+
+SDKs map stable FFI error codes to language-native exceptions/classes, so
+callers can catch categories instead of parsing message text. Python exports
+`hg.ParseError`, `hg.GraphError`, `hg.UnsupportedOpError`,
+`hg.BadAttrError`, `hg.ShapeError`, `hg.ExternalTensorError`,
+`hg.ArchiveLoadError`, `hg.ExecutionError`, `hg.AbiMismatchError`,
+`hg.InvalidArgumentError`, `hg.UnsupportedDTypeError`, and
+`hg.CompileError`. TypeScript exports the same classes plus
+`errorFromCode(code, message)` and `ERROR_*` constants from `@hologram/sdk`.
+Where a frontend can identify source position, errors also preserve
+`line`, `column`, and `rejected` fields. File-backed `const_ref` values are
+read and hash-checked during compile; runtime sessions never reopen source
+paths. Set `HOLOGRAM_EXTERNAL_TENSOR_ROOT` to constrain relative and absolute
+external tensor paths to an explicit compile root.
 
 Content-address and compose model parts as UOR-ADDR κ-labels:
 
@@ -178,6 +433,9 @@ wasm and on embedded targets) and exposes a `std` feature for host builds.
 | `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
 | `tiered-exec` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
 | `parallel` | `hologram-backend` | ✓ | Rayon parallel level execution |
+| `frontend-python` | `hologram-compiler`, `hologram-cli` | — | Python AST source frontend for restricted Hologram builder functions (implies `std`) |
+| `frontend-rust` | `hologram-compiler`, `hologram-cli` | — | Rust AST source frontend for restricted Hologram builder functions (implies `std`) |
+| `frontend-typescript` | `hologram-compiler`, `hologram-cli` | — | TypeScript AST source frontend for restricted Hologram builder functions (implies `std`) |
 | `wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
 
 For `no_std` targets (wasm / embedded) disable default features on the library
@@ -217,6 +475,7 @@ hologram-bench --bench <suite>`):
 | `content_reuse` | Content-addressed memo hit vs recompute |
 | `tiered_executor` | Per-execute dispatch overhead (PM_7 tiering) |
 | `compiler` | Compile pipeline |
+| `source_lowering` | Source parsing allocations, source IR lowering, and archive equivalence guards |
 | `decode_step` | Archive decode + session load |
 
 Recorded results live in [`BENCHMARKS.md`](BENCHMARKS.md).
@@ -228,8 +487,23 @@ Recorded results live in [`BENCHMARKS.md`](BENCHMARKS.md).
 `hologram-cli` builds the `hologram` binary:
 
 ```bash
-# compile hologram-source (or an empty graph) to a .holo archive
+# compile native Hologram source (or an empty graph) to a .holo archive
 hologram compile --source graph.txt --output model.holo
+
+# compile a Python file containing Hologram builder functions
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py --graph encoder --output model.holo
+
+# compile a TypeScript file containing Hologram builder functions
+cargo run -p hologram-cli --features frontend-typescript -- compile \
+  --source graph.ts --graph encoder --output model.holo
+
+# compile a Rust file containing Hologram builder functions
+cargo run -p hologram-cli --features frontend-rust -- compile \
+  --source graph.rs --graph encoder --output model.holo
+
+# override extension-based language detection when needed
+hologram compile --source embedded.txt --source-language python --graph encoder --output model.holo
 
 # inspect an archive's section table
 hologram inspect --archive model.holo
@@ -255,8 +529,25 @@ cargo install --path crates/hologram-cli
 an integer handle into a process-local table:
 
 ```c
-// compile hologram-source into a .holo archive (written to `out`)
+// compile native Hologram source into a .holo archive (written to `out`)
 int len = hologram_compile_source(src, src_len, out, out_capacity);
+
+// or build the same SourceProgram through the ABI without parsing source text
+HologramSourceBuilder *b = hologram_source_builder_new();
+hologram_source_builder_input(b, &input_desc);
+hologram_source_builder_const(b, &small_inline_const);
+hologram_source_builder_const_ref(b, &file_backed_const); // path + byte range + BLAKE3
+hologram_source_builder_op(b, &op_desc);
+hologram_source_builder_output(b, output_name);
+int built_len = hologram_source_builder_compile(b, out, out_capacity);
+if (built_len < 0) {
+    int code = hologram_last_error_code();
+    const char *message = hologram_last_error_message();
+    size_t line = hologram_last_error_line();
+    size_t column = hologram_last_error_column();
+    const char *rejected = hologram_last_error_rejected();
+}
+hologram_source_builder_free(b);
 
 // load an archive into a session, returning a handle (or a negative error)
 int h = hologram_session_load(archive, archive_len);
@@ -266,7 +557,8 @@ int out_count = hologram_session_output_count(h);
 // ports carry a semantic name + shape (multi-input models map by identity)
 hologram_session_input_name(h, 0, name_buf, name_cap);   // snprintf-style copy
 int rank = hologram_session_input_shape(h, 0, dims, dim_cap);
-// (and hologram_session_output_name / hologram_session_output_shape)
+int dtype = hologram_session_input_dtype(h, 0);
+// (and hologram_session_output_name / output_shape / output_dtype)
 
 // open producer-defined metadata (tokenizer, gen config, …) travels in the archive
 int n = hologram_session_extension(h, key, key_len, out, out_cap); // bytes, or -1
@@ -275,6 +567,11 @@ int n = hologram_session_extension(h, key, key_len, out, out_cap); // bytes, or 
 hologram_session_execute(h, /* … */);
 hologram_session_close(h);
 ```
+
+Ownership, versioning, feature probing, and error-code rules are captured in
+[`specs/docs/ffi-abi-contract.md`](specs/docs/ffi-abi-contract.md).
+SDK bindings should check `hologram_abi_version()` and required
+`hologram_feature_supported(...)` strings before calling optional builder APIs.
 
 Built for `wasm32-unknown-unknown` with `--features wasm`; the browser demo
 under `site/` loads the resulting module.

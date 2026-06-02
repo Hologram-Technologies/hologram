@@ -1,0 +1,18 @@
+[package]
+name = "hologram-node-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Node N-API driver for the Hologram TypeScript SDK."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hologram-ffi = { path = "../../../../crates/hologram-ffi" }
+napi = { version = "3.9.0", default-features = false, features = ["napi4"] }
+napi-derive = "3.5.6"
+
+[build-dependencies]
+napi-build = "2.2.3"

@@ -20,6 +20,10 @@ hologram-backend  = { workspace = true, features = ["std", "cpu"] }
 hologram-graph    = { workspace = true }
 uor-prism         = { workspace = true }
 
+[dev-dependencies]
+hologram-host = { workspace = true }
+uor-prism     = { workspace = true }
+
 [features]
 default = []
 wasm = []

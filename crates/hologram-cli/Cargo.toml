@@ -23,3 +23,9 @@ clap              = { workspace = true }
 # Hologram's CLI is an application-author surface; it consumes the
 # prism façade per wiki ADR-031.
 uor-prism         = { workspace = true }
+
+[features]
+default = []
+frontend-python = ["hologram-compiler/frontend-python"]
+frontend-rust = ["hologram-compiler/frontend-rust"]
+frontend-typescript = ["hologram-compiler/frontend-typescript"]

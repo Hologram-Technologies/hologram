@@ -41,6 +41,17 @@ pub fn compile_from_source(
     Compiler::new(graph, target, level).compile()
 }
 
+/// Convenience: parse selected source language -> Graph -> compile.
+pub fn compile_from_source_language(
+    source: &str,
+    language: source::SourceLanguage,
+    level: uor_foundation::WittLevel,
+    target: BackendKind,
+) -> Result<CompilationOutput, CompileError> {
+    let graph = source::lower_ir(&source::parse_ir(source, language)?)?;
+    Compiler::new(graph, target, level).compile()
+}
+
 /// Convenience: compile a pre-built graph.
 pub fn compile(
     graph: hologram_graph::Graph,
