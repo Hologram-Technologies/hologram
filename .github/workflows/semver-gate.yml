@@ -58,7 +58,9 @@ jobs:
           feature-group: default-features
           # Adding the root facade turns the workspace root into package
           # `hologram`; without an explicit package set, cargo-semver-checks
-          # selects only that root package. Include the root facade plus the
-          # established library crates, and omit crates that are new to the
-          # target-branch baseline.
-          package: "hologram,hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-backend,hologram-archive,hologram-ffi,hologram-bench"
+          # selects only that root package. The target-branch baseline for this
+          # PR still has a virtual workspace root, so `hologram` cannot be
+          # compared until it exists on both sides. Check the established
+          # library crates here and add the facade itself in a follow-up once it
+          # ships on the baseline branch.
+          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-backend,hologram-archive,hologram-ffi,hologram-bench"
