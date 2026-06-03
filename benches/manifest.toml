@@ -73,6 +73,9 @@ status = "active"
 [benchmarks."production::mlp_served_seq64_d256_l2"]
 status = "active"
 
+[benchmarks."production::mlp_cold_seq1_d512_l2"]
+status = "active"
+
 [benchmarks."source_lowering::native_const4096_lower_ir"]
 status = "active"
 

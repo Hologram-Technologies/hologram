@@ -157,6 +157,10 @@ fn benches(c: &mut Criterion) {
     // keep the cold path's criterion sampling bounded.
     bench_cold(c, 64, 128, 2);
     bench_cold(c, 64, 256, 2);
+    // Decode shape: seq=1 ⇒ every weight matmul is a GEMV (M=1), the
+    // single-token autoregressive path. Exercises the vectorized small-M
+    // kernel remainder rather than the 4-row register tile.
+    bench_cold(c, 1, 512, 2);
     bench_served(c, 64, 256, 2);
 }
 
