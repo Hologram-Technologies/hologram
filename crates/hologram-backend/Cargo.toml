@@ -50,3 +50,8 @@ wgpu = ["std", "dep:wgpu", "dep:pollster"]
 [[example]]
 name = "wasm_matmul_timing"
 required-features = ["std", "cpu"]
+
+# Fused int8 vs f32 matmul timing harness (the fused-int decode spike).
+[[example]]
+name = "fused_int_timing"
+required-features = ["std", "cpu"]
