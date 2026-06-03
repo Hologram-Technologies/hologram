@@ -892,18 +892,60 @@ mod aarch {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR).
+        // Row remainder (m not a multiple of MR) — vectorized GEMV per row.
+        // Each remaining row streams B across `k`, accumulating output columns
+        // 16-wide (then 4-wide, then a scalar tail). This is the single-token
+        // decode path (M=1), which would otherwise run fully scalar.
         while i < m {
-            for j in 0..n {
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            let orow = out.add(i * ldc);
+            let mut j = 0;
+            while j + 16 <= n {
+                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
+                    (
+                        vld1q_f32(orow.add(j)),
+                        vld1q_f32(orow.add(j + 4)),
+                        vld1q_f32(orow.add(j + 8)),
+                        vld1q_f32(orow.add(j + 12)),
+                    )
                 } else {
-                    0.0
+                    let z = vdupq_n_f32(0.0);
+                    (z, z, z, z)
                 };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *b.add(kk * ldb + j);
+                    let av = vdupq_n_f32(*arow.add(kk));
+                    let brow = b.add(kk * ldb + j);
+                    c0 = vfmaq_f32(c0, av, vld1q_f32(brow));
+                    c1 = vfmaq_f32(c1, av, vld1q_f32(brow.add(4)));
+                    c2 = vfmaq_f32(c2, av, vld1q_f32(brow.add(8)));
+                    c3 = vfmaq_f32(c3, av, vld1q_f32(brow.add(12)));
                 }
-                *out.add(i * ldc + j) = s;
+                vst1q_f32(orow.add(j), c0);
+                vst1q_f32(orow.add(j + 4), c1);
+                vst1q_f32(orow.add(j + 8), c2);
+                vst1q_f32(orow.add(j + 12), c3);
+                j += 16;
+            }
+            while j + 4 <= n {
+                let mut c0 = if accumulate {
+                    vld1q_f32(orow.add(j))
+                } else {
+                    vdupq_n_f32(0.0)
+                };
+                for kk in 0..k {
+                    let av = vdupq_n_f32(*arow.add(kk));
+                    c0 = vfmaq_f32(c0, av, vld1q_f32(b.add(kk * ldb + j)));
+                }
+                vst1q_f32(orow.add(j), c0);
+                j += 4;
+            }
+            while j < n {
+                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
+                for kk in 0..k {
+                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                }
+                *orow.add(j) = s;
+                j += 1;
             }
             i += 1;
         }
@@ -1068,20 +1110,48 @@ mod aarch {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR): scalar over the packed panels.
+        // Row remainder (m not a multiple of MR) — vectorized GEMV over packed
+        // panels. Each remaining row accumulates each full 16-wide panel in four
+        // NEON registers across `k`; the trailing partial panel falls to scalar.
+        // This is the single-token decode path (M=1), packed-weight form.
         while i < m {
-            for j in 0..n {
-                let p = j / 16;
-                let c = j % 16;
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            let orow = out.add(i * ldc);
+            let n_full = n / 16;
+            for p in 0..n_full {
+                let base = p * k_stride * 16;
+                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
+                    (
+                        vld1q_f32(orow.add(p * 16)),
+                        vld1q_f32(orow.add(p * 16 + 4)),
+                        vld1q_f32(orow.add(p * 16 + 8)),
+                        vld1q_f32(orow.add(p * 16 + 12)),
+                    )
                 } else {
-                    0.0
+                    let z = vdupq_n_f32(0.0);
+                    (z, z, z, z)
                 };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
+                    let av = vdupq_n_f32(*arow.add(kk));
+                    let bp = bpacked.add(base + kk * 16);
+                    c0 = vfmaq_f32(c0, av, vld1q_f32(bp));
+                    c1 = vfmaq_f32(c1, av, vld1q_f32(bp.add(4)));
+                    c2 = vfmaq_f32(c2, av, vld1q_f32(bp.add(8)));
+                    c3 = vfmaq_f32(c3, av, vld1q_f32(bp.add(12)));
                 }
-                *out.add(i * ldc + j) = s;
+                vst1q_f32(orow.add(p * 16), c0);
+                vst1q_f32(orow.add(p * 16 + 4), c1);
+                vst1q_f32(orow.add(p * 16 + 8), c2);
+                vst1q_f32(orow.add(p * 16 + 12), c3);
+            }
+            for j in n_full * 16..n {
+                let p = j / 16;
+                let c = j % 16;
+                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
+                for kk in 0..k {
+                    s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
+                }
+                *orow.add(j) = s;
             }
             i += 1;
         }
@@ -1256,17 +1326,58 @@ mod wasm_simd {
             }
             i += MR;
         }
+        // Row remainder (m not a multiple of MR) — vectorized GEMV per row
+        // (single-token decode path, M=1), SIMD128 form.
         while i < m {
-            for j in 0..n {
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            let orow = out.add(i * ldc);
+            let mut j = 0;
+            while j + 16 <= n {
+                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
+                    (
+                        v128_load(orow.add(j) as *const v128),
+                        v128_load(orow.add(j + 4) as *const v128),
+                        v128_load(orow.add(j + 8) as *const v128),
+                        v128_load(orow.add(j + 12) as *const v128),
+                    )
                 } else {
-                    0.0
+                    let z = f32x4_splat(0.0);
+                    (z, z, z, z)
                 };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *b.add(kk * ldb + j);
+                    let av = f32x4_splat(*arow.add(kk));
+                    let brow = b.add(kk * ldb + j);
+                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(brow as *const v128)));
+                    c1 = f32x4_add(c1, f32x4_mul(av, v128_load(brow.add(4) as *const v128)));
+                    c2 = f32x4_add(c2, f32x4_mul(av, v128_load(brow.add(8) as *const v128)));
+                    c3 = f32x4_add(c3, f32x4_mul(av, v128_load(brow.add(12) as *const v128)));
                 }
-                *out.add(i * ldc + j) = s;
+                v128_store(orow.add(j) as *mut v128, c0);
+                v128_store(orow.add(j + 4) as *mut v128, c1);
+                v128_store(orow.add(j + 8) as *mut v128, c2);
+                v128_store(orow.add(j + 12) as *mut v128, c3);
+                j += 16;
+            }
+            while j + 4 <= n {
+                let mut c0 = if accumulate {
+                    v128_load(orow.add(j) as *const v128)
+                } else {
+                    f32x4_splat(0.0)
+                };
+                for kk in 0..k {
+                    let av = f32x4_splat(*arow.add(kk));
+                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(b.add(kk * ldb + j) as *const v128)));
+                }
+                v128_store(orow.add(j) as *mut v128, c0);
+                j += 4;
+            }
+            while j < n {
+                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
+                for kk in 0..k {
+                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                }
+                *orow.add(j) = s;
+                j += 1;
             }
             i += 1;
         }
@@ -1422,19 +1533,46 @@ mod wasm_simd {
             }
             i += MR;
         }
+        // Row remainder (m not a multiple of MR) — vectorized GEMV over packed
+        // panels (single-token decode path, M=1), SIMD128 form.
         while i < m {
-            for j in 0..n {
-                let p = j / 16;
-                let c = j % 16;
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            let orow = out.add(i * ldc);
+            let n_full = n / 16;
+            for p in 0..n_full {
+                let base = p * k_stride * 16;
+                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
+                    (
+                        v128_load(orow.add(p * 16) as *const v128),
+                        v128_load(orow.add(p * 16 + 4) as *const v128),
+                        v128_load(orow.add(p * 16 + 8) as *const v128),
+                        v128_load(orow.add(p * 16 + 12) as *const v128),
+                    )
                 } else {
-                    0.0
+                    let z = f32x4_splat(0.0);
+                    (z, z, z, z)
                 };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
+                    let av = f32x4_splat(*arow.add(kk));
+                    let bp = bpacked.add(base + kk * 16);
+                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(bp as *const v128)));
+                    c1 = f32x4_add(c1, f32x4_mul(av, v128_load(bp.add(4) as *const v128)));
+                    c2 = f32x4_add(c2, f32x4_mul(av, v128_load(bp.add(8) as *const v128)));
+                    c3 = f32x4_add(c3, f32x4_mul(av, v128_load(bp.add(12) as *const v128)));
                 }
-                *out.add(i * ldc + j) = s;
+                v128_store(orow.add(p * 16) as *mut v128, c0);
+                v128_store(orow.add(p * 16 + 4) as *mut v128, c1);
+                v128_store(orow.add(p * 16 + 8) as *mut v128, c2);
+                v128_store(orow.add(p * 16 + 12) as *mut v128, c3);
+            }
+            for j in n_full * 16..n {
+                let p = j / 16;
+                let c = j % 16;
+                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
+                for kk in 0..k {
+                    s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
+                }
+                *orow.add(j) = s;
             }
             i += 1;
         }
@@ -2111,7 +2249,11 @@ mod tests {
     #[test]
     fn packed_matmul_dispatch_matches_naive() {
         for &(m, k, n) in &[
-            (4usize, 8usize, 16usize),
+            (1usize, 2048usize, 64usize), // GEMV: single-token decode shape (M=1)
+            (1, 11, 37),                  // GEMV with partial trailing panel
+            (2, 13, 48),                  // M=2 remainder, 3 full panels
+            (3, 9, 50),                   // M=3 remainder, full + partial panel
+            (4, 8, 16),
             (5, 7, 19), // non-multiple-of-16 n → partial-panel + m-remainder tails
             (13, 11, 37),
             (64, 64, 64),
@@ -2122,6 +2264,45 @@ mod tests {
             let packed = crate::layout::pack_b_panels(&b, k, n);
             let mut got = vec![0f32; m * n];
             matmul_f32_packed(&a, &packed, &mut got, m, k, n);
+
+            let mut want = vec![0f32; m * n];
+            for i in 0..m {
+                for j in 0..n {
+                    let mut s = 0f32;
+                    for kk in 0..k {
+                        s += a[i * k + kk] * b[kk * n + j];
+                    }
+                    want[i * n + j] = s;
+                }
+            }
+            for idx in 0..m * n {
+                let denom = want[idx].abs().max(1.0);
+                assert!(
+                    (got[idx] - want[idx]).abs() / denom < 1e-4,
+                    "{m}×{k}×{n} diff at {idx}: got {} want {}",
+                    got[idx],
+                    want[idx]
+                );
+            }
+        }
+    }
+
+    /// Unpacked GEMV / small-M correctness through `matmul_f32_blocked` — the
+    /// vectorized M<4 row-remainder (single-token decode path, M=1) exercising
+    /// the 16-wide, 4-wide, and scalar-tail column sub-paths.
+    #[test]
+    fn blocked_gemv_small_m_matches_naive() {
+        for &(m, k, n) in &[
+            (1usize, 2048usize, 64usize), // decode GEMV (16-wide path)
+            (1, 17, 22),                  // 16-wide + 4-wide + scalar tail
+            (2, 9, 35),
+            (3, 31, 17), // 16-wide + scalar tail
+        ] {
+            let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.0007 - 0.2).collect();
+            let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.0011 + 0.3).collect();
+            let mut bt = Vec::new();
+            let mut got = vec![0f32; m * n];
+            matmul_f32_blocked(&a, &b, &mut got, m, k, n, &mut bt);
 
             let mut want = vec![0f32; m * n];
             for i in 0..m {
