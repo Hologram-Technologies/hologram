@@ -42,6 +42,7 @@ pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Wor
 pub mod hologram_backend::cpu::simd
 pub fn hologram_backend::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)
 pub fn hologram_backend::cpu::simd::matmul_f32_packed(&[f32], &[f32], &mut [f32], usize, usize, usize)
+pub fn hologram_backend::cpu::simd::matmul_i8_per_channel(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::simd_f32_add(&[f32], &[f32], &mut [f32])
 pub fn hologram_backend::cpu::simd::simd_f32_dot(&[f32], &[f32]) -> f32
 pub fn hologram_backend::cpu::simd::simd_f32_fmadd(&[f32], &[f32], &mut [f32])
