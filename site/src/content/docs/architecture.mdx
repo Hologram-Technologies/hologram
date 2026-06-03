@@ -61,7 +61,7 @@ Model parts compose as κ-labels via `address::address_ring` and `address::compo
 
 ## C & WASM bindings
 
-`hologram-ffi` exposes the pipeline through a C ABI: a session is referenced by an integer handle into a process-local table (`hologram_session_load` / `_execute` / `_close`, `hologram_compile_source`). Built for `wasm32-unknown-unknown` with `--features wasm`, the same FFI powers the browser demo.
+`hologram-ffi` exposes the pipeline through a C ABI: a session is referenced by an integer handle into a process-local table (`hologram_session_load` / `_execute` / `_close`). Source can be compiled either as text through `hologram_compile_source` or built directly through the `hologram_source_builder_*` ABI, including inline constants and file-backed constant references. Built for `wasm32-unknown-unknown` with `--features wasm`, the same FFI powers the browser demo.
 
 ## Design Principles
 

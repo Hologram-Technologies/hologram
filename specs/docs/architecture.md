@@ -190,6 +190,55 @@ across nodes (or across runs, via warm-start) is an O(1) rebind.
 **Key types**: `BufferArena` (`hologram-exec/src/buffer.rs`), `CpuBackend`
 (`hologram-backend/src/cpu.rs`)
 
+### Refinement Execution Strategy
+
+Refinement is a bounded execution strategy over compiled sessions. It is not a
+new graph node, canonical op, or backend kernel. A `RefinementPlan` runs
+against an already-loaded `InferenceSession`; callers may either borrow an
+existing session through `RefinementPlan::execute` / `bind` or use the owning
+`CompiledRefinement` convenience wrapper. Each pass invokes
+`InferenceSession::execute_addressed`, then feeds the returned output κ-labels
+back as the next pass input labels.
+
+The state contract is validated before execution. A plan may carry an explicit
+`RefinementStateContract`; otherwise the runtime derives one from the session's
+input/output ports. The session must have the same number of input and output
+state ports, and each corresponding port must match in dtype, element count,
+shape, and logical byte length. This preserves planner/executor separation:
+shape repair and state-layout changes belong in the compiler or external
+planner, not in the runtime loop.
+
+Refinement validators run only at pass boundaries:
+
+| Validator | Cost class | Meaning |
+|-----------|------------|---------|
+| `StableLabels` | O(number of state ports) | Accepts when output labels exactly match input labels |
+| `StableBytes` | O(state bytes) | Accepts when logical state bytes match exactly |
+
+`StableBytes` is zero-copy: it compares resolved `BufferArena` slices without
+copying tensors. It is not O(1) in state size, so strict O(1) profiles should
+prefer label or metadata validators. The distinction matters because output
+labels are witnessed derivation labels; an idempotent byte transform can be
+byte-stable while producing a different derivation label.
+
+Repair is explicit and bounded. The prototype supports `RepairPolicy::None`
+and `RepairPolicy::RetryPass { extra_passes }`, which retries the same compiled
+pass after the normal pass budget is exhausted. Repair attempts are reported
+separately from normal passes.
+
+Refinement differs from normal graph execution by adding a bounded outer
+strategy around graph execution. It differs from iterative agent loops because
+the pass count, validators, and repair budget are fixed plan constants. It
+differs from diffusion models because Hologram does not own sampling,
+denoising, tokenization, or model policy; it only provides a deterministic
+bounded convergence substrate that downstream planners such as `hologram-ai`
+can target.
+
+Future multi-pass validation and repair graphs require shared-pool execution
+or explicit label import. Separate `InferenceSession`s currently own separate
+`BufferArena`s, so a label produced by one session is not automatically
+resident in another.
+
 ### Fusion — Content-Addressed Path Shortening
 
 Fusion happens in two phases. The compiler first desugars composite ops to primitives and applies
@@ -311,14 +360,66 @@ All compilation routes through the 7-stage cascade engine (`hologram-cascade`), 
 the UOR cascade pipeline from uor-foundation v0.1.3. The cascade is the sole compilation path;
 there is no separate imperative pipeline.
 
+### Source Frontend Boundary
+
+Source parsing is a compile-time frontend concern. Native Hologram source,
+Python, TypeScript, and Rust frontends parse into the same document-level
+contract before anything reaches the graph compiler:
+
+```text
+source text -> SourceDocument -> selected SourceProgram -> Graph -> Compiler
+```
+
+`SourceDocument` may contain multiple graph regions extracted from a larger host
+file. `SourceParseOptions` selects the graph by name; if no graph is selected,
+a document with one graph is accepted and a document with multiple graphs fails
+loudly as ambiguous. Host-language frontends may ignore unrelated application
+code, but unsupported statements inside an inferred graph region must fail
+loudly.
+
+Python support is feature-gated behind `frontend-python` and parses the Python
+AST without importing or executing user code. Its current accepted subset is
+restricted to Hologram builder calls (`h.input`, `h.const` / `h.constant`,
+`h.ops.<op>`, and `h.output`) with literal shape/dtype/value metadata and the
+shared source op-attribute table used by native Hologram source.
+
+TypeScript support is feature-gated behind `frontend-typescript` and parses the
+TypeScript AST without importing or executing user code. Its current accepted
+subset mirrors Python through object-literal call options: `h.input`,
+`h.const` / `h.constant`, `h.ops.<op>`, and `h.output` with literal
+shape/dtype/value metadata and the shared source op-attribute table.
+
+Rust support is feature-gated behind `frontend-rust` and parses the Rust AST
+with `syn` without compiling or executing user code. Its current accepted
+subset mirrors the other host frontends through helper-call options:
+`h.input`, `h.constant` / `h.const_`, `h.ops().<op>`, and `h.output` with
+literal shape/dtype/value metadata and the shared source op-attribute table.
+
+No source-language metadata, parser spans, dynamic attribute maps, or frontend
+dispatch survives into `hologram-graph`, `.holo` archives, `hologram-backend`,
+or `hologram-exec`; those layers see only the closed graph/`KernelCall`
+vocabulary.
+
+Inline constants are for tests and small source examples. Large weights should
+enter through a shared source/SDK external tensor reference contract so bytes
+are validated, loaded, packed, and archived once rather than copied through
+host-language source literals; see
+[External Tensor References](external-tensor-references.md).
+
 ### Entry Points
 
 | Entry Point | Use Case |
 |-------------|----------|
-| `compile(graph)` | Raw Graph — wraps in CompileUnit via `unit_from_graph()` → cascade |
-| `CompilerBuilder::from_unit(unit, graph)` | Pre-built CompileUnit + pre-lowered Graph → cascade |
-| `CompilerBuilder::from_source(source, ...)` | UOR term language → parse → preflight → lower → cascade |
-| `compile_from_source(source, ...)` | Convenience wrapper for `from_source` |
+| `compile(graph)` / `Compiler::new(graph, ...)` | Pre-built `Graph` → cascade |
+| `source::parse(source)` | Compatibility path: native Hologram source → `Graph` |
+| `source::parse_document(source, language)` | Source text → `SourceDocument` with zero or more graph regions |
+| `source::parse_ir_with_options(source, language, options)` | Source text + graph selection → `SourceProgram` |
+| `source::lower_ir(&program)` | `SourceProgram` → `Graph` |
+| `compile_from_source(source, ...)` | Convenience wrapper for native Hologram source |
+| `compile_from_source_language(source, language, ...)` | Convenience wrapper for a language-aware source path when graph selection is not needed |
+
+The CLI mirrors this boundary with `hologram compile --source-language <lang>`
+and `--graph <name>` for embedded or multi-graph source files.
 
 ### 7 Cascade Stages
 

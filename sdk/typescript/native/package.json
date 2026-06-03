@@ -1,0 +1,47 @@
+{
+  "name": "@hologram/native",
+  "version": "0.6.0",
+  "description": "Node native binding adapter for the Hologram TypeScript SDK",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "native/Cargo.lock",
+    "native/Cargo.toml",
+    "native/build.rs",
+    "native/src",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:native": "cargo build --manifest-path native/Cargo.toml --release && node scripts/copy-native.mjs",
+    "build:all": "npm run build && npm run build:native",
+    "prepack": "npm run build:all",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke:native": "npm run build:all && node test/smoke-addon.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@hologram/sdk": "0.6.0"
+  },
+  "devDependencies": {
+    "typescript": ">=5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hologram-Technologies/hologram.git",
+    "directory": "sdk/typescript/native"
+  }
+}

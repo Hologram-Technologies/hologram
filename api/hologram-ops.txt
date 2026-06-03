@@ -1536,10 +1536,12 @@ pub hologram_ops::kind::OpKind::Transpose
 pub hologram_ops::kind::OpKind::Where
 pub hologram_ops::kind::OpKind::Xor
 impl hologram_ops::kind::OpKind
+pub const hologram_ops::kind::OpKind::ALL: &'static [Self]
+pub const fn hologram_ops::kind::OpKind::name(self) -> &'static str
+impl hologram_ops::kind::OpKind
 pub const fn hologram_ops::kind::OpKind::cap(self) -> usize
 pub const fn hologram_ops::kind::OpKind::is_direct(self) -> bool
 pub const fn hologram_ops::kind::OpKind::is_layout_only(self) -> bool
-pub const fn hologram_ops::kind::OpKind::name(self) -> &'static str
 pub const fn hologram_ops::kind::OpKind::primary_arity(self) -> u8
 pub const fn hologram_ops::kind::OpKind::primary_primitive(self) -> uor_foundation::enums::PrimitiveOp
 impl core::clone::Clone for hologram_ops::kind::OpKind
@@ -2203,10 +2205,12 @@ pub hologram_ops::OpKind::Transpose
 pub hologram_ops::OpKind::Where
 pub hologram_ops::OpKind::Xor
 impl hologram_ops::kind::OpKind
+pub const hologram_ops::kind::OpKind::ALL: &'static [Self]
+pub const fn hologram_ops::kind::OpKind::name(self) -> &'static str
+impl hologram_ops::kind::OpKind
 pub const fn hologram_ops::kind::OpKind::cap(self) -> usize
 pub const fn hologram_ops::kind::OpKind::is_direct(self) -> bool
 pub const fn hologram_ops::kind::OpKind::is_layout_only(self) -> bool
-pub const fn hologram_ops::kind::OpKind::name(self) -> &'static str
 pub const fn hologram_ops::kind::OpKind::primary_arity(self) -> u8
 pub const fn hologram_ops::kind::OpKind::primary_primitive(self) -> uor_foundation::enums::PrimitiveOp
 impl core::clone::Clone for hologram_ops::kind::OpKind

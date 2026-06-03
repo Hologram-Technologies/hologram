@@ -1,0 +1,15 @@
+[package]
+name = "hologram-wasm-driver"
+version = "0.6.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+description = "wasm-bindgen driver for the Hologram TypeScript SDK."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hologram-ffi = { path = "../../../../crates/hologram-ffi", features = ["wasm"] }
+js-sys = "0.3.99"
+wasm-bindgen = "=0.2.122"

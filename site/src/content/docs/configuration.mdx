@@ -18,6 +18,9 @@ Every library crate is `no_std` + `alloc` by default and exposes a `std` feature
 | `metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
 | `tiered-exec` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
 | `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing |
+| `frontend-python` | `hologram-compiler`, `hologram-cli` | — | Python AST source frontend for restricted Hologram builder functions (implies `std`) |
+| `frontend-rust` | `hologram-compiler`, `hologram-cli` | — | Rust AST source frontend for restricted Hologram builder functions (implies `std`) |
+| `frontend-typescript` | `hologram-compiler`, `hologram-cli` | — | TypeScript AST source frontend for restricted Hologram builder functions (implies `std`) |
 | `wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
 
 Enable features in `Cargo.toml`:
@@ -25,6 +28,24 @@ Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
 hologram-backend = { git = "https://github.com/Hologram-Technologies/hologram", features = ["parallel"] }
+```
+
+Enable source frontend features on `hologram-compiler` when a build needs to
+parse host-language files:
+
+```toml
+[dependencies]
+hologram-compiler = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["frontend-python", "frontend-typescript", "frontend-rust"],
+}
+```
+
+For CLI development runs, enable the matching `hologram-cli` feature:
+
+```bash
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py --graph encoder --output model.holo
 ```
 
 ## no_std Targets
@@ -64,6 +85,22 @@ let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
 
 `BackendKind` selects the target backend (e.g. `Cpu`). `WittLevel::new(32)` is the conventional default.
 
+### External tensor roots
+
+File-backed `const_ref` tensors are resolved and hash-checked at compile time.
+By default, relative paths resolve from the compiler process' current directory
+and absolute paths are allowed. Set `HOLOGRAM_EXTERNAL_TENSOR_ROOT` to require
+every resolved external tensor path, relative or absolute, to canonicalize under
+that root:
+
+```bash
+HOLOGRAM_EXTERNAL_TENSOR_ROOT="$PWD/weights" hologram compile \
+  --source graph.txt --output model.holo
+```
+
+Runtime sessions never reopen `const_ref` source paths; the validated bytes are
+already part of the compiled archive.
+
 ## Runtime / session configuration
 
 Execution is synchronous. A session is loaded from an archive against a backend, and the backend is parameterized by the buffer pool (`BufferArena`):
@@ -99,3 +136,9 @@ int h   = hologram_session_load(archive, archive_len);
 hologram_session_execute(h, /* … */);
 hologram_session_close(h);
 ```
+
+SDK bindings should read `hologram_last_error_code()` and
+`hologram_last_error_message()` after failures. Python and TypeScript map the
+stable FFI categories to typed errors such as `ArchiveLoadError`,
+`ExternalTensorError`, `ExecutionError`, `AbiMismatchError`, and
+`InvalidArgumentError`.

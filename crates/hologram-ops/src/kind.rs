@@ -2,121 +2,150 @@
 //!
 //! One variant per `Grounding`-equivalent op marker in the rest of this
 //! crate. Adding an op = (a) define a marker type in the right module,
-//! (b) add a variant here, (c) wire the compiler dispatch arm.
+//! (b) add one catalog entry here, (c) wire the compiler dispatch arm.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub enum OpKind {
+macro_rules! op_kind_catalog {
+    ($($(#[$meta:meta])* $variant:ident => $name:literal,)+) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[repr(u16)]
+        pub enum OpKind {
+            $(
+                $(#[$meta])*
+                $variant,
+            )+
+        }
+
+        impl OpKind {
+            /// Closed catalog of canonical operation kinds.
+            ///
+            /// Keep this list in enum declaration order. Parser frontends,
+            /// dispatch coverage, and catalog-size tests should use this
+            /// constant instead of carrying local copies.
+            pub const ALL: &'static [Self] = &[
+                $(Self::$variant,)+
+            ];
+
+            /// Stable human-readable name (lowercase snake_case).
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+    };
+}
+
+op_kind_catalog! {
     // Direct PrimitiveOp wrappers (spec V.3)
-    Neg,
-    Bnot,
-    Succ,
-    Pred,
-    Add,
-    Sub,
-    Mul,
-    Xor,
-    And,
-    Or,
+    Neg => "neg",
+    Bnot => "bnot",
+    Succ => "succ",
+    Pred => "pred",
+    Add => "add",
+    Sub => "sub",
+    Mul => "mul",
+    Xor => "xor",
+    And => "and",
+    Or => "or",
 
     // Elementwise unary
-    Relu,
-    Sigmoid,
-    Tanh,
-    Gelu,
-    Silu,
-    Elu,
-    Selu,
-    Exp,
-    Log,
-    Log1p,
-    Sqrt,
-    Reciprocal,
-    Sin,
-    Cos,
-    Tan,
-    Asin,
-    Acos,
-    Atan,
-    Ceil,
-    Floor,
-    Round,
-    Erf,
-    IsNaN,
-    Sign,
-    Abs,
+    Relu => "relu",
+    Sigmoid => "sigmoid",
+    Tanh => "tanh",
+    Gelu => "gelu",
+    Silu => "silu",
+    Elu => "elu",
+    Selu => "selu",
+    Exp => "exp",
+    Log => "log",
+    Log1p => "log1p",
+    Sqrt => "sqrt",
+    Reciprocal => "reciprocal",
+    Sin => "sin",
+    Cos => "cos",
+    Tan => "tan",
+    Asin => "asin",
+    Acos => "acos",
+    Atan => "atan",
+    Ceil => "ceil",
+    Floor => "floor",
+    Round => "round",
+    Erf => "erf",
+    IsNaN => "is_nan",
+    Sign => "sign",
+    Abs => "abs",
 
     // Elementwise binary (non-primitive)
-    Div,
-    Pow,
-    Mod,
-    Min,
-    Max,
-    Equal,
-    Less,
-    LessOrEqual,
-    Greater,
-    GreaterOrEqual,
+    Div => "div",
+    Pow => "pow",
+    Mod => "mod",
+    Min => "min",
+    Max => "max",
+    Equal => "equal",
+    Less => "less",
+    LessOrEqual => "less_or_equal",
+    Greater => "greater",
+    GreaterOrEqual => "greater_or_equal",
 
     // Linear algebra
-    MatMul,
-    Gemm,
+    MatMul => "matmul",
+    Gemm => "gemm",
 
     // Convolution
-    Conv2d,
-    ConvTranspose2d,
+    Conv2d => "conv2d",
+    ConvTranspose2d => "conv_transpose_2d",
     /// im2col: gather a conv's receptive-field patches into a `[Cin·kh·kw,
     /// Hout·Wout]` matrix (a pure layout gather). Lets a convolution be
     /// expressed as `W · im2col(x)`, and its gradients composed from the
     /// matmul VJP. Single-instance (rank-3 `[Cin,Hin,Win]` → rank-2).
-    Im2Col,
+    Im2Col => "im2col",
     /// col2im: the adjoint of [`Im2Col`](Self::Im2Col) — scatter-add a `[Cin·kh·kw,
     /// Hout·Wout]` patch matrix back into a `[Cin,Hin,Win]` image (overlapping
     /// windows accumulate). The input-gradient half of conv composition.
-    Col2Im,
+    Col2Im => "col2im",
 
     // Normalization
-    LayerNorm,
-    RmsNorm,
-    GroupNorm,
-    InstanceNorm,
-    AddRmsNorm,
+    LayerNorm => "layer_norm",
+    RmsNorm => "rms_norm",
+    GroupNorm => "group_norm",
+    InstanceNorm => "instance_norm",
+    AddRmsNorm => "add_rms_norm",
 
     // Reduction
-    ReduceSum,
-    ReduceMean,
-    ReduceProd,
-    ReduceMin,
-    ReduceMax,
+    ReduceSum => "reduce_sum",
+    ReduceMean => "reduce_mean",
+    ReduceProd => "reduce_prod",
+    ReduceMin => "reduce_min",
+    ReduceMax => "reduce_max",
 
     // Layout (no compute)
-    Reshape,
-    Transpose,
-    Concat,
-    Slice,
+    Reshape => "reshape",
+    Transpose => "transpose",
+    Concat => "concat",
+    Slice => "slice",
 
     // Activation+reduce
-    Softmax,
-    LogSoftmax,
+    Softmax => "softmax",
+    LogSoftmax => "log_softmax",
 
     // Pooling
-    MaxPool2d,
-    AvgPool2d,
-    GlobalAvgPool,
+    MaxPool2d => "max_pool_2d",
+    AvgPool2d => "avg_pool_2d",
+    GlobalAvgPool => "global_avg_pool",
 
     // Structured
-    Attention,
-    FusedSwiGlu,
+    Attention => "attention",
+    FusedSwiGlu => "fused_swiglu",
 
     // Utility
-    Pad,
-    Expand,
-    Resize,
-    CumSum,
-    RotaryEmbedding,
-    Clip,
-    Lrn,
-    Where,
+    Pad => "pad",
+    Expand => "expand",
+    Resize => "resize",
+    CumSum => "cumsum",
+    RotaryEmbedding => "rotary_embedding",
+    Clip => "clip",
+    Lrn => "lrn",
+    Where => "where",
     /// Gather rows of `data` along `axis` selected by a runtime integer
     /// `indices` operand (ONNX Gather / embedding lookup): `out[…,i,…] =
     /// data[…,indices[i],…]`. A pure data-movement map like [`Im2Col`](Self::Im2Col),
@@ -125,7 +154,7 @@ pub enum OpKind {
     /// contract is the kernel's, V&V'd against the ONNX spec and the
     /// `OneHot·MatMul` reference it replaces (`O(outer·idx·inner)` indexed
     /// copy vs the one-hot matmul's `O(outer·idx·axis·inner)`).
-    Gather,
+    Gather => "gather",
 
     // Numeric conversion
     /// Numeric dtype conversion (ONNX `Cast`): the abstract value is preserved
@@ -136,103 +165,13 @@ pub enum OpKind {
     /// spec is the affine chain while the widening is the kernel's. This is the
     /// general int→float primitive — distinct from `Dequantize`, which decodes
     /// a *quantized* value with scale/zero-point.
-    Cast,
+    Cast => "cast",
 
     // Quantization (spec X-5)
-    Dequantize,
+    Dequantize => "dequantize",
 }
 
 impl OpKind {
-    /// Stable human-readable name (lowercase snake_case).
-    pub const fn name(self) -> &'static str {
-        use OpKind::*;
-        match self {
-            Neg => "neg",
-            Bnot => "bnot",
-            Succ => "succ",
-            Pred => "pred",
-            Add => "add",
-            Sub => "sub",
-            Mul => "mul",
-            Xor => "xor",
-            And => "and",
-            Or => "or",
-            Relu => "relu",
-            Sigmoid => "sigmoid",
-            Tanh => "tanh",
-            Gelu => "gelu",
-            Silu => "silu",
-            Elu => "elu",
-            Selu => "selu",
-            Exp => "exp",
-            Log => "log",
-            Log1p => "log1p",
-            Sqrt => "sqrt",
-            Reciprocal => "reciprocal",
-            Sin => "sin",
-            Cos => "cos",
-            Tan => "tan",
-            Asin => "asin",
-            Acos => "acos",
-            Atan => "atan",
-            Ceil => "ceil",
-            Floor => "floor",
-            Round => "round",
-            Erf => "erf",
-            IsNaN => "is_nan",
-            Sign => "sign",
-            Abs => "abs",
-            Div => "div",
-            Pow => "pow",
-            Mod => "mod",
-            Min => "min",
-            Max => "max",
-            Equal => "equal",
-            Less => "less",
-            LessOrEqual => "less_or_equal",
-            Greater => "greater",
-            GreaterOrEqual => "greater_or_equal",
-            MatMul => "matmul",
-            Gemm => "gemm",
-            Conv2d => "conv2d",
-            ConvTranspose2d => "conv_transpose_2d",
-            Im2Col => "im2col",
-            Col2Im => "col2im",
-            LayerNorm => "layer_norm",
-            RmsNorm => "rms_norm",
-            GroupNorm => "group_norm",
-            InstanceNorm => "instance_norm",
-            AddRmsNorm => "add_rms_norm",
-            ReduceSum => "reduce_sum",
-            ReduceMean => "reduce_mean",
-            ReduceProd => "reduce_prod",
-            ReduceMin => "reduce_min",
-            ReduceMax => "reduce_max",
-            Reshape => "reshape",
-            Transpose => "transpose",
-            Concat => "concat",
-            Slice => "slice",
-            Softmax => "softmax",
-            LogSoftmax => "log_softmax",
-            MaxPool2d => "max_pool_2d",
-            AvgPool2d => "avg_pool_2d",
-            GlobalAvgPool => "global_avg_pool",
-            Attention => "attention",
-            FusedSwiGlu => "fused_swiglu",
-            Pad => "pad",
-            Expand => "expand",
-            Resize => "resize",
-            CumSum => "cumsum",
-            RotaryEmbedding => "rotary_embedding",
-            Clip => "clip",
-            Lrn => "lrn",
-            Where => "where",
-            Gather => "gather",
-            Cast => "cast",
-            Dequantize => "dequantize",
-        }
-    }
-
     /// Whether this op is a layout-only operation (no compute Term).
     pub const fn is_layout_only(self) -> bool {
         matches!(

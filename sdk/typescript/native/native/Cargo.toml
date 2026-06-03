@@ -1,0 +1,18 @@
+[package]
+name = "hologram-node-native"
+version = "0.6.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+description = "Node N-API driver for the Hologram TypeScript SDK."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hologram-ffi = { path = "../../../../crates/hologram-ffi" }
+napi = { version = "3.9.0", default-features = false, features = ["napi4"] }
+napi-derive = "3.5.6"
+
+[build-dependencies]
+napi-build = "2.2.3"

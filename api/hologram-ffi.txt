@@ -1,16 +1,194 @@
 pub mod hologram_ffi
+pub mod hologram_ffi::sdk
+pub struct hologram_ffi::sdk::SdkDType
+pub hologram_ffi::sdk::SdkDType::id: u8
+pub hologram_ffi::sdk::SdkDType::name: &'static str
+impl core::clone::Clone for hologram_ffi::sdk::SdkDType
+pub fn hologram_ffi::sdk::SdkDType::clone(&self) -> hologram_ffi::sdk::SdkDType
+impl core::cmp::Eq for hologram_ffi::sdk::SdkDType
+impl core::cmp::PartialEq for hologram_ffi::sdk::SdkDType
+pub fn hologram_ffi::sdk::SdkDType::eq(&self, &hologram_ffi::sdk::SdkDType) -> bool
+impl core::fmt::Debug for hologram_ffi::sdk::SdkDType
+pub fn hologram_ffi::sdk::SdkDType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_ffi::sdk::SdkDType
+impl core::marker::StructuralPartialEq for hologram_ffi::sdk::SdkDType
+impl core::marker::Freeze for hologram_ffi::sdk::SdkDType
+impl core::marker::Send for hologram_ffi::sdk::SdkDType
+impl core::marker::Sync for hologram_ffi::sdk::SdkDType
+impl core::marker::Unpin for hologram_ffi::sdk::SdkDType
+impl core::marker::UnsafeUnpin for hologram_ffi::sdk::SdkDType
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::sdk::SdkDType
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::sdk::SdkDType
+pub struct hologram_ffi::sdk::SdkOp
+pub hologram_ffi::sdk::SdkOp::arity: u8
+pub hologram_ffi::sdk::SdkOp::attrs: &'static [&'static str]
+pub hologram_ffi::sdk::SdkOp::doc: &'static str
+pub hologram_ffi::sdk::SdkOp::dtype_policy: &'static str
+pub hologram_ffi::sdk::SdkOp::kind: hologram_ops::kind::OpKind
+pub hologram_ffi::sdk::SdkOp::name: &'static str
+pub hologram_ffi::sdk::SdkOp::shape_policy: &'static str
+impl core::clone::Clone for hologram_ffi::sdk::SdkOp
+pub fn hologram_ffi::sdk::SdkOp::clone(&self) -> hologram_ffi::sdk::SdkOp
+impl core::cmp::Eq for hologram_ffi::sdk::SdkOp
+impl core::cmp::PartialEq for hologram_ffi::sdk::SdkOp
+pub fn hologram_ffi::sdk::SdkOp::eq(&self, &hologram_ffi::sdk::SdkOp) -> bool
+impl core::fmt::Debug for hologram_ffi::sdk::SdkOp
+pub fn hologram_ffi::sdk::SdkOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_ffi::sdk::SdkOp
+impl core::marker::StructuralPartialEq for hologram_ffi::sdk::SdkOp
+impl core::marker::Freeze for hologram_ffi::sdk::SdkOp
+impl core::marker::Send for hologram_ffi::sdk::SdkOp
+impl core::marker::Sync for hologram_ffi::sdk::SdkOp
+impl core::marker::Unpin for hologram_ffi::sdk::SdkOp
+impl core::marker::UnsafeUnpin for hologram_ffi::sdk::SdkOp
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::sdk::SdkOp
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::sdk::SdkOp
+pub const hologram_ffi::sdk::DTYPES: &[hologram_ffi::sdk::SdkDType]
+pub const hologram_ffi::sdk::FEATURES: &[&str]
+pub fn hologram_ffi::sdk::generate_python() -> alloc::string::String
+pub fn hologram_ffi::sdk::generate_typescript() -> alloc::string::String
+pub fn hologram_ffi::sdk::ops() -> impl core::iter::traits::iterator::Iterator<Item = hologram_ffi::sdk::SdkOp>
+#[repr(C)] pub struct hologram_ffi::HologramConstDesc
+pub hologram_ffi::HologramConstDesc::byte_len: usize
+pub hologram_ffi::HologramConstDesc::bytes: *const std::os::raw::c_uchar
+pub hologram_ffi::HologramConstDesc::tensor: hologram_ffi::HologramTensorDesc
+impl core::clone::Clone for hologram_ffi::HologramConstDesc
+pub fn hologram_ffi::HologramConstDesc::clone(&self) -> hologram_ffi::HologramConstDesc
+impl core::marker::Copy for hologram_ffi::HologramConstDesc
+impl core::marker::Freeze for hologram_ffi::HologramConstDesc
+impl !core::marker::Send for hologram_ffi::HologramConstDesc
+impl !core::marker::Sync for hologram_ffi::HologramConstDesc
+impl core::marker::Unpin for hologram_ffi::HologramConstDesc
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramConstDesc
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramConstDesc
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramConstDesc
+#[repr(C)] pub struct hologram_ffi::HologramExternalTensorDesc
+pub hologram_ffi::HologramExternalTensorDesc::byte_len: u64
+pub hologram_ffi::HologramExternalTensorDesc::byte_offset: u64
+pub hologram_ffi::HologramExternalTensorDesc::content_hash: [std::os::raw::c_uchar; 32]
+pub hologram_ffi::HologramExternalTensorDesc::path: hologram_ffi::HologramString
+pub hologram_ffi::HologramExternalTensorDesc::tensor: hologram_ffi::HologramTensorDesc
+impl core::clone::Clone for hologram_ffi::HologramExternalTensorDesc
+pub fn hologram_ffi::HologramExternalTensorDesc::clone(&self) -> hologram_ffi::HologramExternalTensorDesc
+impl core::marker::Copy for hologram_ffi::HologramExternalTensorDesc
+impl core::marker::Freeze for hologram_ffi::HologramExternalTensorDesc
+impl !core::marker::Send for hologram_ffi::HologramExternalTensorDesc
+impl !core::marker::Sync for hologram_ffi::HologramExternalTensorDesc
+impl core::marker::Unpin for hologram_ffi::HologramExternalTensorDesc
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramExternalTensorDesc
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramExternalTensorDesc
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramExternalTensorDesc
+#[repr(C)] pub struct hologram_ffi::HologramShape
+pub hologram_ffi::HologramShape::dims: *const u64
+pub hologram_ffi::HologramShape::rank: usize
+impl core::clone::Clone for hologram_ffi::HologramShape
+pub fn hologram_ffi::HologramShape::clone(&self) -> hologram_ffi::HologramShape
+impl core::marker::Copy for hologram_ffi::HologramShape
+impl core::marker::Freeze for hologram_ffi::HologramShape
+impl !core::marker::Send for hologram_ffi::HologramShape
+impl !core::marker::Sync for hologram_ffi::HologramShape
+impl core::marker::Unpin for hologram_ffi::HologramShape
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramShape
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramShape
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramShape
+pub struct hologram_ffi::HologramSourceBuilder
+impl core::marker::Freeze for hologram_ffi::HologramSourceBuilder
+impl core::marker::Send for hologram_ffi::HologramSourceBuilder
+impl core::marker::Sync for hologram_ffi::HologramSourceBuilder
+impl core::marker::Unpin for hologram_ffi::HologramSourceBuilder
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramSourceBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramSourceBuilder
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramSourceBuilder
+#[repr(C)] pub struct hologram_ffi::HologramSourceOp
+pub hologram_ffi::HologramSourceOp::input_count: usize
+pub hologram_ffi::HologramSourceOp::inputs: *const hologram_ffi::HologramString
+pub hologram_ffi::HologramSourceOp::op: hologram_ffi::HologramString
+pub hologram_ffi::HologramSourceOp::output: hologram_ffi::HologramString
+pub hologram_ffi::HologramSourceOp::shape: hologram_ffi::HologramShape
+impl core::clone::Clone for hologram_ffi::HologramSourceOp
+pub fn hologram_ffi::HologramSourceOp::clone(&self) -> hologram_ffi::HologramSourceOp
+impl core::marker::Copy for hologram_ffi::HologramSourceOp
+impl core::marker::Freeze for hologram_ffi::HologramSourceOp
+impl !core::marker::Send for hologram_ffi::HologramSourceOp
+impl !core::marker::Sync for hologram_ffi::HologramSourceOp
+impl core::marker::Unpin for hologram_ffi::HologramSourceOp
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramSourceOp
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramSourceOp
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramSourceOp
+#[repr(C)] pub struct hologram_ffi::HologramString
+pub hologram_ffi::HologramString::len: usize
+pub hologram_ffi::HologramString::ptr: *const std::os::raw::c_uchar
+impl core::clone::Clone for hologram_ffi::HologramString
+pub fn hologram_ffi::HologramString::clone(&self) -> hologram_ffi::HologramString
+impl core::marker::Copy for hologram_ffi::HologramString
+impl core::marker::Freeze for hologram_ffi::HologramString
+impl !core::marker::Send for hologram_ffi::HologramString
+impl !core::marker::Sync for hologram_ffi::HologramString
+impl core::marker::Unpin for hologram_ffi::HologramString
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramString
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramString
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramString
+#[repr(C)] pub struct hologram_ffi::HologramTensorDesc
+pub hologram_ffi::HologramTensorDesc::dtype_id: u8
+pub hologram_ffi::HologramTensorDesc::name: hologram_ffi::HologramString
+pub hologram_ffi::HologramTensorDesc::shape: hologram_ffi::HologramShape
+impl core::clone::Clone for hologram_ffi::HologramTensorDesc
+pub fn hologram_ffi::HologramTensorDesc::clone(&self) -> hologram_ffi::HologramTensorDesc
+impl core::marker::Copy for hologram_ffi::HologramTensorDesc
+impl core::marker::Freeze for hologram_ffi::HologramTensorDesc
+impl !core::marker::Send for hologram_ffi::HologramTensorDesc
+impl !core::marker::Sync for hologram_ffi::HologramTensorDesc
+impl core::marker::Unpin for hologram_ffi::HologramTensorDesc
+impl core::marker::UnsafeUnpin for hologram_ffi::HologramTensorDesc
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramTensorDesc
+impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramTensorDesc
+pub const hologram_ffi::HOLOGRAM_ABI_VERSION: u32
+pub const hologram_ffi::HOLOGRAM_ERROR_ABI_MISMATCH: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_ARCHIVE_LOAD: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_BAD_ATTR: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_COMPILE: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_EXECUTION: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_EXTERNAL_TENSOR: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_GRAPH: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_INVALID_ARGUMENT: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_NONE: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_PARSE: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_SHAPE: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_UNSUPPORTED_DTYPE: std::os::raw::c_int
+pub const hologram_ffi::HOLOGRAM_ERROR_UNSUPPORTED_OP: std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_abi_version() -> u32
+#[no_mangle] pub c fn hologram_ffi::hologram_archive_format_version() -> u32
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_empty(*mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_source(*const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_error_message() -> *const std::os::raw::c_char
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_feature_supported(hologram_ffi::HologramString) -> std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error() -> std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error_code() -> std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error_column() -> usize
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error_line() -> usize
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error_message() -> *const std::os::raw::c_char
+#[no_mangle] pub c fn hologram_ffi::hologram_last_error_rejected() -> *const std::os::raw::c_char
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_archive_fingerprint(std::os::raw::c_int, *mut std::os::raw::c_uchar) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_close(std::os::raw::c_int) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_execute(std::os::raw::c_int, *const *const std::os::raw::c_uchar, *const usize, usize, *const *mut std::os::raw::c_uchar, *const usize, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_extension(std::os::raw::c_int, *const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_count(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_dtype(std::os::raw::c_int, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_kernel_count(std::os::raw::c_int) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_load(*const std::os::raw::c_uchar, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_byte_len(std::os::raw::c_int, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_count(std::os::raw::c_int) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_dtype(std::os::raw::c_int, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
 #[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_compile(*const hologram_ffi::HologramSourceBuilder, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_const(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramConstDesc) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_const_ref(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramExternalTensorDesc) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_free(*mut hologram_ffi::HologramSourceBuilder)
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_input(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramTensorDesc) -> std::os::raw::c_int
+#[no_mangle] pub c fn hologram_ffi::hologram_source_builder_new() -> *mut hologram_ffi::HologramSourceBuilder
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_op(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramSourceOp) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_output(*mut hologram_ffi::HologramSourceBuilder, hologram_ffi::HologramString) -> std::os::raw::c_int
+#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_output_alias(*mut hologram_ffi::HologramSourceBuilder, hologram_ffi::HologramString, hologram_ffi::HologramString) -> std::os::raw::c_int

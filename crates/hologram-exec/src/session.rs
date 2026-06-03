@@ -104,8 +104,8 @@ pub struct InferenceSession<B: SessionBackend> {
     /// With per-node addressing, a shared sub-graph is *not* dispatched, so
     /// `last_dispatched < kernel_count` whenever sub-graph reuse fires.
     last_dispatched: usize,
-    /// Kernels elided in the most recent walk because their output κ-label
-    /// was already resident (sub-graph / common-subexpression reuse).
+    /// Kernels elided in the most recent execution because their output
+    /// κ-label was already resident, or because the whole graph memo hit.
     last_skipped: usize,
     /// Reused per-walk scratch (slot→label, output-port→witnessed-label) so
     /// a compute miss allocates nothing beyond the first run — the
@@ -570,6 +570,7 @@ impl<B: SessionBackend> InferenceSession<B> {
         let cached = self.graph_memo.get(&key).cloned();
         if let Some(labels) = cached {
             if labels.iter().all(|l| self.pool.resident(l)) {
+                self.record_graph_memo_hit();
                 return self.collect_outputs(&labels);
             }
         }
@@ -628,6 +629,7 @@ impl<B: SessionBackend> InferenceSession<B> {
         let cached = self.graph_memo.get(&key).cloned();
         if let Some(labels) = cached {
             if labels.iter().all(|l| self.pool.resident(l)) {
+                self.record_graph_memo_hit();
                 return Ok(labels.into_vec());
             }
         }
@@ -855,11 +857,16 @@ impl<B: SessionBackend> InferenceSession<B> {
         self.last_dispatched
     }
 
-    /// Kernels elided in the most recent walk because their output κ-label
-    /// was already resident — the count of reused sub-graph nodes.
+    /// Kernels elided in the most recent execution because their output
+    /// κ-label was already resident, or because the whole graph memo hit.
     #[inline]
     pub fn last_skipped(&self) -> usize {
         self.last_skipped
+    }
+
+    fn record_graph_memo_hit(&mut self) {
+        self.last_dispatched = 0;
+        self.last_skipped = self.kernel_calls.len();
     }
 
     pub fn kernel_count(&self) -> usize {

@@ -54,10 +54,20 @@ let output = compile(graph, BackendKind::Cpu, WittLevel::W32)?;
 
 ## Compiling from source
 
-`hologram_compiler::source::parse` reads a line-oriented textual grammar
-(`#` comments and blank lines ignored) into a `Graph`. A `:<shape>` token is
-`d0xd1x…` (e.g. `:2x3`); op inputs reference any prior `input` / `const` /
-op-alias name.
+All source frontends lower through the same boundary:
+
+```text
+source text -> SourceDocument -> selected SourceProgram -> Graph -> Compiler
+```
+
+`SourceDocument` lets frontends extract one or more graph regions from a larger
+host-language file before the compiler selects a single `SourceProgram` for
+lowering. This keeps source-language spans and AST details out of the graph IR,
+archive, backend, and executor.
+
+`hologram_compiler::source::parse` remains the compatibility entry point for
+native Hologram source. It accepts both the original line-oriented grammar
+(`#` comments and blank lines ignored) and the native frontend path:
 
 ```text
 input  x :2x3
@@ -75,3 +85,148 @@ let output = compile_from_source(src, WittLevel::W32, BackendKind::Cpu)?;
 
 `source::parse` returns `Result<Graph, CompileError>` if you want the graph
 without compiling.
+
+Use the language-aware API when the source file may contain more than one graph
+region or when it is written in a host-language frontend:
+
+```rust
+use hologram_compiler::source::{self, SourceLanguage, SourceParseOptions};
+
+let options = SourceParseOptions::new().graph("encoder");
+let program = source::parse_ir_with_options(
+    py_source,
+    SourceLanguage::Python,
+    &options,
+)?;
+let graph = source::lower_ir(&program)?;
+```
+
+If graph selection is not needed, compile source directly with the language
+convenience API:
+
+```rust
+use hologram_compiler::source::SourceLanguage;
+use hologram_compiler::{compile_from_source_language, BackendKind};
+use prism::vocabulary::WittLevel;
+
+let output = compile_from_source_language(
+    py_source,
+    SourceLanguage::Python,
+    WittLevel::W32,
+    BackendKind::Cpu,
+)?;
+```
+
+The CLI detects source language by extension for `.txt`, `.py`, `.ts`, `.tsx`,
+and `.rs`. Pass `--source-language <lang>` only for unusual extensions or an
+explicit override. Pass `--graph <name>` when a file contains multiple graph
+regions.
+
+Python and TypeScript SDK packages also expose native Hologram `.txt`
+compilation through the FFI. Use `hg.compile_source_file("graph.txt")` in
+Python, or `compileSource(...)` from `@hologram/sdk` with a native/WASM binding
+in TypeScript. The Node adapter adds `compileSourceFile("graph.txt")` for
+filesystem-backed source files.
+
+### Python frontend
+
+The Python frontend is behind the `frontend-python` feature on
+`hologram-compiler` and `hologram-cli`. It parses Python source as an AST and
+extracts restricted Hologram builder functions; it does not import, evaluate, or
+execute user Python code. Unrelated Python code is ignored. If a file contains
+one inferred graph, it is selected automatically; if it contains multiple graph
+functions, pass `--graph`.
+
+```python
+def ordinary_app_code():
+    return 42
+
+def encoder(h):
+    x = h.input("x", dtype="f32", shape=[2, 3])
+    w = h.const("w", shape=[3, 2], values=[1, 2, 3, 4, 5, 6])
+    y = h.ops.matmul(x, w, shape=[2, 2])
+    h.output("y", y)
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py \
+  --graph encoder \
+  --output model.holo
+```
+
+The accepted Python subset is currently `h.input`, `h.const` / `h.constant`,
+`h.ops.<op>`, and `h.output` with literal `shape`, `dtype`, constant `values`,
+and the same op attributes accepted by native Hologram source. Unsupported
+statements inside an inferred graph function fail loudly; ordinary Python
+functions with no Hologram builder calls are ignored.
+
+### TypeScript frontend
+
+The TypeScript frontend is behind the `frontend-typescript` feature on
+`hologram-compiler` and `hologram-cli`. It parses TypeScript source as an AST
+and extracts restricted Hologram builder functions; it does not import,
+evaluate, or execute user TypeScript code. Unrelated TypeScript code is
+ignored. If a file contains one inferred graph, it is selected automatically;
+if it contains multiple graph functions, pass `--graph`.
+
+```ts
+function ordinaryAppCode() {
+    return 42;
+}
+
+export function encoder(h: HologramBuilder) {
+    const x = h.input("x", { dtype: "f32", shape: [2, 3] });
+    const w = h.const("w", { shape: [3, 2], values: [1, 2, 3, 4, 5, 6] });
+    const y = h.ops.matmul(x, w, { shape: [2, 2] });
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-typescript -- compile \
+  --source graph.ts \
+  --graph encoder \
+  --output model.holo
+```
+
+The accepted TypeScript subset is currently `h.input`, `h.const` /
+`h.constant`, `h.ops.<op>`, and `h.output` with object-literal `shape`, `dtype`,
+constant `values`, and the same op attributes accepted by native Hologram
+source. Unsupported statements inside an inferred graph function fail loudly;
+ordinary TypeScript functions with no Hologram builder calls are ignored.
+
+### Rust frontend
+
+The Rust frontend is behind the `frontend-rust` feature on `hologram-compiler`
+and `hologram-cli`. It parses Rust source with `syn` and extracts restricted
+Hologram builder functions; it does not compile, link, or execute user Rust
+code. Unrelated Rust code is ignored. If a file contains one inferred graph, it
+is selected automatically; if it contains multiple graph functions, pass
+`--graph`.
+
+```rust
+fn ordinary_app_code() -> i32 {
+    42
+}
+
+pub fn encoder(h: &mut HologramBuilder) {
+    let x = h.input("x", dtype("f32"), shape([2, 3]));
+    let w = h.constant("w", shape([3, 2]), values([1, 2, 3, 4, 5, 6]));
+    let y = h.ops().matmul(x, w, shape([2, 2]));
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-rust -- compile \
+  --source graph.rs \
+  --graph encoder \
+  --output model.holo
+```
+
+The accepted Rust subset is currently `h.input`, `h.constant` / `h.const_`,
+`h.ops().<op>`, and `h.output` with helper-call `shape`, `dtype`, constant
+`values`, and the same op attributes accepted by native Hologram source.
+Unsupported statements inside an inferred graph function fail loudly; ordinary
+Rust functions with no Hologram builder calls are ignored.

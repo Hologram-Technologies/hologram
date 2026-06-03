@@ -27,6 +27,17 @@ hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram" 
 hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram" }
 ```
 
+Enable source frontend features when you want to parse Hologram graph functions
+embedded in host-language files:
+
+```toml
+[dependencies]
+hologram-compiler = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["frontend-python", "frontend-typescript", "frontend-rust"],
+}
+```
+
 ## Run the Pipeline Example
 
 `crates/hologram-cli/examples/pipeline.rs` runs the end-to-end flow: it parses a graph, compiles it to a `.holo` archive, executes it on the CPU backend, and mints + composes UOR-ADDR κ-labels.
@@ -40,12 +51,12 @@ cargo run -p hologram-cli --example pipeline
 Compile a graph to a `.holo` archive and execute it synchronously against the CPU backend:
 
 ```rust
-use hologram_compiler::{source, BackendKind, Compiler};
 use hologram_backend::CpuBackend;
+use hologram_compiler::{source, BackendKind, Compiler};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
-// Parse a line-oriented hologram source into a Graph and compile it.
+// Parse native Hologram source into a Graph and compile it.
 let graph = source::parse("input x\nop relu x as=y\noutput y\n").unwrap();
 let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::new(32))
     .compile()
@@ -67,7 +78,7 @@ Graphs can also be built programmatically with `Graph::new()` plus `add_node` / 
 `hologram-cli` builds the `hologram` binary:
 
 ```bash
-# compile hologram-source (or an empty graph) to a .holo archive
+# compile native Hologram source (or an empty graph) to a .holo archive
 hologram compile --source graph.txt --output model.holo --backend cpu --witt-level 32
 
 # inspect an archive's section table
@@ -81,6 +92,121 @@ hologram bench --archive model.holo --iterations 100
 ```
 
 By default `compile` folds the constant-only cone into the archive (warm start); pass `--no-warm` to emit the labels-only lattice instead.
+
+## Source Frontends
+
+Native Hologram source is always available. Python, TypeScript, and Rust
+frontends are feature-gated and parse the host language AST without executing
+host-language code. They extract restricted Hologram builder functions from
+larger application files, ignore unrelated functions, and lower every supported
+language through the same `SourceProgram -> Graph -> Compiler` path.
+
+The CLI detects source language from `.txt`, `.py`, `.ts`, `.tsx`, and `.rs`
+extensions. Use `--source-language <lang>` only for unusual extensions or an
+explicit override. If a file contains one inferred graph function, `--graph` can
+be omitted. If it contains multiple graph functions, use `--graph <name>`.
+
+## SDK Source Helpers
+
+Python and TypeScript SDKs can compile native Hologram `.txt` source through
+the same FFI boundary used by the CLI:
+
+```python
+import hologram as hg
+
+archive = hg.compile_source_file("graph.txt")
+```
+
+```ts
+import { compileSourceFile, createNativeBinding } from "@hologram/native";
+
+const archive = await compileSourceFile("graph.txt", createNativeBinding());
+```
+
+## Compile Python Source
+
+Enable the `frontend-python` feature to compile restricted Hologram builder
+functions embedded in ordinary Python files. The compiler parses the Python AST;
+it does not execute Python code.
+
+```python
+def ordinary_app_code():
+    return 42
+
+def encoder(h):
+    x = h.input("x", dtype="f32", shape=[2, 3])
+    y = h.ops.relu(x, shape=[2, 3])
+    h.output("y", y)
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py \
+  --graph encoder \
+  --output model.holo
+```
+
+If the file contains exactly one inferred graph function, `--graph` can be
+omitted. Use `--source-language python` when the file does not have a `.py`
+extension.
+
+## Compile TypeScript Source
+
+Enable the `frontend-typescript` feature to compile restricted Hologram builder
+functions embedded in ordinary TypeScript files. The compiler parses the
+TypeScript AST; it does not execute TypeScript code.
+
+```ts
+function ordinaryAppCode() {
+    return 42;
+}
+
+export function encoder(h: HologramBuilder) {
+    const x = h.input("x", { dtype: "f32", shape: [2, 3] });
+    const y = h.ops.relu(x, { shape: [2, 3] });
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-typescript -- compile \
+  --source graph.ts \
+  --graph encoder \
+  --output model.holo
+```
+
+If the file contains exactly one inferred graph function, `--graph` can be
+omitted. Use `--source-language typescript` when the file does not have a `.ts`
+or `.tsx` extension.
+
+## Compile Rust Source
+
+Enable the `frontend-rust` feature to compile restricted Hologram builder
+functions embedded in ordinary Rust files. The compiler parses the Rust AST
+with `syn`; it does not compile or execute Rust code.
+
+```rust
+fn ordinary_app_code() -> i32 {
+    42
+}
+
+pub fn encoder(h: &mut HologramBuilder) {
+    let x = h.input("x", dtype("f32"), shape([2, 3]));
+    let y = h.ops().relu(x, shape([2, 3]));
+    h.output("y", y);
+}
+```
+
+```bash
+cargo run -p hologram-cli --features frontend-rust -- compile \
+  --source graph.rs \
+  --graph encoder \
+  --output model.holo
+```
+
+If the file contains exactly one inferred graph function, `--graph` can be
+omitted. Use `--source-language rust` when the file does not have a `.rs`
+extension.
 
 ## Run Benchmarks
 

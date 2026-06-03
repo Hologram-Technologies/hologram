@@ -50,90 +50,9 @@ fn parser_accepts_every_op_in_catalog() {
     // Every `OpKind::name()` should round-trip through the source parser.
     // This is the inverse of `dispatch_coverage::every_op_kind_dispatches_*`
     // — the source parser is the user-facing entry point and must accept
-    // all 105 spec-V.3/V.4/X-5 op names.
+    // every canonical op name exposed by the closed `OpKind` catalog.
     use hologram_graph::OpKind;
-    const ALL: &[OpKind] = &[
-        OpKind::Neg,
-        OpKind::Bnot,
-        OpKind::Succ,
-        OpKind::Pred,
-        OpKind::Add,
-        OpKind::Sub,
-        OpKind::Mul,
-        OpKind::Xor,
-        OpKind::And,
-        OpKind::Or,
-        OpKind::Relu,
-        OpKind::Sigmoid,
-        OpKind::Tanh,
-        OpKind::Gelu,
-        OpKind::Silu,
-        OpKind::Elu,
-        OpKind::Selu,
-        OpKind::Exp,
-        OpKind::Log,
-        OpKind::Log1p,
-        OpKind::Sqrt,
-        OpKind::Reciprocal,
-        OpKind::Sin,
-        OpKind::Cos,
-        OpKind::Tan,
-        OpKind::Asin,
-        OpKind::Acos,
-        OpKind::Atan,
-        OpKind::Ceil,
-        OpKind::Floor,
-        OpKind::Round,
-        OpKind::Erf,
-        OpKind::IsNaN,
-        OpKind::Sign,
-        OpKind::Abs,
-        OpKind::Div,
-        OpKind::Pow,
-        OpKind::Mod,
-        OpKind::Min,
-        OpKind::Max,
-        OpKind::Equal,
-        OpKind::Less,
-        OpKind::LessOrEqual,
-        OpKind::Greater,
-        OpKind::GreaterOrEqual,
-        OpKind::MatMul,
-        OpKind::Gemm,
-        OpKind::Conv2d,
-        OpKind::ConvTranspose2d,
-        OpKind::LayerNorm,
-        OpKind::RmsNorm,
-        OpKind::GroupNorm,
-        OpKind::InstanceNorm,
-        OpKind::AddRmsNorm,
-        OpKind::ReduceSum,
-        OpKind::ReduceMean,
-        OpKind::ReduceProd,
-        OpKind::ReduceMin,
-        OpKind::ReduceMax,
-        OpKind::Reshape,
-        OpKind::Transpose,
-        OpKind::Concat,
-        OpKind::Slice,
-        OpKind::Softmax,
-        OpKind::LogSoftmax,
-        OpKind::MaxPool2d,
-        OpKind::AvgPool2d,
-        OpKind::GlobalAvgPool,
-        OpKind::Attention,
-        OpKind::FusedSwiGlu,
-        OpKind::Pad,
-        OpKind::Expand,
-        OpKind::Resize,
-        OpKind::CumSum,
-        OpKind::RotaryEmbedding,
-        OpKind::Clip,
-        OpKind::Lrn,
-        OpKind::Where,
-        OpKind::Dequantize,
-    ];
-    for &kind in ALL {
+    for &kind in OpKind::ALL {
         // Slice = ProjectField requires its starts/ends as *index-constant*
         // operands (to compute the sub-region byte offset); the bare text
         // frontend can't yet express constants, so a generic-input Slice is
@@ -158,6 +77,10 @@ fn parser_accepts_every_op_in_catalog() {
                 | hologram_graph::OpKind::Resize
                 | hologram_graph::OpKind::MatMul
                 | hologram_graph::OpKind::Gemm
+                | hologram_graph::OpKind::Im2Col
+                | hologram_graph::OpKind::Col2Im
+                | hologram_graph::OpKind::Gather
+                | hologram_graph::OpKind::Cast
         ) {
             continue;
         }

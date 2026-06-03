@@ -27,16 +27,6 @@ status = "active"
 [benchmarks."decode_step::compile"]
 status = "active"
 
-# The original `decode_step::execute` measurement was bound to silent
-# no-op behavior: the bench's source text emitted an unannotated MatMul
-# which `ShapeArgs::from_graph` silently inferred as m=k=n=0 (a
-# zero-contraction kernel that did no work). PR #28 closed that silent
-# fallback (refuse-not-fabricate on rank!=2 / unknown dims), and the bench
-# source was corrected to `:32x32` shapes — but that means the prior
-# baseline measurement is no longer comparable (it was timing a no-op).
-# Deprecating this entry retires the lying baseline; a follow-up commit
-# can re-register a new active entry once the corrected measurement has
-# established a new baseline on main.
 [benchmarks."decode_step::execute"]
 status = "deprecated"
 deprecated_since = "pr-28"
@@ -81,6 +71,18 @@ status = "active"
 status = "active"
 
 [benchmarks."production::mlp_served_seq64_d256_l2"]
+status = "active"
+
+[benchmarks."source_lowering::native_const4096_lower_ir"]
+status = "active"
+
+[benchmarks."source_lowering::native_const4096_parse_allocations"]
+status = "active"
+
+[benchmarks."source_lowering::native_linear512_lower_ir"]
+status = "active"
+
+[benchmarks."source_lowering::native_linear512_parse_allocations"]
 status = "active"
 
 [benchmarks."tiered_executor/chain_6op_cached_reexecute"]

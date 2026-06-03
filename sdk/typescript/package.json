@@ -1,0 +1,55 @@
+{
+  "name": "@hologram/sdk",
+  "version": "0.6.0",
+  "description": "TypeScript SDK for building and compiling Hologram tensor graphs",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "browser": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./generated": {
+      "types": "./dist/generated.d.ts",
+      "import": "./dist/generated.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test:golden": "npm run build && node test/golden.mjs",
+    "test:types": "npm run build && tsc --ignoreConfig --strict --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck test/types.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "hologram",
+    "tensor",
+    "compiler",
+    "uor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hologram-Technologies/hologram.git",
+    "directory": "sdk/typescript"
+  },
+  "devDependencies": {
+    "typescript": ">=5.4"
+  }
+}

@@ -2,15 +2,24 @@
 
 use clap::{Parser, Subcommand};
 use hologram_compiler::error::CompileError;
+use hologram_compiler::source::{self, SourceLanguage};
 use hologram_compiler::{BackendKind, Compiler};
 use hologram_graph::Graph;
 use prism::vocabulary::WittLevel;
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(name = "hologram", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "hologram", version)]
+struct CliArgs {
+    #[command(subcommand)]
+    command: CommandArgs,
 }
 
 #[derive(Subcommand, Debug)]
@@ -55,6 +64,51 @@ pub enum Command {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum CommandArgs {
+    /// Compile a hologram source file (or an empty graph if no source) to a `.holo` archive.
+    Compile {
+        #[arg(long, default_value = "cpu")]
+        backend: String,
+        #[arg(long, default_value_t = 32)]
+        witt_level: u32,
+        #[arg(long)]
+        source: Option<std::path::PathBuf>,
+        /// Source language (`hologram`, `python`, `typescript`, `rust`, or `auto`).
+        #[arg(long, value_name = "LANG")]
+        source_language: Option<String>,
+        /// Graph name to compile when a source file contains multiple graph regions.
+        #[arg(long, value_name = "NAME")]
+        graph: Option<String>,
+        #[arg(long)]
+        output: std::path::PathBuf,
+        #[arg(long)]
+        no_warm: bool,
+    },
+    /// Execute a `.holo` archive against the CPU backend with zero-byte inputs.
+    Execute {
+        #[arg(long)]
+        archive: std::path::PathBuf,
+    },
+    /// Inspect a `.holo` archive's section table.
+    Inspect {
+        #[arg(long)]
+        archive: std::path::PathBuf,
+    },
+    /// Micro-bench: run an archive `iterations` times against zero inputs.
+    Bench {
+        #[arg(long)]
+        archive: std::path::PathBuf,
+        #[arg(long, default_value_t = 100)]
+        iterations: u32,
+    },
+}
+
+/// Parse command-line arguments from the process environment and run the CLI.
+pub fn run_from_env() -> Result<(), CompileError> {
+    run_args(CliArgs::parse())
+}
+
 pub fn run(cli: Cli) -> Result<(), CompileError> {
     match cli.command {
         Command::Compile {
@@ -63,42 +117,15 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
             source,
             output,
             no_warm,
-        } => {
-            let kind = parse_backend(&backend)?;
-            let level = WittLevel::new(witt_level);
-            let graph = match source {
-                Some(path) => {
-                    let src = std::fs::read_to_string(&path)
-                        .map_err(|_| CompileError::SourceParse("read source"))?;
-                    hologram_compiler::source::parse(&src)?
-                }
-                None => Graph::new(),
-            };
-            let out = Compiler::new(graph, kind, level).compile()?;
-            // Warm-start fold (WS-2): materialize the constant-only cone into
-            // the archive so the runtime cache is never cold. Folded on the
-            // CPU backend (the cone's bytes are backend-independent) even when
-            // the target is a GPU. `--no-warm` keeps the labels-only lattice.
-            let archive = if no_warm {
-                out.archive
-            } else {
-                let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
-                    hologram_backend::CpuBackend::new();
-                hologram_exec::fold_archive(&out.archive, backend)
-                    .map_err(|_| CompileError::SourceParse("warm fold"))?
-            };
-            std::fs::write(&output, &archive)
-                .map_err(|_| CompileError::SourceParse("write archive"))?;
-            println!("compiled {} bytes to {}", archive.len(), output.display());
-            println!(
-                "  nodes={} levels={} validated={} cache_hits={}",
-                out.stats.total_nodes,
-                out.stats.schedule_levels,
-                out.stats.validated_units,
-                out.stats.cache_hits,
-            );
-            Ok(())
-        }
+        } => compile_command(CompileArgs {
+            backend,
+            witt_level,
+            source,
+            source_language: None,
+            graph_name: None,
+            output,
+            no_warm,
+        }),
         Command::Execute { archive } => {
             let bytes =
                 std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
@@ -188,6 +215,125 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
     }
 }
 
+fn run_args(cli: CliArgs) -> Result<(), CompileError> {
+    match cli.command {
+        CommandArgs::Compile {
+            backend,
+            witt_level,
+            source,
+            source_language,
+            graph: graph_name,
+            output,
+            no_warm,
+        } => compile_command(CompileArgs {
+            backend,
+            witt_level,
+            source,
+            source_language,
+            graph_name,
+            output,
+            no_warm,
+        }),
+        CommandArgs::Execute { archive } => run(Cli {
+            command: Command::Execute { archive },
+        }),
+        CommandArgs::Inspect { archive } => run(Cli {
+            command: Command::Inspect { archive },
+        }),
+        CommandArgs::Bench {
+            archive,
+            iterations,
+        } => run(Cli {
+            command: Command::Bench {
+                archive,
+                iterations,
+            },
+        }),
+    }
+}
+
+struct CompileArgs {
+    backend: String,
+    witt_level: u32,
+    source: Option<std::path::PathBuf>,
+    source_language: Option<String>,
+    graph_name: Option<String>,
+    output: std::path::PathBuf,
+    no_warm: bool,
+}
+
+struct SourceCompileArgs {
+    source: Option<std::path::PathBuf>,
+    source_language: Option<String>,
+    graph_name: Option<String>,
+    kind: BackendKind,
+    witt_level: u32,
+}
+
+fn compile_command(args: CompileArgs) -> Result<(), CompileError> {
+    let kind = parse_backend(&args.backend)?;
+    let out = compile_source(SourceCompileArgs {
+        source: args.source,
+        source_language: args.source_language,
+        graph_name: args.graph_name,
+        kind,
+        witt_level: args.witt_level,
+    })?;
+    let archive = maybe_warm_fold(out.archive, args.no_warm)?;
+    std::fs::write(&args.output, &archive)
+        .map_err(|_| CompileError::SourceParse("write archive"))?;
+    print_compile_result(archive.len(), &args.output, &out.stats);
+    Ok(())
+}
+
+fn compile_source(
+    args: SourceCompileArgs,
+) -> Result<hologram_compiler::CompilationOutput, CompileError> {
+    match args.source.as_deref() {
+        Some(path) => compile_source_file(path, &args),
+        None => Compiler::new(Graph::new(), args.kind, WittLevel::new(args.witt_level)).compile(),
+    }
+}
+
+fn compile_source_file(
+    path: &Path,
+    args: &SourceCompileArgs,
+) -> Result<hologram_compiler::CompilationOutput, CompileError> {
+    let src =
+        std::fs::read_to_string(path).map_err(|_| CompileError::SourceParse("read source"))?;
+    let language = source_language_for(path, args.source_language.as_deref())?;
+    let options = source_options(args.graph_name.as_deref());
+    let program = source::parse_ir_with_options(&src, language, &options)?;
+    Compiler::new(
+        source::lower_ir(&program)?,
+        args.kind,
+        WittLevel::new(args.witt_level),
+    )
+    .compile()
+}
+
+fn maybe_warm_fold(archive: Vec<u8>, no_warm: bool) -> Result<Vec<u8>, CompileError> {
+    if no_warm {
+        return Ok(archive);
+    }
+    let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
+        hologram_backend::CpuBackend::new();
+    hologram_exec::fold_archive(&archive, backend)
+        .map_err(|_| CompileError::SourceParse("warm fold"))
+}
+
+fn print_compile_result(
+    archive_len: usize,
+    output: &Path,
+    stats: &hologram_compiler::CompilationStats,
+) {
+    println!("compiled {} bytes to {}", archive_len, output.display());
+    println!(
+        "  nodes={} levels={} validated={} cache_hits={}",
+        stats.total_nodes, stats.schedule_levels, stats.validated_units, stats.cache_hits
+    );
+}
+
 fn parse_backend(s: &str) -> Result<BackendKind, CompileError> {
     match s {
         "cpu" => Ok(BackendKind::Cpu),
@@ -205,6 +351,24 @@ fn parse_backend(s: &str) -> Result<BackendKind, CompileError> {
     }
 }
 
+fn source_language_for(
+    path: &Path,
+    explicit: Option<&str>,
+) -> Result<SourceLanguage, CompileError> {
+    source::resolve_source_language(explicit, path_extension(path))
+}
+
+fn path_extension(path: &Path) -> Option<&str> {
+    path.extension().and_then(|ext| ext.to_str())
+}
+
+fn source_options(graph: Option<&str>) -> source::SourceParseOptions {
+    match graph {
+        Some(graph) => source::SourceParseOptions::new().graph(graph),
+        None => source::SourceParseOptions::new(),
+    }
+}
+
 /// Owned zero-filled input buffers sized to each declared input port — the
 /// diagnostic Execute/Bench commands feed dummy zeros, but each port's byte
 /// length comes from the archive's declared shape × dtype, not a fixed cap.
@@ -216,4 +380,55 @@ fn zero_inputs_for(
     (0..session.input_count())
         .map(|i| vec![0u8; session.input_byte_len(i)])
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_source_language_from_extension() {
+        assert_eq!(
+            source_language_for(Path::new("graph.py"), None).unwrap(),
+            SourceLanguage::Python
+        );
+        assert_eq!(
+            source_language_for(Path::new("graph.tsx"), None).unwrap(),
+            SourceLanguage::TypeScript
+        );
+        assert_eq!(
+            source_language_for(Path::new("graph.rs"), None).unwrap(),
+            SourceLanguage::Rust
+        );
+        assert_eq!(
+            source_language_for(Path::new("graph.txt"), None).unwrap(),
+            SourceLanguage::Hologram
+        );
+    }
+
+    #[test]
+    fn explicit_source_language_overrides_extension() {
+        assert_eq!(
+            source_language_for(Path::new("graph.py"), Some("hologram")).unwrap(),
+            SourceLanguage::Hologram
+        );
+        assert_eq!(
+            source_language_for(Path::new("graph.unknown"), Some("ts")).unwrap(),
+            SourceLanguage::TypeScript
+        );
+    }
+
+    #[test]
+    fn unknown_source_language_fails_loudly() {
+        assert!(source_language_for(Path::new("graph.txt"), Some("ruby")).is_err());
+    }
+
+    #[test]
+    fn builds_source_options_with_graph_selection() {
+        assert_eq!(
+            source_options(Some("encoder")).graph_name(),
+            Some("encoder")
+        );
+        assert_eq!(source_options(None).graph_name(), None);
+    }
 }
