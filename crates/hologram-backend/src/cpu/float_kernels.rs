@@ -360,6 +360,41 @@ pub fn matmul_dequant_float<W: Workspace>(
     let scale = f32::from_bits(c.scale_bits);
     let zp = c.zero_point;
     let quant_dtype = c.quant_dtype;
+
+    // Fast path — fused per-channel symmetric int8 → f32 at small M (decode).
+    // Reads the i8 weight directly (no f32 materialization), factoring the
+    // per-column scale to the writeback. ~1.5× faster than the dequant-then-
+    // matmul below on the decode (M ≤ 3) shape, where the f32 register tile
+    // (MR=4) hasn't engaged yet. SIMD targets only — the scalar fused kernel
+    // would lose to the tuned f32 path. Requires per-output-column scales
+    // (channels == n, inner == 1) and all-zero zero-points (symmetric).
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))]
+    {
+        const FUSED_INT_M_GATE: usize = 3;
+        if per_ch
+            && quant_dtype == DTYPE_I8
+            && m <= FUSED_INT_M_GATE
+            && channels == n
+            && inner == 1
+            && zps
+                .chunks_exact(4)
+                .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0)
+        {
+            if let (Ok(a32), Ok(scale32), Ok(out32)) = (
+                bytemuck::try_cast_slice::<u8, f32>(a),
+                bytemuck::try_cast_slice::<u8, f32>(scales),
+                bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4]),
+            ) {
+                let bq_i8 = bytemuck::cast_slice::<u8, i8>(bq);
+                crate::cpu::simd::matmul_i8_per_channel(a32, bq_i8, scale32, out32, m, k, n);
+                return Ok(());
+            }
+        }
+    }
+
     // `bdq` is a reused thread-local (zero alloc per call after warm-up) holding
     // the dequantized B panel. A/out are workspace slots — 64-byte aligned by
     // construction — so the f32 views always succeed; an unaligned operand is a

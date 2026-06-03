@@ -2084,9 +2084,247 @@ pub fn matmul_f32_blocked(
     }
 }
 
+// ─── Fused per-channel symmetric int8 matmul (SPIKE) ───────────────
+// `out[i][j] = scale[j] · Σ_k a[i][k] · (f32)bq[k][j]` (zero-point 0).
+// Reads the i8 weight directly and dequantizes each 16-wide column tile in
+// registers; the per-column scale factors OUT of the k-loop to the writeback,
+// so the dense f32 weight is never materialized (unlike `matmul_dequant`'s
+// dequant-to-f32-scratch path). aarch64 NEON + portable scalar; this is a spike
+// to measure whether the fused int path beats dequant-then-matmul.
+
+/// NEON inner: GEMV-style over output columns, 16 wide. `a` `[m,k]` row-major,
+/// `bq` `[k,n]` row-major i8, `scales` `[n]`, `out` `[m,n]`.
+///
+/// # Safety
+/// NEON (baseline aarch64); slices sized `m*k`, `k*n`, `n`, `m*n`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn matmul_i8_pc_neon(
+    a: *const f32,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    use core::arch::aarch64::*;
+    for i in 0..m {
+        let arow = a.add(i * k);
+        let orow = out.add(i * n);
+        let mut j = 0;
+        while j + 16 <= n {
+            let (mut c0, mut c1, mut c2, mut c3) = (
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+                vdupq_n_f32(0.0),
+            );
+            for kk in 0..k {
+                let av = vdupq_n_f32(*arow.add(kk));
+                // 16 i8 weights for this k-row, this column panel.
+                let q = vld1q_s8(bq.add(kk * n + j));
+                let lo = vmovl_s8(vget_low_s8(q)); // i16x8 (cols 0..8)
+                let hi = vmovl_s8(vget_high_s8(q)); // i16x8 (cols 8..16)
+                let b0 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo)));
+                let b1 = vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo)));
+                let b2 = vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi)));
+                let b3 = vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi)));
+                c0 = vfmaq_f32(c0, av, b0);
+                c1 = vfmaq_f32(c1, av, b1);
+                c2 = vfmaq_f32(c2, av, b2);
+                c3 = vfmaq_f32(c3, av, b3);
+            }
+            // Apply the per-column scale once, at writeback.
+            vst1q_f32(orow.add(j), vmulq_f32(c0, vld1q_f32(scales.add(j))));
+            vst1q_f32(orow.add(j + 4), vmulq_f32(c1, vld1q_f32(scales.add(j + 4))));
+            vst1q_f32(orow.add(j + 8), vmulq_f32(c2, vld1q_f32(scales.add(j + 8))));
+            vst1q_f32(
+                orow.add(j + 12),
+                vmulq_f32(c3, vld1q_f32(scales.add(j + 12))),
+            );
+            j += 16;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                acc += *arow.add(kk) * (*bq.add(kk * n + j) as f32);
+            }
+            *orow.add(j) = acc * *scales.add(j);
+            j += 1;
+        }
+    }
+}
+
+/// wasm SIMD128 inner for the fused per-channel int8 matmul — the wasm twin of
+/// `matmul_i8_pc_neon`. SIMD128 has no FMA (mul+add), and widens i8→f32 via the
+/// extend ladder. This is the primary-target (browser) decode kernel.
+///
+/// # Safety
+/// simd128 enabled; slices sized `m*k`, `k*n`, `n`, `m*n`. `v128_load`/`store`
+/// are unaligned wasm loads (no alignment fault).
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn matmul_i8_pc_wasm(
+    a: *const f32,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    use core::arch::wasm32::*;
+    for i in 0..m {
+        let arow = a.add(i * k);
+        let orow = out.add(i * n);
+        let mut j = 0;
+        while j + 16 <= n {
+            let (mut c0, mut c1, mut c2, mut c3) = (
+                f32x4_splat(0.0),
+                f32x4_splat(0.0),
+                f32x4_splat(0.0),
+                f32x4_splat(0.0),
+            );
+            for kk in 0..k {
+                let av = f32x4_splat(*arow.add(kk));
+                let q = v128_load(bq.add(kk * n + j) as *const v128);
+                let lo = i16x8_extend_low_i8x16(q);
+                let hi = i16x8_extend_high_i8x16(q);
+                let b0 = f32x4_convert_i32x4(i32x4_extend_low_i16x8(lo));
+                let b1 = f32x4_convert_i32x4(i32x4_extend_high_i16x8(lo));
+                let b2 = f32x4_convert_i32x4(i32x4_extend_low_i16x8(hi));
+                let b3 = f32x4_convert_i32x4(i32x4_extend_high_i16x8(hi));
+                c0 = f32x4_add(c0, f32x4_mul(av, b0));
+                c1 = f32x4_add(c1, f32x4_mul(av, b1));
+                c2 = f32x4_add(c2, f32x4_mul(av, b2));
+                c3 = f32x4_add(c3, f32x4_mul(av, b3));
+            }
+            v128_store(
+                orow.add(j) as *mut v128,
+                f32x4_mul(c0, v128_load(scales.add(j) as *const v128)),
+            );
+            v128_store(
+                orow.add(j + 4) as *mut v128,
+                f32x4_mul(c1, v128_load(scales.add(j + 4) as *const v128)),
+            );
+            v128_store(
+                orow.add(j + 8) as *mut v128,
+                f32x4_mul(c2, v128_load(scales.add(j + 8) as *const v128)),
+            );
+            v128_store(
+                orow.add(j + 12) as *mut v128,
+                f32x4_mul(c3, v128_load(scales.add(j + 12) as *const v128)),
+            );
+            j += 16;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                acc += *arow.add(kk) * (*bq.add(kk * n + j) as f32);
+            }
+            *orow.add(j) = acc * *scales.add(j);
+            j += 1;
+        }
+    }
+}
+
+/// Fused per-channel symmetric int8 matmul (zero-point 0). See module comment.
+pub fn matmul_i8_per_channel(
+    a: &[f32],
+    bq: &[i8],
+    scales: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    debug_assert_eq!(a.len(), m * k);
+    debug_assert_eq!(bq.len(), k * n);
+    debug_assert_eq!(scales.len(), n);
+    debug_assert!(out.len() >= m * n);
+
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is baseline on aarch64; sizes checked above.
+    unsafe {
+        matmul_i8_pc_neon(
+            a.as_ptr(),
+            bq.as_ptr(),
+            scales.as_ptr(),
+            out.as_mut_ptr(),
+            m,
+            k,
+            n,
+        );
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; sizes checked above.
+    unsafe {
+        matmul_i8_pc_wasm(
+            a.as_ptr(),
+            bq.as_ptr(),
+            scales.as_ptr(),
+            out.as_mut_ptr(),
+            m,
+            k,
+            n,
+        );
+    }
+    // Portable scalar fallback (wasm-without-simd128 / x86 / other); aarch64 NEON
+    // and wasm SIMD128 ran above and this block is compiled out for them.
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                acc += a[i * k + kk] * (bq[kk * n + j] as f32);
+            }
+            out[i * n + j] = acc * scales[j];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matmul_i8_per_channel_matches_naive() {
+        // GEMV (decode) + small + odd + decode-shaped cases.
+        for &(m, k, n) in &[
+            (1usize, 64usize, 48usize),
+            (3, 17, 33),
+            (5, 9, 16),
+            (1, 2048, 64),
+        ] {
+            let a: Vec<f32> = (0..m * k).map(|i| ((i % 13) as f32 - 6.0) * 0.1).collect();
+            let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+            let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 0.001).collect();
+            let mut got = vec![0f32; m * n];
+            matmul_i8_per_channel(&a, &bq, &scales, &mut got, m, k, n);
+            for i in 0..m {
+                for j in 0..n {
+                    let mut want = 0f32;
+                    for kk in 0..k {
+                        want += a[i * k + kk] * (bq[kk * n + j] as f32);
+                    }
+                    want *= scales[j];
+                    let denom = want.abs().max(1.0);
+                    assert!(
+                        (got[i * n + j] - want).abs() / denom < 1e-4,
+                        "{m}x{k}x{n} ({i},{j}): {} vs {want}",
+                        got[i * n + j]
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn add_matches_scalar() {
