@@ -44,3 +44,9 @@ parallel = ["std"]
 # The GPU backends are inherently host-only.
 metal = ["std", "dep:metal", "dep:objc"]
 wgpu = ["std", "dep:wgpu", "dep:pollster"]
+
+# Standalone matmul timing harness (runs under wasmtime); needs std for
+# `std::time::Instant`, so it is skipped on no_std / embedded CI builds.
+[[example]]
+name = "wasm_matmul_timing"
+required-features = ["std", "cpu"]

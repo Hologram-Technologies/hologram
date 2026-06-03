@@ -1366,7 +1366,10 @@ mod wasm_simd {
                 };
                 for kk in 0..k {
                     let av = f32x4_splat(*arow.add(kk));
-                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(b.add(kk * ldb + j) as *const v128)));
+                    c0 = f32x4_add(
+                        c0,
+                        f32x4_mul(av, v128_load(b.add(kk * ldb + j) as *const v128)),
+                    );
                 }
                 v128_store(orow.add(j) as *mut v128, c0);
                 j += 4;
@@ -2333,8 +2336,12 @@ mod tests {
     #[test]
     fn large_matmul_matches_naive_full() {
         let (m, k, n) = (256usize, 256usize, 256usize); // 16.7M MACs ≥ PAR_THRESHOLD
-        let a: Vec<f32> = (0..m * k).map(|i| (((i % 53) as f32) - 26.0) * 0.01).collect();
-        let b: Vec<f32> = (0..k * n).map(|i| (((i % 37) as f32) - 18.0) * 0.01).collect();
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| (((i % 53) as f32) - 26.0) * 0.01)
+            .collect();
+        let b: Vec<f32> = (0..k * n)
+            .map(|i| (((i % 37) as f32) - 18.0) * 0.01)
+            .collect();
 
         let mut want = vec![0f32; m * n];
         for i in 0..m {
