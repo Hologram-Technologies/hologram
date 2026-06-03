@@ -54,11 +54,13 @@ jobs:
           # Default features only: `all-features` would pull in the macOS-only
           # `metal` backend (and other platform-gated surfaces) and fail to
           # build on the Linux runner. The default std+cpu API is the contract
-          # every consumer sees; all workspace library crates are checked.
+          # every consumer sees.
           feature-group: default-features
-          # The deployment-substrate crates are new in their introducing PR, so
-          # they have no baseline on the target branch to diff against (a brand-new
-          # crate cannot break an API that did not previously exist). Exclude them
-          # until they ship in a release; thereafter they are gated like any other.
-          # Comma-separated package list (takes effect because `package` is unset).
-          exclude: "hologram-substrate-core,hologram-realizations,hologram-substrate-tck,hologram-store-mem,hologram-store-native,hologram-store-bare,hologram-net-http,hologram-net-tcp,hologram-net-bare,hologram-runtime,hologram-runtime-wasmtime,hologram-runtime-bare,hologram-substrate-cli,hologram-bare-hal"
+          # Adding the root facade turns the workspace root into package
+          # `hologram`; without an explicit package set, cargo-semver-checks
+          # selects only that root package. The target-branch baseline for this
+          # PR still has a virtual workspace root, so `hologram` cannot be
+          # compared until it exists on both sides. Check the established
+          # library crates here and add the facade itself in a follow-up once it
+          # ships on the baseline branch.
+          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-backend,hologram-archive,hologram-ffi,hologram-bench"

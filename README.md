@@ -72,7 +72,9 @@ engine — no scalar fallback; f64 is rejected loudly.
 ## Workspace crates
 
 Every library crate is `no_std` + `alloc` by default and exposes a `std` feature
-for host builds.
+for host builds. The root `hologram` crate is a feature-gated facade over the
+workspace crates, so applications can depend on one package and opt into the
+surfaces they need.
 
 | Crate | Role | Key types |
 |---|---|---|
@@ -88,31 +90,70 @@ for host builds.
 | `hologram-cli` | `hologram` binary: `compile` / `execute` / `inspect` / `bench` | — |
 | `hologram-bench` | Criterion benchmark suites | — |
 
-Depend on the individual crates you need (e.g. `hologram-compiler`,
-`hologram-exec`, `hologram-backend`); there is no umbrella crate.
+The facade exposes each crate under a same-named module without the
+`hologram-` prefix: `hologram::compiler`, `hologram::exec`,
+`hologram::backend`, and so on.
+
+### Root facade crate
+
+The root `hologram` package is the application-facing import surface. It does
+not add execution logic or require each implementation crate to maintain facade
+exports. Instead, the root [`src/lib.rs`](src/lib.rs) owns the export policy:
+each enabled Cargo feature creates a module and re-exports the matching backing
+crate from there.
+
+| Feature | Public module | Backing crate |
+|---|---|---|
+| `host` | `hologram::host` | `hologram-host` |
+| `types` | `hologram::types` | `hologram-types` |
+| `ops` | `hologram::ops` | `hologram-ops` |
+| `graph` | `hologram::graph` | `hologram-graph` |
+| `compiler` | `hologram::compiler` | `hologram-compiler` |
+| `archive` | `hologram::archive` | `hologram-archive` |
+| `backend` | `hologram::backend` | `hologram-backend` |
+| `exec` | `hologram::exec` | `hologram-exec` |
+| `ffi` | `hologram::ffi` | `hologram-ffi` |
+| `cli` | `hologram::cli` | `hologram-cli` |
+| `bench` | `hologram::bench` | `hologram-bench` |
+
+Direct dependencies on individual crates remain supported for low-level crate
+authors, but applications should prefer the root facade.
 
 ---
 
 ## Quick start
 
-Add the crates you need to `Cargo.toml`:
+Add the facade crate and enable the surfaces you need:
 
 ```toml
 [dependencies]
-hologram-compiler = { git = "https://github.com/Hologram-Technologies/hologram" }
-hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram" }
-hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram" }
+hologram = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["archive", "backend", "compiler", "exec"],
+}
 ```
 
-Enable host-language source frontends on `hologram-compiler` when your build
-needs to parse embedded Hologram graph functions from Python, TypeScript, or
-Rust source files:
+Use `features = ["full"]` to expose every primary crate facade under `crates/`.
+The `full` feature is equivalent to enabling all facade modules in the table
+above:
 
 ```toml
 [dependencies]
-hologram-compiler = {
+hologram = {
   git = "https://github.com/Hologram-Technologies/hologram",
-  features = ["frontend-python", "frontend-typescript", "frontend-rust"],
+  features = ["full"],
+}
+```
+
+Enable host-language source frontends on the root facade when your build needs
+to parse embedded Hologram graph functions from Python, TypeScript, or Rust
+source files:
+
+```toml
+[dependencies]
+hologram = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["compiler", "frontend-python", "frontend-typescript", "frontend-rust"],
 }
 ```
 
@@ -127,9 +168,9 @@ cargo run -p hologram-cli --example pipeline
 Minimal usage — compile a graph to a `.holo` archive and execute it:
 
 ```rust
-use hologram_backend::CpuBackend;
-use hologram_compiler::{source, BackendKind, Compiler};
-use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
+use hologram::backend::CpuBackend;
+use hologram::compiler::{source, BackendKind, Compiler};
+use hologram::exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 
 // Parse native Hologram source into a Graph and compile it.
@@ -171,8 +212,8 @@ functions, pass `--graph <name>` to select one.
 Programmatic graph selection uses `SourceParseOptions`:
 
 ```rust
-use hologram_compiler::source::{self, SourceLanguage, SourceParseOptions};
-use hologram_compiler::{BackendKind, Compiler};
+use hologram::compiler::source::{self, SourceLanguage, SourceParseOptions};
+use hologram::compiler::{BackendKind, Compiler};
 use prism::vocabulary::WittLevel;
 
 let options = SourceParseOptions::new().graph("encoder");
@@ -188,8 +229,8 @@ let compiled = Compiler::new(graph, BackendKind::Cpu, WittLevel::W32).compile()?
 When graph selection is not needed, use `compile_from_source_language`:
 
 ```rust
-use hologram_compiler::source::SourceLanguage;
-use hologram_compiler::{compile_from_source_language, BackendKind};
+use hologram::compiler::source::SourceLanguage;
+use hologram::compiler::{compile_from_source_language, BackendKind};
 use prism::vocabulary::WittLevel;
 
 let output = compile_from_source_language(
@@ -393,7 +434,7 @@ external tensor paths to an explicit compile root.
 Content-address and compose model parts as UOR-ADDR κ-labels:
 
 ```rust
-use hologram_archive::address::{address_ring, compose_model};
+use hologram::archive::address::{address_ring, compose_model};
 
 let a = address_ring(&[1, 0x02, 0x01]).unwrap().address;
 let b = address_ring(&[2, 0x10, 0x20, 0x30]).unwrap().address;
@@ -421,28 +462,33 @@ Requires: Rust stable, [`just`](https://github.com/casey/just).
 
 ## Feature flags
 
+The root `hologram` crate has same-named features for every workspace crate:
+`host`, `types`, `ops`, `graph`, `compiler`, `exec`, `backend`, `archive`,
+`ffi`, `cli`, and `bench`. `full` enables all of those primary facade modules.
+
 Every library crate is `no_std` + `alloc` by default (so hologram-ai runs in
-wasm and on embedded targets) and exposes a `std` feature for host builds.
+wasm and on embedded targets) and exposes a `std` feature for host builds. The
+facade defaults to `std` and forwards it only to enabled optional crates.
 
 | Flag | Crate(s) | Default | Enables |
 |---|---|:---:|---|
-| `std` | all libs | ✓ | Standard library: file I/O, runtime SIMD detection, thread-local scratch, `tracing` |
-| `cpu` | `hologram-backend` | ✓ | The native CPU kernel backend (`CpuBackend`) |
-| `wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
-| `metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
-| `model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
-| `tiered-exec` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
-| `parallel` | `hologram-backend` | ✓ | Rayon parallel level execution |
-| `frontend-python` | `hologram-compiler`, `hologram-cli` | — | Python AST source frontend for restricted Hologram builder functions (implies `std`) |
-| `frontend-rust` | `hologram-compiler`, `hologram-cli` | — | Rust AST source frontend for restricted Hologram builder functions (implies `std`) |
-| `frontend-typescript` | `hologram-compiler`, `hologram-cli` | — | TypeScript AST source frontend for restricted Hologram builder functions (implies `std`) |
-| `wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
+| `std` | facade + enabled libs | ✓ | Standard library: file I/O, runtime SIMD detection, thread-local scratch, `tracing` |
+| `backend` / `backend-cpu` | `hologram-backend` | — | The native CPU kernel backend (`CpuBackend`) |
+| `backend-wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
+| `backend-metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
+| `archive-model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
+| `archive-compression` | `hologram-archive` | — | Archive compression support |
+| `exec-tiered` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |
+| `backend-parallel` / `exec-parallel` | backend / exec | — | In-tree multi-core kernel dispatch |
+| `frontend-python` | `hologram-compiler` | — | Python AST source frontend for restricted Hologram builder functions (implies `compiler` + `std`) |
+| `frontend-rust` | `hologram-compiler` | — | Rust AST source frontend for restricted Hologram builder functions (implies `compiler` + `std`) |
+| `frontend-typescript` | `hologram-compiler` | — | TypeScript AST source frontend for restricted Hologram builder functions (implies `compiler` + `std`) |
+| `ffi-wasm` | `hologram-ffi` | — | WebAssembly build of the C-ABI FFI (browser demo) |
 
-For `no_std` targets (wasm / embedded) disable default features on the library
-crates:
+For `no_std` targets (wasm / embedded) disable facade default features:
 
 ```toml
-hologram-backend = { ..., default-features = false }
+hologram = { ..., default-features = false, features = ["backend", "compiler", "exec"] }
 ```
 
 ---

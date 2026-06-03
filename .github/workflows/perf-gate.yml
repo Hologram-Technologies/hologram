@@ -11,6 +11,29 @@ name: Performance Gate
 on:
   pull_request:
     branches: [main]
+    # Only benchmark PRs that can plausibly affect runtime performance, bench
+    # definitions, or the gate logic itself. Docs, site, SDK packaging, and
+    # unrelated workflow changes should not pay the 2-hour perf-gate cost.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "benches/**"
+      - "scripts/bench-reduce-min.py"
+      - "scripts/compare-benchmarks.py"
+      - "scripts/interleave-bench-gate.sh"
+      - "scripts/perf-gate-local.sh"
+      - "scripts/update-bench-manifest.py"
+      - ".github/workflows/benchmarks.yml"
+      - ".github/workflows/perf-gate.yml"
+      - "crates/hologram-archive/**"
+      - "crates/hologram-backend/**"
+      - "crates/hologram-bench/**"
+      - "crates/hologram-compiler/**"
+      - "crates/hologram-exec/**"
+      - "crates/hologram-graph/**"
+      - "crates/hologram-host/**"
+      - "crates/hologram-ops/**"
+      - "crates/hologram-types/**"
   workflow_dispatch:
 
 permissions:
