@@ -97,13 +97,31 @@ Kernel changes are accepted by hologram-ai's performance contract, which is
 where the browser exists. hologram's benches catch shape-level regressions
 before they reach it.
 
-## Phase 2 — item 4: relaxed SIMD tier
+## Phase 2 — item 4: relaxed SIMD tier (DONE)
 
-`simd.rs` baseline simd128 has no fused multiply-add. Add a relaxed-simd tier
-(`f32x4_relaxed_madd`; `i32x4_relaxed_dot_i8x16_i7x16_add_s` only where the
-dot maps exactly — one operand provably in i7 range) behind build/runtime
-detection, baseline kept as the witnessed fallback. The i8-dot relaxed
-instruction removes the extend chain from the W8A8 inner loop entirely.
+Landed as an **exact-only** tier: `gemv_i8_omajor_wasm_relaxed` (built with
+`-Ctarget-feature=+simd128,+relaxed-simd`) computes the **same W8A8
+function** with `i32x4_relaxed_dot_i8x16_i7x16_add` by splitting the signed
+activation row `q = q⁺ − q⁻` with both halves in the i7 range `[0, 127]` —
+exactly where the relaxed dot is exact and engine-deterministic (products
+≤ 127², internal pairwise i16 sums ≤ 32258 cannot saturate). Each 16-wide
+step is two relaxed dots per row instead of two extends + two dots + two
+adds, with no activation extends at all. Output stays bit-identical to the
+baseline and scalar paths (the exactness suite passes on both builds under
+wasmtime), so the tier is a pure execution speedup with zero semantic
+surface — no call-surface, signature, codec, or compiler change. The
+baseline simd128 build remains the witnessed fallback; `just wasm` builds
+both tiers so neither bit-rots.
+
+`f32x4_relaxed_madd` was measured (wasmtime, x86-64 FMA host) and
+**regressed the f32 kernels ~30%** — the register-tile accumulator chains
+are latency-bound and the fused op lengthens the dependency chain — so it is
+deliberately excluded (documented at the wasm_simd module comment). Re-open
+only with an in-browser V8 measurement from hologram-ai showing otherwise.
+
+wasmtime relaxed-tier signal: 17.6–19.6 GB/s int8 at cache-resident decode
+shapes and 14.5 GB/s at the 7B shape (vs 11.5 baseline, +26%) — the kernel
+is bandwidth-limited on this host.
 
 ## Phase 3 — item 7 (+ item 8): seq-1 dispatch, fusion, and mathf
 

@@ -1246,7 +1246,11 @@ mod wasm_simd {
     // structure exactly, with `f32x4_*` lanes. SIMD128 has no fused
     // multiply-add (that's relaxed-SIMD), so the inner step is a separate
     // `f32x4_add(acc, f32x4_mul(av, b))`; still 4-wide, a large win over the
-    // scalar fallback. The cache-oblivious recursion is identical to the other
+    // scalar fallback. `f32x4_relaxed_madd` was measured here (wasmtime,
+    // x86-64 FMA host) and REGRESSED these kernels ~30% — the accumulator
+    // chains are latency-bound and the fused op lengthens the chain — so the
+    // relaxed-SIMD tier deliberately covers only the integer i8 dot (see
+    // `gemv_i8_omajor_wasm_relaxed`), where it is exact and measured faster. The cache-oblivious recursion is identical to the other
     // arches. No multi-core (wasm is single-threaded here); the sequential
     // recursion carries the whole matmul. This satisfies the wasm portability
     // mandate from a 128-bit design shared in shape with NEON.
@@ -2328,6 +2332,48 @@ fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
     f(&mut v)
 }
 
+/// Split scratch for the relaxed-SIMD tier: `q = q⁺ − q⁻` with both halves
+/// in `[0, 127]` — the i7 range where `i32x4_relaxed_dot_i8x16_i7x16_add` is
+/// exact and engine-deterministic.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+fn with_q7_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
+    #[cfg(feature = "std")]
+    {
+        std::thread_local! {
+            static Q7: core::cell::RefCell<(Vec<i8>, Vec<i8>)> =
+                const { core::cell::RefCell::new((Vec::new(), Vec::new())) };
+        }
+        Q7.with(|cell| {
+            let mut g = cell.borrow_mut();
+            let (p, n) = &mut *g;
+            f(p, n)
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let (mut p, mut n) = (Vec::new(), Vec::new());
+        f(&mut p, &mut n)
+    }
+}
+
+/// `q = q⁺ − q⁻` elementwise: `q⁺ = max(q, 0)`, `q⁻ = max(−q, 0)`, both in
+/// `[0, 127]`. O(k) against the GEMV's O(k·n).
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+fn split_q7(q: &[i8], qp: &mut [i8], qn: &mut [i8]) {
+    for ((&v, p), n) in q.iter().zip(qp.iter_mut()).zip(qn.iter_mut()) {
+        *p = v.max(0);
+        *n = (-v).max(0);
+    }
+}
+
 /// Quantize one activation row to symmetric i8: `scale = max|a| / 127`,
 /// `q = clamp(round_half_away_from_zero(a · (127 / max|a|)), -127, 127)`.
 /// Returns the scale (`0.0` for an all-zero row — the caller writes a zero
@@ -2449,7 +2495,11 @@ unsafe fn gemv_i8_omajor_neon(
 /// # Safety
 /// simd128 enabled; `q` len `k`, `bq` len `n*k`, `scales` len `n`, `out`
 /// len `n`; `k ≤ I8_DOT_K_MAX`. `v128_load` is an unaligned wasm load.
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    not(target_feature = "relaxed-simd")
+))]
 #[target_feature(enable = "simd128")]
 unsafe fn gemv_i8_omajor_wasm(
     q: *const i8,
@@ -2513,6 +2563,95 @@ unsafe fn gemv_i8_omajor_wasm(
     }
 }
 
+/// wasm relaxed-SIMD inner — the **same W8A8 function** as
+/// `gemv_i8_omajor_wasm`, executed with `i32x4_relaxed_dot_i8x16_i7x16_add`.
+/// The signed activation row is split `q = q⁺ − q⁻` with both halves in the
+/// i7 range `[0, 127]`, where the relaxed dot is exact and deterministic on
+/// every engine; each 16-wide step is then two relaxed dots per row instead
+/// of two extends + two dots + two adds, with no activation extends at all.
+/// Products stay ≤ 127², so the instruction's internal pairwise i16 sums
+/// (≤ 32258) cannot saturate. Exact integer throughout: output remains
+/// bit-identical to the baseline and scalar paths — the relaxed tier is an
+/// execution speedup of the identical function, not a numeric variant.
+///
+/// # Safety
+/// simd128 + relaxed-simd enabled; `q`/`qp`/`qn` len `k`, `bq` len `n*k`,
+/// `scales` len `n`, `out` len `n`; `k ≤ I8_DOT_K_MAX`.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+#[target_feature(enable = "simd128", enable = "relaxed-simd")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i8_omajor_wasm_relaxed(
+    q: *const i8,
+    qp: *const i8,
+    qn: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    #[inline(always)]
+    unsafe fn hsum(v: v128) -> i32 {
+        i32x4_extract_lane::<0>(v)
+            + i32x4_extract_lane::<1>(v)
+            + i32x4_extract_lane::<2>(v)
+            + i32x4_extract_lane::<3>(v)
+    }
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * k),
+            bq.add((j + 1) * k),
+            bq.add((j + 2) * k),
+            bq.add((j + 3) * k),
+        ];
+        let mut cp = [i32x4_splat(0); 4];
+        let mut cn = [i32x4_splat(0); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let vp = v128_load(qp.add(kk) as *const v128);
+            let vn = v128_load(qn.add(kk) as *const v128);
+            for r in 0..4 {
+                let w = v128_load(rows[r].add(kk) as *const v128);
+                cp[r] = i32x4_relaxed_dot_i8x16_i7x16_add(w, vp, cp[r]);
+                cn[r] = i32x4_relaxed_dot_i8x16_i7x16_add(w, vn, cn[r]);
+            }
+            kk += 16;
+        }
+        let mut s = [0i32; 4];
+        for r in 0..4 {
+            s[r] = hsum(cp[r]) - hsum(cn[r]);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in s.iter_mut().zip(rows.iter()) {
+                *sr += qa * (*row.add(kk) as i32);
+            }
+            kk += 1;
+        }
+        for (r, &sr) in s.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut acc = 0i32;
+        for kk in 0..k {
+            acc += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (acc as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
 /// Fused per-channel symmetric int8 matmul over an **output-major** weight
 /// with per-token dynamic activation quantization (W8A8). `a` is `[m,k]`
 /// row-major f32, `bq` is `[n,k]` i8 (each output's k-vector contiguous),
@@ -2566,7 +2705,11 @@ pub fn matmul_i8_pc_omajor(
                     scale_a,
                 );
             }
-            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                not(target_feature = "relaxed-simd")
+            ))]
             // SAFETY: simd128 gate; sizes checked above.
             unsafe {
                 gemv_i8_omajor_wasm(
@@ -2578,6 +2721,34 @@ pub fn matmul_i8_pc_omajor(
                     n,
                     scale_a,
                 );
+            }
+            // Relaxed-SIMD build: same function, i8·i7 relaxed dots over the
+            // q⁺/q⁻ split (exact — see `gemv_i8_omajor_wasm_relaxed`).
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                target_feature = "relaxed-simd"
+            ))]
+            // SAFETY: simd128 + relaxed-simd gates; sizes checked above.
+            unsafe {
+                with_q7_scratch(|qp, qn| {
+                    qp.clear();
+                    qp.resize(k, 0);
+                    qn.clear();
+                    qn.resize(k, 0);
+                    split_q7(q, qp, qn);
+                    gemv_i8_omajor_wasm_relaxed(
+                        q.as_ptr(),
+                        qp.as_ptr(),
+                        qn.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                    );
+                });
             }
             // Same integer function on every other target (x86 /
             // wasm-without-simd128) — not a numerically different tier.

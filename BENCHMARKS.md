@@ -158,7 +158,11 @@ fusion are shape-generic. Reported as **GB/s of int8 weight bytes streamed**
 | 1×3584×18944 | 5917 µs, 11.5 GB/s | 17391 µs, 3.9 GB/s | ~2.9× |
 
 The largest shape drops toward DRAM bandwidth as the weight leaves cache —
-the kernel is entering the bandwidth-bound regime. Output is bit-identical
+the kernel is entering the bandwidth-bound regime. The relaxed-SIMD build
+(`+relaxed-simd`, wasmtime `-W relaxed-simd=y`) computes the same exact
+function via `i32x4_relaxed_dot_i8x16_i7x16_add` over a `q⁺ − q⁻` i7 split
+and lifts the 7B shape to 14.5 GB/s (+26%); cache-resident shapes reach
+17.6–19.6 GB/s. Output is bit-identical
 across scalar / NEON / wasm (exact integer accumulation). These lanes are
 iteration signals; acceptance is witnessed downstream by hologram-ai's
 performance contract, which exercises the deployed browser build. Re-run:

@@ -65,6 +65,13 @@ wasm:
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
         -p hologram-backend
+    # SIMD tiers: baseline simd128 (the witnessed browser kernel) and the
+    # relaxed-SIMD tier (i8 relaxed dot — same exact function, engine-fast
+    # path). Building both keeps the cfg'd kernels from bit-rotting.
+    RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-unknown-unknown \
+        --no-default-features --features cpu -p hologram-backend
+    RUSTFLAGS="-Ctarget-feature=+simd128,+relaxed-simd" cargo build --target wasm32-unknown-unknown \
+        --no-default-features --features cpu -p hologram-backend
     # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \

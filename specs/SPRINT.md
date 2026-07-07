@@ -31,8 +31,11 @@ mirror.
   projections, m = 1) reporting int8 bytes-streamed/s, kernel + full-pipeline
   novel-input session step; manifest registration; `wasm_matmul_timing`
   extended so the wasmtime+simd128 lane runs the actual wasm kernel.
-- [ ] **4.1**: Relaxed-SIMD tier (`f32x4_relaxed_madd`, exact-map i8 dot)
-  behind detection, baseline stays the witnessed fallback.
+- [x] **4.1**: Relaxed-SIMD tier: `i32x4_relaxed_dot_i8x16_i7x16_add` over a
+  `q = q⁺ − q⁻` i7 split — same exact W8A8 function, bit-identical on both
+  builds; baseline stays the witnessed fallback and `just wasm` builds both
+  tiers. `f32x4_relaxed_madd` measured ~30% slower under wasmtime
+  (latency-bound accumulator chains) and deliberately excluded.
 - [ ] **7.1**: seq-1 dispatch/fusion: dequant+matmul+bias+activation as one
   call, pre-bound plan handle keyed by graph κ, arena reuse across steps.
 - [ ] **8.1**: SIMD exp for the decode softmax path (or Q-tier table after
