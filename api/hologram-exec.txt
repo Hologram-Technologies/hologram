@@ -439,7 +439,7 @@ impl<B: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferAre
 pub mod hologram_exec::warm
 pub struct hologram_exec::warm::FileWarmStore
 impl hologram_exec::warm::FileWarmStore
-pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> std::io::error::Result<Self>
+pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>
 impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
 pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
 pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
@@ -693,7 +693,7 @@ impl<B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::C
 impl<B> core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B> where B: core::panic::unwind_safe::UnwindSafe
 pub struct hologram_exec::FileWarmStore
 impl hologram_exec::warm::FileWarmStore
-pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> std::io::error::Result<Self>
+pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>
 impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
 pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
 pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])

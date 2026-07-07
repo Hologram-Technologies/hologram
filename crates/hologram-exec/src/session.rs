@@ -1320,6 +1320,7 @@ fn fuse_dequant_matmul(
     outputs: &[PortDescriptor],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
     use hashbrown::HashSet;
+    use hologram_backend::mm_act_quant;
     let n = calls.len();
     let mut prod_count: HashMap<u32, u32> = HashMap::new();
     let mut read_count: HashMap<u32, u32> = HashMap::new();
@@ -1378,6 +1379,12 @@ fn fuse_dequant_matmul(
             dtype: mm.dtype,
             scale_bits: dq.scale_bits,
             zero_point: dq.zero_point,
+            // Load-time fusion sees the weight as the archive laid it out
+            // ([k,n]) and keeps the original W8A32 semantics; the
+            // output-major W8A8 form is compile-time-only (constant
+            // weights, decode shapes).
+            bq_omajor: false,
+            act_quant: mm_act_quant::W8A32,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }

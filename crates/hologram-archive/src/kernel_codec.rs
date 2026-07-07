@@ -106,6 +106,10 @@ const D_BCBIN: u16 = 112;
 const D_DQACT: u16 = 113;
 const D_GATHER: u16 = 114;
 const D_CAST: u16 = 115;
+// MatMulDequant extended with `bq_omajor` + `act_quant` (output-major W8A8
+// decode GEMV). Emitted only when a field is non-default so archives that
+// don't use the feature stay byte-identical to pre-extension output.
+const D_MMDQ2: u16 = 116;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -483,8 +487,15 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u8(out, c.act);
         }
         K::MatMulDequant(c) => {
-            put_u16(out, D_MMDQ);
-            put_matmul_dequant(out, c);
+            if c.bq_omajor || c.act_quant != 0 {
+                put_u16(out, D_MMDQ2);
+                put_matmul_dequant(out, c);
+                put_u8(out, c.bq_omajor as u8);
+                put_u8(out, c.act_quant);
+            } else {
+                put_u16(out, D_MMDQ);
+                put_matmul_dequant(out, c);
+            }
         }
         K::BroadcastBinary(c) => {
             put_u16(out, D_BCBIN);

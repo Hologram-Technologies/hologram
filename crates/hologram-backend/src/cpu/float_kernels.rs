@@ -361,6 +361,47 @@ pub fn matmul_dequant_float<W: Workspace>(
     let zp = c.zero_point;
     let quant_dtype = c.quant_dtype;
 
+    // Output-major W8A8 decode GEMV — compile-time-fused constant weights
+    // (`fuse_const_i8_decode`). The omajor layout pairs exclusively with
+    // W8A8 (a single emitter), and `matmul_i8_pc_omajor` runs the identical
+    // exact-integer function on every target, so this arm has no per-arch
+    // gate, no W8A32 downgrade, and no fallthrough: an output-major weight
+    // must never be read with the `[k,n]` interpretation below — any
+    // contract violation fails loud.
+    {
+        use crate::kernel_call::mm_act_quant;
+        let omajor = c.bq_omajor;
+        let w8a8 = c.act_quant == mm_act_quant::W8A8_TOKEN_SYM;
+        if omajor || w8a8 {
+            if !(omajor && w8a8) {
+                return Err(BackendError::UnsupportedOp(
+                    "matmul_dequant: bq_omajor and W8A8 must be paired",
+                ));
+            }
+            let symmetric = per_ch
+                && quant_dtype == DTYPE_I8
+                && channels == n
+                && inner == 1
+                && zps
+                    .chunks_exact(4)
+                    .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0);
+            if !symmetric || k > mm_act_quant::K_MAX {
+                return Err(BackendError::UnsupportedOp(
+                    "matmul_dequant: W8A8 requires symmetric per-channel i8 within the k bound",
+                ));
+            }
+            let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
+                .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
+            let scale32 = bytemuck::try_cast_slice::<u8, f32>(scales)
+                .map_err(|_| BackendError::SlotOutOfRange(c.scales.slot))?;
+            let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
+                .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
+            let bq_i8 = bytemuck::cast_slice::<u8, i8>(bq);
+            crate::cpu::simd::matmul_i8_pc_omajor(a32, bq_i8, scale32, out32, m, k, n);
+            return Ok(());
+        }
+    }
+
     // Fast path — fused per-channel symmetric int8 → f32 at small M (decode).
     // Reads the i8 weight directly (no f32 materialization), factoring the
     // per-column scale to the writeback. ~1.5× faster than the dequant-then-

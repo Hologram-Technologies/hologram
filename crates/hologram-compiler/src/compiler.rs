@@ -475,6 +475,34 @@ impl Compiler {
         // (execution-free) compiler.
         let node_count = self.graph.node_count() as u32;
 
+        const DTYPE_F32: u8 = 8;
+        let n_const = self.graph.constants().len();
+        // Constant bodies rewritten by the compile-time layout passes below:
+        // the body a constant emits is its derived layout if one exists, else
+        // its original bytes.
+        let mut packed_consts: Vec<Option<Vec<u8>>> = vec![None; n_const];
+
+        // ── Decode-shape int8 fusion (compile-time, weight-layout
+        //    monomorphism for quantized weights) ──
+        //
+        // A constant symmetric per-channel i8 weight uniquely consumed by a
+        // `Dequantize → MatMul(B)` chain at decode shapes (small static m)
+        // fuses to one `MatMulDequant` **in the archive**, with the constant
+        // transposed to output-major `[n,k]` and per-token dynamic activation
+        // quantization (W8A8). The transposed bytes are derived content under
+        // the constant's own κ — exactly like the f32 panel packing below —
+        // and the fused call is the only reader of that layout. Dynamic
+        // quantized weights keep the load-time fusion path (W8A32, `[k,n]`).
+        let (fused_calls, fused_plan) = fuse_const_i8_decode(
+            &self.graph,
+            kernel_calls,
+            exec_plan,
+            node_count,
+            &mut packed_consts,
+        );
+        let mut kernel_calls = fused_calls;
+        let exec_plan = fused_plan;
+
         // ── Weight-layout monomorphism (UOR-native, zero runtime copy) ──
         //
         // A matmul's B operand is its weight. When that weight is a *constant*
@@ -486,9 +514,6 @@ impl Compiler {
         // monomorphism the ONNX model compiles to — so at runtime the kernel
         // reads B with no strided gather and **no copy**. f32 only; the packed
         // weight is content-addressed by its (packed) bytes like any constant.
-        const DTYPE_F32: u8 = 8;
-        let n_const = self.graph.constants().len();
-        let mut packed_consts: Vec<Option<Vec<u8>>> = vec![None; n_const];
         {
             // Census of slot reads/writes across all calls: a constant the
             // matmul uniquely consumes (count == 1) packs unambiguously.
@@ -1340,4 +1365,210 @@ fn gather_plan(
         num_indices = num_indices.checked_mul(indices.dim(i)?)?;
     }
     Some((outer, axis_dim, inner, num_indices, idx_dtype))
+}
+
+/// Compile-time `Dequantize(const) → MatMul(B)` fusion at decode shapes.
+///
+/// Pattern (all conditions required, checked structurally):
+/// - the Dequantize reads a **constant** i8 weight that no other call reads;
+/// - scale/zero-point are per-channel over the matmul's output columns
+///   (`channels == n`, `inner == 1`) and the zero-point constant is all-zero
+///   (symmetric);
+/// - the dequant output is a private single-consumer intermediate (not a
+///   port) feeding a plain (`!b_packed`) f32 MatMul's B operand;
+/// - `m` is decode-small (≤ 4, static per archive) and `k` is inside the
+///   exact-i32 accumulation bound.
+///
+/// The match emits one fused `MatMulDequant { bq_omajor, act_quant: W8A8 }`
+/// in the MatMul's place, drops the Dequantize, renumbers the exec plan, and
+/// rewrites the constant body to the output-major `[n,k]` transpose — derived
+/// content under the constant's own κ, the quantized analog of the f32 panel
+/// packing. The fused call is the transposed layout's only reader, so the
+/// `[k,n]` interpretation can never leak. Everything else falls through to
+/// the load-time fusion (W8A32 over `[k,n]`), which no-ops on already-fused
+/// archives.
+fn fuse_const_i8_decode(
+    graph: &Graph,
+    calls: Vec<KernelCall>,
+    plan: Vec<Vec<u32>>,
+    node_count: u32,
+    packed_consts: &mut [Option<Vec<u8>>],
+) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
+    use hologram_backend::{buffers, mm_act_quant, MatMulDequantCall};
+    use hologram_graph::{ConstantId, InputSource, NodeId};
+    const DTYPE_F32: u8 = 8;
+    const DTYPE_I8: u8 = 2;
+    /// Largest static `m` treated as a decode shape. Not model-derived: it is
+    /// the boundary below which the blocked f32 kernel's register tile
+    /// (MR = 4) has not engaged, so the GEMV formulation wins; at m >= MR the
+    /// tiled W8A32 path takes over. Shapes above the gate (or any condition
+    /// miss below) fall through to the generic paths — every model still
+    /// compiles and runs.
+    const M_GATE: u32 = 4;
+
+    // Census: total references per slot, producer/reader counts, reader index.
+    let n_calls = calls.len();
+    let mut uses: hashbrown::HashMap<u32, u32> = hashbrown::HashMap::new();
+    let mut prod_count: hashbrown::HashMap<u32, u32> = hashbrown::HashMap::new();
+    let mut read_count: hashbrown::HashMap<u32, u32> = hashbrown::HashMap::new();
+    let mut read_idx: hashbrown::HashMap<u32, usize> = hashbrown::HashMap::new();
+    for (ci, call) in calls.iter().enumerate() {
+        let bufs = buffers(call);
+        for b in &bufs {
+            if b.slot != u32::MAX {
+                *uses.entry(b.slot).or_insert(0) += 1;
+            }
+        }
+        if let Some((out, ins)) = bufs.split_last() {
+            for r in ins {
+                if r.slot != u32::MAX {
+                    *read_count.entry(r.slot).or_insert(0) += 1;
+                    read_idx.insert(r.slot, ci);
+                }
+            }
+            if out.slot != u32::MAX {
+                *prod_count.entry(out.slot).or_insert(0) += 1;
+            }
+        }
+    }
+    // Slots an output port can alias (resolved exactly as the port-descriptor
+    // emission resolves them): neither the dequant intermediate nor the weight
+    // constant may be externally visible.
+    let mut port_slots: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
+    for &id in graph.outputs() {
+        port_slots.insert(id.0);
+        if let Some(node) = graph.nodes().get(id.0 as usize) {
+            match node.inputs.first() {
+                Some(InputSource::Node(NodeId(p))) => {
+                    port_slots.insert(*p);
+                }
+                Some(InputSource::Constant(cid)) => {
+                    port_slots.insert(node_count + cid.0);
+                }
+                Some(InputSource::GraphInput(g)) => {
+                    if let Some(NodeId(p)) = graph.inputs().get(*g as usize) {
+                        port_slots.insert(*p);
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    let mut absorbed = vec![false; n_calls];
+    let mut fused: Vec<Option<KernelCall>> = (0..n_calls).map(|_| None).collect();
+    for i in 0..n_calls {
+        let dq = match &calls[i] {
+            KernelCall::Dequantize(c) => *c,
+            _ => continue,
+        };
+        if dq.quant_dtype != DTYPE_I8 || !dq.per_channel() || dq.inner != 1 {
+            continue;
+        }
+        // Constant weight, read by this dequant alone, not port-aliased.
+        let wslot = dq.input.slot;
+        if wslot < node_count || port_slots.contains(&wslot) {
+            continue;
+        }
+        let cid = (wslot - node_count) as usize;
+        if cid >= packed_consts.len()
+            || packed_consts[cid].is_some()
+            || uses.get(&wslot) != Some(&1)
+        {
+            continue;
+        }
+        // Private single-consumer dequant output feeding a MatMul's B.
+        let s = dq.output.slot;
+        if s == u32::MAX || port_slots.contains(&s) {
+            continue;
+        }
+        if prod_count.get(&s) != Some(&1) || read_count.get(&s) != Some(&1) {
+            continue;
+        }
+        let j = match read_idx.get(&s) {
+            Some(&j) if j != i && !absorbed[j] && fused[j].is_none() => j,
+            _ => continue,
+        };
+        let mm = match &calls[j] {
+            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 && !c.b_packed && c.b.slot == s => *c,
+            _ => continue,
+        };
+        let (k, n) = (mm.k as usize, mm.n as usize);
+        if mm.m == 0 || mm.m > M_GATE || k > mm_act_quant::K_MAX || dq.channels != mm.n {
+            continue;
+        }
+        // Symmetric: the per-channel zero-point constant must be all-zero.
+        let zp_slot = dq.zero_points.slot;
+        if zp_slot < node_count {
+            continue;
+        }
+        let zp_ok = graph
+            .constants()
+            .get(ConstantId(zp_slot - node_count))
+            .map(|e| e.bytes.len() == n * 4 && e.bytes.iter().all(|&b| b == 0))
+            .unwrap_or(false);
+        if !zp_ok {
+            continue;
+        }
+        let entry = match graph.constants().get(ConstantId(cid as u32)) {
+            Some(e) if e.bytes.len() == k * n => e,
+            _ => continue, // shape/dtype guard
+        };
+        // Derive the output-major layout: transpose `[k,n] → [n,k]` (i8,
+        // 1 byte/elem). Baked into the archive; zero runtime copy.
+        let mut t = vec![0u8; k * n];
+        for kk in 0..k {
+            let row = &entry.bytes[kk * n..(kk + 1) * n];
+            for (jj, &b) in row.iter().enumerate() {
+                t[jj * k + kk] = b;
+            }
+        }
+        packed_consts[cid] = Some(t);
+        fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
+            a: mm.a,
+            bq: dq.input,
+            scales: dq.scales,
+            zero_points: dq.zero_points,
+            output: mm.output,
+            m: mm.m,
+            k: mm.k,
+            n: mm.n,
+            channels: dq.channels,
+            inner: dq.inner,
+            quant_dtype: dq.quant_dtype,
+            dtype: mm.dtype,
+            scale_bits: dq.scale_bits,
+            zero_point: dq.zero_point,
+            bq_omajor: true,
+            act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+        }));
+        absorbed[i] = true; // drop the standalone dequant
+    }
+    if !absorbed.iter().any(|&a| a) {
+        return (calls, plan);
+    }
+    // Rebuild the call list and renumber the per-level exec plan.
+    let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n_calls);
+    let mut remap = vec![u32::MAX; n_calls];
+    for i in 0..n_calls {
+        if absorbed[i] {
+            continue;
+        }
+        remap[i] = new_calls.len() as u32;
+        new_calls.push(fused[i].take().unwrap_or(calls[i]));
+    }
+    let mut new_plan: Vec<Vec<u32>> = Vec::with_capacity(plan.len());
+    for level in &plan {
+        let lvl: Vec<u32> = level
+            .iter()
+            .filter_map(|&ci| {
+                let ci = ci as usize;
+                (ci < n_calls && !absorbed[ci]).then(|| remap[ci])
+            })
+            .collect();
+        if !lvl.is_empty() {
+            new_plan.push(lvl);
+        }
+    }
+    (new_calls, new_plan)
 }

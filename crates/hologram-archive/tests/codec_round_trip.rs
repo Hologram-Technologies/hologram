@@ -191,6 +191,8 @@ fn matmul_dequant_round_trip() {
         dtype: 8,
         scale_bits: 0.0125f32.to_bits(),
         zero_point: -3,
+        bq_omajor: false,
+        act_quant: 0,
     })];
     let bytes = kernel_codec::encode_calls(&calls);
     let decoded = decoder::decode_calls(&bytes).unwrap();
@@ -204,6 +206,43 @@ fn matmul_dequant_round_trip() {
         assert_eq!(d.quant_dtype, 2);
         assert_eq!(d.zero_point, -3);
         assert_eq!(d.scale_bits, 0.0125f32.to_bits());
+    } else {
+        panic!("not matmul-dequant");
+    }
+    // Default-form calls must stay on the legacy discriminant so archives
+    // that don't use the extension remain byte-identical (κ-stable).
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 111);
+}
+
+#[test]
+fn matmul_dequant_omajor_w8a8_round_trip() {
+    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
+        a: ref_buf(0),
+        bq: ref_buf(1),
+        scales: ref_buf(2),
+        zero_points: ref_buf(3),
+        output: ref_buf(4),
+        m: 1,
+        k: 896,
+        n: 4864,
+        channels: 4864,
+        inner: 1,
+        quant_dtype: 2,
+        dtype: 8,
+        scale_bits: 0,
+        zero_point: 0,
+        bq_omajor: true,
+        act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    // Extended fields force the v2 discriminant.
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 116);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    if let KernelCall::MatMulDequant(d) = &decoded[0] {
+        assert_eq!((d.m, d.k, d.n), (1, 896, 4864));
+        assert!(d.bq_omajor);
+        assert_eq!(d.act_quant, mm_act_quant::W8A8_TOKEN_SYM);
     } else {
         panic!("not matmul-dequant");
     }

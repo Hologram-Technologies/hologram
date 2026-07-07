@@ -64,13 +64,34 @@ pub struct MatMulCall {
     pub b_packed: bool,
 }
 
+/// Activation-quantization mode selector for [`MatMulDequantCall`].
+pub mod mm_act_quant {
+    /// f32 activation against the dequantized weight (W8A32) — the original
+    /// fused semantics.
+    pub const W8A32: u8 = 0;
+    /// Per-token symmetric dynamic i8 activation quantization (W8A8): each
+    /// activation row is quantized (`scale = max|a|/127`) inside the kernel
+    /// and the dot products accumulate in exact integer arithmetic. A
+    /// different *function* from W8A32, so it selects a distinct
+    /// `op_signature` tag.
+    pub const W8A8_TOKEN_SYM: u8 = 1;
+
+    /// Upper bound on `k` for the W8A8 path's exact i32 accumulation
+    /// (`k · 127²  <  i32::MAX`). The compiler refuses to emit W8A8 beyond
+    /// it and the kernel asserts it; real decode shapes sit three orders of
+    /// magnitude below (~2k–19k).
+    pub const K_MAX: usize = (i32::MAX as usize) / (127 * 127);
+}
+
 /// Fused dequantize-then-matmul: `output = A · dequant(Bq)`. Produced by the
 /// runtime `Dequantize → MatMul` fusion (the dequant feeds the matmul's B
-/// operand and has no other consumer). The dense f32 weight is **never
-/// materialized in the pool** — `Bq` stays quantized and is dequantized into a
-/// transient scratch panel inside the kernel. `A` is row-major f32 `[m,k]`;
-/// `Bq` is the quantized `[k,n]` weight (i8/i4) with per-tensor or per-channel
-/// scale/zero-point (same layout as [`DequantizeCall`]).
+/// operand and has no other consumer), or emitted directly by the compiler
+/// for constant symmetric per-channel i8 weights at decode shapes. The dense
+/// f32 weight is **never materialized in the pool** — `Bq` stays quantized
+/// and is dequantized into a transient scratch panel (W8A32) or read directly
+/// by the integer GEMV (W8A8) inside the kernel. `A` is row-major f32
+/// `[m,k]`; `Bq` is the quantized weight (i8/i4) with per-tensor or
+/// per-channel scale/zero-point (same layout as [`DequantizeCall`]).
 #[derive(Debug, Clone, Copy)]
 pub struct MatMulDequantCall {
     pub a: BufferRef,
@@ -87,6 +108,18 @@ pub struct MatMulDequantCall {
     pub dtype: u8,
     pub scale_bits: u32,
     pub zero_point: i32,
+    /// When `true`, `Bq` is stored **output-major** `[n,k]` (each output's
+    /// k-vector contiguous), transposed at compile time so the decode GEMV
+    /// streams the weight sequentially — the quantized analog of
+    /// `MatMulCall::b_packed`. Layout-only (the produced value is identical),
+    /// so it is excluded from `op_signature`; the operand's own κ-label
+    /// already reflects its (transposed) bytes.
+    pub bq_omajor: bool,
+    /// Activation-quantization mode ([`mm_act_quant`]). Semantic — W8A8
+    /// rounds the activation — so unlike `bq_omajor` it is
+    /// signature-visible; W8A32 signatures stay byte-identical to before
+    /// this field existed (no re-keying of existing content).
+    pub act_quant: u8,
 }
 
 impl MatMulDequantCall {
@@ -1063,6 +1096,9 @@ impl KernelCall {
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
             K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
+            // `bq_omajor` is layout-only and excluded (see the field doc);
+            // W8A8 is a different function, so it takes its own tag while
+            // W8A32 keeps the historical bytes unchanged.
             K::MatMulDequant(c) => Pb::new()
                 .u32(c.m)
                 .u32(c.k)
@@ -1073,7 +1109,11 @@ impl KernelCall {
                 .u8(c.dtype)
                 .u32(c.scale_bits)
                 .i32(c.zero_point)
-                .done(108),
+                .done(if c.act_quant == mm_act_quant::W8A8_TOKEN_SYM {
+                    116
+                } else {
+                    108
+                }),
             K::BroadcastBinary(c) => {
                 let mut b = Pb::new()
                     .u8(c.rank)

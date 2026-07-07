@@ -40,8 +40,10 @@ pub mod hologram_backend::cpu::lut
 pub fn hologram_backend::cpu::lut::is_lut_dtype(u8) -> bool
 pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Workspace>(&hologram_backend::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_backend::error::BackendError>
 pub mod hologram_backend::cpu::simd
+pub const hologram_backend::cpu::simd::I8_DOT_K_MAX: usize
 pub fn hologram_backend::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)
 pub fn hologram_backend::cpu::simd::matmul_f32_packed(&[f32], &[f32], &mut [f32], usize, usize, usize)
+pub fn hologram_backend::cpu::simd::matmul_i8_pc_omajor(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::matmul_i8_per_channel(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::simd_f32_add(&[f32], &[f32], &mut [f32])
 pub fn hologram_backend::cpu::simd::simd_f32_dot(&[f32], &[f32]) -> f32
@@ -120,6 +122,10 @@ pub const hologram_backend::kernel_call::lut_act::GELU: u8
 pub const hologram_backend::kernel_call::lut_act::SIGMOID: u8
 pub const hologram_backend::kernel_call::lut_act::SILU: u8
 pub const hologram_backend::kernel_call::lut_act::TANH: u8
+pub mod hologram_backend::kernel_call::mm_act_quant
+pub const hologram_backend::kernel_call::mm_act_quant::K_MAX: usize
+pub const hologram_backend::kernel_call::mm_act_quant::W8A32: u8
+pub const hologram_backend::kernel_call::mm_act_quant::W8A8_TOKEN_SYM: u8
 pub enum hologram_backend::kernel_call::KernelCall
 pub hologram_backend::kernel_call::KernelCall::Abs(hologram_backend::UnaryCall)
 pub hologram_backend::kernel_call::KernelCall::Acos(hologram_backend::UnaryCall)
@@ -586,7 +592,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
 pub struct hologram_backend::kernel_call::MatMulDequantCall
 pub hologram_backend::kernel_call::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::act_quant: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::bq_omajor: bool
 pub hologram_backend::kernel_call::MatMulDequantCall::channels: u32
 pub hologram_backend::kernel_call::MatMulDequantCall::dtype: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::inner: u32
@@ -813,6 +821,10 @@ pub const hologram_backend::lut_act::GELU: u8
 pub const hologram_backend::lut_act::SIGMOID: u8
 pub const hologram_backend::lut_act::SILU: u8
 pub const hologram_backend::lut_act::TANH: u8
+pub mod hologram_backend::mm_act_quant
+pub const hologram_backend::mm_act_quant::K_MAX: usize
+pub const hologram_backend::mm_act_quant::W8A32: u8
+pub const hologram_backend::mm_act_quant::W8A8_TOKEN_SYM: u8
 pub mod hologram_backend::prism_axes
 pub struct hologram_backend::prism_axes::HologramF32MatmulSquare<const DIM: usize>
 impl<const DIM: usize> core::clone::Clone for hologram_backend::prism_axes::HologramF32MatmulSquare<DIM>
@@ -1512,7 +1524,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
 pub struct hologram_backend::MatMulDequantCall
 pub hologram_backend::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::act_quant: u8
 pub hologram_backend::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::bq_omajor: bool
 pub hologram_backend::MatMulDequantCall::channels: u32
 pub hologram_backend::MatMulDequantCall::dtype: u8
 pub hologram_backend::MatMulDequantCall::inner: u32
