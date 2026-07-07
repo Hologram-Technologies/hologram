@@ -167,19 +167,37 @@ Q-tier exp table stays an item-6 follow-up.
 Phase-3 residual: constant rebinding (O(constants) map hits per step) —
 revisit with a many-hundred-weight model.
 
-## Phase 4 — item 5: wasm threads
+## Phase 4 — item 5: wasm threads (scoped, not started)
 
 `cpu/parallel.rs` is `std::thread`, compiled out on wasm. Decode GEMV is
-row-parallel with zero synchronization inside a step. wasm threads
-(SharedArrayBuffer + atomics; hologram-ai serves its own COOP/COEP headers)
-need an embedder-provided worker contract; determinism is preserved by static
-row partitioning (per-output reduction order unchanged, structural-ce
-unaffected). Near-linear scaling until Phase 1's kernel is bandwidth-bound.
+row-parallel with zero synchronization inside a step. Design shape:
 
-## Phase 5 — item 6: Q0/LUT-GEMM tier to main
+- wasm32 has no `std::thread`; workers are **embedder-provided** — the host
+  (hologram-ai; it already serves COOP/COEP) instantiates the module on N
+  web workers sharing one memory (SharedArrayBuffer + atomics build:
+  `-Ctarget-feature=+atomics,+bulk-memory`), and hologram exports a worker
+  entry (`hologram_worker_run(queue_ptr)`) that drains an atomics-based job
+  queue in shared memory.
+- The GEMV partitions **statically by output rows** (per-output reduction
+  order unchanged ⇒ bit-identity and structural-ce preserved; the pool's
+  disjoint-output tiles need no synchronization inside a step).
+- hologram-side work is testable under wasmtime (`--wasm threads`); the
+  browser contract is witnessed downstream. Near-linear scaling expected
+  until the Phase-1/2 kernel is bandwidth-bound (it already is on the
+  wasmtime lane; V8 may differ).
 
-The kernel-floor tier (fiber-ordered radix passes, one L1 line per pass,
-per-element cost = table lookup) exists only as plan 033 on the migration
-branch; `cpu/lut.rs` on main is Q1 unary only. This is the structural lever
-below item 1's ceiling: it removes the multiply entirely and cuts the
-streamed bytes, not just the widening. Sequence after Phases 2–3.
+## Phase 5 — item 6: Q0/LUT-GEMM tier to main (scoped, not started)
+
+The kernel-floor tier exists on `origin/port/uor-foundation-0.3.0` in an
+**architecture main no longer has**: `hologram-core/src/lut/` (q0/hlut/
+arith/activation), `hologram-ring` (involution/orbit algebra), and
+`hologram-exec/src/lut_gemm/` (matmul, orbit compression, psumbook,
+fiber-ordered Q8 radix — 16 passes, one L1 line per pass — quantize,
+parallel). Plan 033 claims ~256× quantization (O(N) uniform floor-division
+vs k-means), ~2× MACs via dihedral-orbit compression, and no cache-line
+thrashing. This is a **re-architecture port**, not a cherry-pick: the tier
+must land as `KernelCall` variants + archive-carried derived tables under
+their own κ (the discipline items 1–7 established), with the wasm SIMD128
+lane as the primary target and the W8A8 GEMV as the witnessed fallback. It
+is the structural lever below item 1's ceiling — it removes the multiply
+entirely and cuts the streamed bytes. Own sprint; sequence next.
