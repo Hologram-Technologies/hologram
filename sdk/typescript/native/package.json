@@ -34,7 +34,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@hologram/sdk": "0.6.0"
+    "@hologram/sdk": "0.7.0"
   },
   "devDependencies": {
     "typescript": ">=5.4"
