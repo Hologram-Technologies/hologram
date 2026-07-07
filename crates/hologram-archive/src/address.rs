@@ -60,6 +60,16 @@ fn blake3_kappa(digest: &[u8; 32]) -> ContentLabel {
     KappaLabel::from_bytes(&buf).expect("71-byte ASCII blake3 κ-label by construction")
 }
 
+/// The κ-label for a value whose BLAKE3 digest is already known — the
+/// `blake3:<hex>` form of `digest`, identical to what [`address_bytes`]
+/// produces for the body that hashes to it. Lets the weight tier key
+/// residency by label from a `WeightFingerprint` without pulling the body
+/// (a paged load never materializes a weight just to name it).
+#[must_use]
+pub fn label_from_fingerprint(digest: &[u8; 32]) -> ContentLabel {
+    blake3_kappa(digest)
+}
+
 /// Content-address opaque bytes on the BLAKE3 σ-axis (ADR-052/ADR-060).
 ///
 /// This is the *leaf* identity: inputs, weights, and any value whose

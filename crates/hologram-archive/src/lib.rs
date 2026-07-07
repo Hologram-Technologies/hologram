@@ -28,11 +28,12 @@ pub mod writer;
 
 pub use address::{
     address_bytes, address_ring, compose_model, derive_label, derive_label_boundary,
-    derive_label_witnessed, AddressOutcome, AddressWitness, ContentLabel, KappaLabel,
+    derive_label_witnessed, label_from_fingerprint, AddressOutcome, AddressWitness, ContentLabel,
+    KappaLabel,
 };
 pub use error::ArchiveError;
 pub use format::{HoloHeader, SectionKind, FORMAT_VERSION, MAGIC};
 pub use loader::{HoloLoader, LoadedPlan};
 pub use warm_codec::{derive_cone_lattice, WarmEntry};
-pub use weight::{WeightFingerprint, WeightStore};
+pub use weight::{WeightFingerprint, WeightProvider, WeightStore};
 pub use writer::{decode_exec_plan, decode_ports, decode_weights, HoloWriter, PortDescriptor};

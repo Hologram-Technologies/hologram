@@ -1,6 +1,6 @@
 //! `InferenceSession` (spec VIII.1).
 
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 
 use hashbrown::HashMap;
 use smallvec::SmallVec;
@@ -10,7 +10,7 @@ use crate::error::ExecError;
 use hologram_archive::{
     address_bytes, constant_codec, decode_exec_plan, decode_ports, decode_weights, decoder,
     derive_label, derive_label_boundary, format::SectionKind, warm_codec, ContentLabel, HoloLoader,
-    PortDescriptor, WarmEntry, WeightFingerprint,
+    PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
 };
 use hologram_backend::{
     buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
@@ -75,6 +75,16 @@ pub struct InferenceSession<B: SessionBackend> {
     /// `(slot, label)` for each model constant, so the walk re-binds the
     /// pinned constant buffers by label each run after `rebind_reset`.
     const_bindings: Vec<(u32, ContentLabel)>,
+    /// Host-provided weight body source for a **paged** session (the
+    /// inversion of the owned `WeightStore`). `None` for a fully-resident
+    /// `load`; `Some` when the arena is a bounded window over the provider.
+    weight_provider: Option<Arc<dyn WeightProvider + Send + Sync>>,
+    /// Const slots backed by a **lazily-resident** weight (slot → κ-label).
+    /// The walk pages each in from `weight_provider` right before the kernel
+    /// that consumes it dispatches, so peak residency never exceeds the
+    /// budget rather than the whole weight set. Empty for a fully-resident
+    /// `load`.
+    lazy_slots: HashMap<u32, ContentLabel>,
     /// Graph-level memo: input-port κ-labels → output-port κ-labels. A
     /// re-execution whose inputs content-address to a present key returns
     /// the cached output *addresses* without walking the graph or moving
@@ -181,8 +191,44 @@ pub trait SessionBackend: Backend<WS = BufferArena> + Clone + Send + Sync {}
 impl<B: Backend<WS = BufferArena> + Clone + Send + Sync> SessionBackend for B {}
 
 impl<B: SessionBackend> InferenceSession<B> {
-    /// Load and prepare an `.holo` archive for execution.
+    /// Load and prepare an `.holo` archive for execution, **fully resident**:
+    /// every model constant is copied into the arena at load and pinned for
+    /// the session (the historical behavior — no residency bound).
     pub fn load(bytes: &[u8], backend: B) -> Result<Self, ExecError> {
+        Self::load_inner(bytes, backend, None, 0)
+    }
+
+    /// Load with a host-supplied [`WeightProvider`] and a resident
+    /// lazy-weight **byte budget**, making the arena a bounded **window**
+    /// over the provider instead of a full copy of the weight set. Weights
+    /// referenced by fingerprint (the `by_reference` constants — the large
+    /// bodies) page in from `provider` on first use and evict LRU to hold
+    /// the budget; small inline constants and warm-fold results still pin
+    /// whole. A model whose weights fit `budget` pages each once and then
+    /// runs identically to [`Self::load`] (zero steady-state overhead); a
+    /// model that exceeds it streams its weights through the window — the
+    /// one structural change that lets a bounded host run a model larger
+    /// than its window. `budget == 0` means unbounded (never evict).
+    ///
+    /// Output is **bit-identical** to the fully-resident load: a paged range
+    /// hashes to the same κ, so every derivation key and kernel is unchanged.
+    pub fn load_paged(
+        bytes: &[u8],
+        backend: B,
+        provider: Arc<dyn WeightProvider + Send + Sync>,
+        budget: usize,
+    ) -> Result<Self, ExecError> {
+        Self::load_inner(bytes, backend, Some(provider), budget)
+    }
+
+    /// Shared load implementation. `provider` present ⇒ paged (lazy weight
+    /// residency against `budget`); absent ⇒ fully resident.
+    fn load_inner(
+        bytes: &[u8],
+        backend: B,
+        provider: Option<Arc<dyn WeightProvider + Send + Sync>>,
+        budget: usize,
+    ) -> Result<Self, ExecError> {
         let loader = HoloLoader::from_bytes(bytes)?;
         let archive_fingerprint = loader.fingerprint();
         let plan = loader.into_plan()?;
@@ -330,15 +376,26 @@ impl<B: SessionBackend> InferenceSession<B> {
                 *s = n;
             }
         }
-        for e in constant_entries.iter() {
-            // Inline bodies report their length directly; references
-            // resolve through the WeightStore for sizing.
-            let n: u64 = if e.by_reference {
-                weight_store
+        // Size of a `by_reference` weight body. When a provider is supplied it
+        // is **authoritative** — it is the weight source (the archive may not
+        // even carry the Weights section, the intended weightless-archive
+        // deploy), so a weight the provider lacks fails the load loudly rather
+        // than silently falling back. Without a provider, the archive's own
+        // `WeightStore` sizes the fully-resident load.
+        let weight_size = |fp: WeightFingerprint| -> Option<usize> {
+            match provider.as_deref() {
+                Some(p) => p.size(fp),
+                None => weight_store
                     .as_ref()
-                    .and_then(|s| s.get(WeightFingerprint(e.fingerprint)))
-                    .map(|b| b.len() as u64)
-                    .unwrap_or(0)
+                    .and_then(|s| s.get(fp))
+                    .map(<[u8]>::len),
+            }
+        };
+        for e in constant_entries.iter() {
+            // Inline bodies report their length directly; references resolve
+            // through the provider (paged) or the WeightStore (resident).
+            let n: u64 = if e.by_reference {
+                weight_size(WeightFingerprint(e.fingerprint)).unwrap_or(0) as u64
             } else {
                 e.bytes.len() as u64
             };
@@ -377,21 +434,48 @@ impl<B: SessionBackend> InferenceSession<B> {
         // weight-consuming op is addressable. No fixed byte arena, no
         // second copy of any weight.
         let mut pool = BufferArena::new();
+        pool.set_lazy_budget(budget);
         let mut slot_label_init: Vec<Option<ContentLabel>> = vec![None; slot_count];
         let mut const_bindings: Vec<(u32, ContentLabel)> = Vec::new();
+        let mut lazy_slots: HashMap<u32, ContentLabel> = HashMap::new();
+        // A constant whose slot backs a graph **output** port must stay
+        // pinned even under a paged load: output collection resolves by label
+        // through the read-only boundary and cannot page a lazy body back in,
+        // so a degenerate graph that emits a raw weight would fail if that
+        // weight were evictable. (No kernel consumes such a constant either,
+        // so lazy residency would gain nothing.)
+        let output_port_slots: hashbrown::HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
         for entry in &constant_entries {
-            let body: &[u8] = if entry.by_reference {
-                weight_store
-                    .as_ref()
-                    .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
-                    .unwrap_or(&[])
+            if provider.is_some() && entry.by_reference && !output_port_slots.contains(&entry.slot)
+            {
+                // Paged weight: declare it lazily resident (label from the
+                // fingerprint alone — no body pulled), page on first use. The
+                // κ-label equals `address_bytes(body)`, so the slot's initial
+                // label and every derivation key are identical to the pinned
+                // path.
+                let fp = WeightFingerprint(entry.fingerprint);
+                let size = weight_size(fp).ok_or(ExecError::WorkspaceExhausted)?;
+                let label = fp.content_label();
+                pool.pin_lazy(label, fp, size);
+                slot_label_init[entry.slot as usize] = Some(label);
+                const_bindings.push((entry.slot, label));
+                lazy_slots.insert(entry.slot, label);
             } else {
-                &entry.bytes
-            };
-            let label = address_bytes(body);
-            pool.pin_bytes(label, body);
-            slot_label_init[entry.slot as usize] = Some(label);
-            const_bindings.push((entry.slot, label));
+                // Inline constant, warm result, or fully-resident load: copy
+                // the body resident and pin it for the session.
+                let body: &[u8] = if entry.by_reference {
+                    weight_store
+                        .as_ref()
+                        .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
+                        .unwrap_or(&[])
+                } else {
+                    &entry.bytes
+                };
+                let label = address_bytes(body);
+                pool.pin_bytes(label, body);
+                slot_label_init[entry.slot as usize] = Some(label);
+                const_bindings.push((entry.slot, label));
+            }
         }
 
         // Warm-start fold (WS-2). If the archive carries materialized
@@ -498,6 +582,8 @@ impl<B: SessionBackend> InferenceSession<B> {
             backend,
             slot_sizes,
             const_bindings,
+            weight_provider: provider,
+            lazy_slots,
             graph_memo: HashMap::new(),
             input_cache: vec![None; inputs_len],
             node_meta,
@@ -717,6 +803,11 @@ impl<B: SessionBackend> InferenceSession<B> {
         out_witnessed.clear();
         out_witnessed.resize(slot_label.len(), None);
 
+        // Paged-session weight source (an Arc clone so the per-node page-in
+        // borrows the provider without holding a borrow on `self`). `None`
+        // for a fully-resident load — the paging step below is then skipped.
+        let provider = self.weight_provider.clone();
+
         for li in 0..self.exec_plan.len() {
             for ni in 0..self.exec_plan[li].len() {
                 let ci = self.exec_plan[li][ni] as usize;
@@ -790,6 +881,32 @@ impl<B: SessionBackend> InferenceSession<B> {
                         slot_label[out_slot] = label;
                         self.last_skipped += 1;
                         continue;
+                    }
+                }
+
+                // Paged session: page in and bind this node's lazy-weight
+                // operands as one group right before the kernel reads them —
+                // the only point a weight's bytes are needed, so peak
+                // residency tracks the working set of live nodes, not the
+                // whole weight set. Grouping keeps every operand of a
+                // multi-weight kernel (e.g. a per-channel dequant matmul's
+                // packed weight + scale/zero-point vectors) simultaneously
+                // resident. Elided nodes (reuse / view above) never reach
+                // here, so their weights never page; a fully-resident load
+                // has no lazy slots and skips this entirely.
+                if let Some(provider) = provider.as_ref() {
+                    if !self.lazy_slots.is_empty() {
+                        let mut group: SmallVec<[(usize, ContentLabel); 4]> = SmallVec::new();
+                        for &s in &self.node_meta[ci].inputs {
+                            if let Some(&label) = self.lazy_slots.get(&s) {
+                                group.push((s as usize, label));
+                            }
+                        }
+                        if !group.is_empty()
+                            && !self.pool.page_and_bind_group(&group, provider.as_ref())
+                        {
+                            return Err(ExecError::WorkspaceExhausted);
+                        }
                     }
                 }
 
@@ -967,6 +1084,13 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// reflects embedded-weight models too.
     pub fn resident_bytes(&self) -> usize {
         self.pool.pinned_bytes() + self.pool.transient_bytes()
+    }
+    /// Resident **paged-weight** bytes (the lazy tier of a [`Self::load_paged`]
+    /// session) — the quantity bounded by the residency budget. `0` for a
+    /// fully-resident [`Self::load`]. The pager's witness reads peak of this
+    /// across a decode.
+    pub fn paged_weight_bytes(&self) -> usize {
+        self.pool.lazy_resident_bytes()
     }
     /// Number of distinct resident values in the pool (deduped by κ-label).
     pub fn resident_count(&self) -> usize {

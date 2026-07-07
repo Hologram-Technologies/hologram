@@ -4,13 +4,18 @@ pub struct hologram_exec::buffer::BufferArena
 impl hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
 pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
 pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
 pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
 pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl hologram_exec::buffer::BufferArena
@@ -250,8 +255,8 @@ impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> 
 impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync
 impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin
 impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin
-impl<B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B> where B: core::panic::unwind_safe::RefUnwindSafe
-impl<B> core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B> where B: core::panic::unwind_safe::UnwindSafe
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
 pub struct hologram_exec::refinement::RefinementPlan
 impl hologram_exec::refinement::RefinementPlan
 pub fn hologram_exec::refinement::RefinementPlan::bind<'a, B: hologram_exec::session::SessionBackend>(&'a self, &'a mut hologram_exec::session::InferenceSession<B>) -> core::result::Result<hologram_exec::refinement::RefinementRunner<'a, B>, hologram_exec::refinement::RefinementError>
@@ -323,7 +328,7 @@ impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'
 impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync
 impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>
 impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>
-impl<'a, B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::panic::unwind_safe::RefUnwindSafe
+impl<'a, B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
 impl<'a, B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
 pub struct hologram_exec::refinement::RefinementStateContract
 impl hologram_exec::refinement::RefinementStateContract
@@ -410,11 +415,13 @@ pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::output_byte_len(&self, usize) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::output_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
 pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
@@ -433,8 +440,8 @@ impl<B> core::marker::Send for hologram_exec::session::InferenceSession<B> where
 impl<B> core::marker::Sync for hologram_exec::session::InferenceSession<B> where B: core::marker::Sync
 impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> where B: core::marker::Unpin
 impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin
-impl<B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B> where B: core::panic::unwind_safe::RefUnwindSafe
-impl<B> core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B> where B: core::panic::unwind_safe::UnwindSafe
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>
 pub trait hologram_exec::session::SessionBackend: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>
 impl<B: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
 pub mod hologram_exec::warm
@@ -644,13 +651,18 @@ pub struct hologram_exec::BufferArena
 impl hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
 pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
 pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
 pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
 pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
 pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl hologram_exec::buffer::BufferArena
@@ -690,8 +702,8 @@ impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> 
 impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync
 impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin
 impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin
-impl<B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B> where B: core::panic::unwind_safe::RefUnwindSafe
-impl<B> core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B> where B: core::panic::unwind_safe::UnwindSafe
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
 pub struct hologram_exec::FileWarmStore
 impl hologram_exec::warm::FileWarmStore
 pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>
@@ -728,11 +740,13 @@ pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::output_byte_len(&self, usize) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::output_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
 pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
@@ -751,8 +765,8 @@ impl<B> core::marker::Send for hologram_exec::session::InferenceSession<B> where
 impl<B> core::marker::Sync for hologram_exec::session::InferenceSession<B> where B: core::marker::Sync
 impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> where B: core::marker::Unpin
 impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin
-impl<B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B> where B: core::panic::unwind_safe::RefUnwindSafe
-impl<B> core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B> where B: core::panic::unwind_safe::UnwindSafe
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>
 pub struct hologram_exec::InputBuffer<'a>
 pub hologram_exec::InputBuffer::bytes: &'a [u8]
 impl<'a> core::marker::Freeze for hologram_exec::buffer::InputBuffer<'a>
@@ -859,7 +873,7 @@ impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'
 impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync
 impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>
 impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>
-impl<'a, B> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::panic::unwind_safe::RefUnwindSafe
+impl<'a, B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
 impl<'a, B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
 pub struct hologram_exec::RefinementStateContract
 impl hologram_exec::refinement::RefinementStateContract

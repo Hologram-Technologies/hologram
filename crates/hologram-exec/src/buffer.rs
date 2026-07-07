@@ -33,8 +33,22 @@ use alloc::vec::Vec;
 use core::ptr::NonNull;
 
 use hashbrown::HashMap;
-use hologram_archive::ContentLabel;
+use hologram_archive::{ContentLabel, WeightFingerprint, WeightProvider};
 use hologram_backend::{BufferRef, SplitReads, Workspace};
+
+/// A lazily-resident model weight: known by content label and fingerprint,
+/// its body paged from the provider on first use and evictable under the
+/// residency budget. `resident` is the backing buffer index while paged in,
+/// `None` while evicted (re-pageable — a paged range hashes to the same κ,
+/// so this never changes a result).
+#[derive(Debug, Clone, Copy)]
+struct LazyWeight {
+    fp: WeightFingerprint,
+    size: usize,
+    resident: Option<usize>,
+    /// Monotonic last-touch stamp for LRU eviction.
+    last_touch: u64,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SlotSpan {
@@ -157,6 +171,22 @@ pub struct BufferArena {
     // it scales with the model and window, with no fixed cap.
     current: HashMap<ContentLabel, usize>,
     previous: HashMap<ContentLabel, usize>,
+    // Lazily-resident weight tier (label → paging record): model weights the
+    // session declared but did not copy resident at load. A weight's body
+    // pages in from the host's `WeightProvider` on the first walk that
+    // dispatches a kernel consuming it, and is evicted LRU to keep the
+    // resident lazy-weight bytes within `lazy_budget`. Paged buffers survive
+    // walk rotation (see `rebind_reset`), so a model whose weights fit the
+    // budget pages each once and then behaves exactly like the pinned tier —
+    // zero steady-state overhead — while a model that exceeds it streams its
+    // weights through a bounded window instead of failing to load.
+    lazy: HashMap<ContentLabel, LazyWeight>,
+    /// Byte ceiling on resident lazy-weight bytes; `0` = unbounded (never
+    /// evict — the fully-resident degenerate case). A structural budget the
+    /// host sets from its window, not a hardcoded cap.
+    lazy_budget: usize,
+    /// Monotonic clock for LRU stamps.
+    lazy_clock: u64,
 }
 
 const UNBOUND: usize = usize::MAX;
@@ -189,6 +219,9 @@ impl BufferArena {
             pinned: HashMap::new(),
             current: HashMap::new(),
             previous: HashMap::new(),
+            lazy: HashMap::new(),
+            lazy_budget: 0,
+            lazy_clock: 0,
         }
     }
 
@@ -299,10 +332,14 @@ impl BufferArena {
         // list). A buffer is still needed only if pinned or in the kept
         // generation (`previous`); slot binding alone does not keep it, since we
         // clear the bindings here.
+        // Paged weight buffers are kept too: a weight that fits the budget
+        // pages once and stays resident across walks (steady-state pinning),
+        // and one just paged for this walk's kernels must not be reclaimed.
         let kept: alloc::collections::BTreeSet<usize> = self
             .pinned
             .values()
             .chain(self.previous.values())
+            .chain(self.lazy.values().filter_map(|e| e.resident.as_ref()))
             .copied()
             .collect();
         let mut reclaim: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
@@ -400,6 +437,178 @@ impl BufferArena {
         self.pinned.insert(label, bi);
     }
 
+    /// Set the resident lazy-weight byte budget (`0` = unbounded). The pool
+    /// evicts LRU paged weights to keep [`Self::lazy_resident_bytes`] within
+    /// it; a single weight larger than the budget still pages (a kernel
+    /// cannot run a weight it cannot hold), so peak residency is
+    /// `budget + largest_single_weight` in the worst case and exactly
+    /// `budget` when every weight fits.
+    pub fn set_lazy_budget(&mut self, bytes: usize) {
+        self.lazy_budget = bytes;
+    }
+
+    /// Declare a model weight as **lazily resident**: record its label,
+    /// fingerprint, and full size, but allocate nothing. Its body pages in
+    /// from the provider on the first [`Self::page_and_bind`]. Idempotent;
+    /// identical weights (same fingerprint ⇒ same label) collapse to one
+    /// entry, so the dedup the pinned tier gives is preserved.
+    pub fn pin_lazy(&mut self, label: ContentLabel, fp: WeightFingerprint, size: usize) {
+        self.lazy.entry(label).or_insert(LazyWeight {
+            fp,
+            size,
+            resident: None,
+            last_touch: 0,
+        });
+    }
+
+    #[inline]
+    fn tick(&mut self) -> u64 {
+        self.lazy_clock = self.lazy_clock.wrapping_add(1);
+        self.lazy_clock
+    }
+
+    /// Resident lazy-weight bytes (deduped by construction — each label is one
+    /// weight). The quantity the budget bounds; the pager's SC-3 witness.
+    pub fn lazy_resident_bytes(&self) -> usize {
+        self.lazy
+            .values()
+            .filter_map(|e| e.resident.map(|_| e.size))
+            .sum()
+    }
+
+    /// Acquire a `len`-byte backing buffer (recycled from the free list or
+    /// freshly allocated), returning its index. Contents are zeroed.
+    fn acquire_buf(&mut self, len: usize) -> usize {
+        match self.free.pop() {
+            Some(bi) => {
+                self.bufs[bi].reset_to(len);
+                bi
+            }
+            None => {
+                self.bufs.push(AlignedBytes::zeroed(len));
+                self.bufs.len() - 1
+            }
+        }
+    }
+
+    /// Evict LRU paged weights until `need` more bytes fit the budget, never
+    /// evicting a label in `keep` (every lazy operand of the node currently
+    /// paging — a kernel reads them **simultaneously**, so none may be
+    /// evicted to make room for another). No-op when unbounded or already
+    /// within budget; stops when nothing else is evictable (a group whose
+    /// combined footprint exceeds the budget then resides in full — a kernel
+    /// cannot run operands it cannot hold).
+    fn evict_lazy_protecting(&mut self, need: usize, keep: &[ContentLabel]) {
+        if self.lazy_budget == 0 {
+            return;
+        }
+        while self.lazy_resident_bytes() + need > self.lazy_budget {
+            let victim = self
+                .lazy
+                .iter()
+                .filter(|(l, e)| e.resident.is_some() && !keep.contains(l))
+                .min_by_key(|(_, e)| e.last_touch)
+                .map(|(l, _)| *l);
+            match victim {
+                Some(v) => {
+                    if let Some(bi) = self.lazy.get_mut(&v).and_then(|e| e.resident.take()) {
+                        if !self.free.contains(&bi) {
+                            self.free.push(bi);
+                        }
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Page the lazy weight `label` resident if it is not (chunked whole-body
+    /// fetch from `provider`), protecting `keep` from eviction. Returns the
+    /// backing buffer index, or `None` if `label` is not a lazy weight or the
+    /// provider cannot serve its body. Does not bind a slot.
+    fn page_one<P: WeightProvider + ?Sized>(
+        &mut self,
+        label: &ContentLabel,
+        provider: &P,
+        keep: &[ContentLabel],
+    ) -> Option<usize> {
+        let &LazyWeight {
+            fp, size, resident, ..
+        } = self.lazy.get(label)?;
+        if let Some(bi) = resident {
+            let t = self.tick();
+            if let Some(e) = self.lazy.get_mut(label) {
+                e.last_touch = t;
+            }
+            return Some(bi);
+        }
+        self.evict_lazy_protecting(size, keep);
+        let bi = self.acquire_buf(size);
+        // Request the whole body; the provider owns its substrate's paging
+        // (an in-memory store borrows zero-copy, an OPFS store assembles the
+        // range however it pages internally). The `get_range` API still lets
+        // a provider — or a future sub-tensor-resident kernel — address a
+        // sub-range by the same κ; hologram's residency unit is the whole
+        // weight, so it asks for `[0, size)` and copies once.
+        let Some(body) = provider.get_range(fp, 0, size) else {
+            // Paging failed — release the buffer, leave the weight
+            // non-resident (fail-closed; the caller sees `None`).
+            self.free.push(bi);
+            return None;
+        };
+        if body.len() != size {
+            self.free.push(bi);
+            return None;
+        }
+        self.bufs[bi].as_mut_slice().copy_from_slice(&body);
+        let t = self.tick();
+        if let Some(e) = self.lazy.get_mut(label) {
+            e.resident = Some(bi);
+            e.last_touch = t;
+        }
+        Some(bi)
+    }
+
+    /// Page in and bind a node's **entire** lazy-weight operand set together,
+    /// so all of them are simultaneously resident before the kernel reads
+    /// them — the correct unit for a kernel that consumes more than one paged
+    /// weight (e.g. a per-channel dequant matmul reading a packed weight plus
+    /// large scale/zero-point vectors). Each is paged whole from `provider`
+    /// (no copy on a hit, one copy on a miss), protecting the rest of the
+    /// group from eviction; the resident set is held within the budget by
+    /// evicting cold weights from *other* nodes. Returns `false` (fail-closed)
+    /// if any operand is not a declared lazy weight or the provider cannot
+    /// serve it. This is the weight-tier `resolve → miss → page → bind`.
+    pub fn page_and_bind_group<P: WeightProvider + ?Sized>(
+        &mut self,
+        group: &[(usize, ContentLabel)],
+        provider: &P,
+    ) -> bool {
+        // Protect every label in the group while paging any of them.
+        let labels: Vec<ContentLabel> = group.iter().map(|&(_, l)| l).collect();
+        for &(slot, label) in group {
+            let Some(bi) = self.page_one(&label, provider, &labels) else {
+                return false;
+            };
+            let size = self.lazy.get(&label).map_or(0, |e| e.size);
+            self.ensure_slot(slot);
+            self.slot_buf[slot] = bi;
+            self.slot_len[slot] = size;
+        }
+        true
+    }
+
+    /// Convenience for a single lazy-weight operand — see
+    /// [`Self::page_and_bind_group`].
+    pub fn page_and_bind<P: WeightProvider + ?Sized>(
+        &mut self,
+        slot: usize,
+        label: &ContentLabel,
+        provider: &P,
+    ) -> bool {
+        self.page_and_bind_group(&[(slot, *label)], provider)
+    }
+
     /// Store arbitrary bytes as a transient value addressed by `label`,
     /// without binding a slot. The byte→address boundary for inputs
     /// pre-interned ahead of `execute_addressed`.
@@ -435,20 +644,25 @@ impl BufferArena {
         self.current.insert(label, bi);
     }
 
-    /// Whether a value with this label is resident (pinned or transient).
+    /// Whether a value with this label is resident (pinned, transient, or a
+    /// paged-in lazy weight).
     pub fn resident(&self, label: &ContentLabel) -> bool {
         self.pinned.contains_key(label)
             || self.current.contains_key(label)
             || self.previous.contains_key(label)
+            || self.lazy.get(label).is_some_and(|e| e.resident.is_some())
     }
 
     /// Resolve a label to its bytes, if resident (the address→byte boundary).
+    /// A paged-in lazy weight resolves here too, so a weight that is also a
+    /// graph output (or read back by label) works unchanged.
     pub fn resolve(&self, label: &ContentLabel) -> Option<&[u8]> {
         let bi = self
             .pinned
             .get(label)
             .or_else(|| self.current.get(label))
             .or_else(|| self.previous.get(label))
+            .or_else(|| self.lazy.get(label).and_then(|e| e.resident.as_ref()))
             .copied()?;
         Some(self.bufs[bi].as_slice())
     }
@@ -545,7 +759,248 @@ pub struct OutputBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::borrow::Cow;
+    use core::cell::Cell;
     use hologram_archive::address_bytes;
+
+    /// In-test `WeightProvider` over an owned body table, counting bytes
+    /// served and honoring a forced-fail set, so the pool's pager can be
+    /// exercised in isolation (no session, no archive).
+    struct MockProvider {
+        bodies: HashMap<WeightFingerprint, Vec<u8>>,
+        served: Cell<usize>,
+        fail: HashMap<WeightFingerprint, ()>,
+    }
+    impl MockProvider {
+        fn new() -> Self {
+            Self {
+                bodies: HashMap::new(),
+                served: Cell::new(0),
+                fail: HashMap::new(),
+            }
+        }
+        /// Register a weight; returns its `(fingerprint, label)`.
+        fn add(&mut self, body: Vec<u8>) -> (WeightFingerprint, ContentLabel) {
+            let fp = WeightFingerprint::of(&body);
+            let label = fp.content_label();
+            self.bodies.insert(fp, body);
+            (fp, label)
+        }
+        fn served(&self) -> usize {
+            self.served.get()
+        }
+    }
+    impl WeightProvider for MockProvider {
+        fn size(&self, fp: WeightFingerprint) -> Option<usize> {
+            self.bodies.get(&fp).map(Vec::len)
+        }
+        fn get_range(
+            &self,
+            fp: WeightFingerprint,
+            offset: usize,
+            len: usize,
+        ) -> Option<Cow<'_, [u8]>> {
+            if self.fail.contains_key(&fp) {
+                return None;
+            }
+            let b = self.bodies.get(&fp)?;
+            let r = b.get(offset..offset.checked_add(len)?)?;
+            self.served.set(self.served.get() + r.len());
+            Some(Cow::Borrowed(r))
+        }
+    }
+
+    /// Whole-body read of `slot` (page_and_bind sets slot_len to the size).
+    fn slot_bytes(pool: &BufferArena, slot: usize) -> Vec<u8> {
+        pool.read_slot(slot).unwrap().to_vec()
+    }
+
+    #[test]
+    fn lazy_pages_on_demand_and_is_readable() {
+        let mut p = MockProvider::new();
+        let body: Vec<u8> = (0..500u16).map(|i| i as u8).collect();
+        let (fp, label) = p.add(body.clone());
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(4);
+        pool.pin_lazy(label, fp, body.len());
+
+        // Nothing resident until paged.
+        assert_eq!(pool.lazy_resident_bytes(), 0);
+        assert!(!pool.resident(&label));
+        assert!(pool.resolve(&label).is_none());
+
+        assert!(pool.page_and_bind(1, &label, &p));
+        assert_eq!(slot_bytes(&pool, 1), body);
+        assert_eq!(pool.resolve(&label), Some(body.as_slice()));
+        assert!(pool.resident(&label));
+        assert_eq!(pool.lazy_resident_bytes(), body.len());
+        assert_eq!(p.served(), body.len(), "paged exactly once");
+
+        // A hit does not re-serve.
+        assert!(pool.page_and_bind(2, &label, &p));
+        assert_eq!(p.served(), body.len(), "hit must not re-page");
+        assert_eq!(slot_bytes(&pool, 2), body);
+    }
+
+    #[test]
+    fn lazy_budget_evicts_lru_and_repages_identically() {
+        let mut p = MockProvider::new();
+        let (fa, la) = p.add(vec![0xAA; 100]);
+        let (fb, lb) = p.add(vec![0xBB; 100]);
+        let (fc, lc) = p.add(vec![0xCC; 100]);
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(8);
+        pool.set_lazy_budget(250); // room for exactly two
+        pool.pin_lazy(la, fa, 100);
+        pool.pin_lazy(lb, fb, 100);
+        pool.pin_lazy(lc, fc, 100);
+
+        pool.page_and_bind(0, &la, &p); // resident: A
+        pool.page_and_bind(1, &lb, &p); // resident: A,B
+        assert_eq!(pool.lazy_resident_bytes(), 200);
+        pool.page_and_bind(2, &lc, &p); // C needs room → evict LRU (A)
+        assert!(
+            pool.lazy_resident_bytes() <= 250,
+            "budget held: {}",
+            pool.lazy_resident_bytes()
+        );
+        assert!(!pool.resident(&la), "A (LRU) evicted");
+        assert!(pool.resident(&lb) && pool.resident(&lc));
+        assert_eq!(p.served(), 300, "A,B,C each paged once so far");
+
+        // Re-paging A returns identical bytes (residency is orthogonal to
+        // identity) and costs another page (A was evicted).
+        assert!(pool.page_and_bind(3, &la, &p));
+        assert_eq!(slot_bytes(&pool, 3), vec![0xAA; 100]);
+        assert_eq!(p.served(), 400, "A re-paged");
+    }
+
+    #[test]
+    fn lazy_group_keeps_all_operands_resident() {
+        // Budget == exactly the group footprint: a multi-weight node must
+        // hold all its operands together; a per-weight pager would evict one.
+        let mut p = MockProvider::new();
+        let (fa, la) = p.add(vec![1u8; 100]);
+        let (fb, lb) = p.add(vec![2u8; 100]);
+        let (fc, lc) = p.add(vec![3u8; 100]);
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(8);
+        // Room for the 2-weight group but not also the unrelated weight, so
+        // paging the group must evict the unrelated one — never a member.
+        pool.set_lazy_budget(200);
+        pool.pin_lazy(la, fa, 100);
+        pool.pin_lazy(lb, fb, 100);
+        pool.pin_lazy(lc, fc, 100);
+
+        pool.page_and_bind(0, &lc, &p); // resident: C (100)
+        let ok = pool.page_and_bind_group(&[(1, la), (2, lb)], &p);
+        assert!(ok);
+        assert!(
+            pool.resident(&la) && pool.resident(&lb),
+            "group both resident"
+        );
+        assert!(!pool.resident(&lc), "unrelated LRU evicted for the group");
+        assert_eq!(slot_bytes(&pool, 1), vec![1u8; 100]);
+        assert_eq!(slot_bytes(&pool, 2), vec![2u8; 100]);
+        assert!(pool.lazy_resident_bytes() <= 200);
+    }
+
+    #[test]
+    fn lazy_group_over_budget_still_resides_in_full() {
+        // A group whose combined footprint exceeds the budget must reside in
+        // full — a kernel cannot run operands it cannot hold. Peak then
+        // exceeds the budget by construction (the documented worst case).
+        let mut p = MockProvider::new();
+        let (fa, la) = p.add(vec![1u8; 100]);
+        let (fb, lb) = p.add(vec![2u8; 100]);
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(4);
+        pool.set_lazy_budget(50); // below even one weight
+        pool.pin_lazy(la, fa, 100);
+        pool.pin_lazy(lb, fb, 100);
+        assert!(pool.page_and_bind_group(&[(0, la), (1, lb)], &p));
+        assert_eq!(slot_bytes(&pool, 0), vec![1u8; 100]);
+        assert_eq!(slot_bytes(&pool, 1), vec![2u8; 100]);
+    }
+
+    #[test]
+    fn lazy_survives_walk_rotation_without_repaging() {
+        let mut p = MockProvider::new();
+        let (fp, label) = p.add(vec![0x7E; 300]);
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(4);
+        pool.set_lazy_budget(0); // unbounded
+        pool.pin_lazy(label, fp, 300);
+        pool.page_and_bind(0, &label, &p);
+        assert_eq!(p.served(), 300);
+
+        // Rotate generations across many walks; the paged weight must persist
+        // (kept from reclaim) and rebind without a re-page — steady-state
+        // pinning for a fitting model.
+        for _ in 0..1000 {
+            pool.rebind_reset(4);
+            assert!(pool.resident(&label), "paged weight survives rotation");
+            assert!(pool.page_and_bind(0, &label, &p));
+        }
+        assert_eq!(p.served(), 300, "never re-paged across 1000 walks");
+        assert_eq!(slot_bytes(&pool, 0), vec![0x7E; 300]);
+    }
+
+    #[test]
+    fn lazy_page_fails_closed_on_missing_or_short_provider() {
+        let mut p = MockProvider::new();
+        let (fp, label) = p.add(vec![9u8; 128]);
+        p.fail.insert(fp, ()); // provider will refuse this body
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(4);
+        pool.pin_lazy(label, fp, 128);
+        assert!(
+            !pool.page_and_bind(0, &label, &p),
+            "paging failure returns false, never a wrong answer"
+        );
+        assert!(!pool.resident(&label));
+        assert_eq!(pool.lazy_resident_bytes(), 0);
+
+        // An unknown label is not a lazy weight → false, no panic.
+        assert!(!pool.page_and_bind(0, &address_bytes(b"nope"), &p));
+    }
+
+    #[test]
+    fn lazy_dedup_same_fingerprint_pages_once() {
+        let mut p = MockProvider::new();
+        let (fp, label) = p.add(vec![5u8; 200]);
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(4);
+        pool.set_lazy_budget(0);
+        // Two declarations of the identical weight collapse to one entry.
+        pool.pin_lazy(label, fp, 200);
+        pool.pin_lazy(label, fp, 200);
+        pool.page_and_bind(0, &label, &p);
+        pool.page_and_bind(1, &label, &p);
+        assert_eq!(p.served(), 200, "deduped weight paged once");
+        assert_eq!(pool.lazy_resident_bytes(), 200, "counted once");
+    }
+
+    #[test]
+    fn lazy_unbounded_never_evicts() {
+        let mut p = MockProvider::new();
+        let mut pool = BufferArena::new();
+        pool.rebind_reset(64);
+        pool.set_lazy_budget(0);
+        let mut labels = Vec::new();
+        for i in 0..32u8 {
+            let (fp, l) = p.add(vec![i; 100]);
+            pool.pin_lazy(l, fp, 100);
+            labels.push(l);
+        }
+        for (slot, l) in labels.iter().enumerate() {
+            pool.page_and_bind(slot, l, &p);
+        }
+        assert_eq!(pool.lazy_resident_bytes(), 32 * 100, "all resident");
+        for l in &labels {
+            assert!(pool.resident(l));
+        }
+    }
 
     /// A view slot (Slice / ProjectField) exposes a sub-region of a parent
     /// buffer with **zero movement**: no new allocation, and reads see the
