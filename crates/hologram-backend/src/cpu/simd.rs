@@ -2836,6 +2836,69 @@ unsafe fn gemv_i8_omajor_wasm_relaxed(
     }
 }
 
+/// Pool executor: one participant's contiguous output-row range of the
+/// omajor W8A8 GEMV, running the identical single-threaded inner this build
+/// dispatches — so a partitioned run is bit-identical to the serial run
+/// (every output row is computed whole, by one participant, in the same
+/// reduction order).
+///
+/// # Safety
+/// Called only from `wasm_pool` fork-join: `args` point into buffers the
+/// publisher keeps alive until every participant is done, and participant
+/// ranges are disjoint.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-threads",
+    target_feature = "simd128"
+))]
+pub(crate) unsafe fn pool_exec_gemv(
+    args: &[usize; crate::cpu::wasm_pool::JOB_ARGS],
+    part: usize,
+    parts: usize,
+) {
+    let q = args[0] as *const i8;
+    let bq = args[3] as *const i8;
+    let scales = args[4] as *const f32;
+    let out = args[5] as *mut f32;
+    let k = args[6];
+    let n = args[7];
+    let scale_a = f32::from_bits(args[8] as u32);
+    let start = part * n / parts;
+    let end = (part + 1) * n / parts;
+    if start >= end {
+        return;
+    }
+    let rows = end - start;
+    #[cfg(not(target_feature = "relaxed-simd"))]
+    {
+        gemv_i8_omajor_wasm(
+            q,
+            bq.add(start * k),
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+    }
+    #[cfg(target_feature = "relaxed-simd")]
+    {
+        let qp = args[1] as *const i8;
+        let qn = args[2] as *const i8;
+        gemv_i8_omajor_wasm_relaxed(
+            q,
+            qp,
+            qn,
+            bq.add(start * k),
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+    }
+}
+
 /// Fused per-channel symmetric int8 matmul over an **output-major** weight
 /// with per-token dynamic activation quantization (W8A8). `a` is `[m,k]`
 /// row-major f32, `bq` is `[n,k]` i8 (each output's k-vector contiguous),
@@ -2894,17 +2957,37 @@ pub fn matmul_i8_pc_omajor(
                 target_feature = "simd128",
                 not(target_feature = "relaxed-simd")
             ))]
-            // SAFETY: simd128 gate; sizes checked above.
+            // SAFETY: simd128 gate; sizes checked above. On shared-memory
+            // atomics builds the row range is fork-joined across the
+            // embedder's workers first (bit-identical partition; see
+            // `wasm_pool`); the single-threaded inner is the fallback and
+            // the only path on plain simd128 builds.
             unsafe {
-                gemv_i8_omajor_wasm(
-                    q.as_ptr(),
-                    bq.as_ptr(),
-                    scales.as_ptr(),
-                    orow.as_mut_ptr(),
+                #[cfg(feature = "wasm-threads")]
+                let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                    q.as_ptr() as usize,
+                    0,
+                    0,
+                    bq.as_ptr() as usize,
+                    scales.as_ptr() as usize,
+                    orow.as_mut_ptr() as usize,
                     k,
                     n,
-                    scale_a,
-                );
+                    scale_a.to_bits() as usize,
+                ]);
+                #[cfg(not(feature = "wasm-threads"))]
+                let pooled = false;
+                if !pooled {
+                    gemv_i8_omajor_wasm(
+                        q.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                    );
+                }
             }
             // Relaxed-SIMD build: same function, i8·i7 relaxed dots over the
             // q⁺/q⁻ split (exact — see `gemv_i8_omajor_wasm_relaxed`).
@@ -2921,17 +3004,33 @@ pub fn matmul_i8_pc_omajor(
                     qn.clear();
                     qn.resize(k, 0);
                     split_q7(q, qp, qn);
-                    gemv_i8_omajor_wasm_relaxed(
-                        q.as_ptr(),
-                        qp.as_ptr(),
-                        qn.as_ptr(),
-                        bq.as_ptr(),
-                        scales.as_ptr(),
-                        orow.as_mut_ptr(),
+                    #[cfg(feature = "wasm-threads")]
+                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                        q.as_ptr() as usize,
+                        qp.as_ptr() as usize,
+                        qn.as_ptr() as usize,
+                        bq.as_ptr() as usize,
+                        scales.as_ptr() as usize,
+                        orow.as_mut_ptr() as usize,
                         k,
                         n,
-                        scale_a,
-                    );
+                        scale_a.to_bits() as usize,
+                    ]);
+                    #[cfg(not(feature = "wasm-threads"))]
+                    let pooled = false;
+                    if !pooled {
+                        gemv_i8_omajor_wasm_relaxed(
+                            q.as_ptr(),
+                            qp.as_ptr(),
+                            qn.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                    }
                 });
             }
             // Same integer function on every other target (x86 /
@@ -2988,6 +3087,55 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Multi-threaded fork-join vs serial, bit for bit — run on
+    /// `wasm32-wasip1-threads` under wasmtime (`-S threads`), where std
+    /// threads drive the exact atomics job queue the browser's web workers
+    /// will. Proves the static row partition preserves the per-output
+    /// reduction order (structural determinism), not just approximate
+    /// results.
+    #[test]
+    #[cfg(all(
+        feature = "std",
+        feature = "wasm-threads",
+        target_arch = "wasm32",
+        target_feature = "simd128"
+    ))]
+    fn parallel_gemv_matches_serial_bitwise() {
+        use crate::cpu::wasm_pool;
+        // Above the pool's latency floor (k·n = 512 KiB ≥ 256 KiB), with
+        // n not a multiple of the participant count.
+        let (m, k, n) = (1usize, 512usize, 1027usize);
+        let a: Vec<f32> = (0..k).map(|i| ((i % 31) as f32 - 15.0) * 0.041).collect();
+        let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 253) - 126) as i8).collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.004 + (j as f32) * 1e-6).collect();
+
+        // Serial baseline: no workers registered yet.
+        let mut serial = vec![0f32; n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut serial, m, k, n);
+
+        let handles: Vec<_> = (0..3u32)
+            .map(|i| std::thread::spawn(move || wasm_pool::hologram_worker_run(i)))
+            .collect();
+        while wasm_pool::hologram_pool_workers() < 3 {
+            std::thread::yield_now();
+        }
+
+        let mut par = vec![f32::NAN; n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut par, m, k, n);
+        for (j, (p, sv)) in par.iter().zip(&serial).enumerate() {
+            assert_eq!(
+                p.to_bits(),
+                sv.to_bits(),
+                "output {j}: parallel {p} vs serial {sv}"
+            );
+        }
+
+        wasm_pool::hologram_pool_shutdown();
+        for h in handles {
+            h.join().unwrap();
         }
     }
 

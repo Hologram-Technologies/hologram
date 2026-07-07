@@ -72,6 +72,14 @@ wasm:
         --no-default-features --features cpu -p hologram-backend
     RUSTFLAGS="-Ctarget-feature=+simd128,+relaxed-simd" cargo build --target wasm32-unknown-unknown \
         --no-default-features --features cpu -p hologram-backend
+    # Embedder-worker pool (shared-memory build; imports the embedder futex).
+    RUSTFLAGS="-Ctarget-feature=+simd128,+atomics,+bulk-memory,+mutable-globals" \
+        cargo build --target wasm32-unknown-unknown \
+        --no-default-features --features cpu,wasm-threads -p hologram-backend
+    # Threaded lane (wasip1-threads carries atomics in its target spec); the
+    # fork-join bit-identity test runs under `wasmtime -W threads=y -S threads`.
+    RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-wasip1-threads \
+        --no-default-features --features cpu,std,wasm-threads -p hologram-backend
     # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
@@ -148,7 +156,7 @@ install:
 # Install optional dependencies (WASM tooling, benchmark visualization, deployment)
 install-optional:
     cargo install wasm-pack wasm-bindgen-cli
-    rustup target add wasm32-unknown-unknown
+    rustup target add wasm32-unknown-unknown wasm32-wasip1 wasm32-wasip1-threads
     npm install -g wrangler
 
 # Build WASM module for the demo page (uses rustup toolchain to find wasm32 target)

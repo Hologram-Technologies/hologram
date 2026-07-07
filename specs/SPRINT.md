@@ -70,9 +70,18 @@ mirror.
   softmax with reduction order unchanged. ~2× over scalar libm on the wasm
   lane, and stronger determinism than before (std/no_std builds previously
   used different libms). Q-tier exp table remains an item-6 follow-up.
-- [ ] **5.1**: wasm threads: embedder-provided workers
-  (SharedArrayBuffer+atomics), static row partitioning preserves reduction
-  order.
+- [x] **5.1**: wasm threads (`wasm-threads` feature): embedder-provided
+  workers register via the exported `hologram_worker_run` and drain a
+  single fork-join job slot in shared linear memory; the futex is
+  embedder-provided too (`hologram_host_wait32`/`notify` — JS
+  `Atomics.wait`/`notify` — since wasm's native wait/notify intrinsics are
+  unstable on stable Rust; the std test lane parks by spin+yield). The
+  decode GEMV statically partitions output rows, so every row is computed
+  whole by one participant — parallel output is **bit-identical** to serial
+  (locked by `parallel_gemv_matches_serial_bitwise` running real threads
+  under wasmtime). Scaling signal (wasmtime, 3 workers + main): 2.5–3.8×,
+  72 GB/s aggregate int8 at 1536×8960; the 7B shape saturates DRAM at
+  35 GB/s. Plain simd128 builds are unchanged (witnessed fallback).
 - [ ] **6.1**: Q0/LUT-GEMM tier port from plan 033 (migration branch) to
   main.
 

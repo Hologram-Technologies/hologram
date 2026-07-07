@@ -167,24 +167,40 @@ Q-tier exp table stays an item-6 follow-up.
 Phase-3 residual: constant rebinding (O(constants) map hits per step) —
 revisit with a many-hundred-weight model.
 
-## Phase 4 — item 5: wasm threads (scoped, not started)
+## Phase 4 — item 5: wasm threads (DONE)
 
-`cpu/parallel.rs` is `std::thread`, compiled out on wasm. Decode GEMV is
-row-parallel with zero synchronization inside a step. Design shape:
+Landed as `cpu/wasm_pool.rs` behind the `wasm-threads` feature (plain
+simd128 builds byte-unchanged — the witnessed fallback):
 
-- wasm32 has no `std::thread`; workers are **embedder-provided** — the host
-  (hologram-ai; it already serves COOP/COEP) instantiates the module on N
-  web workers sharing one memory (SharedArrayBuffer + atomics build:
-  `-Ctarget-feature=+atomics,+bulk-memory`), and hologram exports a worker
-  entry (`hologram_worker_run(queue_ptr)`) that drains an atomics-based job
-  queue in shared memory.
-- The GEMV partitions **statically by output rows** (per-output reduction
-  order unchanged ⇒ bit-identity and structural-ce preserved; the pool's
-  disjoint-output tiles need no synchronization inside a step).
-- hologram-side work is testable under wasmtime (`--wasm threads`); the
-  browser contract is witnessed downstream. Near-linear scaling expected
-  until the Phase-1/2 kernel is bandwidth-bound (it already is on the
-  wasmtime lane; V8 may differ).
+- **Embedder contract**: the host (hologram-ai; it already serves
+  COOP/COEP) builds shared-memory
+  (`+simd128,+atomics,+bulk-memory,+mutable-globals`), instantiates the
+  module on N web workers sharing one linear memory, and each worker calls
+  the exported `hologram_worker_run(id)` once, before the first execute
+  (late registration traps — fail-loud). Work flows through a single
+  fork-join job slot in linear memory: epoch published by the executing
+  thread, drained by workers, `done` joined by the publisher. Workers never
+  allocate. `hologram_pool_shutdown` / `hologram_pool_workers` complete the
+  lifecycle surface.
+- **Embedder futex**: wasm's native `memory.atomic.wait32`/`notify`
+  intrinsics are unstable on stable Rust (rust-lang/rust#77839), so no_std
+  builds import `hologram_host_wait32`/`hologram_host_notify` — one-line JS
+  wrappers over `Atomics.wait`/`Atomics.notify`. The std test lane
+  (wasm32-wasip1-threads) parks by spin + OS yield; the synchronization
+  algebra is identical.
+- **Determinism is structural**: the GEMV partitions output rows into
+  contiguous per-participant ranges; every row is computed whole by one
+  participant running the identical single-threaded inner, so per-output
+  reduction order — and every CE derivation key — is unchanged. Locked by
+  `parallel_gemv_matches_serial_bitwise`, which runs real threads under
+  wasmtime (`-W threads=y -S threads`) and compares bits against serial.
+- A `POOL_MIN_WEIGHT_BYTES` latency floor (structural: wake+join round-trip
+  vs. per-slice work, not model-derived) keeps tiny GEMVs serial.
+- Scaling signal (wasmtime, 3 workers + main, `wasm_threads_timing`):
+  896×4864 18.5 → 45.6 GB/s (2.5×), 1536×8960 19.0 → 71.8 GB/s (3.8×,
+  near-linear), 3584×18944 14.2 → 35.1 GB/s (DRAM-saturated) — the
+  aggregate now sits at memory bandwidth, which is item 6's cue: cut the
+  streamed bytes.
 
 ## Phase 5 — item 6: Q0/LUT-GEMM tier to main (scoped, not started)
 
