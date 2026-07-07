@@ -11,7 +11,8 @@
 //! (single-threaded; the `parallel` feature is off for wasm)
 
 use hologram_backend::cpu::simd::{
-    matmul_f32_blocked, matmul_f32_packed, matmul_i8_pc_omajor, matmul_i8_per_channel,
+    matmul_f32_blocked, matmul_f32_packed, matmul_i4_pc_omajor, matmul_i8_pc_omajor,
+    matmul_i8_per_channel,
 };
 use std::time::Instant;
 
@@ -130,6 +131,28 @@ fn bench_exp(len: usize, iters: usize) {
     );
 }
 
+/// LUT-tier W4A8 GEMV: half the streamed bytes of the i8 kernel; GB/s is
+/// over the ACTUAL packed-i4 bytes (k·n/2), so compare step TIME against
+/// the i8 line at the same shape for the tier's win.
+fn bench_i4_gemv(k: usize, n: usize, iters: usize) {
+    let a: Vec<f32> = (0..k).map(|i| ((i % 29) as f32 - 14.0) * 0.037).collect();
+    let bq: Vec<u8> = (0..k * n / 2).map(|i| (i % 251) as u8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 1e-5).collect();
+    let mut out = vec![0f32; n];
+    matmul_i4_pc_omajor(&a, &bq, &scales, &mut out, 1, k, n); // warm up
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        matmul_i4_pc_omajor(&a, &bq, &scales, &mut out, 1, k, n);
+        std::hint::black_box(&out);
+    }
+    let per = t0.elapsed().as_secs_f64() / iters as f64;
+    println!(
+        "  omajor_w4a8 1x{k}x{n:<6} {:>9.1} us/iter  {:>7.2} GB/s int4",
+        per * 1e6,
+        (k * n / 2) as f64 / per / 1e9
+    );
+}
+
 fn main() {
     println!("matmul_f32_blocked (unpacked, single-thread):");
     bench_blocked("64x64x64", 64, 64, 64, 3000);
@@ -146,6 +169,10 @@ fn main() {
     bench_i8_gemv(4864, 896, 400);
     bench_i8_gemv(1536, 8960, 100);
     bench_i8_gemv(3584, 18944, 20);
+    println!("int4 decode GEMV (LUT tier, half the streamed bytes):");
+    bench_i4_gemv(896, 4864, 400);
+    bench_i4_gemv(1536, 8960, 100);
+    bench_i4_gemv(3584, 18944, 20);
     println!("decode softmax exp (deterministic vectorized vs scalar libm):");
     bench_exp(4096, 4000);
 }

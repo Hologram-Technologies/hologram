@@ -12,7 +12,9 @@
 //! before they reach it.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use hologram_backend::cpu::simd::{matmul_i8_pc_omajor, matmul_i8_per_channel};
+use hologram_backend::cpu::simd::{
+    matmul_i4_pc_omajor, matmul_i8_pc_omajor, matmul_i8_per_channel,
+};
 use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
@@ -61,6 +63,18 @@ fn bench_kernels(c: &mut Criterion) {
                 black_box(&out);
             })
         });
+        // LUT tier: packed i4, HALF the streamed bytes (throughput axis is
+        // over the actual k·n/2 bytes — compare step TIME against the i8
+        // line for the tier's win, which materializes when bandwidth-bound).
+        let bq4: Vec<u8> = (0..k * n / 2).map(|i| (i % 251) as u8).collect();
+        g.throughput(Throughput::Bytes((k * n / 2) as u64));
+        g.bench_function(format!("i4_omajor_w8a8_1x{k}x{n}"), |b| {
+            b.iter(|| {
+                matmul_i4_pc_omajor(black_box(&a), black_box(&bq4), &scales, &mut out, 1, k, n);
+                black_box(&out);
+            })
+        });
+        g.throughput(Throughput::Bytes((k * n) as u64));
         // The prior fused path ([k,n] stride-n walk, W8A32 float
         // accumulation) at the same shapes — the ratio between the two is
         // the layout + integer-accumulation win.

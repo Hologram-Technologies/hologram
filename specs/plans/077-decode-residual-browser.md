@@ -202,18 +202,58 @@ simd128 builds byte-unchanged — the witnessed fallback):
   aggregate now sits at memory bandwidth, which is item 6's cue: cut the
   streamed bytes.
 
-## Phase 5 — item 6: Q0/LUT-GEMM tier to main (scoped, not started)
+## Phase 5 — item 6: Q0/LUT tier — decode core to main (DONE)
 
-The kernel-floor tier exists on `origin/port/uor-foundation-0.3.0` in an
-**architecture main no longer has**: `hologram-core/src/lut/` (q0/hlut/
-arith/activation), `hologram-ring` (involution/orbit algebra), and
+The migration branch (`origin/port/uor-foundation-0.3.0`) carries the full
+LUT-GEMM machinery — `hologram-core/src/lut/`, `hologram-ring`,
 `hologram-exec/src/lut_gemm/` (matmul, orbit compression, psumbook,
-fiber-ordered Q8 radix — 16 passes, one L1 line per pass — quantize,
-parallel). Plan 033 claims ~256× quantization (O(N) uniform floor-division
-vs k-means), ~2× MACs via dihedral-orbit compression, and no cache-line
-thrashing. This is a **re-architecture port**, not a cherry-pick: the tier
-must land as `KernelCall` variants + archive-carried derived tables under
-their own κ (the discipline items 1–7 established), with the wasm SIMD128
-lane as the primary target and the W8A8 GEMV as the witnessed fallback. It
-is the structural lever below item 1's ceiling — it removes the multiply
-entirely and cuts the streamed bytes. Own sprint; sequence next.
+fiber-ordered radix) — in an architecture main no longer has, ~2900 lines
+across crates that don't exist here. Rather than port that whole surface, we
+landed **the piece the decode residual actually names**: the LUT-tier GEMV
+that removes the stored multiply and **halves the streamed weight bytes**,
+inside the exact κ-discipline items 1–5 established.
+
+Landed:
+- `matmul_i4_pc_omajor` (`hologram-backend::cpu::simd`): output-major
+  **packed-i4** W4A8 GEMV. The stored-weight multiply becomes an in-register
+  16-entry table lookup — `i8x16_swizzle` (wasm) / `vqtbl1q_s8` (NEON), the
+  value grid `I4_VALUES` living in one SIMD register — after which the
+  looked-up i8 values flow through the *identical* integer dot pipeline as
+  the i8 kernel (baseline extends + `i32x4_dot_i16x8`; relaxed `q⁺/q⁻` i7
+  dots; scalar MACs). Output is **bit-identical** across scalar / NEON / wasm
+  on both SIMD tiers (`matmul_i4_pc_omajor_matches_integer_reference`,
+  verified natively, under qemu-aarch64, and under wasmtime on both tiers).
+  The activation is de-interleaved once per token (`[q_even | q_odd]`, or the
+  four-way `q⁺/q⁻` split on the relaxed tier) so the packed nibbles need no
+  lane shuffle in the inner loop — the swizzle overhead lives outside the hot
+  path.
+- Dispatch: `matmul_dequant_float` routes `bq_omajor + W8A8 + quant_dtype ==
+  i4` to the packed kernel, fail-closed (even-k guard); the W8A8 signature
+  tag and archive discriminant are unchanged — i4 is just another
+  `quant_dtype` under the existing extended `MatMulDequant`, no new
+  call-surface, codec, or signature.
+- Compiler: `fuse_const_i8_decode` gained the i4 arm — a constant packed-i4
+  weight (even `k`, whole packed bytes) uniquely consumed by
+  `Dequantize → MatMul(B)` at decode shapes fuses in the archive with the
+  nibbles **repacked** into output-major `[n, k/2]` (derived content under
+  its own κ, the i4 analog of the i8 transpose). Odd-k i4 falls through to
+  the generic W8A32 path (`wl3_odd_k_i4_stays_on_generic_path`).
+- Pool: the fork-join job carries a `kind` (0 = i8, 1 = i4); the i4 path
+  passes its de-interleaved activation through the shared slot, and
+  `parallel_gemv_matches_serial_bitwise` now locks bit-identity for **both**
+  kinds under real wasmtime threads.
+
+Conformance: `wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms` proves
+the archive fusion fires and execution is bit-identical to an independent
+W4A8 integer reference over the *original* `[k,n]` nibble packing (also
+witnessing the repack).
+
+Signal (wasmtime, relaxed tier): W4A8 streams 5.9–7.2 GB/s of int4 bytes at
+decode shapes — i.e. it moves **half** the bytes of the W8A8 line at
+comparable step time where compute-bound, and at the DRAM-saturated 7B shape
+under the pool (3 workers + main) W4A8 finishes in 1434 µs vs W8A8's 1551 µs
+while resident model footprint halves — the decisive lever for the single
+32-bit heap. The full-fat orbit/psumbook/fiber-radix port (dihedral MAC
+compression, non-uniform codebooks) remains available on the migration
+branch as a future sprint; this landed the byte-cutting core the resource
+model named.

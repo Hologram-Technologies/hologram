@@ -2239,3 +2239,278 @@ fn wl2_omajor_w8a8_bias_gelu_is_one_call() {
         .fold(0f64, f64::max);
     assert!(err <= 1e-4, "fused bias+gelu diverged (err {err:.3e})");
 }
+
+// ─── WL-3: constant packed-i4 weight → compile-time LUT-tier fusion ────────
+
+/// Independent W4A8 reference: the same activation quantization as
+/// `ref_w8a8`, exact i32 dots against the ORIGINAL `[k,n]` nibble packing
+/// (element `i = kk·n + j`, low nibble first).
+fn ref_w4a8(a: &[f32], wq_packed: &[u8], scales: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    let nib = |i: usize| -> i32 {
+        let byte = wq_packed[i >> 1];
+        let v = if i & 1 == 0 { byte & 0x0F } else { byte >> 4 };
+        if v < 8 {
+            v as i32
+        } else {
+            v as i32 - 16
+        }
+    };
+    let mut out = vec![0f32; m * n];
+    for i in 0..m {
+        let row = &a[i * k..(i + 1) * k];
+        let mut amax = 0f32;
+        for &v in row {
+            amax = amax.max(v.abs());
+        }
+        if amax == 0.0 {
+            continue;
+        }
+        let inv = 127.0 / amax;
+        let sa = amax / 127.0;
+        let q: Vec<i32> = row
+            .iter()
+            .map(|&v| {
+                let t = v * inv;
+                let r = if t >= 0.0 {
+                    (t + 0.5) as i32
+                } else {
+                    (t - 0.5) as i32
+                };
+                r.clamp(-127, 127)
+            })
+            .collect();
+        for j in 0..n {
+            let mut s = 0i32;
+            for (kk, &qa) in q.iter().enumerate() {
+                s += qa * nib(kk * n + j);
+            }
+            out[i * n + j] = (s as f32) * (sa * scales[j]);
+        }
+    }
+    out
+}
+
+#[test]
+fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::{mm_act_quant, KernelCall};
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I4: u8 = 10;
+
+    let (m, k, n) = (1usize, 66usize, 31usize); // even k, odd n, off-multiples
+    let a = fill(m * k, 0xF6);
+    let wq: Vec<u8> = (0..k * n / 2).map(|i| (i % 249) as u8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.03 + (j as f32) * 0.002).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq.clone(),
+        dtype: DTypeId(DTYPE_I4),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(2),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I4,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    let fused: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            KernelCall::MatMulDequant(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fused.len(), 1, "i4 weight must compile-time fuse");
+    assert!(fused[0].bq_omajor);
+    assert_eq!(fused[0].act_quant, mm_act_quant::W8A8_TOKEN_SYM);
+    assert_eq!(fused[0].quant_dtype, DTYPE_I4);
+
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    // Bit-identical to the independent reference over the ORIGINAL [k,n]
+    // packing — also witnesses the compile-time nibble transposition.
+    let want = ref_w4a8(&a, &wq, &scales, m, k, n);
+    for (i, (gv, wv)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(gv.to_bits(), wv.to_bits(), "output {i}: {gv} vs {wv}");
+    }
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
+}
+
+#[test]
+fn wl3_odd_k_i4_stays_on_generic_path() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I4: u8 = 10;
+
+    // k odd: nibble columns wouldn't pack whole bytes — the compiler must
+    // leave the pair for the (W8A32) load-time fusion, and execution must
+    // still conform.
+    let (m, k, n) = (1usize, 7usize, 8usize);
+    let a = fill(m * k, 0xA7);
+    let wq: Vec<u8> = (0..(k * n).div_ceil(2)).map(|i| (i % 240) as u8).collect();
+    let scales: Vec<f32> = (0..n).map(|_| 0.05).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq,
+        dtype: DTypeId(DTYPE_I4),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(2),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I4,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, KernelCall::MatMulDequant(d) if d.bq_omajor)),
+        "odd-k i4 must not take the omajor path"
+    );
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert!(got.iter().all(|v| v.is_finite()));
+}

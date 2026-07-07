@@ -82,8 +82,20 @@ mirror.
   under wasmtime). Scaling signal (wasmtime, 3 workers + main): 2.5–3.8×,
   72 GB/s aggregate int8 at 1536×8960; the 7B shape saturates DRAM at
   35 GB/s. Plain simd128 builds are unchanged (witnessed fallback).
-- [ ] **6.1**: Q0/LUT-GEMM tier port from plan 033 (migration branch) to
-  main.
+- [x] **6.1**: LUT-tier decode core to main — `matmul_i4_pc_omajor`, an
+  output-major packed-i4 W4A8 GEMV: the stored-weight multiply becomes an
+  in-register 16-entry `i8x16_swizzle`/`vqtbl1q_s8` table lookup and the
+  streamed weight bytes **halve**, then the looked-up i8 values flow through
+  the identical integer dot pipeline as the i8 kernel (bit-identical across
+  scalar/NEON/wasm on both SIMD tiers). Dispatch routes it under the existing
+  W8A8 `MatMulDequant` (i4 quant_dtype, even-k guard — no new call-surface or
+  signature); `fuse_const_i8_decode` repacks constant nibbles to `[n, k/2]`
+  under their own κ; the wasm pool carries an i8/i4 `kind` and
+  `parallel_gemv_matches_serial_bitwise` locks both. Conformance:
+  `wl3_*`. Signal: half the bytes at comparable step time, and under the pool
+  at the DRAM-bound 7B shape W4A8 (1434 µs) beats W8A8 (1551 µs) with half the
+  resident footprint. The full orbit/psumbook/fiber-radix port stays a future
+  sprint on the migration branch.
 
 ## Sprint 38: Source IR and Multi-Language Frontends (DONE)
 

@@ -378,8 +378,10 @@ pub fn matmul_dequant_float<W: Workspace>(
                     "matmul_dequant: bq_omajor and W8A8 must be paired",
                 ));
             }
+            let dtype_ok =
+                quant_dtype == DTYPE_I8 || (quant_dtype == DTYPE_I4 && k.is_multiple_of(2));
             let symmetric = per_ch
-                && quant_dtype == DTYPE_I8
+                && dtype_ok
                 && channels == n
                 && inner == 1
                 && zps
@@ -387,7 +389,7 @@ pub fn matmul_dequant_float<W: Workspace>(
                     .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0);
             if !symmetric || k > mm_act_quant::K_MAX {
                 return Err(BackendError::UnsupportedOp(
-                    "matmul_dequant: W8A8 requires symmetric per-channel i8 within the k bound",
+                    "matmul_dequant: W8A8 requires symmetric per-channel i8/i4 within the k bound",
                 ));
             }
             let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
@@ -396,8 +398,13 @@ pub fn matmul_dequant_float<W: Workspace>(
                 .map_err(|_| BackendError::SlotOutOfRange(c.scales.slot))?;
             let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
                 .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
-            let bq_i8 = bytemuck::cast_slice::<u8, i8>(bq);
-            crate::cpu::simd::matmul_i8_pc_omajor(a32, bq_i8, scale32, out32, m, k, n);
+            if quant_dtype == DTYPE_I4 {
+                // LUT tier: packed nibbles, half the streamed bytes.
+                crate::cpu::simd::matmul_i4_pc_omajor(a32, bq, scale32, out32, m, k, n);
+            } else {
+                let bq_i8 = bytemuck::cast_slice::<u8, i8>(bq);
+                crate::cpu::simd::matmul_i8_pc_omajor(a32, bq_i8, scale32, out32, m, k, n);
+            }
             return Ok(());
         }
     }

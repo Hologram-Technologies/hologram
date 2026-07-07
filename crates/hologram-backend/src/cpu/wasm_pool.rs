@@ -52,8 +52,10 @@ extern "C" {
     fn hologram_host_notify(ptr: *const i32, count: u32) -> u32;
 }
 
-/// Raw job arguments: `[q, qp, qn, bq, scales, out, k, n, scale_a_bits]`.
-pub(crate) const JOB_ARGS: usize = 9;
+/// Raw job arguments:
+/// `[q, qp, qn, bq, scales, out, k, n, scale_a_bits, kind]`
+/// (`kind`: 0 = i8 omajor GEMV, 1 = packed-i4 omajor GEMV).
+pub(crate) const JOB_ARGS: usize = 10;
 
 struct Job {
     /// Bumped to publish a job; workers wait on it.
