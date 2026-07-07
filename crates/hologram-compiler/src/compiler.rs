@@ -1541,6 +1541,10 @@ fn fuse_const_i8_decode(
             zero_point: dq.zero_point,
             bq_omajor: true,
             act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+            // The epilogue (act/residual) is absorbed by the load-time
+            // epilogue pass over the archive-carried fused call.
+            act: 0,
+            residual: MatMulDequantCall::NO_RESIDUAL,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }

@@ -193,6 +193,8 @@ fn matmul_dequant_round_trip() {
         zero_point: -3,
         bq_omajor: false,
         act_quant: 0,
+        act: 0,
+        residual: MatMulDequantCall::NO_RESIDUAL,
     })];
     let bytes = kernel_codec::encode_calls(&calls);
     let decoded = decoder::decode_calls(&bytes).unwrap();
@@ -234,6 +236,8 @@ fn matmul_dequant_omajor_w8a8_round_trip() {
         zero_point: 0,
         bq_omajor: true,
         act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+        act: 5, // fused_activation::TANH
+        residual: ref_buf(7),
     })];
     let bytes = kernel_codec::encode_calls(&calls);
     // Extended fields force the v2 discriminant.
@@ -243,6 +247,8 @@ fn matmul_dequant_omajor_w8a8_round_trip() {
         assert_eq!((d.m, d.k, d.n), (1, 896, 4864));
         assert!(d.bq_omajor);
         assert_eq!(d.act_quant, mm_act_quant::W8A8_TOKEN_SYM);
+        assert_eq!(d.act, 5, "fused epilogue act must round-trip");
+        assert_eq!(d.residual.slot, 7, "epilogue residual must round-trip");
     } else {
         panic!("not matmul-dequant");
     }

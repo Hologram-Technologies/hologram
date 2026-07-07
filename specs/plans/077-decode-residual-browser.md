@@ -123,15 +123,29 @@ wasmtime relaxed-tier signal: 17.6–19.6 GB/s int8 at cache-resident decode
 shapes and 14.5 GB/s at the 7B shape (vs 11.5 baseline, +26%) — the kernel
 is bandwidth-limited on this host.
 
-## Phase 3 — item 7 (+ item 8): seq-1 dispatch, fusion, and mathf
+## Phase 3 — item 7 (+ item 8): seq-1 dispatch, fusion, and mathf (IN PROGRESS)
 
 Fixture-scale decode attributes 20–50× floor to per-op overhead at seq = 1.
-Levers: fuse dequant+matmul+bias+activation as one call (extend the epilogue
-fusion onto `MatMulDequant`, mirroring `MatMulAddActivation`); a pre-bound
-plan handle keyed by the graph's κ that validates once and replays per step;
-arena reuse across steps. The `decode_gemv/session_step_novel` bench is the
-measurement surface. Item 8 rides along: SIMD exp for the softmax path
-(`cpu/mathf.rs` breadth), or the Q-tier exp table once item 6 lands.
+
+Landed:
+- Fusion pass ordering: dequant→matmul fuses before the matmul epilogue, so
+  a dynamic quantized weight followed by an activation keeps streaming in
+  place instead of re-materializing the dense f32 weight each step.
+- dequant+matmul+bias+activation as ONE call: `MatMulDequantCall` carries a
+  fused epilogue (`act`, `residual`) — signature-visible (extended tag),
+  wire-carried on the extended discriminant, applied in place at dispatch
+  while the `m·n` results are hot. The load-time epilogue pass absorbs
+  activation-only, bias-add-only, and the three-op `matmul → add → act`
+  chain into fused dequant-matmuls, including archive-carried compile-time
+  omajor W8A8 calls. Conformance: `gelu(A·dequant(Bq) + bias)` is one call;
+  exact epilogues (relu) stay bit-identical to the W8A8 reference.
+
+Remaining: a pre-bound plan handle keyed by the graph's κ that validates
+once and replays per step; arena reuse across steps. The
+`decode_gemv/session_step_novel` bench is the measurement surface (baseline:
+~84 µs/step over the raw kernel at m = 1, 896×4864, single-op). Item 8 rides
+along: SIMD exp for the softmax path (`cpu/mathf.rs` breadth), or the Q-tier
+exp table once item 6 lands.
 
 ## Phase 4 — item 5: wasm threads
 

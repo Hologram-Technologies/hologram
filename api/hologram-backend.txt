@@ -592,6 +592,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
 pub struct hologram_backend::kernel_call::MatMulDequantCall
 pub hologram_backend::kernel_call::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::MatMulDequantCall::act: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::act_quant: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::bq_omajor: bool
@@ -603,11 +604,15 @@ pub hologram_backend::kernel_call::MatMulDequantCall::m: u32
 pub hologram_backend::kernel_call::MatMulDequantCall::n: u32
 pub hologram_backend::kernel_call::MatMulDequantCall::output: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::quant_dtype: u8
+pub hologram_backend::kernel_call::MatMulDequantCall::residual: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::scale_bits: u32
 pub hologram_backend::kernel_call::MatMulDequantCall::scales: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::zero_point: i32
 pub hologram_backend::kernel_call::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
 impl hologram_backend::MatMulDequantCall
+pub const hologram_backend::MatMulDequantCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::MatMulDequantCall::extended(&self) -> bool
+pub const fn hologram_backend::MatMulDequantCall::has_residual(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
 impl core::clone::Clone for hologram_backend::MatMulDequantCall
 pub fn hologram_backend::MatMulDequantCall::clone(&self) -> hologram_backend::MatMulDequantCall
@@ -1524,6 +1529,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::MatMulCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::MatMulCall
 pub struct hologram_backend::MatMulDequantCall
 pub hologram_backend::MatMulDequantCall::a: hologram_backend::workspace::BufferRef
+pub hologram_backend::MatMulDequantCall::act: u8
 pub hologram_backend::MatMulDequantCall::act_quant: u8
 pub hologram_backend::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::bq_omajor: bool
@@ -1535,11 +1541,15 @@ pub hologram_backend::MatMulDequantCall::m: u32
 pub hologram_backend::MatMulDequantCall::n: u32
 pub hologram_backend::MatMulDequantCall::output: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::quant_dtype: u8
+pub hologram_backend::MatMulDequantCall::residual: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::scale_bits: u32
 pub hologram_backend::MatMulDequantCall::scales: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::zero_point: i32
 pub hologram_backend::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
 impl hologram_backend::MatMulDequantCall
+pub const hologram_backend::MatMulDequantCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::MatMulDequantCall::extended(&self) -> bool
+pub const fn hologram_backend::MatMulDequantCall::has_residual(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
 impl core::clone::Clone for hologram_backend::MatMulDequantCall
 pub fn hologram_backend::MatMulDequantCall::clone(&self) -> hologram_backend::MatMulDequantCall

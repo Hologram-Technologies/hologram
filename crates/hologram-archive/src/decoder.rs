@@ -174,11 +174,14 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
             act: cur.u8()?,
         }),
         111 => K::MatMulDequant(read_matmul_dequant(cur)?),
-        // Extended MatMulDequant: legacy body + layout/activation-quant tail.
+        // Extended MatMulDequant: legacy body + layout / activation-quant /
+        // fused-epilogue tail.
         116 => {
             let mut c = read_matmul_dequant(cur)?;
             c.bq_omajor = cur.u8()? != 0;
             c.act_quant = cur.u8()?;
+            c.act = cur.u8()?;
+            c.residual = cur.buf()?;
             K::MatMulDequant(c)
         }
         112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
@@ -240,6 +243,8 @@ fn read_matmul_dequant(c: &mut Cursor<'_>) -> Result<MatMulDequantCall, ArchiveE
         zero_point: c.u32()? as i32,
         bq_omajor: false,
         act_quant: 0,
+        act: 0,
+        residual: MatMulDequantCall::NO_RESIDUAL,
     })
 }
 

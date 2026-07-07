@@ -120,12 +120,43 @@ pub struct MatMulDequantCall {
     /// signature-visible; W8A32 signatures stay byte-identical to before
     /// this field existed (no re-keying of existing content).
     pub act_quant: u8,
+    /// Fused epilogue activation ([`fused_activation`], `0` = none), applied
+    /// in place over the `m·n` results — the decode projection's
+    /// `act(A·dequant(Bq) [+ bias])` collapses to this one call, so neither
+    /// the matmul product nor the post-add sum is ever separately
+    /// materialized or addressed. Signature-visible.
+    pub act: u8,
+    /// Fused epilogue residual/bias operand (`slot == u32::MAX` = none),
+    /// added in place before `act`. An operand like any other: it
+    /// participates in `buffers()` (and therefore in the κ-label
+    /// composition); only its *presence* needs a signature byte.
+    pub residual: BufferRef,
 }
 
 impl MatMulDequantCall {
+    /// Sentinel for "no epilogue residual" (`residual.slot == u32::MAX`).
+    pub const NO_RESIDUAL: BufferRef = BufferRef {
+        slot: u32::MAX,
+        offset: 0,
+        length: 0,
+    };
+
     #[inline]
     pub const fn per_channel(&self) -> bool {
         self.channels > 0 && self.scales.slot != u32::MAX
+    }
+
+    #[inline]
+    pub const fn has_residual(&self) -> bool {
+        self.residual.slot != u32::MAX
+    }
+
+    /// `true` when any extended field is non-default — selects the extended
+    /// wire discriminant and signature tag; the all-default form stays
+    /// byte-identical to the original encoding.
+    #[inline]
+    pub const fn extended(&self) -> bool {
+        self.bq_omajor || self.act_quant != 0 || self.act != 0 || self.has_residual()
     }
 }
 
@@ -1096,24 +1127,31 @@ impl KernelCall {
             K::MatMulActivation(c) => p_matmul(&c.mm).u8(c.act).done(105),
             K::MatMulAdd(c) => p_matmul(&c.mm).done(106),
             K::MatMulAddActivation(c) => p_matmul(&c.mm).u8(c.act).done(107),
-            // `bq_omajor` is layout-only and excluded (see the field doc);
-            // W8A8 is a different function, so it takes its own tag while
-            // W8A32 keeps the historical bytes unchanged.
-            K::MatMulDequant(c) => Pb::new()
-                .u32(c.m)
-                .u32(c.k)
-                .u32(c.n)
-                .u32(c.channels)
-                .u32(c.inner)
-                .u8(c.quant_dtype)
-                .u8(c.dtype)
-                .u32(c.scale_bits)
-                .i32(c.zero_point)
-                .done(if c.act_quant == mm_act_quant::W8A8_TOKEN_SYM {
-                    116
+            // `bq_omajor` is layout-only and excluded (see the field doc).
+            // The semantic extensions — W8A8 activation quantization and the
+            // fused epilogue (act / residual presence) — are a different
+            // function and take the extended tag; the all-default W8A32 form
+            // keeps the historical bytes unchanged (no re-keying).
+            K::MatMulDequant(c) => {
+                let base = Pb::new()
+                    .u32(c.m)
+                    .u32(c.k)
+                    .u32(c.n)
+                    .u32(c.channels)
+                    .u32(c.inner)
+                    .u8(c.quant_dtype)
+                    .u8(c.dtype)
+                    .u32(c.scale_bits)
+                    .i32(c.zero_point);
+                if c.act_quant != 0 || c.act != 0 || c.has_residual() {
+                    base.u8(c.act_quant)
+                        .u8(c.act)
+                        .u8(c.has_residual() as u8)
+                        .done(116)
                 } else {
-                    108
-                }),
+                    base.done(108)
+                }
+            }
             K::BroadcastBinary(c) => {
                 let mut b = Pb::new()
                     .u8(c.rank)
@@ -1193,10 +1231,18 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::MatMul(c) | K::FusedSwiGlu(c) => vec![c.a, c.b, c.output],
 
-        K::MatMulDequant(c) if c.per_channel() => {
-            vec![c.a, c.bq, c.scales, c.zero_points, c.output]
+        K::MatMulDequant(c) => {
+            let mut v = if c.per_channel() {
+                vec![c.a, c.bq, c.scales, c.zero_points]
+            } else {
+                vec![c.a, c.bq]
+            };
+            if c.has_residual() {
+                v.push(c.residual);
+            }
+            v.push(c.output);
+            v
         }
-        K::MatMulDequant(c) => vec![c.a, c.bq, c.output],
         K::BroadcastBinary(c) => vec![c.small, c.other, c.output],
         K::MatMulActivation(c) => vec![c.mm.a, c.mm.b, c.mm.output],
         K::MatMulAdd(c) => vec![c.mm.a, c.mm.b, c.residual, c.mm.output],

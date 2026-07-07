@@ -394,6 +394,7 @@ pub fn hologram_exec::session::InferenceSession<B>::archive_fingerprint(&self) -
 pub fn hologram_exec::session::InferenceSession<B>::broadcast_binary_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::content_store_len(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::dequant_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_epilogue_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::dequant_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<alloc::vec::Vec<hologram_archive::address::ContentLabel>, hologram_exec::error::ExecError>
@@ -711,6 +712,7 @@ pub fn hologram_exec::session::InferenceSession<B>::archive_fingerprint(&self) -
 pub fn hologram_exec::session::InferenceSession<B>::broadcast_binary_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::content_store_len(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::dequant_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_epilogue_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::dequant_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<alloc::vec::Vec<hologram_archive::address::ContentLabel>, hologram_exec::error::ExecError>

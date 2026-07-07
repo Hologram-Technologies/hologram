@@ -496,6 +496,54 @@ pub fn matmul_dequant_float<W: Workspace>(
     })
 }
 
+/// Fused epilogue for `MatMulDequant`: `out = act(out [+ residual])`, applied
+/// in place over the `m·n` results while they are still hot in cache — the
+/// same functions the f32 matmul epilogues use, so the decode projection's
+/// `act(A·dequant(Bq) + bias)` is one call with no separately materialized
+/// or addressed intermediate. A no-op for calls without an epilogue.
+pub fn matmul_dequant_epilogue<W: Workspace>(
+    c: &MatMulDequantCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    if c.act == 0 && !c.has_residual() {
+        return Ok(());
+    }
+    let count = (c.m as usize) * (c.n as usize);
+    if count == 0 {
+        return Ok(());
+    }
+    let reads_spec: &[crate::workspace::BufferRef] = if c.has_residual() {
+        core::slice::from_ref(&c.residual)
+    } else {
+        &[]
+    };
+    let (reads, out) = ws
+        .split_borrow(reads_spec, c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let out_bytes = out
+        .get_mut(..count * 4)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(out_bytes)
+        .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
+    if c.has_residual() {
+        let res = reads[0]
+            .get(..count * 4)
+            .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?;
+        let res32 = bytemuck::try_cast_slice::<u8, f32>(res)
+            .map_err(|_| BackendError::SlotOutOfRange(c.residual.slot))?;
+        for (o, &r) in out32.iter_mut().zip(res32) {
+            *o += r;
+        }
+    }
+    if c.act != 0 {
+        let f = fused_act_fn(c.act);
+        for o in out32.iter_mut() {
+            *o = f(*o);
+        }
+    }
+    Ok(())
+}
+
 /// Selector → activation function for a fused matmul epilogue.
 fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
     use crate::kernel_call::fused_activation as fa;

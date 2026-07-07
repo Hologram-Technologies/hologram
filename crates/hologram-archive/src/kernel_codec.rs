@@ -487,11 +487,13 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u8(out, c.act);
         }
         K::MatMulDequant(c) => {
-            if c.bq_omajor || c.act_quant != 0 {
+            if c.extended() {
                 put_u16(out, D_MMDQ2);
                 put_matmul_dequant(out, c);
                 put_u8(out, c.bq_omajor as u8);
                 put_u8(out, c.act_quant);
+                put_u8(out, c.act);
+                put_buf(out, c.residual);
             } else {
                 put_u16(out, D_MMDQ);
                 put_matmul_dequant(out, c);

@@ -922,6 +922,15 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulDequant(_)))
             .count()
     }
+    /// Number of fused dequant-matmuls that also absorbed an epilogue
+    /// (activation and/or residual/bias add) — the decode projection's
+    /// `act(A·dequant(Bq) + bias)` as one call.
+    pub fn dequant_epilogue_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::MatMulDequant(d) if d.act != 0 || d.has_residual()))
+            .count()
+    }
     /// Number of `Dequantize → activation` pairs densified into a single
     /// quantized-domain table ([`KernelCall::DequantActivation`]).
     pub fn dequant_activation_fused_count(&self) -> usize {
@@ -1393,9 +1402,12 @@ fn fuse_dequant_matmul(
             // Load-time fusion sees the weight as the archive laid it out
             // ([k,n]) and keeps the original W8A32 semantics; the
             // output-major W8A8 form is compile-time-only (constant
-            // weights, decode shapes).
+            // weights, decode shapes). The epilogue (act/residual) is
+            // absorbed by the epilogue pass that runs after this one.
             bq_omajor: false,
             act_quant: mm_act_quant::W8A32,
+            act: 0,
+            residual: MatMulDequantCall::NO_RESIDUAL,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }
@@ -1584,16 +1596,32 @@ fn fuse_matmul_epilogue(
         }
     }
 
-    // Decide fusions: fused[i] replaces matmul i; absorbed[j] drops the
-    // consumer (activation or residual-add) j.
+    // Decide fusions: fused[i] replaces the producer i; absorbed[j] drops the
+    // consumer (activation or residual-add) j. Producers are plain f32
+    // matmuls AND fused dequant-matmuls (whose epilogue fields are still
+    // empty) — the latter is how the decode projection's
+    // `act(A·dequant(Bq) + bias)` collapses to one call, whether the
+    // dequant fusion happened at compile time or in the pass above.
+    enum Prod {
+        Mm(MatMulCall),
+        Mmd(MatMulDequantCall),
+    }
     let mut absorbed = vec![false; n];
     let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
     for i in 0..n {
-        let mm = match &calls[i] {
-            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => *c,
+        let prod = match &calls[i] {
+            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => Prod::Mm(*c),
+            KernelCall::MatMulDequant(c)
+                if c.dtype == DTYPE_F32 && c.act == 0 && !c.has_residual() =>
+            {
+                Prod::Mmd(*c)
+            }
             _ => continue,
         };
-        let s = mm.output.slot;
+        let s = match &prod {
+            Prod::Mm(c) => c.output.slot,
+            Prod::Mmd(c) => c.output.slot,
+        };
         if s == u32::MAX || out_slots.contains(&s) {
             continue;
         }
@@ -1615,14 +1643,20 @@ fn fuse_matmul_epilogue(
             if jins.len() != 1 || jins[0].slot != s {
                 continue;
             }
-            let fused_mm = MatMulCall {
-                output: *jout,
-                ..mm
-            };
-            fused[i] = Some(KernelCall::MatMulActivation(MatMulActivationCall {
-                mm: fused_mm,
-                act,
-            }));
+            fused[i] = Some(match prod {
+                Prod::Mm(mm) => KernelCall::MatMulActivation(MatMulActivationCall {
+                    mm: MatMulCall {
+                        output: *jout,
+                        ..mm
+                    },
+                    act,
+                }),
+                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                    output: *jout,
+                    act,
+                    ..md
+                }),
+            });
             absorbed[j] = true;
         } else if matches!(&calls[j], KernelCall::Add(_)) {
             // matmul → add(matmul_out, residual): the transformer residual.
@@ -1665,16 +1699,24 @@ fn fuse_matmul_epilogue(
                     let krefs = buffers(&calls[k]);
                     if let Some((kout, kins)) = krefs.split_last() {
                         if kins.len() == 1 && kins[0].slot == add_out {
-                            let fused_mm = MatMulCall {
-                                output: *kout,
-                                ..mm
-                            };
-                            fused[i] =
-                                Some(KernelCall::MatMulAddActivation(MatMulAddActivationCall {
-                                    mm: fused_mm,
+                            fused[i] = Some(match prod {
+                                Prod::Mm(mm) => {
+                                    KernelCall::MatMulAddActivation(MatMulAddActivationCall {
+                                        mm: MatMulCall {
+                                            output: *kout,
+                                            ..mm
+                                        },
+                                        residual,
+                                        act,
+                                    })
+                                }
+                                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                                    output: *kout,
                                     residual,
                                     act,
-                                }));
+                                    ..md
+                                }),
+                            });
                             absorbed[j] = true;
                             absorbed[k] = true;
                             continue;
@@ -1683,14 +1725,20 @@ fn fuse_matmul_epilogue(
                 }
             }
 
-            let fused_mm = MatMulCall {
-                output: *jout,
-                ..mm
-            };
-            fused[i] = Some(KernelCall::MatMulAdd(MatMulAddCall {
-                mm: fused_mm,
-                residual,
-            }));
+            fused[i] = Some(match prod {
+                Prod::Mm(mm) => KernelCall::MatMulAdd(MatMulAddCall {
+                    mm: MatMulCall {
+                        output: *jout,
+                        ..mm
+                    },
+                    residual,
+                }),
+                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                    output: *jout,
+                    residual,
+                    ..md
+                }),
+            });
             absorbed[j] = true;
         }
     }
