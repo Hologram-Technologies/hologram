@@ -444,7 +444,6 @@ impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shap
 pub struct hologram_types::shape::Shape1<D0, const SITES: usize>(_)
 impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self
-impl<D0, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape1<D0, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape
 pub const hologram_types::shape::Shape1<D0, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
 pub const hologram_types::shape::Shape1<D0, SITES>::CYCLE_SIZE: u64
@@ -455,6 +454,7 @@ pub fn hologram_types::shape::Shape1<D0, SITES>::clone(&self) -> hologram_types:
 impl<D0: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::eq(&self, &hologram_types::shape::Shape1<D0, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<D0: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape1<D0, SITES>
@@ -470,7 +470,6 @@ impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_t
 pub struct hologram_types::shape::Shape2<D0, D1, const SITES: usize>(_)
 impl<D0, D1, const SITES: usize> core::default::Default for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::default() -> Self
-impl<D0, D1, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0, D1, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape2<D0, D1, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape, D1: uor_foundation::pipeline::ConstrainedTypeShape
 pub const hologram_types::shape::Shape2<D0, D1, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
 pub const hologram_types::shape::Shape2<D0, D1, SITES>::CYCLE_SIZE: u64
@@ -481,6 +480,7 @@ pub fn hologram_types::shape::Shape2<D0, D1, SITES>::clone(&self) -> hologram_ty
 impl<D0: core::cmp::Eq, D1: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::eq(&self, &hologram_types::shape::Shape2<D0, D1, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0: core::fmt::Debug, D1: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<D0: core::hash::Hash, D1: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape2<D0, D1, SITES>
@@ -896,7 +896,6 @@ impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shap
 pub struct hologram_types::Shape1<D0, const SITES: usize>(_)
 impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self
-impl<D0, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape1<D0, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape
 pub const hologram_types::shape::Shape1<D0, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
 pub const hologram_types::shape::Shape1<D0, SITES>::CYCLE_SIZE: u64
@@ -907,6 +906,7 @@ pub fn hologram_types::shape::Shape1<D0, SITES>::clone(&self) -> hologram_types:
 impl<D0: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::eq(&self, &hologram_types::shape::Shape1<D0, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
 impl<D0: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<D0: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape1<D0, SITES>
@@ -922,7 +922,6 @@ impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_t
 pub struct hologram_types::Shape2<D0, D1, const SITES: usize>(_)
 impl<D0, D1, const SITES: usize> core::default::Default for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::default() -> Self
-impl<D0, D1, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0, D1, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape2<D0, D1, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape, D1: uor_foundation::pipeline::ConstrainedTypeShape
 pub const hologram_types::shape::Shape2<D0, D1, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
 pub const hologram_types::shape::Shape2<D0, D1, SITES>::CYCLE_SIZE: u64
@@ -933,6 +932,7 @@ pub fn hologram_types::shape::Shape2<D0, D1, SITES>::clone(&self) -> hologram_ty
 impl<D0: core::cmp::Eq, D1: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::eq(&self, &hologram_types::shape::Shape2<D0, D1, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0: core::fmt::Debug, D1: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape2<D0, D1, SITES>
 pub fn hologram_types::shape::Shape2<D0, D1, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<D0: core::hash::Hash, D1: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape2<D0, D1, SITES>

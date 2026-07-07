@@ -361,6 +361,54 @@ pub fn matmul_dequant_float<W: Workspace>(
     let zp = c.zero_point;
     let quant_dtype = c.quant_dtype;
 
+    // Output-major W8A8 decode GEMV — compile-time-fused constant weights
+    // (`fuse_const_i8_decode`). The omajor layout pairs exclusively with
+    // W8A8 (a single emitter), and `matmul_i8_pc_omajor` runs the identical
+    // exact-integer function on every target, so this arm has no per-arch
+    // gate, no W8A32 downgrade, and no fallthrough: an output-major weight
+    // must never be read with the `[k,n]` interpretation below — any
+    // contract violation fails loud.
+    {
+        use crate::kernel_call::mm_act_quant;
+        let omajor = c.bq_omajor;
+        let w8a8 = c.act_quant == mm_act_quant::W8A8_TOKEN_SYM;
+        if omajor || w8a8 {
+            if !(omajor && w8a8) {
+                return Err(BackendError::UnsupportedOp(
+                    "matmul_dequant: bq_omajor and W8A8 must be paired",
+                ));
+            }
+            let dtype_ok =
+                quant_dtype == DTYPE_I8 || (quant_dtype == DTYPE_I4 && k.is_multiple_of(2));
+            let symmetric = per_ch
+                && dtype_ok
+                && channels == n
+                && inner == 1
+                && zps
+                    .chunks_exact(4)
+                    .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0);
+            if !symmetric || k > mm_act_quant::K_MAX {
+                return Err(BackendError::UnsupportedOp(
+                    "matmul_dequant: W8A8 requires symmetric per-channel i8/i4 within the k bound",
+                ));
+            }
+            let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
+                .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
+            let scale32 = bytemuck::try_cast_slice::<u8, f32>(scales)
+                .map_err(|_| BackendError::SlotOutOfRange(c.scales.slot))?;
+            let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
+                .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
+            if quant_dtype == DTYPE_I4 {
+                // LUT tier: packed nibbles, half the streamed bytes.
+                crate::cpu::simd::matmul_i4_pc_omajor(a32, bq, scale32, out32, m, k, n);
+            } else {
+                let bq_i8 = bytemuck::cast_slice::<u8, i8>(bq);
+                crate::cpu::simd::matmul_i8_pc_omajor(a32, bq_i8, scale32, out32, m, k, n);
+            }
+            return Ok(());
+        }
+    }
+
     // Fast path — fused per-channel symmetric int8 → f32 at small M (decode).
     // Reads the i8 weight directly (no f32 materialization), factoring the
     // per-column scale to the writeback. ~1.5× faster than the dequant-then-
@@ -453,6 +501,54 @@ pub fn matmul_dequant_float<W: Workspace>(
         });
         Ok(())
     })
+}
+
+/// Fused epilogue for `MatMulDequant`: `out = act(out [+ residual])`, applied
+/// in place over the `m·n` results while they are still hot in cache — the
+/// same functions the f32 matmul epilogues use, so the decode projection's
+/// `act(A·dequant(Bq) + bias)` is one call with no separately materialized
+/// or addressed intermediate. A no-op for calls without an epilogue.
+pub fn matmul_dequant_epilogue<W: Workspace>(
+    c: &MatMulDequantCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    if c.act == 0 && !c.has_residual() {
+        return Ok(());
+    }
+    let count = (c.m as usize) * (c.n as usize);
+    if count == 0 {
+        return Ok(());
+    }
+    let reads_spec: &[crate::workspace::BufferRef] = if c.has_residual() {
+        core::slice::from_ref(&c.residual)
+    } else {
+        &[]
+    };
+    let (reads, out) = ws
+        .split_borrow(reads_spec, c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let out_bytes = out
+        .get_mut(..count * 4)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(out_bytes)
+        .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
+    if c.has_residual() {
+        let res = reads[0]
+            .get(..count * 4)
+            .ok_or(BackendError::SlotOutOfRange(c.residual.slot))?;
+        let res32 = bytemuck::try_cast_slice::<u8, f32>(res)
+            .map_err(|_| BackendError::SlotOutOfRange(c.residual.slot))?;
+        for (o, &r) in out32.iter_mut().zip(res32) {
+            *o += r;
+        }
+    }
+    if c.act != 0 {
+        let f = fused_act_fn(c.act);
+        for o in out32.iter_mut() {
+            *o = f(*o);
+        }
+    }
+    Ok(())
 }
 
 /// Selector → activation function for a fused matmul epilogue.
@@ -1176,11 +1272,15 @@ pub fn softmax_float<W: Workspace>(
             }
             exps.clear();
             exps.reserve(f);
-            let mut sum = 0f32;
             for j in 0..f {
-                let e = libm::expf(read_float(xs, row_off + j, dt) - max_v);
+                exps.push(read_float(xs, row_off + j, dt) - max_v);
+            }
+            // Vectorized deterministic exp (bit-identical across targets);
+            // the sum keeps its original sequential reduction order.
+            crate::cpu::simd::simd_f32_exp_inplace(exps);
+            let mut sum = 0f32;
+            for &e in exps.iter() {
                 sum += e;
-                exps.push(e);
             }
             let log_sum = libm::logf(sum.max(1e-30)) + max_v;
             for (j, &e) in exps.iter().enumerate() {
@@ -1550,10 +1650,15 @@ fn attention_f32_engine(
                         *score = crate::cpu::simd::simd_f32_dot(qrow, krow) / scale;
                     }
                     let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                    let mut sum = 0f32;
                     for sc in scores.iter_mut() {
-                        *sc = libm::expf(*sc - max_s);
-                        sum += *sc;
+                        *sc -= max_s;
+                    }
+                    // Vectorized deterministic exp; masked −∞ scores stay
+                    // exactly 0. Sequential sum order unchanged.
+                    crate::cpu::simd::simd_f32_exp_inplace(scores);
+                    let mut sum = 0f32;
+                    for &sc in scores.iter() {
+                        sum += sc;
                     }
                     let denom = sum.max(1e-30);
                     let orow = &mut out32[q_off + qi * d..q_off + qi * d + d];

@@ -1,6 +1,103 @@
 # Sprint Tracking
 
-## Sprint 38: Source IR and Multi-Language Frontends (ACTIVE)
+## Sprint 39: Decode Residual — Browser (ACTIVE)
+
+**Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
+
+Goal: close hologram's share of hologram-ai's browser decode residual
+(compute-bound wasm int8 matmul at ~7 MB/s effective vs GB/s stream
+bandwidth), staying within κ-operation. Acceptance is witnessed downstream by
+hologram-ai's performance contract; hologram benches are the regression
+mirror.
+
+- [x] **1.1**: Output-major W8A8 int8 GEMV kernel (`matmul_i8_pc_omajor`):
+  contiguous k-inner weight walk, per-token symmetric i8 activation
+  quantization, exact integer accumulation (wasm `i32x4_dot_i16x8`, NEON
+  `vmull_s8`+`vpadalq_s16`); bit-identical across scalar/NEON/wasm (verified
+  natively, under qemu-aarch64, and under wasmtime+simd128).
+- [x] **1.2**: `MatMulDequantCall { bq_omajor, act_quant }` — layout excluded
+  from `op_signature` (b_packed rule), W8A8 on its own signature tag (116);
+  archive wire tag `D_MMDQ2 = 116`, legacy archives byte-identical, unknown
+  tags fail closed.
+- [x] **1.3**: Compile-time `fuse_const_i8_decode` pass: constant symmetric
+  per-channel i8 weight uniquely consumed by `Dequantize → MatMul(B)` at
+  m ≤ 4 fuses in the archive with the constant transposed `[k,n] → [n,k]`
+  (derived content under its own κ); dynamic weights keep load-time W8A32
+  fusion; `wl2_*` conformance (fusion fires, bit-identical to independent
+  W8A8 reference, prefill + asymmetric negatives).
+- [x] **2.1**: m = 1 GEMV specialization — 4 output rows in flight,
+  independent integer accumulators, no output tiling.
+- [x] **9.1**: `decode_gemv` benches at deployed decode shapes (0.5B/1.5B/7B
+  projections, m = 1) reporting int8 bytes-streamed/s, kernel + full-pipeline
+  novel-input session step; manifest registration; `wasm_matmul_timing`
+  extended so the wasmtime+simd128 lane runs the actual wasm kernel.
+- [x] **4.1**: Relaxed-SIMD tier: `i32x4_relaxed_dot_i8x16_i7x16_add` over a
+  `q = q⁺ − q⁻` i7 split — same exact W8A8 function, bit-identical on both
+  builds; baseline stays the witnessed fallback and `just wasm` builds both
+  tiers. `f32x4_relaxed_madd` measured ~30% slower under wasmtime
+  (latency-bound accumulator chains) and deliberately excluded.
+- [x] **7.1a**: dequant+matmul+bias+activation as ONE call:
+  `MatMulDequantCall` gained fused-epilogue fields (`act`, `residual` —
+  signature-visible; wire on the extended discriminant), the load-time
+  epilogue pass now absorbs activation / bias-add / three-op chains into
+  fused dequant-matmuls (compile-time-fused omajor W8A8 included), and the
+  dispatch applies the epilogue in place while the results are hot.
+  Conformance: `gelu(A·dequant(Bq) + bias)` is one call; exact epilogues
+  stay bit-identical to the W8A8 reference. Also fixed en route: fusion
+  pass ordering (dequant→matmul now fuses before the
+  matmul epilogue, so a quantized weight followed by an activation keeps
+  streaming in place instead of materializing the dense f32 weight each
+  step; conformance-locked). Measured per-step session overhead at m = 1,
+  896×4864: ~84 µs over the raw kernel (~7% single-op; the multi-op residual
+  is the remaining fusion/plan-handle work).
+- [x] **7.1b**: validate-once / replay-per-step for the seq-1 walk. Profiling
+  (callgrind) attributed the fixed per-step residual (~100 µs on a 1-node
+  graph) to the boundary-address mint: `derive_label_witnessed` grounded a
+  full ψ-tower composition per operand per step and the walk dropped the
+  TC-05 witness. Added `derive_label_boundary` /
+  `compose_ordered_blake3_address` — the identical composition sequence
+  minting only the address (pinned label-equal to the witnessed form by
+  tests, so any algebra change fails closed; the witness stays re-derivable
+  on demand). Per-step walk overhead: ~100 µs → ~10–28 µs. Arena reuse
+  across steps already holds (generation rotation + free list); constant
+  rebinding is O(constants) HashMap hits per step — revisit only if a
+  many-hundred-weight model shows it.
+- [x] **8.1**: Deterministic vectorized exp for the decode softmax path
+  (`exp_f32_det` scalar spec + NEON/wasm SIMD128 lanes replaying the exact
+  IEEE sequence — bit-identical across targets, verified natively, under
+  qemu-aarch64, and under wasmtime on both SIMD tiers; masked −∞ scores
+  stay exactly 0). Wired into `softmax_float` and the attention inner
+  softmax with reduction order unchanged. ~2× over scalar libm on the wasm
+  lane, and stronger determinism than before (std/no_std builds previously
+  used different libms). Q-tier exp table remains an item-6 follow-up.
+- [x] **5.1**: wasm threads (`wasm-threads` feature): embedder-provided
+  workers register via the exported `hologram_worker_run` and drain a
+  single fork-join job slot in shared linear memory; the futex is
+  embedder-provided too (`hologram_host_wait32`/`notify` — JS
+  `Atomics.wait`/`notify` — since wasm's native wait/notify intrinsics are
+  unstable on stable Rust; the std test lane parks by spin+yield). The
+  decode GEMV statically partitions output rows, so every row is computed
+  whole by one participant — parallel output is **bit-identical** to serial
+  (locked by `parallel_gemv_matches_serial_bitwise` running real threads
+  under wasmtime). Scaling signal (wasmtime, 3 workers + main): 2.5–3.8×,
+  72 GB/s aggregate int8 at 1536×8960; the 7B shape saturates DRAM at
+  35 GB/s. Plain simd128 builds are unchanged (witnessed fallback).
+- [x] **6.1**: LUT-tier decode core to main — `matmul_i4_pc_omajor`, an
+  output-major packed-i4 W4A8 GEMV: the stored-weight multiply becomes an
+  in-register 16-entry `i8x16_swizzle`/`vqtbl1q_s8` table lookup and the
+  streamed weight bytes **halve**, then the looked-up i8 values flow through
+  the identical integer dot pipeline as the i8 kernel (bit-identical across
+  scalar/NEON/wasm on both SIMD tiers). Dispatch routes it under the existing
+  W8A8 `MatMulDequant` (i4 quant_dtype, even-k guard — no new call-surface or
+  signature); `fuse_const_i8_decode` repacks constant nibbles to `[n, k/2]`
+  under their own κ; the wasm pool carries an i8/i4 `kind` and
+  `parallel_gemv_matches_serial_bitwise` locks both. Conformance:
+  `wl3_*`. Signal: half the bytes at comparable step time, and under the pool
+  at the DRAM-bound 7B shape W4A8 (1434 µs) beats W8A8 (1551 µs) with half the
+  resident footprint. The full orbit/psumbook/fiber-radix port stays a future
+  sprint on the migration branch.
+
+## Sprint 38: Source IR and Multi-Language Frontends (DONE)
 
 **Plan:** [plans/075-source-ir-language-frontends.md](plans/075-source-ir-language-frontends.md)
 

@@ -136,6 +136,33 @@ fn decode_blake3(operand: &KappaLabel<LABEL>) -> Result<[u8; 32], CompositionFai
 ///
 /// [`CompositionFailure`] if an operand is not a well-formed `blake3`
 /// κ-label, or (defensively) on a pipeline shape violation.
+/// Address-only replay of [`compose_ordered_blake3`]: the same ordered
+/// product, minting only the κ-label. The ψ-tower grounds the canonical
+/// bytes (`left_digest ‖ right_digest`) on the BLAKE3 σ-axis, so the
+/// grounded address **is** the σ-axis fold of those bytes — this computes
+/// it directly, skipping the TC-05 witness scaffolding the executor's hot
+/// path immediately drops. The witnessed form remains the authority: it is
+/// re-derivable on demand for any address that must be independently
+/// replayed, and `ordered_address_matches_witnessed` pins pointwise
+/// equality, so any future algebra change fails closed instead of
+/// silently diverging.
+///
+/// # Errors
+///
+/// [`CompositionFailure`] if an operand is not a well-formed `blake3`
+/// κ-label.
+pub fn compose_ordered_blake3_address(
+    left: &KappaLabel<LABEL>,
+    right: &KappaLabel<LABEL>,
+) -> Result<KappaLabel<LABEL>, CompositionFailure> {
+    let l = decode_blake3(left)?;
+    let r = decode_blake3(right)?;
+    let mut canon = [0u8; 64];
+    canon[..32].copy_from_slice(&l);
+    canon[32..].copy_from_slice(&r);
+    Ok(crate::address::address_bytes(&canon))
+}
+
 pub fn compose_ordered_blake3(
     left: &KappaLabel<LABEL>,
     right: &KappaLabel<LABEL>,
@@ -149,4 +176,27 @@ pub fn compose_ordered_blake3(
         .map_err(|_| CompositionFailure::PipelineFailure)?;
     AddressOutcome::<LABEL>::from_grounded(&grounded)
         .map_err(|_| CompositionFailure::PipelineFailure)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::address::address_bytes;
+
+    #[test]
+    fn ordered_address_matches_witnessed() {
+        // The address-only ordered product must equal the witnessed
+        // grounding's address pointwise — the fail-closed pin that keeps
+        // the fast path honest if the composition algebra ever changes.
+        let labels: alloc::vec::Vec<_> = (0..6u8)
+            .map(|i| address_bytes(&[i, 0x5A, i.wrapping_mul(101)]))
+            .collect();
+        for l in &labels {
+            for r in &labels {
+                let witnessed = compose_ordered_blake3(l, r).expect("witnessed").address;
+                let fast = compose_ordered_blake3_address(l, r).expect("fast");
+                assert_eq!(witnessed.as_bytes(), fast.as_bytes());
+            }
+        }
+    }
 }

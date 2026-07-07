@@ -24,6 +24,54 @@ status = "active"
 [benchmarks."content_reuse::chain8_128_repeated_memo_hit"]
 status = "active"
 
+[benchmarks."decode_gemv/i4_omajor_w8a8_1x1536x8960"]
+status = "active"
+
+[benchmarks."decode_gemv/i4_omajor_w8a8_1x3584x18944"]
+status = "active"
+
+[benchmarks."decode_gemv/i4_omajor_w8a8_1x4864x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i4_omajor_w8a8_1x896x4864"]
+status = "active"
+
+[benchmarks."decode_gemv/i4_omajor_w8a8_1x896x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x1536x8960"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x3584x18944"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x4864x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x896x4864"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x896x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x1536x8960"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x3584x18944"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x4864x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x896x4864"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x896x896"]
+status = "active"
+
+[benchmarks."decode_gemv/session_step_novel_1x896x4864_i8"]
+status = "active"
+
 [benchmarks."decode_step::compile"]
 status = "active"
 
@@ -64,6 +112,9 @@ status = "active"
 [benchmarks."matmul_w8_64x64x64"]
 status = "active"
 
+[benchmarks."production::mlp_cold_seq1_d512_l2"]
+status = "active"
+
 [benchmarks."production::mlp_cold_seq64_d128_l2"]
 status = "active"
 
@@ -71,9 +122,6 @@ status = "active"
 status = "active"
 
 [benchmarks."production::mlp_served_seq64_d256_l2"]
-status = "active"
-
-[benchmarks."production::mlp_cold_seq1_d512_l2"]
 status = "active"
 
 [benchmarks."source_lowering::native_const4096_lower_ir"]

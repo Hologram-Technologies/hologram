@@ -26,6 +26,14 @@ pub mod mathf;
 #[cfg(feature = "parallel")]
 pub mod parallel;
 pub mod simd;
+/// Embedder-provided wasm worker pool (shared-memory atomics builds only);
+/// the plain simd128 build stays the witnessed single-threaded fallback.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-threads",
+    target_feature = "simd128"
+))]
+pub mod wasm_pool;
 
 /// CPU backend parameterized over the runtime workspace shape.
 ///

@@ -41,12 +41,21 @@ cpu = []
 # (std threads, no external dependency). Host-only; the single-thread path
 # is byte-identical and unchanged when off.
 parallel = ["std"]
+# Embedder-provided wasm worker pool (plan 077 item 5). Requires a
+# shared-memory build: RUSTFLAGS="-Ctarget-feature=+simd128,+atomics,
+# +bulk-memory,+mutable-globals" (wasm32-wasip1-threads carries the atomics
+# codegen in its target spec). Off = the witnessed single-threaded build.
+wasm-threads = []
 # The GPU backends are inherently host-only.
 metal = ["std", "dep:metal", "dep:objc"]
 wgpu = ["std", "dep:wgpu", "dep:pollster"]
 
 # Standalone matmul timing harness (runs under wasmtime); needs std for
 # `std::time::Instant`, so it is skipped on no_std / embedded CI builds.
+[[example]]
+name = "wasm_threads_timing"
+required-features = ["std", "cpu", "wasm-threads"]
+
 [[example]]
 name = "wasm_matmul_timing"
 required-features = ["std", "cpu"]

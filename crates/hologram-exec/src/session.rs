@@ -1,6 +1,6 @@
 //! `InferenceSession` (spec VIII.1).
 
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 
 use hashbrown::HashMap;
 use smallvec::SmallVec;
@@ -9,8 +9,8 @@ use crate::buffer::{BufferArena, InputBuffer, OutputBuffer};
 use crate::error::ExecError;
 use hologram_archive::{
     address_bytes, constant_codec, decode_exec_plan, decode_ports, decode_weights, decoder,
-    derive_label, derive_label_witnessed, format::SectionKind, warm_codec, ContentLabel,
-    HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
+    derive_label, derive_label_boundary, format::SectionKind, warm_codec, ContentLabel, HoloLoader,
+    PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
 };
 use hologram_backend::{
     buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
@@ -75,6 +75,16 @@ pub struct InferenceSession<B: SessionBackend> {
     /// `(slot, label)` for each model constant, so the walk re-binds the
     /// pinned constant buffers by label each run after `rebind_reset`.
     const_bindings: Vec<(u32, ContentLabel)>,
+    /// Host-provided weight body source for a **paged** session (the
+    /// inversion of the owned `WeightStore`). `None` for a fully-resident
+    /// `load`; `Some` when the arena is a bounded window over the provider.
+    weight_provider: Option<Arc<dyn WeightProvider + Send + Sync>>,
+    /// Const slots backed by a **lazily-resident** weight (slot → κ-label).
+    /// The walk pages each in from `weight_provider` right before the kernel
+    /// that consumes it dispatches, so peak residency never exceeds the
+    /// budget rather than the whole weight set. Empty for a fully-resident
+    /// `load`.
+    lazy_slots: HashMap<u32, ContentLabel>,
     /// Graph-level memo: input-port κ-labels → output-port κ-labels. A
     /// re-execution whose inputs content-address to a present key returns
     /// the cached output *addresses* without walking the graph or moving
@@ -95,7 +105,8 @@ pub struct InferenceSession<B: SessionBackend> {
     slot_label_init: Vec<Option<ContentLabel>>,
     /// `is_output_slot[s]` ⇒ slot `s` backs a graph output port. The node
     /// that writes such a slot additionally mints the **witnessed**
-    /// (TC-05-replayable) output address (`derive_label_witnessed`) — the
+    /// (TC-05-replayable) output address (`derive_label_boundary`, pinned
+    /// label-equal to `derive_label_witnessed`) — the
     /// boundary address a caller receives. Interior nodes use only the
     /// cheap reuse key, so the per-prism-pipeline cost is paid once per
     /// output port, not per node.
@@ -180,8 +191,44 @@ pub trait SessionBackend: Backend<WS = BufferArena> + Clone + Send + Sync {}
 impl<B: Backend<WS = BufferArena> + Clone + Send + Sync> SessionBackend for B {}
 
 impl<B: SessionBackend> InferenceSession<B> {
-    /// Load and prepare an `.holo` archive for execution.
+    /// Load and prepare an `.holo` archive for execution, **fully resident**:
+    /// every model constant is copied into the arena at load and pinned for
+    /// the session (the historical behavior — no residency bound).
     pub fn load(bytes: &[u8], backend: B) -> Result<Self, ExecError> {
+        Self::load_inner(bytes, backend, None, 0)
+    }
+
+    /// Load with a host-supplied [`WeightProvider`] and a resident
+    /// lazy-weight **byte budget**, making the arena a bounded **window**
+    /// over the provider instead of a full copy of the weight set. Weights
+    /// referenced by fingerprint (the `by_reference` constants — the large
+    /// bodies) page in from `provider` on first use and evict LRU to hold
+    /// the budget; small inline constants and warm-fold results still pin
+    /// whole. A model whose weights fit `budget` pages each once and then
+    /// runs identically to [`Self::load`] (zero steady-state overhead); a
+    /// model that exceeds it streams its weights through the window — the
+    /// one structural change that lets a bounded host run a model larger
+    /// than its window. `budget == 0` means unbounded (never evict).
+    ///
+    /// Output is **bit-identical** to the fully-resident load: a paged range
+    /// hashes to the same κ, so every derivation key and kernel is unchanged.
+    pub fn load_paged(
+        bytes: &[u8],
+        backend: B,
+        provider: Arc<dyn WeightProvider + Send + Sync>,
+        budget: usize,
+    ) -> Result<Self, ExecError> {
+        Self::load_inner(bytes, backend, Some(provider), budget)
+    }
+
+    /// Shared load implementation. `provider` present ⇒ paged (lazy weight
+    /// residency against `budget`); absent ⇒ fully resident.
+    fn load_inner(
+        bytes: &[u8],
+        backend: B,
+        provider: Option<Arc<dyn WeightProvider + Send + Sync>>,
+        budget: usize,
+    ) -> Result<Self, ExecError> {
         let loader = HoloLoader::from_bytes(bytes)?;
         let archive_fingerprint = loader.fingerprint();
         let plan = loader.into_plan()?;
@@ -223,18 +270,29 @@ impl<B: SessionBackend> InferenceSession<B> {
             .map_err(ExecError::Archive)?
             .unwrap_or_else(|| vec![(0..kernel_calls.len() as u32).collect()]);
 
-        // Content-addressed fusion (the UOR-native execution pass): collapse
-        // `matmul → elementwise-activation` sub-graphs into one fused op so
-        // the activation's intermediate is never separately materialized or
-        // addressed — the fused op carries a single κ-derivation. Runs once
-        // at load over the decoded schedule; a no-op when nothing fuses.
-        let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
+        // Content-addressed fusion (the UOR-native execution pass), run once
+        // at load over the decoded schedule; each pass is a no-op when
+        // nothing fuses.
+        //
+        // Ordering: dequant→matmul fuses FIRST. The epilogue pass rewrites a
+        // `MatMul` into `MatMulActivation`/`MatMulAdd*`, which the dequant
+        // pass does not match — so running it first would trade the dequant
+        // fusion (the quantized weight streamed in place, the dense f32
+        // weight never materialized) for an epilogue fusion (one elided
+        // activation intermediate). At decode the weight bytes dwarf the
+        // activation bytes, so the dequant fusion is the one that must win;
+        // a following activation then simply stays a standalone call.
+        //
         // Fuse `dequantize → matmul` so a quantized weight is dequantized inside
         // the matmul (transient panel) rather than materializing the dense f32
-        // weight in the pool. Constant quantized weights are folded at warm-start
-        // (no runtime dequant), so a runtime dequant feeding a matmul is dynamic
-        // — fusing it is a pure win.
+        // weight in the pool. Constant quantized weights fuse at compile time
+        // (`fuse_const_i8_decode`, omajor W8A8) or fold at warm-start, so a
+        // runtime dequant feeding a matmul is dynamic — fusing it is a pure win.
         let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs);
+        // Collapse `matmul → elementwise-activation` sub-graphs into one fused
+        // op so the activation's intermediate is never separately materialized
+        // or addressed — the fused op carries a single κ-derivation.
+        let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
         // Fuse `dequantize → unary activation` into a table densified over the
         // *quantized* domain (PM_7 densification generalized): the dequantized
         // value is a pure function of the i8/i4 byte, so `activation(dequant(q))`
@@ -318,15 +376,26 @@ impl<B: SessionBackend> InferenceSession<B> {
                 *s = n;
             }
         }
-        for e in constant_entries.iter() {
-            // Inline bodies report their length directly; references
-            // resolve through the WeightStore for sizing.
-            let n: u64 = if e.by_reference {
-                weight_store
+        // Size of a `by_reference` weight body. When a provider is supplied it
+        // is **authoritative** — it is the weight source (the archive may not
+        // even carry the Weights section, the intended weightless-archive
+        // deploy), so a weight the provider lacks fails the load loudly rather
+        // than silently falling back. Without a provider, the archive's own
+        // `WeightStore` sizes the fully-resident load.
+        let weight_size = |fp: WeightFingerprint| -> Option<usize> {
+            match provider.as_deref() {
+                Some(p) => p.size(fp),
+                None => weight_store
                     .as_ref()
-                    .and_then(|s| s.get(WeightFingerprint(e.fingerprint)))
-                    .map(|b| b.len() as u64)
-                    .unwrap_or(0)
+                    .and_then(|s| s.get(fp))
+                    .map(<[u8]>::len),
+            }
+        };
+        for e in constant_entries.iter() {
+            // Inline bodies report their length directly; references resolve
+            // through the provider (paged) or the WeightStore (resident).
+            let n: u64 = if e.by_reference {
+                weight_size(WeightFingerprint(e.fingerprint)).unwrap_or(0) as u64
             } else {
                 e.bytes.len() as u64
             };
@@ -365,21 +434,48 @@ impl<B: SessionBackend> InferenceSession<B> {
         // weight-consuming op is addressable. No fixed byte arena, no
         // second copy of any weight.
         let mut pool = BufferArena::new();
+        pool.set_lazy_budget(budget);
         let mut slot_label_init: Vec<Option<ContentLabel>> = vec![None; slot_count];
         let mut const_bindings: Vec<(u32, ContentLabel)> = Vec::new();
+        let mut lazy_slots: HashMap<u32, ContentLabel> = HashMap::new();
+        // A constant whose slot backs a graph **output** port must stay
+        // pinned even under a paged load: output collection resolves by label
+        // through the read-only boundary and cannot page a lazy body back in,
+        // so a degenerate graph that emits a raw weight would fail if that
+        // weight were evictable. (No kernel consumes such a constant either,
+        // so lazy residency would gain nothing.)
+        let output_port_slots: hashbrown::HashSet<u32> = outputs.iter().map(|p| p.slot).collect();
         for entry in &constant_entries {
-            let body: &[u8] = if entry.by_reference {
-                weight_store
-                    .as_ref()
-                    .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
-                    .unwrap_or(&[])
+            if provider.is_some() && entry.by_reference && !output_port_slots.contains(&entry.slot)
+            {
+                // Paged weight: declare it lazily resident (label from the
+                // fingerprint alone — no body pulled), page on first use. The
+                // κ-label equals `address_bytes(body)`, so the slot's initial
+                // label and every derivation key are identical to the pinned
+                // path.
+                let fp = WeightFingerprint(entry.fingerprint);
+                let size = weight_size(fp).ok_or(ExecError::WorkspaceExhausted)?;
+                let label = fp.content_label();
+                pool.pin_lazy(label, fp, size);
+                slot_label_init[entry.slot as usize] = Some(label);
+                const_bindings.push((entry.slot, label));
+                lazy_slots.insert(entry.slot, label);
             } else {
-                &entry.bytes
-            };
-            let label = address_bytes(body);
-            pool.pin_bytes(label, body);
-            slot_label_init[entry.slot as usize] = Some(label);
-            const_bindings.push((entry.slot, label));
+                // Inline constant, warm result, or fully-resident load: copy
+                // the body resident and pin it for the session.
+                let body: &[u8] = if entry.by_reference {
+                    weight_store
+                        .as_ref()
+                        .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
+                        .unwrap_or(&[])
+                } else {
+                    &entry.bytes
+                };
+                let label = address_bytes(body);
+                pool.pin_bytes(label, body);
+                slot_label_init[entry.slot as usize] = Some(label);
+                const_bindings.push((entry.slot, label));
+            }
         }
 
         // Warm-start fold (WS-2). If the archive carries materialized
@@ -486,6 +582,8 @@ impl<B: SessionBackend> InferenceSession<B> {
             backend,
             slot_sizes,
             const_bindings,
+            weight_provider: provider,
+            lazy_slots,
             graph_memo: HashMap::new(),
             input_cache: vec![None; inputs_len],
             node_meta,
@@ -682,7 +780,7 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// **no copy**. Reuse and retention are pointer-level; nothing moves.
     ///
     /// A node that writes a **graph output port** mints the witnessed
-    /// (TC-05-replayable) boundary address via [`derive_label_witnessed`]
+    /// (TC-05-replayable) boundary address via [`derive_label_boundary`]
     /// (CA-3) and retains its buffer under that label — the prism-pipeline
     /// grounding cost is paid once per output port, not per node. The
     /// input→output mapping (`key`) is recorded for the O(1) whole-graph hit.
@@ -704,6 +802,11 @@ impl<B: SessionBackend> InferenceSession<B> {
         let mut out_witnessed = core::mem::take(&mut self.out_witnessed_scratch);
         out_witnessed.clear();
         out_witnessed.resize(slot_label.len(), None);
+
+        // Paged-session weight source (an Arc clone so the per-node page-in
+        // borrows the provider without holding a borrow on `self`). `None`
+        // for a fully-resident load — the paging step below is then skipped.
+        let provider = self.weight_provider.clone();
 
         for li in 0..self.exec_plan.len() {
             for ni in 0..self.exec_plan[li].len() {
@@ -781,6 +884,32 @@ impl<B: SessionBackend> InferenceSession<B> {
                     }
                 }
 
+                // Paged session: page in and bind this node's lazy-weight
+                // operands as one group right before the kernel reads them —
+                // the only point a weight's bytes are needed, so peak
+                // residency tracks the working set of live nodes, not the
+                // whole weight set. Grouping keeps every operand of a
+                // multi-weight kernel (e.g. a per-channel dequant matmul's
+                // packed weight + scale/zero-point vectors) simultaneously
+                // resident. Elided nodes (reuse / view above) never reach
+                // here, so their weights never page; a fully-resident load
+                // has no lazy slots and skips this entirely.
+                if let Some(provider) = provider.as_ref() {
+                    if !self.lazy_slots.is_empty() {
+                        let mut group: SmallVec<[(usize, ContentLabel); 4]> = SmallVec::new();
+                        for &s in &self.node_meta[ci].inputs {
+                            if let Some(&label) = self.lazy_slots.get(&s) {
+                                group.push((s as usize, label));
+                            }
+                        }
+                        if !group.is_empty()
+                            && !self.pool.page_and_bind_group(&group, provider.as_ref())
+                        {
+                            return Err(ExecError::WorkspaceExhausted);
+                        }
+                    }
+                }
+
                 // Miss / novel: bind a fresh output buffer and dispatch the
                 // kernel straight into it.
                 let size = self.slot_sizes.get(out_slot).copied().unwrap_or(64);
@@ -798,14 +927,18 @@ impl<B: SessionBackend> InferenceSession<B> {
                         slot_label[out_slot] = Some(label);
                     }
                     (Some(label), true) => {
-                        // Output port: retain under the witnessed boundary
-                        // address (CA-3); `slot_label` keeps the cheap label
-                        // for any downstream derivation.
+                        // Output port: retain under the witnessed-form
+                        // boundary address (CA-3), minted address-only —
+                        // `derive_label_boundary` is pinned label-equal to
+                        // `derive_label_witnessed().address`, and the walk
+                        // was already dropping the TC-05 witness (it stays
+                        // re-derivable on demand through the witnessed
+                        // form). `slot_label` keeps the cheap label for any
+                        // downstream derivation.
                         let meta = &self.node_meta[ci];
                         let witnessed =
-                            derive_label_witnessed(meta.opcode, &meta.params, &in_labels)
-                                .map_err(|_| ExecError::Backend)?
-                                .address;
+                            derive_label_boundary(meta.opcode, &meta.params, &in_labels)
+                                .map_err(|_| ExecError::Backend)?;
                         self.pool.retain(out_slot, witnessed);
                         out_witnessed[out_slot] = Some(witnessed);
                         slot_label[out_slot] = Some(label);
@@ -911,6 +1044,15 @@ impl<B: SessionBackend> InferenceSession<B> {
             .filter(|c| matches!(c, KernelCall::MatMulDequant(_)))
             .count()
     }
+    /// Number of fused dequant-matmuls that also absorbed an epilogue
+    /// (activation and/or residual/bias add) — the decode projection's
+    /// `act(A·dequant(Bq) + bias)` as one call.
+    pub fn dequant_epilogue_fused_count(&self) -> usize {
+        self.kernel_calls
+            .iter()
+            .filter(|c| matches!(c, KernelCall::MatMulDequant(d) if d.act != 0 || d.has_residual()))
+            .count()
+    }
     /// Number of `Dequantize → activation` pairs densified into a single
     /// quantized-domain table ([`KernelCall::DequantActivation`]).
     pub fn dequant_activation_fused_count(&self) -> usize {
@@ -942,6 +1084,13 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// reflects embedded-weight models too.
     pub fn resident_bytes(&self) -> usize {
         self.pool.pinned_bytes() + self.pool.transient_bytes()
+    }
+    /// Resident **paged-weight** bytes (the lazy tier of a [`Self::load_paged`]
+    /// session) — the quantity bounded by the residency budget. `0` for a
+    /// fully-resident [`Self::load`]. The pager's witness reads peak of this
+    /// across a decode.
+    pub fn paged_weight_bytes(&self) -> usize {
+        self.pool.lazy_resident_bytes()
     }
     /// Number of distinct resident values in the pool (deduped by κ-label).
     pub fn resident_count(&self) -> usize {
@@ -1320,6 +1469,7 @@ fn fuse_dequant_matmul(
     outputs: &[PortDescriptor],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
     use hashbrown::HashSet;
+    use hologram_backend::mm_act_quant;
     let n = calls.len();
     let mut prod_count: HashMap<u32, u32> = HashMap::new();
     let mut read_count: HashMap<u32, u32> = HashMap::new();
@@ -1378,6 +1528,15 @@ fn fuse_dequant_matmul(
             dtype: mm.dtype,
             scale_bits: dq.scale_bits,
             zero_point: dq.zero_point,
+            // Load-time fusion sees the weight as the archive laid it out
+            // ([k,n]) and keeps the original W8A32 semantics; the
+            // output-major W8A8 form is compile-time-only (constant
+            // weights, decode shapes). The epilogue (act/residual) is
+            // absorbed by the epilogue pass that runs after this one.
+            bq_omajor: false,
+            act_quant: mm_act_quant::W8A32,
+            act: 0,
+            residual: MatMulDequantCall::NO_RESIDUAL,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }
@@ -1566,16 +1725,32 @@ fn fuse_matmul_epilogue(
         }
     }
 
-    // Decide fusions: fused[i] replaces matmul i; absorbed[j] drops the
-    // consumer (activation or residual-add) j.
+    // Decide fusions: fused[i] replaces the producer i; absorbed[j] drops the
+    // consumer (activation or residual-add) j. Producers are plain f32
+    // matmuls AND fused dequant-matmuls (whose epilogue fields are still
+    // empty) — the latter is how the decode projection's
+    // `act(A·dequant(Bq) + bias)` collapses to one call, whether the
+    // dequant fusion happened at compile time or in the pass above.
+    enum Prod {
+        Mm(MatMulCall),
+        Mmd(MatMulDequantCall),
+    }
     let mut absorbed = vec![false; n];
     let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
     for i in 0..n {
-        let mm = match &calls[i] {
-            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => *c,
+        let prod = match &calls[i] {
+            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => Prod::Mm(*c),
+            KernelCall::MatMulDequant(c)
+                if c.dtype == DTYPE_F32 && c.act == 0 && !c.has_residual() =>
+            {
+                Prod::Mmd(*c)
+            }
             _ => continue,
         };
-        let s = mm.output.slot;
+        let s = match &prod {
+            Prod::Mm(c) => c.output.slot,
+            Prod::Mmd(c) => c.output.slot,
+        };
         if s == u32::MAX || out_slots.contains(&s) {
             continue;
         }
@@ -1597,14 +1772,20 @@ fn fuse_matmul_epilogue(
             if jins.len() != 1 || jins[0].slot != s {
                 continue;
             }
-            let fused_mm = MatMulCall {
-                output: *jout,
-                ..mm
-            };
-            fused[i] = Some(KernelCall::MatMulActivation(MatMulActivationCall {
-                mm: fused_mm,
-                act,
-            }));
+            fused[i] = Some(match prod {
+                Prod::Mm(mm) => KernelCall::MatMulActivation(MatMulActivationCall {
+                    mm: MatMulCall {
+                        output: *jout,
+                        ..mm
+                    },
+                    act,
+                }),
+                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                    output: *jout,
+                    act,
+                    ..md
+                }),
+            });
             absorbed[j] = true;
         } else if matches!(&calls[j], KernelCall::Add(_)) {
             // matmul → add(matmul_out, residual): the transformer residual.
@@ -1647,16 +1828,24 @@ fn fuse_matmul_epilogue(
                     let krefs = buffers(&calls[k]);
                     if let Some((kout, kins)) = krefs.split_last() {
                         if kins.len() == 1 && kins[0].slot == add_out {
-                            let fused_mm = MatMulCall {
-                                output: *kout,
-                                ..mm
-                            };
-                            fused[i] =
-                                Some(KernelCall::MatMulAddActivation(MatMulAddActivationCall {
-                                    mm: fused_mm,
+                            fused[i] = Some(match prod {
+                                Prod::Mm(mm) => {
+                                    KernelCall::MatMulAddActivation(MatMulAddActivationCall {
+                                        mm: MatMulCall {
+                                            output: *kout,
+                                            ..mm
+                                        },
+                                        residual,
+                                        act,
+                                    })
+                                }
+                                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                                    output: *kout,
                                     residual,
                                     act,
-                                }));
+                                    ..md
+                                }),
+                            });
                             absorbed[j] = true;
                             absorbed[k] = true;
                             continue;
@@ -1665,14 +1854,20 @@ fn fuse_matmul_epilogue(
                 }
             }
 
-            let fused_mm = MatMulCall {
-                output: *jout,
-                ..mm
-            };
-            fused[i] = Some(KernelCall::MatMulAdd(MatMulAddCall {
-                mm: fused_mm,
-                residual,
-            }));
+            fused[i] = Some(match prod {
+                Prod::Mm(mm) => KernelCall::MatMulAdd(MatMulAddCall {
+                    mm: MatMulCall {
+                        output: *jout,
+                        ..mm
+                    },
+                    residual,
+                }),
+                Prod::Mmd(md) => KernelCall::MatMulDequant(MatMulDequantCall {
+                    output: *jout,
+                    residual,
+                    ..md
+                }),
+            });
             absorbed[j] = true;
         }
     }

@@ -1246,7 +1246,11 @@ mod wasm_simd {
     // structure exactly, with `f32x4_*` lanes. SIMD128 has no fused
     // multiply-add (that's relaxed-SIMD), so the inner step is a separate
     // `f32x4_add(acc, f32x4_mul(av, b))`; still 4-wide, a large win over the
-    // scalar fallback. The cache-oblivious recursion is identical to the other
+    // scalar fallback. `f32x4_relaxed_madd` was measured here (wasmtime,
+    // x86-64 FMA host) and REGRESSED these kernels ~30% — the accumulator
+    // chains are latency-bound and the fused op lengthens the chain — so the
+    // relaxed-SIMD tier deliberately covers only the integer i8 dot (see
+    // `gemv_i8_omajor_wasm_relaxed`), where it is exact and measured faster. The cache-oblivious recursion is identical to the other
     // arches. No multi-core (wasm is single-threaded here); the sequential
     // recursion carries the whole matmul. This satisfies the wasm portability
     // mandate from a 128-bit design shared in shape with NEON.
@@ -2290,9 +2294,1561 @@ pub fn matmul_i8_per_channel(
     }
 }
 
+// ─── Deterministic vectorized f32 exp (decode softmax path) ────────
+// The decode path runs softmax per head per step over the attention bucket;
+// its exp was a scalar `libm::expf` per element. This is the vectorized
+// replacement: one fixed algorithm — range reduction `x = k·ln2 + r` with a
+// trunc-cast round-half-away (the same rounding discipline as the W8A8
+// quantizer), a degree-6 Taylor polynomial in Horner form over
+// |r| ≤ ln2/2, and a 2^k exponent-bit scale — evaluated with plain IEEE
+// mul/add (deliberately no FMA) so scalar, NEON, and wasm SIMD128 lanes
+// produce **bit-identical** results. That is stronger determinism than the
+// path it replaces: `libm::expf` (no_std) and a platform libm (std) did not
+// agree bit-for-bit across builds. Inputs below `EXP_F32_LO` (including the
+// causal mask's −∞ scores) map to exactly 0.0, so masked attention
+// positions keep zero probability; NaN also maps to 0.0 (out-of-domain,
+// documented), and inputs above `EXP_F32_HI` clamp.
+
+/// Underflow cutoff: `exp(x) = 0.0` exactly for `x < EXP_F32_LO` (−∞ and
+/// NaN included). e^−87.3 ≈ 1.2e−38 is the last normal-range value.
+pub const EXP_F32_LO: f32 = -87.336_54;
+/// Clamp ceiling, chosen so the scale exponent `k ≤ 127` stays a normal
+/// f32 (e^88 ≈ 1.65e38 < f32::MAX).
+pub const EXP_F32_HI: f32 = 88.0;
+
+const EXP_LOG2E: f32 = core::f32::consts::LOG2_E;
+// Cody–Waite split of ln2: HI has zeroed low mantissa bits so `kf·HI` is
+// exact for |k| ≤ 2^15; HI + LO = ln2 to ~1e-11. HI is spelled as its exact
+// bit pattern (0.693359375) so the zeroed low bits are explicit.
+const EXP_LN2_HI: f32 = f32::from_bits(0x3F31_8000);
+const EXP_LN2_LO: f32 = -2.121_944_4e-4;
+// Degree-6 Taylor coefficients 1/6!, …, 1/2! (Horner from C6 down to r+1).
+const EXP_C6: f32 = 1.0 / 720.0;
+const EXP_C5: f32 = 1.0 / 120.0;
+const EXP_C4: f32 = 1.0 / 24.0;
+const EXP_C3: f32 = 1.0 / 6.0;
+const EXP_C2: f32 = 0.5;
+
+/// The scalar specification of the deterministic exp. Every SIMD lane
+/// computes exactly this sequence of IEEE operations; the bit-identity
+/// tests compare lanes against it.
+#[inline]
+pub fn exp_f32_det(x: f32) -> f32 {
+    if x.is_nan() || x < EXP_F32_LO {
+        return 0.0; // underflow, −∞, NaN
+    }
+    let x = if x > EXP_F32_HI { EXP_F32_HI } else { x };
+    let t = x * EXP_LOG2E;
+    let k = if t >= 0.0 {
+        (t + 0.5) as i32
+    } else {
+        (t - 0.5) as i32
+    };
+    let kf = k as f32;
+    let r = (x - kf * EXP_LN2_HI) - kf * EXP_LN2_LO;
+    let mut p = EXP_C6;
+    p = p * r + EXP_C5;
+    p = p * r + EXP_C4;
+    p = p * r + EXP_C3;
+    p = p * r + EXP_C2;
+    p = p * r + 1.0;
+    p = p * r + 1.0;
+    let scale = f32::from_bits((((k + 127) as u32) << 23).min(0x7f00_0000));
+    p * scale
+}
+
+/// NEON lanes of [`exp_f32_det`] — the identical operation sequence, 4 wide.
+///
+/// # Safety
+/// NEON (baseline aarch64); `xs` valid for `len` reads/writes.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn exp_f32_neon_inplace(xs: *mut f32, len: usize) {
+    use core::arch::aarch64::*;
+    let lo = vdupq_n_f32(EXP_F32_LO);
+    let hi = vdupq_n_f32(EXP_F32_HI);
+    let log2e = vdupq_n_f32(EXP_LOG2E);
+    let ln2_hi = vdupq_n_f32(EXP_LN2_HI);
+    let ln2_lo = vdupq_n_f32(EXP_LN2_LO);
+    let half = vdupq_n_f32(0.5);
+    let one = vdupq_n_f32(1.0);
+    let mut i = 0;
+    while i + 4 <= len {
+        let x0 = vld1q_f32(xs.add(i));
+        // Keep-mask on the ORIGINAL input: false for underflow/−∞/NaN.
+        let keep = vcgeq_f32(x0, lo);
+        let x = vminq_f32(x0, hi);
+        let t = vmulq_f32(x, log2e);
+        // round half away from zero: trunc(t ± 0.5) by sign of t.
+        let neg = vcltq_f32(t, vdupq_n_f32(0.0));
+        let adj = vbslq_f32(neg, vnegq_f32(half), half);
+        let k = vcvtq_s32_f32(vaddq_f32(t, adj)); // trunc toward zero
+        let kf = vcvtq_f32_s32(k);
+        let r = vsubq_f32(vsubq_f32(x, vmulq_f32(kf, ln2_hi)), vmulq_f32(kf, ln2_lo));
+        let mut p = vdupq_n_f32(EXP_C6);
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C5));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C4));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C3));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C2));
+        p = vaddq_f32(vmulq_f32(p, r), one);
+        p = vaddq_f32(vmulq_f32(p, r), one);
+        let bits = vshlq_n_s32::<23>(vaddq_s32(k, vdupq_n_s32(127)));
+        let scale = vreinterpretq_f32_s32(bits);
+        let e = vmulq_f32(p, scale);
+        let z = vdupq_n_f32(0.0);
+        vst1q_f32(xs.add(i), vbslq_f32(keep, e, z));
+        i += 4;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
+    }
+}
+
+/// wasm SIMD128 lanes of [`exp_f32_det`] — the identical operation
+/// sequence, 4 wide.
+///
+/// # Safety
+/// simd128 enabled; `xs` valid for `len` reads/writes.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn exp_f32_wasm_inplace(xs: *mut f32, len: usize) {
+    use core::arch::wasm32::*;
+    let lo = f32x4_splat(EXP_F32_LO);
+    let hi = f32x4_splat(EXP_F32_HI);
+    let log2e = f32x4_splat(EXP_LOG2E);
+    let ln2_hi = f32x4_splat(EXP_LN2_HI);
+    let ln2_lo = f32x4_splat(EXP_LN2_LO);
+    let half = f32x4_splat(0.5);
+    let one = f32x4_splat(1.0);
+    let mut i = 0;
+    while i + 4 <= len {
+        let x0 = v128_load(xs.add(i) as *const v128);
+        let keep = f32x4_ge(x0, lo);
+        // pmin semantics match the scalar `if x > HI { HI }` for non-NaN x;
+        // NaN lanes are discarded by `keep`.
+        let x = f32x4_pmin(x0, hi);
+        let t = f32x4_mul(x, log2e);
+        let neg = f32x4_lt(t, f32x4_splat(0.0));
+        let adj = v128_bitselect(f32x4_neg(half), half, neg);
+        let k = i32x4_trunc_sat_f32x4(f32x4_add(t, adj));
+        let kf = f32x4_convert_i32x4(k);
+        let r = f32x4_sub(f32x4_sub(x, f32x4_mul(kf, ln2_hi)), f32x4_mul(kf, ln2_lo));
+        let mut p = f32x4_splat(EXP_C6);
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C5));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C4));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C3));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C2));
+        p = f32x4_add(f32x4_mul(p, r), one);
+        p = f32x4_add(f32x4_mul(p, r), one);
+        let bits = i32x4_shl(i32x4_add(k, i32x4_splat(127)), 23);
+        let e = f32x4_mul(p, bits);
+        let z = f32x4_splat(0.0);
+        v128_store(xs.add(i) as *mut v128, v128_bitselect(e, z, keep));
+        i += 4;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
+    }
+}
+
+/// Elementwise deterministic `exp` in place — the decode softmax's exp
+/// pass. Bit-identical across scalar / x86 AVX2 / NEON / wasm SIMD128 (see
+/// [`exp_f32_det`], the scalar specification every lane replays).
+pub fn simd_f32_exp_inplace(xs: &mut [f32]) {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is baseline on aarch64; slice bounds by construction.
+    unsafe {
+        exp_f32_neon_inplace(xs.as_mut_ptr(), xs.len());
+        return;
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds by construction.
+    unsafe {
+        exp_f32_wasm_inplace(xs.as_mut_ptr(), xs.len());
+        return;
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    {
+        #[cfg(target_arch = "x86_64")]
+        if x86_has_avx2() {
+            // SAFETY: AVX2 detected; slice bounds by construction.
+            unsafe {
+                exp_f32_avx2_inplace(xs.as_mut_ptr(), xs.len());
+            }
+            return;
+        }
+        for x in xs.iter_mut() {
+            *x = exp_f32_det(*x);
+        }
+    }
+}
+
+// ─── x86_64 AVX2 lanes for the decode kernels ──────────────────────
+// The integer GEMV and deterministic-exp kernels below carry NEON and wasm
+// SIMD128 inners; on x86_64 (a first-class deployment target, and the native
+// bench/CI lane) they must not fall to scalar — per this module's contract, a
+// stock build picks the widest ISA at runtime. These AVX2 inners replay the
+// EXACT scalar specifications: the integer dot uses `_mm256_madd_epi16` over
+// i8→i16 widenings (an exact, associative i32 reduction — bit-identical to the
+// scalar/NEON/wasm total), and the exp reuses the same no-FMA op sequence as
+// `exp_f32_det`. Selected by runtime CPUID (`is_x86_feature_detected!`) under
+// `std`, or the build's compile-time feature floor on no_std x86.
+
+/// `true` if the AVX2 decode lanes are usable — runtime CPUID under `std`,
+/// the build target's compile-time floor on no_std.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn x86_has_avx2() -> bool {
+    #[cfg(feature = "std")]
+    {
+        std::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        cfg!(target_feature = "avx2")
+    }
+}
+
+/// Exact horizontal sum of the eight i32 lanes of a `__m256i`.
+///
+/// # Safety
+/// AVX2 must be enabled at the call site.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn hsum256_i32(v: core::arch::x86_64::__m256i) -> i32 {
+    use core::arch::x86_64::*;
+    let s = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
+    let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b0100_1110>(s));
+    let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b0000_0001>(s));
+    _mm_cvtsi128_si32(s)
+}
+
+/// AVX2 inner for the output-major W8A8 int8 GEMV — the x86 twin of
+/// `gemv_i8_omajor_neon`/`_wasm`: i8→i16 widen (`_mm256_cvtepi8_epi16`) then
+/// `_mm256_madd_epi16` exact-i32 pairwise accumulation, 4 outputs in flight.
+///
+/// # Safety
+/// AVX2 enabled; `q` len `k`, `bq` len `n*k`, `scales` len `n`, `out` len
+/// `n`; `k ≤ I8_DOT_K_MAX`. Loads are unaligned.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn gemv_i8_omajor_avx2(
+    q: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::x86_64::*;
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * k),
+            bq.add((j + 1) * k),
+            bq.add((j + 2) * k),
+            bq.add((j + 3) * k),
+        ];
+        let mut c = [_mm256_setzero_si256(); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let av = _mm256_cvtepi8_epi16(_mm_loadu_si128(q.add(kk) as *const __m128i));
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let w = _mm256_cvtepi8_epi16(_mm_loadu_si128(row.add(kk) as *const __m128i));
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(av, w));
+            }
+            kk += 16;
+        }
+        let mut sums = [0i32; 4];
+        for (sr, cr) in sums.iter_mut().zip(c.iter()) {
+            *sr = hsum256_i32(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * (*row.add(kk) as i32);
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut s = 0i32;
+        for kk in 0..k {
+            s += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// AVX2 inner for the output-major W4A8 packed-i4 GEMV — the x86 twin of the
+/// de-interleaved wasm i4 kernel. The activation arrives split
+/// (`de = [q_even | q_odd]`, each `k/2`, built once per token) so the packed
+/// nibbles need no reorder: one 16-byte weight load yields 32 values, the low
+/// nibbles pair with the even activations and the high with the odd, through
+/// two `_mm_shuffle_epi8` LUT hits into the same exact madd pipeline.
+///
+/// # Safety
+/// AVX2 enabled; `q` len `k` (scalar tail), `de` len `k`, `bq` len `n*k/2`,
+/// `scales` len `n`, `out` len `n`; `k` even, `k ≤ I8_DOT_K_MAX`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i4_omajor_avx2(
+    q: *const i8,
+    de: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::x86_64::*;
+    let kb = k / 2;
+    let (qe, qo) = (de, de.add(kb));
+    let table = _mm_loadu_si128(I4_VALUES.as_ptr() as *const __m128i);
+    let low_mask = _mm_set1_epi8(0x0F);
+    let kv = k & !31;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * kb),
+            bq.add((j + 1) * kb),
+            bq.add((j + 2) * kb),
+            bq.add((j + 3) * kb),
+        ];
+        let mut c = [_mm256_setzero_si256(); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let h = kk / 2; // 16 packed bytes = weights kk..kk+32
+            let ae = _mm256_cvtepi8_epi16(_mm_loadu_si128(qe.add(h) as *const __m128i));
+            let ao = _mm256_cvtepi8_epi16(_mm_loadu_si128(qo.add(h) as *const __m128i));
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let b = _mm_loadu_si128(row.add(h) as *const __m128i);
+                let we8 = _mm_shuffle_epi8(table, _mm_and_si128(b, low_mask));
+                let wo8 = _mm_shuffle_epi8(table, _mm_and_si128(_mm_srli_epi16::<4>(b), low_mask));
+                let we = _mm256_cvtepi8_epi16(we8);
+                let wo = _mm256_cvtepi8_epi16(wo8);
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(ae, we));
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(ao, wo));
+            }
+            kk += 32;
+        }
+        let mut sums = [0i32; 4];
+        for (sr, cr) in sums.iter_mut().zip(c.iter()) {
+            *sr = hsum256_i32(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * i4_at(core::slice::from_raw_parts(*row, kb), kk) as i32;
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+        let mut sv = 0i32;
+        for kk in 0..k {
+            sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+        }
+        *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// AVX2 lanes of [`exp_f32_det`] — the identical no-FMA operation sequence,
+/// 8 wide.
+///
+/// # Safety
+/// AVX2 enabled; `xs` valid for `len` reads/writes.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn exp_f32_avx2_inplace(xs: *mut f32, len: usize) {
+    use core::arch::x86_64::*;
+    let lo = _mm256_set1_ps(EXP_F32_LO);
+    let hi = _mm256_set1_ps(EXP_F32_HI);
+    let log2e = _mm256_set1_ps(EXP_LOG2E);
+    let ln2_hi = _mm256_set1_ps(EXP_LN2_HI);
+    let ln2_lo = _mm256_set1_ps(EXP_LN2_LO);
+    let half = _mm256_set1_ps(0.5);
+    let one = _mm256_set1_ps(1.0);
+    let zero = _mm256_setzero_ps();
+    let mut i = 0;
+    while i + 8 <= len {
+        let x0 = _mm256_loadu_ps(xs.add(i));
+        // keep = x >= LO; a NaN lane compares false (→ zeroed), matching the
+        // scalar `is_nan() || x < LO → 0.0`.
+        let keep = _mm256_cmp_ps::<_CMP_GE_OQ>(x0, lo);
+        let x = _mm256_min_ps(x0, hi);
+        let t = _mm256_mul_ps(x, log2e);
+        let neg = _mm256_cmp_ps::<_CMP_LT_OQ>(t, zero);
+        let adj = _mm256_blendv_ps(half, _mm256_sub_ps(zero, half), neg);
+        let ki = _mm256_cvttps_epi32(_mm256_add_ps(t, adj));
+        let kf = _mm256_cvtepi32_ps(ki);
+        let r = _mm256_sub_ps(
+            _mm256_sub_ps(x, _mm256_mul_ps(kf, ln2_hi)),
+            _mm256_mul_ps(kf, ln2_lo),
+        );
+        let mut p = _mm256_set1_ps(EXP_C6);
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C5));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C4));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C3));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C2));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), one);
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), one);
+        let bits = _mm256_slli_epi32::<23>(_mm256_add_epi32(ki, _mm256_set1_epi32(127)));
+        let bits = _mm256_min_epi32(bits, _mm256_set1_epi32(0x7f00_0000));
+        let scale = _mm256_castsi256_ps(bits);
+        let e = _mm256_mul_ps(p, scale);
+        _mm256_storeu_ps(xs.add(i), _mm256_blendv_ps(zero, e, keep));
+        i += 8;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
+    }
+}
+
+// ─── Output-major W8A8 int8 GEMV (decode) ──────────────────────────
+// `matmul_i8_per_channel` above reads the `[k,n]` weight k-inner: at decode
+// (m = 1) that walk touches 16 bytes of every 64-byte line with no line reuse
+// between column tiles (reuse distance ≈ the whole matrix), and every product
+// is float (W8A32). This kernel is the decode-shaped replacement: the weight
+// is **output-major** `[n,k]` — each output's k-vector contiguous; the layout
+// is compile-time derived content under its own κ (see the compiler's
+// weight-layout monomorphism pass) — the activation row is quantized once per
+// token to symmetric i8 (W8A8), and the dot products accumulate in **exact
+// integer** arithmetic (wasm `i32x4_dot_i16x8`, NEON `vmull_s8` +
+// `vpadalq_s16`). Integer sums are associative, so scalar / NEON / wasm
+// produce bit-identical output — a single fused `(Σ q·w) · (scale_a ·
+// scale_w[j])` writeback per output is the only float rounding, and the
+// reduction order cannot perturb CE derivation keys.
+
+/// Upper bound on `k` for exact i32 accumulation: `k · 127²` must stay below
+/// `i32::MAX`. Rejected loudly; real decode shapes sit three orders of
+/// magnitude below (~2k–19k). One definition, shared with the compiler's
+/// emission gate.
+pub const I8_DOT_K_MAX: usize = crate::kernel_call::mm_act_quant::K_MAX;
+
+/// Reused per-token quantized-activation row (zero alloc per call after
+/// warm-up under `std`; a transient alloc on `no_std`, matching the other
+/// kernel scratches).
+#[cfg(feature = "std")]
+fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
+    std::thread_local! {
+        static Q8: core::cell::RefCell<Vec<i8>> = const { core::cell::RefCell::new(Vec::new()) };
+    }
+    Q8.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+#[cfg(not(feature = "std"))]
+fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
+    let mut v = Vec::new();
+    f(&mut v)
+}
+
+/// Two reusable i8 scratch buffers for the vectorized quantized-GEMV
+/// activation re-layouts (zero alloc per call after warm-up under `std`;
+/// transient on no_std, like the other kernel scratches). Callers repurpose
+/// them per path: the wasm i8 relaxed tier holds the `q⁺ / q⁻` i7 split
+/// (both `k`); the i4 paths pack the de-interleaved activation into the
+/// first buffer (`k` baseline, `2k` wasm-relaxed) and leave the second idle.
+/// The buffers carry no fixed size — each caller `resize`s to its own
+/// `k`-derived length — so the scratch is shape-agnostic.
+#[cfg(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+))]
+fn with_gemv_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
+    #[cfg(feature = "std")]
+    {
+        std::thread_local! {
+            static SCRATCH: core::cell::RefCell<(Vec<i8>, Vec<i8>)> =
+                const { core::cell::RefCell::new((Vec::new(), Vec::new())) };
+        }
+        SCRATCH.with(|cell| {
+            let mut g = cell.borrow_mut();
+            let (p, n) = &mut *g;
+            f(p, n)
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let (mut p, mut n) = (Vec::new(), Vec::new());
+        f(&mut p, &mut n)
+    }
+}
+
+/// `q = q⁺ − q⁻` elementwise: `q⁺ = max(q, 0)`, `q⁻ = max(−q, 0)`, both in
+/// `[0, 127]`. O(k) against the GEMV's O(k·n).
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+fn split_q7(q: &[i8], qp: &mut [i8], qn: &mut [i8]) {
+    for ((&v, p), n) in q.iter().zip(qp.iter_mut()).zip(qn.iter_mut()) {
+        *p = v.max(0);
+        *n = (-v).max(0);
+    }
+}
+
+/// Quantize one activation row to symmetric i8: `scale = max|a| / 127`,
+/// `q = clamp(round_half_away_from_zero(a · (127 / max|a|)), -127, 127)`.
+/// Returns the scale (`0.0` for an all-zero row — the caller writes a zero
+/// output row). A deterministic pure function of the row bytes: IEEE f32
+/// mul/add plus Rust's saturating trunc-cast, no libm, no fenv, no
+/// data-dependent order.
+fn quantize_row_i8(a: &[f32], q: &mut [i8]) -> f32 {
+    let mut amax = 0f32;
+    for &v in a {
+        let av = if v < 0.0 { -v } else { v };
+        if av > amax {
+            amax = av;
+        }
+    }
+    if amax == 0.0 {
+        return 0.0;
+    }
+    let inv = 127.0 / amax;
+    for (dst, &v) in q.iter_mut().zip(a) {
+        let t = v * inv;
+        // Round half away from zero via trunc-cast; |t| ≤ 127 + ulps by
+        // construction, clamp guards the boundary ulp.
+        let r = if t >= 0.0 {
+            (t + 0.5) as i32
+        } else {
+            (t - 0.5) as i32
+        };
+        *dst = r.clamp(-127, 127) as i8;
+    }
+    amax / 127.0
+}
+
+/// NEON inner: one quantized activation row (`q`, len `k`) against the
+/// output-major weight (`bq`, `[n,k]`), 4 outputs in flight, exact i32
+/// accumulation (`vmull_s8` products pairwise-accumulated by `vpadalq_s16`).
+///
+/// # Safety
+/// NEON (baseline aarch64); `q` len `k`, `bq` len `n*k`, `scales` len `n`,
+/// `out` len `n`; `k ≤ I8_DOT_K_MAX`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn gemv_i8_omajor_neon(
+    q: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::aarch64::*;
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let r0 = bq.add(j * k);
+        let r1 = bq.add((j + 1) * k);
+        let r2 = bq.add((j + 2) * k);
+        let r3 = bq.add((j + 3) * k);
+        let (mut c0, mut c1, mut c2, mut c3) = (
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+        );
+        let mut kk = 0;
+        while kk < kv {
+            let av = vld1q_s8(q.add(kk));
+            let alo = vget_low_s8(av);
+            let ahi = vget_high_s8(av);
+            let w0 = vld1q_s8(r0.add(kk));
+            c0 = vpadalq_s16(c0, vmull_s8(alo, vget_low_s8(w0)));
+            c0 = vpadalq_s16(c0, vmull_s8(ahi, vget_high_s8(w0)));
+            let w1 = vld1q_s8(r1.add(kk));
+            c1 = vpadalq_s16(c1, vmull_s8(alo, vget_low_s8(w1)));
+            c1 = vpadalq_s16(c1, vmull_s8(ahi, vget_high_s8(w1)));
+            let w2 = vld1q_s8(r2.add(kk));
+            c2 = vpadalq_s16(c2, vmull_s8(alo, vget_low_s8(w2)));
+            c2 = vpadalq_s16(c2, vmull_s8(ahi, vget_high_s8(w2)));
+            let w3 = vld1q_s8(r3.add(kk));
+            c3 = vpadalq_s16(c3, vmull_s8(alo, vget_low_s8(w3)));
+            c3 = vpadalq_s16(c3, vmull_s8(ahi, vget_high_s8(w3)));
+            kk += 16;
+        }
+        let mut s0 = vaddvq_s32(c0);
+        let mut s1 = vaddvq_s32(c1);
+        let mut s2 = vaddvq_s32(c2);
+        let mut s3 = vaddvq_s32(c3);
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            s0 += qa * (*r0.add(kk) as i32);
+            s1 += qa * (*r1.add(kk) as i32);
+            s2 += qa * (*r2.add(kk) as i32);
+            s3 += qa * (*r3.add(kk) as i32);
+            kk += 1;
+        }
+        *out.add(j) = (s0 as f32) * (scale_a * *scales.add(j));
+        *out.add(j + 1) = (s1 as f32) * (scale_a * *scales.add(j + 1));
+        *out.add(j + 2) = (s2 as f32) * (scale_a * *scales.add(j + 2));
+        *out.add(j + 3) = (s3 as f32) * (scale_a * *scales.add(j + 3));
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut s = 0i32;
+        for kk in 0..k {
+            s += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// wasm SIMD128 inner — the wasm twin of `gemv_i8_omajor_neon`: sequential
+/// k-inner loads over contiguous weight rows (full-line use, prefetchable),
+/// `i16x8_extend` + `i32x4_dot_i16x8` exact integer accumulation (the
+/// widening ladder to f32 and the per-step float rounding are gone). The
+/// activation extends amortize over the 4 output rows in flight.
+///
+/// # Safety
+/// simd128 enabled; `q` len `k`, `bq` len `n*k`, `scales` len `n`, `out`
+/// len `n`; `k ≤ I8_DOT_K_MAX`. `v128_load` is an unaligned wasm load.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    not(target_feature = "relaxed-simd")
+))]
+#[target_feature(enable = "simd128")]
+unsafe fn gemv_i8_omajor_wasm(
+    q: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * k),
+            bq.add((j + 1) * k),
+            bq.add((j + 2) * k),
+            bq.add((j + 3) * k),
+        ];
+        let mut c = [i32x4_splat(0); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let av = v128_load(q.add(kk) as *const v128);
+            let alo = i16x8_extend_low_i8x16(av);
+            let ahi = i16x8_extend_high_i8x16(av);
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let w = v128_load(row.add(kk) as *const v128);
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(alo, i16x8_extend_low_i8x16(w)));
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(ahi, i16x8_extend_high_i8x16(w)));
+            }
+            kk += 16;
+        }
+        let mut s = [0i32; 4];
+        for (sr, cr) in s.iter_mut().zip(c.iter()) {
+            *sr = i32x4_extract_lane::<0>(*cr)
+                + i32x4_extract_lane::<1>(*cr)
+                + i32x4_extract_lane::<2>(*cr)
+                + i32x4_extract_lane::<3>(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in s.iter_mut().zip(rows.iter()) {
+                *sr += qa * (*row.add(kk) as i32);
+            }
+            kk += 1;
+        }
+        for (r, &sr) in s.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut s = 0i32;
+        for kk in 0..k {
+            s += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// wasm relaxed-SIMD inner — the **same W8A8 function** as
+/// `gemv_i8_omajor_wasm`, executed with `i32x4_relaxed_dot_i8x16_i7x16_add`.
+/// The signed activation row is split `q = q⁺ − q⁻` with both halves in the
+/// i7 range `[0, 127]`, where the relaxed dot is exact and deterministic on
+/// every engine; each 16-wide step is then two relaxed dots per row instead
+/// of two extends + two dots + two adds, with no activation extends at all.
+/// Products stay ≤ 127², so the instruction's internal pairwise i16 sums
+/// (≤ 32258) cannot saturate. Exact integer throughout: output remains
+/// bit-identical to the baseline and scalar paths — the relaxed tier is an
+/// execution speedup of the identical function, not a numeric variant.
+///
+/// # Safety
+/// simd128 + relaxed-simd enabled; `q`/`qp`/`qn` len `k`, `bq` len `n*k`,
+/// `scales` len `n`, `out` len `n`; `k ≤ I8_DOT_K_MAX`.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+#[target_feature(enable = "simd128", enable = "relaxed-simd")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i8_omajor_wasm_relaxed(
+    q: *const i8,
+    qp: *const i8,
+    qn: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    #[inline(always)]
+    unsafe fn hsum(v: v128) -> i32 {
+        i32x4_extract_lane::<0>(v)
+            + i32x4_extract_lane::<1>(v)
+            + i32x4_extract_lane::<2>(v)
+            + i32x4_extract_lane::<3>(v)
+    }
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * k),
+            bq.add((j + 1) * k),
+            bq.add((j + 2) * k),
+            bq.add((j + 3) * k),
+        ];
+        let mut cp = [i32x4_splat(0); 4];
+        let mut cn = [i32x4_splat(0); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let vp = v128_load(qp.add(kk) as *const v128);
+            let vn = v128_load(qn.add(kk) as *const v128);
+            for r in 0..4 {
+                let w = v128_load(rows[r].add(kk) as *const v128);
+                cp[r] = i32x4_relaxed_dot_i8x16_i7x16_add(w, vp, cp[r]);
+                cn[r] = i32x4_relaxed_dot_i8x16_i7x16_add(w, vn, cn[r]);
+            }
+            kk += 16;
+        }
+        let mut s = [0i32; 4];
+        for r in 0..4 {
+            s[r] = hsum(cp[r]) - hsum(cn[r]);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in s.iter_mut().zip(rows.iter()) {
+                *sr += qa * (*row.add(kk) as i32);
+            }
+            kk += 1;
+        }
+        for (r, &sr) in s.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut acc = 0i32;
+        for kk in 0..k {
+            acc += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (acc as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// Pool executor: one participant's contiguous output-row range of the
+/// omajor W8A8 GEMV, running the identical single-threaded inner this build
+/// dispatches — so a partitioned run is bit-identical to the serial run
+/// (every output row is computed whole, by one participant, in the same
+/// reduction order).
+///
+/// # Safety
+/// Called only from `wasm_pool` fork-join: `args` point into buffers the
+/// publisher keeps alive until every participant is done, and participant
+/// ranges are disjoint.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-threads",
+    target_feature = "simd128"
+))]
+pub(crate) unsafe fn pool_exec_gemv(
+    args: &[usize; crate::cpu::wasm_pool::JOB_ARGS],
+    part: usize,
+    parts: usize,
+) {
+    let q = args[0] as *const i8;
+    let scales = args[4] as *const f32;
+    let out = args[5] as *mut f32;
+    let k = args[6];
+    let n = args[7];
+    let scale_a = f32::from_bits(args[8] as u32);
+    let kind = args[9];
+    let start = part * n / parts;
+    let end = (part + 1) * n / parts;
+    if start >= end {
+        return;
+    }
+    let rows = end - start;
+    #[cfg(target_feature = "relaxed-simd")]
+    let (qp, qn) = (args[1] as *const i8, args[2] as *const i8);
+    if kind == 1 {
+        // Packed i4: k/2 bytes per output row; args[1] = the de-interleaved
+        // activation layout (see `matmul_i4_pc_omajor`).
+        let de = args[1] as *const i8;
+        let bq = args[3] as *const u8;
+        let bq_part = bq.add(start * (k / 2));
+        #[cfg(not(target_feature = "relaxed-simd"))]
+        gemv_i4_omajor_wasm(
+            q,
+            de,
+            bq_part,
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+        #[cfg(target_feature = "relaxed-simd")]
+        gemv_i4_omajor_wasm_relaxed(
+            q,
+            de,
+            bq_part,
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+    } else {
+        let bq = args[3] as *const i8;
+        let bq_part = bq.add(start * k);
+        #[cfg(not(target_feature = "relaxed-simd"))]
+        gemv_i8_omajor_wasm(
+            q,
+            bq_part,
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+        #[cfg(target_feature = "relaxed-simd")]
+        gemv_i8_omajor_wasm_relaxed(
+            q,
+            qp,
+            qn,
+            bq_part,
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
+    }
+}
+
+/// Fused per-channel symmetric int8 matmul over an **output-major** weight
+/// with per-token dynamic activation quantization (W8A8). `a` is `[m,k]`
+/// row-major f32, `bq` is `[n,k]` i8 (each output's k-vector contiguous),
+/// `scales` `[n]`, `out` `[m,n]`. m = 1 is the decode GEMV this kernel is
+/// shaped for; small m loops rows through the same core. Output is
+/// **bit-identical** across scalar / x86 AVX2 / NEON / wasm SIMD128: the
+/// accumulation is exact integer, and every target shares the same
+/// quantization and writeback expressions.
+pub fn matmul_i8_pc_omajor(
+    a: &[f32],
+    bq: &[i8],
+    scales: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    assert!(
+        k <= I8_DOT_K_MAX,
+        "matmul_i8_pc_omajor: k {k} exceeds exact-i32 bound {I8_DOT_K_MAX}"
+    );
+    debug_assert_eq!(a.len(), m * k);
+    debug_assert_eq!(bq.len(), k * n);
+    debug_assert_eq!(scales.len(), n);
+    debug_assert!(out.len() >= m * n);
+
+    with_q8_scratch(|q| {
+        q.clear();
+        q.resize(k, 0);
+        for i in 0..m {
+            let arow = &a[i * k..(i + 1) * k];
+            let orow = &mut out[i * n..i * n + n];
+            let scale_a = quantize_row_i8(arow, q);
+            if scale_a == 0.0 {
+                orow.fill(0.0);
+                continue;
+            }
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: NEON is baseline on aarch64; sizes checked above.
+            unsafe {
+                gemv_i8_omajor_neon(
+                    q.as_ptr(),
+                    bq.as_ptr(),
+                    scales.as_ptr(),
+                    orow.as_mut_ptr(),
+                    k,
+                    n,
+                    scale_a,
+                );
+            }
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                not(target_feature = "relaxed-simd")
+            ))]
+            // SAFETY: simd128 gate; sizes checked above. On shared-memory
+            // atomics builds the row range is fork-joined across the
+            // embedder's workers first (bit-identical partition; see
+            // `wasm_pool`); the single-threaded inner is the fallback and
+            // the only path on plain simd128 builds.
+            unsafe {
+                #[cfg(feature = "wasm-threads")]
+                let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                    q.as_ptr() as usize,
+                    0,
+                    0,
+                    bq.as_ptr() as usize,
+                    scales.as_ptr() as usize,
+                    orow.as_mut_ptr() as usize,
+                    k,
+                    n,
+                    scale_a.to_bits() as usize,
+                    0,
+                ]);
+                #[cfg(not(feature = "wasm-threads"))]
+                let pooled = false;
+                if !pooled {
+                    gemv_i8_omajor_wasm(
+                        q.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                    );
+                }
+            }
+            // Relaxed-SIMD build: same function, i8·i7 relaxed dots over the
+            // q⁺/q⁻ split (exact — see `gemv_i8_omajor_wasm_relaxed`).
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                target_feature = "relaxed-simd"
+            ))]
+            // SAFETY: simd128 + relaxed-simd gates; sizes checked above.
+            unsafe {
+                with_gemv_scratch(|qp, qn| {
+                    qp.clear();
+                    qp.resize(k, 0);
+                    qn.clear();
+                    qn.resize(k, 0);
+                    split_q7(q, qp, qn);
+                    #[cfg(feature = "wasm-threads")]
+                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                        q.as_ptr() as usize,
+                        qp.as_ptr() as usize,
+                        qn.as_ptr() as usize,
+                        bq.as_ptr() as usize,
+                        scales.as_ptr() as usize,
+                        orow.as_mut_ptr() as usize,
+                        k,
+                        n,
+                        scale_a.to_bits() as usize,
+                        0,
+                    ]);
+                    #[cfg(not(feature = "wasm-threads"))]
+                    let pooled = false;
+                    if !pooled {
+                        gemv_i8_omajor_wasm_relaxed(
+                            q.as_ptr(),
+                            qp.as_ptr(),
+                            qn.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                    }
+                });
+            }
+            // Same integer function on every other target: AVX2 on x86_64
+            // (runtime-detected), scalar elsewhere / wasm-without-simd128 —
+            // not a numerically different tier.
+            #[cfg(not(any(
+                target_arch = "aarch64",
+                all(target_arch = "wasm32", target_feature = "simd128")
+            )))]
+            {
+                #[cfg(target_arch = "x86_64")]
+                let done = if x86_has_avx2() {
+                    // SAFETY: AVX2 detected; sizes checked above.
+                    unsafe {
+                        gemv_i8_omajor_avx2(
+                            q.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                    }
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let done = false;
+                if !done {
+                    for j in 0..n {
+                        let row = &bq[j * k..j * k + k];
+                        let mut s = 0i32;
+                        for (&qa, &w) in q.iter().zip(row) {
+                            s += qa as i32 * w as i32;
+                        }
+                        orow[j] = (s as f32) * (scale_a * scales[j]);
+                    }
+                }
+            }
+        }
+    })
+}
+
+// ─── Output-major W4A8 int4 GEMV (decode, LUT tier) ────────────────
+// The Q0/LUT tier's decode-critical core (plan 077 item 6): the multiply
+// against a stored weight is replaced by an in-register 16-entry table
+// lookup (`i8x16_swizzle` / `vqtbl1q_s8` — the LUT lives in one SIMD
+// register), and the streamed weight bytes HALVE (4-bit nibble indices,
+// k/2 bytes per output column). The looked-up i8 values then flow through
+// the exact same integer W8A8 dot pipeline as the i8 kernel — extends +
+// `i32x4_dot_i16x8` on the baseline tier, `q⁺/q⁻` relaxed dots on the
+// relaxed tier, plain integer MACs on scalar — so the output stays
+// **bit-identical** across scalar / NEON / wasm on both SIMD tiers. At the
+// bandwidth-bound decode regime items 1–5 reached, halving the bytes is the
+// step-time lever. Linear i4 today (the table is the fixed i4 value grid);
+// the same shape generalizes to per-channel codebooks (non-uniform Q4)
+// without touching the dot pipeline.
+
+/// The i4 value grid as a swizzle table: nibble `0..=7 → 0..=7`,
+/// `8..=15 → −8..=−1` (two's complement), matching the archive's packed-i4
+/// convention (element `l` = nibble `l`, low nibble first).
+pub const I4_VALUES: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1];
+
+/// Nibble `l` of a packed span (low nibble first — the archive convention).
+#[inline]
+fn i4_at(packed: &[u8], l: usize) -> i8 {
+    let byte = packed[l >> 1];
+    let nib = if l & 1 == 0 { byte & 0x0F } else { byte >> 4 };
+    I4_VALUES[nib as usize]
+}
+
+/// NEON inner: one quantized activation row against the output-major packed
+/// i4 weight (`[n, k/2]` bytes), 4 outputs in flight; `vqtbl1q_s8` performs
+/// the 16-entry LUT, then the exact-i32 dot pipeline of the i8 kernel.
+///
+/// # Safety
+/// NEON (baseline aarch64); `q` len `k`, `bq` len `n*k/2`, `scales` len
+/// `n`, `out` len `n`; `k` even, `k ≤ I8_DOT_K_MAX`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn gemv_i4_omajor_neon(
+    q: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::aarch64::*;
+    let kb = k / 2; // bytes per column
+    let table = vld1q_s8(I4_VALUES.as_ptr());
+    let low_mask = vdup_n_u8(0x0F);
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let r0 = bq.add(j * kb);
+        let r1 = bq.add((j + 1) * kb);
+        let r2 = bq.add((j + 2) * kb);
+        let r3 = bq.add((j + 3) * kb);
+        let (mut c0, mut c1, mut c2, mut c3) = (
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+            vdupq_n_s32(0),
+        );
+        let mut kk = 0;
+        while kk < kv {
+            let av = vld1q_s8(q.add(kk));
+            let alo = vget_low_s8(av);
+            let ahi = vget_high_s8(av);
+            let mut unpack = |r: *const u8| -> int8x16_t {
+                let b = vld1_u8(r.add(kk / 2));
+                let lo = vand_u8(b, low_mask);
+                let hi = vshr_n_u8::<4>(b);
+                let z = vzip_u8(lo, hi);
+                vqtbl1q_s8(table, vcombine_u8(z.0, z.1))
+            };
+            let w0 = unpack(r0);
+            c0 = vpadalq_s16(c0, vmull_s8(alo, vget_low_s8(w0)));
+            c0 = vpadalq_s16(c0, vmull_s8(ahi, vget_high_s8(w0)));
+            let w1 = unpack(r1);
+            c1 = vpadalq_s16(c1, vmull_s8(alo, vget_low_s8(w1)));
+            c1 = vpadalq_s16(c1, vmull_s8(ahi, vget_high_s8(w1)));
+            let w2 = unpack(r2);
+            c2 = vpadalq_s16(c2, vmull_s8(alo, vget_low_s8(w2)));
+            c2 = vpadalq_s16(c2, vmull_s8(ahi, vget_high_s8(w2)));
+            let w3 = unpack(r3);
+            c3 = vpadalq_s16(c3, vmull_s8(alo, vget_low_s8(w3)));
+            c3 = vpadalq_s16(c3, vmull_s8(ahi, vget_high_s8(w3)));
+            kk += 16;
+        }
+        let mut sums = [
+            vaddvq_s32(c0),
+            vaddvq_s32(c1),
+            vaddvq_s32(c2),
+            vaddvq_s32(c3),
+        ];
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            sums[0] += qa * i4_at(core::slice::from_raw_parts(r0, kb), kk) as i32;
+            sums[1] += qa * i4_at(core::slice::from_raw_parts(r1, kb), kk) as i32;
+            sums[2] += qa * i4_at(core::slice::from_raw_parts(r2, kb), kk) as i32;
+            sums[3] += qa * i4_at(core::slice::from_raw_parts(r3, kb), kk) as i32;
+            kk += 1;
+        }
+        for (r, &sv) in sums.iter().enumerate() {
+            *out.add(j + r) = (sv as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+        let mut sv = 0i32;
+        for kk in 0..k {
+            sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+        }
+        *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// wasm SIMD128 inner (baseline tier). The activation row arrives
+/// **de-interleaved** (`de = [q_even(k/2) | q_odd(k/2)]`, built once per
+/// token and amortized over all `n` rows), so the packed weight needs no
+/// lane shuffle: one 16-byte load yields 32 weights — the low nibbles pair
+/// with the even activations, the high nibbles with the odd — through two
+/// `i8x16_swizzle` LUT hits into the exact `i32x4_dot_i16x8` pipeline.
+/// Integer sums are associative, so the pairing order leaves the output
+/// bit-identical to the sequential scalar specification.
+///
+/// # Safety
+/// simd128 enabled; `q` len `k` (scalar tail), `de` len `k`, `bq` len
+/// `n*k/2`, `scales` len `n`, `out` len `n`; `k` even, `k ≤ I8_DOT_K_MAX`.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    not(target_feature = "relaxed-simd")
+))]
+#[target_feature(enable = "simd128")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i4_omajor_wasm(
+    q: *const i8,
+    de: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    let kb = k / 2;
+    let (qe, qo) = (de, de.add(kb));
+    let table = v128_load(I4_VALUES.as_ptr() as *const v128);
+    let kv = k & !31;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * kb),
+            bq.add((j + 1) * kb),
+            bq.add((j + 2) * kb),
+            bq.add((j + 3) * kb),
+        ];
+        let mut c = [i32x4_splat(0); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let h = kk / 2; // 16 packed bytes = weights kk..kk+32
+            let ae = v128_load(qe.add(h) as *const v128);
+            let ao = v128_load(qo.add(h) as *const v128);
+            let ae_lo = i16x8_extend_low_i8x16(ae);
+            let ae_hi = i16x8_extend_high_i8x16(ae);
+            let ao_lo = i16x8_extend_low_i8x16(ao);
+            let ao_hi = i16x8_extend_high_i8x16(ao);
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let b = v128_load(row.add(h) as *const v128);
+                let we = i8x16_swizzle(table, v128_and(b, u8x16_splat(0x0F)));
+                let wo = i8x16_swizzle(table, u8x16_shr(b, 4));
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(ae_lo, i16x8_extend_low_i8x16(we)));
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(ae_hi, i16x8_extend_high_i8x16(we)));
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(ao_lo, i16x8_extend_low_i8x16(wo)));
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(ao_hi, i16x8_extend_high_i8x16(wo)));
+            }
+            kk += 32;
+        }
+        let mut sums = [0i32; 4];
+        for (sr, cr) in sums.iter_mut().zip(c.iter()) {
+            *sr = i32x4_extract_lane::<0>(*cr)
+                + i32x4_extract_lane::<1>(*cr)
+                + i32x4_extract_lane::<2>(*cr)
+                + i32x4_extract_lane::<3>(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * i4_at(core::slice::from_raw_parts(*row, kb), kk) as i32;
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+        let mut sv = 0i32;
+        for kk in 0..k {
+            sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+        }
+        *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// wasm relaxed-SIMD inner — the same function via `q⁺/q⁻` i7-split relaxed
+/// dots over the de-interleaved layout
+/// (`de = [qe⁺ | qo⁺ | qe⁻ | qo⁻]`, each `k/2`).
+///
+/// # Safety
+/// As `gemv_i4_omajor_wasm`, with `de` len `2k`.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    target_feature = "relaxed-simd"
+))]
+#[target_feature(enable = "simd128", enable = "relaxed-simd")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i4_omajor_wasm_relaxed(
+    q: *const i8,
+    de: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    #[inline(always)]
+    unsafe fn hsum(v: v128) -> i32 {
+        i32x4_extract_lane::<0>(v)
+            + i32x4_extract_lane::<1>(v)
+            + i32x4_extract_lane::<2>(v)
+            + i32x4_extract_lane::<3>(v)
+    }
+    let kb = k / 2;
+    let (qep, qop, qen, qon) = (de, de.add(kb), de.add(2 * kb), de.add(3 * kb));
+    let table = v128_load(I4_VALUES.as_ptr() as *const v128);
+    let kv = k & !31;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * kb),
+            bq.add((j + 1) * kb),
+            bq.add((j + 2) * kb),
+            bq.add((j + 3) * kb),
+        ];
+        let mut cp = [i32x4_splat(0); 4];
+        let mut cn = [i32x4_splat(0); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let h = kk / 2;
+            let vep = v128_load(qep.add(h) as *const v128);
+            let vop = v128_load(qop.add(h) as *const v128);
+            let ven = v128_load(qen.add(h) as *const v128);
+            let von = v128_load(qon.add(h) as *const v128);
+            for r in 0..4 {
+                let b = v128_load(rows[r].add(h) as *const v128);
+                let we = i8x16_swizzle(table, v128_and(b, u8x16_splat(0x0F)));
+                let wo = i8x16_swizzle(table, u8x16_shr(b, 4));
+                cp[r] = i32x4_relaxed_dot_i8x16_i7x16_add(we, vep, cp[r]);
+                cp[r] = i32x4_relaxed_dot_i8x16_i7x16_add(wo, vop, cp[r]);
+                cn[r] = i32x4_relaxed_dot_i8x16_i7x16_add(we, ven, cn[r]);
+                cn[r] = i32x4_relaxed_dot_i8x16_i7x16_add(wo, von, cn[r]);
+            }
+            kk += 32;
+        }
+        let mut sums = [0i32; 4];
+        for r in 0..4 {
+            sums[r] = hsum(cp[r]) - hsum(cn[r]);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * i4_at(core::slice::from_raw_parts(*row, kb), kk) as i32;
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+        let mut sv = 0i32;
+        for kk in 0..k {
+            sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+        }
+        *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// Fused per-channel symmetric **int4** matmul over an output-major packed
+/// weight with per-token dynamic activation quantization (W4A8). `a` is
+/// `[m,k]` row-major f32, `bq` is `[n, k/2]` packed nibbles (element `l` of
+/// column `j` = nibble `l` of its `k/2`-byte span, low nibble first),
+/// `scales` `[n]`, `out` `[m,n]`. Streams **half** the weight bytes of the
+/// i8 kernel; all-integer accumulation keeps it bit-identical across
+/// scalar / x86 AVX2 / NEON / wasm on both SIMD tiers. `k` must be even
+/// (loud).
+pub fn matmul_i4_pc_omajor(
+    a: &[f32],
+    bq: &[u8],
+    scales: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    assert!(
+        k.is_multiple_of(2),
+        "matmul_i4_pc_omajor: k must be even (packed nibbles)"
+    );
+    assert!(
+        k <= I8_DOT_K_MAX,
+        "matmul_i4_pc_omajor: k {k} exceeds exact-i32 bound {I8_DOT_K_MAX}"
+    );
+    debug_assert_eq!(a.len(), m * k);
+    debug_assert_eq!(bq.len(), k * n / 2);
+    debug_assert_eq!(scales.len(), n);
+    debug_assert!(out.len() >= m * n);
+
+    with_q8_scratch(|q| {
+        q.clear();
+        q.resize(k, 0);
+        for i in 0..m {
+            let arow = &a[i * k..(i + 1) * k];
+            let orow = &mut out[i * n..i * n + n];
+            let scale_a = quantize_row_i8(arow, q);
+            if scale_a == 0.0 {
+                orow.fill(0.0);
+                continue;
+            }
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: NEON is baseline on aarch64; sizes checked above.
+            unsafe {
+                gemv_i4_omajor_neon(
+                    q.as_ptr(),
+                    bq.as_ptr(),
+                    scales.as_ptr(),
+                    orow.as_mut_ptr(),
+                    k,
+                    n,
+                    scale_a,
+                );
+            }
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            // SAFETY: simd128 gate; sizes checked above. The activation row
+            // is de-interleaved once per token (amortized over all n rows) so
+            // the packed nibbles need no lane shuffle in the inner loop; on
+            // shared-memory builds the rows fork-join across the embedder
+            // pool (kind 1). Integer sums keep any layout bit-identical.
+            unsafe {
+                with_gemv_scratch(|de, _unused| {
+                    let kb = k / 2;
+                    #[cfg(not(target_feature = "relaxed-simd"))]
+                    {
+                        // de = [q_even | q_odd]
+                        de.clear();
+                        de.resize(k, 0);
+                        for (t, pair) in q.chunks_exact(2).enumerate() {
+                            de[t] = pair[0];
+                            de[kb + t] = pair[1];
+                        }
+                    }
+                    #[cfg(target_feature = "relaxed-simd")]
+                    {
+                        // de = [qe⁺ | qo⁺ | qe⁻ | qo⁻]
+                        de.clear();
+                        de.resize(2 * k, 0);
+                        for (t, pair) in q.chunks_exact(2).enumerate() {
+                            de[t] = pair[0].max(0);
+                            de[kb + t] = pair[1].max(0);
+                            de[2 * kb + t] = (-pair[0]).max(0);
+                            de[3 * kb + t] = (-pair[1]).max(0);
+                        }
+                    }
+                    #[cfg(feature = "wasm-threads")]
+                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                        q.as_ptr() as usize,
+                        de.as_ptr() as usize,
+                        0,
+                        bq.as_ptr() as usize,
+                        scales.as_ptr() as usize,
+                        orow.as_mut_ptr() as usize,
+                        k,
+                        n,
+                        scale_a.to_bits() as usize,
+                        1,
+                    ]);
+                    #[cfg(not(feature = "wasm-threads"))]
+                    let pooled = false;
+                    if !pooled {
+                        #[cfg(not(target_feature = "relaxed-simd"))]
+                        gemv_i4_omajor_wasm(
+                            q.as_ptr(),
+                            de.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                        #[cfg(target_feature = "relaxed-simd")]
+                        gemv_i4_omajor_wasm_relaxed(
+                            q.as_ptr(),
+                            de.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                    }
+                });
+            }
+            // Same integer function on every other target: AVX2 on x86_64
+            // (runtime-detected; the activation is de-interleaved once per
+            // token exactly as the wasm baseline), scalar elsewhere.
+            #[cfg(not(any(
+                target_arch = "aarch64",
+                all(target_arch = "wasm32", target_feature = "simd128")
+            )))]
+            {
+                #[cfg(target_arch = "x86_64")]
+                let done = if x86_has_avx2() {
+                    with_gemv_scratch(|de, _unused| {
+                        let kb = k / 2;
+                        de.clear();
+                        de.resize(k, 0);
+                        for (t, pair) in q.chunks_exact(2).enumerate() {
+                            de[t] = pair[0];
+                            de[kb + t] = pair[1];
+                        }
+                        // SAFETY: AVX2 detected; sizes checked above.
+                        unsafe {
+                            gemv_i4_omajor_avx2(
+                                q.as_ptr(),
+                                de.as_ptr(),
+                                bq.as_ptr(),
+                                scales.as_ptr(),
+                                orow.as_mut_ptr(),
+                                k,
+                                n,
+                                scale_a,
+                            );
+                        }
+                    });
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let done = false;
+                if !done {
+                    for j in 0..n {
+                        let row = &bq[j * (k / 2)..(j + 1) * (k / 2)];
+                        let mut sv = 0i32;
+                        for (kk, &qa) in q.iter().enumerate() {
+                            sv += qa as i32 * i4_at(row, kk) as i32;
+                        }
+                        orow[j] = (sv as f32) * (scale_a * scales[j]);
+                    }
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `vec!` via alloc so the suite also builds/runs on no_std targets
+    // (wasm32-wasip1 under wasmtime — the deployed-kernel test lane).
+    use alloc::vec;
 
     #[test]
     fn matmul_i8_per_channel_matches_naive() {
@@ -2323,6 +3879,267 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Multi-threaded fork-join vs serial, bit for bit — run on
+    /// `wasm32-wasip1-threads` under wasmtime (`-S threads`), where std
+    /// threads drive the exact atomics job queue the browser's web workers
+    /// will. Proves the static row partition preserves the per-output
+    /// reduction order (structural determinism), not just approximate
+    /// results.
+    #[test]
+    #[cfg(all(
+        feature = "std",
+        feature = "wasm-threads",
+        target_arch = "wasm32",
+        target_feature = "simd128"
+    ))]
+    fn parallel_gemv_matches_serial_bitwise() {
+        use crate::cpu::wasm_pool;
+        // Above the pool's latency floor (k·n = 512 KiB ≥ 256 KiB), with
+        // n not a multiple of the participant count.
+        let (m, k, n) = (1usize, 512usize, 1027usize);
+        let a: Vec<f32> = (0..k).map(|i| ((i % 31) as f32 - 15.0) * 0.041).collect();
+        let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 253) - 126) as i8).collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.004 + (j as f32) * 1e-6).collect();
+
+        // Serial baselines: no workers registered yet.
+        let mut serial = vec![0f32; n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut serial, m, k, n);
+        let bq4: Vec<u8> = (0..k * n / 2).map(|i| (i % 247) as u8).collect();
+        let mut serial4 = vec![0f32; n];
+        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut serial4, m, k, n);
+
+        let handles: Vec<_> = (0..3u32)
+            .map(|i| std::thread::spawn(move || wasm_pool::hologram_worker_run(i)))
+            .collect();
+        while wasm_pool::hologram_pool_workers() < 3 {
+            std::thread::yield_now();
+        }
+
+        let mut par = vec![f32::NAN; n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut par, m, k, n);
+        for (j, (p, sv)) in par.iter().zip(&serial).enumerate() {
+            assert_eq!(
+                p.to_bits(),
+                sv.to_bits(),
+                "i8 output {j}: parallel {p} vs serial {sv}"
+            );
+        }
+        let mut par4 = vec![f32::NAN; n];
+        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut par4, m, k, n);
+        for (j, (p, sv)) in par4.iter().zip(&serial4).enumerate() {
+            assert_eq!(
+                p.to_bits(),
+                sv.to_bits(),
+                "i4 output {j}: parallel {p} vs serial {sv}"
+            );
+        }
+
+        wasm_pool::hologram_pool_shutdown();
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn exp_det_simd_matches_scalar_spec_bitwise() {
+        // Dense grid + edge cases; the in-place (SIMD) form must equal the
+        // scalar specification bit-for-bit on every target this compiles
+        // for — the determinism contract of the decode softmax's exp.
+        let mut xs: Vec<f32> = Vec::new();
+        let mut v = -90.0f32;
+        while v <= 90.0 {
+            xs.push(v);
+            v += 0.037;
+        }
+        xs.extend_from_slice(&[
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NAN,
+            0.0,
+            -0.0,
+            EXP_F32_LO,
+            EXP_F32_HI,
+            -87.3,
+            88.9,
+            1e-8,
+            -1e-8,
+        ]);
+        let want: Vec<f32> = xs.iter().map(|&x| exp_f32_det(x)).collect();
+        let mut got = xs.clone();
+        simd_f32_exp_inplace(&mut got);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(
+                g.to_bits(),
+                w.to_bits(),
+                "x = {} (idx {i}): {g} vs {w}",
+                xs[i]
+            );
+        }
+    }
+
+    #[test]
+    fn exp_det_accuracy_and_edges() {
+        // Accuracy against libm over the working range, plus the exact
+        // edge semantics: exp(0) = 1 exactly, underflow/−∞/NaN → 0.0.
+        let mut v = -87.0f32;
+        let mut max_rel = 0f64;
+        while v <= 88.0 {
+            let e = f64::from(exp_f32_det(v));
+            let r = f64::from(libm::expf(v));
+            if r > 0.0 {
+                max_rel = max_rel.max(((e - r) / r).abs());
+            }
+            v += 0.0173;
+        }
+        assert!(max_rel < 2e-6, "max rel err {max_rel:.3e}");
+        assert_eq!(exp_f32_det(0.0).to_bits(), 1.0f32.to_bits());
+        assert_eq!(exp_f32_det(f32::NEG_INFINITY).to_bits(), 0.0f32.to_bits());
+        assert_eq!(exp_f32_det(f32::NAN).to_bits(), 0.0f32.to_bits());
+        assert_eq!(exp_f32_det(-1000.0).to_bits(), 0.0f32.to_bits());
+    }
+
+    #[test]
+    fn matmul_i4_pc_omajor_matches_integer_reference() {
+        // The W4A8 LUT-tier kernel against an independent integer
+        // reference (nibble → value grid → exact i32 dot → one fused
+        // writeback): bit equality on every target this compiles for,
+        // including the k-tail (k ≡ 2 mod 16) and multi-row m.
+        for &(m, k, n) in &[
+            (1usize, 64usize, 48usize),
+            (1, 2048, 64),
+            (1, 130, 33),
+            (1, 18, 3),
+            (2, 96, 17),
+            (4, 34, 5),
+        ] {
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| ((i % 29) as f32 - 14.0) * 0.37)
+                .collect();
+            let bq: Vec<u8> = (0..k * n / 2).map(|i| (i % 251) as u8).collect();
+            let scales: Vec<f32> = (0..n).map(|j| 0.02 + (j as f32) * 0.001).collect();
+            let mut got = vec![0f32; m * n];
+            matmul_i4_pc_omajor(&a, &bq, &scales, &mut got, m, k, n);
+            let kb = k / 2;
+            for i in 0..m {
+                let row = &a[i * k..(i + 1) * k];
+                let mut amax = 0f32;
+                for &v in row {
+                    amax = amax.max(v.abs());
+                }
+                let inv = 127.0 / amax;
+                let scale_a = amax / 127.0;
+                let q: Vec<i32> = row
+                    .iter()
+                    .map(|&v| {
+                        let t = v * inv;
+                        let r = if t >= 0.0 {
+                            (t + 0.5) as i32
+                        } else {
+                            (t - 0.5) as i32
+                        };
+                        r.clamp(-127, 127)
+                    })
+                    .collect();
+                for j in 0..n {
+                    let col = &bq[j * kb..(j + 1) * kb];
+                    let mut sv = 0i32;
+                    for (kk, &qa) in q.iter().enumerate() {
+                        let byte = col[kk >> 1];
+                        let nib = if kk & 1 == 0 { byte & 0x0F } else { byte >> 4 };
+                        let w = if nib < 8 { nib as i32 } else { nib as i32 - 16 };
+                        sv += qa * w;
+                    }
+                    let want = (sv as f32) * (scale_a * scales[j]);
+                    assert_eq!(
+                        got[i * n + j].to_bits(),
+                        want.to_bits(),
+                        "{m}x{k}x{n} ({i},{j}): {} vs {want}",
+                        got[i * n + j]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn matmul_i8_pc_omajor_matches_integer_reference() {
+        // Decode GEMV (m = 1, various k/n incl. non-multiples of 16/4),
+        // small-m, and tiny edge shapes. The reference restates the W8A8
+        // spec independently (amax → inv → trunc-round → exact i32 dot →
+        // one fused writeback) and the comparison is **bit equality** —
+        // the kernel's integer accumulation must make SIMD order
+        // invisible on every target this test compiles for.
+        for &(m, k, n) in &[
+            (1usize, 64usize, 48usize),
+            (1, 2048, 64),
+            (1, 129, 33),
+            (1, 16, 3),
+            (1, 7, 1),
+            (2, 100, 17),
+            (4, 31, 5),
+        ] {
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| ((i % 29) as f32 - 14.0) * 0.37)
+                .collect();
+            let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+            let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 0.001).collect();
+            let mut got = vec![0f32; m * n];
+            matmul_i8_pc_omajor(&a, &bq, &scales, &mut got, m, k, n);
+            for i in 0..m {
+                let row = &a[i * k..(i + 1) * k];
+                let mut amax = 0f32;
+                for &v in row {
+                    amax = amax.max(v.abs());
+                }
+                if amax == 0.0 {
+                    for j in 0..n {
+                        assert_eq!(got[i * n + j].to_bits(), 0f32.to_bits());
+                    }
+                    continue;
+                }
+                let inv = 127.0 / amax;
+                let scale_a = amax / 127.0;
+                let q: Vec<i32> = row
+                    .iter()
+                    .map(|&v| {
+                        let t = v * inv;
+                        let r = if t >= 0.0 {
+                            (t + 0.5) as i32
+                        } else {
+                            (t - 0.5) as i32
+                        };
+                        r.clamp(-127, 127)
+                    })
+                    .collect();
+                for j in 0..n {
+                    let mut s = 0i32;
+                    for kk in 0..k {
+                        s += q[kk] * bq[j * k + kk] as i32;
+                    }
+                    let want = (s as f32) * (scale_a * scales[j]);
+                    assert_eq!(
+                        got[i * n + j].to_bits(),
+                        want.to_bits(),
+                        "{m}x{k}x{n} ({i},{j}): {} vs {want}",
+                        got[i * n + j]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn matmul_i8_pc_omajor_zero_row_is_zero() {
+        let a = vec![0f32; 2 * 40];
+        let bq: Vec<i8> = (0..40 * 6).map(|i| (i % 100) as i8).collect();
+        let scales = vec![0.5f32; 6];
+        let mut out = vec![f32::NAN; 2 * 6];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut out, 2, 40, 6);
+        for v in out {
+            assert_eq!(v.to_bits(), 0f32.to_bits());
         }
     }
 

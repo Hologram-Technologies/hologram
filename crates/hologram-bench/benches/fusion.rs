@@ -100,6 +100,10 @@ fn bench_dequant_matmul(c: &mut Criterion) {
         dtype: DTYPE_F32,
         scale_bits: scale,
         zero_point: 0,
+        bq_omajor: false,
+        act_quant: 0,
+        act: 0,
+        residual: MatMulDequantCall::NO_RESIDUAL,
     });
 
     c.bench_function("dequant_then_matmul_256 (unfused)", |b| {

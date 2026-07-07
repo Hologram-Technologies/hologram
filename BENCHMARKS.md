@@ -139,6 +139,38 @@ never consults them. Per-execute dispatch is unchanged:
 | tiered 6-op chain | 157 ns |
 | 6-op cached re-execute | 169 ns |
 
+## Decode int8 GEMV (output-major W8A8, wasm SIMD128 lane)
+
+Single-token decode (m = 1) at representative projection shapes sampled
+across model scales — **samples only**: the kernel and the compile-time
+fusion are shape-generic. Reported as **GB/s of int8 weight bytes streamed**
+(the numerator of the downstream bandwidth-ratio witness). wasmtime +
+`-Ctarget-feature=+simd128`, release; `omajor_w8a8` is the decode kernel
+(output-major weight, per-token W8A8, exact integer accumulation),
+`kn_w8a32` the prior fused path at the same shapes.
+
+| shape (1×k×n) | omajor W8A8 | prior [k,n] W8A32 | ratio |
+|---|---|---|---|
+| 1×896×896 | 46 µs, 17.4 GB/s | 139 µs, 5.8 GB/s | ~3.0× |
+| 1×896×4864 | 263 µs, 16.6 GB/s | 786 µs, 5.5 GB/s | ~3.0× |
+| 1×4864×896 | 227 µs, 19.2 GB/s | 745 µs, 5.9 GB/s | ~3.3× |
+| 1×1536×8960 | 739 µs, 18.6 GB/s | 2811 µs, 4.9 GB/s | ~3.8× |
+| 1×3584×18944 | 5917 µs, 11.5 GB/s | 17391 µs, 3.9 GB/s | ~2.9× |
+
+The largest shape drops toward DRAM bandwidth as the weight leaves cache —
+the kernel is entering the bandwidth-bound regime. The relaxed-SIMD build
+(`+relaxed-simd`, wasmtime `-W relaxed-simd=y`) computes the same exact
+function via `i32x4_relaxed_dot_i8x16_i7x16_add` over a `q⁺ − q⁻` i7 split
+and lifts the 7B shape to 14.5 GB/s (+26%); cache-resident shapes reach
+17.6–19.6 GB/s. Output is bit-identical
+across scalar / NEON / wasm (exact integer accumulation). These lanes are
+iteration signals; acceptance is witnessed downstream by hologram-ai's
+performance contract, which exercises the deployed browser build. Re-run:
+`cargo bench -p hologram-bench --bench decode_gemv` (native) and
+`RUSTFLAGS="-Ctarget-feature=+simd128" cargo run --release --example
+wasm_matmul_timing --target wasm32-wasip1 -p hologram-backend --features
+std,cpu` under wasmtime.
+
 ## Regression gate (CI)
 
 PRs to `main` are gated by [`.github/workflows/perf-gate.yml`](.github/workflows/perf-gate.yml).

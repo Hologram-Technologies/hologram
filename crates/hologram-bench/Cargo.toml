@@ -38,6 +38,10 @@ name = "decode_step"
 harness = false
 
 [[bench]]
+name = "decode_gemv"
+harness = false
+
+[[bench]]
 name = "content_reuse"
 harness = false
 

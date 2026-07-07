@@ -1611,3 +1611,906 @@ fn wl1_constant_weight_is_panel_packed_and_conforms() {
     );
     assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
 }
+
+// ─── WL-2: constant int8 weight → compile-time omajor W8A8 fusion ──────────
+//
+// The quantized analog of WL-1: a constant symmetric per-channel i8 weight
+// uniquely consumed by `Dequantize → MatMul(B)` at a decode shape (m ≤ 4)
+// fuses **at compile time** into one `MatMulDequant { bq_omajor, W8A8 }`,
+// with the constant transposed to output-major `[n,k]` in the archive. This
+// proves: (1) the fusion FIRES in the archive (no standalone Dequantize /
+// MatMul remains, nothing left for load-time fusion); (2) it executes the
+// defined W8A8 function — output is **bit-identical** to an independent
+// integer reference computed from the original `[k,n]` bytes, which also
+// witnesses the transposition (an untransposed read could not reproduce it).
+
+/// Independent W8A8 reference: per-row `scale = max|a|/127`, trunc-cast
+/// round-half-away, exact i32 dots against the ORIGINAL `[k,n]` weight, one
+/// fused writeback — the same function the kernel defines.
+fn ref_w8a8(a: &[f32], wq: &[i8], scales: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    let mut out = vec![0f32; m * n];
+    for i in 0..m {
+        let row = &a[i * k..(i + 1) * k];
+        let mut amax = 0f32;
+        for &v in row {
+            amax = amax.max(v.abs());
+        }
+        if amax == 0.0 {
+            continue;
+        }
+        let inv = 127.0 / amax;
+        let sa = amax / 127.0;
+        let q: Vec<i32> = row
+            .iter()
+            .map(|&v| {
+                let t = v * inv;
+                let r = if t >= 0.0 {
+                    (t + 0.5) as i32
+                } else {
+                    (t - 0.5) as i32
+                };
+                r.clamp(-127, 127)
+            })
+            .collect();
+        for j in 0..n {
+            let mut s = 0i32;
+            for kk in 0..k {
+                s += q[kk] * wq[kk * n + j] as i32;
+            }
+            out[i * n + j] = (s as f32) * (sa * scales[j]);
+        }
+    }
+    out
+}
+
+/// Build the `input a [m,k] · dequant(const Wq [k,n] i8, per-channel axis 1)`
+/// graph. `zp_value` lets the negative test break the symmetric-zps condition.
+fn const_i8_matmul_graph(
+    m: u64,
+    k: u64,
+    n: u64,
+    wq: &[i8],
+    scales: &[f32],
+    zp_value: i32,
+) -> Graph {
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I8: u8 = 2;
+    let mut g = Graph::new();
+    let sa = g.shape_registry_mut().intern(ShapeDescriptor::rank2(m, k));
+    let sw = g.shape_registry_mut().intern(ShapeDescriptor::rank2(k, n));
+    let so = g.shape_registry_mut().intern(ShapeDescriptor::rank2(m, n));
+    let sv = g.shape_registry_mut().intern(ShapeDescriptor::rank1(n));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq.iter().map(|&x| x as u8).collect(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: (0..n).flat_map(|_| zp_value.to_le_bytes()).collect(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1, // per output column: channels = n, inner = 1
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(out);
+    g
+}
+
+#[test]
+fn wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::{mm_act_quant, KernelCall};
+
+    let (m, k, n) = (1usize, 67usize, 33usize); // decode shape, off-multiples
+    let a = fill(m * k, 0xA1);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.005 + (j as f32) * 0.0007).collect();
+
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    // (1) Fusion fired at compile time: one omajor W8A8 MatMulDequant in the
+    // archive; the Dequantize and plain MatMul are gone.
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    let fused: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            KernelCall::MatMulDequant(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fused.len(), 1, "expected exactly one fused call");
+    assert!(fused[0].bq_omajor, "weight must be output-major");
+    assert_eq!(fused[0].act_quant, mm_act_quant::W8A8_TOKEN_SYM);
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, KernelCall::Dequantize(_) | KernelCall::MatMul(_))),
+        "standalone dequant/matmul must be absorbed at compile time"
+    );
+
+    // (2) The loaded schedule serves the archive-carried fused call (the
+    // counter reports fused ops present, whether compile- or load-fused),
+    // and execution is bit-identical to the independent W8A8 reference over
+    // the ORIGINAL [k,n] bytes — which also witnesses the archive-side
+    // transposition.
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(sess.dequant_fused_count(), 1);
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    let want = ref_w8a8(&a, &wq, &scales, m, k, n);
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(
+            g.to_bits(),
+            w.to_bits(),
+            "output {i}: {g} vs reference {w} (must be bit-identical)"
+        );
+    }
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
+}
+
+#[test]
+fn wl2_prefill_m_keeps_runtime_w8a32_fusion() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+
+    // m = 8 is above the decode gate: the archive must carry the unfused
+    // Dequantize + MatMul pair (load-time fusion then serves it as W8A32
+    // over the untransposed [k,n] weight) and conform to the f32 reference.
+    let (m, k, n) = (8usize, 40usize, 24usize);
+    let a = fill(m * k, 0xB2);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 251) - 125) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 0.001).collect();
+
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    assert!(
+        calls.iter().any(|c| matches!(c, KernelCall::Dequantize(_)))
+            && calls.iter().any(|c| matches!(c, KernelCall::MatMul(_))),
+        "prefill shape must not compile-time fuse"
+    );
+
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(sess.dequant_fused_count(), 1, "load-time fusion must fire");
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    // W8A32 reference: dense dequantized weight, f64-accumulated matmul.
+    let wf: Vec<f32> = (0..k * n).map(|i| wq[i] as f32 * scales[i % n]).collect();
+    let want = ref_matmul(&a, &wf, m, k, n);
+    let scale = want.iter().fold(0f64, |mx, &x| mx.max(f64::from(x).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 1e-4, "W8A32 path diverged (err {err:.3e})");
+}
+
+#[test]
+fn wl2_asymmetric_zero_points_do_not_compile_time_fuse() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+
+    // Nonzero per-channel zero-points break the symmetric condition: the
+    // compiler must leave the pair for the (W8A32) load-time fusion.
+    let (m, k, n) = (1u64, 32u64, 16u64);
+    let wq: Vec<i8> = (0..(k * n) as usize).map(|i| (i % 100) as i8).collect();
+    let scales: Vec<f32> = (0..n as usize).map(|_| 0.02).collect();
+    let g = const_i8_matmul_graph(m, k, n, &wq, &scales, 3);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, KernelCall::MatMulDequant(d) if d.bq_omajor || d.act_quant != 0)),
+        "asymmetric weights must not take the W8A8 omajor path"
+    );
+}
+
+#[test]
+fn dynamic_quantized_weight_with_activation_keeps_dequant_fusion() {
+    // `dequant(dynamic Wq) → matmul → relu`: the dequant→matmul fusion runs
+    // first (the quantized weight streams in place, the dense f32 weight is
+    // never pool-materialized), then the epilogue pass absorbs the relu into
+    // the SAME fused call — the whole chain is one `MatMulDequant` with a
+    // fused activation. Before the ordering fix the epilogue fused the plain
+    // matmul first and blocked the dequant fusion entirely.
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I8: u8 = 2;
+    let (m, k, n) = (2usize, 24usize, 12usize);
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let wi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: sw,
+    });
+    g.add_input(wi);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(wi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.05f32.to_bits(),
+            zero_point: 0,
+            axis: -1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let act = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(act)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    // The dequant fusion fired (quantized weight streamed in place)...
+    assert_eq!(
+        sess.dequant_fused_count(),
+        1,
+        "dequant→matmul fusion must win over the epilogue"
+    );
+    // ...no plain-matmul epilogue call absorbed the matmul...
+    assert_eq!(sess.fused_count(), 0, "no MatMulActivation may appear");
+    // ...and the activation was absorbed into the fused dequant-matmul.
+    assert_eq!(
+        sess.dequant_epilogue_fused_count(),
+        1,
+        "the relu must fuse into the MatMulDequant epilogue"
+    );
+
+    let a = fill(m * k, 0xC3);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 200) - 100) as i8).collect();
+    let w_bytes: Vec<u8> = wq.iter().map(|&x| x as u8).collect();
+    let got = le_to_f32(
+        &sess
+            .execute(&[
+                InputBuffer {
+                    bytes: &f32_to_le(&a),
+                },
+                InputBuffer { bytes: &w_bytes },
+            ])
+            .unwrap()[0]
+            .bytes,
+    );
+    let wf: Vec<f32> = wq.iter().map(|&q| q as f32 * 0.05).collect();
+    let want: Vec<f32> = ref_matmul(&a, &wf, m, k, n)
+        .into_iter()
+        .map(|v| v.max(0.0))
+        .collect();
+    let scale = want.iter().fold(0f64, |mx, &x| mx.max(f64::from(x).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 1e-4, "fused path diverged (err {err:.3e})");
+}
+
+#[test]
+fn wl2_omajor_w8a8_relu_fuses_epilogue_bit_exact() {
+    // Compile-time-fused omajor W8A8 archive followed by a relu: the
+    // load-time epilogue pass absorbs the relu into the SAME archive-carried
+    // fused call, and execution stays bit-identical (relu = x.max(0.0) is
+    // exact on bits) to relu(W8A8 reference).
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I8: u8 = 2;
+    let (m, k, n) = (1usize, 40usize, 20usize);
+    let a = fill(m * k, 0xD4);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 240) - 120) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 0.0004).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq.iter().map(|&x| x as u8).collect(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(DTYPE_I8),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let act = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(act)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(sess.dequant_fused_count(), 1);
+    assert_eq!(sess.dequant_epilogue_fused_count(), 1);
+    assert_eq!(sess.fused_count(), 0);
+
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    let want: Vec<f32> = ref_w8a8(&a, &wq, &scales, m, k, n)
+        .into_iter()
+        .map(|v| v.max(0.0))
+        .collect();
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(g.to_bits(), w.to_bits(), "output {i}: {g} vs {w}");
+    }
+}
+
+#[test]
+fn wl2_omajor_w8a8_bias_gelu_is_one_call() {
+    // The decode MLP epilogue `gelu(A·dequant(Bq) + bias)` collapses to ONE
+    // archive-carried fused call: dequant fuses at compile time, then the
+    // load-time epilogue pass absorbs the bias add AND the gelu (three-op
+    // chain) into the same MatMulDequant.
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I8: u8 = 2;
+    let (m, k, n) = (1usize, 32usize, 16usize);
+    let a = fill(m * k, 0xE5);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 220) - 110) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|_| 0.02).collect();
+    let bias: Vec<f32> = (0..n).map(|j| (j as f32 - 8.0) * 0.05).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq.iter().map(|&x| x as u8).collect(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(DTYPE_I8),
+        shape: sv,
+    });
+    let bc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&bias),
+        dtype: DTypeId(DTYPE_F32),
+        shape: so, // [1, n] — same element count as the matmul output
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let add = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Node(mm), InputSource::Constant(bc)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let act = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Gelu),
+        inputs: SmallVec::from_iter([InputSource::Node(add)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(act)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(sess.dequant_fused_count(), 1);
+    assert_eq!(
+        sess.dequant_epilogue_fused_count(),
+        1,
+        "bias + gelu must fuse into the dequant-matmul"
+    );
+    assert_eq!(sess.fused_count(), 0);
+    assert_eq!(sess.add_activation_fused_count(), 0);
+
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    // Reference: gelu(W8A8 + bias); tanh-gelu in f64, tolerance comparison.
+    let want: Vec<f64> = ref_w8a8(&a, &wq, &scales, m, k, n)
+        .into_iter()
+        .zip(&bias)
+        .map(|(v, &b)| {
+            let x = f64::from(v) + f64::from(b);
+            0.5 * x * (1.0 + (0.797_884_6 * (x + 0.044_715 * x * x * x)).tanh())
+        })
+        .collect();
+    let scale = want.iter().fold(0f64, |mx, &x| mx.max(x.abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - wv).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 1e-4, "fused bias+gelu diverged (err {err:.3e})");
+}
+
+// ─── WL-3: constant packed-i4 weight → compile-time LUT-tier fusion ────────
+
+/// Independent W4A8 reference: the same activation quantization as
+/// `ref_w8a8`, exact i32 dots against the ORIGINAL `[k,n]` nibble packing
+/// (element `i = kk·n + j`, low nibble first).
+fn ref_w4a8(a: &[f32], wq_packed: &[u8], scales: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    let nib = |i: usize| -> i32 {
+        let byte = wq_packed[i >> 1];
+        let v = if i & 1 == 0 { byte & 0x0F } else { byte >> 4 };
+        if v < 8 {
+            v as i32
+        } else {
+            v as i32 - 16
+        }
+    };
+    let mut out = vec![0f32; m * n];
+    for i in 0..m {
+        let row = &a[i * k..(i + 1) * k];
+        let mut amax = 0f32;
+        for &v in row {
+            amax = amax.max(v.abs());
+        }
+        if amax == 0.0 {
+            continue;
+        }
+        let inv = 127.0 / amax;
+        let sa = amax / 127.0;
+        let q: Vec<i32> = row
+            .iter()
+            .map(|&v| {
+                let t = v * inv;
+                let r = if t >= 0.0 {
+                    (t + 0.5) as i32
+                } else {
+                    (t - 0.5) as i32
+                };
+                r.clamp(-127, 127)
+            })
+            .collect();
+        for j in 0..n {
+            let mut s = 0i32;
+            for (kk, &qa) in q.iter().enumerate() {
+                s += qa * nib(kk * n + j);
+            }
+            out[i * n + j] = (s as f32) * (sa * scales[j]);
+        }
+    }
+    out
+}
+
+#[test]
+fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::{mm_act_quant, KernelCall};
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I4: u8 = 10;
+
+    let (m, k, n) = (1usize, 66usize, 31usize); // even k, odd n, off-multiples
+    let a = fill(m * k, 0xF6);
+    let wq: Vec<u8> = (0..k * n / 2).map(|i| (i % 249) as u8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.03 + (j as f32) * 0.002).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq.clone(),
+        dtype: DTypeId(DTYPE_I4),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(2),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I4,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    let fused: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            KernelCall::MatMulDequant(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fused.len(), 1, "i4 weight must compile-time fuse");
+    assert!(fused[0].bq_omajor);
+    assert_eq!(fused[0].act_quant, mm_act_quant::W8A8_TOKEN_SYM);
+    assert_eq!(fused[0].quant_dtype, DTYPE_I4);
+
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    // Bit-identical to the independent reference over the ORIGINAL [k,n]
+    // packing — also witnesses the compile-time nibble transposition.
+    let want = ref_w4a8(&a, &wq, &scales, m, k, n);
+    for (i, (gv, wv)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(gv.to_bits(), wv.to_bits(), "output {i}: {gv} vs {wv}");
+    }
+    assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
+}
+
+#[test]
+fn wl3_odd_k_i4_stays_on_generic_path() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I4: u8 = 10;
+
+    // k odd: nibble columns wouldn't pack whole bytes — the compiler must
+    // leave the pair for the (W8A32) load-time fusion, and execution must
+    // still conform.
+    let (m, k, n) = (1usize, 7usize, 8usize);
+    let a = fill(m * k, 0xA7);
+    let wq: Vec<u8> = (0..(k * n).div_ceil(2)).map(|i| (i % 240) as u8).collect();
+    let scales: Vec<f32> = (0..n).map(|_| 0.05).collect();
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let sv = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: wq,
+        dtype: DTypeId(DTYPE_I4),
+        shape: sw,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: f32_to_le(&scales),
+        dtype: DTypeId(DTYPE_F32),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(2),
+        shape: sv,
+    });
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I4,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, KernelCall::MatMulDequant(d) if d.bq_omajor)),
+        "odd-k i4 must not take the omajor path"
+    );
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &f32_to_le(&a),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    assert!(got.iter().all(|v| v.is_finite()));
+}

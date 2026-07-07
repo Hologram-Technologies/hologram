@@ -162,7 +162,10 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         KernelCall::MatMulActivation(c) => ff::matmul_activation_float(c, ws),
         KernelCall::MatMulAdd(c) => ff::matmul_add_float(c, ws),
         KernelCall::MatMulAddActivation(c) => ff::matmul_add_activation_float(c, ws),
-        KernelCall::MatMulDequant(c) => ff::matmul_dequant_float(c, ws),
+        KernelCall::MatMulDequant(c) => {
+            ff::matmul_dequant_float(c, ws)?;
+            ff::matmul_dequant_epilogue(c, ws)
+        }
         // The Expand→binary fusion only fires for float dtypes (handled by the
         // float fast path above); a byte-domain broadcast-binary is not emitted.
         KernelCall::BroadcastBinary(_) => Err(BackendError::UnsupportedOp(
@@ -1684,7 +1687,9 @@ fn try_dispatch_float<W: Workspace>(
         K::MatMulActivation(c) => Some(ff::matmul_activation_float(c, ws)),
         K::MatMulAdd(c) => Some(ff::matmul_add_float(c, ws)),
         K::MatMulAddActivation(c) => Some(ff::matmul_add_activation_float(c, ws)),
-        K::MatMulDequant(c) => Some(ff::matmul_dequant_float(c, ws)),
+        K::MatMulDequant(c) => {
+            Some(ff::matmul_dequant_float(c, ws).and_then(|()| ff::matmul_dequant_epilogue(c, ws)))
+        }
         K::BroadcastBinary(c) if is_float(c.dtype) => Some(ff::broadcast_binary_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
         // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
