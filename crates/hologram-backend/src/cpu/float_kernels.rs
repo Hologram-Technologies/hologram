@@ -1265,11 +1265,15 @@ pub fn softmax_float<W: Workspace>(
             }
             exps.clear();
             exps.reserve(f);
-            let mut sum = 0f32;
             for j in 0..f {
-                let e = libm::expf(read_float(xs, row_off + j, dt) - max_v);
+                exps.push(read_float(xs, row_off + j, dt) - max_v);
+            }
+            // Vectorized deterministic exp (bit-identical across targets);
+            // the sum keeps its original sequential reduction order.
+            crate::cpu::simd::simd_f32_exp_inplace(exps);
+            let mut sum = 0f32;
+            for &e in exps.iter() {
                 sum += e;
-                exps.push(e);
             }
             let log_sum = libm::logf(sum.max(1e-30)) + max_v;
             for (j, &e) in exps.iter().enumerate() {
@@ -1639,10 +1643,15 @@ fn attention_f32_engine(
                         *score = crate::cpu::simd::simd_f32_dot(qrow, krow) / scale;
                     }
                     let max_s = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                    let mut sum = 0f32;
                     for sc in scores.iter_mut() {
-                        *sc = libm::expf(*sc - max_s);
-                        sum += *sc;
+                        *sc -= max_s;
+                    }
+                    // Vectorized deterministic exp; masked −∞ scores stay
+                    // exactly 0. Sequential sum order unchanged.
+                    crate::cpu::simd::simd_f32_exp_inplace(scores);
+                    let mut sum = 0f32;
+                    for &sc in scores.iter() {
+                        sum += sc;
                     }
                     let denom = sum.max(1e-30);
                     let orow = &mut out32[q_off + qi * d..q_off + qi * d + d];

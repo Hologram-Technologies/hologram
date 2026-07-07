@@ -95,6 +95,41 @@ fn bench_i8_gemv(k: usize, n: usize, iters: usize) {
     );
 }
 
+/// Decode softmax exp: the deterministic vectorized exp vs the scalar
+/// libm loop it replaced, over an attention-bucket-sized row.
+fn bench_exp(len: usize, iters: usize) {
+    use hologram_backend::cpu::simd::simd_f32_exp_inplace;
+    let base: Vec<f32> = (0..len).map(|i| -((i % 89) as f32) * 0.93).collect();
+    let mut buf = base.clone();
+    simd_f32_exp_inplace(&mut buf); // warm up
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        buf.copy_from_slice(&base);
+        simd_f32_exp_inplace(&mut buf);
+        std::hint::black_box(&buf);
+    }
+    let per = t0.elapsed().as_secs_f64() / iters as f64;
+    println!(
+        "  exp_det simd  {len:>6}   {:>9.2} us/iter  {:>8.1} Melem/s",
+        per * 1e6,
+        len as f64 / per / 1e6
+    );
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        buf.copy_from_slice(&base);
+        for x in buf.iter_mut() {
+            *x = libm::expf(*x);
+        }
+        std::hint::black_box(&buf);
+    }
+    let per = t0.elapsed().as_secs_f64() / iters as f64;
+    println!(
+        "  libm expf     {len:>6}   {:>9.2} us/iter  {:>8.1} Melem/s",
+        per * 1e6,
+        len as f64 / per / 1e6
+    );
+}
+
 fn main() {
     println!("matmul_f32_blocked (unpacked, single-thread):");
     bench_blocked("64x64x64", 64, 64, 64, 3000);
@@ -111,4 +146,6 @@ fn main() {
     bench_i8_gemv(4864, 896, 400);
     bench_i8_gemv(1536, 8960, 100);
     bench_i8_gemv(3584, 18944, 20);
+    println!("decode softmax exp (deterministic vectorized vs scalar libm):");
+    bench_exp(4096, 4000);
 }

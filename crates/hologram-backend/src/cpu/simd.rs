@@ -2294,6 +2294,190 @@ pub fn matmul_i8_per_channel(
     }
 }
 
+// ─── Deterministic vectorized f32 exp (decode softmax path) ────────
+// The decode path runs softmax per head per step over the attention bucket;
+// its exp was a scalar `libm::expf` per element. This is the vectorized
+// replacement: one fixed algorithm — range reduction `x = k·ln2 + r` with a
+// trunc-cast round-half-away (the same rounding discipline as the W8A8
+// quantizer), a degree-6 Taylor polynomial in Horner form over
+// |r| ≤ ln2/2, and a 2^k exponent-bit scale — evaluated with plain IEEE
+// mul/add (deliberately no FMA) so scalar, NEON, and wasm SIMD128 lanes
+// produce **bit-identical** results. That is stronger determinism than the
+// path it replaces: `libm::expf` (no_std) and a platform libm (std) did not
+// agree bit-for-bit across builds. Inputs below `EXP_F32_LO` (including the
+// causal mask's −∞ scores) map to exactly 0.0, so masked attention
+// positions keep zero probability; NaN also maps to 0.0 (out-of-domain,
+// documented), and inputs above `EXP_F32_HI` clamp.
+
+/// Underflow cutoff: `exp(x) = 0.0` exactly for `x < EXP_F32_LO` (−∞ and
+/// NaN included). e^−87.3 ≈ 1.2e−38 is the last normal-range value.
+pub const EXP_F32_LO: f32 = -87.336_54;
+/// Clamp ceiling, chosen so the scale exponent `k ≤ 127` stays a normal
+/// f32 (e^88 ≈ 1.65e38 < f32::MAX).
+pub const EXP_F32_HI: f32 = 88.0;
+
+const EXP_LOG2E: f32 = core::f32::consts::LOG2_E;
+// Cody–Waite split of ln2: HI has zeroed low mantissa bits so `kf·HI` is
+// exact for |k| ≤ 2^15; HI + LO = ln2 to ~1e-11. HI is spelled as its exact
+// bit pattern (0.693359375) so the zeroed low bits are explicit.
+const EXP_LN2_HI: f32 = f32::from_bits(0x3F31_8000);
+const EXP_LN2_LO: f32 = -2.121_944_4e-4;
+// Degree-6 Taylor coefficients 1/6!, …, 1/2! (Horner from C6 down to r+1).
+const EXP_C6: f32 = 1.0 / 720.0;
+const EXP_C5: f32 = 1.0 / 120.0;
+const EXP_C4: f32 = 1.0 / 24.0;
+const EXP_C3: f32 = 1.0 / 6.0;
+const EXP_C2: f32 = 0.5;
+
+/// The scalar specification of the deterministic exp. Every SIMD lane
+/// computes exactly this sequence of IEEE operations; the bit-identity
+/// tests compare lanes against it.
+#[inline]
+pub fn exp_f32_det(x: f32) -> f32 {
+    if x.is_nan() || x < EXP_F32_LO {
+        return 0.0; // underflow, −∞, NaN
+    }
+    let x = if x > EXP_F32_HI { EXP_F32_HI } else { x };
+    let t = x * EXP_LOG2E;
+    let k = if t >= 0.0 {
+        (t + 0.5) as i32
+    } else {
+        (t - 0.5) as i32
+    };
+    let kf = k as f32;
+    let r = (x - kf * EXP_LN2_HI) - kf * EXP_LN2_LO;
+    let mut p = EXP_C6;
+    p = p * r + EXP_C5;
+    p = p * r + EXP_C4;
+    p = p * r + EXP_C3;
+    p = p * r + EXP_C2;
+    p = p * r + 1.0;
+    p = p * r + 1.0;
+    let scale = f32::from_bits((((k + 127) as u32) << 23).min(0x7f00_0000));
+    p * scale
+}
+
+/// NEON lanes of [`exp_f32_det`] — the identical operation sequence, 4 wide.
+///
+/// # Safety
+/// NEON (baseline aarch64); `xs` valid for `len` reads/writes.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn exp_f32_neon_inplace(xs: *mut f32, len: usize) {
+    use core::arch::aarch64::*;
+    let lo = vdupq_n_f32(EXP_F32_LO);
+    let hi = vdupq_n_f32(EXP_F32_HI);
+    let log2e = vdupq_n_f32(EXP_LOG2E);
+    let ln2_hi = vdupq_n_f32(EXP_LN2_HI);
+    let ln2_lo = vdupq_n_f32(EXP_LN2_LO);
+    let half = vdupq_n_f32(0.5);
+    let one = vdupq_n_f32(1.0);
+    let mut i = 0;
+    while i + 4 <= len {
+        let x0 = vld1q_f32(xs.add(i));
+        // Keep-mask on the ORIGINAL input: false for underflow/−∞/NaN.
+        let keep = vcgeq_f32(x0, lo);
+        let x = vminq_f32(x0, hi);
+        let t = vmulq_f32(x, log2e);
+        // round half away from zero: trunc(t ± 0.5) by sign of t.
+        let neg = vcltq_f32(t, vdupq_n_f32(0.0));
+        let adj = vbslq_f32(neg, vnegq_f32(half), half);
+        let k = vcvtq_s32_f32(vaddq_f32(t, adj)); // trunc toward zero
+        let kf = vcvtq_f32_s32(k);
+        let r = vsubq_f32(vsubq_f32(x, vmulq_f32(kf, ln2_hi)), vmulq_f32(kf, ln2_lo));
+        let mut p = vdupq_n_f32(EXP_C6);
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C5));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C4));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C3));
+        p = vaddq_f32(vmulq_f32(p, r), vdupq_n_f32(EXP_C2));
+        p = vaddq_f32(vmulq_f32(p, r), one);
+        p = vaddq_f32(vmulq_f32(p, r), one);
+        let bits = vshlq_n_s32::<23>(vaddq_s32(k, vdupq_n_s32(127)));
+        let scale = vreinterpretq_f32_s32(bits);
+        let e = vmulq_f32(p, scale);
+        let z = vdupq_n_f32(0.0);
+        vst1q_f32(xs.add(i), vbslq_f32(keep, e, z));
+        i += 4;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
+    }
+}
+
+/// wasm SIMD128 lanes of [`exp_f32_det`] — the identical operation
+/// sequence, 4 wide.
+///
+/// # Safety
+/// simd128 enabled; `xs` valid for `len` reads/writes.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn exp_f32_wasm_inplace(xs: *mut f32, len: usize) {
+    use core::arch::wasm32::*;
+    let lo = f32x4_splat(EXP_F32_LO);
+    let hi = f32x4_splat(EXP_F32_HI);
+    let log2e = f32x4_splat(EXP_LOG2E);
+    let ln2_hi = f32x4_splat(EXP_LN2_HI);
+    let ln2_lo = f32x4_splat(EXP_LN2_LO);
+    let half = f32x4_splat(0.5);
+    let one = f32x4_splat(1.0);
+    let mut i = 0;
+    while i + 4 <= len {
+        let x0 = v128_load(xs.add(i) as *const v128);
+        let keep = f32x4_ge(x0, lo);
+        // pmin semantics match the scalar `if x > HI { HI }` for non-NaN x;
+        // NaN lanes are discarded by `keep`.
+        let x = f32x4_pmin(x0, hi);
+        let t = f32x4_mul(x, log2e);
+        let neg = f32x4_lt(t, f32x4_splat(0.0));
+        let adj = v128_bitselect(f32x4_neg(half), half, neg);
+        let k = i32x4_trunc_sat_f32x4(f32x4_add(t, adj));
+        let kf = f32x4_convert_i32x4(k);
+        let r = f32x4_sub(f32x4_sub(x, f32x4_mul(kf, ln2_hi)), f32x4_mul(kf, ln2_lo));
+        let mut p = f32x4_splat(EXP_C6);
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C5));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C4));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C3));
+        p = f32x4_add(f32x4_mul(p, r), f32x4_splat(EXP_C2));
+        p = f32x4_add(f32x4_mul(p, r), one);
+        p = f32x4_add(f32x4_mul(p, r), one);
+        let bits = i32x4_shl(i32x4_add(k, i32x4_splat(127)), 23);
+        let e = f32x4_mul(p, bits);
+        let z = f32x4_splat(0.0);
+        v128_store(xs.add(i) as *mut v128, v128_bitselect(e, z, keep));
+        i += 4;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
+    }
+}
+
+/// Elementwise deterministic `exp` in place — the decode softmax's exp
+/// pass. Bit-identical across scalar / NEON / wasm SIMD128 (see
+/// [`exp_f32_det`], the scalar specification every lane replays).
+pub fn simd_f32_exp_inplace(xs: &mut [f32]) {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is baseline on aarch64; slice bounds by construction.
+    unsafe {
+        exp_f32_neon_inplace(xs.as_mut_ptr(), xs.len());
+        return;
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds by construction.
+    unsafe {
+        exp_f32_wasm_inplace(xs.as_mut_ptr(), xs.len());
+        return;
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    for x in xs.iter_mut() {
+        *x = exp_f32_det(*x);
+    }
+}
+
 // ─── Output-major W8A8 int8 GEMV (decode) ──────────────────────────
 // `matmul_i8_per_channel` above reads the `[k,n]` weight k-inner: at decode
 // (m = 1) that walk touches 16 bytes of every 64-byte line with no line reuse
@@ -2805,6 +2989,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn exp_det_simd_matches_scalar_spec_bitwise() {
+        // Dense grid + edge cases; the in-place (SIMD) form must equal the
+        // scalar specification bit-for-bit on every target this compiles
+        // for — the determinism contract of the decode softmax's exp.
+        let mut xs: Vec<f32> = Vec::new();
+        let mut v = -90.0f32;
+        while v <= 90.0 {
+            xs.push(v);
+            v += 0.037;
+        }
+        xs.extend_from_slice(&[
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NAN,
+            0.0,
+            -0.0,
+            EXP_F32_LO,
+            EXP_F32_HI,
+            -87.3,
+            88.9,
+            1e-8,
+            -1e-8,
+        ]);
+        let want: Vec<f32> = xs.iter().map(|&x| exp_f32_det(x)).collect();
+        let mut got = xs.clone();
+        simd_f32_exp_inplace(&mut got);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(
+                g.to_bits(),
+                w.to_bits(),
+                "x = {} (idx {i}): {g} vs {w}",
+                xs[i]
+            );
+        }
+    }
+
+    #[test]
+    fn exp_det_accuracy_and_edges() {
+        // Accuracy against libm over the working range, plus the exact
+        // edge semantics: exp(0) = 1 exactly, underflow/−∞/NaN → 0.0.
+        let mut v = -87.0f32;
+        let mut max_rel = 0f64;
+        while v <= 88.0 {
+            let e = f64::from(exp_f32_det(v));
+            let r = f64::from(libm::expf(v));
+            if r > 0.0 {
+                max_rel = max_rel.max(((e - r) / r).abs());
+            }
+            v += 0.0173;
+        }
+        assert!(max_rel < 2e-6, "max rel err {max_rel:.3e}");
+        assert_eq!(exp_f32_det(0.0).to_bits(), 1.0f32.to_bits());
+        assert_eq!(exp_f32_det(f32::NEG_INFINITY).to_bits(), 0.0f32.to_bits());
+        assert_eq!(exp_f32_det(f32::NAN).to_bits(), 0.0f32.to_bits());
+        assert_eq!(exp_f32_det(-1000.0).to_bits(), 0.0f32.to_bits());
     }
 
     #[test]

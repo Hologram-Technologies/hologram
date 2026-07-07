@@ -153,10 +153,19 @@ changes), and the witness remains re-derivable on demand. Measured: walk
 overhead ~100 µs → ~10–28 µs per step; `session_step_novel` −6% end-to-end
 at 896×4864 (kernel-dominated).
 
-Remaining in phase 3: item 8 — SIMD exp for the softmax path
-(`cpu/mathf.rs` breadth), or the Q-tier exp table once item 6 lands.
-Constant rebinding (O(constants) map hits per step) is the only known
-residual lever; revisit with a many-hundred-weight model.
+Item 8 landed: `exp_f32_det` — one fixed IEEE mul/add sequence (range
+reduction with trunc-cast round-half-away, degree-6 Horner polynomial,
+exponent-bit 2^k scale; deliberately no FMA) with NEON and wasm SIMD128
+lanes replaying it exactly, so scalar / NEON / wasm are **bit-identical**
+(pinned by tests on all lanes incl. the relaxed tier). Wired into
+`softmax_float` and the attention inner softmax; sequential reduction
+order unchanged; masked −∞ scores map to exactly 0. ~2× over the scalar
+libm loop on the wasm lane, and it removes a pre-existing determinism
+split (std builds used the platform libm, no_std the libm crate). The
+Q-tier exp table stays an item-6 follow-up.
+
+Phase-3 residual: constant rebinding (O(constants) map hits per step) —
+revisit with a many-hundred-weight model.
 
 ## Phase 4 — item 5: wasm threads
 

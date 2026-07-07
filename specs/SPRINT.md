@@ -62,8 +62,14 @@ mirror.
   across steps already holds (generation rotation + free list); constant
   rebinding is O(constants) HashMap hits per step — revisit only if a
   many-hundred-weight model shows it.
-- [ ] **8.1**: SIMD exp for the decode softmax path (or Q-tier table after
-  item 6).
+- [x] **8.1**: Deterministic vectorized exp for the decode softmax path
+  (`exp_f32_det` scalar spec + NEON/wasm SIMD128 lanes replaying the exact
+  IEEE sequence — bit-identical across targets, verified natively, under
+  qemu-aarch64, and under wasmtime on both SIMD tiers; masked −∞ scores
+  stay exactly 0). Wired into `softmax_float` and the attention inner
+  softmax with reduction order unchanged. ~2× over scalar libm on the wasm
+  lane, and stronger determinism than before (std/no_std builds previously
+  used different libms). Q-tier exp table remains an item-6 follow-up.
 - [ ] **5.1**: wasm threads: embedder-provided workers
   (SharedArrayBuffer+atomics), static row partitioning preserves reduction
   order.
