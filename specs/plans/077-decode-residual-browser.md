@@ -140,12 +140,23 @@ Landed:
   omajor W8A8 calls. Conformance: `gelu(A·dequant(Bq) + bias)` is one call;
   exact epilogues (relu) stay bit-identical to the W8A8 reference.
 
-Remaining: a pre-bound plan handle keyed by the graph's κ that validates
-once and replays per step; arena reuse across steps. The
-`decode_gemv/session_step_novel` bench is the measurement surface (baseline:
-~84 µs/step over the raw kernel at m = 1, 896×4864, single-op). Item 8 rides
-along: SIMD exp for the softmax path (`cpu/mathf.rs` breadth), or the Q-tier
-exp table once item 6 lands.
+Also landed — validate-once / replay-per-step for the walk: callgrind
+attributed the fixed per-step residual (~100 µs even on a 1-node graph;
+~60% of all instructions at small shapes) to the boundary-address mint —
+`derive_label_witnessed` grounded a full ψ-tower composition per operand
+per step, and the walk immediately dropped the TC-05 witness. The grounded
+address is definitionally the σ-axis fold of the composed digests, so
+`derive_label_boundary` / `compose_ordered_blake3_address` now mint the
+**same address** with plain streaming hashes; pointwise equality with the
+witnessed authority is pinned by tests (fail-closed against future algebra
+changes), and the witness remains re-derivable on demand. Measured: walk
+overhead ~100 µs → ~10–28 µs per step; `session_step_novel` −6% end-to-end
+at 896×4864 (kernel-dominated).
+
+Remaining in phase 3: item 8 — SIMD exp for the softmax path
+(`cpu/mathf.rs` breadth), or the Q-tier exp table once item 6 lands.
+Constant rebinding (O(constants) map hits per step) is the only known
+residual lever; revisit with a many-hundred-weight model.
 
 ## Phase 4 — item 5: wasm threads
 

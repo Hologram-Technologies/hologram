@@ -170,6 +170,46 @@ pub fn compose_model(parts: &[KappaLabel<71>]) -> Result<KappaLabel<71>, Composi
 ///
 /// [`CompositionFailure`] if a composition step rejects an operand
 /// (unreachable for well-formed `blake3` κ-labels from [`address_bytes`]).
+/// Address-only form of [`derive_label_witnessed`]: the identical
+/// composition sequence (op-identity base, then each operand folded in
+/// order through the non-commutative BLAKE3 ordered product), minting only
+/// the final κ-label via
+/// [`crate::compose::compose_ordered_blake3_address`]. Produces the **same
+/// address** as the witnessed form — pinned by
+/// `boundary_label_equals_witnessed_address` — at `O(operands)` streaming
+/// hashes instead of `O(operands)` ψ-tower groundings. The executor's walk
+/// mints boundary addresses with this and leaves the TC-05 witness
+/// re-derivable on demand (fail-closed) through the witnessed form.
+///
+/// # Errors
+///
+/// [`CompositionFailure`] as [`derive_label_witnessed`].
+pub fn derive_label_boundary(
+    opcode: u16,
+    params: &[u8],
+    inputs: &[ContentLabel],
+) -> Result<ContentLabel, CompositionFailure> {
+    use crate::compose::compose_ordered_blake3_address;
+    use alloc::vec::Vec;
+    let mut pre: Vec<u8> = Vec::with_capacity(2 + params.len());
+    pre.extend_from_slice(&opcode.to_le_bytes());
+    pre.extend_from_slice(params);
+    let op_label = address_bytes(&pre);
+
+    let mut acc = op_label;
+    let mut composed = false;
+    for inp in inputs {
+        acc = compose_ordered_blake3_address(&acc, inp)?;
+        composed = true;
+    }
+    if composed {
+        Ok(acc)
+    } else {
+        // No inputs (constant-only graph): ground the op identity alone.
+        compose_ordered_blake3_address(&op_label, &op_label)
+    }
+}
+
 pub fn derive_label_witnessed(
     opcode: u16,
     params: &[u8],
@@ -209,6 +249,34 @@ mod tests {
             && s[7..]
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }
+
+    #[test]
+    fn boundary_label_equals_witnessed_address() {
+        // The address-only boundary derivation must mint the SAME κ-label
+        // as the ψ-tower-grounded witnessed form, for every operand count —
+        // the fail-closed pin for the executor's fast boundary path.
+        let ops: alloc::vec::Vec<ContentLabel> = (0..5u8)
+            .map(|i| address_bytes(&[i, i.wrapping_mul(37), 0xAB]))
+            .collect();
+        for n_ops in 0..=4usize {
+            for (opcode, params) in [
+                (45u16, &b""[..]),
+                (111, &[1u8, 2, 3, 4, 5][..]),
+                (116, &[0u8; 32][..]),
+            ] {
+                let witnessed = derive_label_witnessed(opcode, params, &ops[..n_ops])
+                    .expect("witnessed derivation")
+                    .address;
+                let fast = derive_label_boundary(opcode, params, &ops[..n_ops])
+                    .expect("boundary derivation");
+                assert_eq!(
+                    witnessed.as_bytes(),
+                    fast.as_bytes(),
+                    "opcode {opcode}, {n_ops} operands: boundary label diverged"
+                );
+            }
+        }
     }
 
     #[test]

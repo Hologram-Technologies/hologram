@@ -27,8 +27,8 @@ pub mod weight;
 pub mod writer;
 
 pub use address::{
-    address_bytes, address_ring, compose_model, derive_label, derive_label_witnessed,
-    AddressOutcome, AddressWitness, ContentLabel, KappaLabel,
+    address_bytes, address_ring, compose_model, derive_label, derive_label_boundary,
+    derive_label_witnessed, AddressOutcome, AddressWitness, ContentLabel, KappaLabel,
 };
 pub use error::ArchiveError;
 pub use format::{HoloHeader, SectionKind, FORMAT_VERSION, MAGIC};

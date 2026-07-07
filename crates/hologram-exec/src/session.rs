@@ -9,8 +9,8 @@ use crate::buffer::{BufferArena, InputBuffer, OutputBuffer};
 use crate::error::ExecError;
 use hologram_archive::{
     address_bytes, constant_codec, decode_exec_plan, decode_ports, decode_weights, decoder,
-    derive_label, derive_label_witnessed, format::SectionKind, warm_codec, ContentLabel,
-    HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint,
+    derive_label, derive_label_boundary, format::SectionKind, warm_codec, ContentLabel, HoloLoader,
+    PortDescriptor, WarmEntry, WeightFingerprint,
 };
 use hologram_backend::{
     buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
@@ -95,7 +95,8 @@ pub struct InferenceSession<B: SessionBackend> {
     slot_label_init: Vec<Option<ContentLabel>>,
     /// `is_output_slot[s]` ⇒ slot `s` backs a graph output port. The node
     /// that writes such a slot additionally mints the **witnessed**
-    /// (TC-05-replayable) output address (`derive_label_witnessed`) — the
+    /// (TC-05-replayable) output address (`derive_label_boundary`, pinned
+    /// label-equal to `derive_label_witnessed`) — the
     /// boundary address a caller receives. Interior nodes use only the
     /// cheap reuse key, so the per-prism-pipeline cost is paid once per
     /// output port, not per node.
@@ -693,7 +694,7 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// **no copy**. Reuse and retention are pointer-level; nothing moves.
     ///
     /// A node that writes a **graph output port** mints the witnessed
-    /// (TC-05-replayable) boundary address via [`derive_label_witnessed`]
+    /// (TC-05-replayable) boundary address via [`derive_label_boundary`]
     /// (CA-3) and retains its buffer under that label — the prism-pipeline
     /// grounding cost is paid once per output port, not per node. The
     /// input→output mapping (`key`) is recorded for the O(1) whole-graph hit.
@@ -809,14 +810,18 @@ impl<B: SessionBackend> InferenceSession<B> {
                         slot_label[out_slot] = Some(label);
                     }
                     (Some(label), true) => {
-                        // Output port: retain under the witnessed boundary
-                        // address (CA-3); `slot_label` keeps the cheap label
-                        // for any downstream derivation.
+                        // Output port: retain under the witnessed-form
+                        // boundary address (CA-3), minted address-only —
+                        // `derive_label_boundary` is pinned label-equal to
+                        // `derive_label_witnessed().address`, and the walk
+                        // was already dropping the TC-05 witness (it stays
+                        // re-derivable on demand through the witnessed
+                        // form). `slot_label` keeps the cheap label for any
+                        // downstream derivation.
                         let meta = &self.node_meta[ci];
                         let witnessed =
-                            derive_label_witnessed(meta.opcode, &meta.params, &in_labels)
-                                .map_err(|_| ExecError::Backend)?
-                                .address;
+                            derive_label_boundary(meta.opcode, &meta.params, &in_labels)
+                                .map_err(|_| ExecError::Backend)?;
                         self.pool.retain(out_slot, witnessed);
                         out_witnessed[out_slot] = Some(witnessed);
                         slot_label[out_slot] = Some(label);

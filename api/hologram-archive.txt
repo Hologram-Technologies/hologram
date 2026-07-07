@@ -20,6 +20,7 @@ pub fn hologram_archive::address::address_bytes(&[u8]) -> hologram_archive::addr
 pub fn hologram_archive::address::address_ring(&[u8]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::ring::pipeline::AddressFailure>
 pub fn hologram_archive::address::compose_model(&[uor_addr::label::KappaLabel<71>]) -> core::result::Result<uor_addr::label::KappaLabel<71>, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::address::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::address::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::address::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>
 pub type hologram_archive::address::ContentLabel = uor_addr::label::KappaLabel<71>
 pub mod hologram_archive::certificate_codec
@@ -169,6 +170,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::Orde
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedRoute
 pub const fn hologram_archive::compose::VERB_TERMS_COMPOSE_ORDERED_INFERENCE<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
 pub fn hologram_archive::compose::compose_ordered_blake3(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::outcome::AddressOutcome<LABEL>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::compose::compose_ordered_blake3_address(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::label::KappaLabel<LABEL>, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::compose::compose_ordered_inference(hologram_archive::compose::OrderedCarrier<'_>) -> hologram_archive::compose::OrderedLabel
 pub const fn hologram_archive::compose::compose_ordered_inference_term_arena<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
 pub mod hologram_archive::constant_codec
@@ -634,5 +636,6 @@ pub fn hologram_archive::decode_ports(&[u8]) -> core::result::Result<alloc::vec:
 pub fn hologram_archive::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::derive_cone_lattice(&[hologram_backend::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
 pub fn hologram_archive::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>
 pub type hologram_archive::ContentLabel = uor_addr::label::KappaLabel<71>

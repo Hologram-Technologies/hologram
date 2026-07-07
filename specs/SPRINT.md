@@ -50,8 +50,18 @@ mirror.
   step; conformance-locked). Measured per-step session overhead at m = 1,
   896×4864: ~84 µs over the raw kernel (~7% single-op; the multi-op residual
   is the remaining fusion/plan-handle work).
-- [ ] **7.1b**: pre-bound plan handle keyed by graph κ (validate once,
-  replay per step), arena reuse across steps.
+- [x] **7.1b**: validate-once / replay-per-step for the seq-1 walk. Profiling
+  (callgrind) attributed the fixed per-step residual (~100 µs on a 1-node
+  graph) to the boundary-address mint: `derive_label_witnessed` grounded a
+  full ψ-tower composition per operand per step and the walk dropped the
+  TC-05 witness. Added `derive_label_boundary` /
+  `compose_ordered_blake3_address` — the identical composition sequence
+  minting only the address (pinned label-equal to the witnessed form by
+  tests, so any algebra change fails closed; the witness stays re-derivable
+  on demand). Per-step walk overhead: ~100 µs → ~10–28 µs. Arena reuse
+  across steps already holds (generation rotation + free list); constant
+  rebinding is O(constants) HashMap hits per step — revisit only if a
+  many-hundred-weight model shows it.
 - [ ] **8.1**: SIMD exp for the decode softmax path (or Q-tier table after
   item 6).
 - [ ] **5.1**: wasm threads: embedder-provided workers
