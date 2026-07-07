@@ -645,24 +645,34 @@ impl BufferArena {
     }
 
     /// Whether a value with this label is resident (pinned, transient, or a
-    /// paged-in lazy weight).
+    /// paged-in lazy weight). The lazy-tier probe is skipped entirely when no
+    /// weights are paged (a non-paged session), so the fully-resident hot
+    /// path pays nothing for the pager's existence.
     pub fn resident(&self, label: &ContentLabel) -> bool {
         self.pinned.contains_key(label)
             || self.current.contains_key(label)
             || self.previous.contains_key(label)
-            || self.lazy.get(label).is_some_and(|e| e.resident.is_some())
+            || (!self.lazy.is_empty() && self.lazy.get(label).is_some_and(|e| e.resident.is_some()))
     }
 
     /// Resolve a label to its bytes, if resident (the address→byte boundary).
     /// A paged-in lazy weight resolves here too, so a weight that is also a
-    /// graph output (or read back by label) works unchanged.
+    /// graph output (or read back by label) works unchanged. The lazy probe
+    /// is skipped when no weights are paged (zero overhead for a non-paged
+    /// session).
     pub fn resolve(&self, label: &ContentLabel) -> Option<&[u8]> {
         let bi = self
             .pinned
             .get(label)
             .or_else(|| self.current.get(label))
             .or_else(|| self.previous.get(label))
-            .or_else(|| self.lazy.get(label).and_then(|e| e.resident.as_ref()))
+            .or_else(|| {
+                if self.lazy.is_empty() {
+                    None
+                } else {
+                    self.lazy.get(label).and_then(|e| e.resident.as_ref())
+                }
+            })
             .copied()?;
         Some(self.bufs[bi].as_slice())
     }
