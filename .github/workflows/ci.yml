@@ -156,6 +156,14 @@ jobs:
       - name: Install aarch64 cross toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          # The GitHub runner image ships third-party apt sources
+          # (packages.microsoft.com / azure-cli) that intermittently fail
+          # signature verification and abort `apt-get update`. They are
+          # irrelevant to the cross toolchain, so drop them first so a broken
+          # upstream repo cannot flake this job.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources || true
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
