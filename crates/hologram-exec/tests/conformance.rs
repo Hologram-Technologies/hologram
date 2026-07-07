@@ -1874,3 +1874,113 @@ fn wl2_asymmetric_zero_points_do_not_compile_time_fuse() {
         "asymmetric weights must not take the W8A8 omajor path"
     );
 }
+
+#[test]
+fn dynamic_quantized_weight_with_activation_keeps_dequant_fusion() {
+    // `dequant(dynamic Wq) → matmul → relu`: the dequant→matmul fusion must
+    // win over the matmul→activation epilogue (pass ordering) — the quantized
+    // weight streams in place and the dense f32 weight is never pool-
+    // materialized, while the activation stays a standalone call. Before the
+    // ordering fix the epilogue fused first and blocked the dequant fusion.
+    use hologram_graph::QuantAttrs;
+    const DTYPE_I8: u8 = 2;
+    let (m, k, n) = (2usize, 24usize, 12usize);
+
+    let mut g = Graph::new();
+    let sa = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, k as u64));
+    let sw = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let so = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(m as u64, n as u64));
+    let ai = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sa,
+    });
+    g.add_input(ai);
+    let wi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: sw,
+    });
+    g.add_input(wi);
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(wi)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sw,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.05f32.to_bits(),
+            zero_point: 0,
+            axis: -1,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(ai), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let act = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Relu),
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    let outn = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(act)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: so,
+    });
+    g.add_output(outn);
+
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    // The dequant fusion fired (quantized weight streamed in place)...
+    assert_eq!(
+        sess.dequant_fused_count(),
+        1,
+        "dequant→matmul fusion must win over the epilogue"
+    );
+    // ...and no epilogue call absorbed the matmul.
+    assert_eq!(sess.fused_count(), 0, "activation must stay standalone");
+
+    let a = fill(m * k, 0xC3);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 200) - 100) as i8).collect();
+    let w_bytes: Vec<u8> = wq.iter().map(|&x| x as u8).collect();
+    let got = le_to_f32(
+        &sess
+            .execute(&[
+                InputBuffer {
+                    bytes: &f32_to_le(&a),
+                },
+                InputBuffer { bytes: &w_bytes },
+            ])
+            .unwrap()[0]
+            .bytes,
+    );
+    let wf: Vec<f32> = wq.iter().map(|&q| q as f32 * 0.05).collect();
+    let want: Vec<f32> = ref_matmul(&a, &wf, m, k, n)
+        .into_iter()
+        .map(|v| v.max(0.0))
+        .collect();
+    let scale = want.iter().fold(0f64, |mx, &x| mx.max(f64::from(x).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 1e-4, "fused path diverged (err {err:.3e})");
+}

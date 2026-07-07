@@ -38,6 +38,12 @@ mirror.
   (latency-bound accumulator chains) and deliberately excluded.
 - [ ] **7.1**: seq-1 dispatch/fusion: dequant+matmul+bias+activation as one
   call, pre-bound plan handle keyed by graph κ, arena reuse across steps.
+  Started: fusion pass ordering fixed (dequant→matmul now fuses before the
+  matmul epilogue, so a quantized weight followed by an activation keeps
+  streaming in place instead of materializing the dense f32 weight each
+  step; conformance-locked). Measured per-step session overhead at m = 1,
+  896×4864: ~84 µs over the raw kernel (~7% single-op; the multi-op residual
+  is the remaining fusion/plan-handle work).
 - [ ] **8.1**: SIMD exp for the decode softmax path (or Q-tier table after
   item 6).
 - [ ] **5.1**: wasm threads: embedder-provided workers

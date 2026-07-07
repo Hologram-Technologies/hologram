@@ -223,18 +223,29 @@ impl<B: SessionBackend> InferenceSession<B> {
             .map_err(ExecError::Archive)?
             .unwrap_or_else(|| vec![(0..kernel_calls.len() as u32).collect()]);
 
-        // Content-addressed fusion (the UOR-native execution pass): collapse
-        // `matmul → elementwise-activation` sub-graphs into one fused op so
-        // the activation's intermediate is never separately materialized or
-        // addressed — the fused op carries a single κ-derivation. Runs once
-        // at load over the decoded schedule; a no-op when nothing fuses.
-        let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
+        // Content-addressed fusion (the UOR-native execution pass), run once
+        // at load over the decoded schedule; each pass is a no-op when
+        // nothing fuses.
+        //
+        // Ordering: dequant→matmul fuses FIRST. The epilogue pass rewrites a
+        // `MatMul` into `MatMulActivation`/`MatMulAdd*`, which the dequant
+        // pass does not match — so running it first would trade the dequant
+        // fusion (the quantized weight streamed in place, the dense f32
+        // weight never materialized) for an epilogue fusion (one elided
+        // activation intermediate). At decode the weight bytes dwarf the
+        // activation bytes, so the dequant fusion is the one that must win;
+        // a following activation then simply stays a standalone call.
+        //
         // Fuse `dequantize → matmul` so a quantized weight is dequantized inside
         // the matmul (transient panel) rather than materializing the dense f32
-        // weight in the pool. Constant quantized weights are folded at warm-start
-        // (no runtime dequant), so a runtime dequant feeding a matmul is dynamic
-        // — fusing it is a pure win.
+        // weight in the pool. Constant quantized weights fuse at compile time
+        // (`fuse_const_i8_decode`, omajor W8A8) or fold at warm-start, so a
+        // runtime dequant feeding a matmul is dynamic — fusing it is a pure win.
         let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs);
+        // Collapse `matmul → elementwise-activation` sub-graphs into one fused
+        // op so the activation's intermediate is never separately materialized
+        // or addressed — the fused op carries a single κ-derivation.
+        let (kernel_calls, exec_plan) = fuse_matmul_epilogue(kernel_calls, exec_plan, &outputs);
         // Fuse `dequantize → unary activation` into a table densified over the
         // *quantized* domain (PM_7 densification generalized): the dequantized
         // value is a pure function of the i8/i4 byte, so `activation(dequant(q))`
