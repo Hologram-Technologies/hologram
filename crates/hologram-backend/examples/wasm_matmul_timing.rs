@@ -10,7 +10,9 @@
 //!
 //! (single-threaded; the `parallel` feature is off for wasm)
 
-use hologram_backend::cpu::simd::{matmul_f32_blocked, matmul_f32_packed};
+use hologram_backend::cpu::simd::{
+    matmul_f32_blocked, matmul_f32_packed, matmul_i8_pc_omajor, matmul_i8_per_channel,
+};
 use std::time::Instant;
 
 fn gflops(m: usize, k: usize, n: usize, per: f64) -> f64 {
@@ -55,6 +57,44 @@ fn bench_packed(label: &str, m: usize, k: usize, n: usize, iters: usize) {
     );
 }
 
+/// Decode int8 GEMV: reports **GB/s of int8 weight bytes streamed** — the
+/// numerator of hologram-ai's bandwidth-ratio witness. `omajor_w8a8` is the
+/// decode kernel (output-major weight, per-token W8A8 integer accumulation);
+/// `kn_w8a32` is the prior fused path at the same shape.
+fn bench_i8_gemv(k: usize, n: usize, iters: usize) {
+    let a: Vec<f32> = (0..k).map(|i| ((i % 29) as f32 - 14.0) * 0.037).collect();
+    let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 1e-5).collect();
+    let mut out = vec![0f32; n];
+    let gbs = |per: f64| (k * n) as f64 / per / 1e9;
+
+    matmul_i8_pc_omajor(&a, &bq, &scales, &mut out, 1, k, n); // warm up
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut out, 1, k, n);
+        std::hint::black_box(&out);
+    }
+    let per = t0.elapsed().as_secs_f64() / iters as f64;
+    println!(
+        "  omajor_w8a8 1x{k}x{n:<6} {:>9.1} us/iter  {:>7.2} GB/s int8",
+        per * 1e6,
+        gbs(per)
+    );
+
+    matmul_i8_per_channel(&a, &bq, &scales, &mut out, 1, k, n); // warm up
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        matmul_i8_per_channel(&a, &bq, &scales, &mut out, 1, k, n);
+        std::hint::black_box(&out);
+    }
+    let per = t0.elapsed().as_secs_f64() / iters as f64;
+    println!(
+        "  kn_w8a32    1x{k}x{n:<6} {:>9.1} us/iter  {:>7.2} GB/s int8",
+        per * 1e6,
+        gbs(per)
+    );
+}
+
 fn main() {
     println!("matmul_f32_blocked (unpacked, single-thread):");
     bench_blocked("64x64x64", 64, 64, 64, 3000);
@@ -65,4 +105,10 @@ fn main() {
     println!("matmul_f32_packed (packed weights — real decode path):");
     bench_packed("256x256x256", 256, 256, 256, 150);
     bench_packed("gemv 1x2048x2048", 1, 2048, 2048, 400);
+    println!("int8 decode GEMV (deployed browser shapes, m = 1):");
+    bench_i8_gemv(896, 896, 2000);
+    bench_i8_gemv(896, 4864, 400);
+    bench_i8_gemv(4864, 896, 400);
+    bench_i8_gemv(1536, 8960, 100);
+    bench_i8_gemv(3584, 18944, 20);
 }

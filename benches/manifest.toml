@@ -24,6 +24,39 @@ status = "active"
 [benchmarks."content_reuse::chain8_128_repeated_memo_hit"]
 status = "active"
 
+[benchmarks."decode_gemv/i8_kn_w8a32_1x1536x8960"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x3584x18944"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x4864x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x896x4864"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_kn_w8a32_1x896x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x1536x8960"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x3584x18944"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x4864x896"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x896x4864"]
+status = "active"
+
+[benchmarks."decode_gemv/i8_omajor_w8a8_1x896x896"]
+status = "active"
+
+[benchmarks."decode_gemv/session_step_novel_1x896x4864_i8"]
+status = "active"
+
 [benchmarks."decode_step::compile"]
 status = "active"
 
