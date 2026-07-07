@@ -2516,18 +2516,23 @@ fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
     f(&mut v)
 }
 
-/// Split scratch for the relaxed-SIMD tier: `q = q⁺ − q⁻` with both halves
-/// in `[0, 127]` — the i7 range where `i32x4_relaxed_dot_i8x16_i7x16_add` is
-/// exact and engine-deterministic.
+/// Two reusable i8 scratch buffers for the wasm quantized-GEMV activation
+/// re-layouts (zero alloc per call after warm-up under `std`; transient on
+/// no_std, like the other kernel scratches). Callers repurpose them per
+/// path: the i8 relaxed tier holds the `q⁺ / q⁻` i7 split (both `k`); the
+/// i4 paths pack the de-interleaved activation into the first buffer (`k`
+/// baseline, `2k` relaxed) and leave the second idle. The buffers carry no
+/// fixed size — each caller `resize`s to its own `k`-derived length — so the
+/// scratch is shape-agnostic.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-fn with_q7_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
+fn with_wasm_gemv_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
     #[cfg(feature = "std")]
     {
         std::thread_local! {
-            static Q7: core::cell::RefCell<(Vec<i8>, Vec<i8>)> =
+            static SCRATCH: core::cell::RefCell<(Vec<i8>, Vec<i8>)> =
                 const { core::cell::RefCell::new((Vec::new(), Vec::new())) };
         }
-        Q7.with(|cell| {
+        SCRATCH.with(|cell| {
             let mut g = cell.borrow_mut();
             let (p, n) = &mut *g;
             f(p, n)
@@ -3023,7 +3028,7 @@ pub fn matmul_i8_pc_omajor(
             ))]
             // SAFETY: simd128 + relaxed-simd gates; sizes checked above.
             unsafe {
-                with_q7_scratch(|qp, qn| {
+                with_wasm_gemv_scratch(|qp, qn| {
                     qp.clear();
                     qp.resize(k, 0);
                     qn.clear();
@@ -3442,7 +3447,7 @@ pub fn matmul_i4_pc_omajor(
             // shared-memory builds the rows fork-join across the embedder
             // pool (kind 1). Integer sums keep any layout bit-identical.
             unsafe {
-                with_q7_scratch(|de, _unused| {
+                with_wasm_gemv_scratch(|de, _unused| {
                     let kb = k / 2;
                     #[cfg(not(target_feature = "relaxed-simd"))]
                     {
