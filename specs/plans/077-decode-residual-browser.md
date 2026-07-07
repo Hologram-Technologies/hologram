@@ -88,8 +88,19 @@ Iteration signals at landing (not acceptance): wasmtime SIMD128 streams
 16–19 GB/s int8 on 0.5B–1.5B shapes vs 3.9–5.9 GB/s for the prior kernel
 (~3×), falling to 11.5 GB/s at the 7B shape as the working set leaves cache —
 i.e., the kernel is entering the bandwidth-bound regime item 1 targets.
-Native x86 (scalar vs scalar) shows ~5× from layout + integer accumulation
-alone.
+
+**ISA completeness.** Every decode kernel — the i8/i4 omajor GEMVs and the
+deterministic softmax exp — carries a full inner on each supported ISA:
+x86_64 **AVX2** (`_mm256_cvtepi8_epi16` + `_mm256_madd_epi16` exact-i32
+dot; `_mm256_shuffle_epi8` nibble LUT; the no-FMA exp sequence 8-wide),
+aarch64 **NEON**, wasm **SIMD128** (baseline + relaxed), selected by runtime
+CPUID on x86 / baseline elsewhere — no arch falls to the scalar reference in
+a stock build, per this module's dispatch contract. All four lanes are
+**bit-identical** (integer madd is exact and associative; the exp replays
+one fixed op sequence), pinned by the same bit-exactness suite run natively,
+under qemu-aarch64, and under wasmtime on both wasm tiers. Native AVX2 now
+streams ~37 GiB/s int8 at 0.5B shapes (the fastest lane, and the honest
+number the native `decode_gemv` bench reports).
 
 ## Item 3: acceptance is witnessed downstream (standing)
 

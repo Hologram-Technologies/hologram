@@ -2454,7 +2454,7 @@ unsafe fn exp_f32_wasm_inplace(xs: *mut f32, len: usize) {
 }
 
 /// Elementwise deterministic `exp` in place — the decode softmax's exp
-/// pass. Bit-identical across scalar / NEON / wasm SIMD128 (see
+/// pass. Bit-identical across scalar / x86 AVX2 / NEON / wasm SIMD128 (see
 /// [`exp_f32_det`], the scalar specification every lane replays).
 pub fn simd_f32_exp_inplace(xs: &mut [f32]) {
     #[cfg(target_arch = "aarch64")]
@@ -2473,8 +2473,257 @@ pub fn simd_f32_exp_inplace(xs: &mut [f32]) {
         target_arch = "aarch64",
         all(target_arch = "wasm32", target_feature = "simd128")
     )))]
-    for x in xs.iter_mut() {
-        *x = exp_f32_det(*x);
+    {
+        #[cfg(target_arch = "x86_64")]
+        if x86_has_avx2() {
+            // SAFETY: AVX2 detected; slice bounds by construction.
+            unsafe {
+                exp_f32_avx2_inplace(xs.as_mut_ptr(), xs.len());
+            }
+            return;
+        }
+        for x in xs.iter_mut() {
+            *x = exp_f32_det(*x);
+        }
+    }
+}
+
+// ─── x86_64 AVX2 lanes for the decode kernels ──────────────────────
+// The integer GEMV and deterministic-exp kernels below carry NEON and wasm
+// SIMD128 inners; on x86_64 (a first-class deployment target, and the native
+// bench/CI lane) they must not fall to scalar — per this module's contract, a
+// stock build picks the widest ISA at runtime. These AVX2 inners replay the
+// EXACT scalar specifications: the integer dot uses `_mm256_madd_epi16` over
+// i8→i16 widenings (an exact, associative i32 reduction — bit-identical to the
+// scalar/NEON/wasm total), and the exp reuses the same no-FMA op sequence as
+// `exp_f32_det`. Selected by runtime CPUID (`is_x86_feature_detected!`) under
+// `std`, or the build's compile-time feature floor on no_std x86.
+
+/// `true` if the AVX2 decode lanes are usable — runtime CPUID under `std`,
+/// the build target's compile-time floor on no_std.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn x86_has_avx2() -> bool {
+    #[cfg(feature = "std")]
+    {
+        std::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        cfg!(target_feature = "avx2")
+    }
+}
+
+/// Exact horizontal sum of the eight i32 lanes of a `__m256i`.
+///
+/// # Safety
+/// AVX2 must be enabled at the call site.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn hsum256_i32(v: core::arch::x86_64::__m256i) -> i32 {
+    use core::arch::x86_64::*;
+    let s = _mm_add_epi32(_mm256_castsi256_si128(v), _mm256_extracti128_si256::<1>(v));
+    let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b0100_1110>(s));
+    let s = _mm_add_epi32(s, _mm_shuffle_epi32::<0b0000_0001>(s));
+    _mm_cvtsi128_si32(s)
+}
+
+/// AVX2 inner for the output-major W8A8 int8 GEMV — the x86 twin of
+/// `gemv_i8_omajor_neon`/`_wasm`: i8→i16 widen (`_mm256_cvtepi8_epi16`) then
+/// `_mm256_madd_epi16` exact-i32 pairwise accumulation, 4 outputs in flight.
+///
+/// # Safety
+/// AVX2 enabled; `q` len `k`, `bq` len `n*k`, `scales` len `n`, `out` len
+/// `n`; `k ≤ I8_DOT_K_MAX`. Loads are unaligned.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn gemv_i8_omajor_avx2(
+    q: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::x86_64::*;
+    let kv = k & !15;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * k),
+            bq.add((j + 1) * k),
+            bq.add((j + 2) * k),
+            bq.add((j + 3) * k),
+        ];
+        let mut c = [_mm256_setzero_si256(); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let av = _mm256_cvtepi8_epi16(_mm_loadu_si128(q.add(kk) as *const __m128i));
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let w = _mm256_cvtepi8_epi16(_mm_loadu_si128(row.add(kk) as *const __m128i));
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(av, w));
+            }
+            kk += 16;
+        }
+        let mut sums = [0i32; 4];
+        for (sr, cr) in sums.iter_mut().zip(c.iter()) {
+            *sr = hsum256_i32(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * (*row.add(kk) as i32);
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = bq.add(j * k);
+        let mut s = 0i32;
+        for kk in 0..k {
+            s += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// AVX2 inner for the output-major W4A8 packed-i4 GEMV — the x86 twin of the
+/// de-interleaved wasm i4 kernel. The activation arrives split
+/// (`de = [q_even | q_odd]`, each `k/2`, built once per token) so the packed
+/// nibbles need no reorder: one 16-byte weight load yields 32 values, the low
+/// nibbles pair with the even activations and the high with the odd, through
+/// two `_mm_shuffle_epi8` LUT hits into the same exact madd pipeline.
+///
+/// # Safety
+/// AVX2 enabled; `q` len `k` (scalar tail), `de` len `k`, `bq` len `n*k/2`,
+/// `scales` len `n`, `out` len `n`; `k` even, `k ≤ I8_DOT_K_MAX`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i4_omajor_avx2(
+    q: *const i8,
+    de: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::x86_64::*;
+    let kb = k / 2;
+    let (qe, qo) = (de, de.add(kb));
+    let table = _mm_loadu_si128(I4_VALUES.as_ptr() as *const __m128i);
+    let low_mask = _mm_set1_epi8(0x0F);
+    let kv = k & !31;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * kb),
+            bq.add((j + 1) * kb),
+            bq.add((j + 2) * kb),
+            bq.add((j + 3) * kb),
+        ];
+        let mut c = [_mm256_setzero_si256(); 4];
+        let mut kk = 0;
+        while kk < kv {
+            let h = kk / 2; // 16 packed bytes = weights kk..kk+32
+            let ae = _mm256_cvtepi8_epi16(_mm_loadu_si128(qe.add(h) as *const __m128i));
+            let ao = _mm256_cvtepi8_epi16(_mm_loadu_si128(qo.add(h) as *const __m128i));
+            for (cr, row) in c.iter_mut().zip(rows.iter()) {
+                let b = _mm_loadu_si128(row.add(h) as *const __m128i);
+                let we8 = _mm_shuffle_epi8(table, _mm_and_si128(b, low_mask));
+                let wo8 = _mm_shuffle_epi8(table, _mm_and_si128(_mm_srli_epi16::<4>(b), low_mask));
+                let we = _mm256_cvtepi8_epi16(we8);
+                let wo = _mm256_cvtepi8_epi16(wo8);
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(ae, we));
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(ao, wo));
+            }
+            kk += 32;
+        }
+        let mut sums = [0i32; 4];
+        for (sr, cr) in sums.iter_mut().zip(c.iter()) {
+            *sr = hsum256_i32(*cr);
+        }
+        while kk < k {
+            let qa = *q.add(kk) as i32;
+            for (sr, row) in sums.iter_mut().zip(rows.iter()) {
+                *sr += qa * i4_at(core::slice::from_raw_parts(*row, kb), kk) as i32;
+            }
+            kk += 1;
+        }
+        for (r, &sr) in sums.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    while j < n {
+        let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+        let mut sv = 0i32;
+        for kk in 0..k {
+            sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+        }
+        *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// AVX2 lanes of [`exp_f32_det`] — the identical no-FMA operation sequence,
+/// 8 wide.
+///
+/// # Safety
+/// AVX2 enabled; `xs` valid for `len` reads/writes.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn exp_f32_avx2_inplace(xs: *mut f32, len: usize) {
+    use core::arch::x86_64::*;
+    let lo = _mm256_set1_ps(EXP_F32_LO);
+    let hi = _mm256_set1_ps(EXP_F32_HI);
+    let log2e = _mm256_set1_ps(EXP_LOG2E);
+    let ln2_hi = _mm256_set1_ps(EXP_LN2_HI);
+    let ln2_lo = _mm256_set1_ps(EXP_LN2_LO);
+    let half = _mm256_set1_ps(0.5);
+    let one = _mm256_set1_ps(1.0);
+    let zero = _mm256_setzero_ps();
+    let mut i = 0;
+    while i + 8 <= len {
+        let x0 = _mm256_loadu_ps(xs.add(i));
+        // keep = x >= LO; a NaN lane compares false (→ zeroed), matching the
+        // scalar `is_nan() || x < LO → 0.0`.
+        let keep = _mm256_cmp_ps::<_CMP_GE_OQ>(x0, lo);
+        let x = _mm256_min_ps(x0, hi);
+        let t = _mm256_mul_ps(x, log2e);
+        let neg = _mm256_cmp_ps::<_CMP_LT_OQ>(t, zero);
+        let adj = _mm256_blendv_ps(half, _mm256_sub_ps(zero, half), neg);
+        let ki = _mm256_cvttps_epi32(_mm256_add_ps(t, adj));
+        let kf = _mm256_cvtepi32_ps(ki);
+        let r = _mm256_sub_ps(
+            _mm256_sub_ps(x, _mm256_mul_ps(kf, ln2_hi)),
+            _mm256_mul_ps(kf, ln2_lo),
+        );
+        let mut p = _mm256_set1_ps(EXP_C6);
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C5));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C4));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C3));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), _mm256_set1_ps(EXP_C2));
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), one);
+        p = _mm256_add_ps(_mm256_mul_ps(p, r), one);
+        let bits = _mm256_slli_epi32::<23>(_mm256_add_epi32(ki, _mm256_set1_epi32(127)));
+        let bits = _mm256_min_epi32(bits, _mm256_set1_epi32(0x7f00_0000));
+        let scale = _mm256_castsi256_ps(bits);
+        let e = _mm256_mul_ps(p, scale);
+        _mm256_storeu_ps(xs.add(i), _mm256_blendv_ps(zero, e, keep));
+        i += 8;
+    }
+    while i < len {
+        *xs.add(i) = exp_f32_det(*xs.add(i));
+        i += 1;
     }
 }
 
@@ -2516,16 +2765,19 @@ fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
     f(&mut v)
 }
 
-/// Two reusable i8 scratch buffers for the wasm quantized-GEMV activation
-/// re-layouts (zero alloc per call after warm-up under `std`; transient on
-/// no_std, like the other kernel scratches). Callers repurpose them per
-/// path: the i8 relaxed tier holds the `q⁺ / q⁻` i7 split (both `k`); the
-/// i4 paths pack the de-interleaved activation into the first buffer (`k`
-/// baseline, `2k` relaxed) and leave the second idle. The buffers carry no
-/// fixed size — each caller `resize`s to its own `k`-derived length — so the
-/// scratch is shape-agnostic.
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-fn with_wasm_gemv_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
+/// Two reusable i8 scratch buffers for the vectorized quantized-GEMV
+/// activation re-layouts (zero alloc per call after warm-up under `std`;
+/// transient on no_std, like the other kernel scratches). Callers repurpose
+/// them per path: the wasm i8 relaxed tier holds the `q⁺ / q⁻` i7 split
+/// (both `k`); the i4 paths pack the de-interleaved activation into the
+/// first buffer (`k` baseline, `2k` wasm-relaxed) and leave the second idle.
+/// The buffers carry no fixed size — each caller `resize`s to its own
+/// `k`-derived length — so the scratch is shape-agnostic.
+#[cfg(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+))]
+fn with_gemv_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
     #[cfg(feature = "std")]
     {
         std::thread_local! {
@@ -2933,9 +3185,9 @@ pub(crate) unsafe fn pool_exec_gemv(
 /// row-major f32, `bq` is `[n,k]` i8 (each output's k-vector contiguous),
 /// `scales` `[n]`, `out` `[m,n]`. m = 1 is the decode GEMV this kernel is
 /// shaped for; small m loops rows through the same core. Output is
-/// **bit-identical** across scalar / NEON / wasm SIMD128: the accumulation
-/// is exact integer, and every target shares the same quantization and
-/// writeback expressions.
+/// **bit-identical** across scalar / x86 AVX2 / NEON / wasm SIMD128: the
+/// accumulation is exact integer, and every target shares the same
+/// quantization and writeback expressions.
 pub fn matmul_i8_pc_omajor(
     a: &[f32],
     bq: &[i8],
@@ -3028,7 +3280,7 @@ pub fn matmul_i8_pc_omajor(
             ))]
             // SAFETY: simd128 + relaxed-simd gates; sizes checked above.
             unsafe {
-                with_wasm_gemv_scratch(|qp, qn| {
+                with_gemv_scratch(|qp, qn| {
                     qp.clear();
                     qp.resize(k, 0);
                     qn.clear();
@@ -3064,19 +3316,44 @@ pub fn matmul_i8_pc_omajor(
                     }
                 });
             }
-            // Same integer function on every other target (x86 /
-            // wasm-without-simd128) — not a numerically different tier.
+            // Same integer function on every other target: AVX2 on x86_64
+            // (runtime-detected), scalar elsewhere / wasm-without-simd128 —
+            // not a numerically different tier.
             #[cfg(not(any(
                 target_arch = "aarch64",
                 all(target_arch = "wasm32", target_feature = "simd128")
             )))]
-            for j in 0..n {
-                let row = &bq[j * k..j * k + k];
-                let mut s = 0i32;
-                for (&qa, &w) in q.iter().zip(row) {
-                    s += qa as i32 * w as i32;
+            {
+                #[cfg(target_arch = "x86_64")]
+                let done = if x86_has_avx2() {
+                    // SAFETY: AVX2 detected; sizes checked above.
+                    unsafe {
+                        gemv_i8_omajor_avx2(
+                            q.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                        );
+                    }
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let done = false;
+                if !done {
+                    for j in 0..n {
+                        let row = &bq[j * k..j * k + k];
+                        let mut s = 0i32;
+                        for (&qa, &w) in q.iter().zip(row) {
+                            s += qa as i32 * w as i32;
+                        }
+                        orow[j] = (s as f32) * (scale_a * scales[j]);
+                    }
                 }
-                orow[j] = (s as f32) * (scale_a * scales[j]);
             }
         }
     })
@@ -3390,7 +3667,8 @@ unsafe fn gemv_i4_omajor_wasm_relaxed(
 /// column `j` = nibble `l` of its `k/2`-byte span, low nibble first),
 /// `scales` `[n]`, `out` `[m,n]`. Streams **half** the weight bytes of the
 /// i8 kernel; all-integer accumulation keeps it bit-identical across
-/// scalar / NEON / wasm on both SIMD tiers. `k` must be even (loud).
+/// scalar / x86 AVX2 / NEON / wasm on both SIMD tiers. `k` must be even
+/// (loud).
 pub fn matmul_i4_pc_omajor(
     a: &[f32],
     bq: &[u8],
@@ -3447,7 +3725,7 @@ pub fn matmul_i4_pc_omajor(
             // shared-memory builds the rows fork-join across the embedder
             // pool (kind 1). Integer sums keep any layout bit-identical.
             unsafe {
-                with_wasm_gemv_scratch(|de, _unused| {
+                with_gemv_scratch(|de, _unused| {
                     let kb = k / 2;
                     #[cfg(not(target_feature = "relaxed-simd"))]
                     {
@@ -3512,18 +3790,54 @@ pub fn matmul_i4_pc_omajor(
                     }
                 });
             }
-            // Same integer function on every other target.
+            // Same integer function on every other target: AVX2 on x86_64
+            // (runtime-detected; the activation is de-interleaved once per
+            // token exactly as the wasm baseline), scalar elsewhere.
             #[cfg(not(any(
                 target_arch = "aarch64",
                 all(target_arch = "wasm32", target_feature = "simd128")
             )))]
-            for j in 0..n {
-                let row = &bq[j * (k / 2)..(j + 1) * (k / 2)];
-                let mut sv = 0i32;
-                for (kk, &qa) in q.iter().enumerate() {
-                    sv += qa as i32 * i4_at(row, kk) as i32;
+            {
+                #[cfg(target_arch = "x86_64")]
+                let done = if x86_has_avx2() {
+                    with_gemv_scratch(|de, _unused| {
+                        let kb = k / 2;
+                        de.clear();
+                        de.resize(k, 0);
+                        for (t, pair) in q.chunks_exact(2).enumerate() {
+                            de[t] = pair[0];
+                            de[kb + t] = pair[1];
+                        }
+                        // SAFETY: AVX2 detected; sizes checked above.
+                        unsafe {
+                            gemv_i4_omajor_avx2(
+                                q.as_ptr(),
+                                de.as_ptr(),
+                                bq.as_ptr(),
+                                scales.as_ptr(),
+                                orow.as_mut_ptr(),
+                                k,
+                                n,
+                                scale_a,
+                            );
+                        }
+                    });
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let done = false;
+                if !done {
+                    for j in 0..n {
+                        let row = &bq[j * (k / 2)..(j + 1) * (k / 2)];
+                        let mut sv = 0i32;
+                        for (kk, &qa) in q.iter().enumerate() {
+                            sv += qa as i32 * i4_at(row, kk) as i32;
+                        }
+                        orow[j] = (sv as f32) * (scale_a * scales[j]);
+                    }
                 }
-                orow[j] = (sv as f32) * (scale_a * scales[j]);
             }
         }
     })
