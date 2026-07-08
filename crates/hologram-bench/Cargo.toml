@@ -34,6 +34,10 @@ criterion = { workspace = true }
 smallvec  = { workspace = true }
 
 [[bench]]
+name = "kernel_perf"
+harness = false
+
+[[bench]]
 name = "decode_step"
 harness = false
 
