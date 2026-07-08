@@ -2905,6 +2905,83 @@ unsafe fn matmul_i8_pc_wasm(
     }
 }
 
+/// x86-64 AVX2 inner for the fused per-channel int8 matmul — the x86 twin of
+/// `matmul_i8_pc_neon` (a first-class target must not fall to the scalar triple
+/// loop). GEMV over 16-column panels: two YMM accumulators, the i8 weights
+/// sign-extended to f32 in-register (`_mm256_cvtepi8_epi32`), the per-column
+/// scale factored out to the writeback. FMA — bit-close (rel < 1e-4) to the
+/// naive reference, as the NEON lane already is.
+///
+/// # Safety
+/// AVX2 + FMA (the caller gates on `x86_has_avx2`); slices sized `m*k`, `k*n`,
+/// `n`, `m*n`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn matmul_i8_pc_avx2(
+    a: *const f32,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    use core::arch::x86_64::*;
+    for i in 0..m {
+        let arow = a.add(i * k);
+        let orow = out.add(i * n);
+        let mut j = 0;
+        // 16-column panels: two 8-wide YMM accumulators.
+        while j + 16 <= n {
+            let mut c0 = _mm256_setzero_ps();
+            let mut c1 = _mm256_setzero_ps();
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*arow.add(kk));
+                // 16 i8 weights for this k-row / column panel.
+                let q = _mm_loadu_si128(bq.add(kk * n + j) as *const __m128i);
+                let b0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q)); // cols j..j+8
+                let qhi = _mm_srli_si128(q, 8); // high 8 i8 → low
+                let b1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(qhi)); // cols j+8..j+16
+                c0 = _mm256_fmadd_ps(av, b0, c0);
+                c1 = _mm256_fmadd_ps(av, b1, c1);
+            }
+            _mm256_storeu_ps(
+                orow.add(j),
+                _mm256_mul_ps(c0, _mm256_loadu_ps(scales.add(j))),
+            );
+            _mm256_storeu_ps(
+                orow.add(j + 8),
+                _mm256_mul_ps(c1, _mm256_loadu_ps(scales.add(j + 8))),
+            );
+            j += 16;
+        }
+        // 8-column tail.
+        while j + 8 <= n {
+            let mut c0 = _mm256_setzero_ps();
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*arow.add(kk));
+                let q = _mm_loadl_epi64(bq.add(kk * n + j) as *const __m128i); // 8 i8
+                let b0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(q));
+                c0 = _mm256_fmadd_ps(av, b0, c0);
+            }
+            _mm256_storeu_ps(
+                orow.add(j),
+                _mm256_mul_ps(c0, _mm256_loadu_ps(scales.add(j))),
+            );
+            j += 8;
+        }
+        // Scalar remainder.
+        while j < n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                acc += *arow.add(kk) * (*bq.add(kk * n + j) as f32);
+            }
+            *orow.add(j) = acc * *scales.add(j);
+            j += 1;
+        }
+    }
+}
+
 /// Fused per-channel symmetric int8 matmul (zero-point 0). See module comment.
 pub fn matmul_i8_per_channel(
     a: &[f32],
@@ -2949,19 +3026,44 @@ pub fn matmul_i8_per_channel(
             n,
         );
     }
-    // Portable scalar fallback (wasm-without-simd128 / x86 / other); aarch64 NEON
-    // and wasm SIMD128 ran above and this block is compiled out for them.
+    // x86-64 (AVX2 runtime-detected) + portable scalar fallback
+    // (wasm-without-simd128 / other); aarch64 NEON and wasm SIMD128 ran above
+    // and this block is compiled out for them.
     #[cfg(not(any(
         target_arch = "aarch64",
         all(target_arch = "wasm32", target_feature = "simd128")
     )))]
-    for i in 0..m {
-        for j in 0..n {
-            let mut acc = 0f32;
-            for kk in 0..k {
-                acc += a[i * k + kk] * (bq[kk * n + j] as f32);
+    {
+        #[cfg(target_arch = "x86_64")]
+        let done = if x86_has_avx2() {
+            // SAFETY: AVX2 detected; sizes checked above.
+            unsafe {
+                matmul_i8_pc_avx2(
+                    a.as_ptr(),
+                    bq.as_ptr(),
+                    scales.as_ptr(),
+                    out.as_mut_ptr(),
+                    m,
+                    k,
+                    n,
+                );
             }
-            out[i * n + j] = acc * scales[j];
+            true
+        } else {
+            false
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let done = false;
+        if !done {
+            for i in 0..m {
+                for j in 0..n {
+                    let mut acc = 0f32;
+                    for kk in 0..k {
+                        acc += a[i * k + kk] * (bq[kk * n + j] as f32);
+                    }
+                    out[i * n + j] = acc * scales[j];
+                }
+            }
         }
     }
 }
