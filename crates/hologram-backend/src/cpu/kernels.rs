@@ -1738,28 +1738,20 @@ fn try_dispatch_float<W: Workspace>(
 
         // Reductions.
         K::ReduceSum(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, false))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Sum, false))
         }
         K::ReduceMean(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, true))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Sum, true))
         }
         K::ReduceProd(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a * b, 1.0, false))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Prod, false))
         }
-        K::ReduceMin(c) if is_float(c.dtype) => Some(ff::reduce_float(
-            c,
-            ws,
-            |a, b| a.min(b),
-            f32::INFINITY,
-            false,
-        )),
-        K::ReduceMax(c) if is_float(c.dtype) => Some(ff::reduce_float(
-            c,
-            ws,
-            |a, b| a.max(b),
-            f32::NEG_INFINITY,
-            false,
-        )),
+        K::ReduceMin(c) if is_float(c.dtype) => {
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Min, false))
+        }
+        K::ReduceMax(c) if is_float(c.dtype) => {
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Max, false))
+        }
         K::CumSum(c) if is_float(c.dtype) => Some(ff::cumsum_float(c, ws)),
 
         // Softmax. (Backward variants are rejected by the byte-path grad arm.)

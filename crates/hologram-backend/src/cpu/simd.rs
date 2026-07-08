@@ -216,6 +216,26 @@ pub fn simd_f32_max(a: &[f32]) -> f32 {
     }
 }
 
+/// SIMD-vectorized horizontal minimum (`min a[i]`, `+∞` for an empty slice).
+/// The mirror of [`simd_f32_max`] — exact and order-independent for non-NaN
+/// inputs, so bit-identical to a scalar left-fold there.
+#[inline]
+pub fn simd_f32_min(a: &[f32]) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::min_f32(a) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::min_f32_avx512(a) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::min_f32_avx2(a) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::min_f32_neon(a) },
+        _ => scalar::min_f32(a),
+    }
+}
+
 /// Broadcast-scalar AXPY: `out[i] += s * b[i]` (one scalar `s` against a whole
 /// vector `b`). The attention P·V accumulation — distinct from
 /// [`simd_f32_fmadd`], which is a vector×vector FMA. Computed **non-fused**
@@ -281,6 +301,13 @@ mod scalar {
         let mut m = f32::NEG_INFINITY;
         for &v in a {
             m = m.max(v);
+        }
+        m
+    }
+    pub fn min_f32(a: &[f32]) -> f32 {
+        let mut m = f32::INFINITY;
+        for &v in a {
+            m = m.min(v);
         }
         m
     }
@@ -437,6 +464,26 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn min_f32_avx2(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::INFINITY;
+        }
+        let chunks = n / 8;
+        let mut m = _mm256_set1_ps(f32::INFINITY);
+        for k in 0..chunks {
+            m = _mm256_min_ps(m, _mm256_loadu_ps(a.as_ptr().add(k * 8)));
+        }
+        let mut buf = [f32::INFINITY; 8];
+        _mm256_storeu_ps(buf.as_mut_ptr(), m);
+        let mut total = buf.iter().copied().fold(f32::INFINITY, f32::min);
+        for &v in &a[chunks * 8..n] {
+            total = total.min(v);
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx2,fma")]
     pub unsafe fn axpy_f32_avx2(out: &mut [f32], s: f32, b: &[f32]) {
         let n = out.len().min(b.len());
         let chunks = n / 8;
@@ -577,6 +624,24 @@ mod x86 {
         let mut total = _mm512_reduce_max_ps(m);
         for &v in &a[chunks * 16..n] {
             total = total.max(v);
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn min_f32_avx512(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::INFINITY;
+        }
+        let chunks = n / 16;
+        let mut m = _mm512_set1_ps(f32::INFINITY);
+        for k in 0..chunks {
+            m = _mm512_min_ps(m, _mm512_loadu_ps(a.as_ptr().add(k * 16)));
+        }
+        let mut total = _mm512_reduce_min_ps(m);
+        for &v in &a[chunks * 16..n] {
+            total = total.min(v);
         }
         total
     }
@@ -1153,6 +1218,23 @@ mod aarch {
         total
     }
     #[target_feature(enable = "neon")]
+    pub unsafe fn min_f32_neon(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::INFINITY;
+        }
+        let chunks = n / 4;
+        let mut m = vdupq_n_f32(f32::INFINITY);
+        for k in 0..chunks {
+            m = vminq_f32(m, vld1q_f32(a.as_ptr().add(k * 4)));
+        }
+        let mut total = vminvq_f32(m);
+        for &v in &a[chunks * 4..n] {
+            total = total.min(v);
+        }
+        total
+    }
+    #[target_feature(enable = "neon")]
     pub unsafe fn axpy_f32_neon(out: &mut [f32], s: f32, b: &[f32]) {
         let n = out.len().min(b.len());
         let chunks = n / 4;
@@ -1720,6 +1802,30 @@ mod wasm_simd {
             .max(f32x4_extract_lane::<3>(m));
         for i in chunks * 4..n {
             total = total.max(*a.as_ptr().add(i));
+        }
+        total
+    }
+
+    /// wasm SIMD128 horizontal minimum (`+∞` for empty). Mirror of [`max_f32`].
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load` is an unaligned wasm load.
+    pub unsafe fn min_f32(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::INFINITY;
+        }
+        let chunks = n / 4;
+        let mut m = f32x4_splat(f32::INFINITY);
+        for k in 0..chunks {
+            m = f32x4_pmin(m, v128_load(a.as_ptr().add(k * 4) as *const v128));
+        }
+        let mut total = f32x4_extract_lane::<0>(m)
+            .min(f32x4_extract_lane::<1>(m))
+            .min(f32x4_extract_lane::<2>(m))
+            .min(f32x4_extract_lane::<3>(m));
+        for i in chunks * 4..n {
+            total = total.min(*a.as_ptr().add(i));
         }
         total
     }
@@ -4754,6 +4860,19 @@ mod tests {
                 .collect();
             let want = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let got = simd_f32_max(&a);
+            assert_eq!(want, got, "len {len}");
+        }
+    }
+
+    #[test]
+    fn min_matches_scalar() {
+        assert_eq!(simd_f32_min(&[]), f32::INFINITY);
+        for len in [1usize, 3, 4, 7, 8, 15, 16, 17, 63, 64, 65, 100, 257] {
+            let a: Vec<f32> = (0..len)
+                .map(|i| if i % 3 == 0 { -(i as f32) } else { i as f32 })
+                .collect();
+            let want = a.iter().copied().fold(f32::INFINITY, f32::min);
+            let got = simd_f32_min(&a);
             assert_eq!(want, got, "len {len}");
         }
     }

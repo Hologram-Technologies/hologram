@@ -741,6 +741,38 @@ pub fn im2col_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
     if out.len() < kk * nn * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path: pure gather over `&[f32]` — the contiguous `ow` store
+    // autovectorizes and each read is a direct load (no per-element `read_float`
+    // dtype match). Bit-identical (pure data movement).
+    if dt == DTYPE_F32 {
+        if let (Ok(i32s), Ok(o32s)) = (
+            bytemuck::try_cast_slice::<u8, f32>(inp),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..kk * nn * es]),
+        ) {
+            for ci in 0..cin {
+                for kh_ in 0..kh {
+                    for kw_ in 0..kw {
+                        let krow = (ci * kh + kh_) * kw + kw_;
+                        for oh in 0..hout {
+                            let ih = oh * sh + kh_;
+                            let orow =
+                                &mut o32s[krow * nn + oh * wout..krow * nn + oh * wout + wout];
+                            if ih < hin {
+                                let ibase = (ci * hin + ih) * win;
+                                for (ow, o) in orow.iter_mut().enumerate() {
+                                    let iw = ow * sw + kw_;
+                                    *o = if iw < win { i32s[ibase + iw] } else { 0.0 };
+                                }
+                            } else {
+                                orow.fill(0.0);
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for ci in 0..cin {
         for kh_ in 0..kh {
             for kw_ in 0..kw {
@@ -788,6 +820,41 @@ pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < cin * hin * win * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: scatter-add over `&[f32]` (direct loads/stores, no
+    // per-element `read_float`). Bit-identical for f32 (read/write_float are the
+    // identity there); the scatter order is unchanged.
+    if dt == DTYPE_F32 {
+        if let (Ok(i32s), Ok(o32s)) = (
+            bytemuck::try_cast_slice::<u8, f32>(inp),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..cin * hin * win * es]),
+        ) {
+            for o in o32s[..cin * hin * win].iter_mut() {
+                *o = 0.0;
+            }
+            for ci in 0..cin {
+                for kh_ in 0..kh {
+                    for kw_ in 0..kw {
+                        let krow = (ci * kh + kh_) * kw + kw_;
+                        for oh in 0..hout {
+                            let ih = oh * sh + kh_;
+                            if ih >= hin {
+                                continue;
+                            }
+                            let prow = krow * nn + oh * wout;
+                            let ibase = (ci * hin + ih) * win;
+                            for ow in 0..wout {
+                                let iw = ow * sw + kw_;
+                                if iw < win {
+                                    o32s[ibase + iw] += i32s[prow + ow];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     // Zero the image, then accumulate overlapping patches.
     for i in 0..cin * hin * win {
@@ -1544,11 +1611,34 @@ pub fn softmax_float<W: Workspace>(
     Ok(())
 }
 
+/// The associative fold a [`reduce_float`] performs. Carries enough structure
+/// (unlike a bare `fn(f32,f32)->f32`) to let the **full-reduction** f32 path
+/// dispatch to the multi-accumulator SIMD primitives — an opaque fn pointer in
+/// the innermost fold is a serial dependent chain the compiler cannot vectorize.
+#[derive(Clone, Copy)]
+pub enum ReduceKind {
+    Sum,
+    Prod,
+    Min,
+    Max,
+}
+
+impl ReduceKind {
+    #[inline]
+    fn fold(self) -> (fn(f32, f32) -> f32, f32) {
+        match self {
+            ReduceKind::Sum => (|a, b| a + b, 0.0),
+            ReduceKind::Prod => (|a, b| a * b, 1.0),
+            ReduceKind::Min => (|a, b| a.min(b), f32::INFINITY),
+            ReduceKind::Max => (|a, b| a.max(b), f32::NEG_INFINITY),
+        }
+    }
+}
+
 pub fn reduce_float<W: Workspace>(
     c: &ReduceCall,
     ws: &mut W,
-    f: fn(f32, f32) -> f32,
-    init: f32,
+    kind: ReduceKind,
     mean: bool,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
@@ -1557,6 +1647,7 @@ pub fn reduce_float<W: Workspace>(
     }
     let dt = c.dtype;
     let es = elem_size(dt);
+    let (f, init) = kind.fold();
     let plan = ReducePlan::new(c, n)?;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
@@ -1578,6 +1669,28 @@ pub fn reduce_float<W: Workspace>(
             bytemuck::try_cast_slice::<u8, f32>(xs),
             bytemuck::try_cast_slice_mut::<u8, f32>(out),
         ) {
+            // Full reduction (single output cell): the odometer degenerates to a
+            // serial fold into `o32[0]`. Use the multi-accumulator SIMD
+            // primitives instead. Min/Max are order-independent (bit-identical);
+            // Sum's chunked order differs in the last ULP exactly as the f32
+            // norm/dot reductions already do; Prod has no SIMD primitive.
+            if plan.out_count == 1 {
+                let acc = match kind {
+                    ReduceKind::Sum => crate::cpu::simd::simd_f32_sum(&x32[..n]),
+                    ReduceKind::Max => crate::cpu::simd::simd_f32_max(&x32[..n]),
+                    ReduceKind::Min => crate::cpu::simd::simd_f32_min(&x32[..n]),
+                    ReduceKind::Prod => x32[..n].iter().fold(1.0f32, |p, &v| p * v),
+                };
+                o32[0] = if mean {
+                    acc / plan.reduced_count as f32
+                } else {
+                    acc
+                };
+                for o in o32[1..].iter_mut() {
+                    *o = 0.0;
+                }
+                return Ok(());
+            }
             for o in o32[..plan.out_count].iter_mut() {
                 *o = init;
             }
@@ -1777,6 +1890,55 @@ pub fn pool_float<W: Workspace>(
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
     if out.len() < total_out {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: direct `&[f32]` loads in the pooling window instead of a
+    // per-element `read_float` dtype match. Bit-identical (same accumulation
+    // order; f32 read/write_float are the identity).
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total_out]),
+        ) {
+            for bi in 0..b {
+                for ci in 0..ch {
+                    let plane = (bi * ch + ci) * h_in;
+                    for oh in 0..h_out {
+                        for ow in 0..w_out {
+                            let mut acc = if take_max { f32::NEG_INFINITY } else { 0f32 };
+                            let mut count = 0u32;
+                            for kh in 0..k_h {
+                                let ih = oh * s_h + kh;
+                                if ih >= h_in {
+                                    continue;
+                                }
+                                let rbase = (plane + ih) * w_in;
+                                for kw in 0..k_w {
+                                    let iw = ow * s_w + kw;
+                                    if iw < w_in {
+                                        let v = x32[rbase + iw];
+                                        if take_max {
+                                            acc = acc.max(v);
+                                        } else {
+                                            acc += v;
+                                        }
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            let result = if take_max {
+                                acc
+                            } else if count > 0 {
+                                acc / count as f32
+                            } else {
+                                0.0
+                            };
+                            o32[((bi * ch + ci) * h_out + oh) * w_out + ow] = result;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     for bi in 0..b {
         for ci in 0..ch {
