@@ -1169,6 +1169,60 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path (see `rms_norm_float`): materialize `x + residual` into the
+    // output view, take the sum-of-squares with `simd_f32_dot`, and scale in
+    // place — all vectorized. Runs every decode layer per token.
+    const DTYPE_F32: u8 = 8;
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let r32 = residual.and_then(|r| bytemuck::try_cast_slice::<u8, f32>(r).ok());
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let has_g = matches!(g32, Some(g) if g.len() >= f);
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let rrow = r32.map(|r| &r[bi * f..bi * f + f]);
+                let orow = &mut o32[bi * f..bi * f + f];
+                let sumsq = match rrow {
+                    Some(rr) => {
+                        for ((o, &v), &rv) in orow.iter_mut().zip(row).zip(rr) {
+                            *o = v + rv;
+                        }
+                        crate::cpu::simd::simd_f32_dot(orow, orow)
+                    }
+                    None => crate::cpu::simd::simd_f32_dot(row, row),
+                };
+                let inv = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
+                match (rrow.is_some(), has_g) {
+                    (true, true) => {
+                        let g = &g32.unwrap()[..f];
+                        for (o, &gj) in orow.iter_mut().zip(g) {
+                            *o *= inv * gj;
+                        }
+                    }
+                    (true, false) => {
+                        for o in orow.iter_mut() {
+                            *o *= inv;
+                        }
+                    }
+                    (false, true) => {
+                        let g = &g32.unwrap()[..f];
+                        for ((o, &v), &gj) in orow.iter_mut().zip(row).zip(g) {
+                            *o = v * inv * gj;
+                        }
+                    }
+                    (false, false) => {
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v * inv;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut sumsq = 0f32;
@@ -1215,6 +1269,40 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
     let gamma = reads[1].get(..f * es).unwrap_or(&[]);
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: view the aligned slot bytes as `&[f32]` (the arena pads
+    // slots to 64 bytes, so the cast succeeds), take the sum-of-squares with
+    // the vectorized `simd_f32_dot`, and normalize over the contiguous view
+    // (an elementwise map — the compiler vectorizes it). Every decode layer
+    // runs this per token; the generic `read_float` loop below (kept as the
+    // bf16/f16/misaligned fallback) blocked both the reduction and the map.
+    const DTYPE_F32: u8 = 8;
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let sumsq = crate::cpu::simd::simd_f32_dot(row, row);
+                let inv_rms = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
+                let orow = &mut o32[bi * f..bi * f + f];
+                match g32 {
+                    Some(g) if g.len() >= f => {
+                        for ((o, &v), &gj) in orow.iter_mut().zip(row).zip(&g[..f]) {
+                            *o = v * inv_rms * gj;
+                        }
+                    }
+                    _ => {
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v * inv_rms;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     for bi in 0..bsz {
         let row_off = bi * f;

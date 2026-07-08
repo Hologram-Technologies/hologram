@@ -129,9 +129,15 @@ pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// SIMD-vectorized f32 dot product.
+/// SIMD-vectorized f32 dot product. wasm SIMD128 (the deployed target) has a
+/// dedicated lane; x86 (AVX2/AVX-512) and aarch64 (NEON) select at runtime;
+/// everything else is scalar.
 #[inline]
 pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::dot_f32(a, b) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
         #[cfg(target_arch = "x86_64")]
         3 => unsafe { x86::dot_f32_avx512(a, b) },
@@ -1302,6 +1308,67 @@ mod aarch {
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm_simd {
     use core::arch::wasm32::*;
+
+    /// wasm SIMD128 f32 dot product — the deployed-target twin of
+    /// `x86::dot_f32_avx2` / `aarch::dot_f32_neon`. Four independent 4-lane
+    /// accumulators hide the add latency; the horizontal reduction and scalar
+    /// tail keep it correct for any length. (Floating-point reduction order is
+    /// arch-dependent here as it already is for every f32 dot/matmul — the
+    /// content-address of a value is derivation-based, not a re-hash of its
+    /// bytes, so this introduces no cross-target divergence the f32 path did
+    /// not already have.)
+    ///
+    /// # Safety
+    /// simd128 must be enabled; `v128_load` is an unaligned wasm load.
+    pub unsafe fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+        let n = a.len().min(b.len());
+        let chunks = n / 16;
+        let (mut c0, mut c1, mut c2, mut c3) = (
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+        );
+        for k in 0..chunks {
+            let off = k * 16;
+            let ap = a.as_ptr().add(off);
+            let bp = b.as_ptr().add(off);
+            c0 = f32x4_add(
+                c0,
+                f32x4_mul(v128_load(ap as *const v128), v128_load(bp as *const v128)),
+            );
+            c1 = f32x4_add(
+                c1,
+                f32x4_mul(
+                    v128_load(ap.add(4) as *const v128),
+                    v128_load(bp.add(4) as *const v128),
+                ),
+            );
+            c2 = f32x4_add(
+                c2,
+                f32x4_mul(
+                    v128_load(ap.add(8) as *const v128),
+                    v128_load(bp.add(8) as *const v128),
+                ),
+            );
+            c3 = f32x4_add(
+                c3,
+                f32x4_mul(
+                    v128_load(ap.add(12) as *const v128),
+                    v128_load(bp.add(12) as *const v128),
+                ),
+            );
+        }
+        let acc = f32x4_add(f32x4_add(c0, c1), f32x4_add(c2, c3));
+        let mut sum = f32x4_extract_lane::<0>(acc)
+            + f32x4_extract_lane::<1>(acc)
+            + f32x4_extract_lane::<2>(acc)
+            + f32x4_extract_lane::<3>(acc);
+        for i in chunks * 16..n {
+            sum += *a.as_ptr().add(i) * *b.as_ptr().add(i);
+        }
+        sum
+    }
 
     // ─── wasm SIMD128 register-tiled f32 matmul ────────────────────
     // The wasm32 analog of the NEON `aarch` matmul kernels. wasm SIMD128 is
