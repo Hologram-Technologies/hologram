@@ -149,6 +149,76 @@ pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
+/// SIMD-vectorized horizontal sum (`Σ a[i]`). Same dispatch shape as
+/// [`simd_f32_dot`]: wasm SIMD128 has a dedicated lane, x86/aarch select at
+/// runtime, else scalar. Feeds the LayerNorm mean. Floating-point reduction
+/// order is arch-dependent exactly as the dot/matmul reductions already are —
+/// content-addresses are derivation-based, not a re-hash of the f32 bytes, so
+/// this introduces no divergence the f32 path did not already carry.
+#[inline]
+pub fn simd_f32_sum(a: &[f32]) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::sum_f32(a) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::sum_f32_avx512(a) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::sum_f32_avx2(a) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::sum_f32_neon(a) },
+        _ => scalar::sum_f32(a),
+    }
+}
+
+/// SIMD-vectorized horizontal maximum (`max a[i]`, `−∞` for an empty slice).
+/// Feeds the softmax / attention max-subtraction pass. `max` is exact and
+/// order-independent for non-NaN inputs, so this is bit-identical to a scalar
+/// left-fold there; a NaN element makes the result NaN under either path (the
+/// SIMD `max` intrinsics and `f32::max` differ only in *which* NaN/operand
+/// survives, and softmax over a NaN row is NaN regardless).
+#[inline]
+pub fn simd_f32_max(a: &[f32]) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::max_f32(a) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::max_f32_avx512(a) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::max_f32_avx2(a) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::max_f32_neon(a) },
+        _ => scalar::max_f32(a),
+    }
+}
+
+/// Broadcast-scalar AXPY: `out[i] += s * b[i]` (one scalar `s` against a whole
+/// vector `b`). The attention P·V accumulation — distinct from
+/// [`simd_f32_fmadd`], which is a vector×vector FMA. Computed **non-fused**
+/// (multiply then add) on every arch, so each lane replays the scalar
+/// `*o += s * b[i]` bit-for-bit — there is no cross-lane reduction, so the
+/// result is bit-identical to the scalar loop, not merely close. wasm SIMD128
+/// (the deployed target) has a dedicated lane.
+#[inline]
+pub fn simd_f32_axpy(out: &mut [f32], s: f32, b: &[f32]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::axpy_f32(out, s, b) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        #[cfg(target_arch = "x86_64")]
+        3 => unsafe { x86::axpy_f32_avx512(out, s, b) },
+        #[cfg(target_arch = "x86_64")]
+        2 => unsafe { x86::axpy_f32_avx2(out, s, b) },
+        #[cfg(target_arch = "aarch64")]
+        4 => unsafe { aarch::axpy_f32_neon(out, s, b) },
+        _ => scalar::axpy_f32(out, s, b),
+    }
+}
+
 mod scalar {
     #[cfg(not(feature = "std"))]
     use crate::cpu::mathf::FloatExt;
@@ -178,6 +248,26 @@ mod scalar {
             acc += a[i] * b[i];
         }
         acc
+    }
+    pub fn sum_f32(a: &[f32]) -> f32 {
+        let mut acc = 0f32;
+        for &v in a {
+            acc += v;
+        }
+        acc
+    }
+    pub fn max_f32(a: &[f32]) -> f32 {
+        let mut m = f32::NEG_INFINITY;
+        for &v in a {
+            m = m.max(v);
+        }
+        m
+    }
+    pub fn axpy_f32(out: &mut [f32], s: f32, b: &[f32]) {
+        let n = out.len().min(b.len());
+        for i in 0..n {
+            out[i] += s * b[i];
+        }
     }
 }
 
@@ -280,6 +370,69 @@ mod x86 {
         total
     }
 
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn sum_f32_avx2(a: &[f32]) -> f32 {
+        let n = a.len();
+        let chunks = n / 32;
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+        let mut acc2 = _mm256_setzero_ps();
+        let mut acc3 = _mm256_setzero_ps();
+        for k in 0..chunks {
+            let off = k * 32;
+            acc0 = _mm256_add_ps(acc0, _mm256_loadu_ps(a.as_ptr().add(off)));
+            acc1 = _mm256_add_ps(acc1, _mm256_loadu_ps(a.as_ptr().add(off + 8)));
+            acc2 = _mm256_add_ps(acc2, _mm256_loadu_ps(a.as_ptr().add(off + 16)));
+            acc3 = _mm256_add_ps(acc3, _mm256_loadu_ps(a.as_ptr().add(off + 24)));
+        }
+        let acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
+        let mut buf = [0f32; 8];
+        _mm256_storeu_ps(buf.as_mut_ptr(), acc);
+        let mut total: f32 = buf.iter().sum();
+        for &v in &a[chunks * 32..n] {
+            total += v;
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn max_f32_avx2(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::NEG_INFINITY;
+        }
+        let chunks = n / 8;
+        let mut m = _mm256_set1_ps(f32::NEG_INFINITY);
+        for k in 0..chunks {
+            m = _mm256_max_ps(m, _mm256_loadu_ps(a.as_ptr().add(k * 8)));
+        }
+        let mut buf = [f32::NEG_INFINITY; 8];
+        _mm256_storeu_ps(buf.as_mut_ptr(), m);
+        let mut total = buf.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        for &v in &a[chunks * 8..n] {
+            total = total.max(v);
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx2,fma")]
+    pub unsafe fn axpy_f32_avx2(out: &mut [f32], s: f32, b: &[f32]) {
+        let n = out.len().min(b.len());
+        let chunks = n / 8;
+        let sv = _mm256_set1_ps(s);
+        for k in 0..chunks {
+            let off = k * 8;
+            let vb = _mm256_loadu_ps(b.as_ptr().add(off));
+            let vo = _mm256_loadu_ps(out.as_ptr().add(off));
+            // Non-fused (mul then add) so each lane matches the scalar `out += s*b`.
+            let r = _mm256_add_ps(vo, _mm256_mul_ps(sv, vb));
+            _mm256_storeu_ps(out.as_mut_ptr().add(off), r);
+        }
+        for i in chunks * 8..n {
+            out[i] += s * b[i];
+        }
+    }
+
     // ─── AVX-512 path ─────────────────────────────────────────────
 
     #[target_feature(enable = "avx512f")]
@@ -364,6 +517,64 @@ mod x86 {
             total += a[i] * b[i];
         }
         total
+    }
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn sum_f32_avx512(a: &[f32]) -> f32 {
+        let n = a.len();
+        let chunks = n / 64;
+        let mut acc0 = _mm512_setzero_ps();
+        let mut acc1 = _mm512_setzero_ps();
+        let mut acc2 = _mm512_setzero_ps();
+        let mut acc3 = _mm512_setzero_ps();
+        for k in 0..chunks {
+            let off = k * 64;
+            acc0 = _mm512_add_ps(acc0, _mm512_loadu_ps(a.as_ptr().add(off)));
+            acc1 = _mm512_add_ps(acc1, _mm512_loadu_ps(a.as_ptr().add(off + 16)));
+            acc2 = _mm512_add_ps(acc2, _mm512_loadu_ps(a.as_ptr().add(off + 32)));
+            acc3 = _mm512_add_ps(acc3, _mm512_loadu_ps(a.as_ptr().add(off + 48)));
+        }
+        let acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
+        let mut total = _mm512_reduce_add_ps(acc);
+        for &v in &a[chunks * 64..n] {
+            total += v;
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn max_f32_avx512(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::NEG_INFINITY;
+        }
+        let chunks = n / 16;
+        let mut m = _mm512_set1_ps(f32::NEG_INFINITY);
+        for k in 0..chunks {
+            m = _mm512_max_ps(m, _mm512_loadu_ps(a.as_ptr().add(k * 16)));
+        }
+        let mut total = _mm512_reduce_max_ps(m);
+        for &v in &a[chunks * 16..n] {
+            total = total.max(v);
+        }
+        total
+    }
+
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn axpy_f32_avx512(out: &mut [f32], s: f32, b: &[f32]) {
+        let n = out.len().min(b.len());
+        let chunks = n / 16;
+        let sv = _mm512_set1_ps(s);
+        for k in 0..chunks {
+            let off = k * 16;
+            let vb = _mm512_loadu_ps(b.as_ptr().add(off));
+            let vo = _mm512_loadu_ps(out.as_ptr().add(off));
+            let r = _mm512_add_ps(vo, _mm512_mul_ps(sv, vb));
+            _mm512_storeu_ps(out.as_mut_ptr().add(off), r);
+        }
+        for i in chunks * 16..n {
+            out[i] += s * b[i];
+        }
     }
 
     /// Register-tiled FMA **leaf** of the cache-oblivious recursion: a 4×16
@@ -875,6 +1086,68 @@ mod aarch {
         }
         total
     }
+    #[target_feature(enable = "neon")]
+    pub unsafe fn sum_f32_neon(a: &[f32]) -> f32 {
+        let n = a.len();
+        let chunks = n / 16;
+        let mut acc0 = vdupq_n_f32(0.0);
+        let mut acc1 = vdupq_n_f32(0.0);
+        let mut acc2 = vdupq_n_f32(0.0);
+        let mut acc3 = vdupq_n_f32(0.0);
+        for k in 0..chunks {
+            let off = k * 16;
+            acc0 = vaddq_f32(acc0, vld1q_f32(a.as_ptr().add(off)));
+            acc1 = vaddq_f32(acc1, vld1q_f32(a.as_ptr().add(off + 4)));
+            acc2 = vaddq_f32(acc2, vld1q_f32(a.as_ptr().add(off + 8)));
+            acc3 = vaddq_f32(acc3, vld1q_f32(a.as_ptr().add(off + 12)));
+        }
+        let acc = vaddq_f32(vaddq_f32(acc0, acc1), vaddq_f32(acc2, acc3));
+        let lanes = [
+            vgetq_lane_f32(acc, 0),
+            vgetq_lane_f32(acc, 1),
+            vgetq_lane_f32(acc, 2),
+            vgetq_lane_f32(acc, 3),
+        ];
+        let mut total: f32 = lanes.iter().sum();
+        for &v in &a[chunks * 16..n] {
+            total += v;
+        }
+        total
+    }
+    #[target_feature(enable = "neon")]
+    pub unsafe fn max_f32_neon(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::NEG_INFINITY;
+        }
+        let chunks = n / 4;
+        let mut m = vdupq_n_f32(f32::NEG_INFINITY);
+        for k in 0..chunks {
+            m = vmaxq_f32(m, vld1q_f32(a.as_ptr().add(k * 4)));
+        }
+        let mut total = vmaxvq_f32(m);
+        for &v in &a[chunks * 4..n] {
+            total = total.max(v);
+        }
+        total
+    }
+    #[target_feature(enable = "neon")]
+    pub unsafe fn axpy_f32_neon(out: &mut [f32], s: f32, b: &[f32]) {
+        let n = out.len().min(b.len());
+        let chunks = n / 4;
+        let sv = vdupq_n_f32(s);
+        for k in 0..chunks {
+            let off = k * 4;
+            let vb = vld1q_f32(b.as_ptr().add(off));
+            let vo = vld1q_f32(out.as_ptr().add(off));
+            // Non-fused (mul then add) to match the scalar `out += s*b` bitwise.
+            let r = vaddq_f32(vo, vmulq_f32(sv, vb));
+            vst1q_f32(out.as_mut_ptr().add(off), r);
+        }
+        for i in chunks * 4..n {
+            out[i] += s * b[i];
+        }
+    }
 
     // ─── NEON register-tiled f32 matmul ────────────────────────────
     // The aarch64 analog of the x86 `matmul_f32_fma_strided` /
@@ -1368,6 +1641,90 @@ mod wasm_simd {
             sum += *a.as_ptr().add(i) * *b.as_ptr().add(i);
         }
         sum
+    }
+
+    /// wasm SIMD128 horizontal sum — the deployed-target twin of
+    /// `x86::sum_f32_avx2` / `aarch::sum_f32_neon`. Four 4-lane accumulators,
+    /// horizontal reduce, scalar tail.
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load` is an unaligned wasm load.
+    pub unsafe fn sum_f32(a: &[f32]) -> f32 {
+        let n = a.len();
+        let chunks = n / 16;
+        let (mut c0, mut c1, mut c2, mut c3) = (
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+            f32x4_splat(0.0),
+        );
+        for k in 0..chunks {
+            let off = k * 16;
+            let ap = a.as_ptr().add(off);
+            c0 = f32x4_add(c0, v128_load(ap as *const v128));
+            c1 = f32x4_add(c1, v128_load(ap.add(4) as *const v128));
+            c2 = f32x4_add(c2, v128_load(ap.add(8) as *const v128));
+            c3 = f32x4_add(c3, v128_load(ap.add(12) as *const v128));
+        }
+        let acc = f32x4_add(f32x4_add(c0, c1), f32x4_add(c2, c3));
+        let mut sum = f32x4_extract_lane::<0>(acc)
+            + f32x4_extract_lane::<1>(acc)
+            + f32x4_extract_lane::<2>(acc)
+            + f32x4_extract_lane::<3>(acc);
+        for i in chunks * 16..n {
+            sum += *a.as_ptr().add(i);
+        }
+        sum
+    }
+
+    /// wasm SIMD128 horizontal maximum (`−∞` for empty). `f32x4_pmax` picks the
+    /// second operand on ties/NaN — immaterial for softmax (a NaN row is NaN
+    /// either way), and exact for the ordinary finite case.
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load` is an unaligned wasm load.
+    pub unsafe fn max_f32(a: &[f32]) -> f32 {
+        let n = a.len();
+        if n == 0 {
+            return f32::NEG_INFINITY;
+        }
+        let chunks = n / 4;
+        let mut m = f32x4_splat(f32::NEG_INFINITY);
+        for k in 0..chunks {
+            m = f32x4_pmax(m, v128_load(a.as_ptr().add(k * 4) as *const v128));
+        }
+        let mut total = f32x4_extract_lane::<0>(m)
+            .max(f32x4_extract_lane::<1>(m))
+            .max(f32x4_extract_lane::<2>(m))
+            .max(f32x4_extract_lane::<3>(m));
+        for i in chunks * 4..n {
+            total = total.max(*a.as_ptr().add(i));
+        }
+        total
+    }
+
+    /// wasm SIMD128 broadcast-scalar AXPY (`out[i] += s * b[i]`), non-fused so
+    /// each lane matches the scalar loop bit-for-bit. Deliberately mul-then-add
+    /// rather than `f32x4_relaxed_madd` — the fused relaxed op both changes the
+    /// bits and, as measured elsewhere in this module, regresses latency-bound
+    /// chains on the wasmtime host.
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load`/`v128_store` are unaligned wasm accesses.
+    pub unsafe fn axpy_f32(out: &mut [f32], s: f32, b: &[f32]) {
+        let n = out.len().min(b.len());
+        let chunks = n / 4;
+        let sv = f32x4_splat(s);
+        for k in 0..chunks {
+            let off = k * 4;
+            let vb = v128_load(b.as_ptr().add(off) as *const v128);
+            let vo = v128_load(out.as_ptr().add(off) as *const v128);
+            let r = f32x4_add(vo, f32x4_mul(sv, vb));
+            v128_store(out.as_mut_ptr().add(off) as *mut v128, r);
+        }
+        for i in chunks * 4..n {
+            out[i] += s * b[i];
+        }
     }
 
     // ─── wasm SIMD128 register-tiled f32 matmul ────────────────────
@@ -4291,6 +4648,53 @@ mod tests {
         let want: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let got = simd_f32_dot(&a, &b);
         assert!((want - got).abs() < 1e-3, "want {want}, got {got}");
+    }
+
+    #[test]
+    fn sum_matches_scalar() {
+        // Cover lengths spanning the SIMD block widths (8/16/64) and their
+        // tails, so both the vector body and the scalar remainder run.
+        for len in [0usize, 1, 3, 7, 8, 15, 16, 17, 63, 64, 65, 100, 257] {
+            let a: Vec<f32> = (0..len).map(|i| (i as f32) * 0.5 - 3.0).collect();
+            let want: f32 = a.iter().sum();
+            let got = simd_f32_sum(&a);
+            assert!(
+                (want - got).abs() <= 1e-3 * want.abs().max(1.0),
+                "len {len}: want {want}, got {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn max_matches_scalar() {
+        assert_eq!(simd_f32_max(&[]), f32::NEG_INFINITY);
+        for len in [1usize, 3, 4, 7, 8, 15, 16, 17, 63, 64, 65, 100, 257] {
+            // Interleave sign so the running max is not monotone.
+            let a: Vec<f32> = (0..len)
+                .map(|i| if i % 3 == 0 { -(i as f32) } else { i as f32 })
+                .collect();
+            let want = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let got = simd_f32_max(&a);
+            assert_eq!(want, got, "len {len}");
+        }
+    }
+
+    #[test]
+    fn axpy_matches_scalar_bit_identical() {
+        // Non-fused SIMD axpy has no cross-lane reduction, so it must match the
+        // scalar `out += s*b` exactly (bit-for-bit), not merely within epsilon.
+        for len in [0usize, 1, 3, 4, 7, 8, 15, 16, 17, 31, 64, 100] {
+            let s = 0.37f32;
+            let b: Vec<f32> = (0..len).map(|i| (i as f32) * 0.011 - 0.4).collect();
+            let base: Vec<f32> = (0..len).map(|i| (i as f32) * 0.003 + 1.0).collect();
+            let mut got = base.clone();
+            simd_f32_axpy(&mut got, s, &b);
+            let mut want = base.clone();
+            for i in 0..len {
+                want[i] += s * b[i];
+            }
+            assert_eq!(got, want, "len {len}");
+        }
     }
 
     #[test]

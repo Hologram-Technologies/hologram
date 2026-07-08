@@ -1026,6 +1026,55 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path (mirrors `rms_norm_float`): view the aligned slot bytes as
+    // `&[f32]`, take the mean with the vectorized `simd_f32_sum`, center into
+    // the output buffer as scratch, take the variance as `simd_f32_dot` of the
+    // centered row against itself (the numerically-stable two-pass form the
+    // scalar loop uses), then scale in place. The generic `read_float` loop
+    // below is kept as the bf16/f16/misaligned fallback.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let b32 = bytemuck::try_cast_slice::<u8, f32>(beta).ok();
+            let inv_f = 1.0 / f as f32;
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let mean = crate::cpu::simd::simd_f32_sum(row) * inv_f;
+                let orow = &mut o32[bi * f..bi * f + f];
+                for (o, &v) in orow.iter_mut().zip(row) {
+                    *o = v - mean;
+                }
+                let var = crate::cpu::simd::simd_f32_dot(orow, orow) * inv_f;
+                let inv_std = 1.0 / libm::sqrtf(var + eps);
+                match (g32, b32) {
+                    (Some(g), Some(bta)) if g.len() >= f && bta.len() >= f => {
+                        for ((o, &gj), &bj) in orow.iter_mut().zip(&g[..f]).zip(&bta[..f]) {
+                            *o = *o * inv_std * gj + bj;
+                        }
+                    }
+                    (Some(g), _) if g.len() >= f => {
+                        for (o, &gj) in orow.iter_mut().zip(&g[..f]) {
+                            *o = *o * inv_std * gj;
+                        }
+                    }
+                    (_, Some(bta)) if bta.len() >= f => {
+                        for (o, &bj) in orow.iter_mut().zip(&bta[..f]) {
+                            *o = *o * inv_std + bj;
+                        }
+                    }
+                    _ => {
+                        for o in orow.iter_mut() {
+                            *o *= inv_std;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut mean = 0f32;
@@ -1348,6 +1397,45 @@ pub fn softmax_float<W: Workspace>(
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
 
+    // f32 fast path: view the aligned slot bytes as `&[f32]` so the max pass is
+    // the vectorized `simd_f32_max` and the framing (subtract-max, normalize)
+    // walks contiguous `&[f32]` runs instead of per-element `read_float` /
+    // `write_float`. The exp pass and the sequential denominator sum are
+    // unchanged. The generic loop below stays as the bf16/f16/misaligned path.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            with_matmul_scratch(|exps| {
+                for bi in 0..b {
+                    let row = &x32[bi * f..bi * f + f];
+                    let max_v = crate::cpu::simd::simd_f32_max(row);
+                    exps.clear();
+                    exps.extend(row.iter().map(|&v| v - max_v));
+                    crate::cpu::simd::simd_f32_exp_inplace(exps);
+                    let mut sum = 0f32;
+                    for &e in exps.iter() {
+                        sum += e;
+                    }
+                    let orow = &mut o32[bi * f..bi * f + f];
+                    if log_form {
+                        let log_sum = libm::logf(sum.max(1e-30)) + max_v;
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v - log_sum;
+                        }
+                    } else {
+                        let denom = sum.max(1e-30);
+                        for (o, &e) in orow.iter_mut().zip(exps.iter()) {
+                            *o = e / denom;
+                        }
+                    }
+                }
+            });
+            return Ok(());
+        }
+    }
+
     // Reuse the thread-local matmul scratch as a per-row exp buffer.
     // Reset between rows; never reallocates after the first call of
     // matching feature size.
@@ -1406,6 +1494,56 @@ pub fn reduce_float<W: Workspace>(
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < plan.out_count * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: view both slots as `&[f32]` and replace the per-element
+    // `out_offset` (a full rank-length div/mod decode of `i` on every element)
+    // with an incremental odometer that carries the output offset alongside the
+    // input walk — a reduced axis contributes 0 to the offset, a kept axis its
+    // output stride. Identical fold order (linear `i`) and identical cell
+    // mapping to the scalar path, so the reduction result is unchanged.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(out),
+        ) {
+            for o in o32[..plan.out_count].iter_mut() {
+                *o = init;
+            }
+            let rank = plan.rank;
+            let mut coord = [0usize; MAX_RANK];
+            let mut oo = 0usize;
+            for &xv in x32[..n].iter() {
+                o32[oo] = f(o32[oo], xv);
+                // Advance the odometer over the input dims (rightmost fastest),
+                // tracking `oo` incrementally.
+                let mut ax = rank;
+                while ax > 0 {
+                    ax -= 1;
+                    coord[ax] += 1;
+                    if !plan.reduced[ax] {
+                        oo += plan.out_stride[ax];
+                    }
+                    if coord[ax] < plan.in_dims[ax] {
+                        break;
+                    }
+                    coord[ax] = 0;
+                    if !plan.reduced[ax] {
+                        oo -= plan.out_stride[ax] * plan.in_dims[ax];
+                    }
+                }
+            }
+            if mean {
+                let inv = 1.0 / plan.reduced_count as f32;
+                for o in o32[..plan.out_count].iter_mut() {
+                    *o *= inv;
+                }
+            }
+            // Zero any trailing cells beyond the reduced output (slot may be wider).
+            for o in o32[plan.out_count..].iter_mut() {
+                *o = 0.0;
+            }
+            return Ok(());
+        }
     }
     // Initialize each output cell to the fold identity, then fold every input
     // element into the cell its non-reduced coordinates address.
@@ -1754,9 +1892,9 @@ fn attention_f32_engine(
                     for (kj, &sc) in scores.iter().enumerate() {
                         let p = sc / denom;
                         let vrow = &v32[kv_off + kj * d..kv_off + kj * d + d];
-                        for (o, &vv) in orow.iter_mut().zip(vrow) {
-                            *o += p * vv;
-                        }
+                        // orow += p · vrow (broadcast-scalar AXPY, bit-identical
+                        // to the scalar accumulation it replaces).
+                        crate::cpu::simd::simd_f32_axpy(orow, p, vrow);
                     }
                 }
             }
@@ -2014,6 +2152,59 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
     Ok(())
 }
 
+/// Contiguous-inner-run kernel for the f32 [`broadcast_binary_float`] fast path.
+/// Generic over the elementwise op `F` so each call site monomorphizes to a
+/// concrete inner loop LLVM can vectorize (`op` always receives `(small, other)`
+/// in that order; the caller bakes any operand swap into the closure). The
+/// odometer over the outer axes is identical to the scalar path's.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn broadcast_binary_f32_run<F: Fn(f32, f32) -> f32>(
+    s32: &[f32],
+    ot32: &[f32],
+    o32: &mut [f32],
+    in_strides: &[usize; MAX_RANK],
+    out_dims: &[u32],
+    inner_len: usize,
+    inner_stride: usize,
+    num_rows: usize,
+    op: F,
+) {
+    let rank = out_dims.len();
+    let mut coord = [0usize; MAX_RANK];
+    let mut sbase = 0usize;
+    let mut o = 0usize;
+    for _ in 0..num_rows {
+        let orow = &mut o32[o..o + inner_len];
+        let otrow = &ot32[o..o + inner_len];
+        if inner_stride == 0 {
+            // Last axis broadcasts: one small value across the whole run.
+            let sv = s32[sbase];
+            for (od, &ov) in orow.iter_mut().zip(otrow) {
+                *od = op(sv, ov);
+            }
+        } else {
+            // Last axis maps 1:1 (stride 1): small run is contiguous.
+            let srow = &s32[sbase..sbase + inner_len];
+            for ((od, &sv), &ov) in orow.iter_mut().zip(srow).zip(otrow) {
+                *od = op(sv, ov);
+            }
+        }
+        o += inner_len;
+        let mut ax = rank - 1;
+        while ax > 0 {
+            ax -= 1;
+            coord[ax] += 1;
+            sbase += in_strides[ax];
+            if coord[ax] < out_dims[ax] as usize {
+                break;
+            }
+            sbase -= in_strides[ax] * out_dims[ax] as usize;
+            coord[ax] = 0;
+        }
+    }
+}
+
 /// Fused `Expand → elementwise-binary`: `out[o] = op(small[bcast(o)], other[o])`
 /// (operands swapped when `!small_is_lhs`). The `small` (pre-Expand) operand is
 /// read with stride-0 broadcast indexing in place, so the broadcasted tensor is
@@ -2073,6 +2264,67 @@ pub fn broadcast_binary_float<W: Workspace>(
         return Ok(());
     }
     let num_rows = out_total / inner_len;
+    // f32 fast path: view the three slots as `&[f32]` and run the contiguous
+    // inner op with a **concrete** monomorphized closure (an indirect `fn`
+    // pointer defeats the inner-loop vectorization the odometer sets up). The
+    // odometer geometry is identical to the scalar path below; only the leaf
+    // element access changes from `read_float`/`write_float` to a direct load.
+    if dt == DTYPE_F32 {
+        if let (Ok(s32), Ok(ot32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(small),
+            bytemuck::try_cast_slice::<u8, f32>(other),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..out_total * es]),
+        ) {
+            match (c.op, c.small_is_lhs) {
+                (broadcast_op::ADD, _) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s + o,
+                ),
+                (broadcast_op::MUL, _) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s * o,
+                ),
+                (broadcast_op::SUB, true) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s - o,
+                ),
+                (broadcast_op::SUB, false) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| o - s,
+                ),
+                _ => return Err(BackendError::UnsupportedOp("broadcast_binary: bad op")),
+            }
+            return Ok(());
+        }
+    }
     let mut coord = [0usize; MAX_RANK];
     let mut sbase = 0usize;
     let mut o = 0usize;
