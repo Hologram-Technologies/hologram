@@ -432,18 +432,56 @@ mod x86 {
             }
             i += MR;
         }
-        // Row remainder.
+        // Row remainder (m not a multiple of MR) — the M=1 / small-M **decode
+        // (GEMV)** shape. Vectorize each remaining row exactly like the MR
+        // block: broadcast the activation, stream B contiguously, accumulate
+        // NR-wide in YMM. A scalar dot here (the previous form) is a serial
+        // FMA dependency chain over strided B loads — at M=1 that collapses to
+        // a few percent of memory bandwidth, ~two orders off the tiled path;
+        // the FMA GEMV recovers it, matching the NEON/wasm remainder.
         while i < m {
-            for j in 0..n {
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            let orow = out.add(i * ldc);
+            let mut j = 0;
+            while j + NR <= n {
+                let (mut c0, mut c1) = if accumulate {
+                    (
+                        _mm256_loadu_ps(orow.add(j)),
+                        _mm256_loadu_ps(orow.add(j + 8)),
+                    )
                 } else {
-                    0.0
+                    (_mm256_setzero_ps(), _mm256_setzero_ps())
                 };
                 for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *b.add(kk * ldb + j);
+                    let av = _mm256_set1_ps(*arow.add(kk));
+                    let brow = b.add(kk * ldb + j);
+                    c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(brow), c0);
+                    c1 = _mm256_fmadd_ps(av, _mm256_loadu_ps(brow.add(8)), c1);
                 }
-                *out.add(i * ldc + j) = s;
+                _mm256_storeu_ps(orow.add(j), c0);
+                _mm256_storeu_ps(orow.add(j + 8), c1);
+                j += NR;
+            }
+            while j + 8 <= n {
+                let mut c0 = if accumulate {
+                    _mm256_loadu_ps(orow.add(j))
+                } else {
+                    _mm256_setzero_ps()
+                };
+                for kk in 0..k {
+                    let av = _mm256_set1_ps(*arow.add(kk));
+                    c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(b.add(kk * ldb + j)), c0);
+                }
+                _mm256_storeu_ps(orow.add(j), c0);
+                j += 8;
+            }
+            while j < n {
+                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
+                for kk in 0..k {
+                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                }
+                *orow.add(j) = s;
+                j += 1;
             }
             i += 1;
         }
@@ -4351,10 +4389,14 @@ mod tests {
     #[test]
     fn blocked_gemv_small_m_matches_naive() {
         for &(m, k, n) in &[
-            (1usize, 2048usize, 64usize), // decode GEMV (16-wide path)
-            (1, 17, 22),                  // 16-wide + 4-wide + scalar tail
+            (1usize, 2048usize, 64usize), // decode GEMV, k-split accumulate
+            (1, 17, 22),                  // 16-wide + scalar tail
+            (1, 100, 24),                 // 16-wide + 8-wide, no scalar tail
+            (1, 130, 264),                // recurse on n & k (m=1 remainder + accumulate)
+            (1, 3, 7),                    // scalar-tail-only (n < 8)
             (2, 9, 35),
-            (3, 31, 17), // 16-wide + scalar tail
+            (3, 31, 17),   // 16-wide + scalar tail
+            (3, 200, 152), // recursing multi-row remainder
         ] {
             let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.0007 - 0.2).collect();
             let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.0011 + 0.3).collect();

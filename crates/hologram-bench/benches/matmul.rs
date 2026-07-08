@@ -156,12 +156,44 @@ fn bench_matmul_f32_512(c: &mut Criterion) {
     bench_matmul_f32_square(c, 512);
 }
 
+/// **Decode-shaped f32 GEMV** (M=1 · K×N, one token vector times a weight
+/// matrix). The substrate's worst case: the GEMM microkernel's register tile
+/// (MR rows) does not engage at M=1, so the row-remainder path decides the
+/// speed. A scalar remainder collapses this to a few percent of memory
+/// bandwidth; the vectorized FMA remainder holds it near roofline. This bench
+/// guards that shape from regressing back to scalar.
+fn bench_matmul_f32_gemv(c: &mut Criterion, k: usize, n: usize) {
+    c.bench_function(&format!("matmul_f32_gemv_1x{k}x{n} (decode)"), |bench| {
+        let mut ws = make_arena((k * n).max(n) * 4);
+        seed_f32(&mut ws, 0, k); // A is 1×k
+        seed_f32(&mut ws, 1, k * n); // B is k×n
+        let mut backend: CpuBackend<BufferArena> = CpuBackend::new();
+        let call = KernelCall::MatMul(MatMulCall {
+            a: ref_buf(0),
+            b: ref_buf(1),
+            output: ref_buf(2),
+            m: 1,
+            k: k as u32,
+            n: n as u32,
+            dtype: DTYPE_F32,
+            b_packed: false,
+        });
+        bench.iter(|| {
+            backend.dispatch(black_box(&call), &mut ws).unwrap();
+        });
+    });
+}
+fn bench_matmul_f32_gemv_2048(c: &mut Criterion) {
+    bench_matmul_f32_gemv(c, 2048, 2048);
+}
+
 criterion_group!(
     benches,
     bench_matmul_w8_64,
     bench_matmul_f32_64,
     bench_matmul_f32_128,
     bench_matmul_f32_256,
-    bench_matmul_f32_512
+    bench_matmul_f32_512,
+    bench_matmul_f32_gemv_2048
 );
 criterion_main!(benches);

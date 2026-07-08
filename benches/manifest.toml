@@ -97,6 +97,9 @@ status = "active"
 [benchmarks."matmul_dequant_256 (fused)"]
 status = "active"
 
+[benchmarks."matmul_f32_gemv_1x2048x2048 (decode)"]
+status = "active"
+
 [benchmarks."matmul_f32_128x128x128 (zero-copy)"]
 status = "active"
 
