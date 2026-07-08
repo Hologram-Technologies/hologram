@@ -778,22 +778,25 @@ impl<B: SessionBackend> InferenceSession<B> {
                 .saturating_mul(port_bytes_per_element(port.dtype))
                 .min(buf.bytes.len());
             let region = &buf.bytes[..n_bytes];
-            let label = match &mut self.input_cache[i] {
+            // Hit: an **immutable** borrow (same as the pre-optimization form) so
+            // the served/memo-hit path — where the input repeats and this is the
+            // fast arm — keeps its codegen. Only a miss takes `&mut` to re-stash.
+            let label = match self.input_cache[i].as_ref() {
                 Some((prev, lbl)) if prev.as_slice() == region => *lbl,
                 // Miss: re-address, and stash `region` for the next comparison —
                 // reusing the cached Vec's allocation (clear + extend) rather
                 // than a fresh `to_vec`, so an autoregressive decode (input
                 // changes every step, always a miss) does no per-step heap
                 // allocation once the buffer has warmed to the input size.
-                slot => {
+                _ => {
                     let lbl = address_bytes(region);
-                    match slot {
+                    match self.input_cache[i].as_mut() {
                         Some((prev, l)) => {
                             prev.clear();
                             prev.extend_from_slice(region);
                             *l = lbl;
                         }
-                        None => *slot = Some((region.to_vec(), lbl)),
+                        None => self.input_cache[i] = Some((region.to_vec(), lbl)),
                     }
                     lbl
                 }
