@@ -18,15 +18,97 @@ use hologram_backend::{
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
-/// `DTYPE_F32`). Content-addressed fusion only fires for f32 matmuls.
+/// `DTYPE_F32`).
 const DTYPE_F32: u8 = 8;
+/// f16 / bf16 dtype tags (match `port_bytes_per_element` / the backend).
+const DTYPE_F16: u8 = 6;
+const DTYPE_BF16: u8 = 7;
+
+/// A float dtype whose `matmul → {activation | residual-add}` epilogue is
+/// bit-identical whether fused or run as two separate kernels. f32 has no
+/// intermediate rounding. bf16/f16 also qualify for these **2-op** epilogues:
+/// the fused kernel narrows the matmul product to the storage dtype and reads
+/// it back before applying the epilogue (one rounding, exactly as the unfused
+/// chain — the activation LUT and the add kernel both re-widen the narrowed
+/// value). The **3-op** `matmul → add → activation` is deliberately excluded
+/// for bf16/f16: fusing it would skip narrowing the *sum* before the
+/// activation, which the unfused chain performs — so it stays f32-only.
+#[inline]
+const fn epilogue_fusable_dtype(dt: u8) -> bool {
+    dt == DTYPE_F32 || dt == DTYPE_BF16 || dt == DTYPE_F16
+}
 
 /// Max distinct input-label sets the graph-level memo retains. A re-run
 /// whose input ports content-address to a key already present returns its
 /// cached outputs without touching the graph (O(1) in graph size) — the
 /// content-addressing fast path for redundant execution (repeated prompt,
-/// replayed request). Best-effort past the cap.
+/// replayed request). Past the cap the memo evicts its least-recently-used
+/// entry (see [`GraphMemo`]) so the hot working set survives an unbounded
+/// stream of distinct inputs.
 const GRAPH_MEMO_CAP: usize = 1024;
+
+/// Graph-level memo key/value: the input-port / output-port κ-label vectors.
+type MemoLabels = SmallVec<[ContentLabel; 4]>;
+
+/// LRU-bounded graph-level memo. Maps input-port κ-labels → output-port
+/// κ-labels; caps residency at [`GRAPH_MEMO_CAP`] and, when full, evicts the
+/// least-recently-used entry so a long-running server past the cap keeps its
+/// hot prompts cached instead of freezing the cache at the first 1024 seen.
+///
+/// Eviction never affects correctness: the memo is a pure content-addressed
+/// cache, so an evicted key simply recomputes to the identical output labels on
+/// its next occurrence. Recency is a monotonic tick bumped on every access;
+/// eviction scans for the minimum tick (`O(len)`, only when inserting a new key
+/// at capacity — amortized negligible for `cap ≈ 1024`).
+struct GraphMemo {
+    map: HashMap<MemoLabels, (MemoLabels, u64)>,
+    tick: u64,
+    cap: usize,
+}
+
+impl GraphMemo {
+    fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            tick: 0,
+            cap,
+        }
+    }
+
+    /// Look up `key`; on a hit, refresh its recency and return a clone of the
+    /// cached output labels.
+    fn get(&mut self, key: &MemoLabels) -> Option<MemoLabels> {
+        self.tick = self.tick.wrapping_add(1);
+        let now = self.tick;
+        self.map.get_mut(key).map(|(v, last)| {
+            *last = now;
+            v.clone()
+        })
+    }
+
+    /// Insert `key → value`, evicting the least-recently-used entry first if at
+    /// capacity and `key` is new.
+    fn insert(&mut self, key: MemoLabels, value: MemoLabels) {
+        self.tick = self.tick.wrapping_add(1);
+        let now = self.tick;
+        if self.map.len() >= self.cap && !self.map.contains_key(&key) {
+            if let Some(lru) = self
+                .map
+                .iter()
+                .min_by_key(|(_, (_, last))| *last)
+                .map(|(k, _)| k.clone())
+            {
+                self.map.remove(&lru);
+            }
+        }
+        self.map.insert(key, (value, now));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+}
 
 /// Precomputed per-node content-addressing metadata (built once at load).
 /// The runtime walk derives each node's output κ-label from its op
@@ -90,7 +172,7 @@ pub struct InferenceSession<B: SessionBackend> {
     /// the cached output *addresses* without walking the graph or moving
     /// any tensor bytes — the zero-cost reuse path (TC-01). Output values
     /// live in `pool`, resolvable by label.
-    graph_memo: HashMap<SmallVec<[ContentLabel; 4]>, SmallVec<[ContentLabel; 4]>>,
+    graph_memo: GraphMemo,
     /// Per-input-port `(last bytes, label)` cache. Content-addressing a
     /// leaf is `O(bytes)` (BLAKE3); re-hashing an unchanged input every
     /// execute is the dominant cost on the reuse path. A byte-equality
@@ -173,6 +255,62 @@ fn is_layout_only_call(call: &KernelCall) -> bool {
             // Gather is a runtime-indexed data-movement map (no arithmetic).
             | KernelCall::Gather(_)
     )
+}
+
+/// Derive the effective per-kernel tier assignments and the level-boundary
+/// migration schedule under a routing `policy`. The base tier is a pure
+/// function of each kernel's quantum level ([`call_tier`]); `policy.apply`
+/// then transforms it (`ForceAllCpu` → all `CpuMain`, `ForceAllDevice` → all
+/// `Device`), and the migration schedule is built from the **effective** tiers
+/// — so a policy change moves both the tier histogram and the CPU↔Device
+/// transfer plan, not just a stored field. Shared by session load and
+/// [`InferenceSession::set_tier_policy`] so the two never drift.
+#[cfg(feature = "tiered-exec")]
+fn build_tiers_and_migrations(
+    kernel_calls: &[KernelCall],
+    exec_plan: &[Vec<u32>],
+    slot_count: usize,
+    policy: crate::coherence::TierPolicy,
+) -> (
+    Vec<hologram_types::MemoryTier>,
+    Vec<crate::coherence::LevelMigration>,
+) {
+    let tiers: Vec<hologram_types::MemoryTier> = kernel_calls
+        .iter()
+        .map(|c| policy.apply(call_tier(c)))
+        .collect();
+    let call_outputs: Vec<u32> = kernel_calls
+        .iter()
+        .map(|c| {
+            hologram_backend::buffers(c)
+                .last()
+                .map(|b| b.slot)
+                .unwrap_or(u32::MAX)
+        })
+        .collect();
+    let call_inputs: Vec<Vec<u32>> = kernel_calls
+        .iter()
+        .map(|c| {
+            let bufs = hologram_backend::buffers(c);
+            if bufs.len() > 1 {
+                bufs[..bufs.len() - 1]
+                    .iter()
+                    .filter(|b| b.slot != u32::MAX)
+                    .map(|b| b.slot)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    let migrations = crate::coherence::build_migration_schedule(
+        exec_plan,
+        &tiers,
+        &call_outputs,
+        &call_inputs,
+        slot_count,
+    );
+    (tiers, migrations)
 }
 
 /// Backend bounds required for `InferenceSession` execute. Without the
@@ -534,43 +672,16 @@ impl<B: SessionBackend> InferenceSession<B> {
         // function of dtype/quantum level, so no archive section is needed),
         // then precompute the level-boundary migration schedule. PL_2 lease
         // disjointness makes the schedule a no-op on unified-memory hardware.
+        // Default policy at load is `Compiled` (archive-derived tiers). A later
+        // `set_tier_policy` recomputes both `tiers` and `migrations` through the
+        // same helper, so the override is live rather than a stored no-op.
         #[cfg(feature = "tiered-exec")]
-        let (tiers, migrations) = {
-            let tiers: Vec<hologram_types::MemoryTier> =
-                kernel_calls.iter().map(call_tier).collect();
-            let call_outputs: Vec<u32> = kernel_calls
-                .iter()
-                .map(|c| {
-                    hologram_backend::buffers(c)
-                        .last()
-                        .map(|b| b.slot)
-                        .unwrap_or(u32::MAX)
-                })
-                .collect();
-            let call_inputs: Vec<Vec<u32>> = kernel_calls
-                .iter()
-                .map(|c| {
-                    let bufs = hologram_backend::buffers(c);
-                    if bufs.len() > 1 {
-                        bufs[..bufs.len() - 1]
-                            .iter()
-                            .filter(|b| b.slot != u32::MAX)
-                            .map(|b| b.slot)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                })
-                .collect();
-            let migrations = crate::coherence::build_migration_schedule(
-                &exec_plan,
-                &tiers,
-                &call_outputs,
-                &call_inputs,
-                slot_count,
-            );
-            (tiers, migrations)
-        };
+        let (tiers, migrations) = build_tiers_and_migrations(
+            &kernel_calls,
+            &exec_plan,
+            slot_count,
+            crate::coherence::TierPolicy::Compiled,
+        );
 
         Ok(Self {
             kernel_calls,
@@ -584,7 +695,7 @@ impl<B: SessionBackend> InferenceSession<B> {
             const_bindings,
             weight_provider: provider,
             lazy_slots,
-            graph_memo: HashMap::new(),
+            graph_memo: GraphMemo::new(GRAPH_MEMO_CAP),
             input_cache: vec![None; inputs_len],
             node_meta,
             slot_label_init,
@@ -617,10 +728,25 @@ impl<B: SessionBackend> InferenceSession<B> {
     }
 
     /// Override the runtime tier-routing policy (Compiled / ForceAllCpu /
-    /// ForceAllDevice) for latency-vs-throughput tuning.
+    /// ForceAllDevice) for latency-vs-throughput tuning. Recomputes the
+    /// effective per-kernel tiers and the level-boundary migration schedule so
+    /// the override is applied (observable via [`Self::tiers`] /
+    /// [`Self::tier_report`]), not merely stored. A no-op if the policy is
+    /// unchanged, so it is cheap to call idempotently.
     #[cfg(feature = "tiered-exec")]
     pub fn set_tier_policy(&mut self, policy: crate::coherence::TierPolicy) {
+        if self.tier_policy == policy {
+            return;
+        }
         self.tier_policy = policy;
+        let (tiers, migrations) = build_tiers_and_migrations(
+            &self.kernel_calls,
+            &self.exec_plan,
+            self.slot_sizes.len(),
+            policy,
+        );
+        self.tiers = tiers;
+        self.migrations = migrations;
     }
 
     /// The active tier-routing policy.
@@ -652,11 +778,26 @@ impl<B: SessionBackend> InferenceSession<B> {
                 .saturating_mul(port_bytes_per_element(port.dtype))
                 .min(buf.bytes.len());
             let region = &buf.bytes[..n_bytes];
-            let label = match &self.input_cache[i] {
+            // Hit: an **immutable** borrow (same as the pre-optimization form) so
+            // the served/memo-hit path — where the input repeats and this is the
+            // fast arm — keeps its codegen. Only a miss takes `&mut` to re-stash.
+            let label = match self.input_cache[i].as_ref() {
                 Some((prev, lbl)) if prev.as_slice() == region => *lbl,
+                // Miss: re-address, and stash `region` for the next comparison —
+                // reusing the cached Vec's allocation (clear + extend) rather
+                // than a fresh `to_vec`, so an autoregressive decode (input
+                // changes every step, always a miss) does no per-step heap
+                // allocation once the buffer has warmed to the input size.
                 _ => {
                     let lbl = address_bytes(region);
-                    self.input_cache[i] = Some((region.to_vec(), lbl));
+                    match self.input_cache[i].as_mut() {
+                        Some((prev, l)) => {
+                            prev.clear();
+                            prev.extend_from_slice(region);
+                            *l = lbl;
+                        }
+                        None => self.input_cache[i] = Some((region.to_vec(), lbl)),
+                    }
                     lbl
                 }
             };
@@ -665,7 +806,7 @@ impl<B: SessionBackend> InferenceSession<B> {
 
         // Whole-graph memo hit: outputs already addressed and resident — no
         // walk, no movement.
-        let cached = self.graph_memo.get(&key).cloned();
+        let cached = self.graph_memo.get(&key);
         if let Some(labels) = cached {
             if labels.iter().all(|l| self.pool.resident(l)) {
                 self.record_graph_memo_hit();
@@ -699,6 +840,13 @@ impl<B: SessionBackend> InferenceSession<B> {
                 .pool
                 .resolve(label)
                 .ok_or(ExecError::WorkspaceExhausted)?;
+            // The boundary output copy. Keep the iterator `collect` form: a
+            // slice `full[..n].to_vec()`/`extend_from_slice` into the
+            // freshly-allocated destination measured ~8× slower here on the
+            // repeated-memo-hit path (identical byte count) — a real, stable
+            // regression whichever slice form was used, which the `collect`
+            // form does not exhibit. `take(n_bytes)` bounds the copy to the
+            // declared output even if the resolved buffer is wider.
             out.push(OutputBuffer {
                 bytes: full.iter().take(n_bytes).copied().collect(),
             });
@@ -724,7 +872,7 @@ impl<B: SessionBackend> InferenceSession<B> {
         let key: SmallVec<[ContentLabel; 4]> = input_labels.iter().copied().collect();
         // Hit only counts if the cached output addresses are still
         // resolvable; otherwise fall through and recompute.
-        let cached = self.graph_memo.get(&key).cloned();
+        let cached = self.graph_memo.get(&key);
         if let Some(labels) = cached {
             if labels.iter().all(|l| self.pool.resident(l)) {
                 self.record_graph_memo_hit();
@@ -977,9 +1125,9 @@ impl<B: SessionBackend> InferenceSession<B> {
         // Return the scratch allocations to the session for the next run.
         self.slot_label_scratch = slot_label;
         self.out_witnessed_scratch = out_witnessed;
-        if self.graph_memo.len() < GRAPH_MEMO_CAP {
-            self.graph_memo.insert(key, out_labels.clone());
-        }
+        // LRU-bounded: `insert` evicts the least-recently-used entry when full,
+        // so the memo tracks the hot working set rather than freezing at the cap.
+        self.graph_memo.insert(key, out_labels.clone());
         Ok(out_labels)
     }
 
@@ -1739,7 +1887,11 @@ fn fuse_matmul_epilogue(
     let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
     for i in 0..n {
         let prod = match &calls[i] {
-            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => Prod::Mm(*c),
+            // Plain matmul: f32 and (for the 2-op epilogues) bf16/f16.
+            KernelCall::MatMul(c) if epilogue_fusable_dtype(c.dtype) => Prod::Mm(*c),
+            // Dequant-matmul producer stays f32-only: its low-precision epilogue
+            // rounding has not been proven equivalent the way the plain-matmul
+            // path has, and the quantized decode shapes it serves are f32.
             KernelCall::MatMulDequant(c)
                 if c.dtype == DTYPE_F32 && c.act == 0 && !c.has_residual() =>
             {
@@ -1750,6 +1902,13 @@ fn fuse_matmul_epilogue(
         let s = match &prod {
             Prod::Mm(c) => c.output.slot,
             Prod::Mmd(c) => c.output.slot,
+        };
+        // The 3-op `matmul → add → activation` fusion is bit-identical to the
+        // separate kernels only when there is no intermediate narrowing to skip
+        // — i.e. f32. (`Mmd` producers are always f32.)
+        let prod_f32 = match &prod {
+            Prod::Mm(c) => c.dtype == DTYPE_F32,
+            Prod::Mmd(_) => true,
         };
         if s == u32::MAX || out_slots.contains(&s) {
             continue;
@@ -1816,7 +1975,8 @@ fn fuse_matmul_epilogue(
             // that is an elementwise activation, absorb it too so neither the
             // matmul product nor the post-add sum is ever materialized.
             let add_out = jout.slot;
-            let act_consumer = (add_out != u32::MAX
+            let act_consumer = (prod_f32
+                && add_out != u32::MAX
                 && !out_slots.contains(&add_out)
                 && prod_count.get(&add_out) == Some(&1)
                 && read_count.get(&add_out) == Some(&1))
@@ -1900,4 +2060,48 @@ fn fuse_matmul_epilogue(
         }
     }
     (new_calls, new_plan)
+}
+
+#[cfg(test)]
+mod graph_memo_tests {
+    use super::{ContentLabel, GraphMemo, MemoLabels};
+    use hologram_archive::address_bytes;
+    use smallvec::smallvec;
+
+    /// Distinct single-label key for test index `i`.
+    fn key(i: u32) -> MemoLabels {
+        let label: ContentLabel = address_bytes(&i.to_le_bytes());
+        smallvec![label]
+    }
+
+    #[test]
+    fn caps_residency_and_evicts_lru() {
+        let mut m = GraphMemo::new(4);
+        for i in 0..4 {
+            m.insert(key(i), key(1000 + i));
+        }
+        assert_eq!(m.len(), 4);
+
+        // Touch key(0) so it becomes most-recently-used; key(1) is now the LRU.
+        assert!(m.get(&key(0)).is_some());
+
+        // Inserting a 5th distinct key evicts the LRU (key 1), not the touched one.
+        m.insert(key(4), key(1004));
+        assert_eq!(m.len(), 4, "residency stays capped");
+        assert!(m.get(&key(0)).is_some(), "recently-used key survives");
+        assert!(m.get(&key(1)).is_none(), "least-recently-used key evicted");
+        assert!(m.get(&key(4)).is_some(), "newest key present");
+    }
+
+    #[test]
+    fn reinserting_existing_key_does_not_evict() {
+        let mut m = GraphMemo::new(2);
+        m.insert(key(0), key(100));
+        m.insert(key(1), key(101));
+        // Overwriting an existing key must not trigger eviction (still 2 keys).
+        m.insert(key(0), key(200));
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.get(&key(0)), Some(key(200)), "value updated in place");
+        assert!(m.get(&key(1)).is_some());
+    }
 }

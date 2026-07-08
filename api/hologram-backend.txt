@@ -51,10 +51,14 @@ pub fn hologram_backend::cpu::simd::matmul_i4_pc_omajor(&[f32], &[u8], &[f32], &
 pub fn hologram_backend::cpu::simd::matmul_i8_pc_omajor(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::matmul_i8_per_channel(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::simd_f32_add(&[f32], &[f32], &mut [f32])
+pub fn hologram_backend::cpu::simd::simd_f32_axpy(&mut [f32], f32, &[f32])
 pub fn hologram_backend::cpu::simd::simd_f32_dot(&[f32], &[f32]) -> f32
 pub fn hologram_backend::cpu::simd::simd_f32_exp_inplace(&mut [f32])
 pub fn hologram_backend::cpu::simd::simd_f32_fmadd(&[f32], &[f32], &mut [f32])
+pub fn hologram_backend::cpu::simd::simd_f32_max(&[f32]) -> f32
+pub fn hologram_backend::cpu::simd::simd_f32_min(&[f32]) -> f32
 pub fn hologram_backend::cpu::simd::simd_f32_mul(&[f32], &[f32], &mut [f32])
+pub fn hologram_backend::cpu::simd::simd_f32_sum(&[f32]) -> f32
 pub struct hologram_backend::cpu::CpuBackend<W: hologram_backend::workspace::Workspace>
 impl<W: hologram_backend::workspace::Workspace> hologram_backend::cpu::CpuBackend<W>
 pub const fn hologram_backend::cpu::CpuBackend<W>::new() -> Self

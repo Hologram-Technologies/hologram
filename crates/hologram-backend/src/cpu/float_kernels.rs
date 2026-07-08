@@ -120,6 +120,26 @@ pub fn unary_float<W: Workspace>(
     f: fn(f32) -> f32,
     dtype: u8,
 ) -> Result<(), BackendError> {
+    unary_float_acc(c, ws, f, None, dtype)
+}
+
+/// Whole-slice f32 elementwise unary SIMD primitive: `out = act(inp)`.
+pub type SimdUnaryF32 = fn(&[f32], &mut [f32]);
+
+/// Elementwise unary float op, optionally accelerated by a whole-slice SIMD
+/// primitive on the contiguous f32 path. Transcendental activations
+/// (sigmoid/silu/tanh/gelu) pass their vectorized `*_slice` form — bit-identical
+/// to the scalar `f`, so the LUT/dequant SSOT contract is preserved — because a
+/// scalar libm call per element cannot vectorize. Every other unary op passes
+/// `None` and uses the scalar closure `f` (which the compiler autovectorizes for
+/// the simple arithmetic ops anyway).
+pub fn unary_float_acc<W: Workspace>(
+    c: &UnaryCall,
+    ws: &mut W,
+    f: fn(f32) -> f32,
+    simd: Option<SimdUnaryF32>,
+    dtype: u8,
+) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = elem_count_to_bytes(n, dtype);
     // Zero-copy split-borrow + bytemuck cast (no fallback). Every
@@ -141,8 +161,13 @@ pub fn unary_float<W: Workspace>(
             bytemuck::try_cast_slice::<u8, f32>(&inp[..bytes]),
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..bytes]),
         ) {
-            for i in 0..n {
-                o32s[i] = f(i32s[i]);
+            match simd {
+                Some(simd_fn) => simd_fn(&i32s[..n], &mut o32s[..n]),
+                None => {
+                    for i in 0..n {
+                        o32s[i] = f(i32s[i]);
+                    }
+                }
             }
             return Ok(());
         }
@@ -308,6 +333,33 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
 /// or per-channel) is dequantized into a **transient** f32 panel — the dense
 /// weight never occupies a pool slot — then the tuned blocked f32 kernel runs
 /// unchanged (no change to the FMA inner loop, so the perf floors hold).
+/// Decode the `i`-th quantized weight of a `[k,n]` panel to its integer level.
+/// `quant_dtype` is loop-invariant at every call site, so inlining lets LLVM
+/// unswitch the dispatch out of the dequant loop.
+#[inline(always)]
+fn dequant_q(bq: &[u8], i: usize, quant_dtype: u8) -> i32 {
+    use crate::cpu::dtype::*;
+    match quant_dtype {
+        DTYPE_I8 => (bq[i] as i8) as i32,
+        DTYPE_U8 => bq[i] as i32,
+        DTYPE_I4 => {
+            let byte = bq[i / 2];
+            let nib = if i.is_multiple_of(2) {
+                byte & 0x0F
+            } else {
+                byte >> 4
+            };
+            let v = nib as i32;
+            if v >= 8 {
+                v - 16
+            } else {
+                v
+            }
+        }
+        _ => 0,
+    }
+}
+
 pub fn matmul_dequant_float<W: Workspace>(
     c: &MatMulDequantCall,
     ws: &mut W,
@@ -449,48 +501,67 @@ pub fn matmul_dequant_float<W: Workspace>(
     // contract violation and fails loud (no scalar/copy fallback), matching
     // `matmul_float`.
     with_widen_scratch(|_a_unused, bdq, _o_unused| {
-        bdq.clear();
-        bdq.resize(kn, 0.0);
-        for (i, slot) in bdq.iter_mut().enumerate() {
-            let q: i32 = match quant_dtype {
-                DTYPE_I8 => (bq[i] as i8) as i32,
-                DTYPE_U8 => bq[i] as i32,
-                DTYPE_I4 => {
-                    let byte = bq[i / 2];
-                    let nib = if i.is_multiple_of(2) {
-                        byte & 0x0F
-                    } else {
-                        byte >> 4
-                    };
-                    let v = nib as i32;
-                    if v >= 8 {
-                        v - 16
-                    } else {
-                        v
-                    }
+        // Size to `kn` without a redundant zero-fill: the dequant loop below
+        // overwrites every element, so `resize` (not `clear` + `resize`) is
+        // enough — after warmup `len == kn`, so this zeros nothing. The old
+        // clear+resize re-zeroed the whole panel each call (a wasted `kn`-float
+        // write that made the fused path lose to the unfused one).
+        if bdq.len() > kn {
+            bdq.truncate(kn);
+        } else {
+            bdq.resize(kn, 0.0);
+        }
+        // Dequantize the B panel into `bdq`. Pre-cast the per-channel scale/zp
+        // tables to typed slices **once** (aligned workspace slots always cast)
+        // rather than reconstructing each scalar with `from_le_bytes` per
+        // element — that per-element reconstruction is what made the fused
+        // dequant slower than the standalone Dequantize kernel. `quant_dtype` is
+        // loop-invariant, so the inlined `dequant_q` match unswitches and the
+        // contiguous inner map autovectorizes.
+        let sca = if per_ch {
+            bytemuck::try_cast_slice::<u8, f32>(scales).ok()
+        } else {
+            None
+        };
+        let zpa = if per_ch {
+            bytemuck::try_cast_slice::<u8, i32>(zps).ok()
+        } else {
+            None
+        };
+        match (per_ch, sca, zpa) {
+            // Per-channel with aligned typed tables (the production path).
+            (true, Some(sa), Some(za)) => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    let ch = (i / inner) % channels;
+                    *slot = (dequant_q(bq, i, quant_dtype) - za[ch]) as f32 * sa[ch];
                 }
-                _ => 0,
-            };
-            let (s, z) = if per_ch {
-                let ch = (i / inner) % channels;
-                (
-                    f32::from_le_bytes([
+            }
+            // Per-tensor: scalar scale/zp — the inner map is a straight f32 line.
+            (false, _, _) => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    *slot = (dequant_q(bq, i, quant_dtype) - zp) as f32 * scale;
+                }
+            }
+            // Misaligned per-channel tables (non-`BufferArena` workspace only):
+            // reconstruct per element.
+            _ => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    let ch = (i / inner) % channels;
+                    let s = f32::from_le_bytes([
                         scales[ch * 4],
                         scales[ch * 4 + 1],
                         scales[ch * 4 + 2],
                         scales[ch * 4 + 3],
-                    ]),
-                    i32::from_le_bytes([
+                    ]);
+                    let z = i32::from_le_bytes([
                         zps[ch * 4],
                         zps[ch * 4 + 1],
                         zps[ch * 4 + 2],
                         zps[ch * 4 + 3],
-                    ]),
-                )
-            } else {
-                (scale, zp)
-            };
-            *slot = (q - z) as f32 * s;
+                    ]);
+                    *slot = (dequant_q(bq, i, quant_dtype) - z) as f32 * s;
+                }
+            }
         }
         let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
             .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
@@ -543,10 +614,7 @@ pub fn matmul_dequant_epilogue<W: Workspace>(
         }
     }
     if c.act != 0 {
-        let f = fused_act_fn(c.act);
-        for o in out32.iter_mut() {
-            *o = f(*o);
-        }
+        apply_fused_act_f32(c.act, out32);
     }
     Ok(())
 }
@@ -564,6 +632,40 @@ fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
         fa::SELU => selu_f,
         fa::EXP => exp_f,
         _ => |x| x,
+    }
+}
+
+/// Apply a fused activation over an **f32** output slice in place. The
+/// transcendental activations (sigmoid/silu/tanh/gelu) route through their
+/// vectorized `*_slice` form — the scalar `fused_act_fn` (a deterministic-exp
+/// closure applied per element through a fn pointer) is markedly slower than
+/// one vectorized pass, and applying it in the epilogue regressed fused
+/// `matmul → activation`. The `*_slice` forms need a distinct input (silu/gelu
+/// re-read `x` in their final multiply), so they read from the reused matmul
+/// scratch copied from the output; the cheap/rare acts (relu/elu/selu/exp) keep
+/// the scalar closure. Bit-identical to the scalar path (the slice twins are
+/// bit-identical to their scalar `*_f` reference by construction).
+fn apply_fused_act_f32(act: u8, o32: &mut [f32]) {
+    use crate::kernel_call::fused_activation as fa;
+    let slice: Option<SimdUnaryF32> = match act {
+        fa::SIGMOID => Some(sigmoid_slice),
+        fa::TANH => Some(tanh_slice),
+        fa::SILU => Some(silu_slice),
+        fa::GELU => Some(gelu_slice),
+        _ => None,
+    };
+    match slice {
+        Some(sfn) => with_matmul_scratch(|scratch| {
+            scratch.clear();
+            scratch.extend_from_slice(o32);
+            sfn(scratch, o32);
+        }),
+        None => {
+            let f = fused_act_fn(act);
+            for v in o32.iter_mut() {
+                *v = f(*v);
+            }
+        }
     }
 }
 
@@ -590,9 +692,7 @@ pub fn matmul_activation_float<W: Workspace>(
     }
     if dt == DTYPE_F32 {
         if let Ok(o32s) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]) {
-            for v in o32s.iter_mut() {
-                *v = f(*v);
-            }
+            apply_fused_act_f32(c.act, o32s);
             return Ok(());
         }
     }
@@ -677,9 +777,11 @@ pub fn matmul_add_activation_float<W: Workspace>(
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]),
             bytemuck::try_cast_slice::<u8, f32>(res),
         ) {
+            // Residual add (autovectorizes) then the vectorized activation pass.
             for (o, &r) in o32s.iter_mut().zip(r32s.iter()) {
-                *o = f(*o + r);
+                *o += r;
             }
+            apply_fused_act_f32(c.act, o32s);
             return Ok(());
         }
     }
@@ -715,6 +817,38 @@ pub fn im2col_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < kk * nn * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: pure gather over `&[f32]` — the contiguous `ow` store
+    // autovectorizes and each read is a direct load (no per-element `read_float`
+    // dtype match). Bit-identical (pure data movement).
+    if dt == DTYPE_F32 {
+        if let (Ok(i32s), Ok(o32s)) = (
+            bytemuck::try_cast_slice::<u8, f32>(inp),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..kk * nn * es]),
+        ) {
+            for ci in 0..cin {
+                for kh_ in 0..kh {
+                    for kw_ in 0..kw {
+                        let krow = (ci * kh + kh_) * kw + kw_;
+                        for oh in 0..hout {
+                            let ih = oh * sh + kh_;
+                            let orow =
+                                &mut o32s[krow * nn + oh * wout..krow * nn + oh * wout + wout];
+                            if ih < hin {
+                                let ibase = (ci * hin + ih) * win;
+                                for (ow, o) in orow.iter_mut().enumerate() {
+                                    let iw = ow * sw + kw_;
+                                    *o = if iw < win { i32s[ibase + iw] } else { 0.0 };
+                                }
+                            } else {
+                                orow.fill(0.0);
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     for ci in 0..cin {
         for kh_ in 0..kh {
@@ -763,6 +897,41 @@ pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < cin * hin * win * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: scatter-add over `&[f32]` (direct loads/stores, no
+    // per-element `read_float`). Bit-identical for f32 (read/write_float are the
+    // identity there); the scatter order is unchanged.
+    if dt == DTYPE_F32 {
+        if let (Ok(i32s), Ok(o32s)) = (
+            bytemuck::try_cast_slice::<u8, f32>(inp),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..cin * hin * win * es]),
+        ) {
+            for o in o32s[..cin * hin * win].iter_mut() {
+                *o = 0.0;
+            }
+            for ci in 0..cin {
+                for kh_ in 0..kh {
+                    for kw_ in 0..kw {
+                        let krow = (ci * kh + kh_) * kw + kw_;
+                        for oh in 0..hout {
+                            let ih = oh * sh + kh_;
+                            if ih >= hin {
+                                continue;
+                            }
+                            let prow = krow * nn + oh * wout;
+                            let ibase = (ci * hin + ih) * win;
+                            for ow in 0..wout {
+                                let iw = ow * sw + kw_;
+                                if iw < win {
+                                    o32s[ibase + iw] += i32s[prow + ow];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     // Zero the image, then accumulate overlapping patches.
     for i in 0..cin * hin * win {
@@ -1026,6 +1195,55 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path (mirrors `rms_norm_float`): view the aligned slot bytes as
+    // `&[f32]`, take the mean with the vectorized `simd_f32_sum`, center into
+    // the output buffer as scratch, take the variance as `simd_f32_dot` of the
+    // centered row against itself (the numerically-stable two-pass form the
+    // scalar loop uses), then scale in place. The generic `read_float` loop
+    // below is kept as the bf16/f16/misaligned fallback.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let b32 = bytemuck::try_cast_slice::<u8, f32>(beta).ok();
+            let inv_f = 1.0 / f as f32;
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let mean = crate::cpu::simd::simd_f32_sum(row) * inv_f;
+                let orow = &mut o32[bi * f..bi * f + f];
+                for (o, &v) in orow.iter_mut().zip(row) {
+                    *o = v - mean;
+                }
+                let var = crate::cpu::simd::simd_f32_dot(orow, orow) * inv_f;
+                let inv_std = 1.0 / libm::sqrtf(var + eps);
+                match (g32, b32) {
+                    (Some(g), Some(bta)) if g.len() >= f && bta.len() >= f => {
+                        for ((o, &gj), &bj) in orow.iter_mut().zip(&g[..f]).zip(&bta[..f]) {
+                            *o = *o * inv_std * gj + bj;
+                        }
+                    }
+                    (Some(g), _) if g.len() >= f => {
+                        for (o, &gj) in orow.iter_mut().zip(&g[..f]) {
+                            *o = *o * inv_std * gj;
+                        }
+                    }
+                    (_, Some(bta)) if bta.len() >= f => {
+                        for (o, &bj) in orow.iter_mut().zip(&bta[..f]) {
+                            *o = *o * inv_std + bj;
+                        }
+                    }
+                    _ => {
+                        for o in orow.iter_mut() {
+                            *o *= inv_std;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut mean = 0f32;
@@ -1095,6 +1313,53 @@ pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let beta = reads[2].get(..ch * es).unwrap_or(&[]);
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path (the LayerNorm pattern, generalized to per-group + per-
+    // channel γ/β): `simd_f32_sum` mean, stable two-pass variance via
+    // `simd_f32_dot` of the centered group, then scale in contiguous
+    // `spatial`-sized runs that share one channel's γ/β. The scalar loop below
+    // stays the bf16/f16/misaligned fallback.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let b32 = bytemuck::try_cast_slice::<u8, f32>(beta).ok();
+            let inv_gs = 1.0 / group_size as f32;
+            let chans_per_group = ch / g;
+            for ni in 0..n {
+                let sample = ni * f;
+                for gi in 0..g {
+                    let gbase = sample + gi * group_size;
+                    let row = &x32[gbase..gbase + group_size];
+                    let mean = crate::cpu::simd::simd_f32_sum(row) * inv_gs;
+                    let orow = &mut o32[gbase..gbase + group_size];
+                    for (o, &v) in orow.iter_mut().zip(row) {
+                        *o = v - mean;
+                    }
+                    let var = crate::cpu::simd::simd_f32_dot(orow, orow) * inv_gs;
+                    let inv_std = 1.0 / libm::sqrtf(var + eps);
+                    let chan_base = gi * chans_per_group;
+                    for local_ch in 0..chans_per_group {
+                        let ci = chan_base + local_ch;
+                        let gv = match g32 {
+                            Some(gg) if gg.len() >= ch => gg[ci],
+                            _ => 1.0,
+                        };
+                        let bv = match b32 {
+                            Some(bb) if bb.len() >= ch => bb[ci],
+                            _ => 0.0,
+                        };
+                        let run = &mut orow[local_ch * spatial..local_ch * spatial + spatial];
+                        for o in run.iter_mut() {
+                            *o = *o * inv_std * gv + bv;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     for ni in 0..n {
         let sample = ni * f;
@@ -1169,6 +1434,60 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path (see `rms_norm_float`): materialize `x + residual` into the
+    // output view, take the sum-of-squares with `simd_f32_dot`, and scale in
+    // place — all vectorized. Runs every decode layer per token.
+    const DTYPE_F32: u8 = 8;
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let r32 = residual.and_then(|r| bytemuck::try_cast_slice::<u8, f32>(r).ok());
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let has_g = matches!(g32, Some(g) if g.len() >= f);
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let rrow = r32.map(|r| &r[bi * f..bi * f + f]);
+                let orow = &mut o32[bi * f..bi * f + f];
+                let sumsq = match rrow {
+                    Some(rr) => {
+                        for ((o, &v), &rv) in orow.iter_mut().zip(row).zip(rr) {
+                            *o = v + rv;
+                        }
+                        crate::cpu::simd::simd_f32_dot(orow, orow)
+                    }
+                    None => crate::cpu::simd::simd_f32_dot(row, row),
+                };
+                let inv = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
+                match (rrow.is_some(), has_g) {
+                    (true, true) => {
+                        let g = &g32.unwrap()[..f];
+                        for (o, &gj) in orow.iter_mut().zip(g) {
+                            *o *= inv * gj;
+                        }
+                    }
+                    (true, false) => {
+                        for o in orow.iter_mut() {
+                            *o *= inv;
+                        }
+                    }
+                    (false, true) => {
+                        let g = &g32.unwrap()[..f];
+                        for ((o, &v), &gj) in orow.iter_mut().zip(row).zip(g) {
+                            *o = v * inv * gj;
+                        }
+                    }
+                    (false, false) => {
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v * inv;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut sumsq = 0f32;
@@ -1216,6 +1535,40 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path: view the aligned slot bytes as `&[f32]` (the arena pads
+    // slots to 64 bytes, so the cast succeeds), take the sum-of-squares with
+    // the vectorized `simd_f32_dot`, and normalize over the contiguous view
+    // (an elementwise map — the compiler vectorizes it). Every decode layer
+    // runs this per token; the generic `read_float` loop below (kept as the
+    // bf16/f16/misaligned fallback) blocked both the reduction and the map.
+    const DTYPE_F32: u8 = 8;
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            for bi in 0..bsz {
+                let row = &x32[bi * f..bi * f + f];
+                let sumsq = crate::cpu::simd::simd_f32_dot(row, row);
+                let inv_rms = 1.0 / libm::sqrtf(sumsq / f as f32 + eps);
+                let orow = &mut o32[bi * f..bi * f + f];
+                match g32 {
+                    Some(g) if g.len() >= f => {
+                        for ((o, &v), &gj) in orow.iter_mut().zip(row).zip(&g[..f]) {
+                            *o = v * inv_rms * gj;
+                        }
+                    }
+                    _ => {
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v * inv_rms;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for bi in 0..bsz {
         let row_off = bi * f;
         let mut sumsq = 0f32;
@@ -1260,6 +1613,45 @@ pub fn softmax_float<W: Workspace>(
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
 
+    // f32 fast path: view the aligned slot bytes as `&[f32]` so the max pass is
+    // the vectorized `simd_f32_max` and the framing (subtract-max, normalize)
+    // walks contiguous `&[f32]` runs instead of per-element `read_float` /
+    // `write_float`. The exp pass and the sequential denominator sum are
+    // unchanged. The generic loop below stays as the bf16/f16/misaligned path.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            with_matmul_scratch(|exps| {
+                for bi in 0..b {
+                    let row = &x32[bi * f..bi * f + f];
+                    let max_v = crate::cpu::simd::simd_f32_max(row);
+                    exps.clear();
+                    exps.extend(row.iter().map(|&v| v - max_v));
+                    crate::cpu::simd::simd_f32_exp_inplace(exps);
+                    let mut sum = 0f32;
+                    for &e in exps.iter() {
+                        sum += e;
+                    }
+                    let orow = &mut o32[bi * f..bi * f + f];
+                    if log_form {
+                        let log_sum = libm::logf(sum.max(1e-30)) + max_v;
+                        for (o, &v) in orow.iter_mut().zip(row) {
+                            *o = v - log_sum;
+                        }
+                    } else {
+                        let denom = sum.max(1e-30);
+                        for (o, &e) in orow.iter_mut().zip(exps.iter()) {
+                            *o = e / denom;
+                        }
+                    }
+                }
+            });
+            return Ok(());
+        }
+    }
+
     // Reuse the thread-local matmul scratch as a per-row exp buffer.
     // Reset between rows; never reallocates after the first call of
     // matching feature size.
@@ -1296,11 +1688,34 @@ pub fn softmax_float<W: Workspace>(
     Ok(())
 }
 
+/// The associative fold a [`reduce_float`] performs. Carries enough structure
+/// (unlike a bare `fn(f32,f32)->f32`) to let the **full-reduction** f32 path
+/// dispatch to the multi-accumulator SIMD primitives — an opaque fn pointer in
+/// the innermost fold is a serial dependent chain the compiler cannot vectorize.
+#[derive(Clone, Copy)]
+pub enum ReduceKind {
+    Sum,
+    Prod,
+    Min,
+    Max,
+}
+
+impl ReduceKind {
+    #[inline]
+    fn fold(self) -> (fn(f32, f32) -> f32, f32) {
+        match self {
+            ReduceKind::Sum => (|a, b| a + b, 0.0),
+            ReduceKind::Prod => (|a, b| a * b, 1.0),
+            ReduceKind::Min => (|a, b| a.min(b), f32::INFINITY),
+            ReduceKind::Max => (|a, b| a.max(b), f32::NEG_INFINITY),
+        }
+    }
+}
+
 pub fn reduce_float<W: Workspace>(
     c: &ReduceCall,
     ws: &mut W,
-    f: fn(f32, f32) -> f32,
-    init: f32,
+    kind: ReduceKind,
     mean: bool,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
@@ -1309,6 +1724,7 @@ pub fn reduce_float<W: Workspace>(
     }
     let dt = c.dtype;
     let es = elem_size(dt);
+    let (f, init) = kind.fold();
     let plan = ReducePlan::new(c, n)?;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
@@ -1318,6 +1734,78 @@ pub fn reduce_float<W: Workspace>(
         .ok_or(BackendError::SlotOutOfRange(c.input.slot))?;
     if out.len() < plan.out_count * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: view both slots as `&[f32]` and replace the per-element
+    // `out_offset` (a full rank-length div/mod decode of `i` on every element)
+    // with an incremental odometer that carries the output offset alongside the
+    // input walk — a reduced axis contributes 0 to the offset, a kept axis its
+    // output stride. Identical fold order (linear `i`) and identical cell
+    // mapping to the scalar path, so the reduction result is unchanged.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(out),
+        ) {
+            // Full reduction (single output cell): the odometer degenerates to a
+            // serial fold into `o32[0]`. Use the multi-accumulator SIMD
+            // primitives instead. Min/Max are order-independent (bit-identical);
+            // Sum's chunked order differs in the last ULP exactly as the f32
+            // norm/dot reductions already do; Prod has no SIMD primitive.
+            if plan.out_count == 1 {
+                let acc = match kind {
+                    ReduceKind::Sum => crate::cpu::simd::simd_f32_sum(&x32[..n]),
+                    ReduceKind::Max => crate::cpu::simd::simd_f32_max(&x32[..n]),
+                    ReduceKind::Min => crate::cpu::simd::simd_f32_min(&x32[..n]),
+                    ReduceKind::Prod => x32[..n].iter().fold(1.0f32, |p, &v| p * v),
+                };
+                o32[0] = if mean {
+                    acc / plan.reduced_count as f32
+                } else {
+                    acc
+                };
+                for o in o32[1..].iter_mut() {
+                    *o = 0.0;
+                }
+                return Ok(());
+            }
+            for o in o32[..plan.out_count].iter_mut() {
+                *o = init;
+            }
+            let rank = plan.rank;
+            let mut coord = [0usize; MAX_RANK];
+            let mut oo = 0usize;
+            for &xv in x32[..n].iter() {
+                o32[oo] = f(o32[oo], xv);
+                // Advance the odometer over the input dims (rightmost fastest),
+                // tracking `oo` incrementally.
+                let mut ax = rank;
+                while ax > 0 {
+                    ax -= 1;
+                    coord[ax] += 1;
+                    if !plan.reduced[ax] {
+                        oo += plan.out_stride[ax];
+                    }
+                    if coord[ax] < plan.in_dims[ax] {
+                        break;
+                    }
+                    coord[ax] = 0;
+                    if !plan.reduced[ax] {
+                        oo -= plan.out_stride[ax] * plan.in_dims[ax];
+                    }
+                }
+            }
+            if mean {
+                let inv = 1.0 / plan.reduced_count as f32;
+                for o in o32[..plan.out_count].iter_mut() {
+                    *o *= inv;
+                }
+            }
+            // Zero any trailing cells beyond the reduced output (slot may be wider).
+            for o in o32[plan.out_count..].iter_mut() {
+                *o = 0.0;
+            }
+            return Ok(());
+        }
     }
     // Initialize each output cell to the fold identity, then fold every input
     // element into the cell its non-reduced coordinates address.
@@ -1479,6 +1967,55 @@ pub fn pool_float<W: Workspace>(
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
     if out.len() < total_out {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: direct `&[f32]` loads in the pooling window instead of a
+    // per-element `read_float` dtype match. Bit-identical (same accumulation
+    // order; f32 read/write_float are the identity).
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total_out]),
+        ) {
+            for bi in 0..b {
+                for ci in 0..ch {
+                    let plane = (bi * ch + ci) * h_in;
+                    for oh in 0..h_out {
+                        for ow in 0..w_out {
+                            let mut acc = if take_max { f32::NEG_INFINITY } else { 0f32 };
+                            let mut count = 0u32;
+                            for kh in 0..k_h {
+                                let ih = oh * s_h + kh;
+                                if ih >= h_in {
+                                    continue;
+                                }
+                                let rbase = (plane + ih) * w_in;
+                                for kw in 0..k_w {
+                                    let iw = ow * s_w + kw;
+                                    if iw < w_in {
+                                        let v = x32[rbase + iw];
+                                        if take_max {
+                                            acc = acc.max(v);
+                                        } else {
+                                            acc += v;
+                                        }
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            let result = if take_max {
+                                acc
+                            } else if count > 0 {
+                                acc / count as f32
+                            } else {
+                                0.0
+                            };
+                            o32[((bi * ch + ci) * h_out + oh) * w_out + ow] = result;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
     }
     for bi in 0..b {
         for ci in 0..ch {
@@ -1666,9 +2203,9 @@ fn attention_f32_engine(
                     for (kj, &sc) in scores.iter().enumerate() {
                         let p = sc / denom;
                         let vrow = &v32[kv_off + kj * d..kv_off + kj * d + d];
-                        for (o, &vv) in orow.iter_mut().zip(vrow) {
-                            *o += p * vv;
-                        }
+                        // orow += p · vrow (broadcast-scalar AXPY, bit-identical
+                        // to the scalar accumulation it replaces).
+                        crate::cpu::simd::simd_f32_axpy(orow, p, vrow);
                     }
                 }
             }
@@ -1909,6 +2446,40 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
     if out.len() < n * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path: view the slots as `&[f32]` and walk head-by-head, splitting
+    // the per-element `pos = e % d` / partner addressing into two contiguous
+    // half-loops. Each half is a straight-line f32 map that autovectorizes; the
+    // scalar `read_float` loop below (with its per-element `%`/`-`) stays the
+    // bf16/f16/misaligned fallback. RoPE runs on Q and K every layer, every
+    // decode token — this is decode-hot.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(c32), Ok(s32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(x),
+            bytemuck::try_cast_slice::<u8, f32>(cos),
+            bytemuck::try_cast_slice::<u8, f32>(sin),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..n * es]),
+        ) {
+            if c32.len() >= n && s32.len() >= n && x32.len() >= n {
+                let heads = n / d;
+                for h in 0..heads {
+                    let base = h * d;
+                    let xh = &x32[base..base + d];
+                    let ch = &c32[base..base + d];
+                    let sh = &s32[base..base + d];
+                    let oh = &mut o32[base..base + d];
+                    // Lower half: partner is the matching element in the upper half.
+                    for j in 0..half {
+                        oh[j] = xh[j] * ch[j] - xh[j + half] * sh[j];
+                    }
+                    // Upper half: partner is in the lower half.
+                    for j in half..d {
+                        oh[j] = xh[j] * ch[j] + xh[j - half] * sh[j];
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
     for e in 0..n {
         let pos = e % d;
         let base = e - pos;
@@ -1924,6 +2495,59 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
         write_float(out, e, v, dt);
     }
     Ok(())
+}
+
+/// Contiguous-inner-run kernel for the f32 [`broadcast_binary_float`] fast path.
+/// Generic over the elementwise op `F` so each call site monomorphizes to a
+/// concrete inner loop LLVM can vectorize (`op` always receives `(small, other)`
+/// in that order; the caller bakes any operand swap into the closure). The
+/// odometer over the outer axes is identical to the scalar path's.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn broadcast_binary_f32_run<F: Fn(f32, f32) -> f32>(
+    s32: &[f32],
+    ot32: &[f32],
+    o32: &mut [f32],
+    in_strides: &[usize; MAX_RANK],
+    out_dims: &[u32],
+    inner_len: usize,
+    inner_stride: usize,
+    num_rows: usize,
+    op: F,
+) {
+    let rank = out_dims.len();
+    let mut coord = [0usize; MAX_RANK];
+    let mut sbase = 0usize;
+    let mut o = 0usize;
+    for _ in 0..num_rows {
+        let orow = &mut o32[o..o + inner_len];
+        let otrow = &ot32[o..o + inner_len];
+        if inner_stride == 0 {
+            // Last axis broadcasts: one small value across the whole run.
+            let sv = s32[sbase];
+            for (od, &ov) in orow.iter_mut().zip(otrow) {
+                *od = op(sv, ov);
+            }
+        } else {
+            // Last axis maps 1:1 (stride 1): small run is contiguous.
+            let srow = &s32[sbase..sbase + inner_len];
+            for ((od, &sv), &ov) in orow.iter_mut().zip(srow).zip(otrow) {
+                *od = op(sv, ov);
+            }
+        }
+        o += inner_len;
+        let mut ax = rank - 1;
+        while ax > 0 {
+            ax -= 1;
+            coord[ax] += 1;
+            sbase += in_strides[ax];
+            if coord[ax] < out_dims[ax] as usize {
+                break;
+            }
+            sbase -= in_strides[ax] * out_dims[ax] as usize;
+            coord[ax] = 0;
+        }
+    }
 }
 
 /// Fused `Expand → elementwise-binary`: `out[o] = op(small[bcast(o)], other[o])`
@@ -1985,6 +2609,67 @@ pub fn broadcast_binary_float<W: Workspace>(
         return Ok(());
     }
     let num_rows = out_total / inner_len;
+    // f32 fast path: view the three slots as `&[f32]` and run the contiguous
+    // inner op with a **concrete** monomorphized closure (an indirect `fn`
+    // pointer defeats the inner-loop vectorization the odometer sets up). The
+    // odometer geometry is identical to the scalar path below; only the leaf
+    // element access changes from `read_float`/`write_float` to a direct load.
+    if dt == DTYPE_F32 {
+        if let (Ok(s32), Ok(ot32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(small),
+            bytemuck::try_cast_slice::<u8, f32>(other),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..out_total * es]),
+        ) {
+            match (c.op, c.small_is_lhs) {
+                (broadcast_op::ADD, _) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s + o,
+                ),
+                (broadcast_op::MUL, _) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s * o,
+                ),
+                (broadcast_op::SUB, true) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| s - o,
+                ),
+                (broadcast_op::SUB, false) => broadcast_binary_f32_run(
+                    s32,
+                    ot32,
+                    o32,
+                    &in_strides,
+                    out_dims,
+                    inner_len,
+                    inner_stride,
+                    num_rows,
+                    |s, o| o - s,
+                ),
+                _ => return Err(BackendError::UnsupportedOp("broadcast_binary: bad op")),
+            }
+            return Ok(());
+        }
+    }
     let mut coord = [0usize; MAX_RANK];
     let mut sbase = 0usize;
     let mut o = 0usize;
@@ -2157,21 +2842,89 @@ pub fn atan_f(x: f32) -> f32 {
 pub fn erf_f(x: f32) -> f32 {
     libm::erff(x)
 }
+// The four transcendental activations below are expressed through the
+// deterministic `exp_f32_det` rather than libm. Two reasons: (1) libm's
+// `expf`/`tanhf` are platform-divergent, so a content-addressed system saw
+// different activation bits per target — routing through `exp_f32_det` (≤2e-6
+// rel err vs libm, and bit-identical across scalar/AVX2/AVX-512/NEON/wasm)
+// removes that latent divergence; (2) it lets the f32 whole-slice path
+// (`*_slice` below) be **bit-identical** to this scalar reference, so the SSOT
+// contract with the f16/bf16 LUT and the `DequantActivation` densified table
+// (both built from `lut_act_ref`) is preserved while the f32 path vectorizes.
+// Keep each scalar body and its `*_slice` twin in lock-step: identical op
+// order, no FMA contraction.
 #[inline]
 pub fn sigmoid_f(x: f32) -> f32 {
-    1.0 / (1.0 + libm::expf(-x))
+    1.0 / (1.0 + crate::cpu::simd::exp_f32_det(-x))
 }
 #[inline]
 pub fn tanh_f(x: f32) -> f32 {
-    libm::tanhf(x)
+    // tanh(x) = (e^{2x} − 1)/(e^{2x} + 1); the clamped `exp_f32_det` saturates
+    // to ±1 at the tails exactly as libm tanh does.
+    let e = crate::cpu::simd::exp_f32_det(2.0 * x);
+    (e - 1.0) / (e + 1.0)
 }
 #[inline]
 pub fn gelu_f(x: f32) -> f32 {
-    0.5 * x * (1.0 + libm::tanhf(0.797_884_6 * (x + 0.044_715 * x * x * x)))
+    0.5 * x * (1.0 + tanh_f(0.797_884_6 * (x + 0.044_715 * x * x * x)))
 }
 #[inline]
 pub fn silu_f(x: f32) -> f32 {
     x * sigmoid_f(x)
+}
+
+/// Whole-slice `sigmoid` (`out[i] = 1/(1+e^{-x})`), bit-identical to
+/// per-element [`sigmoid_f`]: write `−x`, run the vectorized deterministic exp,
+/// then the (autovectorized) `1/(1+e)` map.
+pub fn sigmoid_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = -x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for o in out[..n].iter_mut() {
+        *o = 1.0 / (1.0 + *o);
+    }
+}
+
+/// Whole-slice `silu` (`x·sigmoid(x)`), bit-identical to [`silu_f`].
+pub fn silu_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = -x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = x * (1.0 / (1.0 + *o));
+    }
+}
+
+/// Whole-slice `tanh`, bit-identical to [`tanh_f`].
+pub fn tanh_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = 2.0 * x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for o in out[..n].iter_mut() {
+        *o = (*o - 1.0) / (*o + 1.0);
+    }
+}
+
+/// Whole-slice `gelu` (tanh approximation), bit-identical to [`gelu_f`]. The
+/// exp argument is `2·(0.7978846·(x + 0.044715·x³))` — the exact expansion of
+/// `tanh_f`'s `2.0 * u` on `u =` gelu's inner term.
+pub fn gelu_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        let u = 0.797_884_6 * (x + 0.044_715 * x * x * x);
+        *o = 2.0 * u;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        let tanh_u = (*o - 1.0) / (*o + 1.0);
+        *o = 0.5 * x * (1.0 + tanh_u);
+    }
 }
 
 /// The reference `f32 → f32` activation for a `lut_act::*` id. The single source
@@ -2284,5 +3037,41 @@ pub fn greater_or_equal_f(a: f32, b: f32) -> f32 {
         1.0
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    /// The whole-slice activation twins MUST be bit-identical to the scalar
+    /// SSOT (`sigmoid_f`/`silu_f`/`tanh_f`/`gelu_f`) — the f16/bf16 LUT and the
+    /// `DequantActivation` densified table are built from the scalar form, so
+    /// any divergence would silently break the "bit-identical by construction"
+    /// contract those paths rely on. Non-fused, no reassociation, so this is
+    /// exact equality, not an epsilon check.
+    #[test]
+    fn slice_activations_bit_identical_to_scalar() {
+        // Span the full working range incl. the exp clamp tails and 0.
+        let xs: Vec<f32> = (-1000..=1000).map(|i| i as f32 * 0.1).collect();
+        type Case = (fn(&[f32], &mut [f32]), fn(f32) -> f32, &'static str);
+        let cases: &[Case] = &[
+            (sigmoid_slice, sigmoid_f, "sigmoid"),
+            (silu_slice, silu_f, "silu"),
+            (tanh_slice, tanh_f, "tanh"),
+            (gelu_slice, gelu_f, "gelu"),
+        ];
+        for (slice_fn, scalar_fn, name) in cases {
+            let mut got = vec![0f32; xs.len()];
+            slice_fn(&xs, &mut got);
+            for (i, (&g, &x)) in got.iter().zip(&xs).enumerate() {
+                let want = scalar_fn(x);
+                assert_eq!(
+                    g.to_bits(),
+                    want.to_bits(),
+                    "{name} mismatch at x={x} (idx {i}): slice {g} vs scalar {want}"
+                );
+            }
+        }
     }
 }

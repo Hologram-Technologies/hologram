@@ -107,14 +107,61 @@ fn execution_is_correct_with_tiering_on() {
 }
 
 #[test]
-fn force_all_cpu_policy_keeps_every_tier_on_cpu() {
+fn set_tier_policy_recomputes_stored_tiers_and_migrations() {
     let mut s = session();
+    // Baseline (Compiled): f32 compute kernels are Device tier, so the schedule
+    // migrates the CPU-resident input up to the device at least once.
+    let base = s.tier_report();
+    assert!(
+        base.device_calls > 0,
+        "f32 kernels default to Device tier under Compiled"
+    );
+    let base_migrations = base.total_migration_slots;
+
+    // ForceAllCpu: the STORED tiers themselves become CPU (not merely
+    // re-derived by the caller), and the migration schedule collapses to empty.
     s.set_tier_policy(TierPolicy::ForceAllCpu);
     assert_eq!(s.tier_policy(), TierPolicy::ForceAllCpu);
-    for &t in s.tiers() {
-        assert!(
-            TierPolicy::ForceAllCpu.apply(t).is_cpu(),
-            "ForceAllCpu routes every tier to CPU"
-        );
-    }
+    assert!(
+        s.tiers().iter().all(|t| t.is_cpu()),
+        "ForceAllCpu makes every stored tier CPU: {:?}",
+        s.tiers()
+    );
+    let cpu_report = s.tier_report();
+    assert_eq!(
+        cpu_report.device_calls, 0,
+        "no device calls under ForceAllCpu"
+    );
+    assert_eq!(
+        cpu_report.total_migration_slots, 0,
+        "all-CPU ⇒ no CPU↔Device migrations"
+    );
+
+    // ForceAllDevice: every stored tier is Device; the CPU-resident input must
+    // migrate up, so the schedule is non-empty.
+    s.set_tier_policy(TierPolicy::ForceAllDevice);
+    assert!(
+        s.tiers().iter().all(|t| !t.is_cpu()),
+        "ForceAllDevice makes every stored tier Device: {:?}",
+        s.tiers()
+    );
+    let dev_report = s.tier_report();
+    assert_eq!(dev_report.device_calls as usize, s.tiers().len());
+    assert!(
+        dev_report.total_migration_slots > 0,
+        "device execution needs the input uploaded"
+    );
+
+    // Round-trip back to Compiled restores the archive-derived assignment.
+    s.set_tier_policy(TierPolicy::Compiled);
+    let restored = s.tier_report();
+    assert_eq!(restored.device_calls, base.device_calls);
+    assert_eq!(restored.total_migration_slots, base_migrations);
+
+    // Execution is byte-correct regardless of policy — the CPU backend runs
+    // every kernel; tiering is an observability/routing layer here.
+    s.set_tier_policy(TierPolicy::ForceAllDevice);
+    let a = le_f32(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let out = s.execute(&[InputBuffer { bytes: &a }]).unwrap();
+    assert_eq!(f32s(&out[0].bytes), vec![3.0, 2.5, 9.0, 3.25]);
 }

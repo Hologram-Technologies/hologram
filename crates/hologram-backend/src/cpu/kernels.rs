@@ -1531,12 +1531,13 @@ fn unary_act<W: Workspace>(
     ws: &mut W,
     act: u8,
     f: fn(f32) -> f32,
+    simd: Option<ff::SimdUnaryF32>,
 ) -> Result<(), BackendError> {
     #[cfg(feature = "std")]
     if crate::cpu::lut::is_lut_dtype(dtype_of_unary(c)) {
         return crate::cpu::lut::unary_lut(c, ws, act);
     }
-    ff::unary_float(c, ws, f, dtype_of_unary(c))
+    ff::unary_float_acc(c, ws, f, simd, dtype_of_unary(c))
 }
 
 fn try_dispatch_float<W: Workspace>(
@@ -1582,19 +1583,41 @@ fn try_dispatch_float<W: Workspace>(
         K::Relu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::relu_f, dtype_of_unary(c)))
         }
-        K::Sigmoid(c) if is_float_unary(c) => {
-            Some(unary_act(c, ws, lut_act::SIGMOID, ff::sigmoid_f))
-        }
-        K::Tanh(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::TANH, ff::tanh_f)),
-        K::Gelu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::GELU, ff::gelu_f)),
-        K::Silu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::SILU, ff::silu_f)),
+        K::Sigmoid(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::SIGMOID,
+            ff::sigmoid_f,
+            Some(ff::sigmoid_slice),
+        )),
+        K::Tanh(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::TANH,
+            ff::tanh_f,
+            Some(ff::tanh_slice),
+        )),
+        K::Gelu(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::GELU,
+            ff::gelu_f,
+            Some(ff::gelu_slice),
+        )),
+        K::Silu(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::SILU,
+            ff::silu_f,
+            Some(ff::silu_slice),
+        )),
         K::Elu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::elu_f, dtype_of_unary(c)))
         }
         K::Selu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::selu_f, dtype_of_unary(c)))
         }
-        K::Exp(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::EXP, ff::exp_f)),
+        K::Exp(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::EXP, ff::exp_f, None)),
         K::Log(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::log_f, dtype_of_unary(c)))
         }
@@ -1634,7 +1657,7 @@ fn try_dispatch_float<W: Workspace>(
         K::Round(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::round_f, dtype_of_unary(c)))
         }
-        K::Erf(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::ERF, ff::erf_f)),
+        K::Erf(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::ERF, ff::erf_f, None)),
         K::IsNaN(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::is_nan_f, dtype_of_unary(c)))
         }
@@ -1692,14 +1715,16 @@ fn try_dispatch_float<W: Workspace>(
         }
         K::BroadcastBinary(c) if is_float(c.dtype) => Some(ff::broadcast_binary_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
-        // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
-        // operands, but `MatMulCall` carries one (`b`). It cannot be computed
-        // faithfully in the current representation; the old code silently ran a
-        // plain matmul and dropped the gate. Fail loud rather than return a
-        // wrong tensor. (Completing it requires a two-weight call form + the
-        // compiler lowering to populate it — see the representational-gap note.)
+        // FusedSwiGlu is a **composite** op: the compiler's `desugar_composites`
+        // pass expands `SwiGlu(x, W_gate, W_up)` into `Silu(x·W_gate) ⊙ (x·W_up)`
+        // over the verified MatMul/Silu/Mul kernels *before* lowering, so a real
+        // model never reaches this arm (covered end-to-end by
+        // `swiglu_desugars_and_computes_end_to_end`). This guard only fires for a
+        // degenerate FusedSwiGlu node that reached lowering without its ≥3
+        // operands (which cannot be expressed as a single MatMul) — fail loud
+        // rather than silently drop the gate.
         K::FusedSwiGlu(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "FusedSwiGlu: gate+up weights not representable in MatMulCall (one operand)",
+            "FusedSwiGlu: expected desugaring to Silu(x·Wg)⊙(x·Wu); degenerate node reached lowering",
         ))),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
         K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
@@ -1715,28 +1740,20 @@ fn try_dispatch_float<W: Workspace>(
 
         // Reductions.
         K::ReduceSum(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, false))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Sum, false))
         }
         K::ReduceMean(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a + b, 0.0, true))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Sum, true))
         }
         K::ReduceProd(c) if is_float(c.dtype) => {
-            Some(ff::reduce_float(c, ws, |a, b| a * b, 1.0, false))
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Prod, false))
         }
-        K::ReduceMin(c) if is_float(c.dtype) => Some(ff::reduce_float(
-            c,
-            ws,
-            |a, b| a.min(b),
-            f32::INFINITY,
-            false,
-        )),
-        K::ReduceMax(c) if is_float(c.dtype) => Some(ff::reduce_float(
-            c,
-            ws,
-            |a, b| a.max(b),
-            f32::NEG_INFINITY,
-            false,
-        )),
+        K::ReduceMin(c) if is_float(c.dtype) => {
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Min, false))
+        }
+        K::ReduceMax(c) if is_float(c.dtype) => {
+            Some(ff::reduce_float(c, ws, ff::ReduceKind::Max, false))
+        }
         K::CumSum(c) if is_float(c.dtype) => Some(ff::cumsum_float(c, ws)),
 
         // Softmax. (Backward variants are rejected by the byte-path grad arm.)
@@ -1779,17 +1796,17 @@ fn try_dispatch_float<W: Workspace>(
         // Resize is the nearest-neighbor gather (reuses ExpandCall's dims).
         K::Resize(c) if is_float(c.dtype) => Some(ff::resize_float(c, ws)),
 
-        // Parameterized ops whose parameters are *not carried* by the kernel-
-        // call representation: Clip needs (min, max), RotaryEmbedding needs the
-        // rotation table / θ / positions, Lrn needs (size, α, β, bias). The
-        // graph node has no attribute slot for them (only Quant/Conv attrs
-        // exist), so a float kernel here would silently behave as identity —
-        // corrupting any model that uses them. Fail loud until the parameters
-        // are plumbed through (graph attrs → call fields → codec). The byte
-        // ring keeps its documented reference approximation; this guard only
-        // covers the numeric float path that real models execute.
+        // Clip is a **composite** op (like FusedSwiGlu above): its (lo, hi)
+        // bounds are operand tensors, and `desugar_composites` expands
+        // `Clip(x, lo, hi)` into `Min(Max(x, lo), hi)` over the verified Min/Max
+        // kernels before lowering — so real models run it fine (covered by
+        // `clip_desugars_and_clamps_end_to_end`). This arm only fires for a
+        // degenerate Clip node that reached lowering without its bound operands,
+        // which cannot be expressed as a bound-less `UnaryCall`; fail loud rather
+        // than silently behave as identity. (RotaryEmbedding and Lrn below DO
+        // dispatch — they carry their parameters in dedicated call structs.)
         K::Clip(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "Clip: (min, max) bounds not carried by UnaryCall — parameters dropped at lowering",
+            "Clip: expected desugaring to Min(Max(x,lo),hi); degenerate node reached lowering",
         ))),
         K::RotaryEmbedding(c) if is_float(c.dtype) => Some(ff::rope_float(c, ws)),
         K::Lrn(c) if is_float(c.dtype) => Some(ff::lrn_float(c, ws)),

@@ -3,6 +3,9 @@
 # (scripts/compare-benchmarks.py) enforces that benchmarks only appear
 # once registered and only fall off once deprecated + versioned out.
 
+[benchmarks."add f32 32x4096"]
+status = "active"
+
 [benchmarks."bf16_gelu_compute_1M (widen+tanh+narrow)"]
 status = "active"
 
@@ -94,6 +97,15 @@ status = "active"
 [benchmarks."expand_then_mul_512 (unfused)"]
 status = "active"
 
+[benchmarks."gelu f32 32x4096"]
+status = "active"
+
+[benchmarks."group_norm f32 8x32x1024"]
+status = "active"
+
+[benchmarks."layer_norm f32 32x4096"]
+status = "active"
+
 [benchmarks."matmul_dequant_256 (fused)"]
 status = "active"
 
@@ -109,7 +121,13 @@ status = "active"
 [benchmarks."matmul_f32_64x64x64 (zero-copy)"]
 status = "active"
 
+[benchmarks."matmul_f32_gemv_1x2048x2048 (decode)"]
+status = "active"
+
 [benchmarks."matmul_w8_64x64x64"]
+status = "active"
+
+[benchmarks."mul f32 32x4096"]
 status = "active"
 
 [benchmarks."production::mlp_cold_seq1_d512_l2"]
@@ -122,6 +140,18 @@ status = "active"
 status = "active"
 
 [benchmarks."production::mlp_served_seq64_d256_l2"]
+status = "active"
+
+[benchmarks."rms_norm f32 32x4096"]
+status = "active"
+
+[benchmarks."rope f32 64x128"]
+status = "active"
+
+[benchmarks."silu f32 32x4096"]
+status = "active"
+
+[benchmarks."softmax f32 64x2048"]
 status = "active"
 
 [benchmarks."source_lowering::native_const4096_lower_ir"]

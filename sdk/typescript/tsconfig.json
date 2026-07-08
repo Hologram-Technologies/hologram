@@ -6,7 +6,7 @@
     "ignoreDeprecations": "6.0",
     "lib": ["ES2022"],
     "module": "ESNext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "newLine": "lf",
     "noEmitOnError": true,
     "outDir": "dist",
