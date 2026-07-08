@@ -1057,7 +1057,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "hologram"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-archive",
  "hologram-backend",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-archive"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-backend"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "bytemuck",
  "hologram-host",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bare-hal"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "pollster",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bench"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "criterion",
  "hologram-archive",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "clap",
  "hologram-archive",
@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compiler"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-exec"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-archive",
  "hologram-backend",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-host"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net-bare"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net-http"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "hologram-store-mem",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net-tcp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "hologram-realizations",
@@ -1265,7 +1265,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ops"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-host",
  "hologram-types",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-realizations"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-substrate-core",
  "uor-addr",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime-bare"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-realizations",
@@ -1314,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime-wasmtime"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "hologram-bare-hal",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store-bare"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-bare-hal",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store-mem"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store-native"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "criterion",
  "hologram-realizations",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "clap",
  "hologram-net-http",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1404,14 +1404,14 @@ dependencies = [
 
 [[package]]
 name = "hologram-substrate-tck"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-substrate-core",
 ]
 
 [[package]]
 name = "hologram-types"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "hologram-host",
  "uor-foundation",
