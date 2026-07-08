@@ -10,6 +10,11 @@ pub enum ExecError {
     InputMismatch,
     #[error("workspace exhausted")]
     WorkspaceExhausted,
+    /// An input/output port declared a dtype tag the runtime does not recognize
+    /// (`≥ 11`). An unknown tag has no known bytes-per-element, so sizing buffers
+    /// / hashing I/O from it would be silently wrong; the load is rejected.
+    #[error("unrecognized I/O port dtype tag {0} (expected a known dtype 0..=10)")]
+    UnsupportedPortDtype(u8),
     /// `prism::pipeline::run` rejected the inference unit during the
     /// reduction-stage sequence (preflight feasibility / budget
     /// solvency / package coherence / dispatch coverage / timing).

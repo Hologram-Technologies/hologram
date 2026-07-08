@@ -33,6 +33,7 @@ use alloc::vec::Vec;
 use core::ptr::NonNull;
 
 use hashbrown::HashMap;
+use hashbrown::HashSet;
 use hologram_archive::{ContentLabel, WeightFingerprint, WeightProvider};
 use hologram_backend::{BufferRef, SplitReads, Workspace};
 
@@ -187,6 +188,12 @@ pub struct BufferArena {
     lazy_budget: usize,
     /// Monotonic clock for LRU stamps.
     lazy_clock: u64,
+    /// Reused scratch for `rebind_reset` so the per-walk reclaim computation
+    /// allocates nothing after warmup — the `kept` reachability set (rebuilt
+    /// each walk over the mostly-stable, potentially-thousands-strong pinned
+    /// tier) and the reclaim list. Empty between walks.
+    kept_scratch: HashSet<usize>,
+    reclaim_scratch: Vec<usize>,
 }
 
 const UNBOUND: usize = usize::MAX;
@@ -222,6 +229,8 @@ impl BufferArena {
             lazy: HashMap::new(),
             lazy_budget: 0,
             lazy_clock: 0,
+            kept_scratch: HashSet::new(),
+            reclaim_scratch: Vec::new(),
         }
     }
 
@@ -335,25 +344,33 @@ impl BufferArena {
         // Paged weight buffers are kept too: a weight that fits the budget
         // pages once and stays resident across walks (steady-state pinning),
         // and one just paged for this walk's kernels must not be reclaimed.
-        let kept: alloc::collections::BTreeSet<usize> = self
-            .pinned
-            .values()
-            .chain(self.previous.values())
-            .chain(self.lazy.values().filter_map(|e| e.resident.as_ref()))
-            .copied()
-            .collect();
-        let mut reclaim: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        // Reachability set, rebuilt into reused scratch (no per-walk allocation
+        // over the large, mostly-stable pinned tier; O(1) membership vs a fresh
+        // BTreeSet's O(log n)).
+        let kept = &mut self.kept_scratch;
+        kept.clear();
+        kept.extend(self.pinned.values().copied());
+        kept.extend(self.previous.values().copied());
+        kept.extend(self.lazy.values().filter_map(|e| e.resident));
+        // Gather reclaimable buffers, then sort+dedup so the free list is pushed
+        // in the same (ascending) order the previous BTreeSet produced — the
+        // recycle order is preserved, only the data structure changed.
+        let reclaim = &mut self.reclaim_scratch;
+        reclaim.clear();
         for (_, bi) in dropped {
             if !kept.contains(&bi) {
-                reclaim.insert(bi);
+                reclaim.push(bi);
             }
         }
         for &bi in &self.slot_buf {
             if bi != UNBOUND && !kept.contains(&bi) {
-                reclaim.insert(bi);
+                reclaim.push(bi);
             }
         }
-        for bi in reclaim {
+        reclaim.sort_unstable();
+        reclaim.dedup();
+        for idx in 0..self.reclaim_scratch.len() {
+            let bi = self.reclaim_scratch[idx];
             if !self.free.contains(&bi) {
                 self.free.push(bi);
             }
@@ -502,22 +519,31 @@ impl BufferArena {
         if self.lazy_budget == 0 {
             return;
         }
-        while self.lazy_resident_bytes() + need > self.lazy_budget {
-            let victim = self
-                .lazy
-                .iter()
-                .filter(|(l, e)| e.resident.is_some() && !keep.contains(l))
-                .min_by_key(|(_, e)| e.last_touch)
-                .map(|(l, _)| *l);
-            match victim {
-                Some(v) => {
-                    if let Some(bi) = self.lazy.get_mut(&v).and_then(|e| e.resident.take()) {
-                        if !self.free.contains(&bi) {
-                            self.free.push(bi);
-                        }
-                    }
+        // Track the resident total incrementally (one O(L) sum up front) instead
+        // of recomputing it every iteration, and pick victims from a single
+        // LRU-sorted pass rather than an O(L) `min_by_key` scan per eviction —
+        // the whole call is O(L log L) instead of O(L²).
+        let mut resident_bytes = self.lazy_resident_bytes();
+        if resident_bytes + need <= self.lazy_budget {
+            return;
+        }
+        let mut victims: Vec<(u64, ContentLabel, usize)> = self
+            .lazy
+            .iter()
+            .filter(|(l, e)| e.resident.is_some() && !keep.contains(l))
+            .map(|(l, e)| (e.last_touch, *l, e.size))
+            .collect();
+        // Ascending last-touch ⇒ least-recently-used first.
+        victims.sort_unstable_by_key(|&(t, _, _)| t);
+        for (_, label, size) in victims {
+            if resident_bytes + need <= self.lazy_budget {
+                break;
+            }
+            if let Some(bi) = self.lazy.get_mut(&label).and_then(|e| e.resident.take()) {
+                if !self.free.contains(&bi) {
+                    self.free.push(bi);
                 }
-                None => break,
+                resident_bytes -= size;
             }
         }
     }

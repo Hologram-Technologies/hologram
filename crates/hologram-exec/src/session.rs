@@ -388,6 +388,17 @@ impl<B: SessionBackend> InferenceSession<B> {
             .map_err(ExecError::Archive)?
             .unwrap_or_default();
 
+        // Reject any I/O port whose dtype tag the runtime does not recognize:
+        // `port_bytes_per_element` would fall back to 1, silently under-sizing
+        // the port's buffer and truncating I/O. Fail loud at load rather than
+        // compute on mis-sized boundaries. (Recognized sub-byte i4 is allowed —
+        // its over-estimate is corrected by the `.min(buf.len)` clamp on I/O.)
+        for p in inputs.iter().chain(outputs.iter()) {
+            if !is_known_port_dtype(p.dtype) {
+                return Err(ExecError::UnsupportedPortDtype(p.dtype));
+            }
+        }
+
         // Open producer metadata (tokenizer, generation config, …) carried
         // opaquely as owned `(key, bytes)`.
         let extensions: Vec<(String, Vec<u8>)> = plan
@@ -778,11 +789,23 @@ impl<B: SessionBackend> InferenceSession<B> {
                 .saturating_mul(port_bytes_per_element(port.dtype))
                 .min(buf.bytes.len());
             let region = &buf.bytes[..n_bytes];
-            let label = match &self.input_cache[i] {
+            let label = match &mut self.input_cache[i] {
                 Some((prev, lbl)) if prev.as_slice() == region => *lbl,
-                _ => {
+                // Miss: re-address, and stash `region` for the next comparison —
+                // reusing the cached Vec's allocation (clear + extend) rather
+                // than a fresh `to_vec`, so an autoregressive decode (input
+                // changes every step, always a miss) does no per-step heap
+                // allocation once the buffer has warmed to the input size.
+                slot => {
                     let lbl = address_bytes(region);
-                    self.input_cache[i] = Some((region.to_vec(), lbl));
+                    match slot {
+                        Some((prev, l)) => {
+                            prev.clear();
+                            prev.extend_from_slice(region);
+                            *l = lbl;
+                        }
+                        None => *slot = Some((region.to_vec(), lbl)),
+                    }
                     lbl
                 }
             };
@@ -1463,6 +1486,16 @@ const fn port_bytes_per_element(dtype: u8) -> usize {
         3 | 5 | 9 => 8, // U64, I64, F64
         _ => 1,
     }
+}
+
+/// `true` iff `dtype` is a **recognized** dtype tag: the fixed-width types
+/// `0..=9` plus packed i4 (`10`). Fixed-width tags size exactly; i4 is
+/// sub-byte, so `port_bytes_per_element` over-estimates and the `.min(buf.len)`
+/// clamp on every I/O keeps it correct. An *unknown* tag (`≥ 11`) has no known
+/// width at all — sizing from it would be silently wrong — so it is rejected at
+/// load (see [`ExecError::UnsupportedPortDtype`]).
+const fn is_known_port_dtype(dtype: u8) -> bool {
+    matches!(dtype, 0..=10)
 }
 
 /// Content-addressed fusion pass (run once at load). Collapses every
