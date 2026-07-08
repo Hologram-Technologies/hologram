@@ -1170,6 +1170,53 @@ pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
+    // f32 fast path (the LayerNorm pattern, generalized to per-group + per-
+    // channel γ/β): `simd_f32_sum` mean, stable two-pass variance via
+    // `simd_f32_dot` of the centered group, then scale in contiguous
+    // `spatial`-sized runs that share one channel's γ/β. The scalar loop below
+    // stays the bf16/f16/misaligned fallback.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(xs),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..total]),
+        ) {
+            let g32 = bytemuck::try_cast_slice::<u8, f32>(gamma).ok();
+            let b32 = bytemuck::try_cast_slice::<u8, f32>(beta).ok();
+            let inv_gs = 1.0 / group_size as f32;
+            let chans_per_group = ch / g;
+            for ni in 0..n {
+                let sample = ni * f;
+                for gi in 0..g {
+                    let gbase = sample + gi * group_size;
+                    let row = &x32[gbase..gbase + group_size];
+                    let mean = crate::cpu::simd::simd_f32_sum(row) * inv_gs;
+                    let orow = &mut o32[gbase..gbase + group_size];
+                    for (o, &v) in orow.iter_mut().zip(row) {
+                        *o = v - mean;
+                    }
+                    let var = crate::cpu::simd::simd_f32_dot(orow, orow) * inv_gs;
+                    let inv_std = 1.0 / libm::sqrtf(var + eps);
+                    let chan_base = gi * chans_per_group;
+                    for local_ch in 0..chans_per_group {
+                        let ci = chan_base + local_ch;
+                        let gv = match g32 {
+                            Some(gg) if gg.len() >= ch => gg[ci],
+                            _ => 1.0,
+                        };
+                        let bv = match b32 {
+                            Some(bb) if bb.len() >= ch => bb[ci],
+                            _ => 0.0,
+                        };
+                        let run = &mut orow[local_ch * spatial..local_ch * spatial + spatial];
+                        for o in run.iter_mut() {
+                            *o = *o * inv_std * gv + bv;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     for ni in 0..n {
         let sample = ni * f;
         for gi in 0..g {
@@ -2159,6 +2206,40 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
     let (x, cos, sin) = (reads[0], reads[1], reads[2]);
     if out.len() < n * es {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // f32 fast path: view the slots as `&[f32]` and walk head-by-head, splitting
+    // the per-element `pos = e % d` / partner addressing into two contiguous
+    // half-loops. Each half is a straight-line f32 map that autovectorizes; the
+    // scalar `read_float` loop below (with its per-element `%`/`-`) stays the
+    // bf16/f16/misaligned fallback. RoPE runs on Q and K every layer, every
+    // decode token — this is decode-hot.
+    if dt == DTYPE_F32 {
+        if let (Ok(x32), Ok(c32), Ok(s32), Ok(o32)) = (
+            bytemuck::try_cast_slice::<u8, f32>(x),
+            bytemuck::try_cast_slice::<u8, f32>(cos),
+            bytemuck::try_cast_slice::<u8, f32>(sin),
+            bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..n * es]),
+        ) {
+            if c32.len() >= n && s32.len() >= n && x32.len() >= n {
+                let heads = n / d;
+                for h in 0..heads {
+                    let base = h * d;
+                    let xh = &x32[base..base + d];
+                    let ch = &c32[base..base + d];
+                    let sh = &s32[base..base + d];
+                    let oh = &mut o32[base..base + d];
+                    // Lower half: partner is the matching element in the upper half.
+                    for j in 0..half {
+                        oh[j] = xh[j] * ch[j] - xh[j + half] * sh[j];
+                    }
+                    // Upper half: partner is in the lower half.
+                    for j in half..d {
+                        oh[j] = xh[j] * ch[j] + xh[j - half] * sh[j];
+                    }
+                }
+                return Ok(());
+            }
+        }
     }
     for e in 0..n {
         let pos = e % d;

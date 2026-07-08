@@ -87,9 +87,15 @@ fn detect_path() -> u8 {
     1
 }
 
-/// SIMD-vectorized f32 add: `out[i] = a[i] + b[i]`.
+/// SIMD-vectorized f32 add: `out[i] = a[i] + b[i]`. wasm SIMD128 (the deployed
+/// target — residual adds, bias) has a dedicated lane; add is exact, so it is
+/// bit-identical to the scalar loop.
 #[inline]
 pub fn simd_f32_add(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::add_f32(a, b, out) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
         #[cfg(target_arch = "x86_64")]
         3 => unsafe { x86::add_f32_avx512(a, b, out) },
@@ -101,9 +107,15 @@ pub fn simd_f32_add(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// SIMD-vectorized f32 multiply.
+/// SIMD-vectorized f32 multiply. wasm SIMD128 (the deployed target — gating
+/// muls, scale) has a dedicated lane; multiply is exact, so bit-identical to
+/// the scalar loop.
 #[inline]
 pub fn simd_f32_mul(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::mul_f32(a, b, out) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
         #[cfg(target_arch = "x86_64")]
         3 => unsafe { x86::mul_f32_avx512(a, b, out) },
@@ -115,9 +127,18 @@ pub fn simd_f32_mul(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// SIMD-vectorized f32 fused multiply-add: `out[i] += a[i] * b[i]`.
+/// SIMD-vectorized f32 fused multiply-add: `out[i] += a[i] * b[i]`. The x86 and
+/// NEON lanes fuse (FMA); the wasm SIMD128 lane multiplies-then-adds (SIMD128
+/// has no FMA, and the relaxed-SIMD fused op both changes the bits and regresses
+/// latency-bound chains on the wasmtime host — see the matmul note), so the
+/// wasm result may differ in the last ULP from the fused arches, as the f32 dot
+/// path already does.
 #[inline]
 pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { wasm_simd::fmadd_f32(a, b, out) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
         #[cfg(target_arch = "x86_64")]
         3 => unsafe { x86::fmadd_f32_avx512(a, b, out) },
@@ -1724,6 +1745,64 @@ mod wasm_simd {
         }
         for i in chunks * 4..n {
             out[i] += s * b[i];
+        }
+    }
+
+    /// wasm SIMD128 elementwise `out = a + b` (exact — bit-identical to scalar).
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load`/`v128_store` are unaligned wasm accesses.
+    pub unsafe fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+        let n = a.len().min(b.len()).min(out.len());
+        let chunks = n / 4;
+        for k in 0..chunks {
+            let off = k * 4;
+            let va = v128_load(a.as_ptr().add(off) as *const v128);
+            let vb = v128_load(b.as_ptr().add(off) as *const v128);
+            v128_store(out.as_mut_ptr().add(off) as *mut v128, f32x4_add(va, vb));
+        }
+        for i in chunks * 4..n {
+            out[i] = a[i] + b[i];
+        }
+    }
+
+    /// wasm SIMD128 elementwise `out = a * b` (exact — bit-identical to scalar).
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load`/`v128_store` are unaligned wasm accesses.
+    pub unsafe fn mul_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+        let n = a.len().min(b.len()).min(out.len());
+        let chunks = n / 4;
+        for k in 0..chunks {
+            let off = k * 4;
+            let va = v128_load(a.as_ptr().add(off) as *const v128);
+            let vb = v128_load(b.as_ptr().add(off) as *const v128);
+            v128_store(out.as_mut_ptr().add(off) as *mut v128, f32x4_mul(va, vb));
+        }
+        for i in chunks * 4..n {
+            out[i] = a[i] * b[i];
+        }
+    }
+
+    /// wasm SIMD128 `out[i] += a[i] * b[i]`, non-fused (mul then add) — SIMD128
+    /// has no FMA. The scalar tail uses the same non-fused form so the whole
+    /// call is internally consistent.
+    ///
+    /// # Safety
+    /// simd128 enabled; `v128_load`/`v128_store` are unaligned wasm accesses.
+    pub unsafe fn fmadd_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
+        let n = a.len().min(b.len()).min(out.len());
+        let chunks = n / 4;
+        for k in 0..chunks {
+            let off = k * 4;
+            let va = v128_load(a.as_ptr().add(off) as *const v128);
+            let vb = v128_load(b.as_ptr().add(off) as *const v128);
+            let vo = v128_load(out.as_ptr().add(off) as *const v128);
+            let r = f32x4_add(vo, f32x4_mul(va, vb));
+            v128_store(out.as_mut_ptr().add(off) as *mut v128, r);
+        }
+        for i in chunks * 4..n {
+            out[i] += a[i] * b[i];
         }
     }
 
