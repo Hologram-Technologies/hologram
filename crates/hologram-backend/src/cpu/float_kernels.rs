@@ -333,6 +333,33 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
 /// or per-channel) is dequantized into a **transient** f32 panel — the dense
 /// weight never occupies a pool slot — then the tuned blocked f32 kernel runs
 /// unchanged (no change to the FMA inner loop, so the perf floors hold).
+/// Decode the `i`-th quantized weight of a `[k,n]` panel to its integer level.
+/// `quant_dtype` is loop-invariant at every call site, so inlining lets LLVM
+/// unswitch the dispatch out of the dequant loop.
+#[inline(always)]
+fn dequant_q(bq: &[u8], i: usize, quant_dtype: u8) -> i32 {
+    use crate::cpu::dtype::*;
+    match quant_dtype {
+        DTYPE_I8 => (bq[i] as i8) as i32,
+        DTYPE_U8 => bq[i] as i32,
+        DTYPE_I4 => {
+            let byte = bq[i / 2];
+            let nib = if i.is_multiple_of(2) {
+                byte & 0x0F
+            } else {
+                byte >> 4
+            };
+            let v = nib as i32;
+            if v >= 8 {
+                v - 16
+            } else {
+                v
+            }
+        }
+        _ => 0,
+    }
+}
+
 pub fn matmul_dequant_float<W: Workspace>(
     c: &MatMulDequantCall,
     ws: &mut W,
@@ -474,48 +501,67 @@ pub fn matmul_dequant_float<W: Workspace>(
     // contract violation and fails loud (no scalar/copy fallback), matching
     // `matmul_float`.
     with_widen_scratch(|_a_unused, bdq, _o_unused| {
-        bdq.clear();
-        bdq.resize(kn, 0.0);
-        for (i, slot) in bdq.iter_mut().enumerate() {
-            let q: i32 = match quant_dtype {
-                DTYPE_I8 => (bq[i] as i8) as i32,
-                DTYPE_U8 => bq[i] as i32,
-                DTYPE_I4 => {
-                    let byte = bq[i / 2];
-                    let nib = if i.is_multiple_of(2) {
-                        byte & 0x0F
-                    } else {
-                        byte >> 4
-                    };
-                    let v = nib as i32;
-                    if v >= 8 {
-                        v - 16
-                    } else {
-                        v
-                    }
+        // Size to `kn` without a redundant zero-fill: the dequant loop below
+        // overwrites every element, so `resize` (not `clear` + `resize`) is
+        // enough — after warmup `len == kn`, so this zeros nothing. The old
+        // clear+resize re-zeroed the whole panel each call (a wasted `kn`-float
+        // write that made the fused path lose to the unfused one).
+        if bdq.len() > kn {
+            bdq.truncate(kn);
+        } else {
+            bdq.resize(kn, 0.0);
+        }
+        // Dequantize the B panel into `bdq`. Pre-cast the per-channel scale/zp
+        // tables to typed slices **once** (aligned workspace slots always cast)
+        // rather than reconstructing each scalar with `from_le_bytes` per
+        // element — that per-element reconstruction is what made the fused
+        // dequant slower than the standalone Dequantize kernel. `quant_dtype` is
+        // loop-invariant, so the inlined `dequant_q` match unswitches and the
+        // contiguous inner map autovectorizes.
+        let sca = if per_ch {
+            bytemuck::try_cast_slice::<u8, f32>(scales).ok()
+        } else {
+            None
+        };
+        let zpa = if per_ch {
+            bytemuck::try_cast_slice::<u8, i32>(zps).ok()
+        } else {
+            None
+        };
+        match (per_ch, sca, zpa) {
+            // Per-channel with aligned typed tables (the production path).
+            (true, Some(sa), Some(za)) => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    let ch = (i / inner) % channels;
+                    *slot = (dequant_q(bq, i, quant_dtype) - za[ch]) as f32 * sa[ch];
                 }
-                _ => 0,
-            };
-            let (s, z) = if per_ch {
-                let ch = (i / inner) % channels;
-                (
-                    f32::from_le_bytes([
+            }
+            // Per-tensor: scalar scale/zp — the inner map is a straight f32 line.
+            (false, _, _) => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    *slot = (dequant_q(bq, i, quant_dtype) - zp) as f32 * scale;
+                }
+            }
+            // Misaligned per-channel tables (non-`BufferArena` workspace only):
+            // reconstruct per element.
+            _ => {
+                for (i, slot) in bdq.iter_mut().enumerate() {
+                    let ch = (i / inner) % channels;
+                    let s = f32::from_le_bytes([
                         scales[ch * 4],
                         scales[ch * 4 + 1],
                         scales[ch * 4 + 2],
                         scales[ch * 4 + 3],
-                    ]),
-                    i32::from_le_bytes([
+                    ]);
+                    let z = i32::from_le_bytes([
                         zps[ch * 4],
                         zps[ch * 4 + 1],
                         zps[ch * 4 + 2],
                         zps[ch * 4 + 3],
-                    ]),
-                )
-            } else {
-                (scale, zp)
-            };
-            *slot = (q - z) as f32 * s;
+                    ]);
+                    *slot = (dequant_q(bq, i, quant_dtype) - z) as f32 * s;
+                }
+            }
         }
         let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
             .map_err(|_| BackendError::SlotOutOfRange(c.a.slot))?;
