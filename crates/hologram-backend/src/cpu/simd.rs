@@ -655,20 +655,45 @@ mod x86 {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR): scalar over the packed panels.
+        // Row remainder (m not a multiple of MR) — vectorized single-row GEMV
+        // over the packed panels (the M=1 / small-M decode shape), the same
+        // 16-wide YMM FMA as the MR block. A scalar dot here left the packed
+        // constant-weight decode path on the same collapse the strided leaf
+        // had; only a partial trailing panel (< 16 cols) stays scalar.
         while i < m {
-            for j in 0..n {
-                let p = j / 16;
-                let c = j % 16;
-                let mut s = if accumulate {
-                    *out.add(i * ldc + j)
+            let arow = a.add(i * lda);
+            for p in 0..n_panels {
+                let cols = core::cmp::min(16, n - p * 16);
+                let base = p * k_stride * 16;
+                if cols == 16 {
+                    let orow = out.add(i * ldc + p * 16);
+                    let (mut c0, mut c1) = if accumulate {
+                        (_mm256_loadu_ps(orow), _mm256_loadu_ps(orow.add(8)))
+                    } else {
+                        (_mm256_setzero_ps(), _mm256_setzero_ps())
+                    };
+                    for kk in 0..k {
+                        let bp = bpacked.add(base + kk * 16);
+                        let av = _mm256_set1_ps(*arow.add(kk));
+                        c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(bp), c0);
+                        c1 = _mm256_fmadd_ps(av, _mm256_loadu_ps(bp.add(8)), c1);
+                    }
+                    _mm256_storeu_ps(orow, c0);
+                    _mm256_storeu_ps(orow.add(8), c1);
                 } else {
-                    0.0
-                };
-                for kk in 0..k {
-                    s += *a.add(i * lda + kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
+                    for cc in 0..cols {
+                        let j = p * 16 + cc;
+                        let mut s = if accumulate {
+                            *out.add(i * ldc + j)
+                        } else {
+                            0.0
+                        };
+                        for kk in 0..k {
+                            s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                        }
+                        *out.add(i * ldc + j) = s;
+                    }
                 }
-                *out.add(i * ldc + j) = s;
             }
             i += 1;
         }
