@@ -388,17 +388,6 @@ impl<B: SessionBackend> InferenceSession<B> {
             .map_err(ExecError::Archive)?
             .unwrap_or_default();
 
-        // Reject any I/O port whose dtype tag the runtime does not recognize:
-        // `port_bytes_per_element` would fall back to 1, silently under-sizing
-        // the port's buffer and truncating I/O. Fail loud at load rather than
-        // compute on mis-sized boundaries. (Recognized sub-byte i4 is allowed —
-        // its over-estimate is corrected by the `.min(buf.len)` clamp on I/O.)
-        for p in inputs.iter().chain(outputs.iter()) {
-            if !is_known_port_dtype(p.dtype) {
-                return Err(ExecError::UnsupportedPortDtype(p.dtype));
-            }
-        }
-
         // Open producer metadata (tokenizer, generation config, …) carried
         // opaquely as owned `(key, bytes)`.
         let extensions: Vec<(String, Vec<u8>)> = plan
@@ -1486,16 +1475,6 @@ const fn port_bytes_per_element(dtype: u8) -> usize {
         3 | 5 | 9 => 8, // U64, I64, F64
         _ => 1,
     }
-}
-
-/// `true` iff `dtype` is a **recognized** dtype tag: the fixed-width types
-/// `0..=9` plus packed i4 (`10`). Fixed-width tags size exactly; i4 is
-/// sub-byte, so `port_bytes_per_element` over-estimates and the `.min(buf.len)`
-/// clamp on every I/O keeps it correct. An *unknown* tag (`≥ 11`) has no known
-/// width at all — sizing from it would be silently wrong — so it is rejected at
-/// load (see [`ExecError::UnsupportedPortDtype`]).
-const fn is_known_port_dtype(dtype: u8) -> bool {
-    matches!(dtype, 0..=10)
 }
 
 /// Content-addressed fusion pass (run once at load). Collapses every
