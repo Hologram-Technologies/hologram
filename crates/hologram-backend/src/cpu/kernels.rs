@@ -1531,12 +1531,13 @@ fn unary_act<W: Workspace>(
     ws: &mut W,
     act: u8,
     f: fn(f32) -> f32,
+    simd: Option<ff::SimdUnaryF32>,
 ) -> Result<(), BackendError> {
     #[cfg(feature = "std")]
     if crate::cpu::lut::is_lut_dtype(dtype_of_unary(c)) {
         return crate::cpu::lut::unary_lut(c, ws, act);
     }
-    ff::unary_float(c, ws, f, dtype_of_unary(c))
+    ff::unary_float_acc(c, ws, f, simd, dtype_of_unary(c))
 }
 
 fn try_dispatch_float<W: Workspace>(
@@ -1582,19 +1583,41 @@ fn try_dispatch_float<W: Workspace>(
         K::Relu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::relu_f, dtype_of_unary(c)))
         }
-        K::Sigmoid(c) if is_float_unary(c) => {
-            Some(unary_act(c, ws, lut_act::SIGMOID, ff::sigmoid_f))
-        }
-        K::Tanh(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::TANH, ff::tanh_f)),
-        K::Gelu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::GELU, ff::gelu_f)),
-        K::Silu(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::SILU, ff::silu_f)),
+        K::Sigmoid(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::SIGMOID,
+            ff::sigmoid_f,
+            Some(ff::sigmoid_slice),
+        )),
+        K::Tanh(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::TANH,
+            ff::tanh_f,
+            Some(ff::tanh_slice),
+        )),
+        K::Gelu(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::GELU,
+            ff::gelu_f,
+            Some(ff::gelu_slice),
+        )),
+        K::Silu(c) if is_float_unary(c) => Some(unary_act(
+            c,
+            ws,
+            lut_act::SILU,
+            ff::silu_f,
+            Some(ff::silu_slice),
+        )),
         K::Elu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::elu_f, dtype_of_unary(c)))
         }
         K::Selu(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::selu_f, dtype_of_unary(c)))
         }
-        K::Exp(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::EXP, ff::exp_f)),
+        K::Exp(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::EXP, ff::exp_f, None)),
         K::Log(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::log_f, dtype_of_unary(c)))
         }
@@ -1634,7 +1657,7 @@ fn try_dispatch_float<W: Workspace>(
         K::Round(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::round_f, dtype_of_unary(c)))
         }
-        K::Erf(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::ERF, ff::erf_f)),
+        K::Erf(c) if is_float_unary(c) => Some(unary_act(c, ws, lut_act::ERF, ff::erf_f, None)),
         K::IsNaN(c) if is_float_unary(c) => {
             Some(ff::unary_float(c, ws, ff::is_nan_f, dtype_of_unary(c)))
         }

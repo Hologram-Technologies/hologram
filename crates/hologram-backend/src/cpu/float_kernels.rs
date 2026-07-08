@@ -120,6 +120,26 @@ pub fn unary_float<W: Workspace>(
     f: fn(f32) -> f32,
     dtype: u8,
 ) -> Result<(), BackendError> {
+    unary_float_acc(c, ws, f, None, dtype)
+}
+
+/// Whole-slice f32 elementwise unary SIMD primitive: `out = act(inp)`.
+pub type SimdUnaryF32 = fn(&[f32], &mut [f32]);
+
+/// Elementwise unary float op, optionally accelerated by a whole-slice SIMD
+/// primitive on the contiguous f32 path. Transcendental activations
+/// (sigmoid/silu/tanh/gelu) pass their vectorized `*_slice` form — bit-identical
+/// to the scalar `f`, so the LUT/dequant SSOT contract is preserved — because a
+/// scalar libm call per element cannot vectorize. Every other unary op passes
+/// `None` and uses the scalar closure `f` (which the compiler autovectorizes for
+/// the simple arithmetic ops anyway).
+pub fn unary_float_acc<W: Workspace>(
+    c: &UnaryCall,
+    ws: &mut W,
+    f: fn(f32) -> f32,
+    simd: Option<SimdUnaryF32>,
+    dtype: u8,
+) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let bytes = elem_count_to_bytes(n, dtype);
     // Zero-copy split-borrow + bytemuck cast (no fallback). Every
@@ -141,8 +161,13 @@ pub fn unary_float<W: Workspace>(
             bytemuck::try_cast_slice::<u8, f32>(&inp[..bytes]),
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..bytes]),
         ) {
-            for i in 0..n {
-                o32s[i] = f(i32s[i]);
+            match simd {
+                Some(simd_fn) => simd_fn(&i32s[..n], &mut o32s[..n]),
+                None => {
+                    for i in 0..n {
+                        o32s[i] = f(i32s[i]);
+                    }
+                }
             }
             return Ok(());
         }
@@ -2497,21 +2522,89 @@ pub fn atan_f(x: f32) -> f32 {
 pub fn erf_f(x: f32) -> f32 {
     libm::erff(x)
 }
+// The four transcendental activations below are expressed through the
+// deterministic `exp_f32_det` rather than libm. Two reasons: (1) libm's
+// `expf`/`tanhf` are platform-divergent, so a content-addressed system saw
+// different activation bits per target — routing through `exp_f32_det` (≤2e-6
+// rel err vs libm, and bit-identical across scalar/AVX2/AVX-512/NEON/wasm)
+// removes that latent divergence; (2) it lets the f32 whole-slice path
+// (`*_slice` below) be **bit-identical** to this scalar reference, so the SSOT
+// contract with the f16/bf16 LUT and the `DequantActivation` densified table
+// (both built from `lut_act_ref`) is preserved while the f32 path vectorizes.
+// Keep each scalar body and its `*_slice` twin in lock-step: identical op
+// order, no FMA contraction.
 #[inline]
 pub fn sigmoid_f(x: f32) -> f32 {
-    1.0 / (1.0 + libm::expf(-x))
+    1.0 / (1.0 + crate::cpu::simd::exp_f32_det(-x))
 }
 #[inline]
 pub fn tanh_f(x: f32) -> f32 {
-    libm::tanhf(x)
+    // tanh(x) = (e^{2x} − 1)/(e^{2x} + 1); the clamped `exp_f32_det` saturates
+    // to ±1 at the tails exactly as libm tanh does.
+    let e = crate::cpu::simd::exp_f32_det(2.0 * x);
+    (e - 1.0) / (e + 1.0)
 }
 #[inline]
 pub fn gelu_f(x: f32) -> f32 {
-    0.5 * x * (1.0 + libm::tanhf(0.797_884_6 * (x + 0.044_715 * x * x * x)))
+    0.5 * x * (1.0 + tanh_f(0.797_884_6 * (x + 0.044_715 * x * x * x)))
 }
 #[inline]
 pub fn silu_f(x: f32) -> f32 {
     x * sigmoid_f(x)
+}
+
+/// Whole-slice `sigmoid` (`out[i] = 1/(1+e^{-x})`), bit-identical to
+/// per-element [`sigmoid_f`]: write `−x`, run the vectorized deterministic exp,
+/// then the (autovectorized) `1/(1+e)` map.
+pub fn sigmoid_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = -x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for o in out[..n].iter_mut() {
+        *o = 1.0 / (1.0 + *o);
+    }
+}
+
+/// Whole-slice `silu` (`x·sigmoid(x)`), bit-identical to [`silu_f`].
+pub fn silu_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = -x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = x * (1.0 / (1.0 + *o));
+    }
+}
+
+/// Whole-slice `tanh`, bit-identical to [`tanh_f`].
+pub fn tanh_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        *o = 2.0 * x;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for o in out[..n].iter_mut() {
+        *o = (*o - 1.0) / (*o + 1.0);
+    }
+}
+
+/// Whole-slice `gelu` (tanh approximation), bit-identical to [`gelu_f`]. The
+/// exp argument is `2·(0.7978846·(x + 0.044715·x³))` — the exact expansion of
+/// `tanh_f`'s `2.0 * u` on `u =` gelu's inner term.
+pub fn gelu_slice(inp: &[f32], out: &mut [f32]) {
+    let n = inp.len().min(out.len());
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        let u = 0.797_884_6 * (x + 0.044_715 * x * x * x);
+        *o = 2.0 * u;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(&mut out[..n]);
+    for (o, &x) in out[..n].iter_mut().zip(&inp[..n]) {
+        let tanh_u = (*o - 1.0) / (*o + 1.0);
+        *o = 0.5 * x * (1.0 + tanh_u);
+    }
 }
 
 /// The reference `f32 → f32` activation for a `lut_act::*` id. The single source
@@ -2624,5 +2717,41 @@ pub fn greater_or_equal_f(a: f32, b: f32) -> f32 {
         1.0
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    /// The whole-slice activation twins MUST be bit-identical to the scalar
+    /// SSOT (`sigmoid_f`/`silu_f`/`tanh_f`/`gelu_f`) — the f16/bf16 LUT and the
+    /// `DequantActivation` densified table are built from the scalar form, so
+    /// any divergence would silently break the "bit-identical by construction"
+    /// contract those paths rely on. Non-fused, no reassociation, so this is
+    /// exact equality, not an epsilon check.
+    #[test]
+    fn slice_activations_bit_identical_to_scalar() {
+        // Span the full working range incl. the exp clamp tails and 0.
+        let xs: Vec<f32> = (-1000..=1000).map(|i| i as f32 * 0.1).collect();
+        type Case = (fn(&[f32], &mut [f32]), fn(f32) -> f32, &'static str);
+        let cases: &[Case] = &[
+            (sigmoid_slice, sigmoid_f, "sigmoid"),
+            (silu_slice, silu_f, "silu"),
+            (tanh_slice, tanh_f, "tanh"),
+            (gelu_slice, gelu_f, "gelu"),
+        ];
+        for (slice_fn, scalar_fn, name) in cases {
+            let mut got = vec![0f32; xs.len()];
+            slice_fn(&xs, &mut got);
+            for (i, (&g, &x)) in got.iter().zip(&xs).enumerate() {
+                let want = scalar_fn(x);
+                assert_eq!(
+                    g.to_bits(),
+                    want.to_bits(),
+                    "{name} mismatch at x={x} (idx {i}): slice {g} vs scalar {want}"
+                );
+            }
+        }
     }
 }
