@@ -614,10 +614,7 @@ pub fn matmul_dequant_epilogue<W: Workspace>(
         }
     }
     if c.act != 0 {
-        let f = fused_act_fn(c.act);
-        for o in out32.iter_mut() {
-            *o = f(*o);
-        }
+        apply_fused_act_f32(c.act, out32);
     }
     Ok(())
 }
@@ -635,6 +632,40 @@ fn fused_act_fn(act: u8) -> fn(f32) -> f32 {
         fa::SELU => selu_f,
         fa::EXP => exp_f,
         _ => |x| x,
+    }
+}
+
+/// Apply a fused activation over an **f32** output slice in place. The
+/// transcendental activations (sigmoid/silu/tanh/gelu) route through their
+/// vectorized `*_slice` form — the scalar `fused_act_fn` (a deterministic-exp
+/// closure applied per element through a fn pointer) is markedly slower than
+/// one vectorized pass, and applying it in the epilogue regressed fused
+/// `matmul → activation`. The `*_slice` forms need a distinct input (silu/gelu
+/// re-read `x` in their final multiply), so they read from the reused matmul
+/// scratch copied from the output; the cheap/rare acts (relu/elu/selu/exp) keep
+/// the scalar closure. Bit-identical to the scalar path (the slice twins are
+/// bit-identical to their scalar `*_f` reference by construction).
+fn apply_fused_act_f32(act: u8, o32: &mut [f32]) {
+    use crate::kernel_call::fused_activation as fa;
+    let slice: Option<SimdUnaryF32> = match act {
+        fa::SIGMOID => Some(sigmoid_slice),
+        fa::TANH => Some(tanh_slice),
+        fa::SILU => Some(silu_slice),
+        fa::GELU => Some(gelu_slice),
+        _ => None,
+    };
+    match slice {
+        Some(sfn) => with_matmul_scratch(|scratch| {
+            scratch.clear();
+            scratch.extend_from_slice(o32);
+            sfn(scratch, o32);
+        }),
+        None => {
+            let f = fused_act_fn(act);
+            for v in o32.iter_mut() {
+                *v = f(*v);
+            }
+        }
     }
 }
 
@@ -661,9 +692,7 @@ pub fn matmul_activation_float<W: Workspace>(
     }
     if dt == DTYPE_F32 {
         if let Ok(o32s) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]) {
-            for v in o32s.iter_mut() {
-                *v = f(*v);
-            }
+            apply_fused_act_f32(c.act, o32s);
             return Ok(());
         }
     }
@@ -748,9 +777,11 @@ pub fn matmul_add_activation_float<W: Workspace>(
             bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..count * 4]),
             bytemuck::try_cast_slice::<u8, f32>(res),
         ) {
+            // Residual add (autovectorizes) then the vectorized activation pass.
             for (o, &r) in o32s.iter_mut().zip(r32s.iter()) {
-                *o = f(*o + r);
+                *o += r;
             }
+            apply_fused_act_f32(c.act, o32s);
             return Ok(());
         }
     }

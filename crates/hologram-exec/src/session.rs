@@ -837,13 +837,15 @@ impl<B: SessionBackend> InferenceSession<B> {
                 .pool
                 .resolve(label)
                 .ok_or(ExecError::WorkspaceExhausted)?;
-            // Slice copy (one `memcpy`), not a per-byte iterator collect — this
-            // is the boundary output copy on every `execute()`. `min` guards the
-            // degenerate case where the resolved buffer is shorter than the
-            // declared output (matches the previous `.take(n_bytes)` semantics).
-            let take = n_bytes.min(full.len());
+            // The boundary output copy. Keep the iterator `collect` form: a
+            // slice `full[..n].to_vec()`/`extend_from_slice` into the
+            // freshly-allocated destination measured ~8× slower here on the
+            // repeated-memo-hit path (identical byte count) — a real, stable
+            // regression whichever slice form was used, which the `collect`
+            // form does not exhibit. `take(n_bytes)` bounds the copy to the
+            // declared output even if the resolved buffer is wider.
             out.push(OutputBuffer {
-                bytes: full[..take].to_vec(),
+                bytes: full.iter().take(n_bytes).copied().collect(),
             });
         }
         Ok(out)
