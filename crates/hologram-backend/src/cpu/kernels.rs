@@ -1715,14 +1715,16 @@ fn try_dispatch_float<W: Workspace>(
         }
         K::BroadcastBinary(c) if is_float(c.dtype) => Some(ff::broadcast_binary_float(c, ws)),
         K::MatMul(c) if is_float(c.dtype) => Some(ff::matmul_float(c, ws)),
-        // FusedSwiGlu is `silu(x·W_gate) · (x·W_up)` — it needs **two** weight
-        // operands, but `MatMulCall` carries one (`b`). It cannot be computed
-        // faithfully in the current representation; the old code silently ran a
-        // plain matmul and dropped the gate. Fail loud rather than return a
-        // wrong tensor. (Completing it requires a two-weight call form + the
-        // compiler lowering to populate it — see the representational-gap note.)
+        // FusedSwiGlu is a **composite** op: the compiler's `desugar_composites`
+        // pass expands `SwiGlu(x, W_gate, W_up)` into `Silu(x·W_gate) ⊙ (x·W_up)`
+        // over the verified MatMul/Silu/Mul kernels *before* lowering, so a real
+        // model never reaches this arm (covered end-to-end by
+        // `swiglu_desugars_and_computes_end_to_end`). This guard only fires for a
+        // degenerate FusedSwiGlu node that reached lowering without its ≥3
+        // operands (which cannot be expressed as a single MatMul) — fail loud
+        // rather than silently drop the gate.
         K::FusedSwiGlu(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "FusedSwiGlu: gate+up weights not representable in MatMulCall (one operand)",
+            "FusedSwiGlu: expected desugaring to Silu(x·Wg)⊙(x·Wu); degenerate node reached lowering",
         ))),
         K::Gemm(c) if is_float(c.dtype) => Some(ff::gemm_float(c, ws)),
         K::Conv2d(c) | K::ConvTranspose2d(c) if is_float(c.dtype) => Some(ff::conv2d_float(c, ws)),
@@ -1794,17 +1796,17 @@ fn try_dispatch_float<W: Workspace>(
         // Resize is the nearest-neighbor gather (reuses ExpandCall's dims).
         K::Resize(c) if is_float(c.dtype) => Some(ff::resize_float(c, ws)),
 
-        // Parameterized ops whose parameters are *not carried* by the kernel-
-        // call representation: Clip needs (min, max), RotaryEmbedding needs the
-        // rotation table / θ / positions, Lrn needs (size, α, β, bias). The
-        // graph node has no attribute slot for them (only Quant/Conv attrs
-        // exist), so a float kernel here would silently behave as identity —
-        // corrupting any model that uses them. Fail loud until the parameters
-        // are plumbed through (graph attrs → call fields → codec). The byte
-        // ring keeps its documented reference approximation; this guard only
-        // covers the numeric float path that real models execute.
+        // Clip is a **composite** op (like FusedSwiGlu above): its (lo, hi)
+        // bounds are operand tensors, and `desugar_composites` expands
+        // `Clip(x, lo, hi)` into `Min(Max(x, lo), hi)` over the verified Min/Max
+        // kernels before lowering — so real models run it fine (covered by
+        // `clip_desugars_and_clamps_end_to_end`). This arm only fires for a
+        // degenerate Clip node that reached lowering without its bound operands,
+        // which cannot be expressed as a bound-less `UnaryCall`; fail loud rather
+        // than silently behave as identity. (RotaryEmbedding and Lrn below DO
+        // dispatch — they carry their parameters in dedicated call structs.)
         K::Clip(c) if is_float(c.dtype) => Some(Err(BackendError::UnsupportedOp(
-            "Clip: (min, max) bounds not carried by UnaryCall — parameters dropped at lowering",
+            "Clip: expected desugaring to Min(Max(x,lo),hi); degenerate node reached lowering",
         ))),
         K::RotaryEmbedding(c) if is_float(c.dtype) => Some(ff::rope_float(c, ws)),
         K::Lrn(c) if is_float(c.dtype) => Some(ff::lrn_float(c, ws)),
