@@ -18,8 +18,25 @@ use hologram_backend::{
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
-/// `DTYPE_F32`). Content-addressed fusion only fires for f32 matmuls.
+/// `DTYPE_F32`).
 const DTYPE_F32: u8 = 8;
+/// f16 / bf16 dtype tags (match `port_bytes_per_element` / the backend).
+const DTYPE_F16: u8 = 6;
+const DTYPE_BF16: u8 = 7;
+
+/// A float dtype whose `matmul → {activation | residual-add}` epilogue is
+/// bit-identical whether fused or run as two separate kernels. f32 has no
+/// intermediate rounding. bf16/f16 also qualify for these **2-op** epilogues:
+/// the fused kernel narrows the matmul product to the storage dtype and reads
+/// it back before applying the epilogue (one rounding, exactly as the unfused
+/// chain — the activation LUT and the add kernel both re-widen the narrowed
+/// value). The **3-op** `matmul → add → activation` is deliberately excluded
+/// for bf16/f16: fusing it would skip narrowing the *sum* before the
+/// activation, which the unfused chain performs — so it stays f32-only.
+#[inline]
+const fn epilogue_fusable_dtype(dt: u8) -> bool {
+    dt == DTYPE_F32 || dt == DTYPE_BF16 || dt == DTYPE_F16
+}
 
 /// Max distinct input-label sets the graph-level memo retains. A re-run
 /// whose input ports content-address to a key already present returns its
@@ -1744,7 +1761,11 @@ fn fuse_matmul_epilogue(
     let mut fused: Vec<Option<KernelCall>> = (0..n).map(|_| None).collect();
     for i in 0..n {
         let prod = match &calls[i] {
-            KernelCall::MatMul(c) if c.dtype == DTYPE_F32 => Prod::Mm(*c),
+            // Plain matmul: f32 and (for the 2-op epilogues) bf16/f16.
+            KernelCall::MatMul(c) if epilogue_fusable_dtype(c.dtype) => Prod::Mm(*c),
+            // Dequant-matmul producer stays f32-only: its low-precision epilogue
+            // rounding has not been proven equivalent the way the plain-matmul
+            // path has, and the quantized decode shapes it serves are f32.
             KernelCall::MatMulDequant(c)
                 if c.dtype == DTYPE_F32 && c.act == 0 && !c.has_residual() =>
             {
@@ -1755,6 +1776,13 @@ fn fuse_matmul_epilogue(
         let s = match &prod {
             Prod::Mm(c) => c.output.slot,
             Prod::Mmd(c) => c.output.slot,
+        };
+        // The 3-op `matmul → add → activation` fusion is bit-identical to the
+        // separate kernels only when there is no intermediate narrowing to skip
+        // — i.e. f32. (`Mmd` producers are always f32.)
+        let prod_f32 = match &prod {
+            Prod::Mm(c) => c.dtype == DTYPE_F32,
+            Prod::Mmd(_) => true,
         };
         if s == u32::MAX || out_slots.contains(&s) {
             continue;
@@ -1821,7 +1849,8 @@ fn fuse_matmul_epilogue(
             // that is an elementwise activation, absorb it too so neither the
             // matmul product nor the post-add sum is ever materialized.
             let add_out = jout.slot;
-            let act_consumer = (add_out != u32::MAX
+            let act_consumer = (prod_f32
+                && add_out != u32::MAX
                 && !out_slots.contains(&add_out)
                 && prod_count.get(&add_out) == Some(&1)
                 && read_count.get(&add_out) == Some(&1))

@@ -2514,3 +2514,164 @@ fn wl3_odd_k_i4_stays_on_generic_path() {
     );
     assert!(got.iter().all(|v| v.is_finite()));
 }
+
+// ── bf16 epilogue fusion (2-op only) ─────────────────────────────────────────
+//
+// The epilogue pass fuses `matmul → activation` and `matmul → add` for bf16/f16
+// (not only f32), because the fused kernel narrows the matmul product to the
+// storage dtype and reads it back before the epilogue — byte-identical to the
+// unfused chain (proven at the kernel layer in
+// `hologram-backend/tests/fused_epilogue_dtype.rs`). The 3-op
+// `matmul → add → activation` is deliberately NOT fused for bf16/f16 (it would
+// skip narrowing the sum before the activation), so it must stay two kernels.
+#[test]
+fn fu6_bf16_epilogue_fuses_two_op_only() {
+    use hologram_backend::cpu::dtype::{read_bf16, write_bf16};
+    const DTYPE_BF16: u8 = 7;
+    let bf = DTypeId(DTYPE_BF16);
+    let n = 16usize;
+    let to_bf16 = |v: &[f32]| -> Vec<u8> {
+        let mut b = vec![0u8; v.len() * 2];
+        for (i, &x) in v.iter().enumerate() {
+            write_bf16(&mut b, i, x);
+        }
+        b
+    };
+    let from_bf16 = |b: &[u8]| -> Vec<f32> { (0..b.len() / 2).map(|i| read_bf16(b, i)).collect() };
+    let shape = |g: &mut Graph| {
+        g.shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(n as u64, n as u64))
+    };
+
+    // (1) matmul → gelu : the 2-op activation epilogue must fuse to ONE kernel.
+    let x = fill(n * n, 0xB1);
+    let w = fill(n * n, 0xB2);
+    let mut g = Graph::new();
+    let s = shape(&mut g);
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: to_bf16(&w),
+        dtype: bf,
+        shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let mmn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Constant(wc)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    let actn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Gelu),
+        inputs: SmallVec::from_iter([InputSource::Node(mmn)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(actn)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W16).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess.fused_count(),
+        1,
+        "bf16 matmul→gelu must fuse to one MatMulActivation"
+    );
+    assert_eq!(
+        sess.kernel_count(),
+        1,
+        "bf16 activation intermediate elided"
+    );
+    // Numeric sanity: finite, and close to the f64 reference within bf16 tol.
+    let got = from_bf16(
+        &sess
+            .execute(&[InputBuffer {
+                bytes: &to_bf16(&x),
+            }])
+            .unwrap()[0]
+            .bytes,
+    );
+    let mm = ref_matmul(&x, &w, n, n, n);
+    let want: Vec<f32> = mm.iter().map(|&v| act_ref(OpKind::Gelu, v)).collect();
+    let scale = want.iter().fold(0f64, |mx, &v| mx.max(f64::from(v).abs())) + 1e-9;
+    let err = got
+        .iter()
+        .zip(&want)
+        .map(|(&gv, &wv)| (f64::from(gv) - f64::from(wv)).abs() / scale)
+        .fold(0f64, f64::max);
+    assert!(err <= 3e-2, "bf16 fused gelu diverged (err {err:.3e})");
+
+    // (2) matmul → add → gelu : the 3-op chain must NOT collapse for bf16 — the
+    // matmul→add fuses (MatMulAdd) but the activation stays a separate kernel.
+    // Structure-only assertion (no execution), so only the weight is needed.
+    let w = fill(n * n, 0xC2);
+    let mut g = Graph::new();
+    let s = shape(&mut g);
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: to_bf16(&w),
+        dtype: bf,
+        shape: s,
+    });
+    let xi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    g.add_input(xi);
+    let bi = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    g.add_input(bi);
+    let mmn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(xi), InputSource::Constant(wc)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    let addn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Add),
+        inputs: SmallVec::from_iter([InputSource::Node(mmn), InputSource::Node(bi)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    let actn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Gelu),
+        inputs: SmallVec::from_iter([InputSource::Node(addn)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(actn)]),
+        output_dtype: bf,
+        output_shape: s,
+    });
+    g.add_output(out);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W16).unwrap();
+    let sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+    assert_eq!(
+        sess.add_activation_fused_count(),
+        0,
+        "bf16 matmul→add→gelu must NOT fuse the 3-op form (intermediate rounding)"
+    );
+    assert_eq!(
+        sess.kernel_count(),
+        2,
+        "bf16 three-op chain stays MatMulAdd + separate activation"
+    );
+}
