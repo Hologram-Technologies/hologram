@@ -76,11 +76,55 @@ pub mod mm_act_quant {
     /// `op_signature` tag.
     pub const W8A8_TOKEN_SYM: u8 = 1;
 
-    /// Upper bound on `k` for the W8A8 path's exact i32 accumulation
-    /// (`k · 127²  <  i32::MAX`). The compiler refuses to emit W8A8 beyond
-    /// it and the kernel asserts it; real decode shapes sit three orders of
-    /// magnitude below (~2k–19k).
-    pub const K_MAX: usize = (i32::MAX as usize) / (127 * 127);
+    /// The symmetric working alphabet's bound: every quantized operand — the
+    /// weight, whatever tier it was *stored* in, and the per-token activation —
+    /// decodes into `{-B ..= B}`. `-128` is excluded by symmetric quantization.
+    ///
+    /// This is the one declared parameter the accumulation bound derives from.
+    /// Nothing else in the W8A8 path may hard-code `127`.
+    pub const ALPHABET_BOUND: usize = 127;
+
+    /// The exact-accumulation capacity: the i32 the dot products accumulate in.
+    pub const ACCUM_CAPACITY: usize = i32::MAX as usize;
+
+    /// Upper bound on `k` for the W8A8 path's exact i32 accumulation:
+    /// `⌊capacity / B²⌋`, so that `k · B² ≤ i32::MAX` and neither the final sum
+    /// **nor any intermediate accumulator state** can overflow — the reduction
+    /// materializes every partial sum, and each is bounded by its own prefix
+    /// length times `B²`.
+    ///
+    /// Derived from `(ALPHABET_BOUND, ACCUM_CAPACITY)`, not declared: a tier
+    /// with a different alphabet gets its bound from the same expression. The
+    /// compiler refuses to emit W8A8 beyond it and the kernel asserts it; real
+    /// decode shapes sit three orders of magnitude below (~2k–19k).
+    ///
+    /// At `(127, i32::MAX)` this is `133_144`, pinned by
+    /// `k_max_is_derived_from_the_alphabet_bound`.
+    pub const K_MAX: usize = ACCUM_CAPACITY / (ALPHABET_BOUND * ALPHABET_BOUND);
+}
+
+#[cfg(test)]
+mod act_quant_tests {
+    use super::mm_act_quant::{ACCUM_CAPACITY, ALPHABET_BOUND, K_MAX};
+
+    /// `K_MAX` is a *derived* constant, and a worst-case `K_MAX`-term dot of
+    /// alphabet-bounded operands fits the accumulator while a `K_MAX + 1`-term
+    /// one need not. Both halves matter: the first is the safety property the
+    /// kernels assert, the second is that the bound is tight (not conservative
+    /// to the point of leaving throughput on the table).
+    #[test]
+    fn k_max_is_derived_from_the_alphabet_bound() {
+        assert_eq!(K_MAX, 133_144, "the derived W8A8 ceiling");
+        let b2 = ALPHABET_BOUND * ALPHABET_BOUND;
+        assert!(
+            K_MAX * b2 <= ACCUM_CAPACITY,
+            "worst-case dot must not overflow"
+        );
+        assert!(
+            (K_MAX + 1) * b2 > ACCUM_CAPACITY,
+            "the bound must be tight, not merely safe"
+        );
+    }
 }
 
 /// Decode-shape gates: the `m` bounds below which a GEMV formulation beats the
