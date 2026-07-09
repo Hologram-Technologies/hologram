@@ -1401,6 +1401,7 @@ fn fuse_const_i8_decode(
     const DTYPE_F32: u8 = 8;
     const DTYPE_I8: u8 = 2;
     const DTYPE_I4: u8 = 10;
+    const DTYPE_E8CB: u8 = 11;
     /// Largest static `m` treated as a decode shape. Not model-derived: it is
     /// the boundary below which the blocked f32 kernel's register tile
     /// (MR = 4) has not engaged, so the GEMV formulation wins; at m >= MR the
@@ -1466,7 +1467,9 @@ fn fuse_const_i8_decode(
             _ => continue,
         };
         let is_i4 = dq.quant_dtype == DTYPE_I4;
-        if (dq.quant_dtype != DTYPE_I8 && !is_i4) || !dq.per_channel() || dq.inner != 1 {
+        let is_e8cb = dq.quant_dtype == DTYPE_E8CB;
+        if (dq.quant_dtype != DTYPE_I8 && !is_i4 && !is_e8cb) || !dq.per_channel() || dq.inner != 1
+        {
             continue;
         }
         // Constant weight, read by this dequant alone, not port-aliased.
@@ -1519,16 +1522,39 @@ fn fuse_const_i8_decode(
         if is_i4 && (!k.is_multiple_of(2) || !(k * n).is_multiple_of(2)) {
             continue;
         }
-        let want_len = if is_i4 { k * n / 2 } else { k * n };
+        // The E8-codebook kernel groups 8 k-elements per index: k must be a
+        // multiple of 8 (whole E8 groups per column).
+        if is_e8cb && !k.is_multiple_of(8) {
+            continue;
+        }
+        let want_len = if is_i4 {
+            k * n / 2
+        } else if is_e8cb {
+            k / 8 * n
+        } else {
+            k * n
+        };
         let entry = match graph.constants().get(ConstantId(cid as u32)) {
             Some(e) if e.bytes.len() == want_len => e,
             _ => continue, // shape/dtype guard
         };
         // Derive the output-major layout: transpose `[k,n] → [n,k]`. i8 is a
         // 1-byte/elem transpose; i4 repacks nibbles (element `i = kk·n + j`,
-        // low nibble first — the archive convention) into per-column spans.
+        // low nibble first — the archive convention) into per-column spans;
+        // e8cb transposes the `[k/8, n]` index grid (one byte per 8-D group,
+        // element `gk·n + j`) into per-column index spans `[n, k/8]`.
         // Baked into the archive; zero runtime copy.
-        let t = if is_i4 {
+        let t = if is_e8cb {
+            let g = k / 8;
+            let mut t = vec![0u8; g * n];
+            for gk in 0..g {
+                let row = &entry.bytes[gk * n..(gk + 1) * n];
+                for (jj, &b) in row.iter().enumerate() {
+                    t[jj * g + gk] = b;
+                }
+            }
+            t
+        } else if is_i4 {
             let mut t = vec![0u8; k * n / 2];
             for kk in 0..k {
                 for jj in 0..n {

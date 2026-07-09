@@ -27,6 +27,7 @@ use std::time::Instant;
 const F32: u8 = 8;
 const I8: u8 = 2;
 const BF16: u8 = 7;
+const E8CB: u8 = 11;
 fn f32t() -> DTypeId {
     DTypeId(F32)
 }
@@ -37,6 +38,10 @@ fn bf16_bytes(vals: impl Iterator<Item = f32>) -> Vec<u8> {
 /// Whether to build a plain bf16 model (DECODE_DTYPE=bf16) vs int8-quantized.
 fn is_bf16() -> bool {
     std::env::var("DECODE_DTYPE").ok().as_deref() == Some("bf16")
+}
+/// Whether to build an E8-codebook (1 bit/weight) model (DECODE_DTYPE=e8cb).
+fn is_e8cb() -> bool {
+    std::env::var("DECODE_DTYPE").ok().as_deref() == Some("e8cb")
 }
 /// The activation/compute dtype of the model.
 fn act_dtype() -> DTypeId {
@@ -89,7 +94,39 @@ fn int8_weight(g: &mut Graph, k: usize, n: usize) -> (ConstantId, ConstantId, Co
     (wc, sc, zc, sw)
 }
 
-/// A projection `x[1,k] · W[k,n] → [1,n]`. int8: dequant(weight)→matmul;
+/// (index, scale, zero-point, weight-shape) E8-codebook constants. The weight
+/// is a `[k/8, n]` grid of `u8` codebook indices (one per 8-D group), declared
+/// with logical shape `[k,n]` + dtype E8CB so storage is `k*n/8` bytes.
+fn e8cb_weight(g: &mut Graph, k: usize, n: usize) -> (ConstantId, ConstantId, ConstantId, ShapeId) {
+    let sw = shape2(g, k as u64, n as u64);
+    let sv = shape1(g, n as u64);
+    // [k/8, n] row-major indices (element gk*n + j), matching the compiler's
+    // input-major → omajor transpose.
+    let idx: Vec<u8> = (0..(k / 8) * n)
+        .map(|i| ((i * 53 + 7) % 256) as u8)
+        .collect();
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: idx,
+        dtype: DTypeId(E8CB),
+        shape: sw,
+    });
+    let scales: Vec<u8> = (0..n)
+        .flat_map(|j| (0.01f32 + j as f32 * 1e-6).to_le_bytes())
+        .collect();
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: scales,
+        dtype: f32t(),
+        shape: sv,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(I8),
+        shape: sv,
+    });
+    (wc, sc, zc, sw)
+}
+
+/// A projection `x[1,k] · W[k,n] → [1,n]`. int8/e8cb: dequant(weight)→matmul;
 /// bf16: a plain bf16 weight constant fed straight to matmul.
 fn proj(g: &mut Graph, x: NodeId, k: usize, n: usize) -> NodeId {
     let so = shape2(g, 1, n as u64);
@@ -108,7 +145,11 @@ fn proj(g: &mut Graph, x: NodeId, k: usize, n: usize) -> NodeId {
             output_shape: so,
         });
     }
-    let (wc, sc, zc, sw) = int8_weight(g, k, n);
+    let (quant_dtype, (wc, sc, zc, sw)) = if is_e8cb() {
+        (E8CB, e8cb_weight(g, k, n))
+    } else {
+        (I8, int8_weight(g, k, n))
+    };
     let dq = g.add_node(Node {
         op: GraphOp::Op(OpKind::Dequantize),
         inputs: SmallVec::from_iter([
@@ -122,7 +163,7 @@ fn proj(g: &mut Graph, x: NodeId, k: usize, n: usize) -> NodeId {
     g.set_quant_attrs(
         dq,
         QuantAttrs {
-            quant_dtype: I8,
+            quant_dtype,
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
@@ -243,11 +284,27 @@ fn main() {
     });
     g.add_output(out_node);
 
+    // Streamed weight bytes per logical weight: bf16 = 2, i8 = 1, e8cb = 1/8.
+    let bytes_per_weight = if is_bf16() {
+        2.0
+    } else if is_e8cb() {
+        0.125
+    } else {
+        1.0
+    };
+    let dtype_label = if is_bf16() {
+        "bf16"
+    } else if is_e8cb() {
+        "e8cb"
+    } else {
+        "i8"
+    };
+    let weight_bytes = int8_bytes as f64 * bytes_per_weight;
+
     let nodes = g.node_count();
     eprintln!(
-        "building: d={d} hidden={hidden} layers={layers} nodes={nodes} weight={:.1} MB dtype={}",
-        (int8_bytes * if is_bf16() { 2 } else { 1 }) as f64 / 1e6,
-        if is_bf16() { "bf16" } else { "i8" }
+        "building: d={d} hidden={hidden} layers={layers} nodes={nodes} weight={:.1} MB dtype={dtype_label}",
+        weight_bytes / 1e6,
     );
 
     let t0 = Instant::now();
@@ -274,8 +331,6 @@ fn main() {
             .flat_map(|i| (i as f32 * 1e-3).to_le_bytes())
             .collect()
     };
-    let esz = if is_bf16() { 4 } else { 4 }; // input element stride for the poke below
-    let _ = esz;
     let _ = sess.execute(&[InputBuffer { bytes: &xb }]).unwrap();
 
     let mut best = f64::INFINITY;
@@ -290,9 +345,9 @@ fn main() {
         best = best.min(ms);
     }
     let avg = total / steps as f64;
-    let wbytes = int8_bytes * if is_bf16() { 2 } else { 1 };
-    let gbps = wbytes as f64 / (best * 1e-3) / 1e9;
-    eprintln!("per-token: avg={avg:.2} ms  best={best:.2} ms  |  int8-weight BW at best = {gbps:.1} GB/s (roofline ~24)");
+    let gbps = weight_bytes / (best * 1e-3) / 1e9;
+    let gmacs = int8_bytes as f64 / (best * 1e-3) / 1e9;
+    eprintln!("per-token: avg={avg:.2} ms  best={best:.2} ms  |  weight BW at best = {gbps:.1} GB/s  |  {gmacs:.1} GMAC/s");
     eprintln!(
         "dispatched={} skipped(reuse)={}",
         sess.last_dispatched(),

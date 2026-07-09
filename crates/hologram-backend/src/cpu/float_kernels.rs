@@ -392,10 +392,11 @@ pub fn matmul_dequant_float<W: Workspace>(
     let kn = k * n;
     let in_bytes = match c.quant_dtype {
         DTYPE_I4 => kn.div_ceil(2),
+        DTYPE_E8CB => kn.div_ceil(8), // one codebook index per 8-D group
         DTYPE_I8 | DTYPE_U8 => kn,
         _ => {
             return Err(BackendError::UnsupportedOp(
-                "matmul_dequant: quant_dtype must be i8/u8/i4",
+                "matmul_dequant: quant_dtype must be i8/u8/i4/e8cb",
             ))
         }
     };
@@ -445,8 +446,9 @@ pub fn matmul_dequant_float<W: Workspace>(
                     "matmul_dequant: bq_omajor and W8A8 must be paired",
                 ));
             }
-            let dtype_ok =
-                quant_dtype == DTYPE_I8 || (quant_dtype == DTYPE_I4 && k.is_multiple_of(2));
+            let dtype_ok = quant_dtype == DTYPE_I8
+                || (quant_dtype == DTYPE_I4 && k.is_multiple_of(2))
+                || (quant_dtype == DTYPE_E8CB && k.is_multiple_of(8));
             let symmetric = per_ch
                 && dtype_ok
                 && channels == n
@@ -456,7 +458,7 @@ pub fn matmul_dequant_float<W: Workspace>(
                     .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0);
             if !symmetric || k > mm_act_quant::K_MAX {
                 return Err(BackendError::UnsupportedOp(
-                    "matmul_dequant: W8A8 requires symmetric per-channel i8/i4 within the k bound",
+                    "matmul_dequant: W8A8 requires symmetric per-channel i8/i4/e8cb within the k bound",
                 ));
             }
             let a32 = bytemuck::try_cast_slice::<u8, f32>(a)
@@ -465,7 +467,21 @@ pub fn matmul_dequant_float<W: Workspace>(
                 .map_err(|_| BackendError::SlotOutOfRange(c.scales.slot))?;
             let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
                 .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
-            if quant_dtype == DTYPE_I4 {
+            if quant_dtype == DTYPE_E8CB {
+                // VQ tier: u8 codebook indices, 8× fewer streamed bytes. The
+                // codebook is the fixed backend table (prototype); a per-model
+                // codebook would arrive as its own operand.
+                crate::cpu::simd::matmul_e8cb_omajor(
+                    a32,
+                    bq,
+                    &crate::cpu::simd::E8_CODEBOOK,
+                    scale32,
+                    out32,
+                    m,
+                    k,
+                    n,
+                );
+            } else if quant_dtype == DTYPE_I4 {
                 // LUT tier: packed nibbles, half the streamed bytes.
                 crate::cpu::simd::matmul_i4_pc_omajor(a32, bq, scale32, out32, m, k, n);
             } else {

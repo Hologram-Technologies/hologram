@@ -5160,6 +5160,378 @@ pub fn matmul_i4_pc_omajor(
     })
 }
 
+// ─── Output-major E8 lattice-codebook GEMV (decode, VQ tier — PROTOTYPE) ─
+// Vector-quantized weights: each 8-D subvector of a column's k-vector is a
+// single codebook index (an E8-lattice point, QuIP#-style). The prototype uses
+// an 8-bit index / 256-entry codebook = **1 bit/weight** (8× fewer streamed
+// bytes than i8), the codebook (256×8 i8 = 2 KB) staying L1-resident. Indices
+// expand through the codebook LUT into i8 weights that flow into the SAME exact
+// integer W8A8 dot pipeline (cvtepi8→madd, per-column scale writeback), so the
+// result is bit-identical to the scalar reference on every target.
+//
+// Scope: this is a *kernel* prototype to measure the compute/bandwidth
+// tradeoff, not a production tier. The codebook *contents* (which E8 points)
+// are the accuracy question and are out of scope here — the kernel is agnostic
+// to them. x86 AVX2 + portable scalar only for now (aarch64/wasm fall to the
+// scalar inner); production would add NEON/SIMD128 twins. `k` must be a
+// multiple of 8 (whole E8 groups).
+
+/// Fixed prototype E8 codebook: 256 entries × 8 i8 lattice coordinates. A
+/// deterministic placeholder grid — the *kernel* speed is independent of the
+/// codebook contents, and a real deployment flows a per-model learned E8
+/// codebook (QuIP#-style) as a constant operand. The compiler's fused decode
+/// path (`fuse_const_e8cb_decode`) uses this table; conformance tests pass
+/// their own codebook to `matmul_e8cb_omajor` directly.
+pub const E8_CODEBOOK: [i8; 256 * 8] = build_e8_codebook();
+
+const fn build_e8_codebook() -> [i8; 256 * 8] {
+    let mut cb = [0i8; 256 * 8];
+    let mut i = 0;
+    while i < 256 * 8 {
+        cb[i] = (((i * 37 + 11) % 255) as i32 - 127) as i8;
+        i += 1;
+    }
+    cb
+}
+
+/// Reused i16 pre-widened codebook scratch (256×8). Widening the i8 codebook
+/// to i16 **once per call** lifts the per-column `cvtepi8_epi16` out of the hot
+/// loop — the codebook then loads straight as `madd_epi16` operands. O(2048)
+/// against the GEMV's O(k·n); the scratch keeps it zero-alloc after warm-up.
+#[cfg(feature = "std")]
+fn with_cb16_scratch<R>(f: impl FnOnce(&mut Vec<i16>) -> R) -> R {
+    std::thread_local! {
+        static CB16: core::cell::RefCell<Vec<i16>> = const { core::cell::RefCell::new(Vec::new()) };
+    }
+    CB16.with(|cell| f(&mut cell.borrow_mut()))
+}
+#[cfg(not(feature = "std"))]
+fn with_cb16_scratch<R>(f: impl FnOnce(&mut Vec<i16>) -> R) -> R {
+    let mut v = Vec::new();
+    f(&mut v)
+}
+
+/// Native serial inner for one quantized activation row against a contiguous
+/// output-column range of the E8-codebook weight — the unit both the serial
+/// call and each pool task run (bit-identical partition). x86 AVX2 when
+/// present, exact scalar otherwise. `cb16` is the codebook pre-widened to i16.
+///
+/// # Safety
+/// `q` len `k`; `bq` is `[n, k/8]` u8 indices (sub-range base); `cb16` len
+/// `256*8` i16; `scales`/`out` sub-range bases (`n` cols); `k` multiple of 8,
+/// `k ≤ I8_DOT_K_MAX`. Unaligned loads.
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_e8cb_omajor_native(
+    q: *const i8,
+    bq: *const u8,
+    cb16: *const i16,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    // wasm SIMD128 is the deployed target — its own inner, not the scalar path.
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        gemv_e8cb_omajor_wasm(q, bq, cb16, scales, out, k, n, scale_a);
+    }
+    // Everything else: x86 AVX2 when detected, exact scalar otherwise. Guarded
+    // off the wasm-SIMD128 build so that branch has no dead scalar tail.
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        #[cfg(target_arch = "x86_64")]
+        if x86_has_avx2() {
+            gemv_e8cb_omajor_avx2(q, bq, cb16, scales, out, k, n, scale_a);
+            return;
+        }
+        // Portable scalar reference inner (x86-without-AVX2, aarch64,
+        // wasm-without-simd128, other).
+        let g = k / 8;
+        for j in 0..n {
+            let row = bq.add(j * g);
+            let mut s = 0i32;
+            for gg in 0..g {
+                let e = cb16.add(*row.add(gg) as usize * 8);
+                let qb = q.add(gg * 8);
+                for t in 0..8 {
+                    s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+                }
+            }
+            *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        }
+    }
+}
+
+/// wasm SIMD128 inner for the E8-codebook GEMV — the deployed-target twin of
+/// `gemv_e8cb_omajor_avx2`. One 8-D group (8 k) per step, 4 output columns in
+/// flight: the group's activations widen once (`v128_load64_zero` +
+/// `i16x8_extend_low_i8x16`) and each column's codebook entry loads straight as
+/// an `i16x8`; `i32x4_dot_i16x8` is the exact pairwise i32 partial (products
+/// ≤ 127² so the instruction's internal i16 sums never saturate), accumulated
+/// and horizontally summed — **bit-identical** to the scalar / AVX2 path
+/// (integer sums are associative). The codebook arrives pre-widened to i16.
+///
+/// # Safety
+/// simd128 enabled; layouts per `gemv_e8cb_omajor_native`; `k` a multiple of 8,
+/// `k ≤ I8_DOT_K_MAX`. `v128_load`/`v128_load64_zero` are unaligned wasm loads.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_e8cb_omajor_wasm(
+    q: *const i8,
+    bq: *const u8,
+    cb16: *const i16,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::wasm32::*;
+    let g = k / 8;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * g),
+            bq.add((j + 1) * g),
+            bq.add((j + 2) * g),
+            bq.add((j + 3) * g),
+        ];
+        let mut c = [i32x4_splat(0); 4];
+        for gg in 0..g {
+            // Widen the group's 8 activations once, shared across the 4 columns.
+            let qv = i16x8_extend_low_i8x16(v128_load64_zero(q.add(gg * 8) as *const u64));
+            for (cr, &row) in c.iter_mut().zip(rows.iter()) {
+                let e = v128_load(cb16.add(*row.add(gg) as usize * 8) as *const v128);
+                *cr = i32x4_add(*cr, i32x4_dot_i16x8(qv, e));
+            }
+        }
+        for (r, &cr) in c.iter().enumerate() {
+            let s = i32x4_extract_lane::<0>(cr)
+                + i32x4_extract_lane::<1>(cr)
+                + i32x4_extract_lane::<2>(cr)
+                + i32x4_extract_lane::<3>(cr);
+            *out.add(j + r) = (s as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    // Column tail (< 4): scalar exact dot over the i16 codebook.
+    while j < n {
+        let row = bq.add(j * g);
+        let mut s = 0i32;
+        for gg in 0..g {
+            let e = cb16.add(*row.add(gg) as usize * 8);
+            let qb = q.add(gg * 8);
+            for t in 0..8 {
+                s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+            }
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// AVX2 inner for the E8-codebook GEMV: **8 output columns in flight** (to hide
+/// the dependent codebook-load latency), two 8-D groups (16 k) per step. The
+/// codebook arrives pre-widened to i16, so each index is a direct
+/// `_mm_loadu_si128` of 8 i16; two entries compose one `__m256i`
+/// (`set_m128i`) and `madd_epi16` against the widened activations — the exact
+/// i32 accumulation of the i8 kernel, no per-column widen.
+///
+/// # Safety
+/// AVX2 enabled; layouts per `gemv_e8cb_omajor_native`; `k` multiple of 8.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_e8cb_omajor_avx2(
+    q: *const i8,
+    bq: *const u8,
+    cb16: *const i16,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::x86_64::*;
+    #[inline(always)]
+    unsafe fn entry(cb16: *const i16, idx: usize) -> core::arch::x86_64::__m128i {
+        _mm_loadu_si128(cb16.add(idx * 8) as *const __m128i) // 8 i16
+    }
+    let g = k / 8; // 8-D groups per column
+    let gv = g & !1; // even group count (16 k per SIMD step)
+    let mut j = 0;
+    while j + 8 <= n {
+        let mut rows = [core::ptr::null::<u8>(); 8];
+        for (r, slot) in rows.iter_mut().enumerate() {
+            *slot = bq.add((j + r) * g);
+        }
+        let mut c = [_mm256_setzero_si256(); 8];
+        let mut gg = 0;
+        while gg < gv {
+            let av = _mm256_cvtepi8_epi16(_mm_loadu_si128(q.add(gg * 8) as *const __m128i));
+            for (cr, &row) in c.iter_mut().zip(rows.iter()) {
+                // Both group indices in one u16 load (little-endian: low byte =
+                // group gg, high byte = group gg+1) — halves the index-load
+                // pressure on the gather's critical path.
+                let pair = (row.add(gg) as *const u16).read_unaligned();
+                let wv = _mm256_set_m128i(
+                    entry(cb16, (pair >> 8) as usize),
+                    entry(cb16, (pair & 0xff) as usize),
+                );
+                *cr = _mm256_add_epi32(*cr, _mm256_madd_epi16(av, wv));
+            }
+            gg += 2;
+        }
+        let mut s = [0i32; 8];
+        for (sr, cr) in s.iter_mut().zip(c.iter()) {
+            *sr = hsum256_i32(*cr);
+        }
+        if gg < g {
+            for (sr, &row) in s.iter_mut().zip(rows.iter()) {
+                let e = cb16.add(*row.add(gg) as usize * 8);
+                let qb = q.add(gg * 8);
+                for t in 0..8 {
+                    *sr += (*qb.add(t) as i32) * (*e.add(t) as i32);
+                }
+            }
+        }
+        for (r, &sr) in s.iter().enumerate() {
+            *out.add(j + r) = (sr as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 8;
+    }
+    // Column tail (< 8): scalar exact dot over the i16 codebook.
+    while j < n {
+        let row = bq.add(j * g);
+        let mut s = 0i32;
+        for gg in 0..g {
+            let e = cb16.add(*row.add(gg) as usize * 8);
+            let qb = q.add(gg * 8);
+            for t in 0..8 {
+                s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+            }
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
+    }
+}
+
+/// Fused E8 lattice-codebook GEMV over an **output-major** weight with
+/// per-token dynamic i8 activation quantization. `a` is `[m,k]` f32, `bq` is
+/// `[n, k/8]` u8 codebook indices (each output's index-vector contiguous), `cb`
+/// is the `256×8` i8 codebook, `scales` `[n]`, `out` `[m,n]`. Bit-identical to
+/// the scalar reference across serial and `--features parallel` builds. See the
+/// tier comment above — prototype (x86 AVX2 + scalar).
+#[allow(clippy::too_many_arguments)]
+pub fn matmul_e8cb_omajor(
+    a: &[f32],
+    bq: &[u8],
+    codebook: &[i8],
+    scales: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    assert!(
+        k.is_multiple_of(8),
+        "matmul_e8cb_omajor: k must be a multiple of 8 (whole E8 groups)"
+    );
+    assert!(
+        k <= I8_DOT_K_MAX,
+        "matmul_e8cb_omajor: k {k} exceeds exact-i32 bound {I8_DOT_K_MAX}"
+    );
+    debug_assert_eq!(a.len(), m * k);
+    debug_assert_eq!(bq.len(), (k / 8) * n);
+    debug_assert_eq!(codebook.len(), 256 * 8);
+    debug_assert_eq!(scales.len(), n);
+    debug_assert!(out.len() >= m * n);
+
+    with_cb16_scratch(|cb16| {
+        cb16.clear();
+        cb16.extend(codebook.iter().map(|&v| v as i16));
+        with_q8_scratch(|q| {
+            q.clear();
+            q.resize(k, 0);
+            for i in 0..m {
+                let arow = &a[i * k..(i + 1) * k];
+                let orow = &mut out[i * n..i * n + n];
+                let scale_a = quantize_row_i8(arow, q);
+                if scale_a == 0.0 {
+                    orow.fill(0.0);
+                    continue;
+                }
+                // Native multi-core: disjoint output-column ranges across the
+                // pool, each running the identical serial inner (bit-identical).
+                #[cfg(all(
+                    feature = "parallel",
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                ))]
+                {
+                    use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let g = k / 8;
+                    let w = parallel::pool().width();
+                    if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                        let tiles = parallel::output_tiles(1, n, w, 8);
+                        if tiles.len() > 1 {
+                            let (qp, bp, cbp, sp, op) = (
+                                SendConst(q.as_ptr()),
+                                SendConst(bq.as_ptr()),
+                                SendConst(cb16.as_ptr()),
+                                SendConst(scales.as_ptr()),
+                                SendMut(orow.as_mut_ptr()),
+                            );
+                            let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                                .into_iter()
+                                .map(|(_, _, c0, cols)| {
+                                    Box::new(move || {
+                                        let (qp, bp, cbp, sp, op) = (qp, bp, cbp, sp, op);
+                                        // SAFETY: disjoint column ranges; q/bq/
+                                        // cb16/scales shared read-only; sizes ok.
+                                        unsafe {
+                                            gemv_e8cb_omajor_native(
+                                                qp.0,
+                                                bp.0.add(c0 * g),
+                                                cbp.0,
+                                                sp.0.add(c0),
+                                                op.0.add(c0),
+                                                k,
+                                                cols,
+                                                scale_a,
+                                            );
+                                        }
+                                    })
+                                        as Box<dyn FnOnce() + Send>
+                                })
+                                .collect();
+                            parallel::pool().run(tasks);
+                            continue;
+                        }
+                    }
+                }
+                // SAFETY: sizes checked above; scalar/AVX2 inner selected within.
+                unsafe {
+                    gemv_e8cb_omajor_native(
+                        q.as_ptr(),
+                        bq.as_ptr(),
+                        cb16.as_ptr(),
+                        scales.as_ptr(),
+                        orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                    );
+                }
+            }
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5514,6 +5886,80 @@ mod tests {
         matmul_i8_pc_omajor(&a, &bq, &scales, &mut out, 2, 40, 6);
         for v in out {
             assert_eq!(v.to_bits(), 0f32.to_bits());
+        }
+    }
+
+    #[test]
+    fn matmul_e8cb_omajor_matches_integer_reference() {
+        // E8-codebook GEMV: the AVX2 / scalar inner (and, under `--features
+        // parallel`, the column-partitioned pool path) must equal an
+        // independent scalar restatement of the spec — amax→inv→trunc-round
+        // quant, index→codebook LUT, exact i32 dot, one fused writeback — with
+        // **bit** equality. Shapes cover the 2-group SIMD body, an odd-group
+        // tail (k/8 odd), the n<4 scalar tail, small m>1, and one shape above
+        // GEMV_PAR_THRESHOLD (k·n ≥ 1<<20) incl. a ragged non-panel n.
+        let codebook: Vec<i8> = (0..256 * 8)
+            .map(|i| ((i * 37 + 11) % 255 - 127) as i8)
+            .collect();
+        for &(m, k, n) in &[
+            (1usize, 64usize, 48usize),
+            (1, 2048, 64),
+            (1, 8, 3),   // one group, n<4 tail
+            (1, 24, 5),  // odd group count (3), n tail
+            (2, 96, 17), // small m>1
+            (1, 2048, 640),
+            (1, 2048, 653), // > threshold, ragged final tile
+        ] {
+            let g = k / 8;
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| ((i % 29) as f32 - 14.0) * 0.31)
+                .collect();
+            let bq: Vec<u8> = (0..g * n).map(|i| ((i * 53 + 7) % 256) as u8).collect();
+            let scales: Vec<f32> = (0..n).map(|j| 0.02 + (j as f32) * 0.0007).collect();
+            let mut got = vec![0f32; m * n];
+            matmul_e8cb_omajor(&a, &bq, &codebook, &scales, &mut got, m, k, n);
+            for i in 0..m {
+                let row = &a[i * k..(i + 1) * k];
+                let mut amax = 0f32;
+                for &v in row {
+                    amax = amax.max(v.abs());
+                }
+                if amax == 0.0 {
+                    for j in 0..n {
+                        assert_eq!(got[i * n + j].to_bits(), 0f32.to_bits());
+                    }
+                    continue;
+                }
+                let inv = 127.0 / amax;
+                let scale_a = amax / 127.0;
+                let q: Vec<i32> = row
+                    .iter()
+                    .map(|&v| {
+                        let t = v * inv;
+                        let r = if t >= 0.0 {
+                            (t + 0.5) as i32
+                        } else {
+                            (t - 0.5) as i32
+                        };
+                        r.clamp(-127, 127)
+                    })
+                    .collect();
+                for j in 0..n {
+                    let mut s = 0i32;
+                    for gg in 0..g {
+                        let idx = bq[j * g + gg] as usize;
+                        for t in 0..8 {
+                            s += q[gg * 8 + t] * codebook[idx * 8 + t] as i32;
+                        }
+                    }
+                    let want = (s as f32) * (scale_a * scales[j]);
+                    assert_eq!(
+                        got[i * n + j].to_bits(),
+                        want.to_bits(),
+                        "{m}x{k}x{n} ({i},{j})"
+                    );
+                }
+            }
         }
     }
 

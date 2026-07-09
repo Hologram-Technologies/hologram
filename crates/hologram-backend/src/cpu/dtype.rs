@@ -21,25 +21,34 @@ pub const DTYPE_F64: u8 = 9;
 /// length explicitly to avoid the 0-bytes-per-element pitfall.
 pub const DTYPE_I4: u8 = 10;
 
+/// E8 lattice-codebook vector-quantized weight (research VQ tier). Each 8-D
+/// weight subvector is stored as a single `u8` codebook index → **1 bit per
+/// logical weight** (8× fewer bytes than i8). Sub-byte like `DTYPE_I4`:
+/// `bytes_per_element` reports `0` and storage is `element_count / 8`. The
+/// codebook itself is a fixed backend table (`simd::E8_CODEBOOK`) for the
+/// prototype; a per-model learned codebook would flow as a constant operand.
+pub const DTYPE_E8CB: u8 = 11;
+
 /// Bytes per element for a given dtype tag. Sub-byte dtypes
-/// (`DTYPE_I4`) report `0`; callers compute storage size as
-/// `(element_count + 1) / 2` for I4.
+/// (`DTYPE_I4`, `DTYPE_E8CB`) report `0`; callers compute storage size via
+/// [`storage_bytes`] (`ceil(n/2)` for I4, `n/8` for E8CB).
 pub const fn bytes_per_element(dtype: u8) -> usize {
     match dtype {
         DTYPE_BOOL | DTYPE_U8 | DTYPE_I8 => 1,
         DTYPE_F16 | DTYPE_BF16 => 2,
         DTYPE_I32 | DTYPE_F32 => 4,
         DTYPE_U64 | DTYPE_I64 | DTYPE_F64 => 8,
-        DTYPE_I4 => 0, // sub-byte; storage = ceil(n/2)
+        DTYPE_I4 | DTYPE_E8CB => 0, // sub-byte; storage via storage_bytes
         _ => 1,
     }
 }
 
-/// Storage bytes for an `n`-element buffer of the given dtype, accounting
-/// for sub-byte packing (I4 → ceil(n/2)).
+/// Storage bytes for an `n`-element buffer of the given dtype, accounting for
+/// sub-byte packing (I4 → ceil(n/2); E8CB → one index byte per 8-D group).
 pub const fn storage_bytes(dtype: u8, element_count: u32) -> u32 {
     match dtype {
         DTYPE_I4 => element_count.div_ceil(2),
+        DTYPE_E8CB => element_count.div_ceil(8),
         _ => element_count * (bytes_per_element(dtype) as u32),
     }
 }
