@@ -17,6 +17,13 @@
 //! also handles the case where the **build target's** floor is below
 //! the **host machine's** ceiling.
 
+// The four kernel constants below (`EXP_F32_LO/HI`, `I8_DOT_K_MAX`,
+// `I4_VALUES`) and `E8_CODEBOOK` are `#[deprecated]` for one release before
+// they are removed or demoted to `pub(crate)` in 0.9.0 — the deprecate-then-
+// version-out lifecycle in `specs/docs/quality-gates.md`. rustc lints
+// intra-crate uses of deprecated items, and the kernels here still read them,
+// so the lint is suppressed for this module only.
+#![allow(deprecated)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use alloc::vec::Vec;
@@ -4177,10 +4184,18 @@ unsafe fn x86_matmul_lowp_gemv(
 
 /// Underflow cutoff: `exp(x) = 0.0` exactly for `x < EXP_F32_LO` (−∞ and
 /// NaN included). e^−87.3 ≈ 1.2e−38 is the last normal-range value.
-pub(crate) const EXP_F32_LO: f32 = -87.336_54;
+#[deprecated(
+    since = "0.8.0",
+    note = "kernel-internal constant; it was never part of a supported surface. Removed in 0.9.0."
+)]
+pub const EXP_F32_LO: f32 = -87.336_54;
 /// Clamp ceiling, chosen so the scale exponent `k ≤ 127` stays a normal
 /// f32 (e^88 ≈ 1.65e38 < f32::MAX).
-pub(crate) const EXP_F32_HI: f32 = 88.0;
+#[deprecated(
+    since = "0.8.0",
+    note = "kernel-internal constant; it was never part of a supported surface. Removed in 0.9.0."
+)]
+pub const EXP_F32_HI: f32 = 88.0;
 
 const EXP_LOG2E: f32 = core::f32::consts::LOG2_E;
 // Cody–Waite split of ln2: HI has zeroed low mantissa bits so `kf·HI` is
@@ -4657,7 +4672,11 @@ unsafe fn exp_f32_avx2_inplace(xs: *mut f32, len: usize) {
 /// `i32::MAX`. Rejected loudly; real decode shapes sit three orders of
 /// magnitude below (~2k–19k). One definition, shared with the compiler's
 /// emission gate.
-pub(crate) const I8_DOT_K_MAX: usize = crate::kernel_call::mm_act_quant::K_MAX;
+#[deprecated(
+    since = "0.8.0",
+    note = "kernel-internal constant; it was never part of a supported surface. Removed in 0.9.0."
+)]
+pub const I8_DOT_K_MAX: usize = crate::kernel_call::mm_act_quant::K_MAX;
 
 /// Reused per-token quantized-activation row (zero alloc per call after
 /// warm-up under `std`; a transient alloc on `no_std`, matching the other
@@ -5310,7 +5329,11 @@ pub fn matmul_i8_pc_omajor(
 /// The i4 value grid as a swizzle table: nibble `0..=7 → 0..=7`,
 /// `8..=15 → −8..=−1` (two's complement), matching the archive's packed-i4
 /// convention (element `l` = nibble `l`, low nibble first).
-pub(crate) const I4_VALUES: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1];
+#[deprecated(
+    since = "0.8.0",
+    note = "kernel-internal constant; it was never part of a supported surface. Removed in 0.9.0."
+)]
+pub const I4_VALUES: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1];
 
 /// Nibble `l` of a packed span (low nibble first — the archive convention).
 #[inline]
@@ -5777,6 +5800,31 @@ pub fn matmul_i4_pc_omajor(
             }
         }
     })
+}
+
+/// Fixed prototype E8 codebook: 256 entries × 8 i8 lattice coordinates.
+///
+/// **Deprecated.** The codebook is *model* data, not engine data: a deployment
+/// flows a per-model learned E8 codebook (QuIP#-style) as a constant operand —
+/// the `Dequantize` node's 4th input — and every kernel now takes it as a
+/// parameter. Nothing in the engine reads this table. It survives one release
+/// so a consumer that referenced it can migrate, per the deprecation lifecycle
+/// in `specs/docs/quality-gates.md`; it is removed in 0.9.0.
+#[deprecated(
+    since = "0.8.0",
+    note = "the codebook is per-model operand data: pass it to `matmul_e8cb_omajor`, \
+            or as the Dequantize node's 4th input. Removed in 0.9.0."
+)]
+pub const E8_CODEBOOK: [i8; 256 * 8] = build_e8_codebook();
+
+const fn build_e8_codebook() -> [i8; 256 * 8] {
+    let mut cb = [0i8; 256 * 8];
+    let mut i = 0;
+    while i < 256 * 8 {
+        cb[i] = (((i * 37 + 11) % 255) as i32 - 127) as i8;
+        i += 1;
+    }
+    cb
 }
 
 // ─── Output-major E8 lattice-codebook GEMV (decode, VQ tier) ───────────
@@ -6955,6 +7003,91 @@ mod tests {
     /// `n` values below straddle both tiers; `m = 5..7` puts rows 0..3 in the
     /// tile and rows 4.. in the remainder. Compares row 0 against row 4, which
     /// are seeded identically.
+    /// **Codec-invariance.** A weight tier is a *codec*: a decode `d : Code → 𝔽`
+    /// from a stored alphabet into the working alphabet `{-127..=127}`. MatMul is
+    /// the exact integer accumulation `Σ aᵢ · d(cᵢ)`. So if two codecs decode to
+    /// the *same* weight sequence, the accumulation must be the same integer —
+    /// the result is a function of the decoded operands alone, never of the codec
+    /// that produced them, nor of the tier's bit-width.
+    ///
+    /// The tier is therefore a residency/bandwidth choice; the arithmetic
+    /// identity is fixed. This test is the runtime witness: i8 (identity codec),
+    /// packed-i4 (nibble → 16-entry grid) and E8CB (index → 8-D codebook block)
+    /// are given three factorizations of one weight matrix, and must return
+    /// **byte-identical** f32.
+    ///
+    /// All three quantize the activation identically (`quantize_row_i8`), so the
+    /// only thing varying is the weight codec. Nothing weaker than bit-equality
+    /// is asserted: the accumulation is exact i32, so there is no rounding step
+    /// at which two codecs could legitimately diverge.
+    #[test]
+    fn tiers_that_decode_to_the_same_weights_agree_bit_for_bit() {
+        // i4 spans `{-8..=7}`; pick weights in that range so one matrix is
+        // exactly representable in all three codecs.
+        let (m, k, n) = (1usize, 16usize, 5usize); // k = 2 whole E8 groups
+        let w = |kk: usize, j: usize| -> i8 { (((kk * 7 + j * 3) % 16) as i32 - 8) as i8 };
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i % 23) as f32 - 11.0) * 0.043)
+            .collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.011 + j as f32 * 0.0007).collect();
+
+        // Codec 1 — i8: the identity codec. `[n, k]`, each output's k-vector
+        // contiguous.
+        let bq_i8: Vec<i8> = (0..n)
+            .flat_map(|j| (0..k).map(move |kk| w(kk, j)))
+            .collect();
+
+        // Codec 2 — packed i4: a nibble indexes the 16-entry grid `I4_VALUES`.
+        // `[n, k/2]`, low nibble first (see `i4_at`).
+        let nib = |v: i8| -> u8 { I4_VALUES.iter().position(|&x| x == v).unwrap() as u8 };
+        let bq_i4: Vec<u8> = (0..n)
+            .flat_map(|j| (0..k / 2).map(move |b| nib(w(2 * b, j)) | (nib(w(2 * b + 1, j)) << 4)))
+            .collect();
+
+        // Codec 3 — E8CB: one index decodes an 8-weight block. `[n, k/8]`
+        // indices into a `256×8` codebook. Give each (column, group) its own
+        // entry, which is exactly what a per-model learned codebook does.
+        let groups = k / 8;
+        let mut codebook = vec![0i8; 256 * 8];
+        let mut bq_e8 = vec![0u8; n * groups];
+        for j in 0..n {
+            for g in 0..groups {
+                let idx = j * groups + g;
+                assert!(idx < 256, "test shape must fit the 256-entry codebook");
+                bq_e8[j * groups + g] = idx as u8;
+                for t in 0..8 {
+                    codebook[idx * 8 + t] = w(g * 8 + t, j);
+                }
+            }
+        }
+
+        let mut out_i8 = vec![0f32; m * n];
+        let mut out_i4 = vec![0f32; m * n];
+        let mut out_e8 = vec![0f32; m * n];
+        matmul_i8_pc_omajor(&a, &bq_i8, &scales, &mut out_i8, m, k, n);
+        matmul_i4_pc_omajor(&a, &bq_i4, &scales, &mut out_i4, m, k, n);
+        matmul_e8cb_omajor(&a, &bq_e8, &codebook, &scales, &mut out_e8, m, k, n);
+
+        for j in 0..n {
+            assert_eq!(
+                out_i8[j].to_bits(),
+                out_i4[j].to_bits(),
+                "col {j}: i8 and packed-i4 decode to the same weights but disagree \
+                 ({} vs {})",
+                out_i8[j],
+                out_i4[j]
+            );
+            assert_eq!(
+                out_i8[j].to_bits(),
+                out_e8[j].to_bits(),
+                "col {j}: i8 and E8CB decode to the same weights but disagree \
+                 ({} vs {})",
+                out_i8[j],
+                out_e8[j]
+            );
+        }
+    }
+
     #[test]
     fn matmul_row_bytes_are_independent_of_row_index() {
         for &n in &[16usize, 20, 23, 24, 28, 31, 32, 40, 64] {

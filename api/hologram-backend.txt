@@ -42,6 +42,11 @@ pub mod hologram_backend::cpu::lut
 pub fn hologram_backend::cpu::lut::is_lut_dtype(u8) -> bool
 pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Workspace>(&hologram_backend::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_backend::error::BackendError>
 pub mod hologram_backend::cpu::simd
+pub const hologram_backend::cpu::simd::E8_CODEBOOK: [i8; 2048]
+pub const hologram_backend::cpu::simd::EXP_F32_HI: f32
+pub const hologram_backend::cpu::simd::EXP_F32_LO: f32
+pub const hologram_backend::cpu::simd::I4_VALUES: [i8; 16]
+pub const hologram_backend::cpu::simd::I8_DOT_K_MAX: usize
 pub fn hologram_backend::cpu::simd::exp_f32_det(f32) -> f32
 pub fn hologram_backend::cpu::simd::matmul_e8cb_omajor(&[f32], &[u8], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)
@@ -140,6 +145,8 @@ pub const hologram_backend::kernel_call::lut_act::SIGMOID: u8
 pub const hologram_backend::kernel_call::lut_act::SILU: u8
 pub const hologram_backend::kernel_call::lut_act::TANH: u8
 pub mod hologram_backend::kernel_call::mm_act_quant
+pub const hologram_backend::kernel_call::mm_act_quant::ACCUM_CAPACITY: usize
+pub const hologram_backend::kernel_call::mm_act_quant::ALPHABET_BOUND: usize
 pub const hologram_backend::kernel_call::mm_act_quant::K_MAX: usize
 pub const hologram_backend::kernel_call::mm_act_quant::W8A32: u8
 pub const hologram_backend::kernel_call::mm_act_quant::W8A8_TOKEN_SYM: u8
@@ -854,6 +861,8 @@ pub const hologram_backend::lut_act::SIGMOID: u8
 pub const hologram_backend::lut_act::SILU: u8
 pub const hologram_backend::lut_act::TANH: u8
 pub mod hologram_backend::mm_act_quant
+pub const hologram_backend::mm_act_quant::ACCUM_CAPACITY: usize
+pub const hologram_backend::mm_act_quant::ALPHABET_BOUND: usize
 pub const hologram_backend::mm_act_quant::K_MAX: usize
 pub const hologram_backend::mm_act_quant::W8A32: u8
 pub const hologram_backend::mm_act_quant::W8A8_TOKEN_SYM: u8
