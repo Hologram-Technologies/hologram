@@ -300,21 +300,36 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
         }
     }
 
-    // bf16 / f16: widen operands to f32, run the shared cache-oblivious engine
-    // (f32 accumulation — identical to the old scalar path's `acc: f32`), then
-    // narrow the result. Shares the optimized kernel instead of a strided
-    // scalar triple-loop.
+    // bf16 / f16: accumulate in f32 (identical to the old scalar path's
+    // `acc: f32`), then narrow the result. `A` (m×k) is always widened — it is
+    // tiny at decode. `B` (the k×n weight) is the large operand and was the
+    // problem: the old path materialized the WHOLE weight to an f32 scratch on
+    // every call via a scalar per-element `read_float`, so an M=1 decode
+    // re-widened the entire constant weight each token (its dominant cost).
+    //   • small M (decode / short prefill): stream B directly through
+    //     `matmul_lowp_gemv` — the weight is widened in-register, never
+    //     materialized (the bf16/f16 analog of the int8 decode kernel).
+    //   • large M (prefill): materialize B once with a **vectorized** widen
+    //     (the cost amortizes over the M output rows), then the shared f32
+    //     kernel. Both are bit-identical (same `a·widen(b)` sum order).
     if dt == DTYPE_BF16 || dt == DTYPE_F16 {
+        const LOWP_STREAM_M_MAX: usize = 8;
+        let is_f16 = dt == DTYPE_F16;
         with_widen_scratch(|a32, b32, o32| {
             a32.clear();
             a32.extend((0..m * k).map(|i| read_float(a, i, dt)));
-            b32.clear();
-            b32.extend((0..k * n).map(|i| read_float(b, i, dt)));
             o32.clear();
             o32.resize(m * n, 0.0);
-            with_matmul_scratch(|bt| {
-                crate::cpu::simd::matmul_f32_blocked(a32, b32, o32, m, k, n, bt);
-            });
+            if m <= LOWP_STREAM_M_MAX {
+                crate::cpu::simd::matmul_lowp_gemv(a32, b, o32, m, k, n, is_f16);
+            } else {
+                b32.clear();
+                b32.resize(k * n, 0.0);
+                crate::cpu::simd::widen_lowp_to_f32(b, b32, is_f16);
+                with_matmul_scratch(|bt| {
+                    crate::cpu::simd::matmul_f32_blocked(a32, b32, o32, m, k, n, bt);
+                });
+            }
             for (i, &v) in o32.iter().enumerate() {
                 write_float(out, i, v, dt);
             }
