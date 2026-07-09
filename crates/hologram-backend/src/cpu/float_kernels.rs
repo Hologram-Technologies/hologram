@@ -422,13 +422,17 @@ pub fn matmul_dequant_float<W: Workspace>(
         ));
     }
     let kn = k * n;
-    let in_bytes = match c.quant_dtype {
-        DTYPE_I4 => kn.div_ceil(2),
-        DTYPE_E8CB => kn.div_ceil(8), // one codebook index per 8-D group
-        DTYPE_I8 | DTYPE_U8 => kn,
-        _ => {
+    // The weight's stored size is tier data (i4 packs two per byte; e8cb stores
+    // one index per 8-element group). An unregistered tag is an error, never a
+    // guessed length.
+    let tier = crate::quant_tier::quant_tier(DTypeId(c.quant_dtype)).ok_or(
+        BackendError::UnsupportedOp("matmul_dequant: unknown quantized weight tier"),
+    )?;
+    let in_bytes = match tier.weight_bytes(k, n) {
+        Some(b) => b,
+        None => {
             return Err(BackendError::UnsupportedOp(
-                "matmul_dequant: quant_dtype must be i8/u8/i4/e8cb",
+                "matmul_dequant: weight shape is not representable in this tier",
             ))
         }
     };
@@ -478,9 +482,9 @@ pub fn matmul_dequant_float<W: Workspace>(
                     "matmul_dequant: bq_omajor and W8A8 must be paired",
                 ));
             }
-            let dtype_ok = quant_dtype == DTYPE_I8
-                || (quant_dtype == DTYPE_I4 && k.is_multiple_of(2))
-                || (quant_dtype == DTYPE_E8CB && k.is_multiple_of(8));
+            // A fused omajor GEMV exists for this tier, and `k` is a whole
+            // number of its groups — both read from the tier registry.
+            let dtype_ok = tier.omajor_fusable && tier.divides_k(k);
             let symmetric = per_ch
                 && dtype_ok
                 && channels == n

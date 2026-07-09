@@ -935,6 +935,37 @@ pub type hologram_backend::prism_axes::HologramF32Tensor8x8Matmul = hologram_bac
 pub type hologram_backend::prism_axes::HologramF32VectorActivation16 = hologram_backend::prism_axes::HologramF32VectorActivation<16>
 pub type hologram_backend::prism_axes::HologramF32VectorActivation256 = hologram_backend::prism_axes::HologramF32VectorActivation<256>
 pub type hologram_backend::prism_axes::HologramF32VectorActivation64 = hologram_backend::prism_axes::HologramF32VectorActivation<64>
+pub mod hologram_backend::quant_tier
+pub struct hologram_backend::quant_tier::QuantTier
+pub hologram_backend::quant_tier::QuantTier::bits_per_weight: u32
+pub hologram_backend::quant_tier::QuantTier::dtype: hologram_types::dtype_id::DTypeId
+pub hologram_backend::quant_tier::QuantTier::group_dim: u32
+pub hologram_backend::quant_tier::QuantTier::needs_codebook: bool
+pub hologram_backend::quant_tier::QuantTier::omajor_fusable: bool
+pub hologram_backend::quant_tier::QuantTier::scalar_decodable: bool
+impl hologram_backend::quant_tier::QuantTier
+pub const fn hologram_backend::quant_tier::QuantTier::divides_k(&self, usize) -> bool
+pub fn hologram_backend::quant_tier::QuantTier::omajor_repack(&self, &[u8], usize, usize) -> core::option::Option<alloc::vec::Vec<u8>>
+pub const fn hologram_backend::quant_tier::QuantTier::rows(&self, usize) -> usize
+pub const fn hologram_backend::quant_tier::QuantTier::unit_bits(&self) -> u32
+pub const fn hologram_backend::quant_tier::QuantTier::weight_bytes(&self, usize, usize) -> core::option::Option<usize>
+impl core::clone::Clone for hologram_backend::quant_tier::QuantTier
+pub fn hologram_backend::quant_tier::QuantTier::clone(&self) -> hologram_backend::quant_tier::QuantTier
+impl core::cmp::Eq for hologram_backend::quant_tier::QuantTier
+impl core::cmp::PartialEq for hologram_backend::quant_tier::QuantTier
+pub fn hologram_backend::quant_tier::QuantTier::eq(&self, &hologram_backend::quant_tier::QuantTier) -> bool
+impl core::fmt::Debug for hologram_backend::quant_tier::QuantTier
+pub fn hologram_backend::quant_tier::QuantTier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::quant_tier::QuantTier
+impl core::marker::StructuralPartialEq for hologram_backend::quant_tier::QuantTier
+impl core::marker::Freeze for hologram_backend::quant_tier::QuantTier
+impl core::marker::Send for hologram_backend::quant_tier::QuantTier
+impl core::marker::Sync for hologram_backend::quant_tier::QuantTier
+impl core::marker::Unpin for hologram_backend::quant_tier::QuantTier
+impl core::marker::UnsafeUnpin for hologram_backend::quant_tier::QuantTier
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::quant_tier::QuantTier
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::quant_tier::QuantTier
+pub fn hologram_backend::quant_tier::quant_tier(hologram_types::dtype_id::DTypeId) -> core::option::Option<&'static hologram_backend::quant_tier::QuantTier>
 pub mod hologram_backend::workspace
 pub struct hologram_backend::workspace::BufferRef
 pub hologram_backend::workspace::BufferRef::length: u64
