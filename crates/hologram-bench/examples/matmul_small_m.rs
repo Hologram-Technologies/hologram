@@ -1,15 +1,24 @@
-//! Small-`m` efficiency probe for the f32 matmul.
+//! Small-`m` efficiency probe for the f32 matmul — a **regression pin**.
 //!
 //! `matmul_f32_blocked`'s micro-kernel works on a register tile of `MR = 4`
-//! output rows. This sweep exists because throughput collapses when `m` is not a
-//! multiple of that tile: the remainder rows take a much slower path, so `m = 3`
-//! can take **longer in absolute time than `m = 4`** while doing less work.
+//! output rows. The leftover `m mod 4` rows once took a per-row path that
+//! re-streamed the whole `k×n` weight for each row, so `m = 3` took **longer in
+//! absolute time than `m = 4`** while doing less work. They now share one pass
+//! over B, monomorphized on the row count (`rem_rows::<R>`), so `R = 1` — decode
+//! — compiles to a dedicated wide-column GEMV.
 //!
-//! It is a *regression pin*, not a target — it records the shape of the cliff so
-//! that a fix (or a regression) is visible. Decode (`m = 1`) and short prefill
-//! (`m = 2..3`) sit squarely inside it.
+//! Decode (`m = 1`) and short prefill (`m = 2..3`) sit squarely in this range.
+//! This sweep exists so a regression is visible, not as a throughput target.
+//!
+//! `m = 5..7` legitimately take two passes over B (one `MR` tile plus a
+//! remainder); `MR` cannot grow past 4 without exceeding the 16 YMM registers
+//! the 4×16 tile already fills, so that is the floor, not a defect.
 //!
 //!   cargo run --release --example matmul_small_m -p hologram-bench
+//!
+//! The wasm SIMD128 lane — the one that actually ships — is pinned by the
+//! `small-m sweep` section of `wasm_matmul_timing` in hologram-backend, since
+//! criterion (a hologram-bench dependency) does not build for wasm.
 
 use hologram_backend::cpu::simd::matmul_f32_blocked;
 use std::hint::black_box;

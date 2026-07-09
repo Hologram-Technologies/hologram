@@ -742,46 +742,142 @@ mod x86 {
                 }
                 j += NR;
             }
-            // Column remainder for this row block.
+            // Column remainder for this row block. These tiers (8-wide FMA,
+            // then scalar) must stay **identical** to the row-remainder block's
+            // tiers below. An output cell's arithmetic may depend on its column
+            // — never on its row index. `_mm256_fmadd_ps` rounds once where the
+            // scalar `s += a*b` rounds twice, so a tile row and a remainder row
+            // that disagreed on the tier for column `j` would compute different
+            // bytes from identical inputs. f32 result bytes are
+            // content-addressed, so that is a κ hazard, not a rounding nicety.
+            // Pinned by `matmul_row_bytes_are_independent_of_row_index`.
+            while j + 8 <= n {
+                let mut c = [_mm256_setzero_ps(); MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        *cr = _mm256_loadu_ps(out.add((i + r) * ldc + j));
+                    }
+                }
+                for kk in 0..k {
+                    let bv = _mm256_loadu_ps(b.add(kk * ldb + j));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                        *cr = _mm256_fmadd_ps(av, bv, *cr);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    _mm256_storeu_ps(out.add((i + r) * ldc + j), *cr);
+                }
+                j += 8;
+            }
             while j < n {
-                for r in 0..MR {
-                    let mut s = if accumulate {
+                let mut s = [0f32; MR];
+                for (r, sr) in s.iter_mut().enumerate() {
+                    *sr = if accumulate {
                         *out.add((i + r) * ldc + j)
                     } else {
                         0.0
                     };
-                    for kk in 0..k {
-                        s += *a.add((i + r) * lda + kk) * *b.add(kk * ldb + j);
+                }
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate() {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
                     }
-                    *out.add((i + r) * ldc + j) = s;
+                }
+                for (r, sr) in s.iter().enumerate() {
+                    *out.add((i + r) * ldc + j) = *sr;
                 }
                 j += 1;
             }
             i += MR;
         }
-        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the M=1 /
-        // small-M **decode (GEMV)** shape.
-        //
-        // The leftover rows share **one** pass over B. The MR tile above
-        // amortizes each B load across 4 rows; doing the remainder a row at a
-        // time re-streams the whole `k×n` weight per row, and B — not the FMAs —
-        // sets the time here. That made `m = 3` move 3× the bytes of `m = 4` and
-        // run ~3.7× slower while doing less arithmetic, and left `m = 1` (decode)
-        // at ~10% of the tiled path's throughput.
-        //
-        // Every output cell still accumulates over `kk` ascending through the
-        // same `fmadd` chain, so results are **bit-identical** to the per-row
-        // form. That is required, not incidental: f32 result bytes are
-        // content-addressed, so reassociating the reduction would re-key every κ
-        // that depends on it.
-        let rem = m - i;
-        if rem > 0 {
-            debug_assert!(rem < MR);
+        #[target_feature(enable = "avx2,fma")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            b: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldb: usize,
+            ldc: usize,
+            accumulate: bool,
+        ) {
             let mut j = 0;
-            while j + NR <= n {
-                let mut c = [[_mm256_setzero_ps(); 2]; MR];
+            // Wide-column tiers for the low-`R` (decode) monomorphizations. The
+            // 16-column loop below keeps only `2·R` accumulators in flight, so
+            // at `R = 1` it is **FMA-latency** bound, not bandwidth bound —
+            // measured 0.433 ms vs 0.238 ms for the 8-accumulator `MR` tile at
+            // k = n = 1024, monotonic in accumulator count. Widening the column
+            // block adds independent chains.
+            //
+            // This cannot change any byte: cells are independent across `j`, and
+            // every tier here is `fmadd`, so the fused-vs-scalar column set is
+            // still exactly `j < 8·⌊n/8⌋` — which is what row-index
+            // independence requires (see the MR tile's matching tiers).
+            if R == 1 {
+                while j + 64 <= n {
+                    let mut c = [_mm256_setzero_ps(); 8];
+                    if accumulate {
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            *cg = _mm256_loadu_ps(out.add(i * ldc + j + g * 8));
+                        }
+                    }
+                    for kk in 0..k {
+                        let av = _mm256_set1_ps(*a.add(i * lda + kk));
+                        let brow = b.add(kk * ldb + j);
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            *cg = _mm256_fmadd_ps(av, _mm256_loadu_ps(brow.add(g * 8)), *cg);
+                        }
+                    }
+                    for (g, cg) in c.iter().enumerate() {
+                        _mm256_storeu_ps(out.add(i * ldc + j + g * 8), *cg);
+                    }
+                    j += 64;
+                }
+            }
+            if R == 2 {
+                while j + 32 <= n {
+                    let mut c = [[_mm256_setzero_ps(); 4]; R];
+                    if accumulate {
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let orow = out.add((i + r) * ldc + j);
+                            for (g, cg) in cr.iter_mut().enumerate() {
+                                *cg = _mm256_loadu_ps(orow.add(g * 8));
+                            }
+                        }
+                    }
+                    for kk in 0..k {
+                        let brow = b.add(kk * ldb + j);
+                        let bv = [
+                            _mm256_loadu_ps(brow),
+                            _mm256_loadu_ps(brow.add(8)),
+                            _mm256_loadu_ps(brow.add(16)),
+                            _mm256_loadu_ps(brow.add(24)),
+                        ];
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                            for (g, cg) in cr.iter_mut().enumerate() {
+                                *cg = _mm256_fmadd_ps(av, bv[g], *cg);
+                            }
+                        }
+                    }
+                    for (r, cr) in c.iter().enumerate() {
+                        let orow = out.add((i + r) * ldc + j);
+                        for (g, cg) in cr.iter().enumerate() {
+                            _mm256_storeu_ps(orow.add(g * 8), *cg);
+                        }
+                    }
+                    j += 32;
+                }
+            }
+            while j + 16 <= n {
+                let mut c = [[_mm256_setzero_ps(); 2]; R];
                 if accumulate {
-                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                    for (r, cr) in c.iter_mut().enumerate() {
                         let orow = out.add((i + r) * ldc + j);
                         cr[0] = _mm256_loadu_ps(orow);
                         cr[1] = _mm256_loadu_ps(orow.add(8));
@@ -791,41 +887,41 @@ mod x86 {
                     let brow = b.add(kk * ldb + j);
                     let b0 = _mm256_loadu_ps(brow);
                     let b1 = _mm256_loadu_ps(brow.add(8));
-                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                    for (r, cr) in c.iter_mut().enumerate() {
                         let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
                         cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
                         cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
                     }
                 }
-                for (r, cr) in c.iter().enumerate().take(rem) {
+                for (r, cr) in c.iter().enumerate() {
                     let orow = out.add((i + r) * ldc + j);
                     _mm256_storeu_ps(orow, cr[0]);
                     _mm256_storeu_ps(orow.add(8), cr[1]);
                 }
-                j += NR;
+                j += 16;
             }
             while j + 8 <= n {
-                let mut c = [_mm256_setzero_ps(); MR];
+                let mut c = [_mm256_setzero_ps(); R];
                 if accumulate {
-                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                    for (r, cr) in c.iter_mut().enumerate() {
                         *cr = _mm256_loadu_ps(out.add((i + r) * ldc + j));
                     }
                 }
                 for kk in 0..k {
                     let bv = _mm256_loadu_ps(b.add(kk * ldb + j));
-                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                    for (r, cr) in c.iter_mut().enumerate() {
                         let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
                         *cr = _mm256_fmadd_ps(av, bv, *cr);
                     }
                 }
-                for (r, cr) in c.iter().enumerate().take(rem) {
+                for (r, cr) in c.iter().enumerate() {
                     _mm256_storeu_ps(out.add((i + r) * ldc + j), *cr);
                 }
                 j += 8;
             }
             while j < n {
-                let mut s = [0f32; MR];
-                for (r, sr) in s.iter_mut().enumerate().take(rem) {
+                let mut s = [0f32; R];
+                for (r, sr) in s.iter_mut().enumerate() {
                     *sr = if accumulate {
                         *out.add((i + r) * ldc + j)
                     } else {
@@ -834,15 +930,41 @@ mod x86 {
                 }
                 for kk in 0..k {
                     let bv = *b.add(kk * ldb + j);
-                    for (r, sr) in s.iter_mut().enumerate().take(rem) {
+                    for (r, sr) in s.iter_mut().enumerate() {
                         *sr += *a.add((i + r) * lda + kk) * bv;
                     }
                 }
-                for (r, sr) in s.iter().enumerate().take(rem) {
+                for (r, sr) in s.iter().enumerate() {
                     *out.add((i + r) * ldc + j) = *sr;
                 }
                 j += 1;
             }
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the M=1 /
+        // small-M **decode (GEMV)** shape.
+        //
+        // The leftover rows share **one** pass over B. The MR tile above
+        // amortizes each B load across 4 rows; doing the remainder a row at a
+        // time re-streams the whole `k×n` weight per row, and B — not the
+        // arithmetic — sets the time here.
+        //
+        // `R` is a **const** so the row loops unroll and `R = 1` monomorphizes
+        // back into exactly the specialized single-row GEMV. A runtime `rem`
+        // bound (`.take(rem)`) leaves the row loop rolled, which costs the
+        // single-threaded wasm decode path ~40% at `m = 1` — the one shape that
+        // matters most — even while it speeds `m = 2..3`.
+        //
+        // Every output cell still accumulates over `kk` ascending through the
+        // same chain as the MR tile, so results are **bit-identical** to the
+        // per-row form. That is required, not incidental: f32 result bytes are
+        // content-addressed, so reassociating the reduction would re-key every κ
+        // that depends on it.
+        match m - i {
+            1 => rem_rows::<1>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            2 => rem_rows::<2>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            3 => rem_rows::<3>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -1014,29 +1136,60 @@ mod x86 {
             }
             i += MR;
         }
-        // Row remainder (`m` not a multiple of MR), 1..=3 rows.
-        //
-        // These rows are done in **one** pass over the packed B, not one pass
-        // per row. The `MR` tile above amortizes each B load across 4 rows; a
-        // per-row loop re-streams the whole packed weight for every leftover
-        // row, so `m = 3` moved 3× the B bytes of `m = 4` and took ~3.7× as long
-        // while doing *less* arithmetic. B is the large operand here (`k·n`),
-        // so its traffic — not the FMAs — sets the time.
-        //
-        // Each output cell still accumulates over `kk` ascending through the
-        // same `fmadd` chain, so the result is **bit-identical** to the per-row
-        // form. That matters: f32 result bytes are content-addressed, and
-        // reassociating the reduction would re-key every κ that depends on it.
-        let rem = m - i;
-        if rem > 0 {
-            debug_assert!(rem < MR);
-            for p in 0..n_panels {
+        #[target_feature(enable = "avx2,fma")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            bpacked: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldc: usize,
+            k_stride: usize,
+            accumulate: bool,
+        ) {
+            // Wide-panel tier for the `R = 1` (decode) monomorphization: one
+            // panel leaves only 2 accumulators in flight and the loop
+            // becomes multiply-add-latency bound rather than bandwidth bound.
+            // Running four panels together puts 8 independent chains in flight.
+            //
+            // Byte-neutral: cells are independent across panels and this tier
+            // uses the same multiply-add as the single-panel tier below, so no
+            // cell's `kk` chain changes.
+            let n_full = n / 16;
+            let mut p0 = 0;
+            if R == 1 {
+                while p0 + 4 <= n_full {
+                    let mut c = [_mm256_setzero_ps(); 8];
+                    if accumulate {
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            *cg = _mm256_loadu_ps(out.add(i * ldc + p0 * 16 + g * 8));
+                        }
+                    }
+                    for kk in 0..k {
+                        let av = _mm256_set1_ps(*a.add(i * lda + kk));
+                        for q in 0..4 {
+                            let bp = bpacked.add((p0 + q) * k_stride * 16 + kk * 16);
+                            c[2 * q] = _mm256_fmadd_ps(av, _mm256_loadu_ps(bp), c[2 * q]);
+                            c[2 * q + 1] =
+                                _mm256_fmadd_ps(av, _mm256_loadu_ps(bp.add(8)), c[2 * q + 1]);
+                        }
+                    }
+                    for (g, cg) in c.iter().enumerate() {
+                        _mm256_storeu_ps(out.add(i * ldc + p0 * 16 + g * 8), *cg);
+                    }
+                    p0 += 4;
+                }
+            }
+            for p in p0..n.div_ceil(16) {
                 let cols = core::cmp::min(16, n - p * 16);
                 let base = p * k_stride * 16;
                 if cols == 16 {
-                    let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                    let mut c = [[_mm256_setzero_ps(); 2]; R];
                     if accumulate {
-                        for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        for (r, cr) in c.iter_mut().enumerate() {
                             let orow = out.add((i + r) * ldc + p * 16);
                             cr[0] = _mm256_loadu_ps(orow);
                             cr[1] = _mm256_loadu_ps(orow.add(8));
@@ -1046,20 +1199,20 @@ mod x86 {
                         let bp = bpacked.add(base + kk * 16);
                         let b0 = _mm256_loadu_ps(bp);
                         let b1 = _mm256_loadu_ps(bp.add(8));
-                        for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        for (r, cr) in c.iter_mut().enumerate() {
                             let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
                             cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
                             cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
                         }
                     }
-                    for (r, cr) in c.iter().enumerate().take(rem) {
+                    for (r, cr) in c.iter().enumerate() {
                         let orow = out.add((i + r) * ldc + p * 16);
                         _mm256_storeu_ps(orow, cr[0]);
                         _mm256_storeu_ps(orow.add(8), cr[1]);
                     }
                 } else {
                     // Partial trailing panel (< 16 cols): scalar, same k order.
-                    for r in 0..rem {
+                    for r in 0..R {
                         let arow = a.add((i + r) * lda);
                         for cc in 0..cols {
                             let j = p * 16 + cc;
@@ -1076,6 +1229,19 @@ mod x86 {
                     }
                 }
             }
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the decode
+        // (GEMV) shape, packed-panel form. The leftover rows share **one** pass
+        // over the packed weight rather than re-streaming it per row, and `R` is
+        // a const so `R = 1` monomorphizes back to the specialized single-row
+        // GEMV. Each cell keeps its `kk`-ascending chain, so the result is
+        // bit-identical to the per-row form.
+        match m - i {
+            1 => rem_rows::<1>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            2 => rem_rows::<2>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            3 => rem_rows::<3>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -1398,78 +1564,200 @@ mod aarch {
                 j += NR;
             }
             // Column remainder for this row block (n not a multiple of NR).
+            // These tiers (4-wide FMA, then scalar) must stay **identical** to
+            // the row-remainder block's tiers below: an output cell's
+            // arithmetic may depend on its column, never on its row index.
+            // `vfmaq_f32` rounds once where the scalar `s += a*b` rounds twice,
+            // so a mismatch here makes two identical input rows produce
+            // different bytes depending on whether they land in the MR tile or
+            // the remainder — a κ hazard, since f32 result bytes are
+            // content-addressed. Pinned by
+            // `matmul_row_bytes_are_independent_of_row_index`.
+            while j + 4 <= n {
+                let mut c = [vdupq_n_f32(0.0); MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        *cr = vld1q_f32(out.add((i + r) * ldc + j));
+                    }
+                }
+                for kk in 0..k {
+                    let bv = vld1q_f32(b.add(kk * ldb + j));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = vdupq_n_f32(*a.add((i + r) * lda + kk));
+                        *cr = vfmaq_f32(*cr, av, bv);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    vst1q_f32(out.add((i + r) * ldc + j), *cr);
+                }
+                j += 4;
+            }
             while j < n {
-                for r in 0..MR {
-                    let mut s = if accumulate {
+                let mut s = [0f32; MR];
+                for (r, sr) in s.iter_mut().enumerate() {
+                    *sr = if accumulate {
                         *out.add((i + r) * ldc + j)
                     } else {
                         0.0
                     };
-                    for kk in 0..k {
-                        s += *a.add((i + r) * lda + kk) * *b.add(kk * ldb + j);
+                }
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate() {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
                     }
-                    *out.add((i + r) * ldc + j) = s;
+                }
+                for (r, sr) in s.iter().enumerate() {
+                    *out.add((i + r) * ldc + j) = *sr;
                 }
                 j += 1;
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — vectorized GEMV per row.
-        // Each remaining row streams B across `k`, accumulating output columns
-        // 16-wide (then 4-wide, then a scalar tail). This is the single-token
-        // decode path (M=1), which would otherwise run fully scalar.
-        while i < m {
-            let arow = a.add(i * lda);
-            let orow = out.add(i * ldc);
+        #[target_feature(enable = "neon")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            b: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldb: usize,
+            ldc: usize,
+            accumulate: bool,
+        ) {
             let mut j = 0;
-            while j + 16 <= n {
-                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
-                    (
-                        vld1q_f32(orow.add(j)),
-                        vld1q_f32(orow.add(j + 4)),
-                        vld1q_f32(orow.add(j + 8)),
-                        vld1q_f32(orow.add(j + 12)),
-                    )
-                } else {
-                    let z = vdupq_n_f32(0.0);
-                    (z, z, z, z)
-                };
-                for kk in 0..k {
-                    let av = vdupq_n_f32(*arow.add(kk));
-                    let brow = b.add(kk * ldb + j);
-                    c0 = vfmaq_f32(c0, av, vld1q_f32(brow));
-                    c1 = vfmaq_f32(c1, av, vld1q_f32(brow.add(4)));
-                    c2 = vfmaq_f32(c2, av, vld1q_f32(brow.add(8)));
-                    c3 = vfmaq_f32(c3, av, vld1q_f32(brow.add(12)));
+            // Wide-column tier for the `R = 1` (decode) monomorphization. The
+            // 16-column loop below keeps only `4·R` accumulators in flight, so
+            // at `R = 1` it is multiply-add-latency bound rather than bandwidth
+            // bound. Widening to 32 columns puts 8 independent chains in flight.
+            //
+            // This cannot change any byte: cells are independent across `j`, and
+            // this tier uses the same `vfmaq_f32` as the 16- and 4-column tiers, so
+            // the vector-vs-scalar column set is still exactly `j < 4·⌊n/4⌋` —
+            // which is what row-index independence requires.
+            if R == 1 {
+                while j + 32 <= n {
+                    let mut c = [vdupq_n_f32(0.0); 8];
+                    if accumulate {
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            *cg = vld1q_f32(out.add(i * ldc + j + g * 4));
+                        }
+                    }
+                    for kk in 0..k {
+                        let av = vdupq_n_f32(*a.add(i * lda + kk));
+                        let brow = b.add(kk * ldb + j);
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            let bv = vld1q_f32(brow.add(g * 4));
+                            *cg = vfmaq_f32(*cg, av, bv);
+                        }
+                    }
+                    for (g, cg) in c.iter().enumerate() {
+                        vst1q_f32(out.add(i * ldc + j + g * 4), *cg);
+                    }
+                    j += 32;
                 }
-                vst1q_f32(orow.add(j), c0);
-                vst1q_f32(orow.add(j + 4), c1);
-                vst1q_f32(orow.add(j + 8), c2);
-                vst1q_f32(orow.add(j + 12), c3);
+            }
+            while j + 16 <= n {
+                let mut c = [[vdupq_n_f32(0.0); 4]; R];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let orow = out.add((i + r) * ldc + j);
+                        cr[0] = vld1q_f32(orow);
+                        cr[1] = vld1q_f32(orow.add(4));
+                        cr[2] = vld1q_f32(orow.add(8));
+                        cr[3] = vld1q_f32(orow.add(12));
+                    }
+                }
+                for kk in 0..k {
+                    let brow = b.add(kk * ldb + j);
+                    let b0 = vld1q_f32(brow);
+                    let b1 = vld1q_f32(brow.add(4));
+                    let b2 = vld1q_f32(brow.add(8));
+                    let b3 = vld1q_f32(brow.add(12));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = vdupq_n_f32(*a.add((i + r) * lda + kk));
+                        cr[0] = vfmaq_f32(cr[0], av, b0);
+                        cr[1] = vfmaq_f32(cr[1], av, b1);
+                        cr[2] = vfmaq_f32(cr[2], av, b2);
+                        cr[3] = vfmaq_f32(cr[3], av, b3);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    let orow = out.add((i + r) * ldc + j);
+                    vst1q_f32(orow, cr[0]);
+                    vst1q_f32(orow.add(4), cr[1]);
+                    vst1q_f32(orow.add(8), cr[2]);
+                    vst1q_f32(orow.add(12), cr[3]);
+                }
                 j += 16;
             }
             while j + 4 <= n {
-                let mut c0 = if accumulate {
-                    vld1q_f32(orow.add(j))
-                } else {
-                    vdupq_n_f32(0.0)
-                };
-                for kk in 0..k {
-                    let av = vdupq_n_f32(*arow.add(kk));
-                    c0 = vfmaq_f32(c0, av, vld1q_f32(b.add(kk * ldb + j)));
+                let mut c = [vdupq_n_f32(0.0); R];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        *cr = vld1q_f32(out.add((i + r) * ldc + j));
+                    }
                 }
-                vst1q_f32(orow.add(j), c0);
+                for kk in 0..k {
+                    let bv = vld1q_f32(b.add(kk * ldb + j));
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = vdupq_n_f32(*a.add((i + r) * lda + kk));
+                        *cr = vfmaq_f32(*cr, av, bv);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    vst1q_f32(out.add((i + r) * ldc + j), *cr);
+                }
                 j += 4;
             }
             while j < n {
-                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
-                for kk in 0..k {
-                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                let mut s = [0f32; R];
+                for (r, sr) in s.iter_mut().enumerate() {
+                    *sr = if accumulate {
+                        *out.add((i + r) * ldc + j)
+                    } else {
+                        0.0
+                    };
                 }
-                *orow.add(j) = s;
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate() {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
+                    }
+                }
+                for (r, sr) in s.iter().enumerate() {
+                    *out.add((i + r) * ldc + j) = *sr;
+                }
                 j += 1;
             }
-            i += 1;
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the M=1 /
+        // small-M **decode (GEMV)** shape.
+        //
+        // The leftover rows share **one** pass over B. The MR tile above
+        // amortizes each B load across 4 rows; doing the remainder a row at a
+        // time re-streams the whole `k×n` weight per row, and B — not the
+        // arithmetic — sets the time here.
+        //
+        // `R` is a **const** so the row loops unroll and `R = 1` monomorphizes
+        // back into exactly the specialized single-row GEMV. A runtime `rem`
+        // bound (`.take(rem)`) leaves the row loop rolled, which measured ~40%
+        // slower at `m = 1` on single-threaded wasm — the decode shape that
+        // matters most — even while it sped up `m = 2..3`.
+        //
+        // Every output cell still accumulates over `kk` ascending through the
+        // same chain as the MR tile, so results are **bit-identical** to the
+        // per-row form. Required, not incidental: f32 result bytes are
+        // content-addressed, so reassociating the reduction re-keys every κ.
+        match m - i {
+            1 => rem_rows::<1>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            2 => rem_rows::<2>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            3 => rem_rows::<3>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -1632,50 +1920,87 @@ mod aarch {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — vectorized GEMV over packed
-        // panels. Each remaining row accumulates each full 16-wide panel in four
-        // NEON registers across `k`; the trailing partial panel falls to scalar.
-        // This is the single-token decode path (M=1), packed-weight form.
-        while i < m {
-            let arow = a.add(i * lda);
-            let orow = out.add(i * ldc);
-            let n_full = n / 16;
-            for p in 0..n_full {
+        #[target_feature(enable = "neon")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            bpacked: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldc: usize,
+            k_stride: usize,
+            accumulate: bool,
+        ) {
+            for p in 0..n.div_ceil(16) {
+                let cols = core::cmp::min(16, n - p * 16);
                 let base = p * k_stride * 16;
-                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
-                    (
-                        vld1q_f32(orow.add(p * 16)),
-                        vld1q_f32(orow.add(p * 16 + 4)),
-                        vld1q_f32(orow.add(p * 16 + 8)),
-                        vld1q_f32(orow.add(p * 16 + 12)),
-                    )
+                if cols == 16 {
+                    let mut c = [[vdupq_n_f32(0.0); 4]; R];
+                    if accumulate {
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let orow = out.add((i + r) * ldc + p * 16);
+                            cr[0] = vld1q_f32(orow);
+                            cr[1] = vld1q_f32(orow.add(4));
+                            cr[2] = vld1q_f32(orow.add(8));
+                            cr[3] = vld1q_f32(orow.add(12));
+                        }
+                    }
+                    for kk in 0..k {
+                        let bp = bpacked.add(base + kk * 16);
+                        let b0 = vld1q_f32(bp);
+                        let b1 = vld1q_f32(bp.add(4));
+                        let b2 = vld1q_f32(bp.add(8));
+                        let b3 = vld1q_f32(bp.add(12));
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let av = vdupq_n_f32(*a.add((i + r) * lda + kk));
+                            cr[0] = vfmaq_f32(cr[0], av, b0);
+                            cr[1] = vfmaq_f32(cr[1], av, b1);
+                            cr[2] = vfmaq_f32(cr[2], av, b2);
+                            cr[3] = vfmaq_f32(cr[3], av, b3);
+                        }
+                    }
+                    for (r, cr) in c.iter().enumerate() {
+                        let orow = out.add((i + r) * ldc + p * 16);
+                        vst1q_f32(orow, cr[0]);
+                        vst1q_f32(orow.add(4), cr[1]);
+                        vst1q_f32(orow.add(8), cr[2]);
+                        vst1q_f32(orow.add(12), cr[3]);
+                    }
                 } else {
-                    let z = vdupq_n_f32(0.0);
-                    (z, z, z, z)
-                };
-                for kk in 0..k {
-                    let av = vdupq_n_f32(*arow.add(kk));
-                    let bp = bpacked.add(base + kk * 16);
-                    c0 = vfmaq_f32(c0, av, vld1q_f32(bp));
-                    c1 = vfmaq_f32(c1, av, vld1q_f32(bp.add(4)));
-                    c2 = vfmaq_f32(c2, av, vld1q_f32(bp.add(8)));
-                    c3 = vfmaq_f32(c3, av, vld1q_f32(bp.add(12)));
+                    // Partial trailing panel (< 16 cols): scalar, same k order.
+                    for r in 0..R {
+                        let arow = a.add((i + r) * lda);
+                        for cc in 0..cols {
+                            let j = p * 16 + cc;
+                            let mut s = if accumulate {
+                                *out.add((i + r) * ldc + j)
+                            } else {
+                                0.0
+                            };
+                            for kk in 0..k {
+                                s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                            }
+                            *out.add((i + r) * ldc + j) = s;
+                        }
+                    }
                 }
-                vst1q_f32(orow.add(p * 16), c0);
-                vst1q_f32(orow.add(p * 16 + 4), c1);
-                vst1q_f32(orow.add(p * 16 + 8), c2);
-                vst1q_f32(orow.add(p * 16 + 12), c3);
             }
-            for j in n_full * 16..n {
-                let p = j / 16;
-                let c = j % 16;
-                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
-                for kk in 0..k {
-                    s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
-                }
-                *orow.add(j) = s;
-            }
-            i += 1;
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the decode
+        // (GEMV) shape, packed-panel form. The leftover rows share **one** pass
+        // over the packed weight rather than re-streaming it per row, and `R` is
+        // a const so `R = 1` monomorphizes back to the specialized single-row
+        // GEMV. Each cell keeps its `kk`-ascending chain, so the result is
+        // bit-identical to the per-row form.
+        match m - i {
+            1 => rem_rows::<1>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            2 => rem_rows::<2>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            3 => rem_rows::<3>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -2063,79 +2388,200 @@ mod wasm_simd {
                 }
                 j += NR;
             }
+            // Column remainder for this row block, tiered to match the
+            // row-remainder block below (4-wide, then scalar) so an output
+            // cell's arithmetic depends on its column and never on its row
+            // index. On SIMD128 this tier is numerically inert — there is no
+            // fused multiply-add, so `f32x4_add(c, f32x4_mul(av, b))` and the
+            // scalar `s += a*b` round identically — but keeping the three
+            // architectures structurally identical is what makes the shared
+            // `matmul_row_bytes_are_independent_of_row_index` pin meaningful,
+            // and it vectorizes the tail.
+            while j + 4 <= n {
+                let mut c = [f32x4_splat(0.0); MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        *cr = v128_load(out.add((i + r) * ldc + j) as *const v128);
+                    }
+                }
+                for kk in 0..k {
+                    let bv = v128_load(b.add(kk * ldb + j) as *const v128);
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = f32x4_splat(*a.add((i + r) * lda + kk));
+                        *cr = f32x4_add(*cr, f32x4_mul(av, bv));
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    v128_store(out.add((i + r) * ldc + j) as *mut v128, *cr);
+                }
+                j += 4;
+            }
             while j < n {
-                for r in 0..MR {
-                    let mut s = if accumulate {
+                let mut s = [0f32; MR];
+                for (r, sr) in s.iter_mut().enumerate() {
+                    *sr = if accumulate {
                         *out.add((i + r) * ldc + j)
                     } else {
                         0.0
                     };
-                    for kk in 0..k {
-                        s += *a.add((i + r) * lda + kk) * *b.add(kk * ldb + j);
+                }
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate() {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
                     }
-                    *out.add((i + r) * ldc + j) = s;
+                }
+                for (r, sr) in s.iter().enumerate() {
+                    *out.add((i + r) * ldc + j) = *sr;
                 }
                 j += 1;
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — vectorized GEMV per row
-        // (single-token decode path, M=1), SIMD128 form.
-        while i < m {
-            let arow = a.add(i * lda);
-            let orow = out.add(i * ldc);
+        #[target_feature(enable = "simd128")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            b: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldb: usize,
+            ldc: usize,
+            accumulate: bool,
+        ) {
             let mut j = 0;
-            while j + 16 <= n {
-                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
-                    (
-                        v128_load(orow.add(j) as *const v128),
-                        v128_load(orow.add(j + 4) as *const v128),
-                        v128_load(orow.add(j + 8) as *const v128),
-                        v128_load(orow.add(j + 12) as *const v128),
-                    )
-                } else {
-                    let z = f32x4_splat(0.0);
-                    (z, z, z, z)
-                };
-                for kk in 0..k {
-                    let av = f32x4_splat(*arow.add(kk));
-                    let brow = b.add(kk * ldb + j);
-                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(brow as *const v128)));
-                    c1 = f32x4_add(c1, f32x4_mul(av, v128_load(brow.add(4) as *const v128)));
-                    c2 = f32x4_add(c2, f32x4_mul(av, v128_load(brow.add(8) as *const v128)));
-                    c3 = f32x4_add(c3, f32x4_mul(av, v128_load(brow.add(12) as *const v128)));
+            // Wide-column tier for the `R = 1` (decode) monomorphization. The
+            // 16-column loop below keeps only `4·R` accumulators in flight, so
+            // at `R = 1` it is multiply-add-latency bound rather than bandwidth
+            // bound. Widening to 32 columns puts 8 independent chains in flight.
+            //
+            // This cannot change any byte: cells are independent across `j`, and
+            // this tier uses the same `add(mul(..))` as the 16- and 4-column tiers, so
+            // the vector-vs-scalar column set is still exactly `j < 4·⌊n/4⌋` —
+            // which is what row-index independence requires.
+            if R == 1 {
+                while j + 32 <= n {
+                    let mut c = [f32x4_splat(0.0); 8];
+                    if accumulate {
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            *cg = v128_load(out.add(i * ldc + j + g * 4) as *const v128);
+                        }
+                    }
+                    for kk in 0..k {
+                        let av = f32x4_splat(*a.add(i * lda + kk));
+                        let brow = b.add(kk * ldb + j);
+                        for (g, cg) in c.iter_mut().enumerate() {
+                            let bv = v128_load(brow.add(g * 4) as *const v128);
+                            *cg = f32x4_add(*cg, f32x4_mul(av, bv));
+                        }
+                    }
+                    for (g, cg) in c.iter().enumerate() {
+                        v128_store(out.add(i * ldc + j + g * 4) as *mut v128, *cg);
+                    }
+                    j += 32;
                 }
-                v128_store(orow.add(j) as *mut v128, c0);
-                v128_store(orow.add(j + 4) as *mut v128, c1);
-                v128_store(orow.add(j + 8) as *mut v128, c2);
-                v128_store(orow.add(j + 12) as *mut v128, c3);
+            }
+            while j + 16 <= n {
+                let mut c = [[f32x4_splat(0.0); 4]; R];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let orow = out.add((i + r) * ldc + j);
+                        cr[0] = v128_load(orow as *const v128);
+                        cr[1] = v128_load(orow.add(4) as *const v128);
+                        cr[2] = v128_load(orow.add(8) as *const v128);
+                        cr[3] = v128_load(orow.add(12) as *const v128);
+                    }
+                }
+                for kk in 0..k {
+                    let brow = b.add(kk * ldb + j);
+                    let b0 = v128_load(brow as *const v128);
+                    let b1 = v128_load(brow.add(4) as *const v128);
+                    let b2 = v128_load(brow.add(8) as *const v128);
+                    let b3 = v128_load(brow.add(12) as *const v128);
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = f32x4_splat(*a.add((i + r) * lda + kk));
+                        cr[0] = f32x4_add(cr[0], f32x4_mul(av, b0));
+                        cr[1] = f32x4_add(cr[1], f32x4_mul(av, b1));
+                        cr[2] = f32x4_add(cr[2], f32x4_mul(av, b2));
+                        cr[3] = f32x4_add(cr[3], f32x4_mul(av, b3));
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    let orow = out.add((i + r) * ldc + j);
+                    v128_store(orow as *mut v128, cr[0]);
+                    v128_store(orow.add(4) as *mut v128, cr[1]);
+                    v128_store(orow.add(8) as *mut v128, cr[2]);
+                    v128_store(orow.add(12) as *mut v128, cr[3]);
+                }
                 j += 16;
             }
             while j + 4 <= n {
-                let mut c0 = if accumulate {
-                    v128_load(orow.add(j) as *const v128)
-                } else {
-                    f32x4_splat(0.0)
-                };
-                for kk in 0..k {
-                    let av = f32x4_splat(*arow.add(kk));
-                    c0 = f32x4_add(
-                        c0,
-                        f32x4_mul(av, v128_load(b.add(kk * ldb + j) as *const v128)),
-                    );
+                let mut c = [f32x4_splat(0.0); R];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        *cr = v128_load(out.add((i + r) * ldc + j) as *const v128);
+                    }
                 }
-                v128_store(orow.add(j) as *mut v128, c0);
+                for kk in 0..k {
+                    let bv = v128_load(b.add(kk * ldb + j) as *const v128);
+                    for (r, cr) in c.iter_mut().enumerate() {
+                        let av = f32x4_splat(*a.add((i + r) * lda + kk));
+                        *cr = f32x4_add(*cr, f32x4_mul(av, bv));
+                    }
+                }
+                for (r, cr) in c.iter().enumerate() {
+                    v128_store(out.add((i + r) * ldc + j) as *mut v128, *cr);
+                }
                 j += 4;
             }
             while j < n {
-                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
-                for kk in 0..k {
-                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                let mut s = [0f32; R];
+                for (r, sr) in s.iter_mut().enumerate() {
+                    *sr = if accumulate {
+                        *out.add((i + r) * ldc + j)
+                    } else {
+                        0.0
+                    };
                 }
-                *orow.add(j) = s;
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate() {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
+                    }
+                }
+                for (r, sr) in s.iter().enumerate() {
+                    *out.add((i + r) * ldc + j) = *sr;
+                }
                 j += 1;
             }
-            i += 1;
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the M=1 /
+        // small-M **decode (GEMV)** shape.
+        //
+        // The leftover rows share **one** pass over B. The MR tile above
+        // amortizes each B load across 4 rows; doing the remainder a row at a
+        // time re-streams the whole `k×n` weight per row, and B — not the
+        // arithmetic — sets the time here.
+        //
+        // `R` is a **const** so the row loops unroll and `R = 1` monomorphizes
+        // back into exactly the specialized single-row GEMV. A runtime `rem`
+        // bound (`.take(rem)`) leaves the row loop rolled, which measured ~40%
+        // slower at `m = 1` on single-threaded wasm — the decode shape that
+        // matters most — even while it sped up `m = 2..3`.
+        //
+        // Every output cell still accumulates over `kk` ascending through the
+        // same chain as the MR tile, so results are **bit-identical** to the
+        // per-row form. Required, not incidental: f32 result bytes are
+        // content-addressed, so reassociating the reduction re-keys every κ.
+        match m - i {
+            1 => rem_rows::<1>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            2 => rem_rows::<2>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            3 => rem_rows::<3>(a, b, out, i, k, n, lda, ldb, ldc, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -2289,48 +2735,87 @@ mod wasm_simd {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — vectorized GEMV over packed
-        // panels (single-token decode path, M=1), SIMD128 form.
-        while i < m {
-            let arow = a.add(i * lda);
-            let orow = out.add(i * ldc);
-            let n_full = n / 16;
-            for p in 0..n_full {
+        #[target_feature(enable = "simd128")]
+        #[allow(clippy::too_many_arguments)]
+        unsafe fn rem_rows<const R: usize>(
+            a: *const f32,
+            bpacked: *const f32,
+            out: *mut f32,
+            i: usize,
+            k: usize,
+            n: usize,
+            lda: usize,
+            ldc: usize,
+            k_stride: usize,
+            accumulate: bool,
+        ) {
+            for p in 0..n.div_ceil(16) {
+                let cols = core::cmp::min(16, n - p * 16);
                 let base = p * k_stride * 16;
-                let (mut c0, mut c1, mut c2, mut c3) = if accumulate {
-                    (
-                        v128_load(orow.add(p * 16) as *const v128),
-                        v128_load(orow.add(p * 16 + 4) as *const v128),
-                        v128_load(orow.add(p * 16 + 8) as *const v128),
-                        v128_load(orow.add(p * 16 + 12) as *const v128),
-                    )
+                if cols == 16 {
+                    let mut c = [[f32x4_splat(0.0); 4]; R];
+                    if accumulate {
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let orow = out.add((i + r) * ldc + p * 16);
+                            cr[0] = v128_load(orow as *const v128);
+                            cr[1] = v128_load(orow.add(4) as *const v128);
+                            cr[2] = v128_load(orow.add(8) as *const v128);
+                            cr[3] = v128_load(orow.add(12) as *const v128);
+                        }
+                    }
+                    for kk in 0..k {
+                        let bp = bpacked.add(base + kk * 16);
+                        let b0 = v128_load(bp as *const v128);
+                        let b1 = v128_load(bp.add(4) as *const v128);
+                        let b2 = v128_load(bp.add(8) as *const v128);
+                        let b3 = v128_load(bp.add(12) as *const v128);
+                        for (r, cr) in c.iter_mut().enumerate() {
+                            let av = f32x4_splat(*a.add((i + r) * lda + kk));
+                            cr[0] = f32x4_add(cr[0], f32x4_mul(av, b0));
+                            cr[1] = f32x4_add(cr[1], f32x4_mul(av, b1));
+                            cr[2] = f32x4_add(cr[2], f32x4_mul(av, b2));
+                            cr[3] = f32x4_add(cr[3], f32x4_mul(av, b3));
+                        }
+                    }
+                    for (r, cr) in c.iter().enumerate() {
+                        let orow = out.add((i + r) * ldc + p * 16);
+                        v128_store(orow as *mut v128, cr[0]);
+                        v128_store(orow.add(4) as *mut v128, cr[1]);
+                        v128_store(orow.add(8) as *mut v128, cr[2]);
+                        v128_store(orow.add(12) as *mut v128, cr[3]);
+                    }
                 } else {
-                    let z = f32x4_splat(0.0);
-                    (z, z, z, z)
-                };
-                for kk in 0..k {
-                    let av = f32x4_splat(*arow.add(kk));
-                    let bp = bpacked.add(base + kk * 16);
-                    c0 = f32x4_add(c0, f32x4_mul(av, v128_load(bp as *const v128)));
-                    c1 = f32x4_add(c1, f32x4_mul(av, v128_load(bp.add(4) as *const v128)));
-                    c2 = f32x4_add(c2, f32x4_mul(av, v128_load(bp.add(8) as *const v128)));
-                    c3 = f32x4_add(c3, f32x4_mul(av, v128_load(bp.add(12) as *const v128)));
+                    // Partial trailing panel (< 16 cols): scalar, same k order.
+                    for r in 0..R {
+                        let arow = a.add((i + r) * lda);
+                        for cc in 0..cols {
+                            let j = p * 16 + cc;
+                            let mut s = if accumulate {
+                                *out.add((i + r) * ldc + j)
+                            } else {
+                                0.0
+                            };
+                            for kk in 0..k {
+                                s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                            }
+                            *out.add((i + r) * ldc + j) = s;
+                        }
+                    }
                 }
-                v128_store(orow.add(p * 16) as *mut v128, c0);
-                v128_store(orow.add(p * 16 + 4) as *mut v128, c1);
-                v128_store(orow.add(p * 16 + 8) as *mut v128, c2);
-                v128_store(orow.add(p * 16 + 12) as *mut v128, c3);
             }
-            for j in n_full * 16..n {
-                let p = j / 16;
-                let c = j % 16;
-                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
-                for kk in 0..k {
-                    s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + c);
-                }
-                *orow.add(j) = s;
-            }
-            i += 1;
+        }
+
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the decode
+        // (GEMV) shape, packed-panel form. The leftover rows share **one** pass
+        // over the packed weight rather than re-streaming it per row, and `R` is
+        // a const so `R = 1` monomorphizes back to the specialized single-row
+        // GEMV. Each cell keeps its `kk`-ascending chain, so the result is
+        // bit-identical to the per-row form.
+        match m - i {
+            1 => rem_rows::<1>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            2 => rem_rows::<2>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            3 => rem_rows::<3>(a, bpacked, out, i, k, n, lda, ldc, k_stride, accumulate),
+            r => debug_assert_eq!(r, 0, "MR = 4 leaves at most 3 remainder rows"),
         }
     }
 
@@ -6494,6 +6979,76 @@ mod tests {
         for i in 0..16 {
             let want = 10.0 + a[i] * b[i];
             assert!((out[i] - want).abs() < 1e-5);
+        }
+    }
+
+    /// An output row's **bytes** must not depend on where the row sits in the
+    /// call: two identical input rows must produce byte-identical output rows,
+    /// whether one lands in the `MR` register tile and the other in the row
+    /// remainder.
+    ///
+    /// This is a content-addressing invariant, not a numerical nicety. f32
+    /// result bytes are hashed into κ, so a cell whose arithmetic depends on
+    /// its row index makes the same logical matmul yield two different
+    /// addresses. It regressed for a decade of shapes because the tile's column
+    /// tail was scalar (`s += a*b`, two roundings) while the row remainder's
+    /// was a fused-multiply-add tier (one rounding) — the two disagreed for
+    /// every column in `n mod 16 >= 8` on AVX2, and `>= 4` on NEON.
+    ///
+    /// `n` values below straddle both tiers; `m = 5..7` puts rows 0..3 in the
+    /// tile and rows 4.. in the remainder. Compares row 0 against row 4, which
+    /// are seeded identically.
+    #[test]
+    fn matmul_row_bytes_are_independent_of_row_index() {
+        for &n in &[16usize, 20, 23, 24, 28, 31, 32, 40, 64] {
+            for &k in &[1usize, 3, 7, 33, 65] {
+                for &m in &[5usize, 6, 7] {
+                    let mut a = vec![0f32; m * k];
+                    for kk in 0..k {
+                        // Row 0 (tiled) and row 4 (remainder) are identical.
+                        let v = ((kk * 37 + 11) % 97) as f32 * 0.0317 - 1.3;
+                        a[kk] = v;
+                        a[4 * k + kk] = v;
+                    }
+                    for r in (1..4).chain(5..m) {
+                        for kk in 0..k {
+                            a[r * k + kk] = ((r * 13 + kk * 7) % 53) as f32 * 0.011;
+                        }
+                    }
+                    let b: Vec<f32> = (0..k * n)
+                        .map(|i| ((i * 29 + 5) % 101) as f32 * 0.0213 - 1.07)
+                        .collect();
+
+                    let mut bt = Vec::new();
+                    let mut out = vec![0f32; m * n];
+                    matmul_f32_blocked(&a, &b, &mut out, m, k, n, &mut bt);
+                    for j in 0..n {
+                        assert_eq!(
+                            out[j].to_bits(),
+                            out[4 * n + j].to_bits(),
+                            "matmul_f32_blocked m={m} k={k} n={n}: tiled row 0 and \
+                             remainder row 4 have identical inputs but column {j} \
+                             differs ({:#010x} vs {:#010x})",
+                            out[j].to_bits(),
+                            out[4 * n + j].to_bits()
+                        );
+                    }
+
+                    // Same invariant on the panel-packed leaf.
+                    let mut outp = vec![0f32; m * n];
+                    let bp = crate::layout::pack_b_panels(&b, k, n);
+                    matmul_f32_packed(&a, &bp, &mut outp, m, k, n);
+                    for j in 0..n {
+                        assert_eq!(
+                            outp[j].to_bits(),
+                            outp[4 * n + j].to_bits(),
+                            "matmul_f32_packed m={m} k={k} n={n}: tiled row 0 and \
+                             remainder row 4 have identical inputs but column {j} \
+                             differs"
+                        );
+                    }
+                }
+            }
         }
     }
 
