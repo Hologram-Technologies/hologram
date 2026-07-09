@@ -18,14 +18,27 @@
 //! is off.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 
 type Task = Box<dyn FnOnce() + Send>;
 
+/// Bounded busy-wait a worker runs before parking on the condvar. Decode
+/// submits ~one GEMV fork-join per projection, back-to-back and microseconds
+/// apart; keeping workers hot across that gap turns each barrier into a
+/// lock-free queue poll instead of a futex park/unpark of the whole pool (the
+/// dominant cost when the per-op work is small). `spin_loop` issues `PAUSE`, so
+/// a spinning worker yields its SMT sibling's pipeline rather than fighting it.
+const WORKER_SPIN: u32 = 1 << 14;
+
 struct Shared {
     queue: Mutex<VecDeque<Task>>,
     cv: Condvar,
+    /// Lock-free queue-length hint: a worker only takes the queue mutex when
+    /// this reads > 0, so idle spinning never touches the lock. Kept in sync
+    /// under the queue lock on every push, and on every pop (by whoever pops).
+    pending: AtomicUsize,
 }
 
 /// A persistent set of worker threads sharing one task queue.
@@ -49,6 +62,7 @@ impl Pool {
         let shared = Arc::new(Shared {
             queue: Mutex::new(VecDeque::new()),
             cv: Condvar::new(),
+            pending: AtomicUsize::new(0),
         });
         // `width - 1` persistent workers; the submitting thread is the width-th
         // runner (it drains the queue in `run`), so a 1-core host spawns none.
@@ -67,32 +81,37 @@ impl Pool {
 
     /// Run `tasks` to completion. The calling thread participates (drains the
     /// queue), so flat task sets never deadlock regardless of `width`. Returns
-    /// only after every task has finished; the completion barrier (a mutex
-    /// release/acquire) establishes happens-before, so all task writes are
-    /// visible to the caller afterwards.
+    /// only after every task has finished.
+    ///
+    /// Completion is an `AtomicUsize` the caller spins on: each task
+    /// `fetch_sub`s (Release), the caller loads Acquire. Those RMWs form a
+    /// release sequence, so the caller's Acquire read of the final `0`
+    /// synchronizes-with **every** task's writes — all output-tile stores are
+    /// visible after `run` returns. Spinning (vs a condvar) removes the
+    /// per-barrier wakeup latency, which dominates when the tasks are the small
+    /// GEMV tiles decode submits back-to-back.
     pub fn run(&self, tasks: Vec<Task>) {
-        if tasks.len() <= 1 {
-            // Nothing to distribute — run inline (no lock traffic).
+        let count = tasks.len();
+        if count <= 1 {
+            // Nothing to distribute — run inline (no lock/atomic traffic).
             for t in tasks {
                 t();
             }
             return;
         }
-        let remaining = Arc::new((Mutex::new(tasks.len()), Condvar::new()));
+        let remaining = Arc::new(AtomicUsize::new(count));
         {
             let mut q = self.shared.queue.lock().unwrap();
             for t in tasks {
                 let rem = Arc::clone(&remaining);
                 q.push_back(Box::new(move || {
                     t();
-                    let (m, cv) = &*rem;
-                    let mut g = m.lock().unwrap();
-                    *g -= 1;
-                    if *g == 0 {
-                        cv.notify_all();
-                    }
+                    rem.fetch_sub(1, Ordering::Release);
                 }));
             }
+            // Publish the queue length under the lock, before any worker that
+            // observes it can race to pop.
+            self.shared.pending.fetch_add(count, Ordering::Release);
         }
         self.shared.cv.notify_all();
         // Calling thread helps drain. Pop in a scoped block so the queue
@@ -104,34 +123,73 @@ impl Pool {
         loop {
             let next = {
                 let mut q = self.shared.queue.lock().unwrap();
-                q.pop_front()
+                let t = q.pop_front();
+                if t.is_some() {
+                    self.shared.pending.fetch_sub(1, Ordering::Relaxed);
+                }
+                t
             };
             match next {
                 Some(task) => task(),
                 None => break,
             }
         }
-        // Wait for tasks still running on workers.
-        let (m, cv) = &*remaining;
-        let mut g = m.lock().unwrap();
-        while *g != 0 {
-            g = cv.wait(g).unwrap();
+        // Barrier: workers finishing the last in-flight tiles are ~µs away.
+        // Spin (PAUSE) briefly, then yield rather than burn a core outright.
+        let mut spins = 0u32;
+        while remaining.load(Ordering::Acquire) != 0 {
+            if spins < WORKER_SPIN {
+                std::hint::spin_loop();
+                spins += 1;
+            } else {
+                std::thread::yield_now();
+            }
         }
     }
 }
 
 fn worker_loop(shared: &Shared) {
+    let mut idle: u32 = 0;
     loop {
-        let task = {
+        // Grab a task only when the lock-free hint says the queue is non-empty
+        // (a pop that races another popper simply yields `None` and re-polls).
+        let task = if shared.pending.load(Ordering::Acquire) > 0 {
             let mut q = shared.queue.lock().unwrap();
-            loop {
-                if let Some(t) = q.pop_front() {
-                    break t;
-                }
-                q = shared.cv.wait(q).unwrap();
+            let t = q.pop_front();
+            if t.is_some() {
+                shared.pending.fetch_sub(1, Ordering::Relaxed);
             }
+            t
+        } else {
+            None
         };
-        task();
+        if let Some(t) = task {
+            t();
+            idle = 0;
+            continue;
+        }
+        // No work: stay hot for the next back-to-back barrier, then park.
+        if idle < WORKER_SPIN {
+            idle += 1;
+            std::hint::spin_loop();
+            continue;
+        }
+        // Park until a submitter notifies; re-check the queue predicate under
+        // the lock (the push happens under the lock before `notify_all`, so no
+        // wakeup is missed).
+        let mut q = shared.queue.lock().unwrap();
+        while q.is_empty() {
+            q = shared.cv.wait(q).unwrap();
+        }
+        let t = q.pop_front();
+        if t.is_some() {
+            shared.pending.fetch_sub(1, Ordering::Relaxed);
+        }
+        drop(q);
+        if let Some(t) = t {
+            t();
+        }
+        idle = 0;
     }
 }
 
