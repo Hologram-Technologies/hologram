@@ -51,6 +51,36 @@ Three results worth stating plainly:
   documented rather than silently assumed.
 - Fewer weight bits only helps where bytes, not MACs, are the wall.
 
+### Small-`m` f32 matmul (the decode/short-prefill shape)
+
+`matmul_f32_blocked`'s micro-kernel works on an `MR = 4` register tile. The
+remainder rows (`m mod 4`) were processed **one row at a time**, and each row
+re-streamed the entire `k×n` weight. B — not the FMAs — sets the time at small
+`m`, so `m = 3` moved 3× the bytes of `m = 4` and ran *slower in absolute time
+while doing less arithmetic*.
+
+Batching the 1–3 remainder rows into a single pass over B (same `kk`-ascending
+FMA chain per cell, so **bit-identical** — f32 result bytes are
+content-addressed) removes it. `k = n = 1024`, same machine:
+
+| m | before | after | speedup |
+|---|---|---|---|
+| 1 | 0.448 ms | 0.322 ms | 1.39× |
+| 2 | 0.605 ms | 0.253 ms | **2.39×** |
+| 3 | 0.890 ms | 0.258 ms | **3.45×** |
+| 4 | 0.238 ms | 0.239 ms | — (unchanged tile path) |
+| 6 | 0.608 ms | 0.338 ms | 1.80× |
+| 7 | 0.786 ms | 0.350 ms | 2.25× |
+
+`m = 3` now costs what `m = 4` costs, as it should: both are one pass over B.
+Low GFLOP/s at small `m` is physics (B dominates the traffic), not a defect —
+the pathology was absolute time *rising* as `m` fell. Pinned by
+`cargo run --release --example matmul_small_m -p hologram-bench`.
+
+`m = 5..7` still take two B passes (the `MR` tile, then the remainder); fusing
+them is a further win, not a regression.
+
+
 Multi-threaded (`--features parallel`) and end-to-end per-token figures move with
 the machine's memory subsystem; re-run `decode_profile` on the target rather than
 quoting these.
