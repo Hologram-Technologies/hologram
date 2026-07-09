@@ -1417,6 +1417,103 @@ fn gather_plan(
     Some((outer, axis_dim, inner, num_indices, idx_dtype))
 }
 
+/// A weight slot's `weight_layout` is a statement about the bytes as they will
+/// be **bound**, not a request. `OUTPUT_MAJOR` means "when this weight arrives
+/// it will already be `[n,k]`", and the only kernel that reads `[n,k]` is the
+/// fused output-major decode GEMV. Every other path — the W8A32 dequant loop,
+/// the standalone Dequantize kernel — reads `[k,n]`.
+///
+/// So a declaration that no output-major kernel can serve has **no correct
+/// execution at all**: taking any other path would transpose the weight by
+/// accident and return a plausible, wrong answer. Every precondition is static,
+/// so this is a compile error rather than a load-time surprise:
+///
+/// - the weight is **not a graph constant** (a constant's bytes are already
+///   here, in `[k,n]`; the claim would simply be false — to put a constant on
+///   the fused path set `act_quant` alone and let the compiler transpose it);
+/// - `act_quant = W8A8_TOKEN_SYM` (there is no output-major W8A32 kernel);
+/// - the quant tier is registered and output-major-fusable, with `k` a whole
+///   number of its groups and a byte-aligned column span;
+/// - `k` is inside the exact-i32 accumulation bound;
+/// - scales are per-output-column (`axis == 1` over a rank-2 `[k,n]` weight);
+/// - a vector-quantized tier brings its codebook, and a scalar tier does not.
+///
+/// `hologram-exec`'s loader re-checks the same predicate and refuses rather than
+/// falling back — defence in depth for archives this compiler did not produce.
+fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError> {
+    use hologram_backend::{mm_act_quant, quant_tier::quant_tier};
+    use hologram_graph::{DTypeId, GraphOp, InputSource, NodeId, OpKind};
+
+    for (idx, node) in graph.nodes().iter().enumerate() {
+        if !matches!(node.op, GraphOp::Op(OpKind::Dequantize)) {
+            continue;
+        }
+        let Some(attrs) = graph.quant_attrs(NodeId(idx as u32)) else {
+            continue;
+        };
+        if attrs.weight_layout == hologram_types::weight_layout::ROW_MAJOR {
+            continue;
+        }
+        if matches!(node.inputs.first(), Some(InputSource::Constant(_))) {
+            return Err(CompileError::GraphValidation(
+                "Dequantize over a graph constant declared weight_layout = OUTPUT_MAJOR;                  a constant's bytes are [k,n] and the declaration describes bound bytes.                  Set act_quant = W8A8_TOKEN_SYM to opt the constant into the fused                  output-major decode path — the compiler transposes it for you.",
+            ));
+        }
+        if attrs.act_quant != hologram_types::act_quant::W8A8_TOKEN_SYM {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR requires act_quant = W8A8_TOKEN_SYM;                  there is no output-major W8A32 kernel, and no other kernel can read                  the [n,k] bytes this weight promises to bind.",
+            ));
+        }
+        let Some(tier) = quant_tier(DTypeId(attrs.quant_dtype)) else {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR on an unregistered quant tier;                  no output-major kernel can decode it.",
+            ));
+        };
+        if !tier.omajor_fusable {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR on a quant tier with no output-major GEMV.",
+            ));
+        }
+        // The weight is `[k, n]` logically, whatever its bound byte order.
+        let Some(shape) = graph.shape_registry().get(node.output_shape) else {
+            continue;
+        };
+        if shape.rank != 2 {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR on a non-rank-2 weight.",
+            ));
+        }
+        let (Some(k), Some(_n)) = (shape.dim(0), shape.dim(1)) else {
+            continue;
+        };
+        let k = k as usize;
+        if !tier.omajor_k_ok(k) {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR but k is not a whole number of the tier's                  groups with a byte-aligned column span; the output-major GEMV cannot                  address it.",
+            ));
+        }
+        if k > mm_act_quant::K_MAX {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR but k exceeds the exact-i32 accumulation                  bound; the output-major GEMV would overflow, so it declines and no                  other kernel can read [n,k].",
+            ));
+        }
+        if attrs.axis != 1 {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR requires per-output-column scales                  (axis = 1); per-tensor and group-wise scales have no output-major GEMV.",
+            ));
+        }
+        // A VQ tier decodes indices through the model's own codebook: the node's
+        // 4th input. A scalar tier must not carry one.
+        let has_codebook = node.inputs.len() >= 4;
+        if tier.needs_codebook != has_codebook {
+            return Err(CompileError::GraphValidation(
+                "weight_layout = OUTPUT_MAJOR: a vector-quantized tier must supply its                  codebook as the Dequantize node's 4th input, and a scalar tier must not.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Compile-time `Dequantize(const) → MatMul(B)` fusion at decode shapes.
 ///
 /// Pattern (all conditions required, checked structurally):
@@ -1439,41 +1536,6 @@ fn gather_plan(
 /// `[k,n]` interpretation can never leak. Everything else falls through to
 /// the load-time fusion (W8A32 over `[k,n]`), which no-ops on already-fused
 /// archives.
-/// A weight slot's `weight_layout` is a statement about the bytes as they will
-/// be **bound**, not a request. `OUTPUT_MAJOR` means "when this weight arrives
-/// it will already be `[n,k]`" — a promise only the binder of a *load-time*
-/// weight can make. A constant's bytes are in the graph, in `[k,n]`.
-///
-/// The compiler may still transpose a constant itself (see
-/// `fuse_const_i8_decode`, gated on `act_quant`); that is an internal
-/// optimization over bytes it owns, and it marks the emitted call `bq_omajor`.
-/// But if a *graph* claims `OUTPUT_MAJOR` for a constant, the claim is false,
-/// and downstream the loader would fire the output-major kernel over `[k,n]`
-/// bytes and return a plausible, wrong answer. Reject it here.
-fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError> {
-    use hologram_graph::{GraphOp, InputSource, NodeId, OpKind};
-    for (idx, node) in graph.nodes().iter().enumerate() {
-        if !matches!(node.op, GraphOp::Op(OpKind::Dequantize)) {
-            continue;
-        }
-        let Some(attrs) = graph.quant_attrs(NodeId(idx as u32)) else {
-            continue;
-        };
-        if attrs.weight_layout == hologram_types::weight_layout::ROW_MAJOR {
-            continue;
-        }
-        if matches!(node.inputs.first(), Some(InputSource::Constant(_))) {
-            return Err(CompileError::GraphValidation(
-                "Dequantize over a graph constant declared weight_layout = OUTPUT_MAJOR; \
-                 a constant's bytes are [k,n] and the declaration describes bound bytes. \
-                 Set act_quant = W8A8_TOKEN_SYM to opt the constant into the fused \
-                 output-major decode path — the compiler transposes it for you.",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn fuse_const_i8_decode(
     graph: &Graph,
     calls: Vec<KernelCall>,
