@@ -36,6 +36,19 @@ static SIMD_PATH: AtomicU8 = AtomicU8::new(0);
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: u64 = 1 << 23;
 
+/// Decode-GEMV parallel grain. A W8A8 omajor GEMV streams `k·n` weight bytes
+/// through a compute-bound (not memory-bound) integer dot, so it scales near
+/// the pool width — worth splitting at a much smaller work size than the f32
+/// register-tiled matmul above. A `k·n` of 4.2M (a d=2048 decode projection)
+/// is ~95 µs single-thread, well above the pool's fork/join cost; the 1M grain
+/// keeps every real decode matmul parallel while leaving trivially small ones
+/// (and the packing tails) serial.
+#[cfg(all(
+    feature = "parallel",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const GEMV_PAR_THRESHOLD: u64 = 1 << 20;
+
 #[inline]
 fn resolve_path() -> u8 {
     let cached = SIMD_PATH.load(Ordering::Relaxed);
@@ -3805,6 +3818,50 @@ unsafe fn gemv_i8_omajor_avx2(
     }
 }
 
+/// Native (x86_64 AVX2 / aarch64 NEON) serial inner for one quantized
+/// activation row against a contiguous output-column range of the omajor W8A8
+/// weight — the unit both the serial call and each pool task run. Every output
+/// column is a whole dot computed by one participant in the same reduction
+/// order, so a partitioned decode GEMV is bit-identical to the serial run.
+///
+/// # Safety
+/// `q` len `k`; `bq`/`scales`/`out` are the sub-range bases (len `k` per
+/// column, `n` columns); `k ≤ I8_DOT_K_MAX`. Unaligned loads.
+#[cfg(all(
+    feature = "parallel",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[inline]
+unsafe fn gemv_i8_omajor_native(
+    q: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        gemv_i8_omajor_neon(q, bq, scales, out, k, n, scale_a);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if x86_has_avx2() {
+            gemv_i8_omajor_avx2(q, bq, scales, out, k, n, scale_a);
+        } else {
+            for j in 0..n {
+                let row = bq.add(j * k);
+                let mut s = 0i32;
+                for kk in 0..k {
+                    s += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+                }
+                *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+            }
+        }
+    }
+}
+
 /// AVX2 inner for the output-major W4A8 packed-i4 GEMV — the x86 twin of the
 /// de-interleaved wasm i4 kernel. The activation arrives split
 /// (`de = [q_even | q_odd]`, each `k/2`, built once per token) so the packed
@@ -4431,6 +4488,54 @@ pub fn matmul_i8_pc_omajor(
             if scale_a == 0.0 {
                 orow.fill(0.0);
                 continue;
+            }
+            // Native multi-core: split the output columns across the pool, each
+            // participant running the identical serial inner over a disjoint
+            // contiguous column range — bit-identical to serial (every output
+            // column is a whole dot by one participant; see
+            // `gemv_i8_omajor_native`). The GEMV is compute-bound, so it scales
+            // near the pool width. wasm keeps its own fork-join below.
+            #[cfg(all(
+                feature = "parallel",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ))]
+            {
+                use crate::cpu::parallel::{self, SendConst, SendMut};
+                let w = parallel::pool().width();
+                if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                    let tiles = parallel::output_tiles(1, n, w, 4);
+                    if tiles.len() > 1 {
+                        let (qp, bp, sp, op) = (
+                            SendConst(q.as_ptr()),
+                            SendConst(bq.as_ptr()),
+                            SendConst(scales.as_ptr()),
+                            SendMut(orow.as_mut_ptr()),
+                        );
+                        let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                            .into_iter()
+                            .map(|(_, _, c0, cols)| {
+                                Box::new(move || {
+                                    let (qp, bp, sp, op) = (qp, bp, sp, op);
+                                    // SAFETY: disjoint column ranges; q/bq/scales
+                                    // shared read-only; sizes checked by caller.
+                                    unsafe {
+                                        gemv_i8_omajor_native(
+                                            qp.0,
+                                            bp.0.add(c0 * k),
+                                            sp.0.add(c0),
+                                            op.0.add(c0),
+                                            k,
+                                            cols,
+                                            scale_a,
+                                        );
+                                    }
+                                }) as Box<dyn FnOnce() + Send>
+                            })
+                            .collect();
+                        parallel::pool().run(tasks);
+                        continue;
+                    }
+                }
             }
             #[cfg(target_arch = "aarch64")]
             // SAFETY: NEON is baseline on aarch64; sizes checked above.
@@ -5343,6 +5448,12 @@ mod tests {
             (1, 7, 1),
             (2, 100, 17),
             (4, 31, 5),
+            // Above GEMV_PAR_THRESHOLD (k·n ≥ 1<<20): exercises the native
+            // column-partitioned pool path when built `--features parallel`.
+            // `640` splits evenly on the 4-wide panel; `653` forces a ragged
+            // final tile so the partition boundary is tested off-panel.
+            (1, 2048, 640),
+            (1, 2048, 653),
         ] {
             let a: Vec<f32> = (0..m * k)
                 .map(|i| ((i % 29) as f32 - 14.0) * 0.37)
