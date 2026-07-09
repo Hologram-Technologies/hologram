@@ -51,6 +51,49 @@ Three results worth stating plainly:
   documented rather than silently assumed.
 - Fewer weight bits only helps where bytes, not MACs, are the wall.
 
+### Prefill on the output-major integer GEMV (`m > 1`)
+
+The i8 / packed-i4 / E8CB output-major GEMVs handled `m > 1` as
+`for i in 0..m { gemv(row_i) }`. Each row streamed the whole `[n,k]` weight, so
+the weight was never amortized: **per-row cost stayed flat at every `m`**, pinned
+at the weight's memory bandwidth.
+
+Read `ms per row`, not total time and not GB/s. Total time grows with `m` because
+the work does; an earlier version of this note mistook that for the defect and
+quoted a meaningless "GB/s collapse" (a constant `k·n` divided by `m`-proportional
+time). The real signal is per-row cost *failing to fall* as `m` rises.
+
+The fix blocks the output columns, so a block's weight slab is read once and
+reused by all `m` rows. x86-64 AVX2, `ms per row`:
+
+| weight | | m=1 | m=4 | m=16 | GMAC/s @ m=16 |
+|---|---|---|---|---|---|
+| 4 MB (L3) | per-row loop | 0.120 | 0.097 | 0.095 | 44.3 |
+| | blocked | 0.115 | 0.087 | **0.084** | 50.1 |
+| 32 MB (~LLC) | per-row loop | 1.713 | 1.570 | 1.698 | 19.8 |
+| | blocked | 1.783 | 0.937 | **0.718** | 46.8 |
+| 64 MB (DRAM) | per-row loop | 2.900 | 2.744 | 2.798 | 24.0 |
+| | blocked | 2.688 | 1.617 | **1.377** | 48.8 |
+
+At `m = 16` that is **2.37× at 32 MB** and **2.03× at 64 MB** of total time;
+blocked prefill reaches the same ~48–50 GMAC/s compute ceiling the cache-resident
+case hits, while the per-row loop is stuck at the weight's DRAM bandwidth
+forever. At 4 MB the GEMV is compute-bound and the blocking is worth 1.13× —
+that is physics, not a defect, and the pin says so.
+
+Decode (`m = 1`) is untouched: one row has nothing to amortize over, and it keeps
+the pooled dispatch. Pinned by
+`cargo run --release --example i8_m_scaling -p hologram-backend`.
+
+**Reordering is free here, and only here.** Every output cell is one whole dot
+over the same `k`-vector; only the order in which cells are visited changes. The
+accumulation is an exact i32 sum and integer addition is associative *and*
+commutative, so no tiling, blocking, or completion order can move a bit — the
+schedule-independence the integer path has and the f32 path does not. Witness:
+`batched_integer_gemv_equals_row_by_row_bit_for_bit` asserts a batched call
+equals `m` independent single-row calls byte for byte, for all three tiers, on
+AVX2 / NEON / wasm SIMD128 / wasm relaxed-SIMD.
+
 ### Small-`m` f32 matmul (the decode/short-prefill shape)
 
 `matmul_f32_blocked`'s micro-kernel works on an `MR = 4` register tile. The
