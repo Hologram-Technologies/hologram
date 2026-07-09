@@ -759,58 +759,90 @@ mod x86 {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — the M=1 / small-M **decode
-        // (GEMV)** shape. Vectorize each remaining row exactly like the MR
-        // block: broadcast the activation, stream B contiguously, accumulate
-        // NR-wide in YMM. A scalar dot here (the previous form) is a serial
-        // FMA dependency chain over strided B loads — at M=1 that collapses to
-        // a few percent of memory bandwidth, ~two orders off the tiled path;
-        // the FMA GEMV recovers it, matching the NEON/wasm remainder.
-        while i < m {
-            let arow = a.add(i * lda);
-            let orow = out.add(i * ldc);
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows — the M=1 /
+        // small-M **decode (GEMV)** shape.
+        //
+        // The leftover rows share **one** pass over B. The MR tile above
+        // amortizes each B load across 4 rows; doing the remainder a row at a
+        // time re-streams the whole `k×n` weight per row, and B — not the FMAs —
+        // sets the time here. That made `m = 3` move 3× the bytes of `m = 4` and
+        // run ~3.7× slower while doing less arithmetic, and left `m = 1` (decode)
+        // at ~10% of the tiled path's throughput.
+        //
+        // Every output cell still accumulates over `kk` ascending through the
+        // same `fmadd` chain, so results are **bit-identical** to the per-row
+        // form. That is required, not incidental: f32 result bytes are
+        // content-addressed, so reassociating the reduction would re-key every κ
+        // that depends on it.
+        let rem = m - i;
+        if rem > 0 {
+            debug_assert!(rem < MR);
             let mut j = 0;
             while j + NR <= n {
-                let (mut c0, mut c1) = if accumulate {
-                    (
-                        _mm256_loadu_ps(orow.add(j)),
-                        _mm256_loadu_ps(orow.add(j + 8)),
-                    )
-                } else {
-                    (_mm256_setzero_ps(), _mm256_setzero_ps())
-                };
-                for kk in 0..k {
-                    let av = _mm256_set1_ps(*arow.add(kk));
-                    let brow = b.add(kk * ldb + j);
-                    c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(brow), c0);
-                    c1 = _mm256_fmadd_ps(av, _mm256_loadu_ps(brow.add(8)), c1);
+                let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        let orow = out.add((i + r) * ldc + j);
+                        cr[0] = _mm256_loadu_ps(orow);
+                        cr[1] = _mm256_loadu_ps(orow.add(8));
+                    }
                 }
-                _mm256_storeu_ps(orow.add(j), c0);
-                _mm256_storeu_ps(orow.add(j + 8), c1);
+                for kk in 0..k {
+                    let brow = b.add(kk * ldb + j);
+                    let b0 = _mm256_loadu_ps(brow);
+                    let b1 = _mm256_loadu_ps(brow.add(8));
+                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                        cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
+                        cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate().take(rem) {
+                    let orow = out.add((i + r) * ldc + j);
+                    _mm256_storeu_ps(orow, cr[0]);
+                    _mm256_storeu_ps(orow.add(8), cr[1]);
+                }
                 j += NR;
             }
             while j + 8 <= n {
-                let mut c0 = if accumulate {
-                    _mm256_loadu_ps(orow.add(j))
-                } else {
-                    _mm256_setzero_ps()
-                };
-                for kk in 0..k {
-                    let av = _mm256_set1_ps(*arow.add(kk));
-                    c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(b.add(kk * ldb + j)), c0);
+                let mut c = [_mm256_setzero_ps(); MR];
+                if accumulate {
+                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        *cr = _mm256_loadu_ps(out.add((i + r) * ldc + j));
+                    }
                 }
-                _mm256_storeu_ps(orow.add(j), c0);
+                for kk in 0..k {
+                    let bv = _mm256_loadu_ps(b.add(kk * ldb + j));
+                    for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                        let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                        *cr = _mm256_fmadd_ps(av, bv, *cr);
+                    }
+                }
+                for (r, cr) in c.iter().enumerate().take(rem) {
+                    _mm256_storeu_ps(out.add((i + r) * ldc + j), *cr);
+                }
                 j += 8;
             }
             while j < n {
-                let mut s = if accumulate { *orow.add(j) } else { 0.0 };
-                for kk in 0..k {
-                    s += *arow.add(kk) * *b.add(kk * ldb + j);
+                let mut s = [0f32; MR];
+                for (r, sr) in s.iter_mut().enumerate().take(rem) {
+                    *sr = if accumulate {
+                        *out.add((i + r) * ldc + j)
+                    } else {
+                        0.0
+                    };
                 }
-                *orow.add(j) = s;
+                for kk in 0..k {
+                    let bv = *b.add(kk * ldb + j);
+                    for (r, sr) in s.iter_mut().enumerate().take(rem) {
+                        *sr += *a.add((i + r) * lda + kk) * bv;
+                    }
+                }
+                for (r, sr) in s.iter().enumerate().take(rem) {
+                    *out.add((i + r) * ldc + j) = *sr;
+                }
                 j += 1;
             }
-            i += 1;
         }
     }
 
@@ -982,47 +1014,68 @@ mod x86 {
             }
             i += MR;
         }
-        // Row remainder (m not a multiple of MR) — vectorized single-row GEMV
-        // over the packed panels (the M=1 / small-M decode shape), the same
-        // 16-wide YMM FMA as the MR block. A scalar dot here left the packed
-        // constant-weight decode path on the same collapse the strided leaf
-        // had; only a partial trailing panel (< 16 cols) stays scalar.
-        while i < m {
-            let arow = a.add(i * lda);
+        // Row remainder (`m` not a multiple of MR), 1..=3 rows.
+        //
+        // These rows are done in **one** pass over the packed B, not one pass
+        // per row. The `MR` tile above amortizes each B load across 4 rows; a
+        // per-row loop re-streams the whole packed weight for every leftover
+        // row, so `m = 3` moved 3× the B bytes of `m = 4` and took ~3.7× as long
+        // while doing *less* arithmetic. B is the large operand here (`k·n`),
+        // so its traffic — not the FMAs — sets the time.
+        //
+        // Each output cell still accumulates over `kk` ascending through the
+        // same `fmadd` chain, so the result is **bit-identical** to the per-row
+        // form. That matters: f32 result bytes are content-addressed, and
+        // reassociating the reduction would re-key every κ that depends on it.
+        let rem = m - i;
+        if rem > 0 {
+            debug_assert!(rem < MR);
             for p in 0..n_panels {
                 let cols = core::cmp::min(16, n - p * 16);
                 let base = p * k_stride * 16;
                 if cols == 16 {
-                    let orow = out.add(i * ldc + p * 16);
-                    let (mut c0, mut c1) = if accumulate {
-                        (_mm256_loadu_ps(orow), _mm256_loadu_ps(orow.add(8)))
-                    } else {
-                        (_mm256_setzero_ps(), _mm256_setzero_ps())
-                    };
+                    let mut c = [[_mm256_setzero_ps(); 2]; MR];
+                    if accumulate {
+                        for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                            let orow = out.add((i + r) * ldc + p * 16);
+                            cr[0] = _mm256_loadu_ps(orow);
+                            cr[1] = _mm256_loadu_ps(orow.add(8));
+                        }
+                    }
                     for kk in 0..k {
                         let bp = bpacked.add(base + kk * 16);
-                        let av = _mm256_set1_ps(*arow.add(kk));
-                        c0 = _mm256_fmadd_ps(av, _mm256_loadu_ps(bp), c0);
-                        c1 = _mm256_fmadd_ps(av, _mm256_loadu_ps(bp.add(8)), c1);
-                    }
-                    _mm256_storeu_ps(orow, c0);
-                    _mm256_storeu_ps(orow.add(8), c1);
-                } else {
-                    for cc in 0..cols {
-                        let j = p * 16 + cc;
-                        let mut s = if accumulate {
-                            *out.add(i * ldc + j)
-                        } else {
-                            0.0
-                        };
-                        for kk in 0..k {
-                            s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                        let b0 = _mm256_loadu_ps(bp);
+                        let b1 = _mm256_loadu_ps(bp.add(8));
+                        for (r, cr) in c.iter_mut().enumerate().take(rem) {
+                            let av = _mm256_set1_ps(*a.add((i + r) * lda + kk));
+                            cr[0] = _mm256_fmadd_ps(av, b0, cr[0]);
+                            cr[1] = _mm256_fmadd_ps(av, b1, cr[1]);
                         }
-                        *out.add(i * ldc + j) = s;
+                    }
+                    for (r, cr) in c.iter().enumerate().take(rem) {
+                        let orow = out.add((i + r) * ldc + p * 16);
+                        _mm256_storeu_ps(orow, cr[0]);
+                        _mm256_storeu_ps(orow.add(8), cr[1]);
+                    }
+                } else {
+                    // Partial trailing panel (< 16 cols): scalar, same k order.
+                    for r in 0..rem {
+                        let arow = a.add((i + r) * lda);
+                        for cc in 0..cols {
+                            let j = p * 16 + cc;
+                            let mut s = if accumulate {
+                                *out.add((i + r) * ldc + j)
+                            } else {
+                                0.0
+                            };
+                            for kk in 0..k {
+                                s += *arow.add(kk) * *bpacked.add((p * k_stride + kk) * 16 + cc);
+                            }
+                            *out.add((i + r) * ldc + j) = s;
+                        }
                     }
                 }
             }
-            i += 1;
         }
     }
 
@@ -2757,7 +2810,9 @@ pub fn matmul_f32_blocked(
     )))]
     {
         const BS: usize = 64;
-        bt_scratch.clear();
+        // `resize` alone zero-fills only the *growth*; a preceding `clear()`
+        // would force `k·n` zero stores on every call — 4 MB for a 1024²
+        // panel — that the transpose below immediately overwrites in full.
         bt_scratch.resize(k * n, 0.0);
         for kk in 0..k {
             for j in 0..n {
@@ -4598,7 +4653,9 @@ pub fn matmul_i8_pc_omajor(
     debug_assert!(out.len() >= m * n);
 
     with_q8_scratch(|q| {
-        q.clear();
+        // `resize` zero-fills only the growth; `quantize_row_i8` rewrites all
+        // `k` elements, so a preceding `clear()` is a wasted k-element zero pass
+        // on every call.
         q.resize(k, 0);
         for i in 0..m {
             let arow = &a[i * k..(i + 1) * k];
@@ -5131,7 +5188,9 @@ pub fn matmul_i4_pc_omajor(
     debug_assert!(out.len() >= m * n);
 
     with_q8_scratch(|q| {
-        q.clear();
+        // `resize` zero-fills only the growth; `quantize_row_i8` rewrites all
+        // `k` elements, so a preceding `clear()` is a wasted k-element zero pass
+        // on every call.
         q.resize(k, 0);
         for i in 0..m {
             let arow = &a[i * k..(i + 1) * k];

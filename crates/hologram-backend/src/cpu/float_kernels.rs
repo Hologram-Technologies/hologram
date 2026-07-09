@@ -323,12 +323,13 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
         with_widen_scratch(|a32, b32, o32| {
             a32.clear();
             a32.extend((0..m * k).map(|i| read_float(a, i, dt)));
-            o32.clear();
+            // `resize` zero-fills only the growth. A preceding `clear()` would
+            // zero all `m·n` (and `k·n`) elements on every call — stores that
+            // both kernels below immediately overwrite in full.
             o32.resize(m * n, 0.0);
             if m <= LOWP_STREAM_M_MAX {
                 crate::cpu::simd::matmul_lowp_gemv(a32, b, o32, m, k, n, is_f16);
             } else {
-                b32.clear();
                 b32.resize(k * n, 0.0);
                 crate::cpu::simd::widen_lowp_to_f32(b, b32, is_f16);
                 with_matmul_scratch(|bt| {
