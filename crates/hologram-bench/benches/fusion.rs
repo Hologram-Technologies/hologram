@@ -74,6 +74,9 @@ fn bench_dequant_matmul(c: &mut Criterion) {
         dtype: DTYPE_F32,
         scale_bits: scale,
         zero_point: 0,
+        codebook: DequantizeCall::NO_CODEBOOK,
+        weight_layout: 0,
+        act_quant: 0,
     });
     let mm = KernelCall::MatMul(MatMulCall {
         a: rb(0),

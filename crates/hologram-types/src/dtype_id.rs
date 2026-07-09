@@ -14,6 +14,34 @@
 //! `DTypeId::raw()`, so the on-disk bytes and every content address are
 //! unchanged by the introduction of this type.
 
+/// How a quantized weight's bytes are laid out. A `Dequantize → MatMul(B)` chain
+/// whose weight is **bound after compile** (weightless compile: the graph carries
+/// only a κ for the weight, and bytes arrive at materialization) cannot have its
+/// layout inferred from constant bytes — it must be *declared*. Wire-stable.
+pub mod weight_layout {
+    /// `[k, n]`, the archive's default: k-major, one row per input element.
+    pub const ROW_MAJOR: u8 = 0;
+    /// `[n, k]`: each output column's k-vector contiguous. The layout the fused
+    /// decode GEMV streams. The binder is responsible for materializing the
+    /// weight this way; the backend re-validates what it can.
+    pub const OUTPUT_MAJOR: u8 = 1;
+}
+
+/// How a fused `Dequantize → MatMul` treats the **activation**. This changes the
+/// computed value, so it is never applied implicitly: a weight opts in.
+/// Wire-stable.
+pub mod act_quant {
+    /// f32 activation against the dequantized weight. The original semantics;
+    /// bit-identical to `dequantize → matmul`.
+    pub const W8A32: u8 = 0;
+    /// Per-token symmetric i8 activation quantization: each activation row is
+    /// quantized (`scale = max|a|/127`) and the dot products accumulate in exact
+    /// integer arithmetic. A *different function* from `W8A32` — it rounds the
+    /// activation — so it selects a distinct `op_signature` and must be opted
+    /// into per weight. See `docs/numerics/w8a8.md` for the error contract.
+    pub const W8A8_TOKEN_SYM: u8 = 1;
+}
+
 /// A dtype tag. The numeric values are **wire-stable** — they appear in archive
 /// bytes and in `op_signature` params, so they must never be renumbered.
 #[repr(transparent)]

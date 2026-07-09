@@ -329,7 +329,7 @@ pub struct LoweredNode {
 /// matmul itself). `channels == 0` is per-tensor (scalar `scale_bits`/
 /// `zero_point`); `channels > 0` is per-channel (scale/zp come from the
 /// dequantize node's 2nd/3rd operands; `inner` = elements per channel step).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct QuantParams {
     /// Source quantized dtype: `DTYPE_U8` (1), `DTYPE_I8` (2), or `DTYPE_I4`
     /// (10). `u8` is ONNX's default asymmetric quantization type.
@@ -342,6 +342,31 @@ pub struct QuantParams {
     pub channels: u32,
     /// Per-channel inner stride (elements per channel step).
     pub inner: u32,
+    /// Weight-slot declaration: layout the weight's bytes will have when bound
+    /// ([`hologram_types::weight_layout`]).
+    pub weight_layout: u8,
+    /// Weight-slot declaration: activation treatment opted into
+    /// ([`hologram_types::act_quant`]).
+    pub act_quant: u8,
+    /// Codebook operand (VQ tiers); `NO_CODEBOOK` when absent.
+    pub codebook: hologram_backend::BufferRef,
+}
+
+impl Default for QuantParams {
+    fn default() -> Self {
+        Self {
+            quant_dtype: 0,
+            scale_bits: 0,
+            zero_point: 0,
+            channels: 0,
+            inner: 0,
+            // A weight declares nothing by default: `[k,n]` bytes, f32
+            // activations, no codebook.
+            weight_layout: hologram_types::weight_layout::ROW_MAJOR,
+            act_quant: hologram_types::act_quant::W8A32,
+            codebook: hologram_backend::DequantizeCall::NO_CODEBOOK,
+        }
+    }
 }
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
@@ -713,6 +738,9 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
             inner: node.quant.inner,
             quant_dtype: node.quant.quant_dtype,
             dtype: node.dtype,
+            codebook: node.quant.codebook,
+            weight_layout: node.quant.weight_layout,
+            act_quant: node.quant.act_quant,
             scale_bits: node.quant.scale_bits,
             zero_point: node.quant.zero_point,
         }),

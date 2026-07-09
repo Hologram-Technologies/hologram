@@ -287,6 +287,12 @@ impl Compiler {
                             zero_point: quant_attrs.zero_point,
                             channels,
                             inner,
+                            // Weight-slot declaration: carried through so the
+                            // *load-time* fusion can build the fused decode call
+                            // for a weight whose bytes arrive after compile.
+                            weight_layout: quant_attrs.weight_layout,
+                            act_quant: quant_attrs.act_quant,
+                            codebook: codebook_ref(&self.graph, node),
                         }
                     },
                 };
@@ -909,42 +915,32 @@ fn collect_buffers(
         .collect()
 }
 
-/// Resolve the codebook a vector-quantized `Dequantize` decodes against: the
-/// node's 4th input, which must be a **constant** of exactly
-/// `E8CB_MAX_ENTRIES × group_dim` signed bytes.
+/// Resolve the codebook operand a vector-quantized `Dequantize` decodes against:
+/// the node's **4th input**, which must be a constant. Returned as a `BufferRef`
+/// into the constant slot space (`node_count + cid`), or `NO_CODEBOOK` when the
+/// node declares none.
 ///
-/// The full 256-entry index space is required so the kernel can dereference any
-/// `u8` index without a per-call bounds scan — a model whose learned codebook
-/// has fewer points pads it, at zero runtime cost (2 KB either way, and the pad
-/// entries are never referenced). Enforcing it here means the backend can trust
-/// an archive it did not produce.
-///
-/// Returns the operand's `BufferRef` (constants live at `node_count + cid`), or
-/// `None` if the input is absent, is not a constant, or has the wrong length.
-fn codebook_operand(
-    graph: &Graph,
-    dq: &hologram_backend::DequantizeCall,
-    node_count: u32,
-    tier: &hologram_backend::quant_tier::QuantTier,
-) -> Option<hologram_backend::BufferRef> {
+/// Length is *not* validated here — the fusions and the backend each enforce the
+/// full `E8CB_MAX_ENTRIES × group_dim` index space, because the backend must not
+/// trust an archive it did not produce.
+fn codebook_ref(graph: &Graph, node: &hologram_graph::Node) -> BufferRef {
     use hologram_graph::InputSource;
-    // The dequant's output slot is its node id, which is how we reach the graph
-    // node (and therefore its 4th input) from the lowered call.
-    let node = graph.nodes().get(dq.output.slot as usize)?;
-    let cid = match node.inputs.get(3)? {
-        InputSource::Constant(cid) => *cid,
-        _ => return None, // a dynamic codebook is not addressable as a constant
-    };
-    let entry = graph.constants().get(cid)?;
-    let want = hologram_graph::DTypeId::E8CB_MAX_ENTRIES * tier.group_dim as usize;
-    if entry.bytes.len() != want {
-        return None;
+    let node_count = graph.node_count() as u32;
+    match node.inputs.get(3) {
+        Some(InputSource::Constant(cid)) => {
+            let len = graph
+                .constants()
+                .get(*cid)
+                .map(|e| e.bytes.len() as u64)
+                .unwrap_or(0);
+            BufferRef {
+                slot: node_count + cid.0,
+                offset: 0,
+                length: len,
+            }
+        }
+        _ => hologram_backend::DequantizeCall::NO_CODEBOOK,
     }
-    Some(hologram_backend::BufferRef {
-        slot: node_count + cid.0,
-        offset: 0,
-        length: entry.bytes.len() as u64,
-    })
 }
 
 /// Bytes per element for a fixed-width dtype. Delegates to the canonical
@@ -1592,10 +1588,14 @@ fn fuse_const_i8_decode(
         // different codebooks address differently). Without it there is nothing
         // to decode against, so the fusion is declined rather than guessed.
         let codebook = if tier.needs_codebook {
-            let Some(cb) = codebook_operand(graph, &dq, node_count, tier) else {
+            // Carried on the lowered call (the Dequantize node's 4th input). The
+            // full 256-entry index space is required so the kernel dereferences
+            // any `u8` index in range without a per-call bounds scan.
+            let want = hologram_graph::DTypeId::E8CB_MAX_ENTRIES * tier.group_dim as usize;
+            if !dq.has_codebook() || dq.codebook.length as usize != want {
                 continue;
-            };
-            cb
+            }
+            dq.codebook
         } else {
             MatMulDequantCall::NO_CODEBOOK
         };

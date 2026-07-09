@@ -563,7 +563,7 @@ pub struct DequantizeCall {
     /// Per-channel: elements per channel step (product of dims after the axis),
     /// so element `i`'s channel is `(i / inner) % channels`.
     pub inner: u32,
-    /// Source quantized dtype: `DTYPE_I8` or `DTYPE_I4`.
+    /// Source quantized dtype (a `crate::cpu::dtype::DTYPE_*` tag).
     pub quant_dtype: u8,
     /// Destination float dtype: `DTYPE_F32`, `DTYPE_BF16`, etc.
     pub dtype: u8,
@@ -571,6 +571,41 @@ pub struct DequantizeCall {
     pub scale_bits: u32,
     /// Symmetric zero-point (per-tensor mode).
     pub zero_point: i32,
+    /// Codebook operand for vector-quantized tiers (`slot == u32::MAX` = none).
+    /// Carried here so **both** the compile-time constant fusion and the
+    /// load-time fusion can bind it without re-deriving it from the graph.
+    pub codebook: BufferRef,
+    /// Weight-slot declaration: the layout the weight's bytes will have when
+    /// bound ([`hologram_types::weight_layout`]). Layout-only — excluded from
+    /// `op_signature`, exactly like `MatMulDequantCall::bq_omajor`.
+    pub weight_layout: u8,
+    /// Weight-slot declaration: the activation treatment this weight opts into
+    /// ([`hologram_types::act_quant`]). Consumed by the fusion, which stamps it
+    /// onto the `MatMulDequantCall` where it *is* signature-visible; the
+    /// standalone dequant's own f32 output is unaffected by it.
+    pub act_quant: u8,
+}
+
+impl DequantizeCall {
+    /// Sentinel for "no codebook operand".
+    pub const NO_CODEBOOK: BufferRef = BufferRef {
+        slot: u32::MAX,
+        offset: 0,
+        length: 0,
+    };
+
+    #[inline]
+    pub const fn has_codebook(&self) -> bool {
+        self.codebook.slot != u32::MAX
+    }
+
+    /// `true` when the weight slot declares anything beyond the defaults, which
+    /// selects the extended wire discriminant. The all-default form stays
+    /// byte-identical to the original encoding.
+    #[inline]
+    pub const fn extended(&self) -> bool {
+        self.weight_layout != 0 || self.act_quant != 0 || self.has_codebook()
+    }
 }
 
 impl DequantizeCall {

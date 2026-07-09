@@ -37,6 +37,9 @@ pub use dtype::{
 /// The canonical runtime dtype tag. The graph registry and the backend both
 /// re-export this type rather than defining their own spelling of it.
 pub use dtype_id::DTypeId;
+/// Weight-slot declaration vocabularies: how a later-bound quantized weight is
+/// laid out, and which activation treatment it opts into.
+pub use dtype_id::{act_quant, weight_layout};
 pub use shape::{Dim, Shape1, Shape2};
 
 // Re-export the canonical prism shape carriers so hologram callers

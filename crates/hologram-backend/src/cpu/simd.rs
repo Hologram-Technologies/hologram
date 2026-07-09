@@ -5601,12 +5601,28 @@ unsafe fn gemv_e8cb_omajor_avx2(
     }
 }
 
-/// Fused E8 lattice-codebook GEMV over an **output-major** weight with
-/// per-token dynamic i8 activation quantization. `a` is `[m,k]` f32, `bq` is
-/// `[n, k/8]` u8 codebook indices (each output's index-vector contiguous), `cb`
-/// is the `256×8` i8 codebook, `scales` `[n]`, `out` `[m,n]`. Bit-identical to
-/// the scalar reference across serial and `--features parallel` builds. See the
-/// tier comment above — prototype (x86 AVX2 + scalar).
+/// Fused E8 lattice-codebook GEMV over an **output-major** weight.
+///
+/// # This tier is W1A8, not W1A32
+///
+/// The `a: &[f32]` signature is misleading on its own: this entry point
+/// **quantizes the activation internally**, per token, to symmetric i8
+/// (`quantize_row_i8`), exactly as the W8A8 int8 decode GEMV does. So the tier
+/// is *W1A8* — 1 bit per weight **and** 8-bit activations — and it inherits the
+/// full W8A8 activation-rounding error on top of whatever error the model's
+/// codebook already carries. See `docs/numerics/w8a8.md`; a caller that needs
+/// f32 activations against VQ weights must dequantize and use the f32 matmul.
+///
+/// # Layout
+///
+/// `a` is `[m,k]` f32; `bq` is `[n, k/8]` `u8` codebook indices (each output's
+/// index-vector contiguous); `codebook` is the **model's** `256×8` i8 codebook
+/// (a constant operand, not an engine table); `scales` is `[n]`; `out` is
+/// `[m,n]`. `k` must be a multiple of 8 (whole E8 groups).
+///
+/// The integer dot is exact, so the result is bit-identical across x86 AVX2,
+/// aarch64 NEON, wasm SIMD128 and the scalar reference, serial or
+/// `--features parallel`.
 #[allow(clippy::too_many_arguments)]
 pub fn matmul_e8cb_omajor(
     a: &[f32],

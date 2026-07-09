@@ -150,6 +150,7 @@ fn bench_session(c: &mut Criterion) {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = graph.add_node(Node {

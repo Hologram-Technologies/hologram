@@ -1665,13 +1665,45 @@ fn fuse_dequant_matmul(
             KernelCall::MatMul(c) if c.dtype == DTYPE_F32 && !c.b_packed && c.b.slot == s => *c,
             _ => continue,
         };
-        // This path reads the weight with the **scalar** dequant loop, which has
-        // no codebook operand. A vector-quantized tier (weights are codebook
-        // indices) cannot be decoded here, so leave it unfused rather than build
-        // a call the backend must reject at execute time.
-        match hologram_backend::quant_tier::quant_tier(hologram_types::DTypeId(dq.quant_dtype)) {
-            Some(t) if t.scalar_decodable => {}
-            _ => continue,
+        // Does this weight slot **declare** the output-major W8A8 decode form?
+        //
+        // A weightless compile (the graph carries only a κ for the weight; bytes
+        // arrive at materialization) has no constant bytes for the compiler to
+        // transpose, so `fuse_const_i8_decode` always declines and the fast
+        // decode GEMV — for *every* model — was unreachable. The declaration
+        // closes that: the binder promises `[n,k]` bytes and asks for W8A8, and
+        // this fusion emits exactly the call the constant-weight path emits.
+        //
+        // The declaration is a promise about *layout*, never about values: the
+        // backend independently re-validates symmetry (all-zero zero-points),
+        // per-channel-ness, `channels == n`, `inner == 1` and the exact-i32 `k`
+        // bound before it will run the integer GEMV, and fails loud otherwise.
+        let tier =
+            match hologram_backend::quant_tier::quant_tier(hologram_types::DTypeId(dq.quant_dtype))
+            {
+                Some(t) => t,
+                None => continue, // unregistered tier: never guess
+            };
+        let declares_omajor_w8a8 = dq.weight_layout == hologram_types::weight_layout::OUTPUT_MAJOR
+            && dq.act_quant == hologram_types::act_quant::W8A8_TOKEN_SYM;
+
+        let omajor_ok = declares_omajor_w8a8
+            && tier.omajor_fusable
+            && tier.omajor_k_ok(mm.k as usize)
+            && dq.per_channel()
+            && dq.inner == 1
+            && dq.channels == mm.n
+            && (mm.k as usize) <= mm_act_quant::K_MAX
+            // A VQ tier must bring its codebook; a scalar tier must not.
+            && tier.needs_codebook == dq.has_codebook();
+
+        if !omajor_ok {
+            // Fall back to the W8A32 scalar dequant loop, which cannot read a
+            // tier whose weights are codebook indices. Leave those unfused
+            // rather than build a call the backend must reject at execute time.
+            if !tier.scalar_decodable {
+                continue;
+            }
         }
         fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
             a: mm.a,
@@ -1688,18 +1720,23 @@ fn fuse_dequant_matmul(
             dtype: mm.dtype,
             scale_bits: dq.scale_bits,
             zero_point: dq.zero_point,
-            // Load-time fusion sees the weight as the archive laid it out
-            // ([k,n]) and keeps the original W8A32 semantics; the
-            // output-major W8A8 form is compile-time-only (constant
-            // weights, decode shapes). The epilogue (act/residual) is
-            // absorbed by the epilogue pass that runs after this one.
-            bq_omajor: false,
-            act_quant: mm_act_quant::W8A32,
+            // Honour the weight-slot declaration; otherwise read the weight as
+            // the archive laid it out (`[k,n]`) with the original W8A32
+            // semantics. The epilogue (act/residual) is absorbed by the epilogue
+            // pass that runs after this one.
+            bq_omajor: omajor_ok,
+            act_quant: if omajor_ok {
+                mm_act_quant::W8A8_TOKEN_SYM
+            } else {
+                mm_act_quant::W8A32
+            },
             act: 0,
             residual: MatMulDequantCall::NO_RESIDUAL,
-            // Scalar-decodable tiers only (guarded above), so there is never a
-            // codebook to carry here.
-            codebook: MatMulDequantCall::NO_CODEBOOK,
+            codebook: if omajor_ok {
+                dq.codebook
+            } else {
+                MatMulDequantCall::NO_CODEBOOK
+            },
         }));
         absorbed[i] = true; // drop the standalone dequant
     }

@@ -102,6 +102,9 @@ fn bench_dequant_activation(c: &mut Criterion) {
         dtype: DTYPE_F32,
         scale_bits,
         zero_point,
+        codebook: DequantizeCall::NO_CODEBOOK,
+        weight_layout: 0,
+        act_quant: 0,
     });
     let gelu = KernelCall::Gelu(UnaryCall {
         input: rb(1),

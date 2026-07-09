@@ -111,6 +111,9 @@ fn dequant_gelu_table_is_bit_identical_to_unfused() {
             dtype: DTYPE_F32,
             scale_bits,
             zero_point,
+            codebook: DequantizeCall::NO_CODEBOOK,
+            weight_layout: 0,
+            act_quant: 0,
         }),
         &mut wu,
     )
@@ -192,6 +195,9 @@ fn dequant_gelu_table_uint8_is_bit_identical_to_unfused() {
             dtype: DTYPE_F32,
             scale_bits,
             zero_point,
+            codebook: DequantizeCall::NO_CODEBOOK,
+            weight_layout: 0,
+            act_quant: 0,
         }),
         &mut wu,
     )

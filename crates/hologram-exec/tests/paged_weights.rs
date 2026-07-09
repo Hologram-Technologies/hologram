@@ -349,6 +349,7 @@ fn per_channel_dequant_graph(k: usize, n: usize) -> (Vec<u8>, WeightStore) {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {

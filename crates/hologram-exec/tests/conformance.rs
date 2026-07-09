@@ -1719,6 +1719,7 @@ fn const_i8_matmul_graph(
             scale_bits: 0,
             zero_point: 0,
             axis: 1, // per output column: channels = n, inner = 1
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {
@@ -1924,6 +1925,7 @@ fn dynamic_quantized_weight_with_activation_keeps_dequant_fusion() {
             scale_bits: 0.05f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {
@@ -2057,6 +2059,7 @@ fn wl2_omajor_w8a8_relu_fuses_epilogue_bit_exact() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {
@@ -2174,6 +2177,7 @@ fn wl2_omajor_w8a8_bias_gelu_is_one_call() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {
@@ -2354,6 +2358,7 @@ fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {
@@ -2474,6 +2479,7 @@ fn wl3_odd_k_i4_stays_on_generic_path() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     let mm = g.add_node(Node {

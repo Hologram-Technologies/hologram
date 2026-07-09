@@ -383,7 +383,9 @@ impl core::marker::UnsafeUnpin for hologram_backend::DequantActivationCall
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantActivationCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantActivationCall
 pub struct hologram_backend::kernel_call::DequantizeCall
+pub hologram_backend::kernel_call::DequantizeCall::act_quant: u8
 pub hologram_backend::kernel_call::DequantizeCall::channels: u32
+pub hologram_backend::kernel_call::DequantizeCall::codebook: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::DequantizeCall::dtype: u8
 pub hologram_backend::kernel_call::DequantizeCall::element_count: u64
 pub hologram_backend::kernel_call::DequantizeCall::inner: u32
@@ -392,8 +394,13 @@ pub hologram_backend::kernel_call::DequantizeCall::output: hologram_backend::wor
 pub hologram_backend::kernel_call::DequantizeCall::quant_dtype: u8
 pub hologram_backend::kernel_call::DequantizeCall::scale_bits: u32
 pub hologram_backend::kernel_call::DequantizeCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DequantizeCall::weight_layout: u8
 pub hologram_backend::kernel_call::DequantizeCall::zero_point: i32
 pub hologram_backend::kernel_call::DequantizeCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::DequantizeCall
+pub const hologram_backend::DequantizeCall::NO_CODEBOOK: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::DequantizeCall::extended(&self) -> bool
+pub const fn hologram_backend::DequantizeCall::has_codebook(&self) -> bool
 impl hologram_backend::DequantizeCall
 pub const hologram_backend::DequantizeCall::NO_VEC: hologram_backend::workspace::BufferRef
 pub const fn hologram_backend::DequantizeCall::per_channel(&self) -> bool
@@ -1302,7 +1309,9 @@ impl core::marker::UnsafeUnpin for hologram_backend::DequantActivationCall
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DequantActivationCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DequantActivationCall
 pub struct hologram_backend::DequantizeCall
+pub hologram_backend::DequantizeCall::act_quant: u8
 pub hologram_backend::DequantizeCall::channels: u32
+pub hologram_backend::DequantizeCall::codebook: hologram_backend::workspace::BufferRef
 pub hologram_backend::DequantizeCall::dtype: u8
 pub hologram_backend::DequantizeCall::element_count: u64
 pub hologram_backend::DequantizeCall::inner: u32
@@ -1311,8 +1320,13 @@ pub hologram_backend::DequantizeCall::output: hologram_backend::workspace::Buffe
 pub hologram_backend::DequantizeCall::quant_dtype: u8
 pub hologram_backend::DequantizeCall::scale_bits: u32
 pub hologram_backend::DequantizeCall::scales: hologram_backend::workspace::BufferRef
+pub hologram_backend::DequantizeCall::weight_layout: u8
 pub hologram_backend::DequantizeCall::zero_point: i32
 pub hologram_backend::DequantizeCall::zero_points: hologram_backend::workspace::BufferRef
+impl hologram_backend::DequantizeCall
+pub const hologram_backend::DequantizeCall::NO_CODEBOOK: hologram_backend::workspace::BufferRef
+pub const fn hologram_backend::DequantizeCall::extended(&self) -> bool
+pub const fn hologram_backend::DequantizeCall::has_codebook(&self) -> bool
 impl hologram_backend::DequantizeCall
 pub const hologram_backend::DequantizeCall::NO_VEC: hologram_backend::workspace::BufferRef
 pub const fn hologram_backend::DequantizeCall::per_channel(&self) -> bool

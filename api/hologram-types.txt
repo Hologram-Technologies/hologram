@@ -2,6 +2,9 @@ pub mod hologram_types
 pub use hologram_types::Digest
 pub use hologram_types::MatrixShape
 pub use hologram_types::VectorShape
+pub mod hologram_types::act_quant
+pub const hologram_types::act_quant::W8A32: u8
+pub const hologram_types::act_quant::W8A8_TOKEN_SYM: u8
 pub mod hologram_types::dtype
 pub enum hologram_types::dtype::DTypeKind
 pub hologram_types::dtype::DTypeKind::Bfloat
@@ -383,6 +386,12 @@ impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
 pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
 pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
 pub mod hologram_types::dtype_id
+pub mod hologram_types::dtype_id::act_quant
+pub const hologram_types::dtype_id::act_quant::W8A32: u8
+pub const hologram_types::dtype_id::act_quant::W8A8_TOKEN_SYM: u8
+pub mod hologram_types::dtype_id::weight_layout
+pub const hologram_types::dtype_id::weight_layout::OUTPUT_MAJOR: u8
+pub const hologram_types::dtype_id::weight_layout::ROW_MAJOR: u8
 #[repr(transparent)] pub struct hologram_types::dtype_id::DTypeId(pub u8)
 impl hologram_types::dtype_id::DTypeId
 pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]
@@ -542,6 +551,9 @@ impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::
 impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES>
 impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe, D1: core::panic::unwind_safe::RefUnwindSafe
 impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::UnwindSafe, D1: core::panic::unwind_safe::UnwindSafe
+pub mod hologram_types::weight_layout
+pub const hologram_types::weight_layout::OUTPUT_MAJOR: u8
+pub const hologram_types::weight_layout::ROW_MAJOR: u8
 pub enum hologram_types::DTypeKind
 pub hologram_types::DTypeKind::Bfloat
 pub hologram_types::DTypeKind::Bool

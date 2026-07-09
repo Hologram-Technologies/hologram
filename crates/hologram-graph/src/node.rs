@@ -57,7 +57,7 @@ pub struct Node {
 /// compiler derives the channel count / inner stride from the input shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QuantAttrs {
-    /// Source quantized dtype (DTypeI8 or DTypeI4 numeric tag).
+    /// Source quantized dtype (a [`hologram_types::DTypeId`] numeric tag).
     pub quant_dtype: u8,
     /// `f32::to_bits` of the per-tensor scale (per-tensor mode only).
     pub scale_bits: u32,
@@ -65,6 +65,25 @@ pub struct QuantAttrs {
     pub zero_point: i32,
     /// Quantization axis: `< 0` ⇒ per-tensor; `>= 0` ⇒ per-channel along it.
     pub axis: i32,
+    /// **Weight-slot declaration**: how the weight's bytes will be laid out when
+    /// bound ([`hologram_types::weight_layout`]).
+    ///
+    /// A weightless compile — the graph carries a κ for the weight and the bytes
+    /// arrive at materialization — has no constant bytes for the compiler to
+    /// transpose, so the fast output-major decode path was unreachable no matter
+    /// what the model was. Declaring `OUTPUT_MAJOR` here lets the *load-time*
+    /// fusion emit the same fused call the constant-weight path emits. The binder
+    /// must materialize `[n, k]`; the backend re-validates every property it can
+    /// (symmetry, per-channel, `k` bound) and fails loud otherwise.
+    pub weight_layout: u8,
+    /// **Weight-slot declaration**: the activation treatment this weight opts
+    /// into ([`hologram_types::act_quant`]). Defaults to `W8A32`, which is
+    /// bit-identical to `dequantize → matmul`.
+    ///
+    /// `W8A8_TOKEN_SYM` rounds the activation, so it changes the computed value.
+    /// It is therefore never an implicit upgrade of an existing path — a weight
+    /// must ask for it.
+    pub act_quant: u8,
 }
 
 impl Default for QuantAttrs {
@@ -74,6 +93,10 @@ impl Default for QuantAttrs {
             scale_bits: 0,
             zero_point: 0,
             axis: -1,
+            // A weight declares nothing by default: `[k,n]` bytes, f32
+            // activations. W8A8 is never an implicit upgrade.
+            weight_layout: hologram_types::weight_layout::ROW_MAJOR,
+            act_quant: hologram_types::act_quant::W8A32,
         }
     }
 }
