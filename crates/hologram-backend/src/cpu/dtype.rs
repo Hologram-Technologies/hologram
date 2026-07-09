@@ -85,7 +85,7 @@ pub fn write_f16(bytes: &mut [u8], i: usize, v: f32) {
 }
 
 /// IEEE-754 binary16 → binary32 (round-to-nearest-even).
-fn f16_to_f32(bits: u16) -> f32 {
+pub(crate) fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
     let exp = ((bits >> 10) & 0x1f) as u32;
     let mant = (bits & 0x3ff) as u32;

@@ -3068,6 +3068,443 @@ pub fn matmul_i8_per_channel(
     }
 }
 
+// ─── Low-precision (bf16/f16) weight: widen + streamed GEMV ─────────
+// A bf16/f16 matmul used to widen the WHOLE weight to an f32 scratch on every
+// call (a scalar per-element `read_float` loop) and then run the f32 kernel.
+// For an M=1 decode that re-materializes the entire constant weight each token
+// — the dominant per-token cost. These two entry points remove it: a vectorized
+// bulk widen for the large-M (prefill) materialize path, and a **streamed**
+// small-M GEMV that reads the low-precision weight directly (widening 8/16
+// elements in-register) and never materializes the f32 weight — the bf16/f16
+// analog of the int8 `matmul_i8_per_channel` fused decode kernel.
+
+/// Widen `bf16` (`is_f16=false`) or `f16` (`true`) elements from `src` (2 bytes
+/// each, little-endian) into `out`, `out.len()` elements. Bit-identical to
+/// element-wise `read_bf16`/`read_f16` (bf16 = `bits << 16`; f16 = IEEE half).
+pub fn widen_lowp_to_f32(src: &[u8], out: &mut [f32], is_f16: bool) {
+    let n = out.len().min(src.len() / 2);
+    #[cfg(target_arch = "x86_64")]
+    if x86_has_avx2() {
+        // SAFETY: AVX2 detected; bounds are `n` for both slices.
+        unsafe {
+            x86_widen_lowp(src.as_ptr(), out.as_mut_ptr(), n, is_f16);
+        }
+        return;
+    }
+    for (i, o) in out[..n].iter_mut().enumerate() {
+        *o = lowp_scalar(src, i, is_f16);
+    }
+}
+
+#[inline(always)]
+fn lowp_scalar(src: &[u8], i: usize, is_f16: bool) -> f32 {
+    let bits = u16::from_le_bytes([src[i * 2], src[i * 2 + 1]]);
+    if is_f16 {
+        crate::cpu::dtype::f16_to_f32(bits)
+    } else {
+        f32::from_bits((bits as u32) << 16)
+    }
+}
+
+/// AVX2 bulk widen (8-wide). bf16 zero-extends `u16→u32` and shifts left 16;
+/// f16 uses the F16C `cvtph_ps` (present on every AVX2 CPU).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,f16c")]
+unsafe fn x86_widen_lowp(src: *const u8, out: *mut f32, n: usize, is_f16: bool) {
+    use core::arch::x86_64::*;
+    let chunks = n / 8;
+    for c in 0..chunks {
+        let p = src.add(c * 16) as *const __m128i; // 8 × u16
+        let h = _mm_loadu_si128(p);
+        let f = if is_f16 {
+            _mm256_cvtph_ps(h)
+        } else {
+            let u32s = _mm256_cvtepu16_epi32(h);
+            _mm256_castsi256_ps(_mm256_slli_epi32::<16>(u32s))
+        };
+        _mm256_storeu_ps(out.add(c * 8), f);
+    }
+    let done = chunks * 8;
+    for i in done..n {
+        let bits = u16::from_le_bytes([*src.add(i * 2), *src.add(i * 2 + 1)]);
+        *out.add(i) = if is_f16 {
+            crate::cpu::dtype::f16_to_f32(bits)
+        } else {
+            f32::from_bits((bits as u32) << 16)
+        };
+    }
+}
+
+/// Streamed small-M matmul `out[m,n] = a[m,k] · widen(B[k,n])` where `B` is a
+/// low-precision (bf16/f16) row-major weight read **directly** — widened in
+/// registers, never materialized to an f32 panel. `a` is already f32. For the
+/// M=1 decode shape this is a single streaming pass over `B` (2 bytes/elem),
+/// the bf16/f16 analog of the int8 decode kernel. Result f32-accumulated,
+/// bit-identical to widen-then-`matmul_f32` (both sum `a·widen(b)` in the same
+/// order per output).
+#[allow(clippy::needless_return)] // cfg-gated arch dispatch
+pub fn matmul_lowp_gemv(
+    a: &[f32],
+    b: &[u8],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    is_f16: bool,
+) {
+    if m == 0 || k == 0 || n == 0 {
+        return;
+    }
+    debug_assert_eq!(a.len(), m * k);
+    debug_assert!(b.len() >= k * n * 2);
+    debug_assert!(out.len() >= m * n);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if x86_has_avx2() {
+            // SAFETY: AVX2 (+F16C) detected; sizes checked above.
+            unsafe {
+                x86_matmul_lowp_gemv(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), m, k, n, is_f16);
+            }
+        } else {
+            matmul_lowp_gemv_scalar(a, b, out, m, k, n, is_f16);
+        }
+        return;
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        // SAFETY: simd128 gate; sizes checked above.
+        unsafe {
+            wasm_matmul_lowp_gemv(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), m, k, n, is_f16);
+        }
+        return;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON baseline; sizes checked above.
+        unsafe {
+            neon_matmul_lowp_gemv(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), m, k, n, is_f16);
+        }
+        return;
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        target_arch = "aarch64"
+    )))]
+    matmul_lowp_gemv_scalar(a, b, out, m, k, n, is_f16);
+}
+
+/// Portable scalar streamed low-precision GEMV — still reads `B` directly (no
+/// f32 materialization); the SIMD lanes above supersede it per arch.
+fn matmul_lowp_gemv_scalar(
+    a: &[f32],
+    b: &[u8],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    is_f16: bool,
+) {
+    for (i, orow) in out[..m * n].chunks_exact_mut(n).enumerate() {
+        let arow = &a[i * k..i * k + k];
+        orow.fill(0.0);
+        for (kk, &av) in arow.iter().enumerate() {
+            let brow = kk * n;
+            for (j, o) in orow.iter_mut().enumerate() {
+                *o += av * lowp_scalar(b, brow + j, is_f16);
+            }
+        }
+    }
+}
+
+/// wasm SIMD128 streamed low-precision GEMV — the deployed-target twin of the
+/// x86 kernel. SIMD128 is 4-wide and has no FMA (mul + add). The M=1 decode path
+/// uses 8 independent `f32x4` accumulators (32 columns) to hide the add-chain
+/// latency; bf16 widens with the extend+shift ladder, f16 is widened per lane
+/// (no SIMD128 half-conversion). Larger M falls to a straightforward streamed
+/// row loop.
+///
+/// # Safety
+/// simd128 enabled; `a` is `m*k` f32, `b` is `k*n*2` bytes, `out` is `m*n` f32.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn wasm_matmul_lowp_gemv(
+    a: *const f32,
+    b: *const u8,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+    is_f16: bool,
+) {
+    use core::arch::wasm32::*;
+    #[inline(always)]
+    unsafe fn widen4(p: *const u8, is_f16: bool) -> v128 {
+        if is_f16 {
+            f32x4(
+                crate::cpu::dtype::f16_to_f32(u16::from_le_bytes([*p, *p.add(1)])),
+                crate::cpu::dtype::f16_to_f32(u16::from_le_bytes([*p.add(2), *p.add(3)])),
+                crate::cpu::dtype::f16_to_f32(u16::from_le_bytes([*p.add(4), *p.add(5)])),
+                crate::cpu::dtype::f16_to_f32(u16::from_le_bytes([*p.add(6), *p.add(7)])),
+            )
+        } else {
+            // bf16: zero-extend low 4 u16 → u32, shift left 16, reinterpret f32.
+            let v = v128_load64_zero(p as *const u64); // 4 × u16 in the low 64 bits
+            i32x4_shl(u32x4_extend_low_u16x8(v), 16)
+        }
+    }
+    if m == 1 {
+        let mut j = 0;
+        while j + 32 <= n {
+            let mut c = [f32x4_splat(0.0); 8];
+            for kk in 0..k {
+                let av = f32x4_splat(*a.add(kk));
+                let bp = b.add((kk * n + j) * 2);
+                for (t, cc) in c.iter_mut().enumerate() {
+                    *cc = f32x4_add(*cc, f32x4_mul(av, widen4(bp.add(t * 8), is_f16)));
+                }
+            }
+            for (t, &cc) in c.iter().enumerate() {
+                v128_store(out.add(j + t * 4) as *mut v128, cc);
+            }
+            j += 32;
+        }
+        while j + 4 <= n {
+            let mut c0 = f32x4_splat(0.0);
+            for kk in 0..k {
+                let av = f32x4_splat(*a.add(kk));
+                c0 = f32x4_add(c0, f32x4_mul(av, widen4(b.add((kk * n + j) * 2), is_f16)));
+            }
+            v128_store(out.add(j) as *mut v128, c0);
+            j += 4;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            let bs = core::slice::from_raw_parts(b, k * n * 2);
+            for kk in 0..k {
+                acc += *a.add(kk) * lowp_scalar(bs, kk * n + j, is_f16);
+            }
+            *out.add(j) = acc;
+            j += 1;
+        }
+        return;
+    }
+    // General small-M: hand off to the portable streamed scalar path.
+    matmul_lowp_gemv_scalar(
+        core::slice::from_raw_parts(a, m * k),
+        core::slice::from_raw_parts(b, k * n * 2),
+        core::slice::from_raw_parts_mut(out, m * n),
+        m,
+        k,
+        n,
+        is_f16,
+    );
+}
+
+/// NEON streamed low-precision GEMV — the aarch64 twin. M=1 uses 8 `float32x4`
+/// accumulators (32 columns); bf16 widens via `vshll` (u16→u32 << 16), f16 via
+/// `vcvt_f32_f16`.
+///
+/// # Safety
+/// NEON baseline; `a` is `m*k` f32, `b` is `k*n*2` bytes, `out` is `m*n` f32.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn neon_matmul_lowp_gemv(
+    a: *const f32,
+    b: *const u8,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+    is_f16: bool,
+) {
+    use core::arch::aarch64::*;
+    #[inline(always)]
+    unsafe fn widen4(p: *const u8, is_f16: bool) -> float32x4_t {
+        if is_f16 {
+            let h = vld1_u16(p as *const u16); // 4 × f16
+            vcvt_f32_f16(vreinterpret_f16_u16(h))
+        } else {
+            let u = vld1_u16(p as *const u16); // 4 × u16 (bf16)
+                                               // Widen u16 → u32, shift left 16, reinterpret as f32.
+            vreinterpretq_f32_u32(vshlq_n_u32::<16>(vmovl_u16(u)))
+        }
+    }
+    if m == 1 {
+        let mut j = 0;
+        while j + 32 <= n {
+            let mut c = [vdupq_n_f32(0.0); 8];
+            for kk in 0..k {
+                let av = vdupq_n_f32(*a.add(kk));
+                let bp = b.add((kk * n + j) * 2);
+                for (t, cc) in c.iter_mut().enumerate() {
+                    *cc = vfmaq_f32(*cc, av, widen4(bp.add(t * 8), is_f16));
+                }
+            }
+            for (t, &cc) in c.iter().enumerate() {
+                vst1q_f32(out.add(j + t * 4), cc);
+            }
+            j += 32;
+        }
+        while j + 4 <= n {
+            let mut c0 = vdupq_n_f32(0.0);
+            for kk in 0..k {
+                let av = vdupq_n_f32(*a.add(kk));
+                c0 = vfmaq_f32(c0, av, widen4(b.add((kk * n + j) * 2), is_f16));
+            }
+            vst1q_f32(out.add(j), c0);
+            j += 4;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            let bs = core::slice::from_raw_parts(b, k * n * 2);
+            for kk in 0..k {
+                acc += *a.add(kk) * lowp_scalar(bs, kk * n + j, is_f16);
+            }
+            *out.add(j) = acc;
+            j += 1;
+        }
+        return;
+    }
+    // General small-M: hand off to the portable streamed scalar path.
+    matmul_lowp_gemv_scalar(
+        core::slice::from_raw_parts(a, m * k),
+        core::slice::from_raw_parts(b, k * n * 2),
+        core::slice::from_raw_parts_mut(out, m * n),
+        m,
+        k,
+        n,
+        is_f16,
+    );
+}
+
+/// x86 AVX2 streamed low-precision GEMV: 16-column panels, two YMM
+/// accumulators per M-row, the 16 bf16/f16 weights widened in-register each
+/// k-step. Mirrors `matmul_i8_pc_avx2` (no per-channel scale).
+///
+/// # Safety
+/// AVX2 + FMA + F16C (the caller gates on `x86_has_avx2`); `a` is `m*k` f32,
+/// `b` is `k*n*2` bytes, `out` is `m*n` f32.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma,f16c")]
+unsafe fn x86_matmul_lowp_gemv(
+    a: *const f32,
+    b: *const u8,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+    is_f16: bool,
+) {
+    use core::arch::x86_64::*;
+    #[inline(always)]
+    unsafe fn widen8(p: *const u8, is_f16: bool) -> __m256 {
+        let h = _mm_loadu_si128(p as *const __m128i); // 8 × u16
+        if is_f16 {
+            _mm256_cvtph_ps(h)
+        } else {
+            _mm256_castsi256_ps(_mm256_slli_epi32::<16>(_mm256_cvtepu16_epi32(h)))
+        }
+    }
+    #[inline(always)]
+    unsafe fn widen16(p: *const u8, is_f16: bool) -> (__m256, __m256) {
+        (widen8(p, is_f16), widen8(p.add(16), is_f16))
+    }
+    // M=1 decode fast path: 8 YMM accumulators (64 columns) to hide the FMA
+    // latency — the loop-carried accumulate chain is otherwise the limiter (only
+    // 2 in-flight FMAs with the general path's 16-column panel).
+    if m == 1 {
+        let mut j = 0;
+        while j + 64 <= n {
+            let mut c = [_mm256_setzero_ps(); 8];
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*a.add(kk));
+                let bp = b.add((kk * n + j) * 2);
+                c[0] = _mm256_fmadd_ps(av, widen8(bp, is_f16), c[0]);
+                c[1] = _mm256_fmadd_ps(av, widen8(bp.add(16), is_f16), c[1]);
+                c[2] = _mm256_fmadd_ps(av, widen8(bp.add(32), is_f16), c[2]);
+                c[3] = _mm256_fmadd_ps(av, widen8(bp.add(48), is_f16), c[3]);
+                c[4] = _mm256_fmadd_ps(av, widen8(bp.add(64), is_f16), c[4]);
+                c[5] = _mm256_fmadd_ps(av, widen8(bp.add(80), is_f16), c[5]);
+                c[6] = _mm256_fmadd_ps(av, widen8(bp.add(96), is_f16), c[6]);
+                c[7] = _mm256_fmadd_ps(av, widen8(bp.add(112), is_f16), c[7]);
+            }
+            for (t, &cc) in c.iter().enumerate() {
+                _mm256_storeu_ps(out.add(j + t * 8), cc);
+            }
+            j += 64;
+        }
+        while j + 8 <= n {
+            let mut c0 = _mm256_setzero_ps();
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*a.add(kk));
+                c0 = _mm256_fmadd_ps(av, widen8(b.add((kk * n + j) * 2), is_f16), c0);
+            }
+            _mm256_storeu_ps(out.add(j), c0);
+            j += 8;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            let bs = core::slice::from_raw_parts(b, k * n * 2);
+            for kk in 0..k {
+                acc += *a.add(kk) * lowp_scalar(bs, kk * n + j, is_f16);
+            }
+            *out.add(j) = acc;
+            j += 1;
+        }
+        return;
+    }
+    for i in 0..m {
+        let arow = a.add(i * k);
+        let orow = out.add(i * n);
+        let mut j = 0;
+        while j + 16 <= n {
+            let mut c0 = _mm256_setzero_ps();
+            let mut c1 = _mm256_setzero_ps();
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*arow.add(kk));
+                let (b0, b1) = widen16(b.add((kk * n + j) * 2), is_f16);
+                c0 = _mm256_fmadd_ps(av, b0, c0);
+                c1 = _mm256_fmadd_ps(av, b1, c1);
+            }
+            _mm256_storeu_ps(orow.add(j), c0);
+            _mm256_storeu_ps(orow.add(j + 8), c1);
+            j += 16;
+        }
+        while j + 8 <= n {
+            let mut c0 = _mm256_setzero_ps();
+            for kk in 0..k {
+                let av = _mm256_set1_ps(*arow.add(kk));
+                let p = b.add((kk * n + j) * 2) as *const __m128i;
+                let bw = if is_f16 {
+                    _mm256_cvtph_ps(_mm_loadu_si128(p))
+                } else {
+                    _mm256_castsi256_ps(_mm256_slli_epi32::<16>(_mm256_cvtepu16_epi32(
+                        _mm_loadu_si128(p),
+                    )))
+                };
+                c0 = _mm256_fmadd_ps(av, bw, c0);
+            }
+            _mm256_storeu_ps(orow.add(j), c0);
+            j += 8;
+        }
+        while j < n {
+            let mut acc = 0f32;
+            for kk in 0..k {
+                acc += *arow.add(kk)
+                    * lowp_scalar(
+                        core::slice::from_raw_parts(b, k * n * 2),
+                        kk * n + j,
+                        is_f16,
+                    );
+            }
+            *orow.add(j) = acc;
+            j += 1;
+        }
+    }
+}
+
 // ─── Deterministic vectorized f32 exp (decode softmax path) ────────
 // The decode path runs softmax per head per step over the attention bucket;
 // its exp was a scalar `libm::expf` per element. This is the vectorized
@@ -3230,6 +3667,7 @@ unsafe fn exp_f32_wasm_inplace(xs: *mut f32, len: usize) {
 /// Elementwise deterministic `exp` in place — the decode softmax's exp
 /// pass. Bit-identical across scalar / x86 AVX2 / NEON / wasm SIMD128 (see
 /// [`exp_f32_det`], the scalar specification every lane replays).
+#[allow(clippy::needless_return)] // cfg-gated arch dispatch
 pub fn simd_f32_exp_inplace(xs: &mut [f32]) {
     #[cfg(target_arch = "aarch64")]
     // SAFETY: NEON is baseline on aarch64; slice bounds by construction.
@@ -4201,7 +4639,7 @@ unsafe fn gemv_i4_omajor_neon(
             let av = vld1q_s8(q.add(kk));
             let alo = vget_low_s8(av);
             let ahi = vget_high_s8(av);
-            let mut unpack = |r: *const u8| -> int8x16_t {
+            let unpack = |r: *const u8| -> int8x16_t {
                 let b = vld1_u8(r.add(kk / 2));
                 let lo = vand_u8(b, low_mask);
                 let hi = vshr_n_u8::<4>(b);
@@ -4623,6 +5061,57 @@ mod tests {
     // `vec!` via alloc so the suite also builds/runs on no_std targets
     // (wasm32-wasip1 under wasmtime — the deployed-kernel test lane).
     use alloc::vec;
+
+    #[test]
+    fn matmul_lowp_gemv_matches_reference() {
+        use crate::cpu::dtype::{read_bf16, read_f16, write_bf16, write_f16};
+        // Cover both dtypes, the M=1 fast path with its 64/8/scalar column
+        // tiers (n crossing 64 and non-multiples), and small M>1.
+        for is_f16 in [false, true] {
+            for &(m, k, n) in &[
+                (1usize, 64usize, 64usize),
+                (1, 100, 130), // n = 130 → 64 + 64 + 8 - 6 tail
+                (1, 2048, 71), // decode-ish k, odd n
+                (1, 7, 5),
+                (1, 1, 1),
+                (2, 96, 17),
+                (4, 34, 80),
+            ] {
+                let a: Vec<f32> = (0..m * k).map(|i| ((i % 13) as f32 - 6.0) * 0.1).collect();
+                let mut b = vec![0u8; k * n * 2];
+                for i in 0..k * n {
+                    let v = ((i % 29) as f32 - 14.0) * 0.03;
+                    if is_f16 {
+                        write_f16(&mut b, i, v);
+                    } else {
+                        write_bf16(&mut b, i, v);
+                    }
+                }
+                let mut got = vec![0f32; m * n];
+                matmul_lowp_gemv(&a, &b, &mut got, m, k, n, is_f16);
+                // f64 reference (bf16/f16 → f32 widening is exact).
+                for i in 0..m {
+                    for j in 0..n {
+                        let mut want = 0f64;
+                        for kk in 0..k {
+                            let bw = if is_f16 {
+                                read_f16(&b, kk * n + j)
+                            } else {
+                                read_bf16(&b, kk * n + j)
+                            };
+                            want += a[i * k + kk] as f64 * bw as f64;
+                        }
+                        let denom = want.abs().max(1.0);
+                        assert!(
+                            (got[i * n + j] as f64 - want).abs() / denom < 1e-4,
+                            "is_f16={is_f16} shape=({m},{k},{n}) [{i},{j}] got {} want {want}",
+                            got[i * n + j]
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn matmul_i8_per_channel_matches_naive() {
