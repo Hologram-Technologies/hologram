@@ -3637,10 +3637,10 @@ unsafe fn x86_matmul_lowp_gemv(
 
 /// Underflow cutoff: `exp(x) = 0.0` exactly for `x < EXP_F32_LO` (−∞ and
 /// NaN included). e^−87.3 ≈ 1.2e−38 is the last normal-range value.
-pub const EXP_F32_LO: f32 = -87.336_54;
+pub(crate) const EXP_F32_LO: f32 = -87.336_54;
 /// Clamp ceiling, chosen so the scale exponent `k ≤ 127` stays a normal
 /// f32 (e^88 ≈ 1.65e38 < f32::MAX).
-pub const EXP_F32_HI: f32 = 88.0;
+pub(crate) const EXP_F32_HI: f32 = 88.0;
 
 const EXP_LOG2E: f32 = core::f32::consts::LOG2_E;
 // Cody–Waite split of ln2: HI has zeroed low mantissa bits so `kf·HI` is
@@ -4117,7 +4117,7 @@ unsafe fn exp_f32_avx2_inplace(xs: *mut f32, len: usize) {
 /// `i32::MAX`. Rejected loudly; real decode shapes sit three orders of
 /// magnitude below (~2k–19k). One definition, shared with the compiler's
 /// emission gate.
-pub const I8_DOT_K_MAX: usize = crate::kernel_call::mm_act_quant::K_MAX;
+pub(crate) const I8_DOT_K_MAX: usize = crate::kernel_call::mm_act_quant::K_MAX;
 
 /// Reused per-token quantized-activation row (zero alloc per call after
 /// warm-up under `std`; a transient alloc on `no_std`, matching the other
@@ -4813,7 +4813,7 @@ pub fn matmul_i8_pc_omajor(
 /// The i4 value grid as a swizzle table: nibble `0..=7 → 0..=7`,
 /// `8..=15 → −8..=−1` (two's complement), matching the archive's packed-i4
 /// convention (element `l` = nibble `l`, low nibble first).
-pub const I4_VALUES: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1];
+pub(crate) const I4_VALUES: [i8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1];
 
 /// Nibble `l` of a packed span (low nibble first — the archive convention).
 #[inline]

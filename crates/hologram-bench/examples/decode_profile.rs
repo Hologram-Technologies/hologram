@@ -1,15 +1,23 @@
-//! Realistic multi-layer int8 decode (M=1) profiling harness.
+//! Multi-layer decode (M=1) profiling harness — int8 / bf16 / E8-codebook.
 //!
 //! Builds an L-layer LLaMA-style decode graph (RmsNorm + q/k/v/o projections +
-//! RmsNorm + gate/up/silu/mul/down MLP + residuals), all weights int8-quantized
-//! constants, and runs `session.execute` with a **novel input each step** (so
-//! the graph memo never elides the walk — the real per-token cost). Reports the
-//! per-token latency, the effective int8-weight bandwidth, and the dispatch/
-//! reuse counts so we can see whether the fast fused decode path is engaged.
+//! RmsNorm + gate/up/silu/mul/down MLP + residuals) whose weights are
+//! **compile-time constants**, and runs `session.execute` with a *novel input
+//! each step* (so the graph memo never elides the walk — the real per-token
+//! cost). Reports per-token latency, effective weight bandwidth, GMAC/s, and the
+//! dispatch/reuse counts so we can see whether the fused decode path engaged.
 //!
-//! Tune via env: DECODE_D, DECODE_HIDDEN, DECODE_LAYERS, DECODE_STEPS.
-//! Profile:  cargo build --release --example decode_profile -p hologram-bench
-//!   then    perf record -g target/release/examples/decode_profile ; perf report
+//! Note this harness exercises the **constant-weight** fusion. A weightless
+//! compile reaches the same kernels through the weight-slot declaration
+//! (`QuantAttrs::{weight_layout, act_quant}`); see the `weightless_*` tests in
+//! `hologram-exec/tests/quantization.rs`.
+//!
+//! Tune via env:
+//!   DECODE_D, DECODE_HIDDEN, DECODE_LAYERS, DECODE_STEPS
+//!   DECODE_DTYPE = <unset|i8> | bf16 | e8cb
+//!
+//! Build:  cargo build --release --example decode_profile -p hologram-bench
+//!         (add --features parallel for the native worker pool)
 
 use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};

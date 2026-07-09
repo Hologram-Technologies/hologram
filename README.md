@@ -63,9 +63,15 @@ sub-graphs so intermediates are never separately materialized:
 f32 matmul is a cache-oblivious blocked SIMD kernel (AVX-512 → AVX2 → NEON →
 portable scalar, selected at runtime) with compile-time panel-packed constant
 weights (zero runtime copy). Quantized weights — **i8, u8 (ONNX's default
-asymmetric type), and i4** — flow through the fused `MatMulDequant` path, with
-per-tensor or per-channel scale/zero-point. f16 / bf16 widen into the same f32
-engine — no scalar fallback; f64 is rejected loudly.
+asymmetric type), i4, and the E8 lattice-codebook (1 bit/weight) VQ tier** —
+flow through the fused `MatMulDequant` path, with per-tensor or per-channel
+scale/zero-point; a weight bound *after* compile reaches the fused output-major
+W8A8 decode GEMV by declaring its layout (`QuantAttrs::weight_layout`) rather
+than by shipping constant bytes. f16 / bf16 route through the f32 engine: large
+`m` widens the weight into it, and decode shapes take a dedicated streamed GEMV
+(`matmul_lowp_gemv`) that widens in-register and never materializes the f32
+weight. Both are bit-identical, and every first-class target has a SIMD lane —
+no scalar fallback. f64 is rejected loudly.
 
 ---
 

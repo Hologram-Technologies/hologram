@@ -556,10 +556,9 @@ pub fn matmul_dequant_float<W: Workspace>(
         all(target_arch = "wasm32", target_feature = "simd128")
     ))]
     {
-        const FUSED_INT_M_GATE: usize = 3;
         if per_ch
             && quant_dtype == DTYPE_I8
-            && m <= FUSED_INT_M_GATE
+            && m <= crate::kernel_call::decode_gate::FUSED_W8A32_MAX_M
             && channels == n
             && inner == 1
             && zps
