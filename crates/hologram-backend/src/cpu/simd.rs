@@ -5016,95 +5016,46 @@ unsafe fn gemv_i8_omajor_wasm_relaxed(
     target_feature = "simd128"
 ))]
 pub(crate) unsafe fn pool_exec_gemv(
-    args: &[usize; crate::cpu::wasm_pool::JOB_ARGS],
+    job: &crate::cpu::wasm_pool::GemvJob,
     part: usize,
     parts: usize,
 ) {
-    let q = args[0] as *const i8;
-    let scales = args[4] as *const f32;
-    let out = args[5] as *mut f32;
-    let k = args[6];
-    let n = args[7];
-    let scale_a = f32::from_bits(args[8] as u32);
-    let kind = args[9];
+    use crate::cpu::wasm_pool::GemvOperands;
+    let (k, n) = (job.k, job.n);
     let start = part * n / parts;
     let end = (part + 1) * n / parts;
     if start >= end {
         return;
     }
     let rows = end - start;
-    #[cfg(target_feature = "relaxed-simd")]
-    let (qp, qn) = (args[1] as *const i8, args[2] as *const i8);
-    if kind == 1 {
-        // Packed i4: k/2 bytes per output row; args[1] = the de-interleaved
-        // activation layout (see `matmul_i4_pc_omajor`).
-        let de = args[1] as *const i8;
-        let bq = args[3] as *const u8;
-        let bq_part = bq.add(start * (k / 2));
-        #[cfg(not(target_feature = "relaxed-simd"))]
-        gemv_i4_omajor_wasm(
-            q,
-            de,
-            bq_part,
-            scales.add(start),
-            out.add(start),
-            k,
-            rows,
-            scale_a,
-        );
-        #[cfg(target_feature = "relaxed-simd")]
-        gemv_i4_omajor_wasm_relaxed(
-            q,
-            de,
-            bq_part,
-            scales.add(start),
-            out.add(start),
-            k,
-            rows,
-            scale_a,
-        );
-    } else if kind == 2 {
-        // E8 codebook: k/8 index bytes per output row; args[1] = the i16
-        // pre-widened codebook (`matmul_e8cb_omajor`). One exact-i32 inner on
+    let scales = job.scales.add(start);
+    let out = job.out.add(start);
+    match job.operands {
+        // Packed i4: k/2 bytes per output row.
+        GemvOperands::I4 { bq, de } => {
+            let bq_part = bq.add(start * (k / 2));
+            #[cfg(not(target_feature = "relaxed-simd"))]
+            gemv_i4_omajor_wasm(job.q, de, bq_part, scales, out, k, rows, job.scale_a);
+            #[cfg(target_feature = "relaxed-simd")]
+            gemv_i4_omajor_wasm_relaxed(job.q, de, bq_part, scales, out, k, rows, job.scale_a);
+        }
+        // E8 codebook: k/8 index bytes per output row. One exact-i32 inner on
         // both SIMD tiers (`i32x4_dot_i16x8`).
-        let cb16 = args[1] as *const i16;
-        let bq = args[3] as *const u8;
-        let bq_part = bq.add(start * (k / 8));
-        gemv_e8cb_omajor_wasm(
-            q,
-            bq_part,
-            cb16,
-            scales.add(start),
-            out.add(start),
-            k,
-            rows,
-            scale_a,
-        );
-    } else {
-        let bq = args[3] as *const i8;
-        let bq_part = bq.add(start * k);
-        #[cfg(not(target_feature = "relaxed-simd"))]
-        gemv_i8_omajor_wasm(
-            q,
-            bq_part,
-            scales.add(start),
-            out.add(start),
-            k,
-            rows,
-            scale_a,
-        );
-        #[cfg(target_feature = "relaxed-simd")]
-        gemv_i8_omajor_wasm_relaxed(
-            q,
-            qp,
-            qn,
-            bq_part,
-            scales.add(start),
-            out.add(start),
-            k,
-            rows,
-            scale_a,
-        );
+        GemvOperands::E8cb { bq, codebook } => {
+            let bq_part = bq.add(start * (k / 8));
+            gemv_e8cb_omajor_wasm(job.q, bq_part, codebook, scales, out, k, rows, job.scale_a);
+        }
+        // int8: k bytes per output row.
+        GemvOperands::I8 { bq, qp, qn } => {
+            let bq_part = bq.add(start * k);
+            #[cfg(not(target_feature = "relaxed-simd"))]
+            {
+                let _ = (qp, qn); // the plain SIMD128 inner reads `q` directly
+                gemv_i8_omajor_wasm(job.q, bq_part, scales, out, k, rows, job.scale_a);
+            }
+            #[cfg(target_feature = "relaxed-simd")]
+            gemv_i8_omajor_wasm_relaxed(job.q, qp, qn, bq_part, scales, out, k, rows, job.scale_a);
+        }
     }
 }
 
@@ -5223,18 +5174,20 @@ pub fn matmul_i8_pc_omajor(
             // the only path on plain simd128 builds.
             unsafe {
                 #[cfg(feature = "wasm-threads")]
-                let pooled = crate::cpu::wasm_pool::fork_join_gemv([
-                    q.as_ptr() as usize,
-                    0,
-                    0,
-                    bq.as_ptr() as usize,
-                    scales.as_ptr() as usize,
-                    orow.as_mut_ptr() as usize,
-                    k,
-                    n,
-                    scale_a.to_bits() as usize,
-                    0,
-                ]);
+                let pooled =
+                    crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                        q: q.as_ptr(),
+                        scales: scales.as_ptr(),
+                        out: orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                        operands: crate::cpu::wasm_pool::GemvOperands::I8 {
+                            bq: bq.as_ptr(),
+                            qp: core::ptr::null(),
+                            qn: core::ptr::null(),
+                        },
+                    });
                 #[cfg(not(feature = "wasm-threads"))]
                 let pooled = false;
                 if !pooled {
@@ -5265,18 +5218,20 @@ pub fn matmul_i8_pc_omajor(
                     qn.resize(k, 0);
                     split_q7(q, qp, qn);
                     #[cfg(feature = "wasm-threads")]
-                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
-                        q.as_ptr() as usize,
-                        qp.as_ptr() as usize,
-                        qn.as_ptr() as usize,
-                        bq.as_ptr() as usize,
-                        scales.as_ptr() as usize,
-                        orow.as_mut_ptr() as usize,
-                        k,
-                        n,
-                        scale_a.to_bits() as usize,
-                        0,
-                    ]);
+                    let pooled =
+                        crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                            q: q.as_ptr(),
+                            scales: scales.as_ptr(),
+                            out: orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                            operands: crate::cpu::wasm_pool::GemvOperands::I8 {
+                                bq: bq.as_ptr(),
+                                qp: qp.as_ptr(),
+                                qn: qn.as_ptr(),
+                            },
+                        });
                     #[cfg(not(feature = "wasm-threads"))]
                     let pooled = false;
                     if !pooled {
@@ -5730,18 +5685,19 @@ pub fn matmul_i4_pc_omajor(
                         }
                     }
                     #[cfg(feature = "wasm-threads")]
-                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
-                        q.as_ptr() as usize,
-                        de.as_ptr() as usize,
-                        0,
-                        bq.as_ptr() as usize,
-                        scales.as_ptr() as usize,
-                        orow.as_mut_ptr() as usize,
-                        k,
-                        n,
-                        scale_a.to_bits() as usize,
-                        1,
-                    ]);
+                    let pooled =
+                        crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                            q: q.as_ptr(),
+                            scales: scales.as_ptr(),
+                            out: orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                            operands: crate::cpu::wasm_pool::GemvOperands::I4 {
+                                bq: bq.as_ptr(),
+                                de: de.as_ptr(),
+                            },
+                        });
                     #[cfg(not(feature = "wasm-threads"))]
                     let pooled = false;
                     if !pooled {
@@ -6228,18 +6184,19 @@ pub fn matmul_e8cb_omajor(
                     feature = "wasm-threads"
                 ))]
                 {
-                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
-                        q.as_ptr() as usize,
-                        cb16.as_ptr() as usize,
-                        0,
-                        bq.as_ptr() as usize,
-                        scales.as_ptr() as usize,
-                        orow.as_mut_ptr() as usize,
-                        k,
-                        n,
-                        scale_a.to_bits() as usize,
-                        2,
-                    ]);
+                    let pooled =
+                        crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                            q: q.as_ptr(),
+                            scales: scales.as_ptr(),
+                            out: orow.as_mut_ptr(),
+                            k,
+                            n,
+                            scale_a,
+                            operands: crate::cpu::wasm_pool::GemvOperands::E8cb {
+                                bq: bq.as_ptr(),
+                                codebook: cb16.as_ptr(),
+                            },
+                        });
                     if pooled {
                         continue;
                     }

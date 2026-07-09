@@ -59,17 +59,26 @@ re-streamed the entire `k×n` weight. B — not the FMAs — sets the time at sm
 `m`, so `m = 3` moved 3× the bytes of `m = 4` and ran *slower in absolute time
 while doing less arithmetic*.
 
-Batching the 1–3 remainder rows into a single pass over B (same `kk`-ascending
-FMA chain per cell, so **bit-identical** — f32 result bytes are
-content-addressed) removes it. `k = n = 1024`, same machine:
+Two fixes, both **bit-identical** per cell (each output keeps its `kk`-ascending
+FMA chain — f32 result bytes are content-addressed, so reassociating the
+reduction would re-key every κ):
+
+1. The 1–3 remainder rows share a *single* pass over B.
+2. The remainder is monomorphized on the row count (`rem_rows::<R>`), so `R = 1`
+   compiles to a dedicated GEMV, and low `R` gets a wide-column tier — with only
+   `2·R` accumulators the 16-column loop is FMA-**latency** bound, not bandwidth
+   bound. (A runtime `.take(rem)` bound leaves the row loop rolled; that cost
+   wasm 1.42× at `m = 1`, which is why step 2 exists.)
+
+`k = n = 1024`, x86-64 AVX2, best-of-3:
 
 | m | before | after | speedup |
 |---|---|---|---|
-| 1 | 0.448 ms | 0.322 ms | 1.39× |
-| 2 | 0.605 ms | 0.253 ms | **2.39×** |
-| 3 | 0.890 ms | 0.258 ms | **3.45×** |
-| 4 | 0.238 ms | 0.239 ms | — (unchanged tile path) |
-| 6 | 0.608 ms | 0.338 ms | 1.80× |
+| 1 | 0.448 ms | 0.159 ms | **2.82×** |
+| 2 | 0.605 ms | 0.178 ms | **3.40×** |
+| 3 | 0.890 ms | 0.256 ms | **3.48×** |
+| 4 | 0.238 ms | 0.240 ms | — (unchanged tile path) |
+| 6 | 0.608 ms | 0.299 ms | 2.03× |
 | 7 | 0.786 ms | 0.350 ms | 2.25× |
 
 `m = 3` now costs what `m = 4` costs, as it should: both are one pass over B.
@@ -77,8 +86,35 @@ Low GFLOP/s at small `m` is physics (B dominates the traffic), not a defect —
 the pathology was absolute time *rising* as `m` fell. Pinned by
 `cargo run --release --example matmul_small_m -p hologram-bench`.
 
-`m = 5..7` still take two B passes (the `MR` tile, then the remainder); fusing
-them is a further win, not a regression.
+**The lane that ships.** The first version of this fix landed only in the x86
+leaves; NEON and wasm still re-streamed B per leftover row, so none of it reached
+a single-threaded-wasm consumer. Both are now fixed. wasm32 + SIMD128 under
+wasmtime, `m = 1`, best-of-3:
+
+| shape | blocked before | blocked after | packed before | packed after |
+|---|---|---|---|---|
+| k=n=512  |  33.5 µs |  37.2 µs |  25.6 µs |  26.4 µs |
+| k=n=1024 | 208.2 µs | **162.1 µs** | 103.5 µs | 105.7 µs |
+| k=n=2048 | 872.5 µs | **715.9 µs** | 452.2 µs | 439.3 µs |
+
+plus `m = 2` 0.429 → 0.227 ms (1.89×) and `m = 3` 0.634 → 0.317 ms (2.00×) at
+`k = n = 1024`. Pinned by the `small-m sweep` section of
+`cargo run --release --example wasm_matmul_timing -p hologram-backend --target
+wasm32-wasip1` (criterion, a hologram-bench dependency, does not build for wasm).
+The `k = n = 512` blocked row is ~11% *slower*: at 1 MB the weight is
+cache-resident, so the extra tier is overhead rather than latency cover. Recorded,
+not hidden.
+
+The wide-column tier for the **packed** leaf is enabled on x86 only (native
+`m = 1`, `k = n = 2048`: 319.5 → 254.6 µs, 1.25×). On wasm the same tier measured
+1.16–1.25× *slower* — there are no registers, and 8 v128 accumulators spill — so
+it is not applied there by symmetry. NEON keeps the strided tier on the same
+register-machine premise and is correctness-verified under qemu; it is not timed
+here, so no NEON speedup is claimed.
+
+`m = 5..7` legitimately take two passes over B (one `MR` tile plus a remainder).
+`MR` cannot grow past 4 without exceeding the 16 YMM registers the 4×16 tile
+already fills, so that is the floor, not a defect.
 
 
 Multi-threaded (`--features parallel`) and end-to-end per-token figures move with

@@ -52,10 +52,117 @@ extern "C" {
     fn hologram_host_notify(ptr: *const i32, count: u32) -> u32;
 }
 
-/// Raw job arguments:
-/// `[q, qp, qn, bq, scales, out, k, n, scale_a_bits, kind]`
-/// (`kind`: 0 = i8 omajor GEMV, 1 = packed-i4 omajor GEMV).
+/// Width of the raw job slot. The slot is `usize` atomics because it lives in
+/// shared linear memory and is published/drained across threads; [`GemvJob`] is
+/// the typed form every caller and the executor actually use, and
+/// [`GemvJob::encode`] / [`GemvJob::decode`] are the only code that knows which
+/// word is which.
 pub(crate) const JOB_ARGS: usize = 10;
+
+/// The weight encoding a pooled GEMV runs, with its operands named.
+///
+/// Each variant fixes its own weight stride (bytes per output row) and its own
+/// auxiliary operand; there is no shared "aux" word whose meaning depends on a
+/// tag read elsewhere.
+#[derive(Clone, Copy)]
+pub(crate) enum GemvOperands {
+    /// int8 output-major weight, `k` bytes per output row. `qp`/`qn` are the
+    /// relaxed-SIMD split of the activation into non-negative halves; they are
+    /// null on builds without `relaxed-simd`, where the kernel does not read them.
+    I8 {
+        bq: *const i8,
+        qp: *const i8,
+        qn: *const i8,
+    },
+    /// Packed int4 weight, `k/2` bytes per output row. `de` is the
+    /// de-interleaved activation layout `matmul_i4_pc_omajor` builds.
+    I4 { bq: *const u8, de: *const i8 },
+    /// E8 codebook indices, `k/8` bytes per output row. `codebook` is the
+    /// model's own codebook, pre-widened to i16.
+    E8cb { bq: *const u8, codebook: *const i16 },
+}
+
+impl GemvOperands {
+    /// Discriminant stored in the job slot. Explicit, because it crosses a
+    /// shared-memory boundary — never `as usize` on the enum.
+    const TAG_I8: usize = 0;
+    const TAG_I4: usize = 1;
+    const TAG_E8CB: usize = 2;
+}
+
+/// One fork-join GEMV job: a `[n, k]` output-major weight times one quantized
+/// activation row, sliced across participants by output row.
+#[derive(Clone, Copy)]
+pub(crate) struct GemvJob {
+    /// The i8-quantized activation row, `k` entries.
+    pub q: *const i8,
+    /// Per-output-channel scales, `n` entries.
+    pub scales: *const f32,
+    /// Output row, `n` f32.
+    pub out: *mut f32,
+    pub k: usize,
+    pub n: usize,
+    /// The activation's dynamic scale (`amax / 127`).
+    pub scale_a: f32,
+    pub operands: GemvOperands,
+}
+
+impl GemvJob {
+    pub(crate) fn encode(&self) -> [usize; JOB_ARGS] {
+        let (aux1, aux2, bq, tag) = match self.operands {
+            GemvOperands::I8 { bq, qp, qn } => {
+                (qp as usize, qn as usize, bq as usize, GemvOperands::TAG_I8)
+            }
+            GemvOperands::I4 { bq, de } => (de as usize, 0, bq as usize, GemvOperands::TAG_I4),
+            GemvOperands::E8cb { bq, codebook } => {
+                (codebook as usize, 0, bq as usize, GemvOperands::TAG_E8CB)
+            }
+        };
+        [
+            self.q as usize,
+            aux1,
+            aux2,
+            bq,
+            self.scales as usize,
+            self.out as usize,
+            self.k,
+            self.n,
+            self.scale_a.to_bits() as usize,
+            tag,
+        ]
+    }
+
+    /// # Safety
+    /// `args` must be the output of [`Self::encode`] for a job whose buffers are
+    /// still live. An unknown tag is a corrupt slot, not a recoverable input.
+    pub(crate) unsafe fn decode(args: &[usize; JOB_ARGS]) -> Self {
+        let operands = match args[9] {
+            GemvOperands::TAG_I8 => GemvOperands::I8 {
+                bq: args[3] as *const i8,
+                qp: args[1] as *const i8,
+                qn: args[2] as *const i8,
+            },
+            GemvOperands::TAG_I4 => GemvOperands::I4 {
+                bq: args[3] as *const u8,
+                de: args[1] as *const i8,
+            },
+            GemvOperands::TAG_E8CB => GemvOperands::E8cb {
+                bq: args[3] as *const u8,
+                codebook: args[1] as *const i16,
+            },
+            other => panic!("wasm_pool: corrupt job slot, unknown GEMV tag {other}"),
+        };
+        Self {
+            q: args[0] as *const i8,
+            scales: args[4] as *const f32,
+            out: args[5] as *mut f32,
+            k: args[6],
+            n: args[7],
+            scale_a: f32::from_bits(args[8] as u32),
+            operands,
+        }
+    }
+}
 
 struct Job {
     /// Bumped to publish a job; workers wait on it.
@@ -150,9 +257,11 @@ pub extern "C" fn hologram_worker_run(worker_id: u32) {
         // SAFETY: the publisher keeps the job's buffers alive (it does not
         // return from `fork_join_gemv` until `done` reaches the snapshot),
         // ranges are disjoint per participant, and this worker's id is
-        // below the snapshot by the registration contract.
+        // below the snapshot by the registration contract. `args` was written
+        // by `GemvJob::encode` before the epoch bump this thread observed.
         unsafe {
-            crate::cpu::simd::pool_exec_gemv(&args, worker_id as usize, parts);
+            let job = GemvJob::decode(&args);
+            crate::cpu::simd::pool_exec_gemv(&job, worker_id as usize, parts);
         }
         JOB.done.fetch_add(1, Ordering::AcqRel);
         notify_all(&JOB.done);
@@ -176,12 +285,12 @@ pub extern "C" fn hologram_pool_shutdown() {
 /// Returns `false` (caller runs serial) when no workers are registered or
 /// the job is below the latency floor. On `true` the output rows are fully
 /// written before returning.
-pub(crate) fn fork_join_gemv(args: [usize; JOB_ARGS]) -> bool {
+pub(crate) fn fork_join_gemv(job: GemvJob) -> bool {
     let w = WORKERS.load(Ordering::Acquire);
-    let (k, n) = (args[6], args[7]);
-    if w == 0 || k * n < POOL_MIN_WEIGHT_BYTES {
+    if w == 0 || job.k * job.n < POOL_MIN_WEIGHT_BYTES {
         return false;
     }
+    let args = job.encode();
     let parts = w + 1;
     for (a, v) in JOB.args.iter().zip(args.iter()) {
         a.store(*v, Ordering::Release);
@@ -194,7 +303,7 @@ pub(crate) fn fork_join_gemv(args: [usize; JOB_ARGS]) -> bool {
     // SAFETY: args point into live workspace buffers owned by the caller;
     // this range is disjoint from every worker's.
     unsafe {
-        crate::cpu::simd::pool_exec_gemv(&args, parts as usize - 1, parts as usize);
+        crate::cpu::simd::pool_exec_gemv(&job, parts as usize - 1, parts as usize);
     }
     // Join: brief spin, then park on `done`. The Acquire loads pair with
     // the workers' AcqRel increments, making their row writes visible.
