@@ -1502,6 +1502,23 @@ fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError
                 "weight_layout = OUTPUT_MAJOR requires per-output-column scales                  (axis = 1); per-tensor and group-wise scales have no output-major GEMV.",
             ));
         }
+        // The output-major integer GEMV decodes a **symmetric** weight: it
+        // computes `Σ q·w` and has no term for a per-column zero point. When the
+        // zero points are a graph constant their values are static, so reject
+        // here rather than at execute time. (A zero-point bound at load is not
+        // knowable now; `matmul_dequant` re-checks and fails loud.)
+        if let Some(InputSource::Constant(zp)) = node.inputs.get(2) {
+            if let Some(entry) = graph.constants().get(*zp) {
+                if entry.bytes.iter().any(|&b| b != 0) {
+                    return Err(CompileError::GraphValidation(
+                        "weight_layout = OUTPUT_MAJOR with a non-zero zero-point; the \
+                         output-major integer GEMV decodes symmetric weights only. \
+                         Asymmetric weights are correct on the generic dequant path — \
+                         leave act_quant = W8A32 and weight_layout = ROW_MAJOR.",
+                    ));
+                }
+            }
+        }
         // A VQ tier decodes indices through the model's own codebook: the node's
         // 4th input. A scalar tier must not carry one.
         let has_codebook = node.inputs.len() >= 4;
