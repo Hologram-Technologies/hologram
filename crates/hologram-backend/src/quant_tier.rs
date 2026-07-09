@@ -71,6 +71,22 @@ impl QuantTier {
         k / self.group_dim as usize
     }
 
+    /// Can this `k` take the output-major decode path?
+    ///
+    /// Two conditions, both tier-derived. `k` must be a whole number of groups,
+    /// **and** each output column's unit span (`rows × unit_bits`) must be a
+    /// whole number of bytes — otherwise a column's units straddle a byte
+    /// boundary and the repacked weight is not addressable per column.
+    ///
+    /// The second condition is why `i4` (4-bit units, `group_dim = 1`) needs an
+    /// even `k` even though every `k` divides its group of 1. `i8` and `e8cb`
+    /// have 8-bit units, so it is satisfied by construction.
+    #[must_use]
+    #[inline]
+    pub const fn omajor_k_ok(&self, k: usize) -> bool {
+        self.divides_k(k) && (self.rows(k) * self.unit_bits() as usize).is_multiple_of(8)
+    }
+
     /// Stored bytes for a `[k, n]` weight of this tier.
     #[must_use]
     pub const fn weight_bytes(&self, k: usize, n: usize) -> Option<usize> {
@@ -88,7 +104,7 @@ impl QuantTier {
     /// a whole number of groups.
     #[must_use]
     pub fn omajor_repack(&self, src: &[u8], k: usize, n: usize) -> Option<Vec<u8>> {
-        if !self.divides_k(k) || src.len() != self.weight_bytes(k, n)? {
+        if !self.omajor_k_ok(k) || src.len() != self.weight_bytes(k, n)? {
             return None;
         }
         let rows = self.rows(k);
@@ -254,6 +270,24 @@ mod tests {
                 assert_eq!(cell(&src, r * n + j), cell(&got, j * k + r), "({r},{j})");
             }
         }
+    }
+
+    /// A column's unit span must be byte-aligned. For `i4` (4-bit units) that
+    /// forces an even `k`; the 8-bit-unit tiers satisfy it by construction. The
+    /// old code special-cased this for i4; it is now tier-derived.
+    #[test]
+    fn omajor_k_ok_requires_a_byte_aligned_column_span() {
+        let i4 = quant_tier(DTypeId::I4).unwrap();
+        assert!(i4.omajor_k_ok(2) && i4.omajor_k_ok(16));
+        assert!(!i4.omajor_k_ok(3), "odd k straddles a byte in an i4 column");
+        assert!(!i4.omajor_k_ok(15));
+        // Odd k must also be refused by the repack itself.
+        assert!(i4.omajor_repack(&[0; 3], 3, 2).is_none());
+
+        let i8 = quant_tier(DTypeId::I8).unwrap();
+        assert!(i8.omajor_k_ok(3) && i8.omajor_k_ok(1)); // 8-bit units: always
+        let cb = quant_tier(DTypeId::E8CB).unwrap();
+        assert!(cb.omajor_k_ok(16) && !cb.omajor_k_ok(12)); // whole E8 groups
     }
 
     #[test]

@@ -340,10 +340,18 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
     // E8-codebook (DTYPE_E8CB) decode projection: A[1,k] · dequant(indices[k,n]).
     // The per-channel constant index weight (m=1) triggers the omajor W8A8
     // fusion to `matmul_e8cb_omajor`. This exercises the compiler's
-    // `[k/8,n] → [n,k/8]` index transpose end-to-end — the one integration step
-    // not covered by the kernel unit test — against a scalar restatement of the
-    // spec (i8 activation quant → index→codebook LUT → exact i32 dot).
-    use hologram_backend::cpu::simd::E8_CODEBOOK;
+    // `[k/8,n] → [n,k/8]` index transpose AND the per-model **codebook operand**
+    // (the Dequantize node's 4th input) end-to-end, against a scalar restatement
+    // of the spec (i8 activation quant → index→codebook LUT → exact i32 dot).
+    //
+    // The codebook is the model's own data: this test declares one, and the
+    // reference below decodes against the same bytes. Nothing about it is baked
+    // into the engine.
+    const CB_ENTRIES: usize = 256;
+    const CB_GROUP: usize = 8;
+    let codebook: Vec<i8> = (0..CB_ENTRIES * CB_GROUP)
+        .map(|i| (((i * 37 + 11) % 255) as i32 - 127) as i8)
+        .collect();
     // Spread of (k, n): n<4 scalar tail, the exact 4-col body, a ragged tail,
     // and many groups/columns — exercising the compiler's `[k/8,n] → [n,k/8]`
     // index transpose end-to-end across shapes.
@@ -389,12 +397,22 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
             dtype: DTypeId(DTYPE_I8),
             shape: v_sh,
         });
+        let cb_sh = graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(CB_ENTRIES as u64, CB_GROUP as u64));
+        let cbc = graph.constants_mut().insert(ConstantEntry {
+            bytes: codebook.iter().map(|&v| v as u8).collect(),
+            dtype: DTypeId(DTYPE_I8),
+            shape: cb_sh,
+        });
         let dq = graph.add_node(Node {
             op: GraphOp::Op(OpKind::Dequantize),
             inputs: SmallVec::from_iter([
                 InputSource::Constant(wc),
                 InputSource::Constant(sc),
                 InputSource::Constant(zc),
+                // 4th input: the model's codebook.
+                InputSource::Constant(cbc),
             ]),
             output_dtype: DTypeId(DTYPE_F32),
             output_shape: w_sh,
@@ -458,7 +476,7 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
             for gk in 0..g {
                 let e = idx[gk * n + j] as usize * 8;
                 for t in 0..8 {
-                    s += q[gk * 8 + t] * E8_CODEBOOK[e + t] as i32;
+                    s += q[gk * 8 + t] * codebook[e + t] as i32;
                 }
             }
             let want = s as f32 * (scale_a * scales[j]);

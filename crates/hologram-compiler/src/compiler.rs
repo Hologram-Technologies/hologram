@@ -909,6 +909,44 @@ fn collect_buffers(
         .collect()
 }
 
+/// Resolve the codebook a vector-quantized `Dequantize` decodes against: the
+/// node's 4th input, which must be a **constant** of exactly
+/// `E8CB_MAX_ENTRIES × group_dim` signed bytes.
+///
+/// The full 256-entry index space is required so the kernel can dereference any
+/// `u8` index without a per-call bounds scan — a model whose learned codebook
+/// has fewer points pads it, at zero runtime cost (2 KB either way, and the pad
+/// entries are never referenced). Enforcing it here means the backend can trust
+/// an archive it did not produce.
+///
+/// Returns the operand's `BufferRef` (constants live at `node_count + cid`), or
+/// `None` if the input is absent, is not a constant, or has the wrong length.
+fn codebook_operand(
+    graph: &Graph,
+    dq: &hologram_backend::DequantizeCall,
+    node_count: u32,
+    tier: &hologram_backend::quant_tier::QuantTier,
+) -> Option<hologram_backend::BufferRef> {
+    use hologram_graph::InputSource;
+    // The dequant's output slot is its node id, which is how we reach the graph
+    // node (and therefore its 4th input) from the lowered call.
+    let node = graph.nodes().get(dq.output.slot as usize)?;
+    let cid = match node.inputs.get(3)? {
+        InputSource::Constant(cid) => *cid,
+        _ => return None, // a dynamic codebook is not addressable as a constant
+    };
+    let entry = graph.constants().get(cid)?;
+    let want = hologram_graph::DTypeId::E8CB_MAX_ENTRIES * tier.group_dim as usize;
+    if entry.bytes.len() != want {
+        return None;
+    }
+    Some(hologram_backend::BufferRef {
+        slot: node_count + cid.0,
+        offset: 0,
+        length: entry.bytes.len() as u64,
+    })
+}
+
 /// Bytes per element for a fixed-width dtype. Delegates to the canonical
 /// [`hologram_graph::registry::DTypeId`] (re-exported from `hologram-types`);
 /// `None` for the sub-byte tiers (`i4`, `e8cb`) — whose storage is not
@@ -1532,7 +1570,7 @@ fn fuse_const_i8_decode(
         // be exactly the tier's `[k,n]` storage. Both are tier data — the i4
         // nibble packing and the e8cb 8-element grouping are no longer special
         // cases here.
-        if !tier.divides_k(k) {
+        if !tier.omajor_k_ok(k) {
             continue;
         }
         let Some(want_len) = tier.weight_bytes(k, n) else {
@@ -1547,6 +1585,19 @@ fn fuse_const_i8_decode(
         // units are contiguous. Baked into the archive; zero runtime copy.
         let Some(t) = tier.omajor_repack(&entry.bytes, k, n) else {
             continue;
+        };
+        // A vector-quantized tier decodes its indices through the model's own
+        // codebook, supplied as the Dequantize node's 4th input. Bind it as a
+        // read operand (it folds into the fused call's κ, so two models with
+        // different codebooks address differently). Without it there is nothing
+        // to decode against, so the fusion is declined rather than guessed.
+        let codebook = if tier.needs_codebook {
+            let Some(cb) = codebook_operand(graph, &dq, node_count, tier) else {
+                continue;
+            };
+            cb
+        } else {
+            MatMulDequantCall::NO_CODEBOOK
         };
         packed_consts[cid] = Some(t);
         fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
@@ -1570,6 +1621,7 @@ fn fuse_const_i8_decode(
             // epilogue pass over the archive-carried fused call.
             act: 0,
             residual: MatMulDequantCall::NO_RESIDUAL,
+            codebook,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }

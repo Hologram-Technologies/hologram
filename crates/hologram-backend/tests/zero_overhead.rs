@@ -230,6 +230,7 @@ fn matmul_dequant_hotpath_is_zero_alloc() {
             act_quant: 0,
             act: 0,
             residual: MatMulDequantCall::NO_RESIDUAL,
+            codebook: MatMulDequantCall::NO_CODEBOOK,
         }),
         vec![
             vec![0x3e; d * d * 4], // A (f32)

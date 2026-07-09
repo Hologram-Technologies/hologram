@@ -184,6 +184,17 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
             c.residual = cur.buf()?;
             K::MatMulDequant(c)
         }
+        // Extended MatMulDequant + a codebook operand (vector-quantized weight:
+        // the stored weight is an index into the model's own codebook).
+        117 => {
+            let mut c = read_matmul_dequant(cur)?;
+            c.bq_omajor = cur.u8()? != 0;
+            c.act_quant = cur.u8()?;
+            c.act = cur.u8()?;
+            c.residual = cur.buf()?;
+            c.codebook = cur.buf()?;
+            K::MatMulDequant(c)
+        }
         112 => K::BroadcastBinary(read_broadcast_binary(cur)?),
         113 => K::DequantActivation(read_dequant_activation(cur)?),
         114 => K::Gather(read_gather(cur)?),
@@ -245,6 +256,7 @@ fn read_matmul_dequant(c: &mut Cursor<'_>) -> Result<MatMulDequantCall, ArchiveE
         act_quant: 0,
         act: 0,
         residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: MatMulDequantCall::NO_CODEBOOK,
     })
 }
 

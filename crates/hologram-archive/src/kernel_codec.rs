@@ -110,6 +110,11 @@ const D_CAST: u16 = 115;
 // decode GEMV). Emitted only when a field is non-default so archives that
 // don't use the feature stay byte-identical to pre-extension output.
 const D_MMDQ2: u16 = 116;
+// MatMulDequant carrying a **codebook operand** (vector-quantized weights: the
+// stored weight is an index into a per-model codebook). Its own discriminant
+// rather than an extra field appended to `D_MMDQ2`, so every archive predating
+// VQ still decodes byte-identically and no content address re-keys.
+const D_MMDQ3: u16 = 117;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -487,7 +492,15 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
             put_u8(out, c.act);
         }
         K::MatMulDequant(c) => {
-            if c.extended() {
+            if c.has_codebook() {
+                put_u16(out, D_MMDQ3);
+                put_matmul_dequant(out, c);
+                put_u8(out, c.bq_omajor as u8);
+                put_u8(out, c.act_quant);
+                put_u8(out, c.act);
+                put_buf(out, c.residual);
+                put_buf(out, c.codebook);
+            } else if c.extended() {
                 put_u16(out, D_MMDQ2);
                 put_matmul_dequant(out, c);
                 put_u8(out, c.bq_omajor as u8);

@@ -42,7 +42,6 @@ pub mod hologram_backend::cpu::lut
 pub fn hologram_backend::cpu::lut::is_lut_dtype(u8) -> bool
 pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Workspace>(&hologram_backend::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_backend::error::BackendError>
 pub mod hologram_backend::cpu::simd
-pub const hologram_backend::cpu::simd::E8_CODEBOOK: [i8; 2048]
 pub const hologram_backend::cpu::simd::EXP_F32_HI: f32
 pub const hologram_backend::cpu::simd::EXP_F32_LO: f32
 pub const hologram_backend::cpu::simd::I4_VALUES: [i8; 16]
@@ -613,6 +612,7 @@ pub hologram_backend::kernel_call::MatMulDequantCall::act_quant: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::bq_omajor: bool
 pub hologram_backend::kernel_call::MatMulDequantCall::channels: u32
+pub hologram_backend::kernel_call::MatMulDequantCall::codebook: hologram_backend::workspace::BufferRef
 pub hologram_backend::kernel_call::MatMulDequantCall::dtype: u8
 pub hologram_backend::kernel_call::MatMulDequantCall::inner: u32
 pub hologram_backend::kernel_call::MatMulDequantCall::k: u32
@@ -626,8 +626,10 @@ pub hologram_backend::kernel_call::MatMulDequantCall::scales: hologram_backend::
 pub hologram_backend::kernel_call::MatMulDequantCall::zero_point: i32
 pub hologram_backend::kernel_call::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
 impl hologram_backend::MatMulDequantCall
+pub const hologram_backend::MatMulDequantCall::NO_CODEBOOK: hologram_backend::workspace::BufferRef
 pub const hologram_backend::MatMulDequantCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
 pub const fn hologram_backend::MatMulDequantCall::extended(&self) -> bool
+pub const fn hologram_backend::MatMulDequantCall::has_codebook(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::has_residual(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
 impl core::clone::Clone for hologram_backend::MatMulDequantCall
@@ -945,6 +947,7 @@ pub hologram_backend::quant_tier::QuantTier::omajor_fusable: bool
 pub hologram_backend::quant_tier::QuantTier::scalar_decodable: bool
 impl hologram_backend::quant_tier::QuantTier
 pub const fn hologram_backend::quant_tier::QuantTier::divides_k(&self, usize) -> bool
+pub const fn hologram_backend::quant_tier::QuantTier::omajor_k_ok(&self, usize) -> bool
 pub fn hologram_backend::quant_tier::QuantTier::omajor_repack(&self, &[u8], usize, usize) -> core::option::Option<alloc::vec::Vec<u8>>
 pub const fn hologram_backend::quant_tier::QuantTier::rows(&self, usize) -> usize
 pub const fn hologram_backend::quant_tier::QuantTier::unit_bits(&self) -> u32
@@ -1581,6 +1584,7 @@ pub hologram_backend::MatMulDequantCall::act_quant: u8
 pub hologram_backend::MatMulDequantCall::bq: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::bq_omajor: bool
 pub hologram_backend::MatMulDequantCall::channels: u32
+pub hologram_backend::MatMulDequantCall::codebook: hologram_backend::workspace::BufferRef
 pub hologram_backend::MatMulDequantCall::dtype: u8
 pub hologram_backend::MatMulDequantCall::inner: u32
 pub hologram_backend::MatMulDequantCall::k: u32
@@ -1594,8 +1598,10 @@ pub hologram_backend::MatMulDequantCall::scales: hologram_backend::workspace::Bu
 pub hologram_backend::MatMulDequantCall::zero_point: i32
 pub hologram_backend::MatMulDequantCall::zero_points: hologram_backend::workspace::BufferRef
 impl hologram_backend::MatMulDequantCall
+pub const hologram_backend::MatMulDequantCall::NO_CODEBOOK: hologram_backend::workspace::BufferRef
 pub const hologram_backend::MatMulDequantCall::NO_RESIDUAL: hologram_backend::workspace::BufferRef
 pub const fn hologram_backend::MatMulDequantCall::extended(&self) -> bool
+pub const fn hologram_backend::MatMulDequantCall::has_codebook(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::has_residual(&self) -> bool
 pub const fn hologram_backend::MatMulDequantCall::per_channel(&self) -> bool
 impl core::clone::Clone for hologram_backend::MatMulDequantCall

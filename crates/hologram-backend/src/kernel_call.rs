@@ -131,11 +131,31 @@ pub struct MatMulDequantCall {
     /// participates in `buffers()` (and therefore in the κ-label
     /// composition); only its *presence* needs a signature byte.
     pub residual: BufferRef,
+    /// Codebook operand for vector-quantized tiers (`slot == u32::MAX` = none).
+    ///
+    /// A VQ tier's weights are *indices* into a codebook the model learned, so
+    /// the codebook is model data — not engine data — and travels as a constant
+    /// operand like `scales`. Its byte length determines the entry count
+    /// (`len / group_dim`), so a model may ship any codebook up to
+    /// `DTypeId::E8CB_MAX_ENTRIES` points; the kernel is agnostic to which.
+    ///
+    /// It participates in `buffers()` (hence in the κ-label composition), so two
+    /// models with different codebooks address differently and can coexist. Its
+    /// *presence* takes a distinct signature tag, leaving every codebook-free
+    /// encoding byte-identical.
+    pub codebook: BufferRef,
 }
 
 impl MatMulDequantCall {
     /// Sentinel for "no epilogue residual" (`residual.slot == u32::MAX`).
     pub const NO_RESIDUAL: BufferRef = BufferRef {
+        slot: u32::MAX,
+        offset: 0,
+        length: 0,
+    };
+
+    /// Sentinel for "no codebook operand" (`codebook.slot == u32::MAX`).
+    pub const NO_CODEBOOK: BufferRef = BufferRef {
         slot: u32::MAX,
         offset: 0,
         length: 0,
@@ -151,12 +171,22 @@ impl MatMulDequantCall {
         self.residual.slot != u32::MAX
     }
 
+    /// `true` when a codebook operand is bound (vector-quantized tiers).
+    #[inline]
+    pub const fn has_codebook(&self) -> bool {
+        self.codebook.slot != u32::MAX
+    }
+
     /// `true` when any extended field is non-default — selects the extended
     /// wire discriminant and signature tag; the all-default form stays
     /// byte-identical to the original encoding.
     #[inline]
     pub const fn extended(&self) -> bool {
-        self.bq_omajor || self.act_quant != 0 || self.act != 0 || self.has_residual()
+        self.bq_omajor
+            || self.act_quant != 0
+            || self.act != 0
+            || self.has_residual()
+            || self.has_codebook()
     }
 }
 
@@ -1143,7 +1173,16 @@ impl KernelCall {
                     .u8(c.dtype)
                     .u32(c.scale_bits)
                     .i32(c.zero_point);
-                if c.act_quant != 0 || c.act != 0 || c.has_residual() {
+                // A bound codebook takes its own tag: the operand set differs, so
+                // the computed value differs. Emitting an extra byte into tag
+                // 116 would have re-keyed every existing W8A8 decode call.
+                if c.has_codebook() {
+                    base.u8(c.act_quant)
+                        .u8(c.act)
+                        .u8(c.has_residual() as u8)
+                        .u8(1)
+                        .done(117)
+                } else if c.act_quant != 0 || c.act != 0 || c.has_residual() {
                     base.u8(c.act_quant)
                         .u8(c.act)
                         .u8(c.has_residual() as u8)
@@ -1237,6 +1276,13 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
             } else {
                 vec![c.a, c.bq]
             };
+            // The codebook is a read operand like `scales`: it folds into the
+            // κ-label, so a different codebook is a different address. Appended
+            // after the quant operands, before the epilogue residual, so a
+            // codebook-free call's operand order is unchanged.
+            if c.has_codebook() {
+                v.push(c.codebook);
+            }
             if c.has_residual() {
                 v.push(c.residual);
             }

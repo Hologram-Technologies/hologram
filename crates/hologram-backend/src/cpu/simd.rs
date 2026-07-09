@@ -21,6 +21,7 @@
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, Ordering};
+use hologram_types::DTypeId;
 
 /// SIMD path the runtime dispatcher selected. Cached after first
 /// detection. Values: 0 = unresolved, 1 = scalar, 2 = AVX2+FMA,
@@ -5177,39 +5178,26 @@ pub fn matmul_i4_pc_omajor(
     })
 }
 
-// ─── Output-major E8 lattice-codebook GEMV (decode, VQ tier — PROTOTYPE) ─
-// Vector-quantized weights: each 8-D subvector of a column's k-vector is a
-// single codebook index (an E8-lattice point, QuIP#-style). The prototype uses
-// an 8-bit index / 256-entry codebook = **1 bit/weight** (8× fewer streamed
-// bytes than i8), the codebook (256×8 i8 = 2 KB) staying L1-resident. Indices
+// ─── Output-major E8 lattice-codebook GEMV (decode, VQ tier) ───────────
+// Vector-quantized weights: each 8-element subvector of a column's k-vector is a
+// single codebook index (an E8-lattice point, QuIP#-style). An 8-bit index over
+// a 256-entry codebook is **1 bit per logical weight** — 8× fewer streamed bytes
+// than i8 — with the codebook (256×8 i8 = 2 KB) staying L1-resident. Indices
 // expand through the codebook LUT into i8 weights that flow into the SAME exact
-// integer W8A8 dot pipeline (cvtepi8→madd, per-column scale writeback), so the
+// integer W8A8 dot pipeline (widen → madd, per-column scale writeback), so the
 // result is bit-identical to the scalar reference on every target.
 //
-// Scope: this is a *kernel* prototype to measure the compute/bandwidth
-// tradeoff, not a production tier. The codebook *contents* (which E8 points)
-// are the accuracy question and are out of scope here — the kernel is agnostic
-// to them. x86 AVX2 + portable scalar only for now (aarch64/wasm fall to the
-// scalar inner); production would add NEON/SIMD128 twins. `k` must be a
-// multiple of 8 (whole E8 groups).
-
-/// Fixed prototype E8 codebook: 256 entries × 8 i8 lattice coordinates. A
-/// deterministic placeholder grid — the *kernel* speed is independent of the
-/// codebook contents, and a real deployment flows a per-model learned E8
-/// codebook (QuIP#-style) as a constant operand. The compiler's fused decode
-/// path (`fuse_const_e8cb_decode`) uses this table; conformance tests pass
-/// their own codebook to `matmul_e8cb_omajor` directly.
-pub const E8_CODEBOOK: [i8; 256 * 8] = build_e8_codebook();
-
-const fn build_e8_codebook() -> [i8; 256 * 8] {
-    let mut cb = [0i8; 256 * 8];
-    let mut i = 0;
-    while i < 256 * 8 {
-        cb[i] = (((i * 37 + 11) % 255) as i32 - 127) as i8;
-        i += 1;
-    }
-    cb
-}
+// The codebook is **the model's**, delivered as a constant operand — which E8
+// points a model quantized against is model data, not engine data, so two models
+// with different codebooks coexist and each addresses distinctly. The kernel is
+// agnostic to its contents; it requires only the full 256-entry index space, so
+// any `u8` index dereferences in range without a per-call bounds scan.
+//
+// `k` must be a multiple of 8 — the group dimension is the E8 lattice's own
+// dimension, not a tuning choice. Lanes: x86 AVX2, wasm SIMD128 (the deployed
+// target), and a portable scalar reference; aarch64 still takes the scalar
+// inner, which is a standing violation of the no-scalar-on-a-first-class-target
+// contract (a NEON twin is the fix).
 
 /// Reused i16 pre-widened codebook scratch (256×8). Widening the i8 codebook
 /// to i16 **once per call** lifts the per-column `cvtepi8_epi16` out of the hot
@@ -5455,17 +5443,25 @@ pub fn matmul_e8cb_omajor(
     if m == 0 || k == 0 || n == 0 {
         return;
     }
+    const G: usize = DTypeId::E8CB_GROUP_DIM as usize;
     assert!(
-        k.is_multiple_of(8),
-        "matmul_e8cb_omajor: k must be a multiple of 8 (whole E8 groups)"
+        k.is_multiple_of(G),
+        "matmul_e8cb_omajor: k must be a multiple of {G} (whole E8 groups)"
     );
     assert!(
         k <= I8_DOT_K_MAX,
         "matmul_e8cb_omajor: k {k} exceeds exact-i32 bound {I8_DOT_K_MAX}"
     );
+    // The codebook spans the full `u8` index space, so any stored index
+    // dereferences in range without a per-call bounds scan. The caller (the
+    // backend's dequant dispatch) enforces this on operands it did not produce.
+    assert!(
+        codebook.len() == DTypeId::E8CB_MAX_ENTRIES * G,
+        "matmul_e8cb_omajor: codebook must be {} entries × {G} coords",
+        DTypeId::E8CB_MAX_ENTRIES
+    );
     debug_assert_eq!(a.len(), m * k);
-    debug_assert_eq!(bq.len(), (k / 8) * n);
-    debug_assert_eq!(codebook.len(), 256 * 8);
+    debug_assert_eq!(bq.len(), (k / G) * n);
     debug_assert_eq!(scales.len(), n);
     debug_assert!(out.len() >= m * n);
 
