@@ -6092,7 +6092,7 @@ mod tests {
 
     #[test]
     fn matmul_e8cb_omajor_zero_row_is_zero() {
-        let codebook: Vec<i8> = (0..256 * 8).map(|i| (i % 200) as i8 - 100).collect();
+        let codebook: Vec<i8> = (0..256 * 8).map(|i| (i % 200 - 100) as i8).collect();
         let (m, k, n) = (2usize, 32usize, 20usize);
         let a = vec![0f32; m * k];
         let bq: Vec<u8> = (0..(k / 8) * n).map(|i| (i * 7) as u8).collect();
