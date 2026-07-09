@@ -385,14 +385,11 @@ fn gather<W: Workspace>(
     ws: &mut W,
 ) -> Result<(), BackendError> {
     use crate::cpu::dtype::*;
-    let elem = bytes_per_element(c.dtype);
-    if elem == 0 {
-        // Sub-byte (i4) gather is not defined — a gathered row must be a whole
-        // number of bytes.
-        return Err(BackendError::UnsupportedOp(
-            "gather: sub-byte element dtype not supported",
-        ));
-    }
+    // Sub-byte (i4/e8cb) and unrecognized dtypes have no element width — a
+    // gathered row must be a whole number of bytes.
+    let elem = bytes_per_element(c.dtype).ok_or(BackendError::UnsupportedOp(
+        "gather: sub-byte or unknown element dtype not supported",
+    ))?;
     let idx_w = match c.idx_dtype {
         DTYPE_I32 => 4usize,
         DTYPE_I64 => 8usize,
@@ -504,14 +501,13 @@ fn cast<W: Workspace>(c: &crate::kernel_call::CastCall, ws: &mut W) -> Result<()
     let n = c.element_count as usize;
     let src_is_float = is_float(c.src_dtype);
     let dst_is_float = is_float(c.dst_dtype);
-    // i4 (sub-byte) and unrecognized dtypes have no element width here.
-    let src_w = bytes_per_element(c.src_dtype);
-    let dst_w = bytes_per_element(c.dst_dtype);
-    if src_w == 0 || dst_w == 0 {
-        return Err(BackendError::UnsupportedOp(
+    // Sub-byte (i4/e8cb) and unrecognized dtypes have no element width here.
+    let width = |d: u8| {
+        bytes_per_element(d).ok_or(BackendError::UnsupportedOp(
             "cast: unsupported source/destination dtype (sub-byte not castable)",
-        ));
-    }
+        ))
+    };
+    let (src_w, dst_w) = (width(c.src_dtype)?, width(c.dst_dtype)?);
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;

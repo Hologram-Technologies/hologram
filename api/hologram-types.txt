@@ -382,6 +382,55 @@ pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKin
 impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
 pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
 pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+pub mod hologram_types::dtype_id
+#[repr(transparent)] pub struct hologram_types::dtype_id::DTypeId(pub u8)
+impl hologram_types::dtype_id::DTypeId
+pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]
+pub const hologram_types::dtype_id::DTypeId::BF16: Self
+pub const hologram_types::dtype_id::DTypeId::BOOL: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB_GROUP_DIM: u32
+pub const hologram_types::dtype_id::DTypeId::E8CB_MAX_ENTRIES: usize
+pub const hologram_types::dtype_id::DTypeId::F16: Self
+pub const hologram_types::dtype_id::DTypeId::F32: Self
+pub const hologram_types::dtype_id::DTypeId::F64: Self
+pub const hologram_types::dtype_id::DTypeId::I32: Self
+pub const hologram_types::dtype_id::DTypeId::I4: Self
+pub const hologram_types::dtype_id::DTypeId::I64: Self
+pub const hologram_types::dtype_id::DTypeId::I8: Self
+pub const hologram_types::dtype_id::DTypeId::U64: Self
+pub const hologram_types::dtype_id::DTypeId::U8: Self
+pub const fn hologram_types::dtype_id::DTypeId::bytes_per_element(self) -> core::option::Option<usize>
+pub const fn hologram_types::dtype_id::DTypeId::is_float(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_quantized_weight(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_sub_byte(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::known(self) -> core::option::Option<Self>
+pub const fn hologram_types::dtype_id::DTypeId::name(self) -> &'static str
+pub const fn hologram_types::dtype_id::DTypeId::raw(self) -> u8
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes(self, u32) -> core::option::Option<u32>
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes_u64(self, u64) -> core::option::Option<u64>
+impl core::clone::Clone for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::clone(&self) -> hologram_types::dtype_id::DTypeId
+impl core::cmp::Eq for hologram_types::dtype_id::DTypeId
+impl core::cmp::Ord for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::eq(&self, &hologram_types::dtype_id::DTypeId) -> bool
+impl core::cmp::PartialOrd for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::partial_cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype_id::DTypeId
+impl core::marker::StructuralPartialEq for hologram_types::dtype_id::DTypeId
+impl core::marker::Freeze for hologram_types::dtype_id::DTypeId
+impl core::marker::Send for hologram_types::dtype_id::DTypeId
+impl core::marker::Sync for hologram_types::dtype_id::DTypeId
+impl core::marker::Unpin for hologram_types::dtype_id::DTypeId
+impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId
 pub mod hologram_types::memory_tier
 #[repr(u8)] pub enum hologram_types::memory_tier::MemoryTier
 pub hologram_types::memory_tier::MemoryTier::CpuL1 = 0
@@ -809,6 +858,54 @@ impl core::marker::Unpin for hologram_types::dtype::DTypeI8
 impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI8
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI8
 impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI8
+#[repr(transparent)] pub struct hologram_types::DTypeId(pub u8)
+impl hologram_types::dtype_id::DTypeId
+pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]
+pub const hologram_types::dtype_id::DTypeId::BF16: Self
+pub const hologram_types::dtype_id::DTypeId::BOOL: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB_GROUP_DIM: u32
+pub const hologram_types::dtype_id::DTypeId::E8CB_MAX_ENTRIES: usize
+pub const hologram_types::dtype_id::DTypeId::F16: Self
+pub const hologram_types::dtype_id::DTypeId::F32: Self
+pub const hologram_types::dtype_id::DTypeId::F64: Self
+pub const hologram_types::dtype_id::DTypeId::I32: Self
+pub const hologram_types::dtype_id::DTypeId::I4: Self
+pub const hologram_types::dtype_id::DTypeId::I64: Self
+pub const hologram_types::dtype_id::DTypeId::I8: Self
+pub const hologram_types::dtype_id::DTypeId::U64: Self
+pub const hologram_types::dtype_id::DTypeId::U8: Self
+pub const fn hologram_types::dtype_id::DTypeId::bytes_per_element(self) -> core::option::Option<usize>
+pub const fn hologram_types::dtype_id::DTypeId::is_float(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_quantized_weight(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_sub_byte(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::known(self) -> core::option::Option<Self>
+pub const fn hologram_types::dtype_id::DTypeId::name(self) -> &'static str
+pub const fn hologram_types::dtype_id::DTypeId::raw(self) -> u8
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes(self, u32) -> core::option::Option<u32>
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes_u64(self, u64) -> core::option::Option<u64>
+impl core::clone::Clone for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::clone(&self) -> hologram_types::dtype_id::DTypeId
+impl core::cmp::Eq for hologram_types::dtype_id::DTypeId
+impl core::cmp::Ord for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::eq(&self, &hologram_types::dtype_id::DTypeId) -> bool
+impl core::cmp::PartialOrd for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::partial_cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype_id::DTypeId
+impl core::marker::StructuralPartialEq for hologram_types::dtype_id::DTypeId
+impl core::marker::Freeze for hologram_types::dtype_id::DTypeId
+impl core::marker::Send for hologram_types::dtype_id::DTypeId
+impl core::marker::Sync for hologram_types::dtype_id::DTypeId
+impl core::marker::Unpin for hologram_types::dtype_id::DTypeId
+impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId
 pub struct hologram_types::DTypeU64
 impl core::clone::Clone for hologram_types::dtype::DTypeU64
 pub fn hologram_types::dtype::DTypeU64::clone(&self) -> hologram_types::dtype::DTypeU64

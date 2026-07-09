@@ -1,61 +1,58 @@
-//! Dtype tag mapping (mirrors `hologram-types::DTypeKind` numeric encoding).
+//! Dtype tags, re-derived from the canonical [`DTypeId`] in `hologram-types`.
 //!
 //! The `dtype: u8` field on every KernelCall variant carries one of these
-//! constants. The CPU dispatcher uses them to select between byte-domain and
-//! IEEE-754 native kernels.
+//! constants; the CPU dispatcher uses them to select between byte-domain and
+//! IEEE-754 native kernels. There is exactly **one** definition of each tag
+//! (`DTypeId::*`) — these aliases exist so the kernels keep matching on plain
+//! `u8` (the wire representation) without a second table drifting out of sync.
+//!
+//! Both accessors are **total**: an unrecognized tag yields `None` rather than
+//! a plausible-looking default. The previous `_ => 1` byte width and `_ => 0`
+//! dequantized value turned an unknown dtype into a silently wrong answer
+//! instead of an error.
 
-pub const DTYPE_BOOL: u8 = 0;
-pub const DTYPE_U8: u8 = 1;
-pub const DTYPE_I8: u8 = 2;
-pub const DTYPE_U64: u8 = 3;
-pub const DTYPE_I32: u8 = 4;
-pub const DTYPE_I64: u8 = 5;
-pub const DTYPE_F16: u8 = 6;
-pub const DTYPE_BF16: u8 = 7;
-pub const DTYPE_F32: u8 = 8;
-pub const DTYPE_F64: u8 = 9;
-/// Packed signed 4-bit integer (two values per byte). Used by quantized
-/// weight payloads — see spec X-5 / ADR-054 Quantization addendum.
-/// `bytes_per_element` returns the integer 0; ceil-division by 2 is
-/// applied at the kernel boundary. The compiler treats the storage
-/// length explicitly to avoid the 0-bytes-per-element pitfall.
-pub const DTYPE_I4: u8 = 10;
+pub use hologram_types::DTypeId;
 
-/// E8 lattice-codebook vector-quantized weight (research VQ tier). Each 8-D
-/// weight subvector is stored as a single `u8` codebook index → **1 bit per
-/// logical weight** (8× fewer bytes than i8). Sub-byte like `DTYPE_I4`:
-/// `bytes_per_element` reports `0` and storage is `element_count / 8`. The
-/// codebook itself is a fixed backend table (`simd::E8_CODEBOOK`) for the
-/// prototype; a per-model learned codebook would flow as a constant operand.
-pub const DTYPE_E8CB: u8 = 11;
+pub const DTYPE_BOOL: u8 = DTypeId::BOOL.raw();
+pub const DTYPE_U8: u8 = DTypeId::U8.raw();
+pub const DTYPE_I8: u8 = DTypeId::I8.raw();
+pub const DTYPE_U64: u8 = DTypeId::U64.raw();
+pub const DTYPE_I32: u8 = DTypeId::I32.raw();
+pub const DTYPE_I64: u8 = DTypeId::I64.raw();
+pub const DTYPE_F16: u8 = DTypeId::F16.raw();
+pub const DTYPE_BF16: u8 = DTypeId::BF16.raw();
+pub const DTYPE_F32: u8 = DTypeId::F32.raw();
+pub const DTYPE_F64: u8 = DTypeId::F64.raw();
+/// Packed signed 4-bit integer (two values per byte, low nibble first).
+/// Sub-byte: [`bytes_per_element`] is `None`; storage is `ceil(n/2)`.
+pub const DTYPE_I4: u8 = DTypeId::I4.raw();
+/// E8 lattice-codebook vector-quantized weight: each 8-element subvector is one
+/// `u8` codebook index → 1 bit per logical weight. The group dimension is 8
+/// because E8 is 8-dimensional (definitional, not a tuning knob); the codebook
+/// *contents* and entry count are per-model data carried as a constant operand.
+/// Sub-byte: storage is `ceil(n/8)`.
+pub const DTYPE_E8CB: u8 = DTypeId::E8CB.raw();
 
-/// Bytes per element for a given dtype tag. Sub-byte dtypes
-/// (`DTYPE_I4`, `DTYPE_E8CB`) report `0`; callers compute storage size via
-/// [`storage_bytes`] (`ceil(n/2)` for I4, `n/8` for E8CB).
-pub const fn bytes_per_element(dtype: u8) -> usize {
-    match dtype {
-        DTYPE_BOOL | DTYPE_U8 | DTYPE_I8 => 1,
-        DTYPE_F16 | DTYPE_BF16 => 2,
-        DTYPE_I32 | DTYPE_F32 => 4,
-        DTYPE_U64 | DTYPE_I64 | DTYPE_F64 => 8,
-        DTYPE_I4 | DTYPE_E8CB => 0, // sub-byte; storage via storage_bytes
-        _ => 1,
-    }
+/// Bytes per element. `None` for the sub-byte tiers (`I4`, `E8CB`) — whose
+/// storage is not `n × width` — and for any unrecognized tag. Callers size
+/// buffers with [`storage_bytes`].
+#[must_use]
+pub const fn bytes_per_element(dtype: u8) -> Option<usize> {
+    DTypeId(dtype).bytes_per_element()
 }
 
-/// Storage bytes for an `n`-element buffer of the given dtype, accounting for
-/// sub-byte packing (I4 → ceil(n/2); E8CB → one index byte per 8-D group).
-pub const fn storage_bytes(dtype: u8, element_count: u32) -> u32 {
-    match dtype {
-        DTYPE_I4 => element_count.div_ceil(2),
-        DTYPE_E8CB => element_count.div_ceil(8),
-        _ => element_count * (bytes_per_element(dtype) as u32),
-    }
+/// Storage bytes for an `n`-element buffer, honouring sub-byte packing
+/// (`I4` → `ceil(n/2)`; `E8CB` → one index byte per 8-element group).
+/// `None` for an unrecognized tag.
+#[must_use]
+pub const fn storage_bytes(dtype: u8, element_count: u32) -> Option<u32> {
+    DTypeId(dtype).storage_bytes(element_count)
 }
 
 /// Whether a dtype is float-typed (selects native IEEE-754 kernel paths).
+#[must_use]
 pub const fn is_float(dtype: u8) -> bool {
-    matches!(dtype, DTYPE_F16 | DTYPE_BF16 | DTYPE_F32 | DTYPE_F64)
+    DTypeId(dtype).is_float()
 }
 
 #[inline]

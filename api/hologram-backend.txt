@@ -14,6 +14,7 @@ pub const hologram_backend::broadcast_op::MUL: u8
 pub const hologram_backend::broadcast_op::SUB: u8
 pub mod hologram_backend::cpu
 pub mod hologram_backend::cpu::dtype
+pub use hologram_backend::cpu::dtype::DTypeId
 pub const hologram_backend::cpu::dtype::DTYPE_BF16: u8
 pub const hologram_backend::cpu::dtype::DTYPE_BOOL: u8
 pub const hologram_backend::cpu::dtype::DTYPE_E8CB: u8
@@ -26,13 +27,13 @@ pub const hologram_backend::cpu::dtype::DTYPE_I64: u8
 pub const hologram_backend::cpu::dtype::DTYPE_I8: u8
 pub const hologram_backend::cpu::dtype::DTYPE_U64: u8
 pub const hologram_backend::cpu::dtype::DTYPE_U8: u8
-pub const fn hologram_backend::cpu::dtype::bytes_per_element(u8) -> usize
+pub const fn hologram_backend::cpu::dtype::bytes_per_element(u8) -> core::option::Option<usize>
 pub const fn hologram_backend::cpu::dtype::is_float(u8) -> bool
 pub fn hologram_backend::cpu::dtype::read_bf16(&[u8], usize) -> f32
 pub fn hologram_backend::cpu::dtype::read_f16(&[u8], usize) -> f32
 pub fn hologram_backend::cpu::dtype::read_f32(&[u8], usize) -> f32
 pub fn hologram_backend::cpu::dtype::read_float(&[u8], usize, u8) -> f32
-pub const fn hologram_backend::cpu::dtype::storage_bytes(u8, u32) -> u32
+pub const fn hologram_backend::cpu::dtype::storage_bytes(u8, u32) -> core::option::Option<u32>
 pub fn hologram_backend::cpu::dtype::write_bf16(&mut [u8], usize, f32)
 pub fn hologram_backend::cpu::dtype::write_f16(&mut [u8], usize, f32)
 pub fn hologram_backend::cpu::dtype::write_f32(&mut [u8], usize, f32)

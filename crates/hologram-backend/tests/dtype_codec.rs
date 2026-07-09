@@ -53,12 +53,32 @@ fn read_float_dispatches_on_dtype() {
 
 #[test]
 fn bytes_per_element_table() {
-    assert_eq!(bytes_per_element(DTYPE_BOOL), 1);
-    assert_eq!(bytes_per_element(DTYPE_U8), 1);
-    assert_eq!(bytes_per_element(DTYPE_F16), 2);
-    assert_eq!(bytes_per_element(DTYPE_BF16), 2);
-    assert_eq!(bytes_per_element(DTYPE_F32), 4);
-    assert_eq!(bytes_per_element(DTYPE_F64), 8);
+    assert_eq!(bytes_per_element(DTYPE_BOOL), Some(1));
+    assert_eq!(bytes_per_element(DTYPE_U8), Some(1));
+    assert_eq!(bytes_per_element(DTYPE_F16), Some(2));
+    assert_eq!(bytes_per_element(DTYPE_BF16), Some(2));
+    assert_eq!(bytes_per_element(DTYPE_F32), Some(4));
+    assert_eq!(bytes_per_element(DTYPE_F64), Some(8));
+}
+
+/// The accessors are **total**: a sub-byte tier has no per-element width, and
+/// an unrecognized tag is never silently assigned one. The previous `_ => 1`
+/// fallback turned an unknown dtype into a wrong buffer size rather than an
+/// error.
+#[test]
+fn sub_byte_and_unknown_dtypes_have_no_element_width() {
+    assert_eq!(bytes_per_element(DTYPE_I4), None);
+    assert_eq!(bytes_per_element(DTYPE_E8CB), None);
+    assert_eq!(bytes_per_element(200), None);
+
+    // Storage, however, is well-defined for the sub-byte tiers.
+    assert_eq!(storage_bytes(DTYPE_I4, 10), Some(5));
+    assert_eq!(storage_bytes(DTYPE_I4, 11), Some(6));
+    assert_eq!(storage_bytes(DTYPE_E8CB, 64), Some(8));
+    assert_eq!(storage_bytes(DTYPE_E8CB, 65), Some(9));
+    assert_eq!(storage_bytes(DTYPE_F32, 10), Some(40));
+    // ...and undefined for an unknown tag.
+    assert_eq!(storage_bytes(200, 10), None);
 }
 
 #[test]

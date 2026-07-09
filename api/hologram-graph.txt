@@ -1,4 +1,5 @@
 pub mod hologram_graph
+pub use hologram_graph::DTypeId
 pub use hologram_graph::OpKind
 pub mod hologram_graph::backward
 pub enum hologram_graph::backward::BackwardError
@@ -23,7 +24,7 @@ pub fn hologram_graph::backward::append_backward(&mut hologram_graph::graph::Gra
 pub mod hologram_graph::constant
 pub struct hologram_graph::constant::ConstantEntry
 pub hologram_graph::constant::ConstantEntry::bytes: alloc::vec::Vec<u8>
-pub hologram_graph::constant::ConstantEntry::dtype: hologram_graph::registry::DTypeId
+pub hologram_graph::constant::ConstantEntry::dtype: hologram_types::dtype_id::DTypeId
 pub hologram_graph::constant::ConstantEntry::shape: hologram_graph::registry::ShapeId
 impl core::clone::Clone for hologram_graph::constant::ConstantEntry
 pub fn hologram_graph::constant::ConstantEntry::clone(&self) -> hologram_graph::constant::ConstantEntry
@@ -303,7 +304,7 @@ impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::LrnAttrs
 pub struct hologram_graph::node::Node
 pub hologram_graph::node::Node::inputs: smallvec::SmallVec<[hologram_graph::node::InputSource; 4]>
 pub hologram_graph::node::Node::op: hologram_graph::node::GraphOp
-pub hologram_graph::node::Node::output_dtype: hologram_graph::registry::DTypeId
+pub hologram_graph::node::Node::output_dtype: hologram_types::dtype_id::DTypeId
 pub hologram_graph::node::Node::output_shape: hologram_graph::registry::ShapeId
 impl core::clone::Clone for hologram_graph::node::Node
 pub fn hologram_graph::node::Node::clone(&self) -> hologram_graph::node::Node
@@ -410,29 +411,7 @@ impl core::marker::UnsafeUnpin for hologram_graph::node::ReduceAttrs
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ReduceAttrs
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ReduceAttrs
 pub mod hologram_graph::registry
-pub struct hologram_graph::registry::DTypeId(pub u8)
-impl core::clone::Clone for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::clone(&self) -> hologram_graph::registry::DTypeId
-impl core::cmp::Eq for hologram_graph::registry::DTypeId
-impl core::cmp::Ord for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::cmp(&self, &hologram_graph::registry::DTypeId) -> core::cmp::Ordering
-impl core::cmp::PartialEq for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::eq(&self, &hologram_graph::registry::DTypeId) -> bool
-impl core::cmp::PartialOrd for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::partial_cmp(&self, &hologram_graph::registry::DTypeId) -> core::option::Option<core::cmp::Ordering>
-impl core::fmt::Debug for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for hologram_graph::registry::DTypeId
-impl core::marker::StructuralPartialEq for hologram_graph::registry::DTypeId
-impl core::marker::Freeze for hologram_graph::registry::DTypeId
-impl core::marker::Send for hologram_graph::registry::DTypeId
-impl core::marker::Sync for hologram_graph::registry::DTypeId
-impl core::marker::Unpin for hologram_graph::registry::DTypeId
-impl core::marker::UnsafeUnpin for hologram_graph::registry::DTypeId
-impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::registry::DTypeId
-impl core::panic::unwind_safe::UnwindSafe for hologram_graph::registry::DTypeId
+pub use hologram_graph::registry::DTypeId
 pub struct hologram_graph::registry::ShapeDescriptor
 pub hologram_graph::registry::ShapeDescriptor::dims: [u64; 8]
 pub hologram_graph::registry::ShapeDescriptor::dims_overflow: core::option::Option<alloc::boxed::Box<[u64]>>
@@ -674,29 +653,6 @@ impl core::marker::Unpin for hologram_graph::node::ConvAttrs
 impl core::marker::UnsafeUnpin for hologram_graph::node::ConvAttrs
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ConvAttrs
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ConvAttrs
-pub struct hologram_graph::DTypeId(pub u8)
-impl core::clone::Clone for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::clone(&self) -> hologram_graph::registry::DTypeId
-impl core::cmp::Eq for hologram_graph::registry::DTypeId
-impl core::cmp::Ord for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::cmp(&self, &hologram_graph::registry::DTypeId) -> core::cmp::Ordering
-impl core::cmp::PartialEq for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::eq(&self, &hologram_graph::registry::DTypeId) -> bool
-impl core::cmp::PartialOrd for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::partial_cmp(&self, &hologram_graph::registry::DTypeId) -> core::option::Option<core::cmp::Ordering>
-impl core::fmt::Debug for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for hologram_graph::registry::DTypeId
-pub fn hologram_graph::registry::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::Copy for hologram_graph::registry::DTypeId
-impl core::marker::StructuralPartialEq for hologram_graph::registry::DTypeId
-impl core::marker::Freeze for hologram_graph::registry::DTypeId
-impl core::marker::Send for hologram_graph::registry::DTypeId
-impl core::marker::Sync for hologram_graph::registry::DTypeId
-impl core::marker::Unpin for hologram_graph::registry::DTypeId
-impl core::marker::UnsafeUnpin for hologram_graph::registry::DTypeId
-impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::registry::DTypeId
-impl core::panic::unwind_safe::UnwindSafe for hologram_graph::registry::DTypeId
 pub struct hologram_graph::GatherAttrs
 pub hologram_graph::GatherAttrs::axis: i32
 impl core::clone::Clone for hologram_graph::node::GatherAttrs
@@ -824,7 +780,7 @@ impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::LrnAttrs
 pub struct hologram_graph::Node
 pub hologram_graph::Node::inputs: smallvec::SmallVec<[hologram_graph::node::InputSource; 4]>
 pub hologram_graph::Node::op: hologram_graph::node::GraphOp
-pub hologram_graph::Node::output_dtype: hologram_graph::registry::DTypeId
+pub hologram_graph::Node::output_dtype: hologram_types::dtype_id::DTypeId
 pub hologram_graph::Node::output_shape: hologram_graph::registry::ShapeId
 impl core::clone::Clone for hologram_graph::node::Node
 pub fn hologram_graph::node::Node::clone(&self) -> hologram_graph::node::Node
