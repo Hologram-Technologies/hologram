@@ -344,125 +344,130 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
     // not covered by the kernel unit test — against a scalar restatement of the
     // spec (i8 activation quant → index→codebook LUT → exact i32 dot).
     use hologram_backend::cpu::simd::E8_CODEBOOK;
-    let (k, n) = (16usize, 3usize); // 2 E8 groups per column, n<4 tail
-    let g = k / 8;
-    let mut graph = Graph::new();
-    let a_sh = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank2(1, k as u64));
-    let w_sh = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
-    let v_sh = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank1(n as u64));
-    let o_sh = graph
-        .shape_registry_mut()
-        .intern(ShapeDescriptor::rank2(1, n as u64));
+    // Spread of (k, n): n<4 scalar tail, the exact 4-col body, a ragged tail,
+    // and many groups/columns — exercising the compiler's `[k/8,n] → [n,k/8]`
+    // index transpose end-to-end across shapes.
+    for &(k, n) in &[(16usize, 3usize), (64, 8), (128, 17), (256, 32)] {
+        let g = k / 8;
+        let mut graph = Graph::new();
+        let a_sh = graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(1, k as u64));
+        let w_sh = graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+        let v_sh = graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank1(n as u64));
+        let o_sh = graph
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank2(1, n as u64));
 
-    let a_in = graph.add_node(Node {
-        op: GraphOp::Input,
-        inputs: SmallVec::new(),
-        output_dtype: DTypeId(DTYPE_F32),
-        output_shape: a_sh,
-    });
-    graph.add_input(a_in);
+        let a_in = graph.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: a_sh,
+        });
+        graph.add_input(a_in);
 
-    // Index weight: [k/8, n] row-major (element gk*n + j).
-    let idx: Vec<u8> = (0..g * n).map(|i| ((i * 53 + 7) % 256) as u8).collect();
-    let scales: Vec<f32> = (0..n).map(|j| 0.03 + j as f32 * 0.01).collect();
-    let wc = graph.constants_mut().insert(ConstantEntry {
-        bytes: idx.clone(),
-        dtype: DTypeId(DTYPE_E8CB),
-        shape: w_sh,
-    });
-    let sc = graph.constants_mut().insert(ConstantEntry {
-        bytes: scales.iter().flat_map(|v| v.to_le_bytes()).collect(),
-        dtype: DTypeId(DTYPE_F32),
-        shape: v_sh,
-    });
-    let zc = graph.constants_mut().insert(ConstantEntry {
-        bytes: vec![0u8; n * 4],
-        dtype: DTypeId(DTYPE_I8),
-        shape: v_sh,
-    });
-    let dq = graph.add_node(Node {
-        op: GraphOp::Op(OpKind::Dequantize),
-        inputs: SmallVec::from_iter([
-            InputSource::Constant(wc),
-            InputSource::Constant(sc),
-            InputSource::Constant(zc),
-        ]),
-        output_dtype: DTypeId(DTYPE_F32),
-        output_shape: w_sh,
-    });
-    graph.set_quant_attrs(
-        dq,
-        QuantAttrs {
-            quant_dtype: DTYPE_E8CB,
-            scale_bits: 0,
-            zero_point: 0,
-            axis: 1,
-        },
-    );
-    let mm = graph.add_node(Node {
-        op: GraphOp::Op(OpKind::MatMul),
-        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
-        output_dtype: DTypeId(DTYPE_F32),
-        output_shape: o_sh,
-    });
-    let out = graph.add_node(Node {
-        op: GraphOp::Output,
-        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
-        output_dtype: DTypeId(DTYPE_F32),
-        output_shape: o_sh,
-    });
-    graph.add_output(out);
-
-    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
-    let backend: CpuBackend<BufferArena> = CpuBackend::new();
-    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
-    assert_eq!(
-        session.dequant_fused_count(),
-        1,
-        "e8cb dequant→matmul must fuse to the omajor MatMulDequant"
-    );
-
-    let a: Vec<f32> = (0..k).map(|i| (i as f32 - 7.5) * 0.4).collect();
-    let a_bytes: Vec<u8> = a.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let result = le_to_f32(&session.execute(&[InputBuffer { bytes: &a_bytes }]).unwrap()[0].bytes);
-
-    // Scalar reference: symmetric i8 activation quant (round half away), then
-    // exact i32 dot of q against the codebook-looked-up weights.
-    let amax = a.iter().fold(0f32, |m, &v| m.max(v.abs()));
-    let inv = 127.0 / amax;
-    let scale_a = amax / 127.0;
-    let q: Vec<i32> = a
-        .iter()
-        .map(|&v| {
-            let t = v * inv;
-            let r = if t >= 0.0 {
-                (t + 0.5) as i32
-            } else {
-                (t - 0.5) as i32
-            };
-            r.clamp(-127, 127)
-        })
-        .collect();
-    for j in 0..n {
-        let mut s = 0i32;
-        for gk in 0..g {
-            let e = idx[gk * n + j] as usize * 8;
-            for t in 0..8 {
-                s += q[gk * 8 + t] * E8_CODEBOOK[e + t] as i32;
-            }
-        }
-        let want = s as f32 * (scale_a * scales[j]);
-        assert!(
-            (result[j] - want).abs() < 1e-4,
-            "col {j}: got {} want {want}",
-            result[j]
+        // Index weight: [k/8, n] row-major (element gk*n + j).
+        let idx: Vec<u8> = (0..g * n).map(|i| ((i * 53 + 7) % 256) as u8).collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.03 + j as f32 * 0.01).collect();
+        let wc = graph.constants_mut().insert(ConstantEntry {
+            bytes: idx.clone(),
+            dtype: DTypeId(DTYPE_E8CB),
+            shape: w_sh,
+        });
+        let sc = graph.constants_mut().insert(ConstantEntry {
+            bytes: scales.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            dtype: DTypeId(DTYPE_F32),
+            shape: v_sh,
+        });
+        let zc = graph.constants_mut().insert(ConstantEntry {
+            bytes: vec![0u8; n * 4],
+            dtype: DTypeId(DTYPE_I8),
+            shape: v_sh,
+        });
+        let dq = graph.add_node(Node {
+            op: GraphOp::Op(OpKind::Dequantize),
+            inputs: SmallVec::from_iter([
+                InputSource::Constant(wc),
+                InputSource::Constant(sc),
+                InputSource::Constant(zc),
+            ]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: w_sh,
+        });
+        graph.set_quant_attrs(
+            dq,
+            QuantAttrs {
+                quant_dtype: DTYPE_E8CB,
+                scale_bits: 0,
+                zero_point: 0,
+                axis: 1,
+            },
         );
+        let mm = graph.add_node(Node {
+            op: GraphOp::Op(OpKind::MatMul),
+            inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: o_sh,
+        });
+        let out = graph.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: o_sh,
+        });
+        graph.add_output(out);
+
+        let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+        let backend: CpuBackend<BufferArena> = CpuBackend::new();
+        let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+        assert_eq!(
+            session.dequant_fused_count(),
+            1,
+            "e8cb dequant→matmul must fuse to the omajor MatMulDequant"
+        );
+
+        let a: Vec<f32> = (0..k).map(|i| (i as f32 - 7.5) * 0.4).collect();
+        let a_bytes: Vec<u8> = a.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let result =
+            le_to_f32(&session.execute(&[InputBuffer { bytes: &a_bytes }]).unwrap()[0].bytes);
+
+        // Scalar reference: symmetric i8 activation quant (round half away), then
+        // exact i32 dot of q against the codebook-looked-up weights.
+        let amax = a.iter().fold(0f32, |m, &v| m.max(v.abs()));
+        let inv = 127.0 / amax;
+        let scale_a = amax / 127.0;
+        let q: Vec<i32> = a
+            .iter()
+            .map(|&v| {
+                let t = v * inv;
+                let r = if t >= 0.0 {
+                    (t + 0.5) as i32
+                } else {
+                    (t - 0.5) as i32
+                };
+                r.clamp(-127, 127)
+            })
+            .collect();
+        for j in 0..n {
+            let mut s = 0i32;
+            for gk in 0..g {
+                let e = idx[gk * n + j] as usize * 8;
+                for t in 0..8 {
+                    s += q[gk * 8 + t] * E8_CODEBOOK[e + t] as i32;
+                }
+            }
+            let want = s as f32 * (scale_a * scales[j]);
+            assert!(
+                (result[j] - want).abs() < 1e-4,
+                "k={k} n={n} col {j}: got {} want {want}",
+                result[j]
+            );
+        }
     }
 }
 

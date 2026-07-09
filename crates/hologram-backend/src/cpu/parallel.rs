@@ -32,6 +32,17 @@ type Task = Box<dyn FnOnce() + Send>;
 /// a spinning worker yields its SMT sibling's pipeline rather than fighting it.
 const WORKER_SPIN: u32 = 1 << 14;
 
+/// Decrements the run's completion counter on scope exit — including an
+/// unwinding `t()`. Without it a panicking task would never decrement and the
+/// caller's barrier would spin forever; with it the barrier always completes
+/// (a panicking worker still dies, but the pool cannot deadlock).
+struct Countdown<'a>(&'a AtomicUsize);
+impl Drop for Countdown<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
+}
+
 struct Shared {
     queue: Mutex<VecDeque<Task>>,
     cv: Condvar,
@@ -105,8 +116,10 @@ impl Pool {
             for t in tasks {
                 let rem = Arc::clone(&remaining);
                 q.push_back(Box::new(move || {
+                    // Guard first: the decrement runs on normal return *and* on
+                    // an unwinding `t()`, so the barrier can never deadlock.
+                    let _done = Countdown(&rem);
                     t();
-                    rem.fetch_sub(1, Ordering::Release);
                 }));
             }
             // Publish the queue length under the lock, before any worker that
@@ -334,6 +347,80 @@ mod pool_diag {
             wall < serial.mul_f64(0.6),
             "pool ran {w} tasks in {wall:?}; serial≈{serial:?} — not concurrent \
              (the calling thread is holding the queue lock across tasks)"
+        );
+    }
+
+    /// Barrier correctness (not timing): after `run` returns, **every** task
+    /// has run **exactly once** and **every** disjoint write is visible to the
+    /// caller. A dropped/duplicated task fails the run-count; a missing
+    /// happens-before (the atomic release-sequence barrier) fails the readback.
+    /// Swept over task counts that hit the inline path (0/1), exactly-`width`,
+    /// `width`-relative fan-out, and a large fan-out, across many rounds to
+    /// stress the spin/park/notify interleavings the rewrite introduced.
+    #[test]
+    fn run_executes_every_task_once_and_publishes_writes() {
+        let p = pool();
+        let w = p.width().max(1);
+        let counts = [0usize, 1, 2, w, w + 1, 4 * w + 3, 97];
+        for round in 0..300u32 {
+            for &count in &counts {
+                let mut out = vec![u32::MAX; count.max(1)];
+                let ran = Arc::new(AtomicUsize::new(0));
+                {
+                    let op = SendMut(out.as_mut_ptr());
+                    let tasks: Vec<Task> = (0..count)
+                        .map(|i| {
+                            let ran = Arc::clone(&ran);
+                            Box::new(move || {
+                                let op = op;
+                                // Disjoint slot i; the value encodes (round, i)
+                                // so a lost or duplicated task is detectable.
+                                let v = round.wrapping_mul(1_000).wrapping_add(i as u32);
+                                // SAFETY: each task owns a distinct slot i.
+                                unsafe {
+                                    *op.0.add(i) = v;
+                                }
+                                ran.fetch_add(1, Ordering::Relaxed);
+                            }) as Task
+                        })
+                        .collect();
+                    p.run(tasks);
+                }
+                assert_eq!(
+                    ran.load(Ordering::Relaxed),
+                    count,
+                    "round {round} count {count}: task ran the wrong number of times"
+                );
+                for (i, &v) in out.iter().enumerate().take(count) {
+                    assert_eq!(
+                        v,
+                        round.wrapping_mul(1_000).wrapping_add(i as u32),
+                        "round {round} count {count}: slot {i} write not published after run()"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The completion counter must reach zero even when a task unwinds — the
+    /// `Countdown` guard's decrement-on-drop is what keeps the caller's barrier
+    /// from spinning forever. Tested in isolation (a worker-thread panic in the
+    /// process-wide pool would kill that worker and perturb other tests).
+    #[test]
+    fn countdown_decrements_on_normal_exit_and_unwind() {
+        let c = AtomicUsize::new(2);
+        {
+            let _g = Countdown(&c);
+        }
+        assert_eq!(c.load(Ordering::Relaxed), 1, "guard must decrement on drop");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = Countdown(&c);
+            panic!("unwind past the guard");
+        }));
+        assert_eq!(
+            c.load(Ordering::Relaxed),
+            0,
+            "guard must decrement even when the task unwinds"
         );
     }
 }

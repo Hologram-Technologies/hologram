@@ -6007,6 +6007,115 @@ mod tests {
         }
     }
 
+    /// Independent scalar restatement of the E8-codebook GEMV spec, the
+    /// bit-exact target for the kernel (any arch / `--features parallel`).
+    fn e8cb_ref(
+        a: &[f32],
+        bq: &[u8],
+        codebook: &[i8],
+        scales: &[f32],
+        m: usize,
+        k: usize,
+        n: usize,
+    ) -> Vec<f32> {
+        let g = k / 8;
+        let mut out = vec![0f32; m * n];
+        for i in 0..m {
+            let row = &a[i * k..(i + 1) * k];
+            let amax = row.iter().fold(0f32, |mx, &v| mx.max(v.abs()));
+            if amax == 0.0 {
+                continue; // zero row → zero output
+            }
+            let inv = 127.0 / amax;
+            let scale_a = amax / 127.0;
+            let q: Vec<i32> = row
+                .iter()
+                .map(|&v| {
+                    let t = v * inv;
+                    let r = if t >= 0.0 {
+                        (t + 0.5) as i32
+                    } else {
+                        (t - 0.5) as i32
+                    };
+                    r.clamp(-127, 127)
+                })
+                .collect();
+            for j in 0..n {
+                let mut s = 0i32;
+                for gg in 0..g {
+                    let idx = bq[j * g + gg] as usize;
+                    for t in 0..8 {
+                        s += q[gg * 8 + t] * codebook[idx * 8 + t] as i32;
+                    }
+                }
+                out[i * n + j] = (s as f32) * (scale_a * scales[j]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn matmul_e8cb_omajor_random_sweep() {
+        // Deterministic xorshift64 — any failure reproduces from the seed.
+        let mut s = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let codebook: Vec<i8> = (0..256 * 8).map(|_| next() as i8).collect();
+        for _ in 0..96 {
+            let m = 1 + (next() % 4) as usize; // 1..=4 (decode + small prefill)
+            let g = 1 + (next() % 48) as usize; // 1..=48 groups
+            let k = g * 8;
+            let n = 1 + (next() % 96) as usize; // spans the 8-col body + <8 tail
+            let a: Vec<f32> = (0..m * k)
+                .map(|_| (next() % 4001) as f32 * 5e-4 - 1.0)
+                .collect();
+            let bq: Vec<u8> = (0..g * n).map(|_| next() as u8).collect();
+            let scales: Vec<f32> = (0..n)
+                .map(|_| 1e-3 + (next() % 1000) as f32 * 1e-5)
+                .collect();
+            let mut got = vec![0f32; m * n];
+            matmul_e8cb_omajor(&a, &bq, &codebook, &scales, &mut got, m, k, n);
+            let want = e8cb_ref(&a, &bq, &codebook, &scales, m, k, n);
+            for (idx, (&gv, &wv)) in got.iter().zip(want.iter()).enumerate() {
+                assert_eq!(
+                    gv.to_bits(),
+                    wv.to_bits(),
+                    "m={m} k={k} n={n} lane {idx}: {gv} vs {wv}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn matmul_e8cb_omajor_zero_row_is_zero() {
+        let codebook: Vec<i8> = (0..256 * 8).map(|i| (i % 200) as i8 - 100).collect();
+        let (m, k, n) = (2usize, 32usize, 20usize);
+        let a = vec![0f32; m * k];
+        let bq: Vec<u8> = (0..(k / 8) * n).map(|i| (i * 7) as u8).collect();
+        let scales = vec![0.5f32; n];
+        let mut out = vec![f32::NAN; m * n];
+        matmul_e8cb_omajor(&a, &bq, &codebook, &scales, &mut out, m, k, n);
+        for v in out {
+            assert_eq!(v.to_bits(), 0f32.to_bits());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple of 8")]
+    fn matmul_e8cb_omajor_rejects_k_not_multiple_of_8() {
+        let codebook = vec![0i8; 256 * 8];
+        let (m, k, n) = (1usize, 12usize, 4usize); // k=12: not a whole E8 group
+        let a = vec![1.0f32; m * k];
+        let bq = vec![0u8; n];
+        let scales = vec![1.0f32; n];
+        let mut out = vec![0f32; m * n];
+        matmul_e8cb_omajor(&a, &bq, &codebook, &scales, &mut out, m, k, n);
+    }
+
     #[test]
     fn add_matches_scalar() {
         let a: Vec<f32> = (0..32).map(|i| i as f32).collect();
