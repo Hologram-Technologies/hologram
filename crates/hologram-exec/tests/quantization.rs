@@ -429,6 +429,12 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
                 scale_bits: 0,
                 zero_point: 0,
                 axis: 1,
+                // E8CB's public entry quantizes the activation internally — it is
+                // W1A8, not W1A32 — so a graph using it opts into the activation
+                // rounding like any other W8A8 weight. `weight_layout` stays
+                // ROW_MAJOR: these are constant `[k/8, n]` index bytes and the
+                // compiler transposes them itself when it fuses.
+                act_quant: hologram_types::act_quant::W8A8_TOKEN_SYM,
                 ..Default::default()
             },
         );
@@ -805,4 +811,90 @@ fn w8a8_is_opt_in_undeclared_weights_keep_w8a32_semantics() {
             got[j]
         );
     }
+}
+
+/// A load-bound weight declaring `OUTPUT_MAJOR` promises its bytes arrive
+/// `[n,k]`. If no output-major kernel can serve the call — here because the
+/// scales are per-tensor, so there is no per-channel `scales[n]` to index — then
+/// **there is no correct fallback**: the W8A32 dequant loop and the standalone
+/// Dequantize kernel both read `[k,n]`, and taking either would transpose the
+/// weight by accident and return a plausible, wrong answer.
+///
+/// The loader must refuse. This is the "no silent-wrong" property: a declaration
+/// the substrate cannot honour is an error, not a quiet downgrade.
+#[test]
+fn declared_output_major_weight_that_no_kernel_can_serve_fails_loud() {
+    use hologram_exec::ExecError;
+    use hologram_types::{act_quant, weight_layout};
+
+    let (k, n) = (16usize, 4usize);
+    let mut graph = Graph::new();
+    let a_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, k as u64));
+    let w_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let o_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, n as u64));
+
+    let a_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: a_sh,
+    });
+    graph.add_input(a_in);
+    let wq = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: w_sh,
+    });
+    graph.add_input(wq);
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([InputSource::Node(wq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: w_sh,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0.05f32.to_bits(),
+            zero_point: 0,
+            axis: -1, // per-tensor: the output-major GEMV needs per-channel
+            weight_layout: weight_layout::OUTPUT_MAJOR,
+            act_quant: act_quant::W8A8_TOKEN_SYM,
+        },
+    );
+    let mm = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    graph.add_output(out);
+
+    // The weightless compile itself is fine: the declaration describes bytes
+    // that do not exist yet, and the compiler transposes nothing.
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+
+    // The loader is where the promise must be checked against the kernels.
+    let err =
+        InferenceSession::<CpuBackend<BufferArena>>::load(&compiled.archive, CpuBackend::new())
+            .err()
+            .expect("declared OUTPUT_MAJOR with per-tensor scales must not load");
+    assert!(
+        matches!(err, ExecError::UnsatisfiableWeightLayout),
+        "expected UnsatisfiableWeightLayout, got {err:?}"
+    );
 }

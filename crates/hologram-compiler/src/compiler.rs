@@ -88,6 +88,13 @@ impl Compiler {
     }
 
     pub fn compile(mut self) -> Result<CompilationOutput, CompileError> {
+        // A weight slot's `weight_layout` describes the layout of the bytes as
+        // they are *bound*. A constant's bytes are already in the graph, in
+        // `[k,n]`; nothing will transpose them behind the graph's back. Reject
+        // the false declaration here rather than let the loader read `[k,n]`
+        // bytes as `[n,k]`.
+        validate_weight_layout_declarations(&self.graph)?;
+
         // Path B: desugar composite ops (e.g. Clip → Min∘Max) into their
         // primitive-op pipelines before scheduling, so the rest of the pipeline
         // sees only primitives + irreducible structured kernels.
@@ -1432,6 +1439,41 @@ fn gather_plan(
 /// `[k,n]` interpretation can never leak. Everything else falls through to
 /// the load-time fusion (W8A32 over `[k,n]`), which no-ops on already-fused
 /// archives.
+/// A weight slot's `weight_layout` is a statement about the bytes as they will
+/// be **bound**, not a request. `OUTPUT_MAJOR` means "when this weight arrives
+/// it will already be `[n,k]`" — a promise only the binder of a *load-time*
+/// weight can make. A constant's bytes are in the graph, in `[k,n]`.
+///
+/// The compiler may still transpose a constant itself (see
+/// `fuse_const_i8_decode`, gated on `act_quant`); that is an internal
+/// optimization over bytes it owns, and it marks the emitted call `bq_omajor`.
+/// But if a *graph* claims `OUTPUT_MAJOR` for a constant, the claim is false,
+/// and downstream the loader would fire the output-major kernel over `[k,n]`
+/// bytes and return a plausible, wrong answer. Reject it here.
+fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError> {
+    use hologram_graph::{GraphOp, InputSource, NodeId, OpKind};
+    for (idx, node) in graph.nodes().iter().enumerate() {
+        if !matches!(node.op, GraphOp::Op(OpKind::Dequantize)) {
+            continue;
+        }
+        let Some(attrs) = graph.quant_attrs(NodeId(idx as u32)) else {
+            continue;
+        };
+        if attrs.weight_layout == hologram_types::weight_layout::ROW_MAJOR {
+            continue;
+        }
+        if matches!(node.inputs.first(), Some(InputSource::Constant(_))) {
+            return Err(CompileError::GraphValidation(
+                "Dequantize over a graph constant declared weight_layout = OUTPUT_MAJOR; \
+                 a constant's bytes are [k,n] and the declaration describes bound bytes. \
+                 Set act_quant = W8A8_TOKEN_SYM to opt the constant into the fused \
+                 output-major decode path — the compiler transposes it for you.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn fuse_const_i8_decode(
     graph: &Graph,
     calls: Vec<KernelCall>,
@@ -1510,6 +1552,23 @@ fn fuse_const_i8_decode(
         let Some(tier) = quant_tier(DTypeId(dq.quant_dtype)) else {
             continue;
         };
+        // W8A8 quantizes the activation, so it **changes the computed value**.
+        // It is opt-in per weight slot, and a compile-time-constant weight is no
+        // different in that respect from one bound at load time: the graph must
+        // say so. Without this the compiler would silently re-key and re-value
+        // every constant symmetric per-channel weight used at a decode shape —
+        // an invisible numerics upgrade to an existing path, which is precisely
+        // what a byte-exact consumer cannot absorb.
+        //
+        // Only `act_quant` is consulted. `weight_layout` describes how the
+        // weight's bytes *arrive*, and a constant's bytes are in the graph, in
+        // `[k,n]`. The compiler owns them, so it transposes them itself below
+        // and sets `bq_omajor` on the call it emits. A constant that claimed
+        // `OUTPUT_MAJOR` would be asserting something false about its own bytes;
+        // `validate_weight_layout_declarations` rejects that at compile time.
+        if dq.act_quant != hologram_types::act_quant::W8A8_TOKEN_SYM {
+            continue;
+        }
         if !tier.omajor_fusable || !dq.per_channel() || dq.inner != 1 {
             continue;
         }

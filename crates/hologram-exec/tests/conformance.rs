@@ -15,6 +15,7 @@ use hologram_graph::{
     registry::{DTypeId, ShapeDescriptor},
     Graph, GraphOp, InputSource, OpKind,
 };
+use hologram_types::{act_quant, weight_layout};
 use prism::vocabulary::WittLevel;
 use smallvec::SmallVec;
 
@@ -1665,6 +1666,10 @@ fn ref_w8a8(a: &[f32], wq: &[i8], scales: &[f32], m: usize, k: usize, n: usize) 
 
 /// Build the `input a [m,k] · dequant(const Wq [k,n] i8, per-channel axis 1)`
 /// graph. `zp_value` lets the negative test break the symmetric-zps condition.
+/// `act_w8a8` opts the constant weight into the W8A8 decode numerics;
+/// `layout_omajor` makes the (false, for a constant) claim that its bytes
+/// arrive `[n,k]` — used only to witness that the compiler rejects it.
+#[allow(clippy::too_many_arguments)]
 fn const_i8_matmul_graph(
     m: u64,
     k: u64,
@@ -1672,6 +1677,8 @@ fn const_i8_matmul_graph(
     wq: &[i8],
     scales: &[f32],
     zp_value: i32,
+    act_w8a8: bool,
+    layout_omajor: bool,
 ) -> Graph {
     use hologram_graph::QuantAttrs;
     const DTYPE_I8: u8 = 2;
@@ -1719,7 +1726,21 @@ fn const_i8_matmul_graph(
             scale_bits: 0,
             zero_point: 0,
             axis: 1, // per output column: channels = n, inner = 1
-            ..Default::default()
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one.
+            act_quant: if act_w8a8 {
+                act_quant::W8A8_TOKEN_SYM
+            } else {
+                act_quant::W8A32
+            },
+            // A constant's bytes are `[k,n]`; the compiler transposes them
+            // itself when it fuses. Claiming OUTPUT_MAJOR is a false statement
+            // about the graph's own bytes, and a compile error.
+            weight_layout: if layout_omajor {
+                weight_layout::OUTPUT_MAJOR
+            } else {
+                weight_layout::ROW_MAJOR
+            },
         },
     );
     let mm = g.add_node(Node {
@@ -1748,7 +1769,7 @@ fn wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms() {
     let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
     let scales: Vec<f32> = (0..n).map(|j| 0.005 + (j as f32) * 0.0007).collect();
 
-    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0);
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0, true, false);
     let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
 
     // (1) Fusion fired at compile time: one omajor W8A8 MatMulDequant in the
@@ -1802,6 +1823,67 @@ fn wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms() {
     assert!(got.iter().any(|&v| v.abs() > 1e-6), "output is all-zero");
 }
 
+/// W8A8 is **never implicit**. A constant symmetric per-channel i8 weight at a
+/// decode shape — the exact shape `fuse_const_i8_decode` serves — must keep
+/// W8A32 semantics unless the graph opts in via `act_quant`.
+///
+/// This is the property a byte-exact consumer certifies against: nothing in the
+/// substrate may promote an existing path's numerics. Before the opt-in gate the
+/// compiler fused this graph unconditionally, changing both its value and its κ.
+#[test]
+fn wl2_undeclared_const_weight_keeps_w8a32_and_does_not_fuse() {
+    use hologram_archive::{decoder, format::SectionKind, HoloLoader};
+    use hologram_backend::KernelCall;
+
+    // Same shape as `wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms`:
+    // everything the fusion wants, except the opt-in.
+    let (m, k, n) = (1usize, 67usize, 33usize);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.005 + (j as f32) * 0.0007).collect();
+
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0, false, false);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let plan = HoloLoader::from_bytes(&compiled.archive)
+        .unwrap()
+        .into_plan()
+        .unwrap();
+    let calls = decoder::decode_calls(plan.section(SectionKind::KernelCalls).unwrap()).unwrap();
+
+    assert!(
+        calls.iter().any(|c| matches!(c, KernelCall::Dequantize(_)))
+            && calls.iter().any(|c| matches!(c, KernelCall::MatMul(_))),
+        "an undeclared constant weight must not compile-time fuse"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, KernelCall::MatMulDequant(d) if d.bq_omajor || d.act_quant != 0)),
+        "no W8A8 or output-major call may appear without an opt-in"
+    );
+}
+
+/// A constant's bytes are `[k,n]`. `weight_layout = OUTPUT_MAJOR` asserts the
+/// bound bytes are `[n,k]`, which for a constant is simply false — and the
+/// loader, believing it, would run the output-major kernel over `[k,n]` bytes
+/// and return a plausible wrong answer (measured: 1.667 absolute error). Reject
+/// the declaration where it is made.
+#[test]
+fn const_weight_declaring_output_major_is_rejected_at_compile_time() {
+    let (m, k, n) = (1usize, 67usize, 33usize);
+    let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 255) - 127) as i8).collect();
+    let scales: Vec<f32> = (0..n).map(|j| 0.005 + (j as f32) * 0.0007).collect();
+
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0, true, true);
+    let err = compile(g, BackendKind::Cpu, WittLevel::W32)
+        .err()
+        .expect("a constant weight may not declare OUTPUT_MAJOR");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("OUTPUT_MAJOR") && msg.contains("constant"),
+        "error must name the offending declaration, got: {msg}"
+    );
+}
+
 #[test]
 fn wl2_prefill_m_keeps_runtime_w8a32_fusion() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
@@ -1815,7 +1897,7 @@ fn wl2_prefill_m_keeps_runtime_w8a32_fusion() {
     let wq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 251) - 125) as i8).collect();
     let scales: Vec<f32> = (0..n).map(|j| 0.01 + (j as f32) * 0.001).collect();
 
-    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0);
+    let g = const_i8_matmul_graph(m as u64, k as u64, n as u64, &wq, &scales, 0, true, false);
     let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
     let plan = HoloLoader::from_bytes(&compiled.archive)
         .unwrap()
@@ -1861,7 +1943,7 @@ fn wl2_asymmetric_zero_points_do_not_compile_time_fuse() {
     let (m, k, n) = (1u64, 32u64, 16u64);
     let wq: Vec<i8> = (0..(k * n) as usize).map(|i| (i % 100) as i8).collect();
     let scales: Vec<f32> = (0..n as usize).map(|_| 0.02).collect();
-    let g = const_i8_matmul_graph(m, k, n, &wq, &scales, 3);
+    let g = const_i8_matmul_graph(m, k, n, &wq, &scales, 3, true, false);
     let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
     let plan = HoloLoader::from_bytes(&compiled.archive)
         .unwrap()
@@ -1925,6 +2007,17 @@ fn dynamic_quantized_weight_with_activation_keeps_dequant_fusion() {
             scale_bits: 0.05f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one. Every
+            // negative case below opts in too, so each still declines for the
+            // reason it names (asymmetry, per-tensor axis, odd k, prefill m)
+            // rather than for a missing opt-in.
+            //
+            // `weight_layout` stays ROW_MAJOR: a constant's bytes are `[k,n]`,
+            // and the compiler transposes them itself when it fuses. Claiming
+            // OUTPUT_MAJOR here is a false statement about the graph's own bytes
+            // and is a compile error (`const_weight_declaring_output_major_is_rejected`).
+            act_quant: act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );
@@ -2059,6 +2152,17 @@ fn wl2_omajor_w8a8_relu_fuses_epilogue_bit_exact() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one. Every
+            // negative case below opts in too, so each still declines for the
+            // reason it names (asymmetry, per-tensor axis, odd k, prefill m)
+            // rather than for a missing opt-in.
+            //
+            // `weight_layout` stays ROW_MAJOR: a constant's bytes are `[k,n]`,
+            // and the compiler transposes them itself when it fuses. Claiming
+            // OUTPUT_MAJOR here is a false statement about the graph's own bytes
+            // and is a compile error (`const_weight_declaring_output_major_is_rejected`).
+            act_quant: act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );
@@ -2177,6 +2281,17 @@ fn wl2_omajor_w8a8_bias_gelu_is_one_call() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one. Every
+            // negative case below opts in too, so each still declines for the
+            // reason it names (asymmetry, per-tensor axis, odd k, prefill m)
+            // rather than for a missing opt-in.
+            //
+            // `weight_layout` stays ROW_MAJOR: a constant's bytes are `[k,n]`,
+            // and the compiler transposes them itself when it fuses. Claiming
+            // OUTPUT_MAJOR here is a false statement about the graph's own bytes
+            // and is a compile error (`const_weight_declaring_output_major_is_rejected`).
+            act_quant: act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );
@@ -2358,6 +2473,17 @@ fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one. Every
+            // negative case below opts in too, so each still declines for the
+            // reason it names (asymmetry, per-tensor axis, odd k, prefill m)
+            // rather than for a missing opt-in.
+            //
+            // `weight_layout` stays ROW_MAJOR: a constant's bytes are `[k,n]`,
+            // and the compiler transposes them itself when it fuses. Claiming
+            // OUTPUT_MAJOR here is a false statement about the graph's own bytes
+            // and is a compile error (`const_weight_declaring_output_major_is_rejected`).
+            act_quant: act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );
@@ -2479,6 +2605,17 @@ fn wl3_odd_k_i4_stays_on_generic_path() {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            // W8A8 changes the value, so it is opt-in per weight slot — for a
+            // constant weight exactly as for a load-time-bound one. Every
+            // negative case below opts in too, so each still declines for the
+            // reason it names (asymmetry, per-tensor axis, odd k, prefill m)
+            // rather than for a missing opt-in.
+            //
+            // `weight_layout` stays ROW_MAJOR: a constant's bytes are `[k,n]`,
+            // and the compiler transposes them itself when it fuses. Claiming
+            // OUTPUT_MAJOR here is a false statement about the graph's own bytes
+            // and is a compile error (`const_weight_declaring_output_major_is_rejected`).
+            act_quant: act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );

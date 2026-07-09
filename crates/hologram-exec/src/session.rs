@@ -426,7 +426,7 @@ impl<B: SessionBackend> InferenceSession<B> {
         // weight in the pool. Constant quantized weights fuse at compile time
         // (`fuse_const_i8_decode`, omajor W8A8) or fold at warm-start, so a
         // runtime dequant feeding a matmul is dynamic — fusing it is a pure win.
-        let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs);
+        let (kernel_calls, exec_plan) = fuse_dequant_matmul(kernel_calls, exec_plan, &outputs)?;
         // Collapse `matmul → elementwise-activation` sub-graphs into one fused
         // op so the activation's intermediate is never separately materialized
         // or addressed — the fused op carries a single κ-derivation.
@@ -1619,7 +1619,7 @@ fn fuse_dequant_matmul(
     calls: Vec<KernelCall>,
     plan: Vec<Vec<u32>>,
     outputs: &[PortDescriptor],
-) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
+) -> Result<(Vec<KernelCall>, Vec<Vec<u32>>), ExecError> {
     use hashbrown::HashSet;
     use hologram_backend::mm_act_quant;
     let n = calls.len();
@@ -1697,6 +1697,16 @@ fn fuse_dequant_matmul(
             // A VQ tier must bring its codebook; a scalar tier must not.
             && tier.needs_codebook == dq.has_codebook();
 
+        // A weight declared `OUTPUT_MAJOR` arrives as `[n,k]`. Every other path
+        // here — the W8A32 fused dequant loop, the standalone Dequantize kernel
+        // — reads `[k,n]`. So if the output-major kernel cannot serve this call
+        // there is no kernel that can, and falling back would transpose the
+        // weight by accident and return a plausible, wrong answer. Fail loud:
+        // the graph asked for something the substrate cannot honour.
+        if dq.weight_layout == hologram_types::weight_layout::OUTPUT_MAJOR && !omajor_ok {
+            return Err(ExecError::UnsatisfiableWeightLayout);
+        }
+
         if !omajor_ok {
             // Fall back to the W8A32 scalar dequant loop, which cannot read a
             // tier whose weights are codebook indices. Leave those unfused
@@ -1740,8 +1750,22 @@ fn fuse_dequant_matmul(
         }));
         absorbed[i] = true; // drop the standalone dequant
     }
+    // A `Dequantize` that declared `OUTPUT_MAJOR` and was *never* fused has no
+    // reader that understands `[n,k]`: the standalone dequant kernel reads
+    // `[k,n]`. Same unsatisfiable declaration as above, reached by a different
+    // route (no adjacent MatMul, weight read twice, unregistered tier).
+    for (i, call) in calls.iter().enumerate() {
+        if absorbed[i] || fused[i].is_some() {
+            continue;
+        }
+        if let KernelCall::Dequantize(d) = call {
+            if d.weight_layout == hologram_types::weight_layout::OUTPUT_MAJOR {
+                return Err(ExecError::UnsatisfiableWeightLayout);
+            }
+        }
+    }
     if !absorbed.iter().any(|&a| a) {
-        return (calls, plan);
+        return Ok((calls, plan));
     }
     let mut new_calls: Vec<KernelCall> = Vec::with_capacity(n);
     let mut remap = vec![u32::MAX; n];
@@ -1765,7 +1789,7 @@ fn fuse_dequant_matmul(
             new_plan.push(lvl);
         }
     }
-    (new_calls, new_plan)
+    Ok((new_calls, new_plan))
 }
 
 /// The `lut_act::*` id for a unary activation `KernelCall` that has a dense
