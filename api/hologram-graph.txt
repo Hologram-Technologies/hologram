@@ -363,9 +363,11 @@ impl core::marker::UnsafeUnpin for hologram_graph::node::NormAttrs
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::NormAttrs
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::NormAttrs
 pub struct hologram_graph::node::QuantAttrs
+pub hologram_graph::node::QuantAttrs::act_quant: u8
 pub hologram_graph::node::QuantAttrs::axis: i32
 pub hologram_graph::node::QuantAttrs::quant_dtype: u8
 pub hologram_graph::node::QuantAttrs::scale_bits: u32
+pub hologram_graph::node::QuantAttrs::weight_layout: u8
 pub hologram_graph::node::QuantAttrs::zero_point: i32
 impl core::clone::Clone for hologram_graph::node::QuantAttrs
 pub fn hologram_graph::node::QuantAttrs::clone(&self) -> hologram_graph::node::QuantAttrs
@@ -839,9 +841,11 @@ impl core::marker::UnsafeUnpin for hologram_graph::node::NormAttrs
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::NormAttrs
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::NormAttrs
 pub struct hologram_graph::QuantAttrs
+pub hologram_graph::QuantAttrs::act_quant: u8
 pub hologram_graph::QuantAttrs::axis: i32
 pub hologram_graph::QuantAttrs::quant_dtype: u8
 pub hologram_graph::QuantAttrs::scale_bits: u32
+pub hologram_graph::QuantAttrs::weight_layout: u8
 pub hologram_graph::QuantAttrs::zero_point: i32
 impl core::clone::Clone for hologram_graph::node::QuantAttrs
 pub fn hologram_graph::node::QuantAttrs::clone(&self) -> hologram_graph::node::QuantAttrs

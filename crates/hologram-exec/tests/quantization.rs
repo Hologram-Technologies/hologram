@@ -54,6 +54,7 @@ fn dequantize_int8_round_trip() {
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            ..Default::default()
         },
     );
     let out = graph.add_node(Node {
@@ -104,6 +105,7 @@ fn dequantize_uint8_round_trip() {
             scale_bits: 0.5f32.to_bits(),
             zero_point: 128,
             axis: -1,
+            ..Default::default()
         },
     );
     let out = graph.add_node(Node {
@@ -175,6 +177,7 @@ fn dequantize_int8_per_channel_round_trip() {
             scale_bits: 0,
             zero_point: 0,
             axis: 0,
+            ..Default::default()
         },
     );
     let out = graph.add_node(Node {
@@ -229,6 +232,7 @@ fn dequantize_int4_packed_unpacks_correctly() {
             scale_bits: 1.0f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            ..Default::default()
         },
     );
     let out = graph.add_node(Node {
@@ -293,6 +297,7 @@ fn dequant_matmul_fuses_and_matches_unfused() {
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            ..Default::default()
         },
     );
     let mm = graph.add_node(Node {
@@ -424,6 +429,7 @@ fn dequant_e8cb_matmul_fuses_omajor_and_matches_reference() {
                 scale_bits: 0,
                 zero_point: 0,
                 axis: 1,
+                ..Default::default()
             },
         );
         let mm = graph.add_node(Node {
@@ -517,6 +523,7 @@ fn dequant_gelu_fuses_to_densified_table() {
             scale_bits: 0.5f32.to_bits(),
             zero_point: 0,
             axis: -1,
+            ..Default::default()
         },
     );
     let act = graph.add_node(Node {
@@ -578,6 +585,7 @@ fn dequantize_int8_with_nonzero_zero_point() {
             scale_bits: 0.25f32.to_bits(),
             zero_point: 5,
             axis: -1,
+            ..Default::default()
         },
     );
     let out = graph.add_node(Node {
@@ -598,4 +606,203 @@ fn dequantize_int8_with_nonzero_zero_point() {
     assert!((result[1] - 1.0).abs() < 1e-6);
     assert!((result[2] - 2.0).abs() < 1e-6);
     assert!((result[3] - (-1.0)).abs() < 1e-6);
+}
+
+/// Build `A[1,k] · dequant(Wq)` where the **weight is a graph input**, not a
+/// constant — the weightless-compile shape: the graph carries no weight bytes,
+/// they are bound at execute time. `declare` opts the weight slot into the
+/// output-major W8A8 decode form.
+///
+/// Returns the executed output.
+fn weightless_dequant_matmul(
+    k: usize,
+    n: usize,
+    a: &[f32],
+    w_bytes: &[u8],
+    declare: bool,
+) -> Vec<f32> {
+    use hologram_types::{act_quant, weight_layout};
+    let mut graph = Graph::new();
+    let a_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, k as u64));
+    let w_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let v_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let o_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, n as u64));
+
+    let a_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: a_sh,
+    });
+    graph.add_input(a_in);
+    // The weight: a graph input, bound later. No bytes at compile time.
+    let wq = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: w_sh,
+    });
+    graph.add_input(wq);
+
+    let scales: Vec<f32> = (0..n).map(|j| 0.02 + j as f32 * 0.003).collect();
+    let sc = graph.constants_mut().insert(ConstantEntry {
+        bytes: scales.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        dtype: DTypeId(DTYPE_F32),
+        shape: v_sh,
+    });
+    let zc = graph.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4], // symmetric
+        dtype: DTypeId(DTYPE_I8),
+        shape: v_sh,
+    });
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(wq),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: w_sh,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            axis: 1,
+            // The weight-slot declaration under test.
+            weight_layout: if declare {
+                weight_layout::OUTPUT_MAJOR
+            } else {
+                weight_layout::ROW_MAJOR
+            },
+            act_quant: if declare {
+                act_quant::W8A8_TOKEN_SYM
+            } else {
+                act_quant::W8A32
+            },
+            ..Default::default()
+        },
+    );
+    let mm = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    graph.add_output(out);
+
+    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let backend: CpuBackend<BufferArena> = CpuBackend::new();
+    let mut session = InferenceSession::load(&compiled.archive, backend).unwrap();
+    assert_eq!(
+        session.dequant_fused_count(),
+        1,
+        "the load-time dequant→matmul fusion must fire for a weightless weight"
+    );
+    let a_bytes: Vec<u8> = a.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let outs = session
+        .execute(&[
+            InputBuffer { bytes: &a_bytes },
+            InputBuffer { bytes: w_bytes },
+        ])
+        .unwrap();
+    le_to_f32(&outs[0].bytes)
+}
+
+/// The regression this test exists for: a weight bound **after** compile could
+/// never reach the fused output-major W8A8 decode GEMV, because the only path to
+/// it required the compiler to hold the weight's constant bytes and transpose
+/// them. Every weightless model — which is every model that wants dedupable,
+/// pageable archives — silently took the slow W8A32 `[k,n]` path.
+///
+/// A weight slot now *declares* `{layout: output-major, act: W8A8}` and the
+/// load-time fusion builds the same call the constant-weight path builds. The
+/// declared result must equal the exact-integer W8A8 oracle.
+#[test]
+fn weightless_weight_can_declare_output_major_w8a8_and_reaches_the_integer_gemv() {
+    let (k, n) = (16usize, 4usize);
+    let a: Vec<f32> = (0..k).map(|i| (i as f32 - 7.5) * 0.31).collect();
+    // Row-major logical weight w[kk][j], and its output-major image.
+    let w: Vec<i8> = (0..k * n).map(|i| ((i * 37) % 197) as i32 as i8).collect();
+    let mut w_omajor = vec![0i8; k * n];
+    for kk in 0..k {
+        for j in 0..n {
+            w_omajor[j * k + kk] = w[kk * n + j];
+        }
+    }
+    let w_om_bytes: Vec<u8> = w_omajor.iter().map(|&v| v as u8).collect();
+    let got = weightless_dequant_matmul(k, n, &a, &w_om_bytes, true);
+
+    // Exact-integer W8A8 oracle: per-token symmetric i8 activation quant, exact
+    // i32 dot, one fused per-column writeback.
+    let scales: Vec<f32> = (0..n).map(|j| 0.02 + j as f32 * 0.003).collect();
+    let amax = a.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    let inv = 127.0 / amax;
+    let scale_a = amax / 127.0;
+    let q: Vec<i32> = a
+        .iter()
+        .map(|&v| {
+            let t = v * inv;
+            let r = if t >= 0.0 {
+                (t + 0.5) as i32
+            } else {
+                (t - 0.5) as i32
+            };
+            r.clamp(-127, 127)
+        })
+        .collect();
+    for j in 0..n {
+        let mut s = 0i32;
+        for (kk, &qv) in q.iter().enumerate() {
+            s += qv * w[kk * n + j] as i32;
+        }
+        let want = s as f32 * (scale_a * scales[j]);
+        assert!(
+            (got[j] - want).abs() < 1e-4,
+            "col {j}: got {} want {want} (declared W8A8 must hit the integer GEMV)",
+            got[j]
+        );
+    }
+}
+
+/// W8A8 rounds the activation, so it changes the computed value. It must
+/// therefore never be an invisible upgrade: an undeclared weight keeps the exact
+/// `dequantize → matmul` (W8A32) semantics, bit-for-bit.
+#[test]
+fn w8a8_is_opt_in_undeclared_weights_keep_w8a32_semantics() {
+    let (k, n) = (16usize, 4usize);
+    let a: Vec<f32> = (0..k).map(|i| (i as f32 - 7.5) * 0.31).collect();
+    let w: Vec<i8> = (0..k * n).map(|i| ((i * 37) % 197) as i32 as i8).collect();
+    let w_bytes: Vec<u8> = w.iter().map(|&v| v as u8).collect();
+    // Undeclared: row-major bytes, W8A32.
+    let got = weightless_dequant_matmul(k, n, &a, &w_bytes, false);
+
+    let scales: Vec<f32> = (0..n).map(|j| 0.02 + j as f32 * 0.003).collect();
+    for j in 0..n {
+        // Exact f32 reference: dequantize then multiply, no activation rounding.
+        let mut s = 0f32;
+        for (kk, &av) in a.iter().enumerate() {
+            s += av * (w[kk * n + j] as f32 * scales[j]);
+        }
+        assert!(
+            (got[j] - s).abs() < 1e-3,
+            "col {j}: got {} want {s} — an undeclared weight must not be silently upgraded to W8A8",
+            got[j]
+        );
+    }
 }

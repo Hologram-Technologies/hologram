@@ -115,6 +115,11 @@ const D_MMDQ2: u16 = 116;
 // rather than an extra field appended to `D_MMDQ2`, so every archive predating
 // VQ still decodes byte-identically and no content address re-keys.
 const D_MMDQ3: u16 = 117;
+// Dequantize carrying a **weight-slot declaration** (the layout its bytes will
+// have when bound, and the activation treatment it opts into) and/or a codebook
+// operand. Emitted only when one is non-default, so archives that declare
+// nothing stay byte-identical.
+const D_DEQ2: u16 = 118;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -472,8 +477,16 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         }
 
         K::Dequantize(c) => {
-            put_u16(out, D_DEQ);
-            put_dequantize(out, c);
+            if c.extended() {
+                put_u16(out, D_DEQ2);
+                put_dequantize(out, c);
+                put_u8(out, c.weight_layout);
+                put_u8(out, c.act_quant);
+                put_buf(out, c.codebook);
+            } else {
+                put_u16(out, D_DEQ);
+                put_dequantize(out, c);
+            }
         }
         K::MatMulActivation(c) => {
             put_u16(out, D_MMA);

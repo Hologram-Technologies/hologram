@@ -160,6 +160,16 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         // 79..=104 were the backward `*Grad` op-kinds, removed when autodiff
         // moved to forward-op composition; those opcodes are now rejected.
         105 => K::Dequantize(read_dequantize(cur)?),
+        // Dequantize + weight-slot declaration (layout / activation opt-in) and
+        // an optional codebook operand. Its own discriminant, so every archive
+        // that declares nothing decodes byte-identically.
+        118 => {
+            let mut c = read_dequantize(cur)?;
+            c.weight_layout = cur.u8()?;
+            c.act_quant = cur.u8()?;
+            c.codebook = cur.buf()?;
+            K::Dequantize(c)
+        }
         106 => K::MatMulActivation(MatMulActivationCall {
             mm: read_matmul(cur)?,
             act: cur.u8()?,
@@ -548,5 +558,9 @@ fn read_dequantize(c: &mut Cursor<'_>) -> Result<DequantizeCall, ArchiveError> {
         dtype: c.u8()?,
         scale_bits: c.u32()?,
         zero_point: c.u32()? as i32,
+        // Declaration-free legacy form; the `D_DEQ2` arm overwrites these.
+        codebook: DequantizeCall::NO_CODEBOOK,
+        weight_layout: 0,
+        act_quant: 0,
     })
 }

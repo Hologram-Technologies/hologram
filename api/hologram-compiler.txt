@@ -143,15 +143,18 @@ impl core::marker::UnsafeUnpin for hologram_compiler::lower::LoweredNode
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::LoweredNode
 impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::LoweredNode
 pub struct hologram_compiler::lower::QuantParams
+pub hologram_compiler::lower::QuantParams::act_quant: u8
 pub hologram_compiler::lower::QuantParams::channels: u32
+pub hologram_compiler::lower::QuantParams::codebook: hologram_backend::workspace::BufferRef
 pub hologram_compiler::lower::QuantParams::inner: u32
 pub hologram_compiler::lower::QuantParams::quant_dtype: u8
 pub hologram_compiler::lower::QuantParams::scale_bits: u32
+pub hologram_compiler::lower::QuantParams::weight_layout: u8
 pub hologram_compiler::lower::QuantParams::zero_point: i32
 impl core::clone::Clone for hologram_compiler::lower::QuantParams
 pub fn hologram_compiler::lower::QuantParams::clone(&self) -> hologram_compiler::lower::QuantParams
 impl core::default::Default for hologram_compiler::lower::QuantParams
-pub fn hologram_compiler::lower::QuantParams::default() -> hologram_compiler::lower::QuantParams
+pub fn hologram_compiler::lower::QuantParams::default() -> Self
 impl core::fmt::Debug for hologram_compiler::lower::QuantParams
 pub fn hologram_compiler::lower::QuantParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for hologram_compiler::lower::QuantParams

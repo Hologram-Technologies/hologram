@@ -167,6 +167,7 @@ fn proj(g: &mut Graph, x: NodeId, k: usize, n: usize) -> NodeId {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            ..Default::default()
         },
     );
     g.add_node(Node {
