@@ -82,7 +82,6 @@ pub hologram_exec::error::ExecError::Archive(hologram_archive::error::ArchiveErr
 pub hologram_exec::error::ExecError::Backend
 pub hologram_exec::error::ExecError::InputMismatch
 pub hologram_exec::error::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)
-pub hologram_exec::error::ExecError::UnsatisfiableWeightLayout
 pub hologram_exec::error::ExecError::WorkspaceExhausted
 impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_exec::error::ExecError
 pub fn hologram_exec::error::ExecError::from(hologram_archive::error::ArchiveError) -> Self
@@ -511,7 +510,6 @@ pub hologram_exec::ExecError::Archive(hologram_archive::error::ArchiveError)
 pub hologram_exec::ExecError::Backend
 pub hologram_exec::ExecError::InputMismatch
 pub hologram_exec::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)
-pub hologram_exec::ExecError::UnsatisfiableWeightLayout
 pub hologram_exec::ExecError::WorkspaceExhausted
 impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_exec::error::ExecError
 pub fn hologram_exec::error::ExecError::from(hologram_archive::error::ArchiveError) -> Self

@@ -820,11 +820,12 @@ fn w8a8_is_opt_in_undeclared_weights_keep_w8a32_semantics() {
 /// Dequantize kernel both read `[k,n]`, and taking either would transpose the
 /// weight by accident and return a plausible, wrong answer.
 ///
-/// The loader must refuse. This is the "no silent-wrong" property: a declaration
-/// the substrate cannot honour is an error, not a quiet downgrade.
+/// Every precondition is static, so the compiler refuses. This is the "no
+/// silent-wrong" property: a declaration the substrate cannot honour is an
+/// error, not a quiet downgrade. (`hologram-exec`'s loader re-checks the same
+/// predicate for archives this compiler did not produce.)
 #[test]
 fn declared_output_major_weight_that_no_kernel_can_serve_fails_loud() {
-    use hologram_exec::ExecError;
     use hologram_types::{act_quant, weight_layout};
 
     let (k, n) = (16usize, 4usize);
@@ -884,17 +885,12 @@ fn declared_output_major_weight_that_no_kernel_can_serve_fails_loud() {
     });
     graph.add_output(out);
 
-    // The weightless compile itself is fine: the declaration describes bytes
-    // that do not exist yet, and the compiler transposes nothing.
-    let compiled = compile(graph, BackendKind::Cpu, WittLevel::W32).unwrap();
-
-    // The loader is where the promise must be checked against the kernels.
-    let err =
-        InferenceSession::<CpuBackend<BufferArena>>::load(&compiled.archive, CpuBackend::new())
-            .err()
-            .expect("declared OUTPUT_MAJOR with per-tensor scales must not load");
+    let err = compile(graph, BackendKind::Cpu, WittLevel::W32)
+        .err()
+        .expect("declared OUTPUT_MAJOR with per-tensor scales must not compile");
+    let msg = format!("{err}");
     assert!(
-        matches!(err, ExecError::UnsatisfiableWeightLayout),
-        "expected UnsatisfiableWeightLayout, got {err:?}"
+        msg.contains("OUTPUT_MAJOR") && msg.contains("axis = 1"),
+        "error must name the offending predicate, got: {msg}"
     );
 }

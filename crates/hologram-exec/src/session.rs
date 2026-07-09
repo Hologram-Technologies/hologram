@@ -1701,10 +1701,13 @@ fn fuse_dequant_matmul(
         // here — the W8A32 fused dequant loop, the standalone Dequantize kernel
         // — reads `[k,n]`. So if the output-major kernel cannot serve this call
         // there is no kernel that can, and falling back would transpose the
-        // weight by accident and return a plausible, wrong answer. Fail loud:
-        // the graph asked for something the substrate cannot honour.
+        // weight by accident and return a plausible, wrong answer. Refuse.
+        //
+        // `hologram-compiler::validate_weight_layout_declarations` rejects this
+        // at compile time, where the message can name the offending predicate.
+        // This is defence in depth for archives this compiler did not produce.
         if dq.weight_layout == hologram_types::weight_layout::OUTPUT_MAJOR && !omajor_ok {
-            return Err(ExecError::UnsatisfiableWeightLayout);
+            return Err(ExecError::Backend);
         }
 
         if !omajor_ok {
@@ -1760,7 +1763,7 @@ fn fuse_dequant_matmul(
         }
         if let KernelCall::Dequantize(d) = call {
             if d.weight_layout == hologram_types::weight_layout::OUTPUT_MAJOR {
-                return Err(ExecError::UnsatisfiableWeightLayout);
+                return Err(ExecError::Backend);
             }
         }
     }
