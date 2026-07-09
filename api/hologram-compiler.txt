@@ -693,7 +693,7 @@ impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceTensorLitera
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceTensorLiteral
 impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceTensorLiteral
 pub struct hologram_compiler::source::SourceType
-pub hologram_compiler::source::SourceType::dtype: hologram_graph::registry::DTypeId
+pub hologram_compiler::source::SourceType::dtype: hologram_types::dtype_id::DTypeId
 pub hologram_compiler::source::SourceType::shape: core::option::Option<hologram_graph::registry::ShapeDescriptor>
 impl hologram_compiler::source::SourceType
 pub const fn hologram_compiler::source::SourceType::f32(core::option::Option<hologram_graph::registry::ShapeDescriptor>) -> Self

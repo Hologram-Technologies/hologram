@@ -6,8 +6,9 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ShapeId(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DTypeId(pub u8);
+/// The canonical dtype tag, defined once in `hologram-types` and re-exported
+/// here so graph callers keep reaching it at `registry::DTypeId`.
+pub use hologram_types::DTypeId;
 
 /// Concrete shape descriptor. Small-rank fast path inline; rank > 8
 /// overflows to heap.

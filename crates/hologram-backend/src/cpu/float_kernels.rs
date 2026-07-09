@@ -12,14 +12,19 @@ use crate::error::BackendError;
 use crate::kernel_call::*;
 use crate::workspace::Workspace;
 
+/// Byte width of a fixed-width dtype. The float kernels only ever see IEEE /
+/// bfloat tags; a sub-byte or unrecognized tag is rejected rather than silently
+/// assigned a plausible default width.
 #[inline]
-fn elem_size(dtype: u8) -> usize {
-    bytes_per_element(dtype)
+fn elem_size(dtype: u8) -> Result<usize, BackendError> {
+    bytes_per_element(dtype).ok_or(BackendError::UnsupportedOp(
+        "float kernel: dtype has no fixed element width (sub-byte or unknown)",
+    ))
 }
 
 #[inline]
-fn elem_count_to_bytes(n: usize, dtype: u8) -> usize {
-    n * elem_size(dtype)
+fn elem_count_to_bytes(n: usize, dtype: u8) -> Result<usize, BackendError> {
+    Ok(n * elem_size(dtype)?)
 }
 
 // Scratch for matmul's pre-transposed B. Under `std` it is a thread-local
@@ -141,7 +146,7 @@ pub fn unary_float_acc<W: Workspace>(
     dtype: u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let bytes = elem_count_to_bytes(n, dtype);
+    let bytes = elem_count_to_bytes(n, dtype)?;
     // Zero-copy split-borrow + bytemuck cast (no fallback). Every
     // `Workspace` consumed by hologram's CPU compute must supply
     // `split_borrow`; the test `Ws` impls above and `BufferArena`
@@ -204,7 +209,7 @@ pub fn binary_float_acc<W: Workspace>(
     dtype: u8,
 ) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let bytes = elem_count_to_bytes(n, dtype);
+    let bytes = elem_count_to_bytes(n, dtype)?;
     let (reads, out) = ws
         .split_borrow(&[c.a, c.b], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.a.slot))?;
@@ -250,7 +255,7 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
 
     // Zero-copy split-borrow + bytemuck f32 view + blocked-tile +
     // runtime-SIMD path. The transposed-B scratch is thread-local so
@@ -351,27 +356,54 @@ pub fn matmul_float<W: Workspace>(c: &MatMulCall, ws: &mut W) -> Result<(), Back
 /// Decode the `i`-th quantized weight of a `[k,n]` panel to its integer level.
 /// `quant_dtype` is loop-invariant at every call site, so inlining lets LLVM
 /// unswitch the dispatch out of the dequant loop.
-#[inline(always)]
-fn dequant_q(bq: &[u8], i: usize, quant_dtype: u8) -> i32 {
-    use crate::cpu::dtype::*;
-    match quant_dtype {
-        DTYPE_I8 => (bq[i] as i8) as i32,
-        DTYPE_U8 => bq[i] as i32,
-        DTYPE_I4 => {
-            let byte = bq[i / 2];
-            let nib = if i.is_multiple_of(2) {
-                byte & 0x0F
-            } else {
-                byte >> 4
-            };
-            let v = nib as i32;
-            if v >= 8 {
-                v - 16
-            } else {
-                v
+/// The quantized weight encodings the **scalar** (W8A32) dequant loop can read
+/// directly, validated once before the loop. Tiers that need extra operands to
+/// decode — `e8cb`, whose weights are codebook indices — are not members, so
+/// they are rejected up front instead of silently decoding to zero (the old
+/// `_ => 0` arm turned an unhandled tier into a zero-filled result).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScalarQuant {
+    I8,
+    U8,
+    I4,
+}
+
+impl ScalarQuant {
+    fn from_tag(tag: u8) -> Result<Self, BackendError> {
+        use crate::cpu::dtype::*;
+        match tag {
+            DTYPE_I8 => Ok(Self::I8),
+            DTYPE_U8 => Ok(Self::U8),
+            DTYPE_I4 => Ok(Self::I4),
+            _ => Err(BackendError::UnsupportedOp(
+                "matmul_dequant: quant_dtype is not scalar-decodable \
+                 (e8cb needs its codebook operand and the fused omajor path)",
+            )),
+        }
+    }
+
+    /// Total: `self` is a validated variant, so there is no fallback arm. The
+    /// dispatch is loop-invariant and unswitches out of the dequant loop.
+    #[inline(always)]
+    fn read(self, bq: &[u8], i: usize) -> i32 {
+        match self {
+            Self::I8 => (bq[i] as i8) as i32,
+            Self::U8 => bq[i] as i32,
+            Self::I4 => {
+                let byte = bq[i / 2];
+                let nib = if i.is_multiple_of(2) {
+                    byte & 0x0F
+                } else {
+                    byte >> 4
+                };
+                let v = nib as i32;
+                if v >= 8 {
+                    v - 16
+                } else {
+                    v
+                }
             }
         }
-        _ => 0,
     }
 }
 
@@ -542,13 +574,16 @@ pub fn matmul_dequant_float<W: Workspace>(
         } else {
             bdq.resize(kn, 0.0);
         }
-        // Dequantize the B panel into `bdq`. Pre-cast the per-channel scale/zp
-        // tables to typed slices **once** (aligned workspace slots always cast)
-        // rather than reconstructing each scalar with `from_le_bytes` per
-        // element — that per-element reconstruction is what made the fused
-        // dequant slower than the standalone Dequantize kernel. `quant_dtype` is
-        // loop-invariant, so the inlined `dequant_q` match unswitches and the
-        // contiguous inner map autovectorizes.
+        // Dequantize the B panel into `bdq`. The weight encoding is validated
+        // **once**, here: a tier the scalar loop cannot decode (e8cb, whose
+        // weights are codebook indices) is rejected rather than read as zeros.
+        // Pre-cast the per-channel scale/zp tables to typed slices once
+        // (aligned workspace slots always cast) rather than reconstructing each
+        // scalar with `from_le_bytes` per element — that per-element
+        // reconstruction is what made the fused dequant slower than the
+        // standalone Dequantize kernel. `sq` is loop-invariant, so the inlined
+        // `read` match unswitches and the contiguous inner map autovectorizes.
+        let sq = ScalarQuant::from_tag(quant_dtype)?;
         let sca = if per_ch {
             bytemuck::try_cast_slice::<u8, f32>(scales).ok()
         } else {
@@ -564,13 +599,13 @@ pub fn matmul_dequant_float<W: Workspace>(
             (true, Some(sa), Some(za)) => {
                 for (i, slot) in bdq.iter_mut().enumerate() {
                     let ch = (i / inner) % channels;
-                    *slot = (dequant_q(bq, i, quant_dtype) - za[ch]) as f32 * sa[ch];
+                    *slot = (sq.read(bq, i) - za[ch]) as f32 * sa[ch];
                 }
             }
             // Per-tensor: scalar scale/zp — the inner map is a straight f32 line.
             (false, _, _) => {
                 for (i, slot) in bdq.iter_mut().enumerate() {
-                    *slot = (dequant_q(bq, i, quant_dtype) - zp) as f32 * scale;
+                    *slot = (sq.read(bq, i) - zp) as f32 * scale;
                 }
             }
             // Misaligned per-channel tables (non-`BufferArena` workspace only):
@@ -590,7 +625,7 @@ pub fn matmul_dequant_float<W: Workspace>(
                         zps[ch * 4 + 2],
                         zps[ch * 4 + 3],
                     ]);
-                    *slot = (dequant_q(bq, i, quant_dtype) - z) as f32 * s;
+                    *slot = (sq.read(bq, i) - z) as f32 * s;
                 }
             }
         }
@@ -715,7 +750,7 @@ pub fn matmul_activation_float<W: Workspace>(
         return Ok(());
     }
     let dt = c.mm.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let f = fused_act_fn(c.act);
     let out = ws.write(c.mm.output);
     if out.len() < count * es {
@@ -747,7 +782,7 @@ pub fn matmul_add_float<W: Workspace>(c: &MatMulAddCall, ws: &mut W) -> Result<(
         return Ok(());
     }
     let dt = c.mm.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     // Disjoint borrow: residual (read) + matmul output (write).
     let (reads, out) = ws
         .split_borrow(&[c.residual], c.mm.output)
@@ -792,7 +827,7 @@ pub fn matmul_add_activation_float<W: Workspace>(
         return Ok(());
     }
     let dt = c.mm.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let f = fused_act_fn(c.act);
     let (reads, out) = ws
         .split_borrow(&[c.residual], c.mm.output)
@@ -834,7 +869,7 @@ pub fn im2col_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
     let (kh, kw) = (c.k_h as usize, c.k_w as usize);
     let (sh, sw) = ((c.stride_h as usize).max(1), (c.stride_w as usize).max(1));
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let nn = hout * wout;
     let kk = cin * kh * kw;
     if kk == 0 || nn == 0 {
@@ -914,7 +949,7 @@ pub fn col2im_float<W: Workspace>(c: &Im2ColCall, ws: &mut W) -> Result<(), Back
     let (kh, kw) = (c.k_h as usize, c.k_w as usize);
     let (sh, sw) = ((c.stride_h as usize).max(1), (c.stride_w as usize).max(1));
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let nn = hout * wout;
     let kk = cin * kh * kw;
     if kk == 0 || nn == 0 {
@@ -1002,7 +1037,7 @@ pub fn gemm_float<W: Workspace>(c: &GemmCall, ws: &mut W) -> Result<(), BackendE
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let alpha = f32::from_bits(c.alpha_bits as u32);
     let beta = f32::from_bits(c.beta_bits as u32);
 
@@ -1075,7 +1110,7 @@ pub fn conv2d_float<W: Workspace>(c: &Conv2dCall, ws: &mut W) -> Result<(), Back
     let s_h = (c.stride_h as usize).max(1);
     let s_w = (c.stride_w as usize).max(1);
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total_in = b * cin * h_in * w_in * es;
     let total_w = cout * cin * k_h * k_w * es;
     let total_out = b * cout * h_out * w_out * es;
@@ -1211,7 +1246,7 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total = bsz * f * es;
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
 
@@ -1328,7 +1363,7 @@ pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
         ));
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total = n * f * es;
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
     let spatial = f / ch; // elements per channel
@@ -1437,7 +1472,7 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total = bsz * f * es;
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
     let has_residual = c.has_residual();
@@ -1553,7 +1588,7 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total = bsz * f * es;
     let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
     let (reads, out) = ws
@@ -1632,7 +1667,7 @@ pub fn softmax_float<W: Workspace>(
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total = b * f * es;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
@@ -1754,7 +1789,7 @@ pub fn reduce_float<W: Workspace>(
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let (f, init) = kind.fold();
     let plan = ReducePlan::new(c, n)?;
     let (reads, out) = ws
@@ -1950,7 +1985,7 @@ pub fn cumsum_float<W: Workspace>(c: &ReduceCall, ws: &mut W) -> Result<(), Back
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
@@ -1987,7 +2022,7 @@ pub fn pool_float<W: Workspace>(
         return Ok(());
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let total_in = b * ch * h_in * w_in * es;
     let total_out = b * ch * h_out * w_out * es;
     let (reads, out) = ws
@@ -2108,7 +2143,7 @@ pub fn attention_float<W: Workspace>(c: &AttentionCall, ws: &mut W) -> Result<()
         ));
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let q_total = b * h * s * d;
     let kv_total = b * hkv * s * d;
     let (reads, out) = ws
@@ -2247,7 +2282,7 @@ fn attention_f32_engine(
 pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let (reads, out) = ws
         .split_borrow(&[c.cond, c.a, c.b], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
@@ -2277,7 +2312,7 @@ pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), Backen
 
 pub fn layout_float<W: Workspace>(c: &LayoutCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
-    let bytes = elem_count_to_bytes(n, c.dtype);
+    let bytes = elem_count_to_bytes(n, c.dtype)?;
     let (reads, out) = ws
         .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
@@ -2321,7 +2356,7 @@ pub fn transpose_float<W: Workspace>(c: &TransposeCall, ws: &mut W) -> Result<()
     if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("transpose: rank must be 1..=8"));
     }
-    let es = elem_size(c.dtype);
+    let es = elem_size(c.dtype)?;
     let in_dims = &c.dims[..rank];
     let perm = &c.perm[..rank];
     let total: usize = in_dims.iter().map(|&d| d as usize).product();
@@ -2371,7 +2406,7 @@ pub fn resize_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("resize: rank must be 1..=8"));
     }
-    let es = elem_size(c.dtype);
+    let es = elem_size(c.dtype)?;
     let in_dims = &c.in_dims[..rank];
     let out_dims = &c.out_dims[..rank];
     let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
@@ -2428,7 +2463,7 @@ pub fn lrn_float<W: Workspace>(c: &LrnCall, ws: &mut W) -> Result<(), BackendErr
         .split_borrow(&[c.input], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let x = reads[0];
-    if out.len() < total * elem_size(dt) {
+    if out.len() < total * elem_size(dt)? {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
     // Window [c - (size-1)/2, c + size/2] (ONNX), clamped to [0, ch).
@@ -2468,7 +2503,7 @@ pub fn rope_float<W: Workspace>(c: &RoPECall, ws: &mut W) -> Result<(), BackendE
         ));
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let half = d / 2;
     let (reads, out) = ws
         .split_borrow(&[c.x, c.cos, c.sin], c.output)
@@ -2598,7 +2633,7 @@ pub fn broadcast_binary_float<W: Workspace>(
         ));
     }
     let dt = c.dtype;
-    let es = elem_size(dt);
+    let es = elem_size(dt)?;
     let in_dims = &c.in_dims[..rank];
     let out_dims = &c.out_dims[..rank];
     let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
@@ -2746,7 +2781,7 @@ pub fn expand_float<W: Workspace>(c: &ExpandCall, ws: &mut W) -> Result<(), Back
     if rank == 0 || rank > MAX_RANK {
         return Err(BackendError::UnsupportedOp("expand: rank must be 1..=8"));
     }
-    let es = elem_size(c.dtype);
+    let es = elem_size(c.dtype)?;
     let in_dims = &c.in_dims[..rank];
     let out_dims = &c.out_dims[..rank];
     let out_total: usize = out_dims.iter().map(|&d| d as usize).product();
@@ -3068,6 +3103,48 @@ pub fn greater_or_equal_f(a: f32, b: f32) -> f32 {
         1.0
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod scalar_quant_tests {
+    use super::*;
+
+    /// The scalar (W8A32) dequant loop must **reject** a tier it cannot decode
+    /// rather than read it as zeros. `e8cb` weights are codebook indices: read
+    /// as raw bytes they are meaningless, and the previous `_ => 0` arm turned
+    /// an unhandled tier into a silently zero-filled result.
+    #[test]
+    fn scalar_quant_rejects_tiers_it_cannot_decode() {
+        assert!(ScalarQuant::from_tag(DTYPE_I8).is_ok());
+        assert!(ScalarQuant::from_tag(DTYPE_U8).is_ok());
+        assert!(ScalarQuant::from_tag(DTYPE_I4).is_ok());
+        // Needs a codebook operand + the fused omajor path.
+        assert!(ScalarQuant::from_tag(DTYPE_E8CB).is_err());
+        // Float and unknown tags are not weight encodings at all.
+        assert!(ScalarQuant::from_tag(DTYPE_F32).is_err());
+        assert!(ScalarQuant::from_tag(200).is_err());
+    }
+
+    /// The validated reader is total and matches the encodings bit-for-bit.
+    #[test]
+    fn scalar_quant_read_matches_the_encodings() {
+        let bytes: alloc::vec::Vec<u8> = alloc::vec![0, 1, 127, 128, 255];
+        let sq = ScalarQuant::from_tag(DTYPE_I8).unwrap();
+        for (i, w) in [0i32, 1, 127, -128, -1].iter().enumerate() {
+            assert_eq!(sq.read(&bytes, i), *w, "i8 elem {i}");
+        }
+        let squ = ScalarQuant::from_tag(DTYPE_U8).unwrap();
+        for (i, b) in bytes.iter().enumerate() {
+            assert_eq!(squ.read(&bytes, i), *b as i32, "u8 elem {i}");
+        }
+        // i4: low nibble is element 2k, high nibble 2k+1; each sign-extended.
+        let packed: alloc::vec::Vec<u8> = alloc::vec![0xE1, 0x0F];
+        let sq4 = ScalarQuant::from_tag(DTYPE_I4).unwrap();
+        assert_eq!(sq4.read(&packed, 0), 1); // 0x1
+        assert_eq!(sq4.read(&packed, 1), -2); // 0xE = 14 - 16
+        assert_eq!(sq4.read(&packed, 2), -1); // 0xF = 15 - 16
+        assert_eq!(sq4.read(&packed, 3), 0); // 0x0
     }
 }
 

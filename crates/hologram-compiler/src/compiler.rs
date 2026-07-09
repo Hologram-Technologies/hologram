@@ -147,8 +147,12 @@ impl Compiler {
             .iter()
             .enumerate()
             .map(|(i, n)| {
-                let bytes_per = bytes_per_element(n.output_dtype.0) as u64;
-                element_counts[i].saturating_mul(bytes_per)
+                // Honours sub-byte packing (i4 → ceil(n/2), e8cb → ceil(n/8)).
+                // An unrecognized tag sizes to 0 so a downstream bounds check
+                // fails loudly rather than under-allocating a live buffer.
+                n.output_dtype
+                    .storage_bytes_u64(element_counts[i])
+                    .unwrap_or(0)
             })
             .collect();
 
@@ -666,7 +670,15 @@ impl Compiler {
                     InputSource::Constant(cid) => {
                         let entry = self.graph.constants().get(cid)?;
                         let dt = entry.dtype.0;
-                        let ec = (entry.bytes.len() / bytes_per_element(dt).max(1)) as u64;
+                        // Element count comes from the declared shape, not from
+                        // `bytes.len() / width`: the sub-byte tiers (i4, e8cb)
+                        // pack several elements per byte, so byte length alone
+                        // under-counts them (i4 by 2×, e8cb by 8×).
+                        let ec = self
+                            .graph
+                            .shape_registry()
+                            .get(entry.shape)?
+                            .total_elements();
                         Some((node_count + cid.0, ec, Some(dt)))
                     }
                     // Direct graph-input passthrough: alias the input node's slot
@@ -897,17 +909,14 @@ fn collect_buffers(
         .collect()
 }
 
-/// Bytes per element for a dtype-id (mirrors `hologram_backend::cpu::dtype`
-/// constants). Centralised here so the compiler doesn't depend on the CPU
-/// backend module path.
-const fn bytes_per_element(dtype: u8) -> usize {
-    match dtype {
-        0..=2 => 1,     // BOOL, U8, I8
-        6 | 7 => 2,     // F16, BF16
-        4 | 8 => 4,     // I32, F32
-        3 | 5 | 9 => 8, // U64, I64, F64
-        _ => 1,
-    }
+/// Bytes per element for a fixed-width dtype. Delegates to the canonical
+/// [`hologram_graph::registry::DTypeId`] (re-exported from `hologram-types`);
+/// `None` for the sub-byte tiers (`i4`, `e8cb`) — whose storage is not
+/// `n × width` — and for any unrecognized tag. Callers that size a buffer use
+/// `DTypeId::storage_bytes_u64`; callers that require a whole-byte element
+/// (slice/pad placement) propagate the `None` as "not representable".
+const fn bytes_per_element(dtype: u8) -> Option<usize> {
+    hologram_graph::registry::DTypeId(dtype).bytes_per_element()
 }
 
 /// Compute the Slice = `ProjectField` sub-region as `(byte_offset, byte_len)`
@@ -959,7 +968,7 @@ fn slice_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, 
     if end < start {
         return None;
     }
-    let elem = bytes_per_element(node.output_dtype.0) as u64;
+    let elem = bytes_per_element(node.output_dtype.0)? as u64;
     let offset = start as u64 * inner * elem;
     let len = (end - start) as u64 * inner * elem;
     Some((offset, len))
@@ -1013,7 +1022,7 @@ fn pad_view_bytes(graph: &Graph, node: &hologram_graph::Node) -> Option<(u64, u6
         }
     }
     let lo = pad_at(0).unwrap_or(0).max(0) as u64;
-    let elem = bytes_per_element(node.output_dtype.0) as u64;
+    let elem = bytes_per_element(node.output_dtype.0)? as u64;
     Some((lo * inner * elem, data_count * elem, data_count))
 }
 

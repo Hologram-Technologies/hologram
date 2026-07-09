@@ -1469,16 +1469,20 @@ impl<B: SessionBackend> InferenceSession<B> {
     }
 }
 
-/// Bytes-per-element for a port descriptor's dtype tag (mirrors
-/// `hologram_backend::cpu::dtype` constants but kept local to avoid an
-/// upward dependency from exec on the backend's internal module).
+/// Bytes-per-element for a port descriptor's dtype tag. Delegates to the
+/// canonical [`hologram_types::DTypeId`] rather than keeping a second dtype
+/// table in sync.
+///
+/// Ports are **byte-addressed**: a sub-byte payload (packed `i4`, or `e8cb`
+/// codebook indices) crosses the boundary as *stored bytes*, which the port
+/// descriptor's `element_count` already counts, so its stride is 1 — a graph
+/// input carrying a packed `i4` tensor is a real, tested case. An unrecognized
+/// tag conservatively takes the same 1-byte stride: it can only over-size a
+/// boundary buffer, never under-size one.
 const fn port_bytes_per_element(dtype: u8) -> usize {
-    match dtype {
-        0..=2 => 1,     // BOOL, U8, I8
-        6 | 7 => 2,     // F16, BF16
-        4 | 8 => 4,     // I32, F32
-        3 | 5 | 9 => 8, // U64, I64, F64
-        _ => 1,
+    match hologram_types::DTypeId(dtype).bytes_per_element() {
+        Some(w) => w,
+        None => 1,
     }
 }
 

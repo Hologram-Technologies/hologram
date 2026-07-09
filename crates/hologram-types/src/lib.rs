@@ -25,6 +25,7 @@
 #![no_std]
 
 pub mod dtype;
+pub mod dtype_id;
 pub mod memory_tier;
 pub mod shape;
 pub use memory_tier::MemoryTier;
@@ -33,6 +34,9 @@ pub use dtype::{
     DType, DTypeBf16, DTypeBool, DTypeF16, DTypeF32, DTypeF64, DTypeI32, DTypeI4, DTypeI64,
     DTypeI8, DTypeKind, DTypeU64, DTypeU8,
 };
+/// The canonical runtime dtype tag. The graph registry and the backend both
+/// re-export this type rather than defining their own spelling of it.
+pub use dtype_id::DTypeId;
 pub use shape::{Dim, Shape1, Shape2};
 
 // Re-export the canonical prism shape carriers so hologram callers
