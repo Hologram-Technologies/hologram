@@ -1405,12 +1405,11 @@ fn fuse_const_i8_decode(
     node_count: u32,
     packed_consts: &mut [Option<Vec<u8>>],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
+    use hologram_backend::quant_tier::quant_tier;
     use hologram_backend::{buffers, mm_act_quant, MatMulDequantCall};
-    use hologram_graph::{ConstantId, InputSource, NodeId};
-    const DTYPE_F32: u8 = 8;
-    const DTYPE_I8: u8 = 2;
-    const DTYPE_I4: u8 = 10;
-    const DTYPE_E8CB: u8 = 11;
+    use hologram_graph::{ConstantId, DTypeId, InputSource, NodeId};
+    // The one dtype vocabulary — no locally re-declared tags.
+    const DTYPE_F32: u8 = DTypeId::F32.raw();
     /// Largest static `m` treated as a decode shape. Not model-derived: it is
     /// the boundary below which the blocked f32 kernel's register tile
     /// (MR = 4) has not engaged, so the GEMV formulation wins; at m >= MR the
@@ -1475,10 +1474,13 @@ fn fuse_const_i8_decode(
             KernelCall::Dequantize(c) => *c,
             _ => continue,
         };
-        let is_i4 = dq.quant_dtype == DTYPE_I4;
-        let is_e8cb = dq.quant_dtype == DTYPE_E8CB;
-        if (dq.quant_dtype != DTYPE_I8 && !is_i4 && !is_e8cb) || !dq.per_channel() || dq.inner != 1
-        {
+        // Which weight encoding is this, and does a fused output-major decode
+        // GEMV exist for it? Both answers come from the tier registry, so a new
+        // tier is registered once rather than added to a condition here.
+        let Some(tier) = quant_tier(DTypeId(dq.quant_dtype)) else {
+            continue;
+        };
+        if !tier.omajor_fusable || !dq.per_channel() || dq.inner != 1 {
             continue;
         }
         // Constant weight, read by this dequant alone, not port-aliased.
@@ -1526,64 +1528,25 @@ fn fuse_const_i8_decode(
         if !zp_ok {
             continue;
         }
-        // The i4 kernel packs two elements per byte: k must be even and the
-        // element count must pack whole bytes.
-        if is_i4 && (!k.is_multiple_of(2) || !(k * n).is_multiple_of(2)) {
+        // `k` must be a whole number of the tier's groups, and the constant must
+        // be exactly the tier's `[k,n]` storage. Both are tier data — the i4
+        // nibble packing and the e8cb 8-element grouping are no longer special
+        // cases here.
+        if !tier.divides_k(k) {
             continue;
         }
-        // The E8-codebook kernel groups 8 k-elements per index: k must be a
-        // multiple of 8 (whole E8 groups per column).
-        if is_e8cb && !k.is_multiple_of(8) {
+        let Some(want_len) = tier.weight_bytes(k, n) else {
             continue;
-        }
-        let want_len = if is_i4 {
-            k * n / 2
-        } else if is_e8cb {
-            k / 8 * n
-        } else {
-            k * n
         };
         let entry = match graph.constants().get(ConstantId(cid as u32)) {
             Some(e) if e.bytes.len() == want_len => e,
             _ => continue, // shape/dtype guard
         };
-        // Derive the output-major layout: transpose `[k,n] → [n,k]`. i8 is a
-        // 1-byte/elem transpose; i4 repacks nibbles (element `i = kk·n + j`,
-        // low nibble first — the archive convention) into per-column spans;
-        // e8cb transposes the `[k/8, n]` index grid (one byte per 8-D group,
-        // element `gk·n + j`) into per-column index spans `[n, k/8]`.
-        // Baked into the archive; zero runtime copy.
-        let t = if is_e8cb {
-            let g = k / 8;
-            let mut t = vec![0u8; g * n];
-            for gk in 0..g {
-                let row = &entry.bytes[gk * n..(gk + 1) * n];
-                for (jj, &b) in row.iter().enumerate() {
-                    t[jj * g + gk] = b;
-                }
-            }
-            t
-        } else if is_i4 {
-            let mut t = vec![0u8; k * n / 2];
-            for kk in 0..k {
-                for jj in 0..n {
-                    let src = kk * n + jj;
-                    let byte = entry.bytes[src >> 1];
-                    let nib = if src & 1 == 0 { byte & 0x0F } else { byte >> 4 };
-                    let dst = jj * k + kk;
-                    t[dst >> 1] |= if dst & 1 == 0 { nib } else { nib << 4 };
-                }
-            }
-            t
-        } else {
-            let mut t = vec![0u8; k * n];
-            for kk in 0..k {
-                let row = &entry.bytes[kk * n..(kk + 1) * n];
-                for (jj, &b) in row.iter().enumerate() {
-                    t[jj * k + kk] = b;
-                }
-            }
-            t
+        // Derive the output-major layout: one transpose of the tier's
+        // `[k/group_dim, n]` unit grid into `[n, k/group_dim]`, so each output's
+        // units are contiguous. Baked into the archive; zero runtime copy.
+        let Some(t) = tier.omajor_repack(&entry.bytes, k, n) else {
+            continue;
         };
         packed_consts[cid] = Some(t);
         fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
