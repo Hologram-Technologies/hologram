@@ -436,14 +436,31 @@ pub fn matmul_dequant_float<W: Workspace>(
             ))
         }
     };
+    // A vector-quantized tier must carry its codebook operand, and only such a
+    // tier may carry one — mismatch means the call was not built by a compiler
+    // that understands this tier, so reject rather than decode garbage.
+    if tier.needs_codebook != c.has_codebook() {
+        return Err(BackendError::UnsupportedOp(
+            "matmul_dequant: codebook operand missing for a VQ tier (or present without one)",
+        ));
+    }
     let per_ch = c.per_channel();
-    let reads_spec: &[crate::workspace::BufferRef] = if per_ch {
-        &[c.a, c.bq, c.scales, c.zero_points]
-    } else {
-        &[c.a, c.bq]
-    };
+    // Operand order mirrors `buffers()`: `a, bq[, scales, zero_points][, codebook]`.
+    let mut spec = [c.a; 5];
+    let mut n_spec = 2;
+    spec[1] = c.bq;
+    if per_ch {
+        spec[2] = c.scales;
+        spec[3] = c.zero_points;
+        n_spec = 4;
+    }
+    let cb_idx = n_spec;
+    if c.has_codebook() {
+        spec[n_spec] = c.codebook;
+        n_spec += 1;
+    }
     let (reads, out) = ws
-        .split_borrow(reads_spec, c.output)
+        .split_borrow(&spec[..n_spec], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
     let a = reads[0]
         .get(..m * k * 4)
@@ -484,7 +501,7 @@ pub fn matmul_dequant_float<W: Workspace>(
             }
             // A fused omajor GEMV exists for this tier, and `k` is a whole
             // number of its groups — both read from the tier registry.
-            let dtype_ok = tier.omajor_fusable && tier.divides_k(k);
+            let dtype_ok = tier.omajor_fusable && tier.omajor_k_ok(k);
             let symmetric = per_ch
                 && dtype_ok
                 && channels == n
@@ -503,20 +520,19 @@ pub fn matmul_dequant_float<W: Workspace>(
                 .map_err(|_| BackendError::SlotOutOfRange(c.scales.slot))?;
             let out32 = bytemuck::try_cast_slice_mut::<u8, f32>(&mut out[..m * n * 4])
                 .map_err(|_| BackendError::SlotOutOfRange(c.output.slot))?;
-            if quant_dtype == DTYPE_E8CB {
-                // VQ tier: u8 codebook indices, 8× fewer streamed bytes. The
-                // codebook is the fixed backend table (prototype); a per-model
-                // codebook would arrive as its own operand.
-                crate::cpu::simd::matmul_e8cb_omajor(
-                    a32,
-                    bq,
-                    &crate::cpu::simd::E8_CODEBOOK,
-                    scale32,
-                    out32,
-                    m,
-                    k,
-                    n,
-                );
+            if tier.needs_codebook {
+                // VQ tier: `u8` codebook indices, 8× fewer streamed bytes. The
+                // codebook is the **model's** — a constant operand, not an
+                // engine table — so two models with different codebooks coexist.
+                // Its length is fixed at the full index space so any `u8` index
+                // dereferences in range without a per-call bounds scan.
+                let cb_bytes = reads[cb_idx];
+                let want = DTypeId::E8CB_MAX_ENTRIES * tier.group_dim as usize;
+                if cb_bytes.len() < want {
+                    return Err(BackendError::SlotOutOfRange(c.codebook.slot));
+                }
+                let codebook = bytemuck::cast_slice::<u8, i8>(&cb_bytes[..want]);
+                crate::cpu::simd::matmul_e8cb_omajor(a32, bq, codebook, scale32, out32, m, k, n);
             } else if quant_dtype == DTYPE_I4 {
                 // LUT tier: packed nibbles, half the streamed bytes.
                 crate::cpu::simd::matmul_i4_pc_omajor(a32, bq, scale32, out32, m, k, n);

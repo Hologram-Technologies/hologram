@@ -104,6 +104,7 @@ fn bench_dequant_matmul(c: &mut Criterion) {
         act_quant: 0,
         act: 0,
         residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: MatMulDequantCall::NO_CODEBOOK,
     });
 
     c.bench_function("dequant_then_matmul_256 (unfused)", |b| {

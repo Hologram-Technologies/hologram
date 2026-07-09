@@ -1665,6 +1665,14 @@ fn fuse_dequant_matmul(
             KernelCall::MatMul(c) if c.dtype == DTYPE_F32 && !c.b_packed && c.b.slot == s => *c,
             _ => continue,
         };
+        // This path reads the weight with the **scalar** dequant loop, which has
+        // no codebook operand. A vector-quantized tier (weights are codebook
+        // indices) cannot be decoded here, so leave it unfused rather than build
+        // a call the backend must reject at execute time.
+        match hologram_backend::quant_tier::quant_tier(hologram_types::DTypeId(dq.quant_dtype)) {
+            Some(t) if t.scalar_decodable => {}
+            _ => continue,
+        }
         fused[j] = Some(KernelCall::MatMulDequant(MatMulDequantCall {
             a: mm.a,
             bq: dq.input,
@@ -1689,6 +1697,9 @@ fn fuse_dequant_matmul(
             act_quant: mm_act_quant::W8A32,
             act: 0,
             residual: MatMulDequantCall::NO_RESIDUAL,
+            // Scalar-decodable tiers only (guarded above), so there is never a
+            // codebook to carry here.
+            codebook: MatMulDequantCall::NO_CODEBOOK,
         }));
         absorbed[i] = true; // drop the standalone dequant
     }

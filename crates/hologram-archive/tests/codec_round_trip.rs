@@ -195,6 +195,7 @@ fn matmul_dequant_round_trip() {
         act_quant: 0,
         act: 0,
         residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: MatMulDequantCall::NO_CODEBOOK,
     })];
     let bytes = kernel_codec::encode_calls(&calls);
     let decoded = decoder::decode_calls(&bytes).unwrap();
@@ -238,9 +239,11 @@ fn matmul_dequant_omajor_w8a8_round_trip() {
         act_quant: mm_act_quant::W8A8_TOKEN_SYM,
         act: 5, // fused_activation::TANH
         residual: ref_buf(7),
+        codebook: MatMulDequantCall::NO_CODEBOOK,
     })];
     let bytes = kernel_codec::encode_calls(&calls);
-    // Extended fields force the v2 discriminant.
+    // Extended fields force the v2 discriminant. A codebook-free call must never
+    // take the v3 tag — that would re-key every existing W8A8 decode address.
     assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 116);
     let decoded = decoder::decode_calls(&bytes).unwrap();
     if let KernelCall::MatMulDequant(d) = &decoded[0] {
@@ -514,4 +517,100 @@ fn cast_round_trip() {
         }
         _ => panic!("not cast"),
     }
+}
+
+/// A vector-quantized `MatMulDequant` carries a **codebook operand**. It takes
+/// its own discriminant (117) so no codebook-free archive re-keys, and the
+/// operand must survive the round-trip.
+#[test]
+fn matmul_dequant_with_codebook_round_trips_on_its_own_discriminant() {
+    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
+        a: ref_buf(0),
+        bq: ref_buf(1),
+        scales: ref_buf(2),
+        zero_points: ref_buf(3),
+        output: ref_buf(4),
+        m: 1,
+        k: 16,
+        n: 4,
+        channels: 4,
+        inner: 1,
+        quant_dtype: 11, // e8cb
+        dtype: 8,
+        scale_bits: 0,
+        zero_point: 0,
+        bq_omajor: true,
+        act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+        act: 0,
+        residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: ref_buf(9),
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    assert_eq!(
+        u16::from_le_bytes([bytes[4], bytes[5]]),
+        117,
+        "a codebook-carrying call must take the v3 discriminant"
+    );
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::MatMulDequant(c) => {
+            assert!(c.has_codebook());
+            assert_eq!(c.codebook.slot, ref_buf(9).slot);
+            assert_eq!(c.codebook.length, ref_buf(9).length);
+            assert_eq!(c.quant_dtype, 11);
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+    // Re-encoding is byte-stable.
+    assert_eq!(kernel_codec::encode_calls(&decoded), bytes);
+}
+
+/// The codebook is a **read operand**: it must appear in `buffers()` so it folds
+/// into the κ-label. Two models with different codebooks must address
+/// differently, and a codebook-free call's operand order must be unchanged.
+#[test]
+fn codebook_participates_in_the_operand_set() {
+    use hologram_backend::MatMulDequantCall;
+    let mut c = match &decode_calls_of_vq()[0] {
+        KernelCall::MatMulDequant(c) => *c,
+        _ => unreachable!(),
+    };
+    let with = hologram_backend::buffers(&KernelCall::MatMulDequant(c));
+    c.codebook = MatMulDequantCall::NO_CODEBOOK;
+    let without = hologram_backend::buffers(&KernelCall::MatMulDequant(c));
+    assert_eq!(
+        with.len(),
+        without.len() + 1,
+        "the codebook must be an operand"
+    );
+    // Output stays last; the codebook slots in before it.
+    assert_eq!(with.last().unwrap().slot, without.last().unwrap().slot);
+    assert!(with.iter().any(|b| b.slot == 9));
+    assert!(!without.iter().any(|b| b.slot == 9));
+}
+
+fn decode_calls_of_vq() -> Vec<KernelCall> {
+    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    vec![KernelCall::MatMulDequant(MatMulDequantCall {
+        a: ref_buf(0),
+        bq: ref_buf(1),
+        scales: ref_buf(2),
+        zero_points: ref_buf(3),
+        output: ref_buf(4),
+        m: 1,
+        k: 16,
+        n: 4,
+        channels: 4,
+        inner: 1,
+        quant_dtype: 11,
+        dtype: 8,
+        scale_bits: 0,
+        zero_point: 0,
+        bq_omajor: true,
+        act_quant: mm_act_quant::W8A8_TOKEN_SYM,
+        act: 0,
+        residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: ref_buf(9),
+    })]
 }

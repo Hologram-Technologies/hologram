@@ -50,6 +50,7 @@ fn mmdq_plain() -> KernelCall {
         act_quant: 0,
         act: 0,
         residual: MatMulDequantCall::NO_RESIDUAL,
+        codebook: MatMulDequantCall::NO_CODEBOOK,
     })
 }
 
