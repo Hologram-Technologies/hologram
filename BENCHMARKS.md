@@ -1,11 +1,60 @@
 # Benchmarks & throughput
 
+Provenance is per-section. The criterion tables below were **captured at
+v0.5.0** and have not been re-run since; the "Decode kernels" section carries its
+own, later capture. A number is never restamped with a version it was not
+measured at.
+
 Captured at v0.5.0 (criterion, release, 100
 samples/bench; CPU). Absolute times are machine-dependent (a shared CI VM); the
 **ratios** — content-addressing reuse and matmul scaling efficiency — are the
 load-bearing results. Re-run with `cargo bench -p hologram-bench` and the
 release perf-floor V&V with `cargo test --release -p hologram-backend --test
 performance --features cpu -- --nocapture`.
+
+
+---
+
+## Decode kernels (captured at v0.7.3)
+
+Machine: AMD EPYC 7763, 4 physical cores / 8 threads, AVX2 (no AVX-512), shared
+CI VM. Method: `cargo run --release --example gemv_micro -p hologram-bench`
+(single-threaded unless noted). `GMAC/s` is the precision-invariant metric — all
+tiers perform the same `k·n` multiply-accumulates, so it compares them directly;
+`GB/s` is the streamed weight-byte view.
+
+**A — L3-resident weight, reused (the compute ceiling):**
+
+| kernel | GMAC/s | GB/s (weight) |
+|---|---|---|
+| i8 W8A8 (`matmul_i8_pc_omajor`) | 41.8 | 41.8 |
+| i4 W4A8 (`matmul_i4_pc_omajor`) | 22.7 | 11.3 |
+| e8cb 1-bit (`matmul_e8cb_omajor`) | 27.1 | 3.4 |
+
+**B — weight ≫ L3, DRAM-streamed (the real decode regime):**
+
+| kernel | GMAC/s | GB/s (weight) |
+|---|---|---|
+| i8 W8A8 | 14.4 | 14.4 |
+| i4 W4A8 | 13.1 | 6.5 |
+| e8cb 1-bit | **27.0** | 3.4 |
+
+Three results worth stating plainly:
+
+- **The E8-codebook (VQ) tier wins only when memory-bound.** Cache-warm it is
+  gather-compute-bound and loses to i8 (0.65×); DRAM-streamed its 8× byte
+  reduction dominates and it is ~1.9× faster. The 8× smaller weight is the
+  browser memory/download lever regardless of throughput.
+- **i4 is slower than i8 in *every* regime measured** (0.54× and 0.91×). Its
+  nibble unpack costs more than the bytes it saves, and no cost model would ever
+  prefer it for speed. It remains a *memory* tier, never a speed tier — this is
+  documented rather than silently assumed.
+- Fewer weight bits only helps where bytes, not MACs, are the wall.
+
+Multi-threaded (`--features parallel`) and end-to-end per-token figures move with
+the machine's memory subsystem; re-run `decode_profile` on the target rather than
+quoting these.
+
 
 ## Headline: UOR content-addressing is the win
 

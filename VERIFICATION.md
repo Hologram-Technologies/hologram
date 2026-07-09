@@ -31,7 +31,7 @@ internal consistency. V&V here means conformance to an authority we did
 ## V&V axes (reproducible: `just vv`)
 
 1. **Architecture** — `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test --workspace`.
-2. **Correctness conformance** — the `conformance` test targets that check each part against its external authority (class AS today; KC/MA forthcoming — see `CONFORMANCE.md`).
+2. **Correctness conformance** — the `conformance` test targets that check each part against its external authority (classes AS, KC, MA, SC — all enforced; see `CONFORMANCE.md`).
 3. **Replay (TC-05)** — every minted κ-label's `AddressWitness::verify()` re-certifies via `prism::replay::certify_from_trace` (QS-05 fingerprint equivalence) without re-running the σ-axis.
 4. **Performance / no-bottleneck** — `cargo bench` with per-part baselines and budgets (class PV); a part regressing past its budget fails V&V.
 5. **Portability** — `just wasm` + `just embedded` (the lib stack builds on `wasm32-unknown-unknown` and `thumbv7em-none-eabi`, `no_std`).

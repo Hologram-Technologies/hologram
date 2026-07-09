@@ -1444,13 +1444,9 @@ fn fuse_const_i8_decode(
     use hologram_graph::{ConstantId, DTypeId, InputSource, NodeId};
     // The one dtype vocabulary — no locally re-declared tags.
     const DTYPE_F32: u8 = DTypeId::F32.raw();
-    /// Largest static `m` treated as a decode shape. Not model-derived: it is
-    /// the boundary below which the blocked f32 kernel's register tile
-    /// (MR = 4) has not engaged, so the GEMV formulation wins; at m >= MR the
-    /// tiled W8A32 path takes over. Shapes above the gate (or any condition
-    /// miss below) fall through to the generic paths — every model still
-    /// compiles and runs.
-    const M_GATE: u32 = 4;
+    // The decode-shape bound lives with the kernels it gates
+    // (`decode_gate::OMAJOR_W8A8_MAX_M`), not as a literal here.
+    use hologram_backend::kernel_call::decode_gate::OMAJOR_W8A8_MAX_M as M_GATE;
 
     // Census: total references per slot, producer/reader counts, reader index.
     let n_calls = calls.len();

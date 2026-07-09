@@ -42,10 +42,6 @@ pub mod hologram_backend::cpu::lut
 pub fn hologram_backend::cpu::lut::is_lut_dtype(u8) -> bool
 pub fn hologram_backend::cpu::lut::unary_lut<W: hologram_backend::workspace::Workspace>(&hologram_backend::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_backend::error::BackendError>
 pub mod hologram_backend::cpu::simd
-pub const hologram_backend::cpu::simd::EXP_F32_HI: f32
-pub const hologram_backend::cpu::simd::EXP_F32_LO: f32
-pub const hologram_backend::cpu::simd::I4_VALUES: [i8; 16]
-pub const hologram_backend::cpu::simd::I8_DOT_K_MAX: usize
 pub fn hologram_backend::cpu::simd::exp_f32_det(f32) -> f32
 pub fn hologram_backend::cpu::simd::matmul_e8cb_omajor(&[f32], &[u8], &[i8], &[f32], &mut [f32], usize, usize, usize)
 pub fn hologram_backend::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)
@@ -85,6 +81,9 @@ impl<W> core::marker::Unpin for hologram_backend::cpu::CpuBackend<W> where W: co
 impl<W> core::marker::UnsafeUnpin for hologram_backend::cpu::CpuBackend<W>
 impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe
 impl<W> core::panic::unwind_safe::UnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe
+pub mod hologram_backend::decode_gate
+pub const hologram_backend::decode_gate::FUSED_W8A32_MAX_M: usize
+pub const hologram_backend::decode_gate::OMAJOR_W8A8_MAX_M: u32
 pub mod hologram_backend::error
 pub enum hologram_backend::error::BackendError
 pub hologram_backend::error::BackendError::Dispatch(&'static str)
@@ -120,6 +119,9 @@ pub mod hologram_backend::kernel_call::broadcast_op
 pub const hologram_backend::kernel_call::broadcast_op::ADD: u8
 pub const hologram_backend::kernel_call::broadcast_op::MUL: u8
 pub const hologram_backend::kernel_call::broadcast_op::SUB: u8
+pub mod hologram_backend::kernel_call::decode_gate
+pub const hologram_backend::kernel_call::decode_gate::FUSED_W8A32_MAX_M: usize
+pub const hologram_backend::kernel_call::decode_gate::OMAJOR_W8A8_MAX_M: u32
 pub mod hologram_backend::kernel_call::fused_activation
 pub const hologram_backend::kernel_call::fused_activation::ELU: u8
 pub const hologram_backend::kernel_call::fused_activation::EXP: u8

@@ -83,6 +83,28 @@ pub mod mm_act_quant {
     pub const K_MAX: usize = (i32::MAX as usize) / (127 * 127);
 }
 
+/// Decode-shape gates: the `m` bounds below which a GEMV formulation beats the
+/// blocked f32 kernel, whose register tile is `MR = 4` rows.
+///
+/// Two bounds, because they guard two different kernels — previously they were
+/// two unrelated literals (`M_GATE = 4` in the compiler, `FUSED_INT_M_GATE = 3`
+/// in the backend) with no stated relationship:
+pub mod decode_gate {
+    /// Largest `m` for which the compiler emits the **output-major W8A8**
+    /// integer decode GEMV. Above it the f32 register tile has engaged and the
+    /// tiled W8A32 path wins. Shapes above the gate (or any condition miss) fall
+    /// through to the generic paths — every model still compiles and runs.
+    pub const OMAJOR_W8A8_MAX_M: u32 = 4;
+
+    /// Largest `m` for which the runtime takes the **W8A32 fused per-channel**
+    /// int8 kernel (`matmul_i8_per_channel`, f32 products, no activation
+    /// rounding) instead of dequantize-then-matmul. One lower than
+    /// `OMAJOR_W8A8_MAX_M` because at `m = MR = 4` the f32 tile is already
+    /// engaged and that kernel loses; the W8A8 GEMV still wins there because it
+    /// streams the weight as integers.
+    pub const FUSED_W8A32_MAX_M: usize = 3;
+}
+
 /// Fused dequantize-then-matmul: `output = A · dequant(Bq)`. Produced by the
 /// runtime `Dequantize → MatMul` fusion (the dequant feeds the matmul's B
 /// operand and has no other consumer), or emitted directly by the compiler
