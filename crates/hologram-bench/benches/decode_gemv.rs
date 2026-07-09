@@ -150,6 +150,12 @@ fn bench_session(c: &mut Criterion) {
             scale_bits: 0,
             zero_point: 0,
             axis: 1,
+            // W8A8 rounds the activation, so it is opt-in per weight slot and is
+            // never applied implicitly. This bench measures the fused
+            // output-major W8A8 decode step, so the weight asks for it. Without
+            // the opt-in the graph runs the exact `W8A32` semantics instead —
+            // correct, and ~2x slower here.
+            act_quant: hologram_types::act_quant::W8A8_TOKEN_SYM,
             ..Default::default()
         },
     );

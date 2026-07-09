@@ -547,12 +547,23 @@ pub fn matmul_dequant_float<W: Workspace>(
 
     // Fast path — fused per-channel symmetric int8 → f32 at small M (decode).
     // Reads the i8 weight directly (no f32 materialization), factoring the
-    // per-column scale to the writeback. ~1.5× faster than the dequant-then-
-    // matmul below on the decode (M ≤ 3) shape, where the f32 register tile
-    // (MR=4) hasn't engaged yet. SIMD targets only — the scalar fused kernel
-    // would lose to the tuned f32 path. Requires per-output-column scales
-    // (channels == n, inner == 1) and all-zero zero-points (symmetric).
+    // per-column scale to the writeback. On the decode (M ≤ 3) shape the f32
+    // register tile (MR = 4) has not engaged, so this beats the dequant-then-
+    // matmul below — which must first materialize a `k·n` f32 panel.
+    //
+    // Dispatched on **every** SIMD target. x86-64 was excluded on the theory
+    // that "the scalar fused kernel would lose to the tuned f32 path", but
+    // `matmul_i8_per_channel` has an AVX2 inner (`matmul_i8_pc_avx2`) and the
+    // exclusion left x86 materializing the whole weight: measured 18.8 ms vs
+    // 0.56 ms at `1×896×4864`, a 34× loss, masked until W8A8 stopped being
+    // applied implicitly. It also meant x86 and aarch64/wasm computed *different
+    // bytes* for the same W8A32 matmul at `m ≤ 3`, since the two paths factor
+    // the per-column scale differently. They now agree.
+    //
+    // Requires per-output-column scales (channels == n, inner == 1) and
+    // all-zero zero-points (symmetric).
     #[cfg(any(
+        target_arch = "x86_64",
         target_arch = "aarch64",
         all(target_arch = "wasm32", target_feature = "simd128")
     ))]
