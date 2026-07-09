@@ -894,3 +894,102 @@ fn declared_output_major_weight_that_no_kernel_can_serve_fails_loud() {
         "error must name the offending predicate, got: {msg}"
     );
 }
+
+/// The output-major integer GEMV computes `Σ q·w` and has **no term** for a
+/// per-column zero point, so it decodes symmetric weights only. When the zero
+/// points are a graph constant their values are static — reject at compile time,
+/// where the message can say what to do, rather than at execute time.
+///
+/// Asymmetric weights are not broken: they are *correct* on the generic dequant
+/// path (`dequantize_int8_with_nonzero_zero_point` witnesses it). What they lack
+/// is the fused integer GEMV. This test pins that the substrate says so instead
+/// of producing a plausible wrong answer or a late error.
+#[test]
+fn declared_output_major_weight_with_nonzero_zero_point_is_rejected_at_compile_time() {
+    use hologram_types::{act_quant, weight_layout};
+
+    let (k, n) = (16usize, 4usize);
+    let mut graph = Graph::new();
+    let a_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, k as u64));
+    let w_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let v_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let o_sh = graph
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, n as u64));
+
+    let a_in = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: a_sh,
+    });
+    graph.add_input(a_in);
+    let wq = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I8),
+        output_shape: w_sh,
+    });
+    graph.add_input(wq);
+    let scales: Vec<f32> = (0..n).map(|j| 0.02 + j as f32 * 0.003).collect();
+    let sc = graph.constants_mut().insert(ConstantEntry {
+        bytes: scales.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        dtype: DTypeId(DTYPE_F32),
+        shape: v_sh,
+    });
+    // Non-zero zero-point: asymmetric.
+    let zc = graph.constants_mut().insert(ConstantEntry {
+        bytes: (0..n).flat_map(|_| 3i32.to_le_bytes()).collect(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: v_sh,
+    });
+    let dq = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Node(wq),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: w_sh,
+    });
+    graph.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+            weight_layout: weight_layout::OUTPUT_MAJOR,
+            act_quant: act_quant::W8A8_TOKEN_SYM,
+        },
+    );
+    let mm = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    graph.add_output(out);
+
+    let err = compile(graph, BackendKind::Cpu, WittLevel::W32)
+        .err()
+        .expect("declared OUTPUT_MAJOR with a non-zero zero-point must not compile");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("zero-point") && msg.contains("symmetric"),
+        "error must name the offending predicate, got: {msg}"
+    );
+}
