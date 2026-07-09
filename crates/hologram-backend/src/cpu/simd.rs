@@ -20,12 +20,19 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use alloc::vec::Vec;
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 use core::sync::atomic::{AtomicU8, Ordering};
 use hologram_types::DTypeId;
 
+// The runtime dispatcher and the portable scalar kernels below exist for the
+// targets that *choose* a path at run time (x86 feature detection) or have no
+// vector unit. On wasm+simd128 every `simd_f32_*` wrapper calls its SIMD128
+// twin unconditionally, so nothing here is reachable — gate them off rather
+// than ship dead code to the deployed target.
 /// SIMD path the runtime dispatcher selected. Cached after first
 /// detection. Values: 0 = unresolved, 1 = scalar, 2 = AVX2+FMA,
 /// 3 = AVX-512F, 4 = NEON.
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 static SIMD_PATH: AtomicU8 = AtomicU8::new(0);
 
 /// Below this `m·k·n`, a matmul runs single-threaded — keeping the small-op
@@ -50,6 +57,7 @@ const PAR_THRESHOLD: u64 = 1 << 23;
 ))]
 const GEMV_PAR_THRESHOLD: u64 = 1 << 20;
 
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 #[inline]
 fn resolve_path() -> u8 {
     let cached = SIMD_PATH.load(Ordering::Relaxed);
@@ -61,6 +69,7 @@ fn resolve_path() -> u8 {
     chosen
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 fn detect_path() -> u8 {
     // Runtime CPU-feature detection requires `std` (`is_x86_feature_detected!`
     // reads CPUID via the OS). On `no_std` targets (wasm / embedded) there is
@@ -274,6 +283,7 @@ pub fn simd_f32_axpy(out: &mut [f32], s: f32, b: &[f32]) {
     }
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 mod scalar {
     #[cfg(not(feature = "std"))]
     use crate::cpu::mathf::FloatExt;
@@ -2355,6 +2365,7 @@ mod wasm_simd {
 /// weight layout). Runtime-dispatched: the AVX2+FMA leaf streams packed
 /// panels contiguously; the portable fallback reads the same layout scalarly.
 /// Zero-copy — `bpacked` is the constant weight's stored representation.
+#[allow(clippy::needless_return)] // cfg-gated arch dispatch
 pub fn matmul_f32_packed(
     a: &[f32],
     bpacked: &[f32],
@@ -2560,6 +2571,7 @@ pub fn matmul_f32_packed(
 /// (naïve) to `Θ(N³ / B)` where `B` is the block dimension — a
 /// constant-factor win that compounds with SIMD lane width to give
 /// near-peak GFLOPS on the host's natural register width.
+#[allow(clippy::needless_return)] // cfg-gated arch dispatch
 pub fn matmul_f32_blocked(
     a: &[f32],
     b: &[f32],
@@ -3095,6 +3107,7 @@ pub fn matmul_i8_per_channel(
 /// Widen `bf16` (`is_f16=false`) or `f16` (`true`) elements from `src` (2 bytes
 /// each, little-endian) into `out`, `out.len()` elements. Bit-identical to
 /// element-wise `read_bf16`/`read_f16` (bf16 = `bits << 16`; f16 = IEEE half).
+#[allow(clippy::needless_return)] // cfg-gated arch dispatch
 pub fn widen_lowp_to_f32(src: &[u8], out: &mut [f32], is_f16: bool) {
     let n = out.len().min(src.len() / 2);
     #[cfg(target_arch = "x86_64")]
@@ -3105,6 +3118,30 @@ pub fn widen_lowp_to_f32(src: &[u8], out: &mut [f32], is_f16: bool) {
         }
         return;
     }
+    // NEON is baseline on aarch64. This is the *prefill* path — it widens the
+    // whole k×n weight before the blocked f32 matmul — so a scalar loop here
+    // throttles a SIMD matmul on a first-class target.
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON baseline; bounds are `n` for both slices.
+        unsafe {
+            neon_widen_lowp(src.as_ptr(), out.as_mut_ptr(), n, is_f16);
+        }
+        return;
+    }
+    // wasm SIMD128 is the deployed target — same reasoning.
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        // SAFETY: simd128 gate; bounds are `n` for both slices.
+        unsafe {
+            wasm_widen_lowp(src.as_ptr(), out.as_mut_ptr(), n, is_f16);
+        }
+        return;
+    }
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
     for (i, o) in out[..n].iter_mut().enumerate() {
         *o = lowp_scalar(src, i, is_f16);
     }
@@ -3146,6 +3183,70 @@ unsafe fn x86_widen_lowp(src: *const u8, out: *mut f32, n: usize, is_f16: bool) 
         } else {
             f32::from_bits((bits as u32) << 16)
         };
+    }
+}
+
+/// NEON bulk widen (4-wide). bf16 zero-extends `u16→u32` and shifts left 16;
+/// f16 uses the architectural half-precision convert (`vcvt_f32_f16`). Both are
+/// bit-identical to `lowp_scalar` — bf16 is exact by construction, and NEON's
+/// f16 convert is the IEEE-754 half→single conversion the scalar `f16_to_f32`
+/// implements.
+///
+/// # Safety
+/// NEON baseline on aarch64; `src` holds `2n` bytes, `out` holds `n` f32.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn neon_widen_lowp(src: *const u8, out: *mut f32, n: usize, is_f16: bool) {
+    use core::arch::aarch64::*;
+    let chunks = n / 4;
+    for c in 0..chunks {
+        let p = src.add(c * 8) as *const u16;
+        let h = vld1_u16(p); // 4 × u16
+        let f = if is_f16 {
+            vcvt_f32_f16(vreinterpret_f16_u16(h))
+        } else {
+            vreinterpretq_f32_u32(vshlq_n_u32::<16>(vmovl_u16(h)))
+        };
+        vst1q_f32(out.add(c * 4), f);
+    }
+    for i in chunks * 4..n {
+        let bits = u16::from_le_bytes([*src.add(i * 2), *src.add(i * 2 + 1)]);
+        *out.add(i) = if is_f16 {
+            crate::cpu::dtype::f16_to_f32(bits)
+        } else {
+            f32::from_bits((bits as u32) << 16)
+        };
+    }
+}
+
+/// wasm SIMD128 bulk widen (4-wide) — the deployed target's twin. bf16 shifts
+/// the zero-extended `u16` left 16; f16 has no SIMD128 convert instruction, so
+/// it falls to the exact scalar `f16_to_f32` per lane (still bit-identical, and
+/// bf16 — the common low-precision weight — takes the vector path).
+///
+/// # Safety
+/// simd128 enabled; `src` holds `2n` bytes, `out` holds `n` f32.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn wasm_widen_lowp(src: *const u8, out: *mut f32, n: usize, is_f16: bool) {
+    use core::arch::wasm32::*;
+    if !is_f16 {
+        let chunks = n / 4;
+        for c in 0..chunks {
+            // 4 × u16 → zero-extend to u32 → << 16 → reinterpret as f32.
+            let h = v128_load64_zero(src.add(c * 8) as *const u64);
+            let u32s = u32x4_extend_low_u16x8(h);
+            v128_store(out.add(c * 4) as *mut v128, i32x4_shl(u32s, 16));
+        }
+        for i in chunks * 4..n {
+            let bits = u16::from_le_bytes([*src.add(i * 2), *src.add(i * 2 + 1)]);
+            *out.add(i) = f32::from_bits((bits as u32) << 16);
+        }
+        return;
+    }
+    for i in 0..n {
+        let bits = u16::from_le_bytes([*src.add(i * 2), *src.add(i * 2 + 1)]);
+        *out.add(i) = crate::cpu::dtype::f16_to_f32(bits);
     }
 }
 
@@ -5194,10 +5295,10 @@ pub fn matmul_i4_pc_omajor(
 // any `u8` index dereferences in range without a per-call bounds scan.
 //
 // `k` must be a multiple of 8 — the group dimension is the E8 lattice's own
-// dimension, not a tuning choice. Lanes: x86 AVX2, wasm SIMD128 (the deployed
-// target), and a portable scalar reference; aarch64 still takes the scalar
-// inner, which is a standing violation of the no-scalar-on-a-first-class-target
-// contract (a NEON twin is the fix).
+// dimension, not a tuning choice. Lanes: x86 AVX2, aarch64 NEON, wasm SIMD128
+// (the deployed target), and a portable scalar reference. All four are pinned to
+// the same bit-exact conformance sweep, so no first-class target falls to
+// scalar.
 
 /// Reused i16 pre-widened codebook scratch (256×8). Widening the i8 codebook
 /// to i16 **once per call** lifts the per-column `cvtepi8_epi16` out of the hot
@@ -5241,8 +5342,9 @@ unsafe fn gemv_e8cb_omajor_native(
     {
         gemv_e8cb_omajor_wasm(q, bq, cb16, scales, out, k, n, scale_a);
     }
-    // Everything else: x86 AVX2 when detected, exact scalar otherwise. Guarded
-    // off the wasm-SIMD128 build so that branch has no dead scalar tail.
+    // Everything else: x86 AVX2 when detected, aarch64 NEON (baseline), exact
+    // scalar otherwise. Guarded off the wasm-SIMD128 build so that branch has no
+    // dead scalar tail.
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     {
         #[cfg(target_arch = "x86_64")]
@@ -5250,21 +5352,97 @@ unsafe fn gemv_e8cb_omajor_native(
             gemv_e8cb_omajor_avx2(q, bq, cb16, scales, out, k, n, scale_a);
             return;
         }
-        // Portable scalar reference inner (x86-without-AVX2, aarch64,
+        // NEON is baseline on aarch64 — a first-class target must never take the
+        // scalar inner.
+        #[cfg(target_arch = "aarch64")]
+        gemv_e8cb_omajor_neon(q, bq, cb16, scales, out, k, n, scale_a);
+        // Portable scalar reference inner (x86-without-AVX2,
         // wasm-without-simd128, other).
-        let g = k / 8;
-        for j in 0..n {
-            let row = bq.add(j * g);
-            let mut s = 0i32;
-            for gg in 0..g {
-                let e = cb16.add(*row.add(gg) as usize * 8);
-                let qb = q.add(gg * 8);
-                for t in 0..8 {
-                    s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let g = k / 8;
+            for j in 0..n {
+                let row = bq.add(j * g);
+                let mut s = 0i32;
+                for gg in 0..g {
+                    let e = cb16.add(*row.add(gg) as usize * 8);
+                    let qb = q.add(gg * 8);
+                    for t in 0..8 {
+                        s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+                    }
                 }
+                *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
             }
-            *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
         }
+    }
+}
+
+/// NEON inner for the E8-codebook GEMV — the aarch64 twin of
+/// `gemv_e8cb_omajor_avx2`. One 8-element group per step, 4 output columns in
+/// flight: the group's activations widen once (`vmovl_s8`) and each column's
+/// codebook entry loads straight as an `int16x8_t` (the codebook arrives
+/// pre-widened to i16). `vmlal_s16` accumulates the exact i32 partials — i16×i16
+/// products are exact in i32 and integer sums are associative, so the result is
+/// **bit-identical** to the scalar / AVX2 / wasm paths.
+///
+/// # Safety
+/// NEON is baseline on aarch64; layouts per `gemv_e8cb_omajor_native`; `k` a
+/// multiple of 8, `k ≤ I8_DOT_K_MAX`. Unaligned loads.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_e8cb_omajor_neon(
+    q: *const i8,
+    bq: *const u8,
+    cb16: *const i16,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    n: usize,
+    scale_a: f32,
+) {
+    use core::arch::aarch64::*;
+    let g = k / 8;
+    let mut j = 0;
+    while j + 4 <= n {
+        let rows = [
+            bq.add(j * g),
+            bq.add((j + 1) * g),
+            bq.add((j + 2) * g),
+            bq.add((j + 3) * g),
+        ];
+        // Two i32x4 accumulators per column: the low and high halves of the
+        // 8-wide product, summed once at the end.
+        let mut lo = [vdupq_n_s32(0); 4];
+        let mut hi = [vdupq_n_s32(0); 4];
+        for gg in 0..g {
+            // Widen the group's 8 activations once, shared across the columns.
+            let qv = vmovl_s8(vld1_s8(q.add(gg * 8)));
+            for r in 0..4 {
+                let e = vld1q_s16(cb16.add(*rows[r].add(gg) as usize * 8));
+                lo[r] = vmlal_s16(lo[r], vget_low_s16(qv), vget_low_s16(e));
+                hi[r] = vmlal_s16(hi[r], vget_high_s16(qv), vget_high_s16(e));
+            }
+        }
+        for r in 0..4 {
+            let s = vaddvq_s32(vaddq_s32(lo[r], hi[r]));
+            *out.add(j + r) = (s as f32) * (scale_a * *scales.add(j + r));
+        }
+        j += 4;
+    }
+    // Column tail (< 4): scalar exact dot over the i16 codebook.
+    while j < n {
+        let row = bq.add(j * g);
+        let mut s = 0i32;
+        for gg in 0..g {
+            let e = cb16.add(*row.add(gg) as usize * 8);
+            let qb = q.add(gg * 8);
+            for t in 0..8 {
+                s += (*qb.add(t) as i32) * (*e.add(t) as i32);
+            }
+        }
+        *out.add(j) = (s as f32) * (scale_a * *scales.add(j));
+        j += 1;
     }
 }
 
@@ -6048,6 +6226,46 @@ mod tests {
             }
         }
         out
+    }
+
+    /// `widen_lowp_to_f32` must be **bit-identical** to element-wise
+    /// `read_bf16`/`read_f16` on every arch. It is the prefill path (it widens
+    /// the whole k×n weight before the blocked f32 matmul), so it has a SIMD
+    /// lane on x86 AVX2, aarch64 NEON and wasm SIMD128; all must agree with the
+    /// scalar spec, including the sub-chunk tail.
+    #[test]
+    fn widen_lowp_matches_elementwise_reference() {
+        use crate::cpu::dtype::{read_bf16, read_f16, write_bf16, write_f16};
+        // Lengths spanning the 4-wide (NEON/wasm) and 8-wide (AVX2) chunk
+        // widths and every tail remainder.
+        for len in [0usize, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 64, 129] {
+            for is_f16 in [false, true] {
+                let mut src = vec![0u8; len * 2];
+                for i in 0..len {
+                    // A spread of magnitudes, signs, and exact halves.
+                    let v = (i as f32 - (len as f32) / 2.0) * 0.375;
+                    if is_f16 {
+                        write_f16(&mut src, i, v);
+                    } else {
+                        write_bf16(&mut src, i, v);
+                    }
+                }
+                let mut got = vec![0f32; len];
+                widen_lowp_to_f32(&src, &mut got, is_f16);
+                for (i, &g) in got.iter().enumerate() {
+                    let want = if is_f16 {
+                        read_f16(&src, i)
+                    } else {
+                        read_bf16(&src, i)
+                    };
+                    assert_eq!(
+                        g.to_bits(),
+                        want.to_bits(),
+                        "len={len} is_f16={is_f16} elem {i}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
