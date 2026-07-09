@@ -5078,14 +5078,182 @@ pub(crate) unsafe fn pool_exec_gemv(
     }
 }
 
+/// Per-row f32 scratch for the output-major GEMVs' per-token activation scales
+/// (zero alloc per call after warm-up under `std`; transient on no_std, like the
+/// other kernel scratches).
+#[cfg(feature = "std")]
+fn with_scale_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    std::thread_local! {
+        static SA: core::cell::RefCell<Vec<f32>> = const { core::cell::RefCell::new(Vec::new()) };
+    }
+    SA.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+#[cfg(not(feature = "std"))]
+fn with_scale_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
+    let mut v = Vec::new();
+    f(&mut v)
+}
+
+/// Output columns per block on the `m > 1` output-major GEMV path.
+///
+/// A block's weight slab is `cols · k` bytes and is re-read by every one of the
+/// `m` rows, so it is sized to stay resident between rows. Without the blocking,
+/// a per-row loop re-streams the whole `[n,k]` weight once **per row** — `m`
+/// passes instead of one — and the per-row cost never falls below the weight's
+/// memory bandwidth, however large `m` grows.
+///
+/// This only bites once the weight exceeds cache; at 4 MB the GEMV is
+/// compute-bound. Measured at `m = 16`: 1.13× at a 4 MB weight, **2.37×** at
+/// 32 MB, **2.03×** at 64 MB (`i8_m_scaling`), the blocked path reaching the
+/// same ~48 GMAC/s compute ceiling at every weight size.
+///
+/// Structural (a cache-residency ratio), not model-derived.
+const OMAJOR_BLOCK_BYTES: usize = 192 * 1024;
+
+#[inline]
+fn omajor_col_block(k: usize, n: usize) -> usize {
+    (OMAJOR_BLOCK_BYTES / k.max(1)).clamp(1, n)
+}
+
+/// The serial output-major i8 GEMV inner this build dispatches, over a
+/// **contiguous column range**: `bq`/`scales`/`out` already point at the first
+/// column. No pool — the caller owns the partitioning.
+///
+/// # Safety
+/// `bq` addresses `cols · k` i8, `scales`/`out` address `cols` elements, and `q`
+/// (plus `qp`/`qn` on relaxed-SIMD builds) addresses `k` i8.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+unsafe fn gemv_i8_omajor_serial(
+    q: *const i8,
+    qp: *const i8,
+    qn: *const i8,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    cols: usize,
+    scale_a: f32,
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = (qp, qn);
+        gemv_i8_omajor_neon(q, bq, scales, out, k, cols, scale_a);
+    }
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        not(target_feature = "relaxed-simd")
+    ))]
+    {
+        let _ = (qp, qn);
+        gemv_i8_omajor_wasm(q, bq, scales, out, k, cols, scale_a);
+    }
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    ))]
+    gemv_i8_omajor_wasm_relaxed(q, qp, qn, bq, scales, out, k, cols, scale_a);
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    {
+        let _ = (qp, qn);
+        #[cfg(target_arch = "x86_64")]
+        let done = if x86_has_avx2() {
+            gemv_i8_omajor_avx2(q, bq, scales, out, k, cols, scale_a);
+            true
+        } else {
+            false
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let done = false;
+        if !done {
+            // Portable scalar: the same exact-i32 dot, one whole column at a
+            // time. Not a numerically different tier.
+            for j in 0..cols {
+                let row = bq.add(j * k);
+                let mut acc = 0i32;
+                for kk in 0..k {
+                    acc += (*q.add(kk) as i32) * (*row.add(kk) as i32);
+                }
+                *out.add(j) = (acc as f32) * (scale_a * *scales.add(j));
+            }
+        }
+    }
+}
+
+/// One column tile of the `m > 1` path: sub-block the tile so its weight slab
+/// stays resident, and run **every row** against a block before moving on.
+///
+/// Each output cell is still one whole dot, computed by the same serial inner
+/// over the same `k`-vector in the same order — only the order in which cells
+/// are *visited* changes. The accumulation is an exact i32 sum and integer
+/// addition is associative, so this cannot move a single bit, let alone a κ.
+///
+/// # Safety
+/// Disjoint output columns per caller; `q_all`/`sa` address `m·k` / `m`.
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i8_omajor_tile_rows(
+    q_all: *const i8,
+    qp_all: *const i8,
+    qn_all: *const i8,
+    sa: *const f32,
+    bq: *const i8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+    c0: usize,
+    tile_cols: usize,
+) {
+    let cb = omajor_col_block(k, tile_cols);
+    let mut c = 0usize;
+    while c < tile_cols {
+        let w = cb.min(tile_cols - c);
+        let col = c0 + c;
+        for i in 0..m {
+            let scale_a = *sa.add(i);
+            if scale_a == 0.0 {
+                continue; // the row was zero-filled up front
+            }
+            gemv_i8_omajor_serial(
+                q_all.add(i * k),
+                qp_all.add(i * k),
+                qn_all.add(i * k),
+                bq.add(col * k),
+                scales.add(col),
+                out.add(i * n + col),
+                k,
+                w,
+                scale_a,
+            );
+        }
+        c += w;
+    }
+}
+
 /// Fused per-channel symmetric int8 matmul over an **output-major** weight
 /// with per-token dynamic activation quantization (W8A8). `a` is `[m,k]`
 /// row-major f32, `bq` is `[n,k]` i8 (each output's k-vector contiguous),
-/// `scales` `[n]`, `out` `[m,n]`. m = 1 is the decode GEMV this kernel is
-/// shaped for; small m loops rows through the same core. Output is
-/// **bit-identical** across scalar / x86 AVX2 / NEON / wasm SIMD128: the
-/// accumulation is exact integer, and every target shares the same
-/// quantization and writeback expressions.
+/// `scales` `[n]`, `out` `[m,n]`.
+///
+/// `m = 1` is the decode GEMV this kernel is shaped for and keeps the pooled
+/// dispatch (native column-tiles / wasm fork-join). For `m > 1` the output
+/// columns are **blocked**, so a block's weight slab is read once and reused by
+/// every row, instead of the whole `[n,k]` weight being re-streamed per row.
+///
+/// Output is **bit-identical** across scalar / x86 AVX2 / NEON / wasm SIMD128,
+/// serial or parallel, at every `m`: the accumulation is exact integer, every
+/// target shares the same quantization and writeback expressions, and every
+/// output cell is one whole dot by one participant. Integer addition is
+/// associative and commutative, so no tiling, blocking, or completion order can
+/// perturb a bit — unlike the f32 matmul, whose summation order is part of its
+/// contract.
 pub fn matmul_i8_pc_omajor(
     a: &[f32],
     bq: &[i8],
@@ -5108,24 +5276,19 @@ pub fn matmul_i8_pc_omajor(
     debug_assert!(out.len() >= m * n);
 
     with_q8_scratch(|q| {
-        // `resize` zero-fills only the growth; `quantize_row_i8` rewrites all
-        // `k` elements, so a preceding `clear()` is a wasted k-element zero pass
-        // on every call.
-        q.resize(k, 0);
-        for i in 0..m {
-            let arow = &a[i * k..(i + 1) * k];
-            let orow = &mut out[i * n..i * n + n];
-            let scale_a = quantize_row_i8(arow, q);
+        if m == 1 {
+            // Decode. One row, so there is nothing to amortize a weight pass
+            // over; keep the pooled dispatch, which partitions the *columns*.
+            q.resize(k, 0);
+            let scale_a = quantize_row_i8(&a[..k], q);
+            let orow = &mut out[..n];
             if scale_a == 0.0 {
                 orow.fill(0.0);
-                continue;
+                return;
             }
             // Native multi-core: split the output columns across the pool, each
             // participant running the identical serial inner over a disjoint
-            // contiguous column range — bit-identical to serial (every output
-            // column is a whole dot by one participant; see
-            // `gemv_i8_omajor_native`). The GEMV is compute-bound, so it scales
-            // near the pool width. wasm keeps its own fork-join below.
+            // contiguous column range — bit-identical to serial.
             #[cfg(all(
                 feature = "parallel",
                 any(target_arch = "x86_64", target_arch = "aarch64")
@@ -5164,35 +5327,16 @@ pub fn matmul_i8_pc_omajor(
                             })
                             .collect();
                         parallel::pool().run(tasks);
-                        continue;
+                        return;
                     }
                 }
             }
-            #[cfg(target_arch = "aarch64")]
-            // SAFETY: NEON is baseline on aarch64; sizes checked above.
-            unsafe {
-                gemv_i8_omajor_neon(
-                    q.as_ptr(),
-                    bq.as_ptr(),
-                    scales.as_ptr(),
-                    orow.as_mut_ptr(),
-                    k,
-                    n,
-                    scale_a,
-                );
-            }
-            #[cfg(all(
-                target_arch = "wasm32",
-                target_feature = "simd128",
-                not(target_feature = "relaxed-simd")
-            ))]
-            // SAFETY: simd128 gate; sizes checked above. On shared-memory
-            // atomics builds the row range is fork-joined across the
-            // embedder's workers first (bit-identical partition; see
-            // `wasm_pool`); the single-threaded inner is the fallback and
-            // the only path on plain simd128 builds.
-            unsafe {
-                #[cfg(feature = "wasm-threads")]
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                // The pool partitions the GEMV's output columns into disjoint
+                // contiguous ranges; every column is a whole dot by one
+                // participant, so the result is bit-identical to serial.
+                #[cfg(all(feature = "wasm-threads", not(target_feature = "relaxed-simd")))]
                 let pooled =
                     crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
                         q: q.as_ptr(),
@@ -5207,33 +5351,21 @@ pub fn matmul_i8_pc_omajor(
                             qn: core::ptr::null(),
                         },
                     });
-                #[cfg(not(feature = "wasm-threads"))]
+                #[cfg(not(all(feature = "wasm-threads", not(target_feature = "relaxed-simd"))))]
                 let pooled = false;
-                if !pooled {
-                    gemv_i8_omajor_wasm(
-                        q.as_ptr(),
-                        bq.as_ptr(),
-                        scales.as_ptr(),
-                        orow.as_mut_ptr(),
-                        k,
-                        n,
-                        scale_a,
-                    );
+                if pooled {
+                    return;
                 }
             }
-            // Relaxed-SIMD build: same function, i8·i7 relaxed dots over the
-            // q⁺/q⁻ split (exact — see `gemv_i8_omajor_wasm_relaxed`).
+            // Relaxed-SIMD build: the inner reads the q⁺/q⁻ i7 split.
             #[cfg(all(
                 target_arch = "wasm32",
                 target_feature = "simd128",
                 target_feature = "relaxed-simd"
             ))]
-            // SAFETY: simd128 + relaxed-simd gates; sizes checked above.
-            unsafe {
+            {
                 with_gemv_scratch(|qp, qn| {
-                    qp.clear();
                     qp.resize(k, 0);
-                    qn.clear();
                     qn.resize(k, 0);
                     split_q7(q, qp, qn);
                     #[cfg(feature = "wasm-threads")]
@@ -5254,60 +5386,169 @@ pub fn matmul_i8_pc_omajor(
                     #[cfg(not(feature = "wasm-threads"))]
                     let pooled = false;
                     if !pooled {
-                        gemv_i8_omajor_wasm_relaxed(
+                        // SAFETY: simd128 + relaxed-simd gates; sizes checked.
+                        unsafe {
+                            gemv_i8_omajor_serial(
+                                q.as_ptr(),
+                                qp.as_ptr(),
+                                qn.as_ptr(),
+                                bq.as_ptr(),
+                                scales.as_ptr(),
+                                orow.as_mut_ptr(),
+                                k,
+                                n,
+                                scale_a,
+                            );
+                        }
+                    }
+                });
+            }
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                target_feature = "relaxed-simd"
+            )))]
+            // SAFETY: sizes checked above; the serial inner is this build's.
+            unsafe {
+                gemv_i8_omajor_serial(
+                    q.as_ptr(),
+                    core::ptr::null(),
+                    core::ptr::null(),
+                    bq.as_ptr(),
+                    scales.as_ptr(),
+                    orow.as_mut_ptr(),
+                    k,
+                    n,
+                    scale_a,
+                );
+            }
+            return;
+        }
+
+        // ── m > 1 ────────────────────────────────────────────────────────
+        // Quantize every row up front, then walk *column blocks* on the
+        // outside and rows on the inside, so a block's weight slab is read
+        // once and reused by all `m` rows.
+        q.resize(m * k, 0);
+        with_scale_scratch(|sa| {
+            sa.resize(m, 0.0);
+            for i in 0..m {
+                sa[i] = quantize_row_i8(&a[i * k..(i + 1) * k], &mut q[i * k..(i + 1) * k]);
+                if sa[i] == 0.0 {
+                    out[i * n..i * n + n].fill(0.0);
+                }
+            }
+
+            // Relaxed-SIMD reads a q⁺/q⁻ split of every row; build them all
+            // once rather than per (block, row).
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                target_feature = "relaxed-simd"
+            ))]
+            {
+                with_gemv_scratch(|qp, qn| {
+                    qp.resize(m * k, 0);
+                    qn.resize(m * k, 0);
+                    split_q7(q, qp, qn);
+                    // SAFETY: sizes checked; single participant.
+                    unsafe {
+                        gemv_i8_omajor_tile_rows(
                             q.as_ptr(),
                             qp.as_ptr(),
                             qn.as_ptr(),
+                            sa.as_ptr(),
                             bq.as_ptr(),
                             scales.as_ptr(),
-                            orow.as_mut_ptr(),
+                            out.as_mut_ptr(),
+                            m,
                             k,
                             n,
-                            scale_a,
+                            0,
+                            n,
                         );
                     }
                 });
             }
-            // Same integer function on every other target: AVX2 on x86_64
-            // (runtime-detected), scalar elsewhere / wasm-without-simd128 —
-            // not a numerically different tier.
-            #[cfg(not(any(
-                target_arch = "aarch64",
-                all(target_arch = "wasm32", target_feature = "simd128")
+
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_feature = "simd128",
+                target_feature = "relaxed-simd"
             )))]
             {
-                #[cfg(target_arch = "x86_64")]
-                let done = if x86_has_avx2() {
-                    // SAFETY: AVX2 detected; sizes checked above.
-                    unsafe {
-                        gemv_i8_omajor_avx2(
-                            q.as_ptr(),
-                            bq.as_ptr(),
-                            scales.as_ptr(),
-                            orow.as_mut_ptr(),
-                            k,
-                            n,
-                            scale_a,
-                        );
-                    }
-                    true
-                } else {
-                    false
-                };
-                #[cfg(not(target_arch = "x86_64"))]
-                let done = false;
-                if !done {
-                    for j in 0..n {
-                        let row = &bq[j * k..j * k + k];
-                        let mut s = 0i32;
-                        for (&qa, &w) in q.iter().zip(row) {
-                            s += qa as i32 * w as i32;
+                // Native multi-core: the parallel frontier is the **column
+                // tile**, and each participant loops all `m` rows inside its
+                // tile. One fork/join for the whole call (the per-row dispatch
+                // paid `m` of them), and each tile's weight slab is reused
+                // across rows. Disjoint output columns ⇒ bit-identical.
+                #[cfg(all(
+                    feature = "parallel",
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                ))]
+                {
+                    use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let w = parallel::pool().width();
+                    if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                        let tiles = parallel::output_tiles(1, n, w, 4);
+                        if tiles.len() > 1 {
+                            let (qp, ap, bp, sp, op) = (
+                                SendConst(q.as_ptr()),
+                                SendConst(sa.as_ptr()),
+                                SendConst(bq.as_ptr()),
+                                SendConst(scales.as_ptr()),
+                                SendMut(out.as_mut_ptr()),
+                            );
+                            let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                                .into_iter()
+                                .map(|(_, _, c0, cols)| {
+                                    Box::new(move || {
+                                        let (qp, ap, bp, sp, op) = (qp, ap, bp, sp, op);
+                                        // SAFETY: disjoint column ranges.
+                                        unsafe {
+                                            gemv_i8_omajor_tile_rows(
+                                                qp.0,
+                                                core::ptr::null(),
+                                                core::ptr::null(),
+                                                ap.0,
+                                                bp.0,
+                                                sp.0,
+                                                op.0,
+                                                m,
+                                                k,
+                                                n,
+                                                c0,
+                                                cols,
+                                            );
+                                        }
+                                    })
+                                        as Box<dyn FnOnce() + Send>
+                                })
+                                .collect();
+                            parallel::pool().run(tasks);
+                            return;
                         }
-                        orow[j] = (s as f32) * (scale_a * scales[j]);
                     }
                 }
+                // SAFETY: sizes checked above; single participant.
+                unsafe {
+                    gemv_i8_omajor_tile_rows(
+                        q.as_ptr(),
+                        core::ptr::null(),
+                        core::ptr::null(),
+                        sa.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        out.as_mut_ptr(),
+                        m,
+                        k,
+                        n,
+                        0,
+                        n,
+                    );
+                }
             }
-        }
+        });
     })
 }
 
@@ -5617,6 +5858,212 @@ unsafe fn gemv_i4_omajor_wasm_relaxed(
     }
 }
 
+/// Column-blocked `m > 1` driver for the packed-i4 GEMV: a block's packed weight
+/// slab is read once and reused by every row, instead of the whole `[n, k/2]`
+/// weight being re-streamed per row.
+///
+/// Byte-neutral: every output cell is one whole dot over the same `k`-vector,
+/// visited in a different order. The accumulation is an exact i32 sum and
+/// integer addition is associative.
+///
+/// # Safety
+/// `q_all` addresses `m·k` i8; `de_all` addresses `m·ds` i8 (or is null when
+/// this build's inner ignores it); `sa` addresses `m` f32; rows with
+/// `sa[i] == 0` are pre-zeroed by the caller.
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_i4_omajor_blocked(
+    q_all: *const i8,
+    de_all: *const i8,
+    ds: usize,
+    sa: *const f32,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+) {
+    let kb = k / 2;
+    let cb = omajor_col_block(kb, n);
+    let mut c = 0usize;
+    while c < n {
+        let w = cb.min(n - c);
+        for i in 0..m {
+            let scale_a = *sa.add(i);
+            if scale_a == 0.0 {
+                continue; // the row was zero-filled up front
+            }
+            gemv_i4_omajor_serial(
+                q_all.add(i * k),
+                if de_all.is_null() {
+                    de_all
+                } else {
+                    de_all.add(i * ds)
+                },
+                bq.add(c * kb),
+                scales.add(c),
+                out.add(i * n + c),
+                k,
+                w,
+                scale_a,
+            );
+        }
+        c += w;
+    }
+}
+
+/// De-interleaved activation stride for the packed-i4 inner, in i8 elements.
+/// The baseline tiers read `[q_even | q_odd]` (`k`); the relaxed-SIMD tier reads
+/// the non-negative split `[qe⁺ | qo⁺ | qe⁻ | qo⁻]` (`2k`).
+#[cfg(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+))]
+#[inline]
+fn i4_de_stride(k: usize) -> usize {
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    ))]
+    {
+        2 * k
+    }
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    )))]
+    {
+        k
+    }
+}
+
+/// Build one row's de-interleaved activation. Amortized over all `n` output
+/// columns (and, on the `m > 1` path, over every column block), so the packed
+/// nibbles need no lane shuffle in the inner loop.
+#[cfg(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+))]
+#[inline]
+fn i4_deinterleave_row(q: &[i8], de: &mut [i8], k: usize) {
+    let kb = k / 2;
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    ))]
+    for (t, pair) in q.chunks_exact(2).enumerate() {
+        de[t] = pair[0].max(0);
+        de[kb + t] = pair[1].max(0);
+        de[2 * kb + t] = (-pair[0]).max(0);
+        de[3 * kb + t] = (-pair[1]).max(0);
+    }
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    )))]
+    for (t, pair) in q.chunks_exact(2).enumerate() {
+        de[t] = pair[0];
+        de[kb + t] = pair[1];
+    }
+}
+
+/// Run `f` with the de-interleaved activation for the single row in `q`.
+///
+/// Only the x86 and wasm inners read it; the NEON inner shuffles nibbles
+/// in-register and the scalar fallback indexes them directly, so on those
+/// targets there is nothing to build.
+#[cfg(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+))]
+#[inline]
+fn with_i4_de_scratch<R>(q: &[i8], k: usize, f: impl FnOnce(&[i8]) -> R) -> R {
+    with_gemv_scratch(|de, _unused| {
+        de.resize(i4_de_stride(k), 0);
+        i4_deinterleave_row(q, de, k);
+        f(de)
+    })
+}
+
+#[cfg(not(any(
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    target_arch = "x86_64"
+)))]
+#[inline]
+fn with_i4_de_scratch<R>(q: &[i8], k: usize, f: impl FnOnce(&[i8]) -> R) -> R {
+    let _ = (q, k);
+    f(&[])
+}
+
+/// The serial output-major packed-i4 GEMV inner this build dispatches, over a
+/// **contiguous column range**: `bq` points at the first column's `k/2` packed
+/// bytes, `scales`/`out` at that column.
+///
+/// # Safety
+/// `bq` addresses `cols · k/2` bytes; `scales`/`out` address `cols` elements;
+/// `q` addresses `k` i8 and `de` `i4_de_stride(k)` i8.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+unsafe fn gemv_i4_omajor_serial(
+    q: *const i8,
+    de: *const i8,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    k: usize,
+    cols: usize,
+    scale_a: f32,
+) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = de; // the NEON inner shuffles nibbles in-register
+        gemv_i4_omajor_neon(q, bq, scales, out, k, cols, scale_a);
+    }
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        not(target_feature = "relaxed-simd")
+    ))]
+    gemv_i4_omajor_wasm(q, de, bq, scales, out, k, cols, scale_a);
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        target_feature = "relaxed-simd"
+    ))]
+    gemv_i4_omajor_wasm_relaxed(q, de, bq, scales, out, k, cols, scale_a);
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    {
+        #[cfg(target_arch = "x86_64")]
+        let done = if x86_has_avx2() {
+            gemv_i4_omajor_avx2(q, de, bq, scales, out, k, cols, scale_a);
+            true
+        } else {
+            false
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let done = false;
+        if !done {
+            let _ = de;
+            let kb = k / 2;
+            for j in 0..cols {
+                let row = core::slice::from_raw_parts(bq.add(j * kb), kb);
+                let mut sv = 0i32;
+                for kk in 0..k {
+                    sv += (*q.add(kk) as i32) * i4_at(row, kk) as i32;
+                }
+                *out.add(j) = (sv as f32) * (scale_a * *scales.add(j));
+            }
+        }
+    }
+}
+
 /// Fused per-channel symmetric **int4** matmul over an output-major packed
 /// weight with per-token dynamic activation quantization (W4A8). `a` is
 /// `[m,k]` row-major f32, `bq` is `[n, k/2]` packed nibbles (element `l` of
@@ -5651,62 +6098,20 @@ pub fn matmul_i4_pc_omajor(
     debug_assert!(out.len() >= m * n);
 
     with_q8_scratch(|q| {
-        // `resize` zero-fills only the growth; `quantize_row_i8` rewrites all
-        // `k` elements, so a preceding `clear()` is a wasted k-element zero pass
-        // on every call.
-        q.resize(k, 0);
-        for i in 0..m {
-            let arow = &a[i * k..(i + 1) * k];
-            let orow = &mut out[i * n..i * n + n];
-            let scale_a = quantize_row_i8(arow, q);
+        if m == 1 {
+            // Decode: nothing to amortize a weight pass over. Keep the pooled
+            // dispatch, which partitions the output columns.
+            q.resize(k, 0);
+            let scale_a = quantize_row_i8(&a[..k], q);
+            let orow = &mut out[..n];
             if scale_a == 0.0 {
                 orow.fill(0.0);
-                continue;
+                return;
             }
-            #[cfg(target_arch = "aarch64")]
-            // SAFETY: NEON is baseline on aarch64; sizes checked above.
-            unsafe {
-                gemv_i4_omajor_neon(
-                    q.as_ptr(),
-                    bq.as_ptr(),
-                    scales.as_ptr(),
-                    orow.as_mut_ptr(),
-                    k,
-                    n,
-                    scale_a,
-                );
-            }
-            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-            // SAFETY: simd128 gate; sizes checked above. The activation row
-            // is de-interleaved once per token (amortized over all n rows) so
-            // the packed nibbles need no lane shuffle in the inner loop; on
-            // shared-memory builds the rows fork-join across the embedder
-            // pool (kind 1). Integer sums keep any layout bit-identical.
-            unsafe {
-                with_gemv_scratch(|de, _unused| {
-                    let kb = k / 2;
-                    #[cfg(not(target_feature = "relaxed-simd"))]
-                    {
-                        // de = [q_even | q_odd]
-                        de.clear();
-                        de.resize(k, 0);
-                        for (t, pair) in q.chunks_exact(2).enumerate() {
-                            de[t] = pair[0];
-                            de[kb + t] = pair[1];
-                        }
-                    }
-                    #[cfg(target_feature = "relaxed-simd")]
-                    {
-                        // de = [qe⁺ | qo⁺ | qe⁻ | qo⁻]
-                        de.clear();
-                        de.resize(2 * k, 0);
-                        for (t, pair) in q.chunks_exact(2).enumerate() {
-                            de[t] = pair[0].max(0);
-                            de[kb + t] = pair[1].max(0);
-                            de[2 * kb + t] = (-pair[0]).max(0);
-                            de[3 * kb + t] = (-pair[1]).max(0);
-                        }
-                    }
+            with_i4_de_scratch(q, k, |de| {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    // The pool partitions output columns disjointly.
                     #[cfg(feature = "wasm-threads")]
                     let pooled =
                         crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
@@ -5723,82 +6128,92 @@ pub fn matmul_i4_pc_omajor(
                         });
                     #[cfg(not(feature = "wasm-threads"))]
                     let pooled = false;
-                    if !pooled {
-                        #[cfg(not(target_feature = "relaxed-simd"))]
-                        gemv_i4_omajor_wasm(
-                            q.as_ptr(),
-                            de.as_ptr(),
-                            bq.as_ptr(),
-                            scales.as_ptr(),
-                            orow.as_mut_ptr(),
-                            k,
-                            n,
-                            scale_a,
-                        );
-                        #[cfg(target_feature = "relaxed-simd")]
-                        gemv_i4_omajor_wasm_relaxed(
-                            q.as_ptr(),
-                            de.as_ptr(),
-                            bq.as_ptr(),
-                            scales.as_ptr(),
-                            orow.as_mut_ptr(),
-                            k,
-                            n,
-                            scale_a,
-                        );
-                    }
-                });
-            }
-            // Same integer function on every other target: AVX2 on x86_64
-            // (runtime-detected; the activation is de-interleaved once per
-            // token exactly as the wasm baseline), scalar elsewhere.
-            #[cfg(not(any(
-                target_arch = "aarch64",
-                all(target_arch = "wasm32", target_feature = "simd128")
-            )))]
-            {
-                #[cfg(target_arch = "x86_64")]
-                let done = if x86_has_avx2() {
-                    with_gemv_scratch(|de, _unused| {
-                        let kb = k / 2;
-                        de.clear();
-                        de.resize(k, 0);
-                        for (t, pair) in q.chunks_exact(2).enumerate() {
-                            de[t] = pair[0];
-                            de[kb + t] = pair[1];
-                        }
-                        // SAFETY: AVX2 detected; sizes checked above.
-                        unsafe {
-                            gemv_i4_omajor_avx2(
-                                q.as_ptr(),
-                                de.as_ptr(),
-                                bq.as_ptr(),
-                                scales.as_ptr(),
-                                orow.as_mut_ptr(),
-                                k,
-                                n,
-                                scale_a,
-                            );
-                        }
-                    });
-                    true
-                } else {
-                    false
-                };
-                #[cfg(not(target_arch = "x86_64"))]
-                let done = false;
-                if !done {
-                    for j in 0..n {
-                        let row = &bq[j * (k / 2)..(j + 1) * (k / 2)];
-                        let mut sv = 0i32;
-                        for (kk, &qa) in q.iter().enumerate() {
-                            sv += qa as i32 * i4_at(row, kk) as i32;
-                        }
-                        orow[j] = (sv as f32) * (scale_a * scales[j]);
+                    if pooled {
+                        return;
                     }
                 }
-            }
+                // SAFETY: sizes checked above; this build's serial inner.
+                unsafe {
+                    gemv_i4_omajor_serial(
+                        q.as_ptr(),
+                        de.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        orow.as_mut_ptr(),
+                        k,
+                        n,
+                        scale_a,
+                    );
+                }
+            });
+            return;
         }
+
+        // ── m > 1 ────────────────────────────────────────────────────────
+        // Quantize (and de-interleave) every row up front, then walk column
+        // blocks outside and rows inside, so a block's packed weight slab is
+        // read once and reused by all `m` rows instead of being re-streamed per
+        // row. Byte-neutral: each output cell is still one whole dot over the
+        // same k-vector, and the accumulation is an exact i32 sum.
+        q.resize(m * k, 0);
+        with_scale_scratch(|sa| {
+            sa.resize(m, 0.0);
+            for i in 0..m {
+                sa[i] = quantize_row_i8(&a[i * k..(i + 1) * k], &mut q[i * k..(i + 1) * k]);
+                if sa[i] == 0.0 {
+                    out[i * n..i * n + n].fill(0.0);
+                }
+            }
+            #[cfg(any(
+                all(target_arch = "wasm32", target_feature = "simd128"),
+                target_arch = "x86_64"
+            ))]
+            with_gemv_scratch(|de_all, _unused| {
+                let ds = i4_de_stride(k);
+                de_all.resize(m * ds, 0);
+                for i in 0..m {
+                    i4_deinterleave_row(
+                        &q[i * k..(i + 1) * k],
+                        &mut de_all[i * ds..(i + 1) * ds],
+                        k,
+                    );
+                }
+                // SAFETY: disjoint output columns; sizes checked above.
+                unsafe {
+                    gemv_i4_omajor_blocked(
+                        q.as_ptr(),
+                        de_all.as_ptr(),
+                        ds,
+                        sa.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        out.as_mut_ptr(),
+                        m,
+                        k,
+                        n,
+                    );
+                }
+            });
+            #[cfg(not(any(
+                all(target_arch = "wasm32", target_feature = "simd128"),
+                target_arch = "x86_64"
+            )))]
+            // SAFETY: disjoint output columns; this build's inner ignores `de`.
+            unsafe {
+                gemv_i4_omajor_blocked(
+                    q.as_ptr(),
+                    core::ptr::null(),
+                    0,
+                    sa.as_ptr(),
+                    bq.as_ptr(),
+                    scales.as_ptr(),
+                    out.as_mut_ptr(),
+                    m,
+                    k,
+                    n,
+                );
+            }
+        });
     })
 }
 
@@ -6211,20 +6626,19 @@ pub fn matmul_e8cb_omajor(
         cb16.clear();
         cb16.extend(codebook.iter().map(|&v| v as i16));
         with_q8_scratch(|q| {
-            q.clear();
-            q.resize(k, 0);
-            for i in 0..m {
-                let arow = &a[i * k..(i + 1) * k];
-                let orow = &mut out[i * n..i * n + n];
-                let scale_a = quantize_row_i8(arow, q);
+            let g = k / 8;
+            if m == 1 {
+                // Decode: one row, nothing to amortize a weight pass over.
+                q.resize(k, 0);
+                let scale_a = quantize_row_i8(&a[..k], q);
+                let orow = &mut out[..n];
                 if scale_a == 0.0 {
                     orow.fill(0.0);
-                    continue;
+                    return;
                 }
                 // wasm multi-core: fork-join the output columns across the
-                // embedder's workers (kind 2 = e8cb; codebook in arg[1]), each
-                // running the identical serial inner — bit-identical to serial.
-                // Falls through to the serial inner below when no workers are
+                // embedder's workers, each running the identical serial inner —
+                // bit-identical to serial. Falls through when no workers are
                 // registered or the job is below the pool's latency floor.
                 #[cfg(all(
                     target_arch = "wasm32",
@@ -6246,7 +6660,7 @@ pub fn matmul_e8cb_omajor(
                             },
                         });
                     if pooled {
-                        continue;
+                        return;
                     }
                 }
                 // Native multi-core: disjoint output-column ranges across the
@@ -6257,7 +6671,6 @@ pub fn matmul_e8cb_omajor(
                 ))]
                 {
                     use crate::cpu::parallel::{self, SendConst, SendMut};
-                    let g = k / 8;
                     let w = parallel::pool().width();
                     if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
                         let tiles = parallel::output_tiles(1, n, w, 8);
@@ -6293,11 +6706,11 @@ pub fn matmul_e8cb_omajor(
                                 })
                                 .collect();
                             parallel::pool().run(tasks);
-                            continue;
+                            return;
                         }
                     }
                 }
-                // SAFETY: sizes checked above; scalar/AVX2 inner selected within.
+                // SAFETY: sizes checked above; per-arch inner selected within.
                 unsafe {
                     gemv_e8cb_omajor_native(
                         q.as_ptr(),
@@ -6310,7 +6723,50 @@ pub fn matmul_e8cb_omajor(
                         scale_a,
                     );
                 }
+                return;
             }
+
+            // ── m > 1 ────────────────────────────────────────────────────
+            // Quantize every row up front, then walk column blocks outside and
+            // rows inside, so a block's index slab (and the codebook) stay
+            // resident across all `m` rows instead of the whole `[n, k/8]`
+            // index stream being re-read per row. Byte-neutral: each output
+            // cell is still one whole dot over the same k-vector, and the
+            // accumulation is an exact i32 sum.
+            q.resize(m * k, 0);
+            with_scale_scratch(|sa| {
+                sa.resize(m, 0.0);
+                for i in 0..m {
+                    sa[i] = quantize_row_i8(&a[i * k..(i + 1) * k], &mut q[i * k..(i + 1) * k]);
+                    if sa[i] == 0.0 {
+                        out[i * n..i * n + n].fill(0.0);
+                    }
+                }
+                let cb = omajor_col_block(g, n);
+                let mut c = 0usize;
+                while c < n {
+                    let w = cb.min(n - c);
+                    for (i, &scale_a) in sa.iter().enumerate() {
+                        if scale_a == 0.0 {
+                            continue; // the row was zero-filled up front
+                        }
+                        // SAFETY: disjoint output columns; sizes checked above.
+                        unsafe {
+                            gemv_e8cb_omajor_native(
+                                q.as_ptr().add(i * k),
+                                bq.as_ptr().add(c * g),
+                                cb16.as_ptr(),
+                                scales.as_ptr().add(c),
+                                out.as_mut_ptr().add(i * n + c),
+                                k,
+                                w,
+                                scale_a,
+                            );
+                        }
+                    }
+                    c += w;
+                }
+            });
         })
     })
 }
@@ -7003,6 +7459,113 @@ mod tests {
     /// `n` values below straddle both tiers; `m = 5..7` puts rows 0..3 in the
     /// tile and rows 4.. in the remainder. Compares row 0 against row 4, which
     /// are seeded identically.
+    /// **Schedule-independence of the integer GEMVs.** The `m > 1` path of every
+    /// tier (i8 / packed-i4 / E8CB) blocks
+    /// the output columns so a weight slab is read once and reused by every row,
+    /// instead of the whole `[n,k]` weight being re-streamed per row. Visiting
+    /// the output cells in a different order must not change one bit: each cell
+    /// is still one whole dot over the same `k`-vector, the accumulation is an
+    /// exact i32 sum, and integer addition is associative.
+    ///
+    /// So a batched call must equal `m` independent single-row calls, byte for
+    /// byte. Shapes straddle the column-block boundary and include a
+    /// zero-activation row (`scale_a == 0`), which takes the early-out.
+    #[test]
+    fn batched_integer_gemv_equals_row_by_row_bit_for_bit() {
+        for &(k, n) in &[(16usize, 5usize), (64, 129), (8, 1), (128, 64)] {
+            for &m in &[1usize, 2, 3, 5, 8] {
+                let bq: Vec<i8> = (0..k * n)
+                    .map(|i| (((i * 31 + 7) % 255) as i32 - 127) as i8)
+                    .collect();
+                let scales: Vec<f32> = (0..n).map(|j| 0.007 + j as f32 * 0.0003).collect();
+                let a: Vec<f32> = (0..m * k)
+                    .map(|i| {
+                        // Row 2 (when present) is all-zero: exercises scale_a == 0.
+                        if m > 2 && i / k == 2 {
+                            0.0
+                        } else {
+                            ((i % 37) as f32 - 18.0) * 0.031
+                        }
+                    })
+                    .collect();
+
+                let mut batched = vec![0f32; m * n];
+                matmul_i8_pc_omajor(&a, &bq, &scales, &mut batched, m, k, n);
+
+                for i in 0..m {
+                    let mut single = vec![0f32; n];
+                    matmul_i8_pc_omajor(&a[i * k..(i + 1) * k], &bq, &scales, &mut single, 1, k, n);
+                    for j in 0..n {
+                        assert_eq!(
+                            batched[i * n + j].to_bits(),
+                            single[j].to_bits(),
+                            "i8 m={m} k={k} n={n} row {i} col {j}: batched {} vs single-row {}",
+                            batched[i * n + j],
+                            single[j]
+                        );
+                    }
+                }
+
+                // Packed i4 (W4A8): `k/2` bytes per output column.
+                let bq4: Vec<u8> = (0..k * n / 2).map(|i| ((i * 53 + 9) % 251) as u8).collect();
+                let mut b4 = vec![0f32; m * n];
+                matmul_i4_pc_omajor(&a, &bq4, &scales, &mut b4, m, k, n);
+                for i in 0..m {
+                    let mut single = vec![0f32; n];
+                    matmul_i4_pc_omajor(
+                        &a[i * k..(i + 1) * k],
+                        &bq4,
+                        &scales,
+                        &mut single,
+                        1,
+                        k,
+                        n,
+                    );
+                    for j in 0..n {
+                        assert_eq!(
+                            b4[i * n + j].to_bits(),
+                            single[j].to_bits(),
+                            "i4 m={m} k={k} n={n} row {i} col {j}"
+                        );
+                    }
+                }
+
+                // E8CB (W1A8): `k/8` index bytes per column; `k` must be a
+                // whole number of 8-D groups.
+                if k.is_multiple_of(8) {
+                    let cb: Vec<i8> = (0..256 * 8)
+                        .map(|i| ((i * 37 + 11) % 255 - 127) as i8)
+                        .collect();
+                    let bq8: Vec<u8> = (0..n * (k / 8))
+                        .map(|i| ((i * 17 + 3) % 256) as u8)
+                        .collect();
+                    let mut b8 = vec![0f32; m * n];
+                    matmul_e8cb_omajor(&a, &bq8, &cb, &scales, &mut b8, m, k, n);
+                    for i in 0..m {
+                        let mut single = vec![0f32; n];
+                        matmul_e8cb_omajor(
+                            &a[i * k..(i + 1) * k],
+                            &bq8,
+                            &cb,
+                            &scales,
+                            &mut single,
+                            1,
+                            k,
+                            n,
+                        );
+                        for j in 0..n {
+                            assert_eq!(
+                                b8[i * n + j].to_bits(),
+                                single[j].to_bits(),
+                                "e8cb m={m} k={k} n={n} row {i} col {j}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// **Codec-invariance.** A weight tier is a *codec*: a decode `d : Code → 𝔽`
     /// from a stored alphabet into the working alphabet `{-127..=127}`. MatMul is
     /// the exact integer accumulation `Σ aᵢ · d(cᵢ)`. So if two codecs decode to
