@@ -160,6 +160,17 @@ fn main() {
     bench_blocked("256x256x256", 256, 256, 256, 150);
     bench_blocked("gemv 1x512x512", 1, 512, 512, 4000);
     bench_blocked("gemv 1x2048x2048", 1, 2048, 2048, 400);
+    // Small-`m` sweep on the lane that actually ships: single-threaded wasm
+    // SIMD128. `m = 1..3` take the const-generic row-remainder path, `m = 4`
+    // the MR register tile. **Absolute time must not rise as `m` falls** — that
+    // would mean a leftover row is re-streaming the whole `k×n` weight instead
+    // of sharing the tile's single pass over B. (`matmul_small_m` in
+    // hologram-bench pins the same signal on the host; it cannot run here
+    // because criterion does not build for wasm.)
+    println!("small-m sweep, k = n = 1024 (time must not rise as m falls):");
+    for m in [1usize, 2, 3, 4, 6, 8] {
+        bench_blocked(&format!("m={m:<2} 1024x1024"), m, 1024, 1024, 40);
+    }
     println!("matmul_f32_packed (packed weights — real decode path):");
     bench_packed("256x256x256", 256, 256, 256, 150);
     bench_packed("gemv 1x2048x2048", 1, 2048, 2048, 400);
