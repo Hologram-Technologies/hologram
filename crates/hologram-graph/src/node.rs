@@ -65,24 +65,36 @@ pub struct QuantAttrs {
     pub zero_point: i32,
     /// Quantization axis: `< 0` ⇒ per-tensor; `>= 0` ⇒ per-channel along it.
     pub axis: i32,
-    /// **Weight-slot declaration**: how the weight's bytes will be laid out when
-    /// bound ([`hologram_types::weight_layout`]).
+    /// **Layout of the weight's bytes as they are bound**
+    /// ([`hologram_types::weight_layout`]). A statement of fact, not a request.
     ///
     /// A weightless compile — the graph carries a κ for the weight and the bytes
     /// arrive at materialization — has no constant bytes for the compiler to
     /// transpose, so the fast output-major decode path was unreachable no matter
-    /// what the model was. Declaring `OUTPUT_MAJOR` here lets the *load-time*
-    /// fusion emit the same fused call the constant-weight path emits. The binder
-    /// must materialize `[n, k]`; the backend re-validates every property it can
-    /// (symmetry, per-channel, `k` bound) and fails loud otherwise.
+    /// what the model was. Declaring `OUTPUT_MAJOR` says the binder will
+    /// materialize `[n, k]`, which lets the *load-time* fusion emit the same
+    /// fused call the constant-weight path emits. The backend re-validates every
+    /// property it can (symmetry, per-channel, `k` bound).
+    ///
+    /// **Only a load-time-bound weight may declare `OUTPUT_MAJOR`.** A graph
+    /// constant's bytes are already here, in `[k, n]`; claiming otherwise is
+    /// false and the compiler rejects it. Nothing can honour it, and the loader
+    /// would read `[k, n]` as `[n, k]` and return a plausible wrong answer. To
+    /// put a constant on the fused path, set [`Self::act_quant`] alone — the
+    /// compiler owns those bytes and transposes them itself.
+    ///
+    /// If the declaration cannot be served by any output-major kernel, the loader
+    /// fails with `ExecError::UnsatisfiableWeightLayout` rather than falling back
+    /// to a `[k, n]`-assuming path. See `docs/numerics/w8a8.md`.
     pub weight_layout: u8,
-    /// **Weight-slot declaration**: the activation treatment this weight opts
-    /// into ([`hologram_types::act_quant`]). Defaults to `W8A32`, which is
+    /// **Activation treatment this weight opts into**
+    /// ([`hologram_types::act_quant`]). Orthogonal to [`Self::weight_layout`],
+    /// which describes bytes; this describes numerics. Defaults to `W8A32`,
     /// bit-identical to `dequantize → matmul`.
     ///
     /// `W8A8_TOKEN_SYM` rounds the activation, so it changes the computed value.
     /// It is therefore never an implicit upgrade of an existing path — a weight
-    /// must ask for it.
+    /// must ask for it, constant or not. E8CB has no W1A32 form and must set it.
     pub act_quant: u8,
 }
 
