@@ -4421,6 +4421,23 @@ pub(crate) unsafe fn pool_exec_gemv(
             rows,
             scale_a,
         );
+    } else if kind == 2 {
+        // E8 codebook: k/8 index bytes per output row; args[1] = the i16
+        // pre-widened codebook (`matmul_e8cb_omajor`). One exact-i32 inner on
+        // both SIMD tiers (`i32x4_dot_i16x8`).
+        let cb16 = args[1] as *const i16;
+        let bq = args[3] as *const u8;
+        let bq_part = bq.add(start * (k / 8));
+        gemv_e8cb_omajor_wasm(
+            q,
+            bq_part,
+            cb16,
+            scales.add(start),
+            out.add(start),
+            k,
+            rows,
+            scale_a,
+        );
     } else {
         let bq = args[3] as *const i8;
         let bq_part = bq.add(start * k);
@@ -5465,6 +5482,33 @@ pub fn matmul_e8cb_omajor(
                 if scale_a == 0.0 {
                     orow.fill(0.0);
                     continue;
+                }
+                // wasm multi-core: fork-join the output columns across the
+                // embedder's workers (kind 2 = e8cb; codebook in arg[1]), each
+                // running the identical serial inner — bit-identical to serial.
+                // Falls through to the serial inner below when no workers are
+                // registered or the job is below the pool's latency floor.
+                #[cfg(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                ))]
+                {
+                    let pooled = crate::cpu::wasm_pool::fork_join_gemv([
+                        q.as_ptr() as usize,
+                        cb16.as_ptr() as usize,
+                        0,
+                        bq.as_ptr() as usize,
+                        scales.as_ptr() as usize,
+                        orow.as_mut_ptr() as usize,
+                        k,
+                        n,
+                        scale_a.to_bits() as usize,
+                        2,
+                    ]);
+                    if pooled {
+                        continue;
+                    }
                 }
                 // Native multi-core: disjoint output-column ranges across the
                 // pool, each running the identical serial inner (bit-identical).
