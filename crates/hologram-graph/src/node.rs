@@ -76,16 +76,23 @@ pub struct QuantAttrs {
     /// fused call the constant-weight path emits. The backend re-validates every
     /// property it can (symmetry, per-channel, `k` bound).
     ///
-    /// **Only a load-time-bound weight may declare `OUTPUT_MAJOR`.** A graph
-    /// constant's bytes are already here, in `[k, n]`; claiming otherwise is
-    /// false and the compiler rejects it. Nothing can honour it, and the loader
-    /// would read `[k, n]` as `[n, k]` and return a plausible wrong answer. To
-    /// put a constant on the fused path, set [`Self::act_quant`] alone — the
-    /// compiler owns those bytes and transposes them itself.
+    /// **Only a weight whose bytes are not in the graph may declare
+    /// `OUTPUT_MAJOR`.** A graph constant *with bytes* has them already, in
+    /// `[k, n]`; claiming otherwise is false and the compiler rejects it — the
+    /// loader would read `[k, n]` as `[n, k]` and return a plausible wrong
+    /// answer. To put such a constant on the fused path, set [`Self::act_quant`]
+    /// alone; the compiler owns those bytes and transposes them itself.
     ///
-    /// If the declaration cannot be served by any output-major kernel, the loader
-    /// fails with `ExecError::UnsatisfiableWeightLayout` rather than falling back
-    /// to a `[k, n]`-assuming path. See `docs/numerics/w8a8.md`.
+    /// A **weightless** constant (`ConstantStore::insert_external`, zero bytes,
+    /// content named by κ and delivered by a `WeightProvider`) is a load-time-bound
+    /// weight and may declare `OUTPUT_MAJOR`. So may a weight bound as a graph
+    /// input. Both are witnessed end-to-end in
+    /// `hologram-exec/tests/weightless_omajor.rs`.
+    ///
+    /// If the declaration cannot be served by any output-major kernel, the
+    /// compiler refuses (`CompileError::GraphValidation`, naming the offending
+    /// predicate) and the loader re-checks and refuses too, rather than falling
+    /// back to a `[k, n]`-assuming path. See `docs/numerics/w8a8.md`.
     pub weight_layout: u8,
     /// **Activation treatment this weight opts into**
     /// ([`hologram_types::act_quant`]). Orthogonal to [`Self::weight_layout`],

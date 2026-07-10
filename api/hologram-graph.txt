@@ -39,8 +39,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::constant::Const
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::constant::ConstantEntry
 pub struct hologram_graph::constant::ConstantStore
 impl hologram_graph::constant::ConstantStore
+pub fn hologram_graph::constant::ConstantStore::external(&self, hologram_graph::node::ConstantId) -> core::option::Option<[u8; 32]>
 pub fn hologram_graph::constant::ConstantStore::get(&self, hologram_graph::node::ConstantId) -> core::option::Option<&hologram_graph::constant::ConstantEntry>
 pub fn hologram_graph::constant::ConstantStore::insert(&mut self, hologram_graph::constant::ConstantEntry) -> hologram_graph::node::ConstantId
+pub fn hologram_graph::constant::ConstantStore::insert_external(&mut self, hologram_types::dtype_id::DTypeId, hologram_graph::registry::ShapeId, [u8; 32]) -> hologram_graph::node::ConstantId
 pub fn hologram_graph::constant::ConstantStore::is_empty(&self) -> bool
 pub fn hologram_graph::constant::ConstantStore::len(&self) -> usize
 pub fn hologram_graph::constant::ConstantStore::new() -> Self
@@ -610,8 +612,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ConstantI
 impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ConstantId
 pub struct hologram_graph::ConstantStore
 impl hologram_graph::constant::ConstantStore
+pub fn hologram_graph::constant::ConstantStore::external(&self, hologram_graph::node::ConstantId) -> core::option::Option<[u8; 32]>
 pub fn hologram_graph::constant::ConstantStore::get(&self, hologram_graph::node::ConstantId) -> core::option::Option<&hologram_graph::constant::ConstantEntry>
 pub fn hologram_graph::constant::ConstantStore::insert(&mut self, hologram_graph::constant::ConstantEntry) -> hologram_graph::node::ConstantId
+pub fn hologram_graph::constant::ConstantStore::insert_external(&mut self, hologram_types::dtype_id::DTypeId, hologram_graph::registry::ShapeId, [u8; 32]) -> hologram_graph::node::ConstantId
 pub fn hologram_graph::constant::ConstantStore::is_empty(&self) -> bool
 pub fn hologram_graph::constant::ConstantStore::len(&self) -> usize
 pub fn hologram_graph::constant::ConstantStore::new() -> Self

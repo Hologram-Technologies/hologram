@@ -9,8 +9,8 @@ use crate::buffer::{BufferArena, InputBuffer, OutputBuffer};
 use crate::error::ExecError;
 use hologram_archive::{
     address_bytes, constant_codec, decode_exec_plan, decode_ports, decode_weights, decoder,
-    derive_label, derive_label_boundary, format::SectionKind, warm_codec, ContentLabel, HoloLoader,
-    PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
+    derive_label, derive_label_boundary, format::SectionKind, warm_codec, ArchiveError,
+    ContentLabel, HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
 };
 use hologram_backend::{
     buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
@@ -601,11 +601,20 @@ impl<B: SessionBackend> InferenceSession<B> {
             } else {
                 // Inline constant, warm result, or fully-resident load: copy
                 // the body resident and pin it for the session.
+                //
+                // A by-reference body that resolves nowhere is a **weightless
+                // archive loaded without a provider**. It must fail loud: an
+                // empty body would pin the κ-label of *empty content*, and every
+                // kernel downstream would read zeros and derive addresses for a
+                // weight that was never bound. Silence here is the worst
+                // possible answer — a plausible one.
                 let body: &[u8] = if entry.by_reference {
                     weight_store
                         .as_ref()
                         .and_then(|s| s.get(WeightFingerprint(entry.fingerprint)))
-                        .unwrap_or(&[])
+                        .ok_or(ExecError::Archive(ArchiveError::SectionMissing(
+                            SectionKind::Weights,
+                        )))?
                 } else {
                     &entry.bytes
                 };

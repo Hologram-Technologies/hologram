@@ -610,6 +610,20 @@ impl Compiler {
         let mut const_fingerprints: Vec<Option<[u8; 32]>> =
             vec![None; self.graph.constants().len()];
         for (i, slot) in const_fingerprints.iter_mut().enumerate() {
+            // A **weightless** constant carries a κ, not bytes: the body arrives
+            // at materialization through a `WeightProvider`. Emit it by
+            // reference under the declared κ and put *nothing* in the Weights
+            // section — that is the whole point, the archive holds no weight
+            // bytes and dedupes across models. `load_paged` resolves it; a
+            // fully-resident `load` fails loud rather than pinning an empty body.
+            if let Some(kappa) = self
+                .graph
+                .constants()
+                .external(hologram_graph::ConstantId(i as u32))
+            {
+                *slot = Some(kappa);
+                continue;
+            }
             let body = const_body(i);
             if body.len() > INLINE_THRESHOLD_BYTES {
                 let fp = weights.insert(body);
@@ -1454,10 +1468,33 @@ fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError
         if attrs.weight_layout == hologram_types::weight_layout::ROW_MAJOR {
             continue;
         }
-        if matches!(node.inputs.first(), Some(InputSource::Constant(_))) {
-            return Err(CompileError::GraphValidation(
-                "Dequantize over a graph constant declared weight_layout = OUTPUT_MAJOR;                  a constant's bytes are [k,n] and the declaration describes bound bytes.                  Set act_quant = W8A8_TOKEN_SYM to opt the constant into the fused                  output-major decode path — the compiler transposes it for you.",
-            ));
+        // A constant *with bytes* carries them in `[k,n]`, here, now — declaring
+        // `OUTPUT_MAJOR` for it is a false statement about the graph's own bytes,
+        // and the compiler transposes such a weight itself (`fuse_const_i8_decode`)
+        // once `act_quant` opts in.
+        //
+        // A constant with **no** bytes is a different animal: it is a κ naming
+        // content that arrives at materialization — a weightless compile. Its bytes
+        // are not `[k,n]`, because there are none. It is a load-time-bound weight
+        // that happens to be addressed through the constant table, and it is exactly
+        // the case `QuantAttrs::weight_layout` exists to serve. So ask whether the
+        // constant *has bytes*, not whether it is a constant — the same question
+        // `fuse_const_i8_decode` asks before it transposes anything.
+        if let Some(InputSource::Constant(cid)) = node.inputs.first() {
+            if graph
+                .constants()
+                .get(*cid)
+                .is_some_and(|e| !e.bytes.is_empty())
+            {
+                return Err(CompileError::GraphValidation(
+                    "Dequantize over a graph constant with bytes declared \
+                     weight_layout = OUTPUT_MAJOR; those bytes are [k,n] and the \
+                     declaration describes bound bytes. Set act_quant = W8A8_TOKEN_SYM \
+                     to opt the constant into the fused output-major decode path — the \
+                     compiler transposes it for you. (A zero-byte constant is a \
+                     weightless κ binding and may declare OUTPUT_MAJOR.)",
+                ));
+            }
         }
         if attrs.act_quant != hologram_types::act_quant::W8A8_TOKEN_SYM {
             return Err(CompileError::GraphValidation(

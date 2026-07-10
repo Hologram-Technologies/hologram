@@ -993,3 +993,97 @@ fn declared_output_major_weight_with_nonzero_zero_point_is_rejected_at_compile_t
         "error must name the offending predicate, got: {msg}"
     );
 }
+
+/// A **weightless** constant — a κ naming content that arrives at
+/// materialization, carrying no bytes — may declare `weight_layout =
+/// OUTPUT_MAJOR`. It is a load-time-bound weight that happens to be addressed
+/// through the constant table, and it is the exact configuration
+/// `QuantAttrs::weight_layout`'s docs say the field exists to serve.
+///
+/// The validator used to ask "is this a constant?" and reject the whole class,
+/// which locked out every weight-paging consumer while its own error message
+/// ("a constant's bytes are [k,n]") was false for precisely this constant. It now
+/// asks whether the constant *has bytes*.
+///
+/// End-to-end execution of this path — through a `WeightProvider`, against the
+/// exact integer oracle — is witnessed in `tests/weightless_omajor.rs`.
+#[test]
+fn a_weightless_kappa_constant_can_declare_output_major() {
+    use hologram_types::{act_quant, weight_layout};
+    let (k, n) = (64usize, 8usize);
+    let mut g = Graph::new();
+    let a_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, k as u64));
+    let w_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(k as u64, n as u64));
+    let v_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank1(n as u64));
+    let o_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank2(1, n as u64));
+    let a_in = g.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: a_sh,
+    });
+    g.add_input(a_in);
+    // Zero bytes: the weight's content arrives at materialization.
+    let wc = g.constants_mut().insert(ConstantEntry {
+        bytes: Vec::new(),
+        dtype: DTypeId(DTYPE_I8),
+        shape: w_sh,
+    });
+    let sc = g.constants_mut().insert(ConstantEntry {
+        bytes: (0..n)
+            .flat_map(|j| (0.02f32 + j as f32 * 0.003).to_le_bytes())
+            .collect(),
+        dtype: DTypeId(DTYPE_F32),
+        shape: v_sh,
+    });
+    let zc = g.constants_mut().insert(ConstantEntry {
+        bytes: vec![0u8; n * 4],
+        dtype: DTypeId(DTYPE_I8),
+        shape: v_sh,
+    });
+    let dq = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Dequantize),
+        inputs: SmallVec::from_iter([
+            InputSource::Constant(wc),
+            InputSource::Constant(sc),
+            InputSource::Constant(zc),
+        ]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: w_sh,
+    });
+    g.set_quant_attrs(
+        dq,
+        QuantAttrs {
+            quant_dtype: DTYPE_I8,
+            scale_bits: 0,
+            zero_point: 0,
+            axis: 1,
+            weight_layout: weight_layout::OUTPUT_MAJOR,
+            act_quant: act_quant::W8A8_TOKEN_SYM,
+        },
+    );
+    let mm = g.add_node(Node {
+        op: GraphOp::Op(OpKind::MatMul),
+        inputs: SmallVec::from_iter([InputSource::Node(a_in), InputSource::Node(dq)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    let out = g.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(mm)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: o_sh,
+    });
+    g.add_output(out);
+
+    compile(g, BackendKind::Cpu, WittLevel::W32)
+        .expect("a weightless (zero-byte) constant may declare OUTPUT_MAJOR");
+}
