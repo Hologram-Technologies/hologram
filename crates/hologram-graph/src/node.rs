@@ -85,9 +85,12 @@ pub struct QuantAttrs {
     ///
     /// A **weightless** constant (`ConstantStore::insert_external`, zero bytes,
     /// content named by κ and delivered by a `WeightProvider`) is a load-time-bound
-    /// weight and may declare `OUTPUT_MAJOR`. So may a weight bound as a graph
-    /// input. Both are witnessed end-to-end in
-    /// `hologram-exec/tests/weightless_omajor.rs`.
+    /// weight and may declare `OUTPUT_MAJOR`. It is witnessed end-to-end, through a
+    /// provider, in `hologram-exec/tests/weightless_omajor.rs`.
+    ///
+    /// A weight bound as a graph **input** is also accepted by the compiler, and is
+    /// witnessed by `weightless_weight_can_declare_output_major_w8a8_and_reaches_the_integer_gemv`
+    /// — but it is not a shape any weight-paging consumer ships.
     ///
     /// If the declaration cannot be served by any output-major kernel, the
     /// compiler refuses (`CompileError::GraphValidation`, naming the offending

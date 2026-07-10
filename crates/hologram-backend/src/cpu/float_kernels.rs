@@ -22,6 +22,27 @@ fn elem_size(dtype: u8) -> Result<usize, BackendError> {
     ))
 }
 
+/// Resolve an **optional affine operand** (`gamma` / `beta`) of a normalization.
+///
+/// An *empty* operand means "no affine" — the identity, which is correct. A
+/// *present but too short* operand is a different thing entirely: silently
+/// falling back to `gamma = 1` / `beta = 0` drops the model's learned
+/// per-feature scale and bias and returns a plausible, wrong tensor. Absent is
+/// not the same as present-but-wrong.
+///
+/// `x` and `output` have always been validated this way (`ok_or(SlotOutOfRange)`);
+/// `gamma`/`beta` were the lone operands with a soft `unwrap_or(&[])`. A
+/// scalar/broadcast gamma (shape `[1]`, legal in ONNX-style graphs) compiled,
+/// loaded, and executed with its scale silently ignored. Witness:
+/// `rms_norm_with_a_short_gamma_fails_loud_instead_of_dropping_the_scale`.
+#[inline]
+pub(crate) fn affine_operand(bytes: &[u8], want: usize, slot: u32) -> Result<&[u8], BackendError> {
+    if bytes.is_empty() {
+        return Ok(&[]); // absent: identity affine
+    }
+    bytes.get(..want).ok_or(BackendError::SlotOutOfRange(slot))
+}
+
 #[inline]
 fn elem_count_to_bytes(n: usize, dtype: u8) -> Result<usize, BackendError> {
     Ok(n * elem_size(dtype)?)
@@ -1287,8 +1308,8 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let xs = reads[0]
         .get(..total)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..f * es).unwrap_or(&[]);
-    let beta = reads[2].get(..f * es).unwrap_or(&[]);
+    let gamma = affine_operand(reads[1], f * es, c.gamma.slot)?;
+    let beta = affine_operand(reads[2], f * es, c.beta.slot)?;
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -1406,8 +1427,8 @@ pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let xs = reads[0]
         .get(..total)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..ch * es).unwrap_or(&[]);
-    let beta = reads[2].get(..ch * es).unwrap_or(&[]);
+    let gamma = affine_operand(reads[1], ch * es, c.gamma.slot)?;
+    let beta = affine_operand(reads[2], ch * es, c.beta.slot)?;
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -1527,7 +1548,7 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
         None
     };
     let gamma_idx = if has_residual { 2 } else { 1 };
-    let gamma = reads[gamma_idx].get(..f * es).unwrap_or(&[]);
+    let gamma = affine_operand(reads[gamma_idx], f * es, c.gamma.slot)?;
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -1628,7 +1649,7 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
     let xs = reads[0]
         .get(..total)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..f * es).unwrap_or(&[]);
+    let gamma = affine_operand(reads[1], f * es, c.gamma.slot)?;
     if out.len() < total {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }

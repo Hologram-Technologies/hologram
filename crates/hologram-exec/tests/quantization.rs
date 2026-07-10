@@ -1087,3 +1087,78 @@ fn a_weightless_kappa_constant_can_declare_output_major() {
     compile(g, BackendKind::Cpu, WittLevel::W32)
         .expect("a weightless (zero-byte) constant may declare OUTPUT_MAJOR");
 }
+
+/// A normalization's `gamma`/`beta` are **optional** — an absent operand means
+/// the identity affine. A *present but too short* operand is a different thing.
+///
+/// A scalar/broadcast `gamma` (shape `[1]`, legal in ONNX-style graphs) used to
+/// compile, load, and execute with the model's learned scale **silently
+/// dropped**: the kernel fell back to `gamma = 1` and returned a plausible,
+/// wrong tensor. `x` and `output` were always validated with
+/// `ok_or(SlotOutOfRange)`; `gamma`/`beta` were the lone operands with a soft
+/// `unwrap_or(&[])`.
+///
+/// Absent is not the same as present-but-wrong. This is the same conflation the
+/// weightless-constant validator made (a zero-byte constant is not a constant
+/// with `[k,n]` bytes), in the numerical kernels.
+#[test]
+fn rms_norm_with_a_short_gamma_fails_loud_instead_of_dropping_the_scale() {
+    let f = 4u64;
+    let build = |glen: usize| {
+        let mut gg = Graph::new();
+        let sh = gg.shape_registry_mut().intern(ShapeDescriptor::rank2(1, f));
+        let gs = gg
+            .shape_registry_mut()
+            .intern(ShapeDescriptor::rank1(glen as u64));
+        let x = gg.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: sh,
+        });
+        gg.add_input(x);
+        let gc = gg.constants_mut().insert(ConstantEntry {
+            bytes: (0..glen).flat_map(|_| 3.0f32.to_le_bytes()).collect(),
+            dtype: DTypeId(DTYPE_F32),
+            shape: gs,
+        });
+        let n = gg.add_node(Node {
+            op: GraphOp::Op(OpKind::RmsNorm),
+            inputs: SmallVec::from_iter([InputSource::Node(x), InputSource::Constant(gc)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: sh,
+        });
+        let o = gg.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(n)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: sh,
+        });
+        gg.add_output(o);
+        compile(gg, BackendKind::Cpu, WittLevel::W32).unwrap()
+    };
+    let a: Vec<u8> = [1.0f32, 2.0, 3.0, 4.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+
+    // A full-length gamma scales by 3, as the model asks.
+    let c = build(f as usize);
+    let mut s: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&c.archive, CpuBackend::new()).unwrap();
+    let got = le_to_f32(&s.execute(&[InputBuffer { bytes: &a }]).unwrap()[0].bytes);
+    assert!(
+        (got[0] - 1.0954452).abs() < 1e-5,
+        "full gamma must scale: {got:?}"
+    );
+
+    // A short gamma must be refused, not silently ignored. Before the fix this
+    // returned [0.365, 0.730, 1.095, 1.461] — the same tensor with no scale.
+    let c = build(1);
+    let mut s: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&c.archive, CpuBackend::new()).unwrap();
+    assert!(
+        s.execute(&[InputBuffer { bytes: &a }]).is_err(),
+        "a gamma shorter than `feature` must fail loud, not degrade to identity"
+    );
+}

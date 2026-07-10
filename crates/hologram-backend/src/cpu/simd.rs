@@ -7566,6 +7566,76 @@ mod tests {
         }
     }
 
+    /// **Cross-lane bit-identity, pinned by golden bytes.**
+    ///
+    /// `docs/numerics/w8a8.md` stakes κ-stability on the claim that the integer
+    /// decode GEMVs are bit-identical on x86 AVX2, aarch64 NEON, wasm SIMD128 and
+    /// the portable scalar reference. Nothing enforced it: every "conformance
+    /// sweep" was an *intra-arch* consistency check (i8 vs i4 vs e8cb, batched vs
+    /// single-row) inside whatever single lane the runner compiled, and CI builds
+    /// this crate for one lane per machine.
+    ///
+    /// Golden hashes close that. Whichever lane runs this test must produce the
+    /// same bytes, so agreement across lanes is asserted by construction rather
+    /// than assumed. The goldens were captured on x86-64 AVX2 and verified equal
+    /// on aarch64 NEON (qemu) and wasm32 SIMD128 (wasmtime).
+    ///
+    /// If a lane ever disagrees, that is a κ divergence — the same graph would
+    /// content-address differently on two machines — not a rounding nicety.
+    ///
+    /// **f32 is deliberately not pinned here.** `matmul_f32_blocked` fuses its
+    /// multiply-add on x86 and NEON and cannot on wasm SIMD128 (which has no
+    /// FMA), so it is *not* cross-lane identical. That is stated in
+    /// `docs/numerics/w8a8.md` rather than hidden; only the integer path carries
+    /// a machine-independent κ.
+    #[test]
+    fn integer_gemv_bits_are_the_cross_lane_golden() {
+        fn fnv(v: &[f32]) -> u64 {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for x in v {
+                for b in x.to_bits().to_le_bytes() {
+                    h ^= b as u64;
+                    h = h.wrapping_mul(0x100_0000_01b3);
+                }
+            }
+            h
+        }
+        let (m, k, n) = (3usize, 64usize, 24usize);
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 37 % 91) as f32 - 45.0) * 0.031)
+            .collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.011 + j as f32 * 0.0007).collect();
+
+        // i8 — W8A8, the identity codec.
+        let bq: Vec<i8> = (0..k * n)
+            .map(|i| ((i as i64 * 31 % 255) - 127) as i8)
+            .collect();
+        let mut o8 = vec![0f32; m * n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut o8, m, k, n);
+        assert_eq!(fnv(&o8), 0x787c_cdc1_7202_9f9b, "i8 W8A8 cross-lane golden");
+
+        // packed i4 — W4A8, nibble into a 16-entry grid.
+        let bq4: Vec<u8> = (0..k * n / 2).map(|i| ((i * 53 + 9) % 251) as u8).collect();
+        let mut o4 = vec![0f32; m * n];
+        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut o4, m, k, n);
+        assert_eq!(fnv(&o4), 0x4c51_23c0_24af_97ae, "i4 W4A8 cross-lane golden");
+
+        // E8CB — W1A8, index into an 8-D codebook block.
+        let cb: Vec<i8> = (0..256 * 8)
+            .map(|i| ((i * 37 + 11) % 255 - 127) as i8)
+            .collect();
+        let bq8: Vec<u8> = (0..n * (k / 8))
+            .map(|i| ((i * 17 + 3) % 256) as u8)
+            .collect();
+        let mut oe = vec![0f32; m * n];
+        matmul_e8cb_omajor(&a, &bq8, &cb, &scales, &mut oe, m, k, n);
+        assert_eq!(
+            fnv(&oe),
+            0x88ac_55a9_1dd5_aa0d,
+            "e8cb W1A8 cross-lane golden"
+        );
+    }
+
     /// **Codec-invariance.** A weight tier is a *codec*: a decode `d : Code → 𝔽`
     /// from a stored alphabet into the working alphabet `{-127..=127}`. MatMul is
     /// the exact integer accumulation `Σ aᵢ · d(cᵢ)`. So if two codecs decode to
