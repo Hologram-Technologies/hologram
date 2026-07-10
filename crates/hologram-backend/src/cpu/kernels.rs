@@ -757,8 +757,8 @@ fn layer_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendEr
     let xs = reads[0]
         .get(..bsz * f)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..f).unwrap_or(&[]);
-    let beta = reads[2].get(..f).unwrap_or(&[]);
+    let gamma = crate::cpu::float_kernels::affine_operand(reads[1], f, c.gamma.slot)?;
+    let beta = crate::cpu::float_kernels::affine_operand(reads[2], f, c.beta.slot)?;
     if out.len() < bsz * f {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -800,8 +800,8 @@ fn group_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendEr
     let xs = reads[0]
         .get(..n * f)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..ch).unwrap_or(&[]);
-    let beta = reads[2].get(..ch).unwrap_or(&[]);
+    let gamma = crate::cpu::float_kernels::affine_operand(reads[1], ch, c.gamma.slot)?;
+    let beta = crate::cpu::float_kernels::affine_operand(reads[2], ch, c.beta.slot)?;
     if out.len() < n * f {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -838,7 +838,7 @@ fn rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendErro
     let xs = reads[0]
         .get(..bsz * f)
         .ok_or(BackendError::SlotOutOfRange(c.x.slot))?;
-    let gamma = reads[1].get(..f).unwrap_or(&[]);
+    let gamma = crate::cpu::float_kernels::affine_operand(reads[1], f, c.gamma.slot)?;
     if out.len() < bsz * f {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
@@ -890,7 +890,7 @@ fn add_rms_norm_w8<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Backend
         None
     };
     let gamma_idx = if has_residual { 2 } else { 1 };
-    let gamma = reads[gamma_idx].get(..f).unwrap_or(&[]);
+    let gamma = crate::cpu::float_kernels::affine_operand(reads[gamma_idx], f, c.gamma.slot)?;
     if out.len() < bsz * f {
         return Err(BackendError::SlotOutOfRange(c.output.slot));
     }
