@@ -17,14 +17,21 @@ fn digest(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn temp_tensor(bytes: &[u8]) -> std::path::PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time after epoch")
-        .as_nanos();
+    // Uniqueness must be **guaranteed**, not probabilistic. The three external
+    // const tests all write a 4-byte tensor and run in parallel in one process,
+    // so a name keyed on `{pid}-{timestamp}-{len}` collides whenever two of them
+    // land in the same clock tick — rare where `SystemTime` is nanosecond-fine
+    // (Linux), but reachable where it is coarser (macOS has bucketed the
+    // sub-microsecond bits). On a collision both tests share a path and one
+    // removes the file while the other is mid-compile, so the read fails and
+    // `compile` returns `n <= 0`. A process-global atomic counter removes the
+    // window entirely.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
         "hologram-ffi-external-{}-{}-{}.bin",
         std::process::id(),
-        nanos,
+        SEQ.fetch_add(1, Ordering::Relaxed),
         bytes.len()
     ));
     std::fs::write(&path, bytes).expect("write temp tensor");
