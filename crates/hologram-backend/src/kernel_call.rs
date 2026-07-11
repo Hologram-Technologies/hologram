@@ -593,6 +593,67 @@ pub struct AttentionCall {
     pub dtype: u8,
 }
 
+/// Fused **decode attention**: split-KV, masked, query-count decoupled from
+/// key length — the per-layer attention step of an autoregressive decoder,
+/// lowered from a 6-input `OpKind::Attention` node.
+///
+/// The legacy [`AttentionCall`] assumes one `[b, h, s, d]` tensor for Q and one
+/// `seq` for both queries and keys, with `causal: bool` the only masking. A
+/// decoder cannot express its step through that: the query has `m` rows (1 at
+/// decode, the chunk size at chunked prefill) against `past + new` keys, the
+/// resident KV cache must be read **in place** (an in-graph
+/// `Concat(past, new)` recopies the whole bucket every step — measured at
+/// ~440 ms/token at 32K context), and visibility is a runtime property (the
+/// bucket's *realized* length) that a compile-time bool over a fixed `seq`
+/// cannot state.
+///
+/// - **Split KV.** `k_past`/`v_past` is the resident cache, `[b, kv_heads,
+///   past_len, d]`, read where it lies; `k_new`/`v_new` is this step's
+///   `[b, kv_heads, new_len, d]`. The kernel iterates keys `past ∥ new` in
+///   order, so the scores — and therefore every output byte — are identical to
+///   the concatenated form without materializing it. Appending to the cache is
+///   the embedder's O(new) write outside the graph.
+/// - **Additive mask**, required, f32 `[q_rows, past_len + new_len]`, shared
+///   across batch and heads: `score += mask[qi][kj]` before the softmax.
+///   `-inf` erases a key exactly (the deterministic exp maps it to `0.0`);
+///   `0.0` admits it. One operand expresses realized-length erasure *and*
+///   causal-within-chunk. The κ split is deliberate: the padded bucket is
+///   *structure* (in this call's signature), the realized length is *content*
+///   (in the mask operand's bytes) — so a fixed bucket yields one call shape
+///   whose per-step identity rides the operands, exactly like every other
+///   content-addressed input.
+/// - **GQA** as in [`AttentionCall`]: `kv_heads == 0` means multi-head; query
+///   head `h` reads kv head `h / (heads / kv_heads)`.
+///
+/// Every `(batch, head, query-row)` output row is one whole
+/// score→softmax→context pipeline, independent of every other — the pool
+/// partition unit, bit-identical serial or pooled.
+#[derive(Debug, Clone, Copy)]
+pub struct DecodeAttentionCall {
+    pub q: BufferRef,
+    pub k_past: BufferRef,
+    pub v_past: BufferRef,
+    pub k_new: BufferRef,
+    pub v_new: BufferRef,
+    /// Additive visibility mask, f32 `[q_rows, past_len + new_len]`.
+    pub mask: BufferRef,
+    pub output: BufferRef,
+    pub batch: u32,
+    pub heads: u32,
+    /// `0` ⇒ multi-head (`kv_heads == heads`).
+    pub kv_heads: u32,
+    /// Query rows `m`: 1 at decode, the chunk size at chunked prefill.
+    pub q_rows: u32,
+    /// Resident-cache rows per kv head. May be 0 (no past).
+    pub past_len: u32,
+    /// Appended rows per kv head. May be 0 (frozen cache).
+    pub new_len: u32,
+    pub head_dim: u32,
+    /// `f32::to_bits` of the softmax score multiplier; `0` ⇒ `1/√head_dim`.
+    pub scale_bits: u32,
+    pub dtype: u8,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WhereCall {
     pub cond: BufferRef,
@@ -1073,6 +1134,7 @@ pub enum KernelCall {
 
     // Structured
     Attention(AttentionCall),
+    DecodeAttention(DecodeAttentionCall),
     FusedSwiGlu(MatMulCall),
 
     // Utility
@@ -1224,6 +1286,23 @@ impl KernelCall {
             K::AvgPool2d(c) => p_pool(c).done(66),
             K::GlobalAvgPool(c) => p_pool(c).done(67),
             K::Attention(c) => p_attention(c).done(68),
+            // Decode attention: split-KV + additive mask. A NEW capability
+            // takes a NEW opcode — the legacy Attention signature is frozen.
+            // The padded bucket (past/new/q_rows) is structure and lives here;
+            // the realized length is content and rides in the mask operand's
+            // κ-label, so a fixed bucket is one call shape whose per-step
+            // identity comes from the operands.
+            K::DecodeAttention(c) => Pb::new()
+                .u32(c.batch)
+                .u32(c.heads)
+                .u32(c.kv_heads)
+                .u32(c.q_rows)
+                .u32(c.past_len)
+                .u32(c.new_len)
+                .u32(c.head_dim)
+                .u32(c.scale_bits)
+                .u8(c.dtype)
+                .done(119),
             K::FusedSwiGlu(c) => p_matmul(c).done(69),
             K::Pad(c) => p_layout(c).done(70),
             K::Expand(c) => p_expand(c).done(71),
@@ -1424,6 +1503,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         K::MaxPool2d(c) | K::AvgPool2d(c) | K::GlobalAvgPool(c) => vec![c.x, c.output],
 
         K::Attention(c) => vec![c.q, c.k, c.v, c.output],
+        K::DecodeAttention(c) => vec![c.q, c.k_past, c.v_past, c.k_new, c.v_new, c.mask, c.output],
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
@@ -1535,6 +1615,7 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
         K::MaxPool2d(c) | K::AvgPool2d(c) | K::GlobalAvgPool(c) => c.dtype,
 
         K::Attention(c) => c.dtype,
+        K::DecodeAttention(c) => c.dtype,
 
         K::Where(c) => c.dtype,
 

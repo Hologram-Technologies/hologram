@@ -171,6 +171,7 @@ pub hologram_backend::kernel_call::KernelCall::Conv2d(hologram_backend::Conv2dCa
 pub hologram_backend::kernel_call::KernelCall::ConvTranspose2d(hologram_backend::Conv2dCall)
 pub hologram_backend::kernel_call::KernelCall::Cos(hologram_backend::UnaryCall)
 pub hologram_backend::kernel_call::KernelCall::CumSum(hologram_backend::ReduceCall)
+pub hologram_backend::kernel_call::KernelCall::DecodeAttention(hologram_backend::DecodeAttentionCall)
 pub hologram_backend::kernel_call::KernelCall::DequantActivation(hologram_backend::DequantActivationCall)
 pub hologram_backend::kernel_call::KernelCall::Dequantize(hologram_backend::DequantizeCall)
 pub hologram_backend::kernel_call::KernelCall::Div(hologram_backend::BinaryCall)
@@ -370,6 +371,35 @@ impl core::marker::Unpin for hologram_backend::Conv2dCall
 impl core::marker::UnsafeUnpin for hologram_backend::Conv2dCall
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Conv2dCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Conv2dCall
+pub struct hologram_backend::kernel_call::DecodeAttentionCall
+pub hologram_backend::kernel_call::DecodeAttentionCall::batch: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::dtype: u8
+pub hologram_backend::kernel_call::DecodeAttentionCall::head_dim: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::heads: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::k_new: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::k_past: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::kv_heads: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::mask: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::new_len: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::past_len: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::q: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::q_rows: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::scale_bits: u32
+pub hologram_backend::kernel_call::DecodeAttentionCall::v_new: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::DecodeAttentionCall::v_past: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::DecodeAttentionCall
+pub fn hologram_backend::DecodeAttentionCall::clone(&self) -> hologram_backend::DecodeAttentionCall
+impl core::fmt::Debug for hologram_backend::DecodeAttentionCall
+pub fn hologram_backend::DecodeAttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DecodeAttentionCall
+impl core::marker::Freeze for hologram_backend::DecodeAttentionCall
+impl core::marker::Send for hologram_backend::DecodeAttentionCall
+impl core::marker::Sync for hologram_backend::DecodeAttentionCall
+impl core::marker::Unpin for hologram_backend::DecodeAttentionCall
+impl core::marker::UnsafeUnpin for hologram_backend::DecodeAttentionCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DecodeAttentionCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DecodeAttentionCall
 pub struct hologram_backend::kernel_call::DequantActivationCall
 pub hologram_backend::kernel_call::DequantActivationCall::act: u8
 pub hologram_backend::kernel_call::DequantActivationCall::dtype: u8
@@ -1056,6 +1086,7 @@ pub hologram_backend::KernelCall::Conv2d(hologram_backend::Conv2dCall)
 pub hologram_backend::KernelCall::ConvTranspose2d(hologram_backend::Conv2dCall)
 pub hologram_backend::KernelCall::Cos(hologram_backend::UnaryCall)
 pub hologram_backend::KernelCall::CumSum(hologram_backend::ReduceCall)
+pub hologram_backend::KernelCall::DecodeAttention(hologram_backend::DecodeAttentionCall)
 pub hologram_backend::KernelCall::DequantActivation(hologram_backend::DequantActivationCall)
 pub hologram_backend::KernelCall::Dequantize(hologram_backend::DequantizeCall)
 pub hologram_backend::KernelCall::Div(hologram_backend::BinaryCall)
@@ -1298,6 +1329,35 @@ impl<W> core::marker::Unpin for hologram_backend::cpu::CpuBackend<W> where W: co
 impl<W> core::marker::UnsafeUnpin for hologram_backend::cpu::CpuBackend<W>
 impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe
 impl<W> core::panic::unwind_safe::UnwindSafe for hologram_backend::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe
+pub struct hologram_backend::DecodeAttentionCall
+pub hologram_backend::DecodeAttentionCall::batch: u32
+pub hologram_backend::DecodeAttentionCall::dtype: u8
+pub hologram_backend::DecodeAttentionCall::head_dim: u32
+pub hologram_backend::DecodeAttentionCall::heads: u32
+pub hologram_backend::DecodeAttentionCall::k_new: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::k_past: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::kv_heads: u32
+pub hologram_backend::DecodeAttentionCall::mask: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::new_len: u32
+pub hologram_backend::DecodeAttentionCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::past_len: u32
+pub hologram_backend::DecodeAttentionCall::q: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::q_rows: u32
+pub hologram_backend::DecodeAttentionCall::scale_bits: u32
+pub hologram_backend::DecodeAttentionCall::v_new: hologram_backend::workspace::BufferRef
+pub hologram_backend::DecodeAttentionCall::v_past: hologram_backend::workspace::BufferRef
+impl core::clone::Clone for hologram_backend::DecodeAttentionCall
+pub fn hologram_backend::DecodeAttentionCall::clone(&self) -> hologram_backend::DecodeAttentionCall
+impl core::fmt::Debug for hologram_backend::DecodeAttentionCall
+pub fn hologram_backend::DecodeAttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::DecodeAttentionCall
+impl core::marker::Freeze for hologram_backend::DecodeAttentionCall
+impl core::marker::Send for hologram_backend::DecodeAttentionCall
+impl core::marker::Sync for hologram_backend::DecodeAttentionCall
+impl core::marker::Unpin for hologram_backend::DecodeAttentionCall
+impl core::marker::UnsafeUnpin for hologram_backend::DecodeAttentionCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::DecodeAttentionCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::DecodeAttentionCall
 pub struct hologram_backend::DequantActivationCall
 pub hologram_backend::DequantActivationCall::act: u8
 pub hologram_backend::DequantActivationCall::dtype: u8
