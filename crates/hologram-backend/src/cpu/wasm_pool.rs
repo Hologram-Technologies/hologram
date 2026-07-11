@@ -209,11 +209,27 @@ static JOB: Job = Job {
 };
 static WORKERS: AtomicU32 = AtomicU32::new(0);
 
-/// Below this weight size (`k·n` int8 bytes) a GEMV runs serial: the wake +
+/// Below this many multiply-accumulates (`m·k·n`) a job runs serial: the wake +
 /// join round-trip (~µs) only pays once the per-participant slice is
-/// meaningful. Structural (latency vs. work), not model-derived; decode
-/// projections sit orders of magnitude above it.
-const POOL_MIN_WEIGHT_BYTES: usize = 1 << 18;
+/// meaningful. Structural (latency vs. work), not model-derived.
+///
+/// The gate is **work**, not weight bytes. At `m == 1` the two coincide (one
+/// MAC per weight byte), so decode behaves exactly as before. At `m > 1` a
+/// byte-keyed floor is blind to the batch: a 112 KiB per-head projection at
+/// `m = 128` is 14.7 MMAC of embarrassingly parallel work — measured 908 µs
+/// serial under the old floor, with the pool idle. Prefill work scales with
+/// `m`; the admission test must too.
+const POOL_MIN_MACS: usize = 1 << 18;
+
+/// Minimum output columns per participant for a job to be worth partitioning.
+///
+/// The column partition hands each participant `~n/parts` columns; the widest
+/// SIMD inner consumes 8 at a time, so a narrower slice runs every row through
+/// the scalar column tail. Measured at `128×1536×8` with 4 participants (2
+/// columns each): pooled 473 µs vs serial 342 µs — the pool *loses* when the
+/// slices are sub-SIMD-width, however much total work the job carries. Work
+/// admits a job; width must too.
+const POOL_MIN_COLS_PER_PARTICIPANT: usize = 8;
 
 #[inline]
 fn wait_u32(a: &AtomicU32, expect: u32, timeout_ns: i64) {
@@ -308,7 +324,10 @@ pub extern "C" fn hologram_pool_shutdown() {
 /// written before returning.
 pub(crate) fn fork_join_gemv(job: GemvJob) -> bool {
     let w = WORKERS.load(Ordering::Acquire);
-    if w == 0 || job.k * job.n < POOL_MIN_WEIGHT_BYTES {
+    if w == 0
+        || job.m.saturating_mul(job.k).saturating_mul(job.n) < POOL_MIN_MACS
+        || job.n < POOL_MIN_COLS_PER_PARTICIPANT * (w as usize + 1)
+    {
         return false;
     }
     let args = job.encode();
