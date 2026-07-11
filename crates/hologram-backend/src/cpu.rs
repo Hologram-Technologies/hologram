@@ -15,6 +15,11 @@ use hologram_host::ActiveCpuBounds;
 
 pub mod dtype;
 mod float_kernels;
+
+/// Doc-hidden bench/test re-entry into the decode-attention engine — the one
+/// deliberate opening; the kernel module itself stays crate-internal.
+#[doc(hidden)]
+pub use float_kernels::decode_attention_engine_for_tests;
 mod kernels;
 /// LUT-accelerated low-precision activations (PM_7 Q0/Q1). Needs `OnceLock`
 /// (std) for the process-lifetime table cache; under no_std the activations

@@ -64,7 +64,7 @@ extern "C" {
 /// the typed form every caller and the executor actually use, and
 /// [`GemvJob::encode`] / [`GemvJob::decode`] are the only code that knows which
 /// word is which.
-pub(crate) const JOB_ARGS: usize = 11;
+pub(crate) const JOB_ARGS: usize = 17;
 
 /// The weight encoding a pooled GEMV runs, with its operands named.
 ///
@@ -137,26 +137,28 @@ impl GemvJob {
                 (codebook as usize, 0, bq as usize, GemvOperands::TAG_E8CB)
             }
         };
-        [
-            self.q as usize,
-            aux1,
-            aux2,
-            bq,
-            self.scales as usize,
-            self.out as usize,
-            self.k,
-            self.n,
-            self.sa as usize,
-            self.m,
-            tag,
-        ]
+        // The job-kind tag lives at the fixed last word (`JOB_ARGS - 1`) for
+        // every job type; unused middle words are zero.
+        let mut a = [0usize; JOB_ARGS];
+        a[0] = self.q as usize;
+        a[1] = aux1;
+        a[2] = aux2;
+        a[3] = bq;
+        a[4] = self.scales as usize;
+        a[5] = self.out as usize;
+        a[6] = self.k;
+        a[7] = self.n;
+        a[8] = self.sa as usize;
+        a[9] = self.m;
+        a[JOB_ARGS - 1] = tag;
+        a
     }
 
     /// # Safety
     /// `args` must be the output of [`Self::encode`] for a job whose buffers are
     /// still live. An unknown tag is a corrupt slot, not a recoverable input.
     pub(crate) unsafe fn decode(args: &[usize; JOB_ARGS]) -> Self {
-        let operands = match args[10] {
+        let operands = match args[JOB_ARGS - 1] {
             GemvOperands::TAG_I8 => GemvOperands::I8 {
                 bq: args[3] as *const i8,
                 qp: args[1] as *const i8,
@@ -181,6 +183,85 @@ impl GemvJob {
             sa: args[8] as *const f32,
             m: args[9],
             operands,
+        }
+    }
+}
+
+/// One fork-join **decode attention** job: `b·h·m` independent
+/// `(batch, head, query-row)` outputs over `past ∥ new` keys, sliced across
+/// participants by **row**. Each row is a whole score→softmax→context
+/// pipeline, so the partition is bit-identical to serial by construction.
+///
+/// `scores` is publisher-allocated scratch of `participants · (past + new)`
+/// f32; participant `p` uses its own stripe — workers never allocate (the
+/// embedder contract), so the publisher carries the scratch for everyone.
+#[derive(Clone, Copy)]
+pub(crate) struct AttnJob {
+    pub q: *const f32,
+    pub k_past: *const f32,
+    pub v_past: *const f32,
+    pub k_new: *const f32,
+    pub v_new: *const f32,
+    pub mask: *const f32,
+    pub out: *mut f32,
+    pub scores: *mut f32,
+    pub b: usize,
+    pub h: usize,
+    pub hkv: usize,
+    pub m: usize,
+    pub past: usize,
+    pub new: usize,
+    pub d: usize,
+    /// `f32::to_bits` of the score divisor (already resolved by the caller).
+    pub scale_bits: u32,
+}
+
+/// Slot tag for an attention job (GEMV tags are 0..=2).
+pub(crate) const TAG_ATTN: usize = 3;
+
+impl AttnJob {
+    pub(crate) fn encode(&self) -> [usize; JOB_ARGS] {
+        [
+            self.q as usize,
+            self.k_past as usize,
+            self.v_past as usize,
+            self.k_new as usize,
+            self.v_new as usize,
+            self.mask as usize,
+            self.out as usize,
+            self.scores as usize,
+            self.b,
+            self.h,
+            self.hkv,
+            self.m,
+            self.past,
+            self.new,
+            self.d,
+            self.scale_bits as usize,
+            TAG_ATTN, // JOB_ARGS - 1: the job-kind tag
+        ]
+    }
+
+    /// # Safety
+    /// `args` must be the output of [`Self::encode`] for a live job.
+    pub(crate) unsafe fn decode(args: &[usize; JOB_ARGS]) -> Self {
+        Self {
+            q: args[0] as *const f32,
+            k_past: args[1] as *const f32,
+            v_past: args[2] as *const f32,
+            k_new: args[3] as *const f32,
+            v_new: args[4] as *const f32,
+            mask: args[5] as *const f32,
+            out: args[6] as *mut f32,
+            scores: args[7] as *mut f32,
+            b: args[8],
+            h: args[9],
+            hkv: args[10],
+            m: args[11],
+            past: args[12],
+            new: args[13],
+            d: args[14],
+            scale_bits: args[15] as u32,
         }
     }
 }
@@ -292,13 +373,12 @@ pub extern "C" fn hologram_worker_run(worker_id: u32) {
             *slot = a.load(Ordering::Acquire);
         }
         // SAFETY: the publisher keeps the job's buffers alive (it does not
-        // return from `fork_join_gemv` until `done` reaches the snapshot),
+        // return from the fork-join until `done` reaches the snapshot),
         // ranges are disjoint per participant, and this worker's id is
         // below the snapshot by the registration contract. `args` was written
-        // by `GemvJob::encode` before the epoch bump this thread observed.
+        // by the job's `encode` before the epoch bump this thread observed.
         unsafe {
-            let job = GemvJob::decode(&args);
-            crate::cpu::simd::pool_exec_gemv(&job, worker_id as usize, parts);
+            exec_slot(&args, worker_id as usize, parts);
         }
         JOB.done.fetch_add(1, Ordering::AcqRel);
         notify_all(&JOB.done);
@@ -322,6 +402,21 @@ pub extern "C" fn hologram_pool_shutdown() {
 /// Returns `false` (caller runs serial) when no workers are registered or
 /// the job is below the latency floor. On `true` the output rows are fully
 /// written before returning.
+/// Route one participant's share of the published job by its kind tag.
+///
+/// # Safety
+/// `args` is a live job slot per the publisher contract; participant ranges
+/// are disjoint.
+unsafe fn exec_slot(args: &[usize; JOB_ARGS], part: usize, parts: usize) {
+    if args[JOB_ARGS - 1] == TAG_ATTN {
+        let job = AttnJob::decode(args);
+        crate::cpu::float_kernels::pool_exec_attn(&job, part, parts);
+    } else {
+        let job = GemvJob::decode(args);
+        crate::cpu::simd::pool_exec_gemv(&job, part, parts);
+    }
+}
+
 pub(crate) fn fork_join_gemv(job: GemvJob) -> bool {
     let w = WORKERS.load(Ordering::Acquire);
     if w == 0
@@ -330,7 +425,33 @@ pub(crate) fn fork_join_gemv(job: GemvJob) -> bool {
     {
         return false;
     }
-    let args = job.encode();
+    fork_join_raw(job.encode(), w)
+}
+
+/// Registered workers + the calling thread — the participant count a pooled
+/// job will be sliced across (1 ⇒ no pool). Publishers size per-participant
+/// scratch with this; the worker set is frozen after the first publish, so the
+/// value is stable across the publish it precedes.
+pub(crate) fn participants() -> usize {
+    WORKERS.load(Ordering::Acquire) as usize + 1
+}
+
+/// Fork-join one decode-attention job across the pool by **row**. Admission:
+/// at least two rows (each participant computes whole rows) and enough MACs
+/// (`rows · keys · head_dim`) to amortize the wake + join round-trip — the
+/// same work-based floor the GEMV uses.
+pub(crate) fn fork_join_attn(job: AttnJob) -> bool {
+    let w = WORKERS.load(Ordering::Acquire);
+    let rows = job.b * job.h * job.m;
+    let l = job.past + job.new;
+    if w == 0 || rows < 2 || rows.saturating_mul(l).saturating_mul(job.d) < POOL_MIN_MACS {
+        return false;
+    }
+    fork_join_raw(job.encode(), w)
+}
+
+/// Publish an encoded job, run the calling thread's share, join.
+fn fork_join_raw(args: [usize; JOB_ARGS], w: u32) -> bool {
     let parts = w + 1;
     for (a, v) in JOB.args.iter().zip(args.iter()) {
         a.store(*v, Ordering::Release);
@@ -343,7 +464,7 @@ pub(crate) fn fork_join_gemv(job: GemvJob) -> bool {
     // SAFETY: args point into live workspace buffers owned by the caller;
     // this range is disjoint from every worker's.
     unsafe {
-        crate::cpu::simd::pool_exec_gemv(&job, parts as usize - 1, parts as usize);
+        exec_slot(&args, parts as usize - 1, parts as usize);
     }
     // Join: brief spin, then park on `done`. The Acquire loads pair with
     // the workers' AcqRel increments, making their row writes visible.

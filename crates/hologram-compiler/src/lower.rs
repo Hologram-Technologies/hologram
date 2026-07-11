@@ -4,9 +4,10 @@ use alloc::vec::Vec;
 
 use crate::error::CompileError;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DequantizeCall, ExpandCall,
-    GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulCall, NormCall,
-    PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DecodeAttentionCall,
+    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
+    MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
+    WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -50,6 +51,12 @@ pub struct ShapeArgs {
     pub head_dim: u32,
     /// Grouped-query kv head count (0 ⇒ multi-head == heads).
     pub kv_heads: u32,
+    /// Decode attention (6-input form): query rows `m`.
+    pub q_rows: u32,
+    /// Decode attention: resident-cache rows per kv head.
+    pub past_len: u32,
+    /// Decode attention: appended rows per kv head.
+    pub new_len: u32,
     /// Causal masking + softmax scale (`scale_bits` 0 ⇒ default 1/√d).
     pub causal: bool,
     pub scale_bits: u32,
@@ -262,6 +269,28 @@ impl ShapeArgs {
                 let attn = graph.attention_attrs(node_id).unwrap_or_default();
                 a.causal = attn.causal;
                 a.scale_bits = attn.scale_bits;
+                // Decode form (6 inputs: q, k_past, v_past, k_new, v_new,
+                // mask): query rows decouple from key length; the split-KV
+                // segment lengths come from their own shapes. Q is
+                // [b, h, m, d]; k_past [b, kv, past, d]; k_new [b, kv, new, d].
+                if matches!(node.op, hologram_graph::GraphOp::Op(OpKind::Attention))
+                    && node.inputs.len() >= 6
+                {
+                    a.batch = s.dim(0).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    a.q_rows = s.dim(2).unwrap_or(0).min(u32::MAX as u64) as u32;
+                    a.past_len = in1
+                        .as_ref()
+                        .filter(|k| k.rank == 4)
+                        .and_then(|k| k.dim(2))
+                        .unwrap_or(0)
+                        .min(u32::MAX as u64) as u32;
+                    a.new_len = in_shape(3)
+                        .as_ref()
+                        .filter(|k| k.rank == 4)
+                        .and_then(|k| k.dim(2))
+                        .unwrap_or(0)
+                        .min(u32::MAX as u64) as u32;
+                }
             }
         }
 
@@ -371,6 +400,13 @@ impl Default for QuantParams {
 
 pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
     use OpKind as K;
+    let inpn = |i: usize| {
+        node.inputs.get(i).copied().unwrap_or(BufferRef {
+            slot: 0,
+            offset: 0,
+            length: 0,
+        })
+    };
     let inp0 = || {
         node.inputs.first().copied().unwrap_or(BufferRef {
             slot: 0,
@@ -643,6 +679,37 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::AvgPool2d => KernelCall::AvgPool2d(pool_call),
         K::GlobalAvgPool => KernelCall::GlobalAvgPool(pool_call),
 
+        K::Attention if node.inputs.len() >= 6 => {
+            // Decode form: q, k_past, v_past, k_new, v_new, mask. Visibility
+            // lives in the additive mask operand; a `causal` attr on this form
+            // would be a second, conflicting masking authority — refuse loud
+            // rather than guess which wins.
+            if s.causal {
+                return Err(CompileError::GraphValidation(
+                    "decode attention (6-input Attention node) carries its visibility in \
+                     the additive mask operand; AttentionAttrs::causal must be false — \
+                     encode causal-within-chunk in the mask.",
+                ));
+            }
+            KernelCall::DecodeAttention(DecodeAttentionCall {
+                q: inp0(),
+                k_past: inp1(),
+                v_past: inp2(),
+                k_new: inpn(3),
+                v_new: inpn(4),
+                mask: inpn(5),
+                output: node.output,
+                batch: s.batch,
+                heads: s.heads,
+                kv_heads: s.kv_heads,
+                q_rows: s.q_rows,
+                past_len: s.past_len,
+                new_len: s.new_len,
+                head_dim: s.head_dim,
+                scale_bits: s.scale_bits,
+                dtype: node.dtype,
+            })
+        }
         K::Attention => KernelCall::Attention(attn_call),
         K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
 

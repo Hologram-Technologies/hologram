@@ -8,10 +8,10 @@
 
 use alloc::vec::Vec;
 use hologram_backend::{
-    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DequantActivationCall,
-    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
-    MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
-    TransposeCall, UnaryCall, WhereCall,
+    AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DecodeAttentionCall,
+    DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall,
+    KernelCall, LayoutCall, LrnCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall,
+    RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 
 const D_NEG: u16 = 1;
@@ -120,6 +120,9 @@ const D_MMDQ3: u16 = 117;
 // operand. Emitted only when one is non-default, so archives that declare
 // nothing stay byte-identical.
 const D_DEQ2: u16 = 118;
+/// Fused decode attention: split-KV + additive mask (v0.8.3). A NEW
+/// capability takes a NEW discriminant; the legacy Attention wire is frozen.
+const D_DECATTN: u16 = 119;
 
 pub fn encode_calls(calls: &[KernelCall]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + calls.len() * 64);
@@ -425,6 +428,10 @@ fn encode_one(call: &KernelCall, out: &mut Vec<u8>) {
         K::Attention(c) => {
             put_u16(out, D_ATTN);
             put_attn(out, c);
+        }
+        K::DecodeAttention(c) => {
+            put_u16(out, D_DECATTN);
+            put_decattn(out, c);
         }
         K::FusedSwiGlu(c) => {
             put_u16(out, D_FSWG);
@@ -744,6 +751,24 @@ fn put_attn(out: &mut Vec<u8>, c: &AttentionCall) {
     put_u32(out, c.head_dim);
     put_u32(out, c.kv_heads);
     put_u8(out, c.causal as u8);
+    put_u32(out, c.scale_bits);
+    put_u8(out, c.dtype);
+}
+fn put_decattn(out: &mut Vec<u8>, c: &DecodeAttentionCall) {
+    put_buf(out, c.q);
+    put_buf(out, c.k_past);
+    put_buf(out, c.v_past);
+    put_buf(out, c.k_new);
+    put_buf(out, c.v_new);
+    put_buf(out, c.mask);
+    put_buf(out, c.output);
+    put_u32(out, c.batch);
+    put_u32(out, c.heads);
+    put_u32(out, c.kv_heads);
+    put_u32(out, c.q_rows);
+    put_u32(out, c.past_len);
+    put_u32(out, c.new_len);
+    put_u32(out, c.head_dim);
     put_u32(out, c.scale_bits);
     put_u8(out, c.dtype);
 }

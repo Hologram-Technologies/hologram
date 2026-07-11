@@ -137,6 +137,10 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
 
         // Attention.
         KernelCall::Attention(c) => attention_w8(c, ws),
+        // Decode attention is float-only; `try_dispatch_float` claims every
+        // dtype (and fails loud on unsupported ones), so this arm exists for
+        // exhaustiveness and routes to the same loud gate.
+        KernelCall::DecodeAttention(c) => ff::decode_attention_float(c, ws),
 
         // RoPE / Clip / Lrn: float-only or parameter-carrying; the byte ring is
         // not meaningful, so fail loud rather than behave as identity. (Clip
@@ -1764,6 +1768,7 @@ fn try_dispatch_float<W: Workspace>(
 
         // Attention. (AttentionGrad is rejected by the byte-path grad arm.)
         K::Attention(c) if is_float(c.dtype) => Some(ff::attention_float(c, ws)),
+        K::DecodeAttention(c) => Some(ff::decode_attention_float(c, ws)),
 
         // Where.
         K::Where(c) if is_float(c.dtype) => Some(ff::where_float(c, ws)),

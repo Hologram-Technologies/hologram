@@ -4,10 +4,10 @@ use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, CastCall, Conv2dCall,
-    DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall,
-    KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall,
-    MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
-    TransposeCall, UnaryCall, WhereCall, MAX_RANK,
+    DecodeAttentionCall, DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall,
+    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall,
+    MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall,
+    SoftmaxCall, TransposeCall, UnaryCall, WhereCall, MAX_RANK,
 };
 
 /// Cursor over a section payload.
@@ -148,6 +148,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         67 => K::AvgPool2d(read_pool(cur)?),
         68 => K::GlobalAvgPool(read_pool(cur)?),
         69 => K::Attention(read_attn(cur)?),
+        119 => K::DecodeAttention(read_decattn(cur)?),
         70 => K::FusedSwiGlu(read_matmul(cur)?),
         71 => K::Pad(read_layout(cur)?),
         72 => K::Expand(read_expand(cur)?),
@@ -531,6 +532,26 @@ fn read_attn(c: &mut Cursor<'_>) -> Result<AttentionCall, ArchiveError> {
         head_dim: c.u32()?,
         kv_heads: c.u32()?,
         causal: c.u8()? != 0,
+        scale_bits: c.u32()?,
+        dtype: c.u8()?,
+    })
+}
+fn read_decattn(c: &mut Cursor<'_>) -> Result<DecodeAttentionCall, ArchiveError> {
+    Ok(DecodeAttentionCall {
+        q: c.buf()?,
+        k_past: c.buf()?,
+        v_past: c.buf()?,
+        k_new: c.buf()?,
+        v_new: c.buf()?,
+        mask: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        heads: c.u32()?,
+        kv_heads: c.u32()?,
+        q_rows: c.u32()?,
+        past_len: c.u32()?,
+        new_len: c.u32()?,
+        head_dim: c.u32()?,
         scale_bits: c.u32()?,
         dtype: c.u8()?,
     })

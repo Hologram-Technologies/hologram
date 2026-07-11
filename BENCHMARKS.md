@@ -116,6 +116,47 @@ Near-linear on 4 participants; pooled prefill sustains ~73–80 GMAC/s where
 serial sat at ~19–20. Reproduce with `wasm_threads_timing` (wasmtime,
 `-W threads=y -S threads=y`).
 
+### Fused decode attention: the long-context ceiling, removed (captured at v0.9.0)
+
+hologram-ai's measurement: with the GEMV pool fixed in context, attention + the
+per-step KV recopy grow with context and the pool speedup collapses (3.09× at
+L=128 → 1.14× at L=32768; ~440 ms/token of pure `Concat`+`Transpose` recopy at
+32K on a 1.5B model). Two substrate contracts forced that: `AttentionCall`'s
+single-`k` signature (⇒ in-graph `Concat(past, new)` recopies the whole bucket
+every step) and `causal`-only masking over one `seq` (⇒ a runtime realized
+length was inexpressible, and `m = 1` against `L` keys wasn't even a legal
+shape).
+
+`DecodeAttentionCall` (new κ discriminant 119; the legacy call's wire is
+frozen) removes both: **split KV** read in place — the kernel iterates
+`past ∥ new` so the concatenation is never materialized, witnessed bit-for-bit
+against the legacy kernel over the precatenated buffer — and a **required
+additive mask** `[m, past+new]`, where `-inf` erases a key *exactly* (padded
+bucket ≡ tight computation, bit for bit). The κ split is deliberate: the fixed
+bucket is structure in the call; the realized length is content in the mask
+operand's bytes. Every `(batch, head, query-row)` is one whole
+score→softmax→context pipeline — the partition unit, pooled on wasm (fork-join
+by row, publisher-carried score scratch so workers never allocate) and native
+(`parallel` column… row tiles), bit-identical to serial by construction.
+
+wasm32-wasip1-threads under wasmtime, 1.5B-class heads (h=12, kv=2, d=128),
+`m = 1` decode step. Three runs on the shared CI VM; the table shows the
+observed range (run-to-run pool contention moves the pooled absolutes, the
+serial baseline is stable to ~4%):
+
+| context L | serial | pooled (4 participants) | speedup | KV-read GB/s |
+|---|--:|--:|--:|--:|
+| 128 | 74–76 µs | (declined: below work floor) | 1.0× | ~3.5 |
+| 8 192 | 4.73–4.93 ms | 1.20–1.75 ms | **2.8–4.0×** | 3.4 → 9.6–13.9 |
+| 32 768 | 23.6–24.3 ms | 7.29–8.09 ms | **2.9–3.2×** | 2.8 → 8.3–9.2 |
+
+And the recopy the split form deletes is gone *by construction*, not by
+optimization: there is no `Concat` in the lowered graph to pay for. Per-token
+attention cost is now the inherent O(context) KV **read**, divided across
+participants — the parametric no-arbitrary-ceiling shape the request asked for.
+Decode (`m = 1`), chunked prefill (`m = C`, causal-within-chunk in the mask)
+and speculative verify (`m = K`) all ride the same call.
+
 ### Pool admission: work admits, width declines (captured at v0.8.2)
 
 Adversarial pass over the pooled GEMM found the admission gate wrong twice, in

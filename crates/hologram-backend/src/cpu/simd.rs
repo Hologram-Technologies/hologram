@@ -62,7 +62,7 @@ const PAR_THRESHOLD: u64 = 1 << 23;
     feature = "parallel",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-const GEMV_PAR_THRESHOLD: u64 = 1 << 20;
+pub(crate) const GEMV_PAR_THRESHOLD: u64 = 1 << 20;
 
 #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 #[inline]
@@ -7346,6 +7346,45 @@ mod tests {
             serial_e8.push(se);
         }
 
+        // Decode-attention fixture: computed serial now (no workers), pooled
+        // after registration via `attn_pooled_now`.
+        let (ab, ah, ahkv, ad, am) = (1usize, 8usize, 4usize, 64usize, 1usize);
+        let (apast, anew) = (1024usize, 1usize);
+        let al = apast + anew;
+        let aq: Vec<f32> = (0..ab * ah * am * ad)
+            .map(|i| (((i * 19) % 37) as f32 - 18.0) * 0.027)
+            .collect();
+        let akp: Vec<f32> = (0..ab * ahkv * apast * ad)
+            .map(|i| (((i * 7) % 43) as f32 - 21.0) * 0.019)
+            .collect();
+        let avp: Vec<f32> = (0..ab * ahkv * apast * ad)
+            .map(|i| (((i * 11) % 41) as f32 - 20.0) * 0.023)
+            .collect();
+        let akn: Vec<f32> = (0..ab * ahkv * anew * ad)
+            .map(|i| (((i * 5) % 31) as f32 - 15.0) * 0.031)
+            .collect();
+        let avn: Vec<f32> = (0..ab * ahkv * anew * ad)
+            .map(|i| (((i * 3) % 29) as f32 - 14.0) * 0.017)
+            .collect();
+        let amask: Vec<f32> = (0..am * al)
+            .map(|i| if i % 9 == 4 { f32::NEG_INFINITY } else { 0.0 })
+            .collect();
+        let run_attn = |aq: &[f32],
+                        akp: &[f32],
+                        avp: &[f32],
+                        akn: &[f32],
+                        avn: &[f32],
+                        amask: &[f32]|
+         -> Vec<f32> {
+            let mut out = vec![f32::NAN; ab * ah * am * ad];
+            crate::cpu::float_kernels::decode_attention_engine_for_tests(
+                aq, akp, avp, akn, avn, amask, &mut out, ab, ah, ahkv, am, apast, anew, ad,
+            );
+            out
+        };
+        let attn_serial = run_attn(&aq, &akp, &avp, &akn, &avn, &amask);
+        let attn_pooled_now = || run_attn(&aq, &akp, &avp, &akn, &avn, &amask);
+
         let handles: Vec<_> = (0..3u32)
             .map(|i| std::thread::spawn(move || wasm_pool::hologram_worker_run(i)))
             .collect();
@@ -7414,6 +7453,20 @@ mod tests {
             matmul_i8_pc_omajor(&a, &bq, &sc, &mut got, m, k, n);
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
                 assert_eq!(g.to_bits(), w.to_bits(), "narrow-n cell {i}: {g} vs {w}");
+            }
+        }
+
+        // Decode attention, pooled by row: 1×8 heads×(1 row) over 1024+1 keys,
+        // d = 64 — rows = 8 ≥ 2 and rows·keys·d ≥ the work floor, so the pool
+        // admits it. Serial baseline was computed before the workers
+        // registered; pooled must match bit for bit.
+        {
+            for (i, (p, sv)) in attn_pooled_now().iter().zip(&attn_serial).enumerate() {
+                assert_eq!(
+                    p.to_bits(),
+                    sv.to_bits(),
+                    "decode-attention cell {i}: pooled {p} vs serial {sv}"
+                );
             }
         }
 
