@@ -157,6 +157,56 @@ participants — the parametric no-arbitrary-ceiling shape the request asked for
 Decode (`m = 1`), chunked prefill (`m = C`, causal-within-chunk in the mask)
 and speculative verify (`m = K`) all ride the same call.
 
+### Resident KV: the cache write is a κ move; the byte boundary disappears (captured at v0.9.0)
+
+The third decode ceiling hologram-ai measured was invisible to kernel
+benchmarks: carrying `past_k`/`past_v` as host bytes re-hashes (BLAKE3) and
+recopies the **entire** cache across the byte boundary every token — a second
+O(bucket) per-step cost on top of the recopy (their numbers: ~28 ms/tok @2K →
+~442 ms/tok @32K on a 1.5B model, native SIMD, before the kernel even runs).
+The substrate already had the addressed path (`execute_addressed`: *"nothing
+is rehashed"*) — what was missing was a way to **append to a resident cache**
+so the updated value could be retained by label and bound next step.
+
+`KvCacheWrite` (OpKind + κ discriminant 120) is that append: a fixed-bucket
+row write at a **runtime** position (ring wrap; the position is a 4-byte
+operand — content, like the decode mask's realized length, so one compiled
+step-graph serves every step). The kernel's contract is an honest
+O(bucket) copy. The *executor* realizes an eligible write as an in-place
+**move**: the old cache label is retired (a moved value is never
+re-addressed), the buffer is mutated at O(new_rows), and the result is
+retained under the derived output label — bit-identical to the copy by
+construction, pinned by `hologram-exec/tests/kv_cache_write.rs` including a
+two-step decode loop against directly-dispatched kernels. Eligibility is
+sound, not assumed: the load-time analysis re-derives it from the decoded
+plan (every other toucher of the cache slot scheduled strictly earlier — a
+hand-built archive cannot spoof the flag), and at steal time the pool
+declines unless the buffer is owned by exactly this node's operands (view
+aliases, duplicate-label ports, pinned/lazy tiers all decline to the honest
+copy — each pathology witnessed).
+
+One decode-step graph (`DecodeAttention` + 2×`KvCacheWrite`, h=12 kv=2 d=128,
+m=1), driven both ways — native x86-64, release, serial kernels; the byte
+column is the *optimistic lower bound* on what the addressed loop removes
+(deployed wasm32 hashes slower):
+
+| bucket L | byte loop (µs/step) | addressed loop (µs/step) | boundary removed | speedup |
+|---|--:|--:|--:|--:|
+| 2 048 | 3 852 | 589 | 3 263 µs | **6.5×** |
+| 8 192 | 23 915 | 2 378 | 21 536 µs | **10.1×** |
+| 32 768 | 165 022 | 19 487 | 145 536 µs | **8.5×** |
+
+The addressed column is essentially the attention kernel itself; everything
+else — 2×O(bucket) re-hash, 2×O(bucket) copy-in, 2×O(bucket) copy-out, and
+the 2×O(bucket) honest-copy writes — became label binds plus two O(1)-row
+in-place moves. Reproduce with
+`cargo run --release -p hologram-exec --example addressed_decode_timing`.
+
+Falling out of the same hardening pass: a refused `execute_addressed` no
+longer rotates the transient generations — input bindability is validated
+*before* any state change, so a failed call cannot age out the resident
+KV labels a retrying decode loop still needs.
+
 ### Pool admission: work admits, width declines (captured at v0.8.2)
 
 Adversarial pass over the pooled GEMM found the admission gate wrong twice, in

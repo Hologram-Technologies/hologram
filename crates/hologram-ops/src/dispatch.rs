@@ -118,6 +118,7 @@ pub fn emit_op_term<const CAP: usize>(
         K::Transpose => layout::emit_layout_relabel(arena, level, a0),
         K::Concat => layout::emit_layout_relabel(arena, level, a0),
         K::Slice => layout::emit_layout_relabel(arena, level, a0),
+        K::KvCacheWrite => layout::emit_layout_relabel(arena, level, a0),
 
         // Activation+reduce: ReduceMax → Sub → Exp → ReduceSum → Div.
         K::Softmax => activation_reduce::emit_softmax(arena, level, a0),

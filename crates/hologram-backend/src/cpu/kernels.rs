@@ -94,6 +94,7 @@ pub fn dispatch<W: Workspace>(call: &KernelCall, ws: &mut W) -> Result<(), Backe
         // here for every dtype — it moves whole elements by byte width, so the
         // float fast path deliberately leaves it to this one implementation).
         KernelCall::Gather(c) => gather(c, ws),
+        KernelCall::KvCacheWrite(c) => kv_cache_write(c, ws),
 
         // Cast: numeric dtype conversion (int↔float↔int). One implementation
         // for every dtype pair; the float fast path leaves it here.
@@ -438,6 +439,61 @@ fn gather<W: Workspace>(
             let src = (o * axis_dim + idx as usize) * row;
             let dst = (o * num_idx + k) * row;
             out[dst..dst + row].copy_from_slice(&data[src..src + row]);
+        }
+    }
+    Ok(())
+}
+
+/// Fixed-bucket KV-cache row write at a runtime position (the honest-copy
+/// reference form; see [`KvCacheWriteCall`] for the contract and the
+/// executor's in-place-move elision, which must stay bit-identical to this).
+/// For each of `planes` independent `[bucket_rows, row_bytes]` planes, the
+/// output is the cache with rows `(pos + j) % bucket_rows` overwritten by
+/// `new[p][j]`. Byte-level — dtype never inspected. Every operand size is
+/// validated against the declared geometry; a short buffer fails loud.
+fn kv_cache_write<W: Workspace>(
+    c: &crate::kernel_call::KvCacheWriteCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    let planes = c.planes as usize;
+    let bucket = c.bucket_rows as usize;
+    let new_rows = c.new_rows as usize;
+    let row = c.row_bytes as usize;
+    if bucket == 0 || row == 0 {
+        return Err(BackendError::UnsupportedOp(
+            "kv_cache_write: bucket_rows and row_bytes must be >= 1",
+        ));
+    }
+    // More new rows than the bucket holds would make later rows silently
+    // overwrite earlier ones within one call — refuse the ambiguity.
+    if new_rows > bucket {
+        return Err(BackendError::UnsupportedOp(
+            "kv_cache_write: new_rows exceeds bucket_rows",
+        ));
+    }
+    let (reads, out) = ws
+        .split_borrow(&[c.cache, c.new, c.pos], c.output)
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let (cache, new, posb) = (reads[0], reads[1], reads[2]);
+    let plane_bytes = bucket * row;
+    if cache.len() < planes * plane_bytes
+        || new.len() < planes * new_rows * row
+        || posb.len() < 4
+        || out.len() < planes * plane_bytes
+    {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // The runtime write position: content, not structure. Ring semantics —
+    // any u32 is valid, wrapped into the bucket.
+    let pos = u32::from_le_bytes(posb[..4].try_into().unwrap()) as usize % bucket;
+    out[..planes * plane_bytes].copy_from_slice(&cache[..planes * plane_bytes]);
+    for p in 0..planes {
+        let ob = p * plane_bytes;
+        let nb = p * new_rows * row;
+        for j in 0..new_rows {
+            let dst = ob + ((pos + j) % bucket) * row;
+            let src = nb + j * row;
+            out[dst..dst + row].copy_from_slice(&new[src..src + row]);
         }
     }
     Ok(())

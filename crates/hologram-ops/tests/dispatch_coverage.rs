@@ -74,9 +74,11 @@ fn op_kind_catalog_size_matches_spec() {
     // removed when autodiff moved to forward-op composition; `Im2Col`/`Col2Im`
     // were added as the conv-composition layout primitives; `Gather` was added
     // as the runtime-indexed embedding/data-movement primitive; `Cast` as the
-    // general numeric int↔float conversion. Adjust if and only if the catalog
-    // is intentionally extended.
-    assert_eq!(OpKind::ALL.len(), 83);
+    // general numeric int↔float conversion; `KvCacheWrite` as the
+    // runtime-positioned KV-cache row write (the append half of the resident
+    // decode path). Adjust if and only if the catalog is intentionally
+    // extended.
+    assert_eq!(OpKind::ALL.len(), 84);
 }
 
 #[test]

@@ -177,6 +177,47 @@ impl Compiler {
             None => vec![(0..self.graph.node_count() as u32).collect()],
         };
 
+        // KvCacheWrite trailing placement: the executor may realize an
+        // output-only cache write as an in-place move on the resident cache
+        // (κ move semantics — the old cache label is consumed). That is sound
+        // only if every other reader of the cache has already run, so a
+        // KvCacheWrite whose result feeds nothing but graph outputs is
+        // deferred to a trailing schedule level after all other work. A write
+        // whose result IS consumed in-graph keeps its dependency-ordered
+        // place (the runtime then takes the honest-copy path — the load-time
+        // steal analysis in hologram-exec re-derives eligibility from the
+        // plan itself, so a hand-built archive cannot spoof it).
+        let traversal_levels: Vec<Vec<u32>> = {
+            let mut levels = traversal_levels;
+            let nodes = self.graph.nodes();
+            let mut deferred: Vec<u32> = Vec::new();
+            let consumed_by_compute = |id: u32| {
+                nodes.iter().any(|n| {
+                    !matches!(n.op, GraphOp::Output)
+                        && n.inputs.iter().any(|src| {
+                            matches!(*src, hologram_graph::InputSource::Node(hologram_graph::NodeId(i)) if i == id)
+                        })
+                })
+            };
+            for level in &mut levels {
+                level.retain(|&id| {
+                    let is_kv_write = nodes.get(id as usize).is_some_and(|n| {
+                        matches!(n.op, GraphOp::Op(hologram_graph::OpKind::KvCacheWrite))
+                    });
+                    if is_kv_write && !consumed_by_compute(id) {
+                        deferred.push(id);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            if !deferred.is_empty() {
+                levels.push(deferred);
+            }
+            levels
+        };
+
         for level_nodes in &traversal_levels {
             let mut level_calls: Vec<u32> = Vec::with_capacity(level_nodes.len());
 

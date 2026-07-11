@@ -13,8 +13,8 @@ use hologram_archive::{
     ContentLabel, HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
 };
 use hologram_backend::{
-    buffers, Backend, DequantActivationCall, KernelCall, MatMulActivationCall,
-    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall,
+    buffers, Backend, DequantActivationCall, KernelCall, KvCacheWriteCall, MatMulActivationCall,
+    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, Workspace,
 };
 
 /// f32 dtype tag (matches `port_bytes_per_element` / the backend's
@@ -193,6 +193,16 @@ pub struct InferenceSession<B: SessionBackend> {
     /// cheap reuse key, so the per-prism-pipeline cost is paid once per
     /// output port, not per node.
     is_output_slot: Vec<bool>,
+    /// Per-call `KvCacheWrite` in-place-move eligibility, derived at load from
+    /// the decoded plan itself (never trusted from the wire): a write may
+    /// consume its cache buffer only if every other kernel touching the cache
+    /// slot is scheduled strictly before it. Ineligible writes always take the
+    /// honest-copy kernel.
+    stealable: Vec<bool>,
+    /// Reused staging buffer for the in-place `KvCacheWrite` move (the new
+    /// rows + write position are staged before the cache buffer is mutated),
+    /// so a steady-state decode allocates nothing per step once warmed.
+    kv_move_scratch: Vec<u8>,
     /// Kernels dispatched in the most recent compute walk (a memo miss).
     /// With per-node addressing, a shared sub-graph is *not* dispatched, so
     /// `last_dispatched < kernel_count` whenever sub-graph reuse fires.
@@ -254,7 +264,61 @@ fn is_layout_only_call(call: &KernelCall) -> bool {
             | KernelCall::Resize(_)
             // Gather is a runtime-indexed data-movement map (no arithmetic).
             | KernelCall::Gather(_)
+            // KvCacheWrite is a runtime-positioned row write (no arithmetic).
+            | KernelCall::KvCacheWrite(_)
     )
+}
+
+/// `KvCacheWrite` in-place-move eligibility (κ move semantics). A write may
+/// realize as a mutation of the resident cache buffer only if nothing else in
+/// the plan can still read that buffer afterwards: every other kernel that
+/// touches the cache **slot** (as operand or output) must be scheduled
+/// strictly before the write in the walk order. Derived from the decoded
+/// calls + plan — an archive cannot carry (or spoof) the flag, so a
+/// hand-built plan that orders a reader after the write simply gets the
+/// honest-copy kernel. Two writes on one cache slot resolve to "only the
+/// later one is eligible" by the same rule.
+fn compute_stealable(
+    kernel_calls: &[KernelCall],
+    exec_plan: &[Vec<u32>],
+    node_meta: &[NodeMeta],
+) -> Vec<bool> {
+    if !kernel_calls
+        .iter()
+        .any(|c| matches!(c, KernelCall::KvCacheWrite(_)))
+    {
+        return vec![false; kernel_calls.len()];
+    }
+    let mut pos = vec![usize::MAX; kernel_calls.len()];
+    let mut t = 0usize;
+    for level in exec_plan {
+        for &ci in level {
+            if let Some(p) = pos.get_mut(ci as usize) {
+                *p = t;
+                t += 1;
+            }
+        }
+    }
+    kernel_calls
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let KernelCall::KvCacheWrite(kc) = c else {
+                return false;
+            };
+            if pos[i] == usize::MAX {
+                return false;
+            }
+            let cache_slot = kc.cache.slot;
+            node_meta.iter().enumerate().all(|(j, m)| {
+                if j == i {
+                    return true;
+                }
+                let touches = m.inputs.contains(&cache_slot) || m.output == cache_slot;
+                !touches || (pos[j] != usize::MAX && pos[j] < pos[i])
+            })
+        })
+        .collect()
 }
 
 /// Derive the effective per-kernel tier assignments and the level-boundary
@@ -676,6 +740,8 @@ impl<B: SessionBackend> InferenceSession<B> {
 
         let inputs_len = inputs.len();
 
+        let stealable = compute_stealable(&kernel_calls, &exec_plan, &node_meta);
+
         // PM_7 memory affinity: derive each kernel's tier from its quantum
         // level (recomputed here from the decoded calls — the tier is a pure
         // function of dtype/quantum level, so no archive section is needed),
@@ -709,6 +775,8 @@ impl<B: SessionBackend> InferenceSession<B> {
             node_meta,
             slot_label_init,
             is_output_slot,
+            stealable,
+            kv_move_scratch: Vec::new(),
             last_dispatched: 0,
             last_skipped: 0,
             slot_label_scratch: Vec::new(),
@@ -888,6 +956,18 @@ impl<B: SessionBackend> InferenceSession<B> {
                 return Ok(labels.into_vec());
             }
         }
+        // Refuse before any state change: the generation rotation below ages
+        // the transient pool, so a call that cannot bind must not rotate —
+        // otherwise a single refused call destroys resident values a
+        // retrying caller still needs (e.g. the KV-cache labels of a decode
+        // loop). Bindability is checked against exactly what survives the
+        // rotation: the pinned tier, the current generation, and paged
+        // weights. (A label living only in the *previous* generation could
+        // never serve anyway — its buffer is reclaimed by this walk's own
+        // rotation before binding.)
+        if input_labels.iter().any(|l| !self.pool.bindable_input(l)) {
+            return Err(ExecError::InputMismatch);
+        }
         // Miss: the addressed inputs are already resident (interned, or a
         // prior call's outputs); bind constants + inputs by label — **no
         // hashing, no copy** — then walk.
@@ -1041,6 +1121,46 @@ impl<B: SessionBackend> InferenceSession<B> {
                     }
                 }
 
+                // KvCacheWrite in-place move (κ move semantics): when the
+                // plan admits it (load-time analysis — every other toucher of
+                // the cache slot runs strictly earlier) and the cache value is
+                // an unaliased transient resident, realize the write as a
+                // mutation of the cache's own buffer: retire the cache label,
+                // overwrite `new_rows` rows, retain under the derived output
+                // label. O(new_rows) instead of O(bucket_rows), bit-identical
+                // to the copy kernel (same bytes, same derived labels — only
+                // the movement is elided, exactly like the Reshape/Slice arms
+                // above). Any failed condition falls through to the honest
+                // copy.
+                if self.stealable[ci] {
+                    if let (Some(node_label), KernelCall::KvCacheWrite(kc), Some(&cache_label)) =
+                        (label, &self.kernel_calls[ci], in_labels.first())
+                    {
+                        let kc = *kc;
+                        let mut allowed: SmallVec<[usize; 8]> = self.node_meta[ci]
+                            .inputs
+                            .iter()
+                            .map(|&sl| sl as usize)
+                            .collect();
+                        allowed.push(out_slot);
+                        if self.kv_move_in_place(&kc, cache_label, out_slot, &allowed) {
+                            self.last_skipped += 1;
+                            if is_out {
+                                let meta = &self.node_meta[ci];
+                                let witnessed =
+                                    derive_label_boundary(meta.opcode, &meta.params, &in_labels)
+                                        .map_err(|_| ExecError::Backend)?;
+                                self.pool.retain(out_slot, witnessed);
+                                out_witnessed[out_slot] = Some(witnessed);
+                            } else {
+                                self.pool.retain(out_slot, node_label);
+                            }
+                            slot_label[out_slot] = Some(node_label);
+                            continue;
+                        }
+                    }
+                }
+
                 // Paged session: page in and bind this node's lazy-weight
                 // operands as one group right before the kernel reads them —
                 // the only point a weight's bytes are needed, so peak
@@ -1152,6 +1272,73 @@ impl<B: SessionBackend> InferenceSession<B> {
     #[inline]
     pub fn last_skipped(&self) -> usize {
         self.last_skipped
+    }
+
+    /// Attempt the in-place realization of a plan-eligible [`KvCacheWriteCall`].
+    /// Returns `true` when the move happened: the cache's buffer (its label
+    /// now retired) is bound to `out_slot` with the new rows written in place.
+    /// Returns `false` — caller dispatches the honest-copy kernel — on any
+    /// declined condition: geometry the kernel would refuse, short operands,
+    /// a pinned/lazy/aliased cache, or a cache buffer readable outside
+    /// `allowed` slots. Validation deliberately mirrors the kernel's, so a
+    /// call that declines here still fails loud there.
+    fn kv_move_in_place(
+        &mut self,
+        kc: &KvCacheWriteCall,
+        cache_label: ContentLabel,
+        out_slot: usize,
+        allowed: &[usize],
+    ) -> bool {
+        let planes = kc.planes as usize;
+        let bucket = kc.bucket_rows as usize;
+        let rows = kc.new_rows as usize;
+        let row = kc.row_bytes as usize;
+        if bucket == 0 || row == 0 || rows > bucket {
+            return false;
+        }
+        let Some(need) = planes.checked_mul(bucket).and_then(|v| v.checked_mul(row)) else {
+            return false;
+        };
+        if self.pool.resolve(&cache_label).map_or(0, |b| b.len()) < need {
+            return false;
+        }
+        // Stage the (small) new rows + write position before any mutation, so
+        // even a pathological aliasing of `new`/`pos` with the cache reads
+        // pre-write bytes — the copy kernel's exact semantics.
+        let staged_len = planes * rows * row;
+        let posb = Workspace::read(&self.pool, kc.pos);
+        if posb.len() < 4 {
+            return false;
+        }
+        let pos = u32::from_le_bytes(posb[..4].try_into().unwrap()) as usize % bucket;
+        {
+            let newb = Workspace::read(&self.pool, kc.new);
+            if newb.len() < staged_len {
+                return false;
+            }
+            let scratch = &mut self.kv_move_scratch;
+            scratch.clear();
+            scratch.extend_from_slice(&newb[..staged_len]);
+        }
+        let Some(bi) = self.pool.steal_transient(&cache_label, allowed) else {
+            return false;
+        };
+        self.pool.bind_stolen(out_slot, bi);
+        let out = self
+            .pool
+            .write_slot(out_slot)
+            .expect("bind_stolen bound this slot");
+        let plane_bytes = bucket * row;
+        for p in 0..planes {
+            let ob = p * plane_bytes;
+            let nb = p * rows * row;
+            for j in 0..rows {
+                let dst = ob + ((pos + j) % bucket) * row;
+                let src = nb + j * row;
+                out[dst..dst + row].copy_from_slice(&self.kv_move_scratch[src..src + row]);
+            }
+        }
+        true
     }
 
     fn record_graph_memo_hit(&mut self) {

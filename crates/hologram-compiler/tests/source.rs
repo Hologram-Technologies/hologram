@@ -81,6 +81,11 @@ fn parser_accepts_every_op_in_catalog() {
                 | hologram_graph::OpKind::Col2Im
                 | hologram_graph::OpKind::Gather
                 | hologram_graph::OpKind::Cast
+                // KvCacheWrite requires shape-annotated rank-4 cache/new
+                // operands (ShapeArgs::from_graph refuses missing dims —
+                // refuse-not-fabricate); covered end-to-end by
+                // hologram-exec/tests/kv_cache_write.rs.
+                | hologram_graph::OpKind::KvCacheWrite
         ) {
             continue;
         }

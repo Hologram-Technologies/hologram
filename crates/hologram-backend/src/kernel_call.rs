@@ -654,6 +654,49 @@ pub struct DecodeAttentionCall {
     pub dtype: u8,
 }
 
+/// Fixed-bucket KV-cache row write at a **runtime** position — the append
+/// half of the resident decode path ([`DecodeAttentionCall`] is the read
+/// half). Pure data movement: for each of `planes` (= batch · kv_heads)
+/// independent `[bucket_rows, row_bytes]` planes,
+///
+/// ```text
+/// out[p][(pos + j) % bucket_rows] = new[p][j]      for j in 0..new_rows
+/// out[p][r]                       = cache[p][r]    for every other row
+/// ```
+///
+/// with `pos` read at dispatch from the 4-byte little-endian `u32` in the
+/// `pos` operand (wrapped modulo `bucket_rows` — ring semantics). The write
+/// position is a runtime value, exactly like the realized length in the
+/// decode-attention mask: *content* riding an operand's bytes, not structure
+/// in the signature — so one compiled step-graph serves every step.
+///
+/// The kernel's contract is the honest copy above, dtype-agnostic (a row is
+/// `row_bytes`). The executor is free to realize an output-scheduled write as
+/// an **in-place move** on a resident cache — the old cache value's κ-label is
+/// *consumed* (retired, never re-addressed) and its buffer re-retained under
+/// the derived output label, byte-identical to the copy at `O(new_rows)` cost
+/// instead of `O(bucket_rows)`. Callers of the addressed session API must
+/// treat the input cache label as moved after a step that writes it.
+#[derive(Debug, Clone, Copy)]
+pub struct KvCacheWriteCall {
+    /// The resident cache, `planes × bucket_rows` rows.
+    pub cache: BufferRef,
+    /// The appended rows, `planes × new_rows` rows.
+    pub new: BufferRef,
+    /// Runtime write position: 4-byte LE `u32`, wrapped modulo `bucket_rows`.
+    pub pos: BufferRef,
+    pub output: BufferRef,
+    /// Independent planes (batch · kv_heads). Each plane appends at the same
+    /// wrapped position.
+    pub planes: u32,
+    /// Cache rows per plane. Must be ≥ 1.
+    pub bucket_rows: u32,
+    /// Appended rows per plane. Must satisfy `new_rows ≤ bucket_rows`.
+    pub new_rows: u32,
+    /// Bytes per row (`head_dim · size_of(dtype)` for a KV cache).
+    pub row_bytes: u32,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WhereCall {
     pub cond: BufferRef,
@@ -1135,6 +1178,7 @@ pub enum KernelCall {
     // Structured
     Attention(AttentionCall),
     DecodeAttention(DecodeAttentionCall),
+    KvCacheWrite(KvCacheWriteCall),
     FusedSwiGlu(MatMulCall),
 
     // Utility
@@ -1303,6 +1347,16 @@ impl KernelCall {
                 .u32(c.scale_bits)
                 .u8(c.dtype)
                 .done(119),
+            // KV-cache row write — new capability, new opcode (120). The
+            // bucket geometry is structure; the write position is content in
+            // the `pos` operand's κ-label, so a fixed bucket is one call
+            // shape whose per-step identity rides the operands.
+            K::KvCacheWrite(c) => Pb::new()
+                .u32(c.planes)
+                .u32(c.bucket_rows)
+                .u32(c.new_rows)
+                .u32(c.row_bytes)
+                .done(120),
             K::FusedSwiGlu(c) => p_matmul(c).done(69),
             K::Pad(c) => p_layout(c).done(70),
             K::Expand(c) => p_expand(c).done(71),
@@ -1504,6 +1558,7 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
 
         K::Attention(c) => vec![c.q, c.k, c.v, c.output],
         K::DecodeAttention(c) => vec![c.q, c.k_past, c.v_past, c.k_new, c.v_new, c.mask, c.output],
+        K::KvCacheWrite(c) => vec![c.cache, c.new, c.pos, c.output],
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
@@ -1616,6 +1671,8 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
 
         K::Attention(c) => c.dtype,
         K::DecodeAttention(c) => c.dtype,
+        // Byte-level data movement (a row is `row_bytes`, any dtype).
+        K::KvCacheWrite(_) => hologram_types::DTypeId::U8.raw(),
 
         K::Where(c) => c.dtype,
 

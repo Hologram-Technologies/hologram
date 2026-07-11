@@ -180,7 +180,11 @@ pub hologram_compiler::lower::ShapeArgs::heads: u32
 pub hologram_compiler::lower::ShapeArgs::k: u32
 pub hologram_compiler::lower::ShapeArgs::k_h: u32
 pub hologram_compiler::lower::ShapeArgs::k_w: u32
+pub hologram_compiler::lower::ShapeArgs::kv_bucket_rows: u32
 pub hologram_compiler::lower::ShapeArgs::kv_heads: u32
+pub hologram_compiler::lower::ShapeArgs::kv_new_rows: u32
+pub hologram_compiler::lower::ShapeArgs::kv_planes: u32
+pub hologram_compiler::lower::ShapeArgs::kv_row_bytes: u32
 pub hologram_compiler::lower::ShapeArgs::m: u32
 pub hologram_compiler::lower::ShapeArgs::n: u32
 pub hologram_compiler::lower::ShapeArgs::new_len: u32
