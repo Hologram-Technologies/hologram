@@ -670,6 +670,78 @@ impl BufferArena {
         self.current.insert(label, bi);
     }
 
+    /// Consume a transient value for an in-place move (`KvCacheWrite`): if
+    /// `label` is resident in the **transient** tier only (never a pinned
+    /// constant or a lazy-paged weight — those are session-owned and must not
+    /// be mutated), its buffer is bound to no slot outside `allowed_slots`,
+    /// and it is not retained under any other label, retire the label from
+    /// both transient generations and return the buffer index. The caller
+    /// re-binds the buffer and re-retains it under the derived output label —
+    /// UOR move semantics: the old value's address is *consumed*, never left
+    /// pointing at mutated bytes. Any failed condition returns `None` and the
+    /// caller must take the honest-copy kernel instead.
+    pub(crate) fn steal_transient(
+        &mut self,
+        label: &ContentLabel,
+        allowed_slots: &[usize],
+    ) -> Option<usize> {
+        if self.pinned.contains_key(label)
+            || (!self.lazy.is_empty() && self.lazy.contains_key(label))
+        {
+            return None;
+        }
+        let bi = self
+            .current
+            .get(label)
+            .or_else(|| self.previous.get(label))
+            .copied()?;
+        // Readable anywhere else this walk? A slot binding outside the
+        // caller's own operand/output slots means another node could still
+        // read the buffer — decline.
+        for (s, &b) in self.slot_buf.iter().enumerate() {
+            if b == bi && !allowed_slots.contains(&s) {
+                return None;
+            }
+        }
+        // Retained under a different label (aliased content)? Mutating would
+        // silently corrupt that label — decline. The transient maps hold the
+        // last two walks' working sets, so this scan is small.
+        let aliased = self.pinned.values().any(|&b| b == bi)
+            || self.current.iter().any(|(l, &b)| b == bi && l != label)
+            || self.previous.iter().any(|(l, &b)| b == bi && l != label)
+            || self
+                .lazy
+                .values()
+                .any(|e| e.resident.is_some_and(|b| b == bi));
+        if aliased {
+            return None;
+        }
+        self.current.remove(label);
+        self.previous.remove(label);
+        Some(bi)
+    }
+
+    /// Bind `slot` directly to buffer `bi` as a plain whole-buffer binding —
+    /// the re-bind half of an in-place move (after [`Self::steal_transient`]).
+    pub(crate) fn bind_stolen(&mut self, slot: usize, bi: usize) {
+        self.ensure_slot(slot);
+        self.slot_buf[slot] = bi;
+        self.slot_off[slot] = 0;
+        self.slot_len[slot] = self.bufs[bi].len;
+    }
+
+    /// Whether `label` can serve as an input to a **new** walk — i.e. will
+    /// still be resident after the walk's generation rotation: the pinned
+    /// tier, the *current* generation, or a paged-in lazy weight. A value
+    /// living only in the previous generation is one rotation from
+    /// reclamation; binding it would fail mid-walk, after state has already
+    /// been mutated — so `execute_addressed` refuses it up front instead.
+    pub fn bindable_input(&self, label: &ContentLabel) -> bool {
+        self.pinned.contains_key(label)
+            || self.current.contains_key(label)
+            || (!self.lazy.is_empty() && self.lazy.get(label).is_some_and(|e| e.resident.is_some()))
+    }
+
     /// Whether a value with this label is resident (pinned, transient, or a
     /// paged-in lazy weight). The lazy-tier probe is skipped entirely when no
     /// weights are paged (a non-paged session), so the fully-resident hot

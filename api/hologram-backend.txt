@@ -192,6 +192,7 @@ pub hologram_backend::kernel_call::KernelCall::GroupNorm(hologram_backend::NormC
 pub hologram_backend::kernel_call::KernelCall::Im2Col(hologram_backend::Im2ColCall)
 pub hologram_backend::kernel_call::KernelCall::InstanceNorm(hologram_backend::NormCall)
 pub hologram_backend::kernel_call::KernelCall::IsNaN(hologram_backend::UnaryCall)
+pub hologram_backend::kernel_call::KernelCall::KvCacheWrite(hologram_backend::KvCacheWriteCall)
 pub hologram_backend::kernel_call::KernelCall::LayerNorm(hologram_backend::NormCall)
 pub hologram_backend::kernel_call::KernelCall::Less(hologram_backend::BinaryCall)
 pub hologram_backend::kernel_call::KernelCall::LessOrEqual(hologram_backend::BinaryCall)
@@ -544,6 +545,27 @@ impl core::marker::Unpin for hologram_backend::Im2ColCall
 impl core::marker::UnsafeUnpin for hologram_backend::Im2ColCall
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Im2ColCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Im2ColCall
+pub struct hologram_backend::kernel_call::KvCacheWriteCall
+pub hologram_backend::kernel_call::KvCacheWriteCall::bucket_rows: u32
+pub hologram_backend::kernel_call::KvCacheWriteCall::cache: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::KvCacheWriteCall::new: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::KvCacheWriteCall::new_rows: u32
+pub hologram_backend::kernel_call::KvCacheWriteCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::KvCacheWriteCall::planes: u32
+pub hologram_backend::kernel_call::KvCacheWriteCall::pos: hologram_backend::workspace::BufferRef
+pub hologram_backend::kernel_call::KvCacheWriteCall::row_bytes: u32
+impl core::clone::Clone for hologram_backend::KvCacheWriteCall
+pub fn hologram_backend::KvCacheWriteCall::clone(&self) -> hologram_backend::KvCacheWriteCall
+impl core::fmt::Debug for hologram_backend::KvCacheWriteCall
+pub fn hologram_backend::KvCacheWriteCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::KvCacheWriteCall
+impl core::marker::Freeze for hologram_backend::KvCacheWriteCall
+impl core::marker::Send for hologram_backend::KvCacheWriteCall
+impl core::marker::Sync for hologram_backend::KvCacheWriteCall
+impl core::marker::Unpin for hologram_backend::KvCacheWriteCall
+impl core::marker::UnsafeUnpin for hologram_backend::KvCacheWriteCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::KvCacheWriteCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::KvCacheWriteCall
 pub struct hologram_backend::kernel_call::LayoutCall
 pub hologram_backend::kernel_call::LayoutCall::dtype: u8
 pub hologram_backend::kernel_call::LayoutCall::element_count: u64
@@ -1107,6 +1129,7 @@ pub hologram_backend::KernelCall::GroupNorm(hologram_backend::NormCall)
 pub hologram_backend::KernelCall::Im2Col(hologram_backend::Im2ColCall)
 pub hologram_backend::KernelCall::InstanceNorm(hologram_backend::NormCall)
 pub hologram_backend::KernelCall::IsNaN(hologram_backend::UnaryCall)
+pub hologram_backend::KernelCall::KvCacheWrite(hologram_backend::KvCacheWriteCall)
 pub hologram_backend::KernelCall::LayerNorm(hologram_backend::NormCall)
 pub hologram_backend::KernelCall::Less(hologram_backend::BinaryCall)
 pub hologram_backend::KernelCall::LessOrEqual(hologram_backend::BinaryCall)
@@ -1555,6 +1578,27 @@ impl core::marker::Unpin for hologram_backend::Im2ColCall
 impl core::marker::UnsafeUnpin for hologram_backend::Im2ColCall
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::Im2ColCall
 impl core::panic::unwind_safe::UnwindSafe for hologram_backend::Im2ColCall
+pub struct hologram_backend::KvCacheWriteCall
+pub hologram_backend::KvCacheWriteCall::bucket_rows: u32
+pub hologram_backend::KvCacheWriteCall::cache: hologram_backend::workspace::BufferRef
+pub hologram_backend::KvCacheWriteCall::new: hologram_backend::workspace::BufferRef
+pub hologram_backend::KvCacheWriteCall::new_rows: u32
+pub hologram_backend::KvCacheWriteCall::output: hologram_backend::workspace::BufferRef
+pub hologram_backend::KvCacheWriteCall::planes: u32
+pub hologram_backend::KvCacheWriteCall::pos: hologram_backend::workspace::BufferRef
+pub hologram_backend::KvCacheWriteCall::row_bytes: u32
+impl core::clone::Clone for hologram_backend::KvCacheWriteCall
+pub fn hologram_backend::KvCacheWriteCall::clone(&self) -> hologram_backend::KvCacheWriteCall
+impl core::fmt::Debug for hologram_backend::KvCacheWriteCall
+pub fn hologram_backend::KvCacheWriteCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_backend::KvCacheWriteCall
+impl core::marker::Freeze for hologram_backend::KvCacheWriteCall
+impl core::marker::Send for hologram_backend::KvCacheWriteCall
+impl core::marker::Sync for hologram_backend::KvCacheWriteCall
+impl core::marker::Unpin for hologram_backend::KvCacheWriteCall
+impl core::marker::UnsafeUnpin for hologram_backend::KvCacheWriteCall
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_backend::KvCacheWriteCall
+impl core::panic::unwind_safe::UnwindSafe for hologram_backend::KvCacheWriteCall
 pub struct hologram_backend::LayoutCall
 pub hologram_backend::LayoutCall::dtype: u8
 pub hologram_backend::LayoutCall::element_count: u64

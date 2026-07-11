@@ -115,6 +115,7 @@ OPS: Final[Mapping[str, OpSpec]] = {
     "gather": OpSpec("gather", 2, ("axis",), "f32-source-builder", "optional-output-shape", "Canonical Hologram tensor operation."),
     "cast": OpSpec("cast", 1, (), "f32-source-builder", "optional-output-shape", "Canonical Hologram tensor operation."),
     "dequantize": OpSpec("dequantize", 1, ("axis", "scale", "scale_bits", "quant_dtype", "zero_point"), "f32-source-builder", "optional-output-shape", "Dequantize quantized tensor values into f32."),
+    "kv_cache_write": OpSpec("kv_cache_write", 3, (), "f32-source-builder", "optional-output-shape", "Canonical Hologram tensor operation."),
 }
 
 def neg(tensor, *inputs, **attrs):
@@ -448,6 +449,10 @@ def cast(tensor, *inputs, **attrs):
 def dequantize(tensor, *inputs, **attrs):
     """Dequantize quantized tensor values into f32."""
     return tensor.op("dequantize", *inputs, **attrs)
+
+def kv_cache_write(tensor, *inputs, **attrs):
+    """Canonical Hologram tensor operation."""
+    return tensor.op("kv_cache_write", *inputs, **attrs)
 
 def op_names() -> tuple[str, ...]:
     return tuple(OPS)

@@ -169,6 +169,17 @@ op_kind_catalog! {
 
     // Quantization (spec X-5)
     Dequantize => "dequantize",
+
+    // KV-cache movement (decode)
+    /// Write the rows of a `new` operand into a fixed-bucket KV cache at a
+    /// runtime write position (ring wrap): `out[p][(pos+j) % bucket] =
+    /// new[p][j]`, all other rows unchanged. Pure data movement like
+    /// [`Gather`](Self::Gather) — the position is a runtime operand, not
+    /// fixed geometry, so it is layout-only (no arithmetic Term) and the
+    /// byte contract is the kernel's. The executor may realize it as an
+    /// in-place move on a resident cache (the old cache label is *consumed*);
+    /// the fallback is an honest copy — bit-identical either way.
+    KvCacheWrite => "kv_cache_write",
 }
 
 impl OpKind {
@@ -185,6 +196,7 @@ impl OpKind {
                 | OpKind::Im2Col
                 | OpKind::Col2Im
                 | OpKind::Gather
+                | OpKind::KvCacheWrite
         )
     }
 
@@ -286,7 +298,7 @@ impl OpKind {
 
             // Layout (no-compute) — anchor at the identity-equivalent And.
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => P::And,
-            K::Im2Col | K::Col2Im | K::Gather => P::And,
+            K::Im2Col | K::Col2Im | K::Gather | K::KvCacheWrite => P::And,
         }
     }
 
@@ -310,7 +322,7 @@ impl OpKind {
             | K::Or => 4,
 
             K::Reshape | K::Transpose | K::Concat | K::Slice | K::Pad | K::Expand => 2,
-            K::Im2Col | K::Col2Im | K::Gather => 2,
+            K::Im2Col | K::Col2Im | K::Gather | K::KvCacheWrite => 2,
 
             K::Equal
             | K::Less
@@ -478,7 +490,9 @@ impl OpKind {
             | K::Attention
             | K::Where
             // RoPE(x, cos, sin): the rotation tables are operands.
-            | K::RotaryEmbedding => 3,
+            | K::RotaryEmbedding
+            // KvCacheWrite(cache, new, pos): the write position is an operand.
+            | K::KvCacheWrite => 3,
         }
     }
 }

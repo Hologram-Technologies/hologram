@@ -4,6 +4,7 @@ pub struct hologram_exec::buffer::BufferArena
 impl hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
 pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
@@ -651,6 +652,7 @@ pub struct hologram_exec::BufferArena
 impl hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
 pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool

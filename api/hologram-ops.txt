@@ -1490,6 +1490,7 @@ pub hologram_ops::kind::OpKind::GroupNorm
 pub hologram_ops::kind::OpKind::Im2Col
 pub hologram_ops::kind::OpKind::InstanceNorm
 pub hologram_ops::kind::OpKind::IsNaN
+pub hologram_ops::kind::OpKind::KvCacheWrite
 pub hologram_ops::kind::OpKind::LayerNorm
 pub hologram_ops::kind::OpKind::Less
 pub hologram_ops::kind::OpKind::LessOrEqual
@@ -1577,6 +1578,20 @@ impl<Axis, Inputs, D, B> core::marker::Unpin for hologram_ops::layout::ConcatOp<
 impl<Axis, Inputs, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>
 impl<Axis, Inputs, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::RefUnwindSafe, Inputs: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe
 impl<Axis, Inputs, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::UnwindSafe, Inputs: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe
+pub struct hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)
+impl<Cache, New, Pos, D, B> hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds
+pub const hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::CAP: usize
+pub const hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::IRI: &'static str
+pub fn hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult
+impl<Cache, New, Pos, D, B> core::default::Default for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds
+pub fn hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::default() -> Self
+impl<Cache, New, Pos, D, B> core::marker::Freeze for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>
+impl<Cache, New, Pos, D, B> core::marker::Send for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Send, New: core::marker::Send, Pos: core::marker::Send, D: core::marker::Send, B: core::marker::Send
+impl<Cache, New, Pos, D, B> core::marker::Sync for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Sync, New: core::marker::Sync, Pos: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync
+impl<Cache, New, Pos, D, B> core::marker::Unpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Unpin, New: core::marker::Unpin, Pos: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin
+impl<Cache, New, Pos, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>
+impl<Cache, New, Pos, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::RefUnwindSafe, New: core::panic::unwind_safe::RefUnwindSafe, Pos: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe
+impl<Cache, New, Pos, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::UnwindSafe, New: core::panic::unwind_safe::UnwindSafe, Pos: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe
 pub struct hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)
 impl<Sin, Sout, D, B> hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds
 pub const hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>::CAP: usize
@@ -2159,6 +2174,7 @@ pub hologram_ops::OpKind::GroupNorm
 pub hologram_ops::OpKind::Im2Col
 pub hologram_ops::OpKind::InstanceNorm
 pub hologram_ops::OpKind::IsNaN
+pub hologram_ops::OpKind::KvCacheWrite
 pub hologram_ops::OpKind::LayerNorm
 pub hologram_ops::OpKind::Less
 pub hologram_ops::OpKind::LessOrEqual

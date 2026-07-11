@@ -112,6 +112,7 @@ export const OPS = {
   gather: { name: "gather", arity: 2, attrs: ["axis"] as const, dtypePolicy: "f32-source-builder", shapePolicy: "optional-output-shape", doc: "Canonical Hologram tensor operation." },
   cast: { name: "cast", arity: 1, attrs: [] as const, dtypePolicy: "f32-source-builder", shapePolicy: "optional-output-shape", doc: "Canonical Hologram tensor operation." },
   dequantize: { name: "dequantize", arity: 1, attrs: ["axis", "scale", "scale_bits", "quant_dtype", "zero_point"] as const, dtypePolicy: "f32-source-builder", shapePolicy: "optional-output-shape", doc: "Dequantize quantized tensor values into f32." },
+  kv_cache_write: { name: "kv_cache_write", arity: 3, attrs: [] as const, dtypePolicy: "f32-source-builder", shapePolicy: "optional-output-shape", doc: "Canonical Hologram tensor operation." },
 } as const;
 
 export type OpName = keyof typeof OPS;
@@ -205,6 +206,7 @@ export interface GeneratedTensorMethods<TTensor, TInput, TAttrs extends OpAttrs 
   gather(input0: TInput, attrs?: TAttrs & OpOptionsFor<"gather">): TTensor;
   cast(attrs?: TAttrs & OpOptionsFor<"cast">): TTensor;
   dequantize(attrs?: TAttrs & OpOptionsFor<"dequantize">): TTensor;
+  kv_cache_write(input0: TInput, input1: TInput, attrs?: TAttrs & OpOptionsFor<"kv_cache_write">): TTensor;
 }
 
 export interface LowLevelGraphBuilder {

@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, CastCall, Conv2dCall,
     DecodeAttentionCall, DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall,
-    Im2ColCall, KernelCall, LayoutCall, LrnCall, MatMulActivationCall, MatMulAddActivationCall,
-    MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall,
-    SoftmaxCall, TransposeCall, UnaryCall, WhereCall, MAX_RANK,
+    Im2ColCall, KernelCall, KvCacheWriteCall, LayoutCall, LrnCall, MatMulActivationCall,
+    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
+    ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall, MAX_RANK,
 };
 
 /// Cursor over a section payload.
@@ -149,6 +149,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         68 => K::GlobalAvgPool(read_pool(cur)?),
         69 => K::Attention(read_attn(cur)?),
         119 => K::DecodeAttention(read_decattn(cur)?),
+        120 => K::KvCacheWrite(read_kvwr(cur)?),
         70 => K::FusedSwiGlu(read_matmul(cur)?),
         71 => K::Pad(read_layout(cur)?),
         72 => K::Expand(read_expand(cur)?),
@@ -554,6 +555,18 @@ fn read_decattn(c: &mut Cursor<'_>) -> Result<DecodeAttentionCall, ArchiveError>
         head_dim: c.u32()?,
         scale_bits: c.u32()?,
         dtype: c.u8()?,
+    })
+}
+fn read_kvwr(c: &mut Cursor<'_>) -> Result<KvCacheWriteCall, ArchiveError> {
+    Ok(KvCacheWriteCall {
+        cache: c.buf()?,
+        new: c.buf()?,
+        pos: c.buf()?,
+        output: c.buf()?,
+        planes: c.u32()?,
+        bucket_rows: c.u32()?,
+        new_rows: c.u32()?,
+        row_bytes: c.u32()?,
     })
 }
 fn read_where(c: &mut Cursor<'_>) -> Result<WhereCall, ArchiveError> {

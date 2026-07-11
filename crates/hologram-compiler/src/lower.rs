@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DecodeAttentionCall,
-    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, LayoutCall, LrnCall,
-    MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall,
-    WhereCall,
+    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, KvCacheWriteCall,
+    LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
+    TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -64,6 +64,16 @@ pub struct ShapeArgs {
     // Gemm scalars (`Y = α·A·B + β·C`); `f32::to_bits`.
     pub alpha_bits: u32,
     pub beta_bits: u32,
+
+    // KvCacheWrite: fixed-bucket KV-cache row write at a runtime position.
+    /// Independent planes (batch · kv_heads).
+    pub kv_planes: u32,
+    /// Cache rows per plane (the bucket).
+    pub kv_bucket_rows: u32,
+    /// Appended rows per plane.
+    pub kv_new_rows: u32,
+    /// Bytes per row (`head_dim · size_of(dtype)`).
+    pub kv_row_bytes: u32,
 }
 
 impl ShapeArgs {
@@ -292,6 +302,57 @@ impl ShapeArgs {
                         .min(u32::MAX as u64) as u32;
                 }
             }
+        }
+
+        // KvCacheWrite(cache, new, pos): cache and new are rank-4
+        // [b, kv_heads, rows, d] planes over the same (b, kv_heads, d) and
+        // dtype; pos is a 4-byte runtime write position. The geometry is
+        // fully determined by the operand shapes — mismatches are refused
+        // here (refuse-not-fabricate), not silently zeroed.
+        if matches!(node.op, hologram_graph::GraphOp::Op(OpKind::KvCacheWrite)) {
+            let cache = in0
+                .as_ref()
+                .filter(|c| c.rank == 4)
+                .ok_or(CompileError::GraphValidation(
+                "kv_cache_write: cache operand must be rank-4 [batch, kv_heads, bucket, head_dim]",
+            ))?;
+            let newt = in1
+                .as_ref()
+                .filter(|c| c.rank == 4)
+                .ok_or(CompileError::GraphValidation(
+                "kv_cache_write: new operand must be rank-4 [batch, kv_heads, new_rows, head_dim]",
+            ))?;
+            let d = |sd: &hologram_graph::ShapeDescriptor, i: usize| sd.dim(i).unwrap_or(0);
+            if d(cache, 0) != d(newt, 0) || d(cache, 1) != d(newt, 1) || d(cache, 3) != d(newt, 3) {
+                return Err(CompileError::GraphValidation(
+                    "kv_cache_write: cache and new must agree on (batch, kv_heads, head_dim)",
+                ));
+            }
+            if d(newt, 2) > d(cache, 2) || d(cache, 2) == 0 {
+                return Err(CompileError::GraphValidation(
+                    "kv_cache_write: new_rows must be 1..=bucket_rows (bucket_rows >= 1)",
+                ));
+            }
+            let out_sh = out.as_ref().ok_or(CompileError::GraphValidation(
+                "kv_cache_write: output shape must be declared",
+            ))?;
+            if out_sh.rank != 4 || (0..4).any(|i| d(out_sh, i) != d(cache, i)) {
+                return Err(CompileError::GraphValidation(
+                    "kv_cache_write: output shape must equal the cache shape",
+                ));
+            }
+            let clamp = |v: u64| v.min(u32::MAX as u64) as u32;
+            a.kv_planes = clamp(d(cache, 0).saturating_mul(d(cache, 1)));
+            a.kv_bucket_rows = clamp(d(cache, 2));
+            a.kv_new_rows = clamp(d(newt, 2));
+            let row_bytes = node
+                .output_dtype
+                .storage_bytes_u64(d(cache, 3))
+                .filter(|&b| b > 0)
+                .ok_or(CompileError::GraphValidation(
+                    "kv_cache_write: head_dim rows must be a whole number of bytes (no sub-byte dtypes)",
+                ))?;
+            a.kv_row_bytes = clamp(row_bytes);
         }
 
         // Gemm scalars `Y = α·A·B + β·C` — from GemmAttrs (default α=β=1, the
@@ -679,6 +740,16 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
         K::AvgPool2d => KernelCall::AvgPool2d(pool_call),
         K::GlobalAvgPool => KernelCall::GlobalAvgPool(pool_call),
 
+        K::KvCacheWrite => KernelCall::KvCacheWrite(KvCacheWriteCall {
+            cache: inp0(),
+            new: inp1(),
+            pos: inpn(2),
+            output: node.output,
+            planes: s.kv_planes,
+            bucket_rows: s.kv_bucket_rows,
+            new_rows: s.kv_new_rows,
+            row_bytes: s.kv_row_bytes,
+        }),
         K::Attention if node.inputs.len() >= 6 => {
             // Decode form: q, k_past, v_past, k_new, v_new, mask. Visibility
             // lives in the additive mask operand; a `causal` attr on this form

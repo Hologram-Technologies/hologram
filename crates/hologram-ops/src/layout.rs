@@ -56,3 +56,4 @@ declare_layout!(ReshapeOp, "reshape", [Sin, Sout]);
 declare_layout!(TransposeOp, "transpose", [S, Perm]);
 declare_layout!(ConcatOp, "concat", [Axis, Inputs]);
 declare_layout!(SliceOp, "slice", [Sin, Starts, Ends]);
+declare_layout!(KvCacheWriteOp, "kv_cache_write", [Cache, New, Pos]);

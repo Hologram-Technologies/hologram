@@ -496,6 +496,36 @@ fn gather_round_trip() {
 }
 
 #[test]
+fn kv_cache_write_round_trip() {
+    use hologram_backend::KvCacheWriteCall;
+    let calls = vec![KernelCall::KvCacheWrite(KvCacheWriteCall {
+        cache: ref_buf(0),
+        new: ref_buf(1),
+        pos: ref_buf(2),
+        output: ref_buf(3),
+        planes: 2,
+        bucket_rows: 32768,
+        new_rows: 1,
+        row_bytes: 512,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::KvCacheWrite(d) => {
+            assert_eq!(d.cache.slot, 0);
+            assert_eq!(d.new.slot, 1);
+            assert_eq!(d.pos.slot, 2);
+            assert_eq!(d.output.slot, 3);
+            assert_eq!(d.planes, 2);
+            assert_eq!(d.bucket_rows, 32768);
+            assert_eq!(d.new_rows, 1);
+            assert_eq!(d.row_bytes, 512);
+        }
+        _ => panic!("not kv_cache_write"),
+    }
+}
+
+#[test]
 fn cast_round_trip() {
     use hologram_backend::CastCall;
     let calls = vec![KernelCall::Cast(CastCall {
