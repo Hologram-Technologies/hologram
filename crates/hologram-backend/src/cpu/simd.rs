@@ -5535,7 +5535,10 @@ pub fn matmul_i8_pc_omajor(
                 {
                     use crate::cpu::parallel::{self, SendConst, SendMut};
                     let w = parallel::pool().width();
-                    if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                    // Work-based gate: prefill work scales with `m`, so the
+                    // admission test must too (a byte-keyed gate leaves a
+                    // 128-row batch over a small weight serial).
+                    if w > 1 && (m as u64) * (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
                         let tiles = parallel::output_tiles(1, n, w, 4);
                         if tiles.len() > 1 {
                             let (qp, ap, bp, sp, op) = (
@@ -6256,6 +6259,46 @@ pub fn matmul_i4_pc_omajor(
                         k,
                     );
                 }
+                // Native multi-core: disjoint column tiles across the pool,
+                // each task running all `m` rows against its tile via the same
+                // tile-rows body the serial path uses (bit-identical: every
+                // output cell is one whole dot by one task). Work-based gate.
+                #[cfg(all(feature = "parallel", target_arch = "x86_64"))]
+                {
+                    use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let w = parallel::pool().width();
+                    if w > 1 && (m as u64) * (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                        let tiles = parallel::output_tiles(1, n, w, 4);
+                        if tiles.len() > 1 {
+                            let (qp, dp, ap, bp, sp, op) = (
+                                SendConst(q.as_ptr()),
+                                SendConst(de_all.as_ptr()),
+                                SendConst(sa.as_ptr()),
+                                SendConst(bq.as_ptr()),
+                                SendConst(scales.as_ptr()),
+                                SendMut(out.as_mut_ptr()),
+                            );
+                            let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                                .into_iter()
+                                .map(|(_, _, c0, cols)| {
+                                    Box::new(move || {
+                                        let (qp, dp, ap, bp, sp, op) = (qp, dp, ap, bp, sp, op);
+                                        // SAFETY: disjoint output columns.
+                                        unsafe {
+                                            gemv_i4_omajor_tile_rows(
+                                                qp.0, dp.0, ds, ap.0, bp.0, sp.0, op.0, m, k, n,
+                                                c0, cols,
+                                            );
+                                        }
+                                    })
+                                        as Box<dyn FnOnce() + Send>
+                                })
+                                .collect();
+                            parallel::pool().run(tasks);
+                            return;
+                        }
+                    }
+                }
                 // wasm multi-core: fork-join the batched GEMM by output
                 // column; each participant runs all `m` rows against its packed
                 // weight tile (read once), the de-interleaved rows `ds`-strided.
@@ -6308,22 +6351,72 @@ pub fn matmul_i4_pc_omajor(
                 all(target_arch = "wasm32", target_feature = "simd128"),
                 target_arch = "x86_64"
             )))]
-            // SAFETY: disjoint output columns; this build's inner ignores `de`.
-            unsafe {
-                gemv_i4_omajor_tile_rows(
-                    q.as_ptr(),
-                    core::ptr::null(),
-                    0,
-                    sa.as_ptr(),
-                    bq.as_ptr(),
-                    scales.as_ptr(),
-                    out.as_mut_ptr(),
-                    m,
-                    k,
-                    n,
-                    0,
-                    n,
-                );
+            {
+                // Native multi-core (aarch64: the NEON inner shuffles nibbles
+                // in-register and ignores `de`): disjoint column tiles, all `m`
+                // rows per task. Work-based gate.
+                #[cfg(all(feature = "parallel", target_arch = "aarch64"))]
+                {
+                    use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let w = parallel::pool().width();
+                    if w > 1 && (m as u64) * (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                        let tiles = parallel::output_tiles(1, n, w, 4);
+                        if tiles.len() > 1 {
+                            let (qp, ap, bp, sp, op) = (
+                                SendConst(q.as_ptr()),
+                                SendConst(sa.as_ptr()),
+                                SendConst(bq.as_ptr()),
+                                SendConst(scales.as_ptr()),
+                                SendMut(out.as_mut_ptr()),
+                            );
+                            let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                                .into_iter()
+                                .map(|(_, _, c0, cols)| {
+                                    Box::new(move || {
+                                        let (qp, ap, bp, sp, op) = (qp, ap, bp, sp, op);
+                                        // SAFETY: disjoint output columns.
+                                        unsafe {
+                                            gemv_i4_omajor_tile_rows(
+                                                qp.0,
+                                                core::ptr::null(),
+                                                0,
+                                                ap.0,
+                                                bp.0,
+                                                sp.0,
+                                                op.0,
+                                                m,
+                                                k,
+                                                n,
+                                                c0,
+                                                cols,
+                                            );
+                                        }
+                                    })
+                                        as Box<dyn FnOnce() + Send>
+                                })
+                                .collect();
+                            parallel::pool().run(tasks);
+                            return;
+                        }
+                    }
+                }
+                // SAFETY: disjoint output columns; this build's inner ignores `de`.
+                unsafe {
+                    gemv_i4_omajor_tile_rows(
+                        q.as_ptr(),
+                        core::ptr::null(),
+                        0,
+                        sa.as_ptr(),
+                        bq.as_ptr(),
+                        scales.as_ptr(),
+                        out.as_mut_ptr(),
+                        m,
+                        k,
+                        n,
+                        0,
+                        n,
+                    );
+                }
             }
         });
     })
@@ -6904,6 +6997,48 @@ pub fn matmul_e8cb_omajor(
                         out[i * n..i * n + n].fill(0.0);
                     }
                 }
+                // Native multi-core: disjoint column tiles across the pool,
+                // each task running all `m` rows against its tile (the 2 KB
+                // i16 codebook is shared read-only). Work-based gate.
+                #[cfg(all(
+                    feature = "parallel",
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                ))]
+                {
+                    use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let w = parallel::pool().width();
+                    if w > 1 && (m as u64) * (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
+                        let tiles = parallel::output_tiles(1, n, w, 8);
+                        if tiles.len() > 1 {
+                            let (qp, cbp, ap, bp, sp, op) = (
+                                SendConst(q.as_ptr()),
+                                SendConst(cb16.as_ptr()),
+                                SendConst(sa.as_ptr()),
+                                SendConst(bq.as_ptr()),
+                                SendConst(scales.as_ptr()),
+                                SendMut(out.as_mut_ptr()),
+                            );
+                            let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                                .into_iter()
+                                .map(|(_, _, c0, cols)| {
+                                    Box::new(move || {
+                                        let (qp, cbp, ap, bp, sp, op) = (qp, cbp, ap, bp, sp, op);
+                                        // SAFETY: disjoint output columns.
+                                        unsafe {
+                                            gemv_e8cb_omajor_tile_rows(
+                                                qp.0, cbp.0, ap.0, bp.0, sp.0, op.0, m, k, n, c0,
+                                                cols,
+                                            );
+                                        }
+                                    })
+                                        as Box<dyn FnOnce() + Send>
+                                })
+                                .collect();
+                            parallel::pool().run(tasks);
+                            return;
+                        }
+                    }
+                }
                 // wasm multi-core: fork-join the batched GEMM across the
                 // embedder pool by output column, every participant running all
                 // `m` rows against its tile (weight read once per participant).
@@ -7045,6 +7180,104 @@ mod tests {
         }
     }
 
+    /// The batched (`m > 1`) integer GEMMs against the **exact integer oracle**,
+    /// at a shape large enough to cross every parallel admission gate
+    /// (`m·k·n = 2 MMAC ≥ GEMV_PAR_THRESHOLD` and the wasm pool floor).
+    ///
+    /// Under `--features parallel` this pins the **native column-tile
+    /// partition** for all three tiers — the pooled path must reproduce the
+    /// oracle bit for bit, exactly as serial does, because every output cell is
+    /// one whole exact-i32 dot by one task. Without the feature it pins the
+    /// serial tile path at the same shape. Either way the assertion is
+    /// identical: the partition must be invisible.
+    #[test]
+    fn batched_gemm_all_tiers_match_the_exact_oracle_at_parallel_scale() {
+        let (m, k, n) = (16usize, 512usize, 256usize);
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| {
+                let (r, c) = (i / k, i % k);
+                if r == 3 {
+                    0.0 // an all-zero row crosses the prezero/skip contract
+                } else {
+                    (((r * 13 + c) % 31) as f32 - 15.0) * 0.041
+                }
+            })
+            .collect();
+        let scales: Vec<f32> = (0..n).map(|j| 0.004 + (j as f32) * 1e-6).collect();
+
+        // Per-row quantization, exactly as the kernels do it.
+        let mut q = vec![0i32; m * k];
+        let mut sa = vec![0f32; m];
+        for r in 0..m {
+            let row = &a[r * k..(r + 1) * k];
+            let amax = row.iter().fold(0f32, |mx, v| mx.max(v.abs()));
+            if amax == 0.0 {
+                continue;
+            }
+            let inv = 127.0 / amax;
+            for c in 0..k {
+                let t = row[c] * inv;
+                let v = if t >= 0.0 { t + 0.5 } else { t - 0.5 } as i32;
+                q[r * k + c] = v.clamp(-127, 127);
+            }
+            sa[r] = amax / 127.0;
+        }
+        let oracle = |w: &dyn Fn(usize, usize) -> i8| -> Vec<f32> {
+            let mut out = vec![0f32; m * n];
+            for r in 0..m {
+                if sa[r] == 0.0 {
+                    continue;
+                }
+                for j in 0..n {
+                    let acc: i32 = (0..k).map(|c| q[r * k + c] * w(c, j) as i32).sum();
+                    out[r * n + j] = (acc as f32) * (sa[r] * scales[j]);
+                }
+            }
+            out
+        };
+
+        // i8: identity codec.
+        let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 253) - 126) as i8).collect();
+        let mut got = vec![0f32; m * n];
+        matmul_i8_pc_omajor(&a, &bq, &scales, &mut got, m, k, n);
+        let want = oracle(&|c, j| bq[j * k + c]);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "i8 cell {i}: {g} vs {w}");
+        }
+
+        // packed i4: nibble -> 16-entry grid.
+        let bq4: Vec<u8> = (0..k * n / 2).map(|i| (i % 247) as u8).collect();
+        let mut got4 = vec![0f32; m * n];
+        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut got4, m, k, n);
+        let i4_at = |c: usize, j: usize| -> i8 {
+            let byte = bq4[j * (k / 2) + (c >> 1)];
+            let nib = if c & 1 == 0 { byte & 0x0F } else { byte >> 4 };
+            I4_VALUES[nib as usize]
+        };
+        let want4 = oracle(&i4_at);
+        for (i, (g, w)) in got4.iter().zip(&want4).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "i4 cell {i}: {g} vs {w}");
+        }
+
+        // E8CB: index -> 8-wide codebook block.
+        let cb: Vec<i8> = (0..256 * 8)
+            .map(|i| ((i * 37 + 11) % 255 - 127) as i8)
+            .collect();
+        let bqe: Vec<u8> = (0..n * (k / 8))
+            .map(|i| ((i * 17 + 3) % 256) as u8)
+            .collect();
+        let mut gote = vec![0f32; m * n];
+        matmul_e8cb_omajor(&a, &bqe, &cb, &scales, &mut gote, m, k, n);
+        let e8_at = |c: usize, j: usize| -> i8 {
+            let idx = bqe[j * (k / 8) + (c >> 3)] as usize;
+            cb[idx * 8 + (c & 7)]
+        };
+        let wante = oracle(&e8_at);
+        for (i, (g, w)) in gote.iter().zip(&wante).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "e8cb cell {i}: {g} vs {w}");
+        }
+    }
+
     /// Multi-threaded fork-join vs serial, bit for bit, at **every `m`** — run
     /// on `wasm32-wasip1-threads` under wasmtime (`-S threads`), where std
     /// threads drive the exact atomics job queue the browser's web workers
@@ -7140,6 +7373,83 @@ mod tests {
                         "{label} m={m} cell {j}: pooled {p} vs serial {sv}"
                     );
                 }
+            }
+        }
+
+        // Degenerate width: n = 3 is below the pool's per-participant width
+        // floor, so admission DECLINES and the call runs serial — narrow jobs
+        // must not be sliced into sub-SIMD-width column tails (measured as a
+        // pool *loss*). The result must still equal the exact oracle. (The
+        // executor's empty-range guard stays as defence in depth, but the
+        // width gate makes empty ranges unreachable through admission.)
+        {
+            let (m, k, n) = (2usize, 65536usize, 3usize); // m·k·n ≥ the work floor
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| (((i * 7) % 23) as f32 - 11.0) * 0.013)
+                .collect();
+            let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 251) - 125) as i8).collect();
+            let sc: Vec<f32> = (0..n).map(|j| 0.02 + j as f32 * 0.001).collect();
+            // Serial ground truth = the exact oracle (bit-exact by construction),
+            // since the pool is already registered and cannot be bypassed.
+            let mut want = vec![0f32; m * n];
+            for r in 0..m {
+                let row = &a[r * k..(r + 1) * k];
+                let amax = row.iter().fold(0f32, |mx, v| mx.max(v.abs()));
+                let inv = 127.0 / amax;
+                let q: Vec<i32> = row
+                    .iter()
+                    .map(|&v| {
+                        let t = v * inv;
+                        let x = if t >= 0.0 { t + 0.5 } else { t - 0.5 } as i32;
+                        x.clamp(-127, 127)
+                    })
+                    .collect();
+                let sa = amax / 127.0;
+                for j in 0..n {
+                    let acc: i32 = (0..k).map(|c| q[c] * bq[j * k + c] as i32).sum();
+                    want[r * n + j] = (acc as f32) * (sa * sc[j]);
+                }
+            }
+            let mut got = vec![f32::NAN; m * n];
+            matmul_i8_pc_omajor(&a, &bq, &sc, &mut got, m, k, n);
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "narrow-n cell {i}: {g} vs {w}");
+            }
+        }
+
+        // Ragged admitted width: n = 33 across 4 participants (9/8/8/8 columns)
+        // crosses both the work and width floors; pooled must equal the oracle
+        // bit for bit through the uneven split.
+        {
+            let (m, k, n) = (4usize, 8192usize, 33usize);
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| (((i * 11) % 29) as f32 - 14.0) * 0.021)
+                .collect();
+            let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 249) - 124) as i8).collect();
+            let sc: Vec<f32> = (0..n).map(|j| 0.015 + j as f32 * 0.0008).collect();
+            let mut want = vec![0f32; m * n];
+            for r in 0..m {
+                let row = &a[r * k..(r + 1) * k];
+                let amax = row.iter().fold(0f32, |mx, v| mx.max(v.abs()));
+                let inv = 127.0 / amax;
+                let q: Vec<i32> = row
+                    .iter()
+                    .map(|&v| {
+                        let t = v * inv;
+                        let x = if t >= 0.0 { t + 0.5 } else { t - 0.5 } as i32;
+                        x.clamp(-127, 127)
+                    })
+                    .collect();
+                let sa = amax / 127.0;
+                for j in 0..n {
+                    let acc: i32 = (0..k).map(|c| q[c] * bq[j * k + c] as i32).sum();
+                    want[r * n + j] = (acc as f32) * (sa * sc[j]);
+                }
+            }
+            let mut got = vec![f32::NAN; m * n];
+            matmul_i8_pc_omajor(&a, &bq, &sc, &mut got, m, k, n);
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "ragged-n cell {i}: {g} vs {w}");
             }
         }
 

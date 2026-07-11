@@ -116,6 +116,42 @@ Near-linear on 4 participants; pooled prefill sustains ~73–80 GMAC/s where
 serial sat at ~19–20. Reproduce with `wasm_threads_timing` (wasmtime,
 `-W threads=y -S threads=y`).
 
+### Pool admission: work admits, width declines (captured at v0.8.2)
+
+Adversarial pass over the pooled GEMM found the admission gate wrong twice, in
+opposite directions — both measured, both fixed, both pinned by
+`pool_floor_probe` (wasmtime, 3 workers + main):
+
+- **Byte-keyed floor, blind to the batch.** `k·n < 256 KiB` declined a 112 KiB
+  per-head projection at `m = 128` — 14.7 MMAC of parallel work ran serial.
+  Work-based admission (`m·k·n`) recovers it; at `m = 1` the two gates are the
+  same number, so decode admission is unchanged:
+
+  | shape | serial | pooled (work-based floor) |
+  |---|--:|--:|
+  | `128×896×128` (112 KiB) | 878 µs | 514 µs |
+  | `128×256×896` (224 KiB) | 2.01 ms | 462–615 µs |
+  | `64×896×256` (224 KiB) | 844 µs | 260–264 µs |
+
+- **Work-only floor, blind to width.** At `n = 8`, 4 participants get 2 columns
+  each — every row runs the SIMD column tail, and pooling *lost* (473 µs vs
+  342 µs serial). Admission now also requires `n ≥ 8 × participants`; the shape
+  runs serial again. The bitwise witness covers both edges: `n = 3` (declined,
+  equals the exact oracle) and a ragged admitted `n = 33` (9/8/8/8 columns,
+  bit-identical through the uneven split).
+
+- **The publisher's serial share is measured, not guessed.** Quantizing
+  `m = 128` rows plus dispatch is ~342 µs against a 21.7 ms pooled full-width
+  call — ~1.6%. Parallelising the publisher would buy ≤ ~1.2% (Amdahl) and is
+  deliberately not done.
+
+The native `parallel` gates use the same work-based admission
+(`m·k·n ≥ GEMV_PAR_THRESHOLD`), and the native column-tile prefill now covers
+**all three tiers** (i8 / packed-i4 / E8CB) on x86-64 and aarch64 — previously
+i8 only. Pinned bit-exact against the integer oracle at parallel scale by
+`batched_gemm_all_tiers_match_the_exact_oracle_at_parallel_scale`, which runs
+with and without the feature.
+
 ### Roofline verdicts: the kernels have no headroom left (captured at v0.8.2)
 
 "Faster than yesterday" cannot answer *are we done*. `cargo run --release
