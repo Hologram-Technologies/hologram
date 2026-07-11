@@ -5019,16 +5019,26 @@ unsafe fn gemv_i8_omajor_wasm_relaxed(
     }
 }
 
-/// Pool executor: one participant's contiguous output-row range of the
-/// omajor W8A8 GEMV, running the identical single-threaded inner this build
-/// dispatches — so a partitioned run is bit-identical to the serial run
-/// (every output row is computed whole, by one participant, in the same
-/// reduction order).
+/// Pool executor: one participant's contiguous **output-column** range of the
+/// omajor W8A8 job, for **all `m` rows** — the decode GEMV (`m == 1`) and the
+/// prefill / batched-verify GEMM (`m > 1`) through one partition.
+///
+/// Each participant reads its weight-column tile ONCE and runs every row
+/// against it (rows inner, column blocks outer — the same order as the serial
+/// batched kernel). Doing prefill as `m` separate pooled single-row jobs would
+/// reload the whole weight `m` times and lose to serial batched; partitioning
+/// the *batched* kernel is what wins.
+///
+/// Bit-identity is structural: every output cell is one whole dot, computed by
+/// exactly one participant, running the identical single-threaded inner over
+/// the same `k`-vector — the accumulation is an exact i32 sum, so no partition,
+/// row order, or completion order can move a bit.
 ///
 /// # Safety
-/// Called only from `wasm_pool` fork-join: `args` point into buffers the
-/// publisher keeps alive until every participant is done, and participant
-/// ranges are disjoint.
+/// Called only from `wasm_pool` fork-join: the job's buffers stay alive until
+/// every participant is done (`q`/aux `m·k`, `sa` `m`, `out` `m·n`), and
+/// participant column ranges are disjoint. Rows with `sa[i] == 0` were
+/// pre-zeroed by the publisher and are skipped.
 #[cfg(all(
     target_arch = "wasm32",
     feature = "wasm-threads",
@@ -5040,40 +5050,44 @@ pub(crate) unsafe fn pool_exec_gemv(
     parts: usize,
 ) {
     use crate::cpu::wasm_pool::GemvOperands;
-    let (k, n) = (job.k, job.n);
+    let (k, n, m) = (job.k, job.n, job.m);
     let start = part * n / parts;
     let end = (part + 1) * n / parts;
     if start >= end {
         return;
     }
-    let rows = end - start;
-    let scales = job.scales.add(start);
-    let out = job.out.add(start);
+    let cols = end - start;
     match job.operands {
-        // Packed i4: k/2 bytes per output row.
+        // Packed i4: k/2 bytes per output column.
         GemvOperands::I4 { bq, de } => {
-            let bq_part = bq.add(start * (k / 2));
-            #[cfg(not(target_feature = "relaxed-simd"))]
-            gemv_i4_omajor_wasm(job.q, de, bq_part, scales, out, k, rows, job.scale_a);
-            #[cfg(target_feature = "relaxed-simd")]
-            gemv_i4_omajor_wasm_relaxed(job.q, de, bq_part, scales, out, k, rows, job.scale_a);
+            gemv_i4_omajor_tile_rows(
+                job.q,
+                de,
+                i4_de_stride(k),
+                job.sa,
+                bq,
+                job.scales,
+                job.out,
+                m,
+                k,
+                n,
+                start,
+                cols,
+            );
         }
-        // E8 codebook: k/8 index bytes per output row. One exact-i32 inner on
-        // both SIMD tiers (`i32x4_dot_i16x8`).
+        // E8 codebook: k/8 index bytes per output column; the pre-widened i16
+        // codebook is shared by every participant (read-only, L1-resident).
         GemvOperands::E8cb { bq, codebook } => {
-            let bq_part = bq.add(start * (k / 8));
-            gemv_e8cb_omajor_wasm(job.q, bq_part, codebook, scales, out, k, rows, job.scale_a);
+            gemv_e8cb_omajor_tile_rows(
+                job.q, codebook, job.sa, bq, job.scales, job.out, m, k, n, start, cols,
+            );
         }
-        // int8: k bytes per output row.
+        // int8: k bytes per output column. `qp`/`qn` are the relaxed-SIMD
+        // splits (m·k, row-strided); null on baseline builds.
         GemvOperands::I8 { bq, qp, qn } => {
-            let bq_part = bq.add(start * k);
-            #[cfg(not(target_feature = "relaxed-simd"))]
-            {
-                let _ = (qp, qn); // the plain SIMD128 inner reads `q` directly
-                gemv_i8_omajor_wasm(job.q, bq_part, scales, out, k, rows, job.scale_a);
-            }
-            #[cfg(target_feature = "relaxed-simd")]
-            gemv_i8_omajor_wasm_relaxed(job.q, qp, qn, bq_part, scales, out, k, rows, job.scale_a);
+            gemv_i8_omajor_tile_rows(
+                job.q, qp, qn, job.sa, bq, job.scales, job.out, m, k, n, start, cols,
+            );
         }
     }
 }
@@ -5221,10 +5235,17 @@ unsafe fn gemv_i8_omajor_tile_rows(
             if scale_a == 0.0 {
                 continue; // the row was zero-filled up front
             }
+            // Offsetting a null pointer is UB even unread; the aux splits are
+            // null on builds whose inner ignores them.
+            let (qp_i, qn_i) = if qp_all.is_null() {
+                (qp_all, qn_all)
+            } else {
+                (qp_all.add(i * k), qn_all.add(i * k))
+            };
             gemv_i8_omajor_serial(
                 q_all.add(i * k),
-                qp_all.add(i * k),
-                qn_all.add(i * k),
+                qp_i,
+                qn_i,
                 bq.add(col * k),
                 scales.add(col),
                 out.add(i * n + col),
@@ -5344,7 +5365,8 @@ pub fn matmul_i8_pc_omajor(
                         out: orow.as_mut_ptr(),
                         k,
                         n,
-                        scale_a,
+                        m: 1,
+                        sa: &scale_a,
                         operands: crate::cpu::wasm_pool::GemvOperands::I8 {
                             bq: bq.as_ptr(),
                             qp: core::ptr::null(),
@@ -5376,7 +5398,8 @@ pub fn matmul_i8_pc_omajor(
                             out: orow.as_mut_ptr(),
                             k,
                             n,
-                            scale_a,
+                            m: 1,
+                            sa: &scale_a,
                             operands: crate::cpu::wasm_pool::GemvOperands::I8 {
                                 bq: bq.as_ptr(),
                                 qp: qp.as_ptr(),
@@ -5451,22 +5474,45 @@ pub fn matmul_i8_pc_omajor(
                     qp.resize(m * k, 0);
                     qn.resize(m * k, 0);
                     split_q7(q, qp, qn);
-                    // SAFETY: sizes checked; single participant.
-                    unsafe {
-                        gemv_i8_omajor_tile_rows(
-                            q.as_ptr(),
-                            qp.as_ptr(),
-                            qn.as_ptr(),
-                            sa.as_ptr(),
-                            bq.as_ptr(),
-                            scales.as_ptr(),
-                            out.as_mut_ptr(),
-                            m,
+                    // wasm multi-core: fork-join the batched GEMM by output
+                    // column; each participant runs all `m` rows against its
+                    // weight tile (read once), the relaxed splits row-strided.
+                    #[cfg(feature = "wasm-threads")]
+                    let pooled =
+                        crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                            q: q.as_ptr(),
+                            scales: scales.as_ptr(),
+                            out: out.as_mut_ptr(),
                             k,
                             n,
-                            0,
-                            n,
-                        );
+                            m,
+                            sa: sa.as_ptr(),
+                            operands: crate::cpu::wasm_pool::GemvOperands::I8 {
+                                bq: bq.as_ptr(),
+                                qp: qp.as_ptr(),
+                                qn: qn.as_ptr(),
+                            },
+                        });
+                    #[cfg(not(feature = "wasm-threads"))]
+                    let pooled = false;
+                    if !pooled {
+                        // SAFETY: sizes checked; single participant.
+                        unsafe {
+                            gemv_i8_omajor_tile_rows(
+                                q.as_ptr(),
+                                qp.as_ptr(),
+                                qn.as_ptr(),
+                                sa.as_ptr(),
+                                bq.as_ptr(),
+                                scales.as_ptr(),
+                                out.as_mut_ptr(),
+                                m,
+                                k,
+                                n,
+                                0,
+                                n,
+                            );
+                        }
                     }
                 });
             }
@@ -5528,6 +5574,34 @@ pub fn matmul_i8_pc_omajor(
                             parallel::pool().run(tasks);
                             return;
                         }
+                    }
+                }
+                // wasm multi-core: fork-join the batched GEMM by output
+                // column; each participant runs all `m` rows against its
+                // weight tile (read once). Falls through to the serial batched
+                // kernel when no workers are registered or the job is below the
+                // pool's latency floor.
+                #[cfg(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                ))]
+                {
+                    if crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                        q: q.as_ptr(),
+                        scales: scales.as_ptr(),
+                        out: out.as_mut_ptr(),
+                        k,
+                        n,
+                        m,
+                        sa: sa.as_ptr(),
+                        operands: crate::cpu::wasm_pool::GemvOperands::I8 {
+                            bq: bq.as_ptr(),
+                            qp: core::ptr::null(),
+                            qn: core::ptr::null(),
+                        },
+                    }) {
+                        return;
                     }
                 }
                 // SAFETY: sizes checked above; single participant.
@@ -5858,7 +5932,7 @@ unsafe fn gemv_i4_omajor_wasm_relaxed(
     }
 }
 
-/// Column-blocked `m > 1` driver for the packed-i4 GEMV: a block's packed weight
+/// One column tile of the packed-i4 `m > 1` path: a block's packed weight
 /// slab is read once and reused by every row, instead of the whole `[n, k/2]`
 /// weight being re-streamed per row.
 ///
@@ -5871,7 +5945,7 @@ unsafe fn gemv_i4_omajor_wasm_relaxed(
 /// this build's inner ignores it); `sa` addresses `m` f32; rows with
 /// `sa[i] == 0` are pre-zeroed by the caller.
 #[allow(clippy::too_many_arguments)]
-unsafe fn gemv_i4_omajor_blocked(
+unsafe fn gemv_i4_omajor_tile_rows(
     q_all: *const i8,
     de_all: *const i8,
     ds: usize,
@@ -5882,12 +5956,15 @@ unsafe fn gemv_i4_omajor_blocked(
     m: usize,
     k: usize,
     n: usize,
+    c0: usize,
+    tile_cols: usize,
 ) {
     let kb = k / 2;
-    let cb = omajor_col_block(kb, n);
+    let cb = omajor_col_block(kb, tile_cols);
     let mut c = 0usize;
-    while c < n {
-        let w = cb.min(n - c);
+    while c < tile_cols {
+        let w = cb.min(tile_cols - c);
+        let col = c0 + c;
         for i in 0..m {
             let scale_a = *sa.add(i);
             if scale_a == 0.0 {
@@ -5900,9 +5977,9 @@ unsafe fn gemv_i4_omajor_blocked(
                 } else {
                     de_all.add(i * ds)
                 },
-                bq.add(c * kb),
-                scales.add(c),
-                out.add(i * n + c),
+                bq.add(col * kb),
+                scales.add(col),
+                out.add(i * n + col),
                 k,
                 w,
                 scale_a,
@@ -6120,7 +6197,8 @@ pub fn matmul_i4_pc_omajor(
                             out: orow.as_mut_ptr(),
                             k,
                             n,
-                            scale_a,
+                            m: 1,
+                            sa: &scale_a,
                             operands: crate::cpu::wasm_pool::GemvOperands::I4 {
                                 bq: bq.as_ptr(),
                                 de: de.as_ptr(),
@@ -6178,20 +6256,52 @@ pub fn matmul_i4_pc_omajor(
                         k,
                     );
                 }
-                // SAFETY: disjoint output columns; sizes checked above.
-                unsafe {
-                    gemv_i4_omajor_blocked(
-                        q.as_ptr(),
-                        de_all.as_ptr(),
-                        ds,
-                        sa.as_ptr(),
-                        bq.as_ptr(),
-                        scales.as_ptr(),
-                        out.as_mut_ptr(),
-                        m,
+                // wasm multi-core: fork-join the batched GEMM by output
+                // column; each participant runs all `m` rows against its packed
+                // weight tile (read once), the de-interleaved rows `ds`-strided.
+                #[cfg(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                ))]
+                let pooled =
+                    crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                        q: q.as_ptr(),
+                        scales: scales.as_ptr(),
+                        out: out.as_mut_ptr(),
                         k,
                         n,
-                    );
+                        m,
+                        sa: sa.as_ptr(),
+                        operands: crate::cpu::wasm_pool::GemvOperands::I4 {
+                            bq: bq.as_ptr(),
+                            de: de_all.as_ptr(),
+                        },
+                    });
+                #[cfg(not(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                )))]
+                let pooled = false;
+                if !pooled {
+                    // SAFETY: disjoint output columns; sizes checked above.
+                    unsafe {
+                        gemv_i4_omajor_tile_rows(
+                            q.as_ptr(),
+                            de_all.as_ptr(),
+                            ds,
+                            sa.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            out.as_mut_ptr(),
+                            m,
+                            k,
+                            n,
+                            0,
+                            n,
+                        );
+                    }
                 }
             });
             #[cfg(not(any(
@@ -6200,7 +6310,7 @@ pub fn matmul_i4_pc_omajor(
             )))]
             // SAFETY: disjoint output columns; this build's inner ignores `de`.
             unsafe {
-                gemv_i4_omajor_blocked(
+                gemv_i4_omajor_tile_rows(
                     q.as_ptr(),
                     core::ptr::null(),
                     0,
@@ -6210,6 +6320,8 @@ pub fn matmul_i4_pc_omajor(
                     out.as_mut_ptr(),
                     m,
                     k,
+                    n,
+                    0,
                     n,
                 );
             }
@@ -6564,6 +6676,55 @@ unsafe fn gemv_e8cb_omajor_avx2(
     }
 }
 
+/// One column tile of the E8CB `m > 1` path: sub-block the tile so its index
+/// slab stays resident (the 2 KB i16 codebook is L1-resident throughout), and
+/// run **every row** against a block before moving on. Byte-neutral: each
+/// output cell is one whole dot over the same `k`-vector; the accumulation is
+/// an exact i32 sum.
+///
+/// # Safety
+/// Disjoint output columns per caller; `q_all`/`sa` address `m·k` / `m`,
+/// `codebook` the full 256×8 i16 table, `bq` `n·k/8` index bytes.
+#[allow(clippy::too_many_arguments)]
+unsafe fn gemv_e8cb_omajor_tile_rows(
+    q_all: *const i8,
+    codebook: *const i16,
+    sa: *const f32,
+    bq: *const u8,
+    scales: *const f32,
+    out: *mut f32,
+    m: usize,
+    k: usize,
+    n: usize,
+    c0: usize,
+    tile_cols: usize,
+) {
+    let g = k / 8;
+    let cb = omajor_col_block(g, tile_cols);
+    let mut c = 0usize;
+    while c < tile_cols {
+        let w = cb.min(tile_cols - c);
+        let col = c0 + c;
+        for i in 0..m {
+            let scale_a = *sa.add(i);
+            if scale_a == 0.0 {
+                continue; // the row was zero-filled up front
+            }
+            gemv_e8cb_omajor_native(
+                q_all.add(i * k),
+                bq.add(col * g),
+                codebook,
+                scales.add(col),
+                out.add(i * n + col),
+                k,
+                w,
+                scale_a,
+            );
+        }
+        c += w;
+    }
+}
+
 /// Fused E8 lattice-codebook GEMV over an **output-major** weight.
 ///
 /// # This tier is W1A8, not W1A32
@@ -6626,7 +6787,6 @@ pub fn matmul_e8cb_omajor(
         cb16.clear();
         cb16.extend(codebook.iter().map(|&v| v as i16));
         with_q8_scratch(|q| {
-            let g = k / 8;
             if m == 1 {
                 // Decode: one row, nothing to amortize a weight pass over.
                 q.resize(k, 0);
@@ -6653,7 +6813,8 @@ pub fn matmul_e8cb_omajor(
                             out: orow.as_mut_ptr(),
                             k,
                             n,
-                            scale_a,
+                            m: 1,
+                            sa: &scale_a,
                             operands: crate::cpu::wasm_pool::GemvOperands::E8cb {
                                 bq: bq.as_ptr(),
                                 codebook: cb16.as_ptr(),
@@ -6671,6 +6832,7 @@ pub fn matmul_e8cb_omajor(
                 ))]
                 {
                     use crate::cpu::parallel::{self, SendConst, SendMut};
+                    let g = k / 8;
                     let w = parallel::pool().width();
                     if w > 1 && (k as u64) * (n as u64) >= GEMV_PAR_THRESHOLD {
                         let tiles = parallel::output_tiles(1, n, w, 8);
@@ -6742,29 +6904,51 @@ pub fn matmul_e8cb_omajor(
                         out[i * n..i * n + n].fill(0.0);
                     }
                 }
-                let cb = omajor_col_block(g, n);
-                let mut c = 0usize;
-                while c < n {
-                    let w = cb.min(n - c);
-                    for (i, &scale_a) in sa.iter().enumerate() {
-                        if scale_a == 0.0 {
-                            continue; // the row was zero-filled up front
-                        }
-                        // SAFETY: disjoint output columns; sizes checked above.
-                        unsafe {
-                            gemv_e8cb_omajor_native(
-                                q.as_ptr().add(i * k),
-                                bq.as_ptr().add(c * g),
-                                cb16.as_ptr(),
-                                scales.as_ptr().add(c),
-                                out.as_mut_ptr().add(i * n + c),
-                                k,
-                                w,
-                                scale_a,
-                            );
-                        }
+                // wasm multi-core: fork-join the batched GEMM across the
+                // embedder pool by output column, every participant running all
+                // `m` rows against its tile (weight read once per participant).
+                #[cfg(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                ))]
+                let pooled =
+                    crate::cpu::wasm_pool::fork_join_gemv(crate::cpu::wasm_pool::GemvJob {
+                        q: q.as_ptr(),
+                        scales: scales.as_ptr(),
+                        out: out.as_mut_ptr(),
+                        k,
+                        n,
+                        m,
+                        sa: sa.as_ptr(),
+                        operands: crate::cpu::wasm_pool::GemvOperands::E8cb {
+                            bq: bq.as_ptr(),
+                            codebook: cb16.as_ptr(),
+                        },
+                    });
+                #[cfg(not(all(
+                    target_arch = "wasm32",
+                    target_feature = "simd128",
+                    feature = "wasm-threads"
+                )))]
+                let pooled = false;
+                if !pooled {
+                    // SAFETY: disjoint output columns; sizes checked above.
+                    unsafe {
+                        gemv_e8cb_omajor_tile_rows(
+                            q.as_ptr(),
+                            cb16.as_ptr(),
+                            sa.as_ptr(),
+                            bq.as_ptr(),
+                            scales.as_ptr(),
+                            out.as_mut_ptr(),
+                            m,
+                            k,
+                            n,
+                            0,
+                            n,
+                        );
                     }
-                    c += w;
                 }
             });
         })
@@ -6861,12 +7045,19 @@ mod tests {
         }
     }
 
-    /// Multi-threaded fork-join vs serial, bit for bit — run on
-    /// `wasm32-wasip1-threads` under wasmtime (`-S threads`), where std
+    /// Multi-threaded fork-join vs serial, bit for bit, at **every `m`** — run
+    /// on `wasm32-wasip1-threads` under wasmtime (`-S threads`), where std
     /// threads drive the exact atomics job queue the browser's web workers
-    /// will. Proves the static row partition preserves the per-output
-    /// reduction order (structural determinism), not just approximate
-    /// results.
+    /// will.
+    ///
+    /// `m == 1` is decode; `m > 1` is the prefill / batched-verify GEMM, pooled
+    /// by the same output-column partition — each participant computes its
+    /// columns for all `m` rows, reading its weight tile once. Structural
+    /// determinism: every output cell is one whole dot by one participant in
+    /// the same reduction order, so pooled must equal serial **bit for bit**,
+    /// for i8, packed-i4 and E8CB alike. `m = 5` includes an all-zero
+    /// activation row, so the publisher-prezeroes/participants-skip contract
+    /// for `sa[i] == 0` is exercised under the pool, not just serially.
     #[test]
     #[cfg(all(
         feature = "std",
@@ -6877,18 +7068,50 @@ mod tests {
     fn parallel_gemv_matches_serial_bitwise() {
         use crate::cpu::wasm_pool;
         // Above the pool's latency floor (k·n = 512 KiB ≥ 256 KiB), with
-        // n not a multiple of the participant count.
-        let (m, k, n) = (1usize, 512usize, 1027usize);
-        let a: Vec<f32> = (0..k).map(|i| ((i % 31) as f32 - 15.0) * 0.041).collect();
+        // n not a multiple of the participant count and k a whole number of
+        // E8 groups.
+        let (k, n) = (512usize, 1027usize);
+        let ms = [1usize, 2, 5, 8];
+
+        let act = |m: usize| -> Vec<f32> {
+            (0..m * k)
+                .map(|i| {
+                    let (r, c) = (i / k, i % k);
+                    if m > 2 && r == 2 {
+                        0.0 // an all-zero row: sa == 0, pre-zeroed + skipped
+                    } else {
+                        (((r * 13 + c) % 31) as f32 - 15.0) * 0.041
+                    }
+                })
+                .collect()
+        };
         let bq: Vec<i8> = (0..k * n).map(|i| ((i as i64 % 253) - 126) as i8).collect();
+        let bq4: Vec<u8> = (0..k * n / 2).map(|i| (i % 247) as u8).collect();
+        let cb: Vec<i8> = (0..256 * 8)
+            .map(|i| ((i * 37 + 11) % 255 - 127) as i8)
+            .collect();
+        let bq8: Vec<u8> = (0..n * (k / 8))
+            .map(|i| ((i * 17 + 3) % 256) as u8)
+            .collect();
         let scales: Vec<f32> = (0..n).map(|j| 0.004 + (j as f32) * 1e-6).collect();
 
-        // Serial baselines: no workers registered yet.
-        let mut serial = vec![0f32; n];
-        matmul_i8_pc_omajor(&a, &bq, &scales, &mut serial, m, k, n);
-        let bq4: Vec<u8> = (0..k * n / 2).map(|i| (i % 247) as u8).collect();
-        let mut serial4 = vec![0f32; n];
-        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut serial4, m, k, n);
+        // Serial baselines for every (tier, m): no workers registered yet, so
+        // `fork_join_gemv` declines without publishing.
+        let mut serial8 = Vec::new();
+        let mut serial4 = Vec::new();
+        let mut serial_e8 = Vec::new();
+        for &m in &ms {
+            let a = act(m);
+            let mut s8 = vec![0f32; m * n];
+            matmul_i8_pc_omajor(&a, &bq, &scales, &mut s8, m, k, n);
+            serial8.push(s8);
+            let mut s4 = vec![0f32; m * n];
+            matmul_i4_pc_omajor(&a, &bq4, &scales, &mut s4, m, k, n);
+            serial4.push(s4);
+            let mut se = vec![0f32; m * n];
+            matmul_e8cb_omajor(&a, &bq8, &cb, &scales, &mut se, m, k, n);
+            serial_e8.push(se);
+        }
 
         let handles: Vec<_> = (0..3u32)
             .map(|i| std::thread::spawn(move || wasm_pool::hologram_worker_run(i)))
@@ -6897,23 +7120,27 @@ mod tests {
             std::thread::yield_now();
         }
 
-        let mut par = vec![f32::NAN; n];
-        matmul_i8_pc_omajor(&a, &bq, &scales, &mut par, m, k, n);
-        for (j, (p, sv)) in par.iter().zip(&serial).enumerate() {
-            assert_eq!(
-                p.to_bits(),
-                sv.to_bits(),
-                "i8 output {j}: parallel {p} vs serial {sv}"
-            );
-        }
-        let mut par4 = vec![f32::NAN; n];
-        matmul_i4_pc_omajor(&a, &bq4, &scales, &mut par4, m, k, n);
-        for (j, (p, sv)) in par4.iter().zip(&serial4).enumerate() {
-            assert_eq!(
-                p.to_bits(),
-                sv.to_bits(),
-                "i4 output {j}: parallel {p} vs serial {sv}"
-            );
+        for (mi, &m) in ms.iter().enumerate() {
+            let a = act(m);
+            let mut p8 = vec![f32::NAN; m * n];
+            matmul_i8_pc_omajor(&a, &bq, &scales, &mut p8, m, k, n);
+            let mut p4 = vec![f32::NAN; m * n];
+            matmul_i4_pc_omajor(&a, &bq4, &scales, &mut p4, m, k, n);
+            let mut pe = vec![f32::NAN; m * n];
+            matmul_e8cb_omajor(&a, &bq8, &cb, &scales, &mut pe, m, k, n);
+            for (label, par, ser) in [
+                ("i8", &p8, &serial8[mi]),
+                ("i4", &p4, &serial4[mi]),
+                ("e8cb", &pe, &serial_e8[mi]),
+            ] {
+                for (j, (p, sv)) in par.iter().zip(ser).enumerate() {
+                    assert_eq!(
+                        p.to_bits(),
+                        sv.to_bits(),
+                        "{label} m={m} cell {j}: pooled {p} vs serial {sv}"
+                    );
+                }
+            }
         }
 
         wasm_pool::hologram_pool_shutdown();

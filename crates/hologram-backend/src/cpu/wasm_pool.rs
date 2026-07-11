@@ -1,5 +1,10 @@
-//! Embedder-provided wasm worker pool for decode parallelism (plan 077
-//! item 5).
+//! Embedder-provided wasm worker pool for **inference** parallelism — the
+//! decode GEMV (`m == 1`) and the prefill / batched-verify GEMM (`m > 1`)
+//! through one output-column partition (plan 077 item 5; prefill pooling per
+//! hologram-ai ADR-0018's upstream request: TTFT is the serial m>1 GEMM, and
+//! the embedder cannot fix it — `m` pooled single-row jobs reload the weight
+//! `m` times and lose to serial batched, so the batched kernel itself is what
+//! must be partitioned).
 //!
 //! wasm32 has no `std::thread`: parallelism comes from the **embedder**
 //! (hologram-ai serves its own COOP/COEP headers) instantiating this module
@@ -10,12 +15,14 @@
 //! workers via `memory.atomic.wait32`/`notify` — as a flat fork-join: no
 //! nested spawns, no queue growth, no allocation on any worker.
 //!
-//! **Determinism is structural.** A job partitions the GEMV's output rows
-//! into contiguous per-participant ranges; every output row is computed by
-//! exactly one participant running the identical single-threaded inner, so
-//! the per-output reduction order — and therefore the output bits and every
-//! CE derivation key — is unchanged from the serial path. The
-//! `parallel_gemv_matches_serial_bitwise` test locks this.
+//! **Determinism is structural.** A job partitions the output **columns**
+//! into contiguous per-participant ranges; every output cell (all `m` rows of
+//! a participant's columns) is computed by exactly one participant running
+//! the identical single-threaded inner, so the per-output reduction order —
+//! and therefore the output bits and every CE derivation key — is unchanged
+//! from the serial path, at every `m`. The
+//! `parallel_gemv_matches_serial_bitwise` test locks this for i8, packed-i4
+//! and E8CB at `m ∈ {1, 2, 5, 8}`.
 //!
 //! Embedder contract (fail-loud where checkable):
 //! - Register every worker (call [`hologram_worker_run`]) **before the
@@ -57,7 +64,7 @@ extern "C" {
 /// the typed form every caller and the executor actually use, and
 /// [`GemvJob::encode`] / [`GemvJob::decode`] are the only code that knows which
 /// word is which.
-pub(crate) const JOB_ARGS: usize = 10;
+pub(crate) const JOB_ARGS: usize = 11;
 
 /// The weight encoding a pooled GEMV runs, with its operands named.
 ///
@@ -90,20 +97,32 @@ impl GemvOperands {
     const TAG_E8CB: usize = 2;
 }
 
-/// One fork-join GEMV job: a `[n, k]` output-major weight times one quantized
-/// activation row, sliced across participants by output row.
+/// One fork-join job: a `[n, k]` output-major weight times `m` quantized
+/// activation rows, sliced across participants by **output column**.
+///
+/// `m == 1` is the decode GEMV. `m > 1` is the prefill / batched-verify GEMM:
+/// each participant computes its contiguous column range for **all** `m` rows,
+/// reading its weight-column tile once — the batched form the serial kernel
+/// already uses, partitioned. Doing prefill as `m` pooled single-row jobs would
+/// reload the whole weight `m` times and lose to serial batched; the batched
+/// pooled job is what actually beats it.
 #[derive(Clone, Copy)]
 pub(crate) struct GemvJob {
-    /// The i8-quantized activation row, `k` entries.
+    /// The i8-quantized activation rows, `m · k` entries (row `i` at `i·k`).
     pub q: *const i8,
     /// Per-output-channel scales, `n` entries.
     pub scales: *const f32,
-    /// Output row, `n` f32.
+    /// Output, `m · n` f32 (row `i` at `i·n`).
     pub out: *mut f32,
     pub k: usize,
     pub n: usize,
-    /// The activation's dynamic scale (`amax / 127`).
-    pub scale_a: f32,
+    /// Row count. 1 = decode GEMV; >1 = prefill GEMM.
+    pub m: usize,
+    /// Per-row activation scales (`amax_i / 127`), `m` entries. Each row is
+    /// quantized per token, so each carries its own scale; a row whose scale is
+    /// `0.0` was all-zero and its output row is pre-zeroed by the publisher —
+    /// participants skip it.
+    pub sa: *const f32,
     pub operands: GemvOperands,
 }
 
@@ -127,7 +146,8 @@ impl GemvJob {
             self.out as usize,
             self.k,
             self.n,
-            self.scale_a.to_bits() as usize,
+            self.sa as usize,
+            self.m,
             tag,
         ]
     }
@@ -136,7 +156,7 @@ impl GemvJob {
     /// `args` must be the output of [`Self::encode`] for a job whose buffers are
     /// still live. An unknown tag is a corrupt slot, not a recoverable input.
     pub(crate) unsafe fn decode(args: &[usize; JOB_ARGS]) -> Self {
-        let operands = match args[9] {
+        let operands = match args[10] {
             GemvOperands::TAG_I8 => GemvOperands::I8 {
                 bq: args[3] as *const i8,
                 qp: args[1] as *const i8,
@@ -158,7 +178,8 @@ impl GemvJob {
             out: args[5] as *mut f32,
             k: args[6],
             n: args[7],
-            scale_a: f32::from_bits(args[8] as u32),
+            sa: args[8] as *const f32,
+            m: args[9],
             operands,
         }
     }
