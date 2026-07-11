@@ -377,3 +377,97 @@ fn weightless_archive_without_a_provider_fails_loud() {
         "error should name the missing weight bodies, got: {msg}"
     );
 }
+
+/// **The reuse lever, witnessed through the shipped binding.**
+///
+/// Pooling scales prefill linearly in participants; the roofline shows the
+/// kernels are already at the machine's ceilings. The lever that is *not*
+/// linear is content addressing: a re-executed prefill whose inputs κ-match a
+/// prior run is a **graph memo hit** — no kernel dispatches, no weight bytes
+/// page, the output is returned by address. Its cost is hashing the inputs,
+/// independent of model size. A shared system prompt re-executing across
+/// requests rides this for free.
+///
+/// This is asserted through a weightless + paged session — the binding a real
+/// consumer ships — not a toy inline graph: zero dispatches AND zero
+/// additional provider bytes on the repeat, byte-identical output, and a
+/// *different* prompt still recomputes (the memo is keyed on input content,
+/// not stuck).
+#[test]
+fn repeated_prefill_through_the_shipped_binding_is_a_memo_hit() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingKappaProvider {
+        kappa: WeightFingerprint,
+        body: Vec<u8>,
+        served: AtomicUsize,
+    }
+    impl WeightProvider for CountingKappaProvider {
+        fn size(&self, fp: WeightFingerprint) -> Option<usize> {
+            (fp == self.kappa).then_some(self.body.len())
+        }
+        fn get_range(
+            &self,
+            fp: WeightFingerprint,
+            offset: usize,
+            len: usize,
+        ) -> Option<Cow<'_, [u8]>> {
+            if fp != self.kappa || offset + len > self.body.len() {
+                return None;
+            }
+            self.served.fetch_add(len, Ordering::Relaxed);
+            Some(Cow::Borrowed(&self.body[offset..offset + len]))
+        }
+    }
+
+    let (m, k, n) = (4usize, 64usize, 8usize);
+    let (archive, plain) = weightless_graph(m, k, n, true);
+    let provider = Arc::new(CountingKappaProvider {
+        kappa: plain.kappa,
+        body: plain.body.clone(),
+        served: AtomicUsize::new(0),
+    });
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load_paged(&archive, CpuBackend::new(), provider.clone(), usize::MAX)
+            .unwrap();
+
+    let prompt_a: Vec<u8> = (0..m * k)
+        .flat_map(|i| act(i / k, i % k).to_le_bytes())
+        .collect();
+    let first = sess.execute(&[InputBuffer { bytes: &prompt_a }]).unwrap()[0]
+        .bytes
+        .clone();
+    let dispatched_cold = sess.last_dispatched();
+    let served_cold = provider.served.load(Ordering::Relaxed);
+    assert!(dispatched_cold > 0, "cold prefill must execute kernels");
+    assert!(served_cold > 0, "cold prefill must page the weight in");
+
+    // The repeat: same prompt, same κ — a memo hit end to end.
+    let second = sess.execute(&[InputBuffer { bytes: &prompt_a }]).unwrap()[0]
+        .bytes
+        .clone();
+    assert_eq!(second, first, "memoized output must be byte-identical");
+    assert_eq!(
+        sess.last_dispatched(),
+        0,
+        "a κ-matched prefill must dispatch no kernels"
+    );
+    assert_eq!(
+        provider.served.load(Ordering::Relaxed),
+        served_cold,
+        "a κ-matched prefill must page no additional weight bytes"
+    );
+
+    // A different prompt is not served from the memo.
+    let prompt_b: Vec<u8> = (0..m * k)
+        .flat_map(|i| (act(i / k, i % k) + 0.25).to_le_bytes())
+        .collect();
+    let third = sess.execute(&[InputBuffer { bytes: &prompt_b }]).unwrap()[0]
+        .bytes
+        .clone();
+    assert!(
+        sess.last_dispatched() > 0,
+        "a different prompt must recompute — the memo is keyed on input content"
+    );
+    assert_ne!(third, first, "different prompt, different output");
+}

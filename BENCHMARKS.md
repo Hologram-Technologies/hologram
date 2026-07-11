@@ -94,6 +94,59 @@ schedule-independence the integer path has and the f32 path does not. Witness:
 equals `m` independent single-row calls byte for byte, for all three tiers, on
 AVX2 / NEON / wasm SIMD128 / wasm relaxed-SIMD.
 
+### Pooled prefill on wasm (captured at v0.8.2) — and where the ceiling actually is
+
+TTFT is the serial `m > 1` GEMM. The wasm worker pool — previously decode-only —
+now partitions **any** `m` by output column: each participant computes its
+columns for all `m` rows, reading its weight tile once. (`m` pooled single-row
+jobs would reload the weight `m` times and lose to serial batched; the batched
+kernel itself is what gets partitioned.) Bit-identity is structural and pinned
+at `m ∈ {1,2,5,8}` for all three tiers by `parallel_gemv_matches_serial_bitwise`.
+
+wasm32-wasip1-threads under wasmtime, 3 workers + main (4 participants):
+
+| shape (i8 W8A8) | serial | pooled | speedup |
+|---|--:|--:|--:|
+| decode `1×1536×8960` | 759.6 µs | 187.1 µs | 4.06× |
+| prefill `32×896×4864` | 7.37 ms | 1.91 ms | **3.87×** |
+| prefill `128×896×4864` | 29.2 ms | 7.66 ms | **3.81×** |
+| prefill `128×1536×8960` | 86.0 ms | 21.9 ms | **3.93×** |
+
+Near-linear on 4 participants; pooled prefill sustains ~73–80 GMAC/s where
+serial sat at ~19–20. Reproduce with `wasm_threads_timing` (wasmtime,
+`-W threads=y -S threads=y`).
+
+### Roofline verdicts: the kernels have no headroom left (captured at v0.8.2)
+
+"Faster than yesterday" cannot answer *are we done*. `cargo run --release
+--example roofline -p hologram-backend` measures the machine's ceilings in the
+same process and places each kernel against them. This host (EPYC, shared VM):
+
+| kernel | achieved | ceiling | verdict |
+|---|--:|--:|---|
+| i8 decode, 64 MB weight | 24.6 GB/s | 22.8 GB/s streaming-read probe | **≥100% — bandwidth-bound, done** |
+| i8 prefill m=128, 64 MB | 52.9 GMAC/s | 50.3 GMAC/s cache-resident | **~100% — compute-bound, done** |
+| i4 decode | 17.3 GMAC/s | (decode-compute-bound) | unpack is the wall, not bytes |
+| e8cb decode | 28.0 GMAC/s | (gather-bound) | codebook gather is the wall |
+
+(>100% means the kernel out-streams the single-stream probe — it is itself the
+better bandwidth probe; the no-headroom verdict holds a fortiori.)
+
+**Consequence.** With decode at the memory wall and prefill at the compute wall,
+further *kernel* tuning on these paths is chasing noise. The remaining levers are
+structural, and they are the UOR levers:
+
+1. **Fewer bytes** — deeper weight codecs (e8cb is 8× fewer bytes; its win is
+   gated on gather cost, not on kernel polish).
+2. **More participants** — pooling, now covering all of inference (above).
+3. **Not recomputing** — content addressing. A κ-matched re-execution is a graph
+   memo hit: **zero kernel dispatches, zero weight bytes paged**, output returned
+   by address, cost independent of model size. Witnessed through the shipped
+   weightless + paged binding by
+   `repeated_prefill_through_the_shipped_binding_is_a_memo_hit`. This is the
+   super-linear axis: a shared system prompt re-executing across requests costs
+   a hash, not a prefill.
+
 ### Small-`m` f32 matmul (the decode/short-prefill shape)
 
 `matmul_f32_blocked`'s micro-kernel works on an `MR = 4` register tile. The
