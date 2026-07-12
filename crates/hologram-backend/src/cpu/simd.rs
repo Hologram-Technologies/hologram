@@ -4686,7 +4686,13 @@ fn with_q8_scratch<R>(f: impl FnOnce(&mut Vec<i8>) -> R) -> R {
     std::thread_local! {
         static Q8: core::cell::RefCell<Vec<i8>> = const { core::cell::RefCell::new(Vec::new()) };
     }
-    Q8.with(|cell| f(&mut cell.borrow_mut()))
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    Q8.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut s) => f(&mut s),
+        Err(_) => f(&mut Vec::new()),
+    })
 }
 
 #[cfg(not(feature = "std"))]
@@ -4714,10 +4720,15 @@ fn with_gemv_scratch<R>(f: impl FnOnce(&mut Vec<i8>, &mut Vec<i8>) -> R) -> R {
             static SCRATCH: core::cell::RefCell<(Vec<i8>, Vec<i8>)> =
                 const { core::cell::RefCell::new((Vec::new(), Vec::new())) };
         }
-        SCRATCH.with(|cell| {
-            let mut g = cell.borrow_mut();
-            let (p, n) = &mut *g;
-            f(p, n)
+        // Nested use on one thread — e.g. a pooled task helping-drained onto a
+        // publisher that already holds this scratch — falls back to a fresh
+        // buffer: identical semantics, one extra allocation, never a panic.
+        SCRATCH.with(|cell| match cell.try_borrow_mut() {
+            Ok(mut g) => {
+                let (p, n) = &mut *g;
+                f(p, n)
+            }
+            Err(_) => f(&mut Vec::new(), &mut Vec::new()),
         })
     }
     #[cfg(not(feature = "std"))]
@@ -5100,7 +5111,13 @@ fn with_scale_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
     std::thread_local! {
         static SA: core::cell::RefCell<Vec<f32>> = const { core::cell::RefCell::new(Vec::new()) };
     }
-    SA.with(|cell| f(&mut cell.borrow_mut()))
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    SA.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut s) => f(&mut s),
+        Err(_) => f(&mut Vec::new()),
+    })
 }
 
 #[cfg(not(feature = "std"))]
@@ -6477,7 +6494,13 @@ fn with_cb16_scratch<R>(f: impl FnOnce(&mut Vec<i16>) -> R) -> R {
     std::thread_local! {
         static CB16: core::cell::RefCell<Vec<i16>> = const { core::cell::RefCell::new(Vec::new()) };
     }
-    CB16.with(|cell| f(&mut cell.borrow_mut()))
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    CB16.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut s) => f(&mut s),
+        Err(_) => f(&mut Vec::new()),
+    })
 }
 #[cfg(not(feature = "std"))]
 fn with_cb16_scratch<R>(f: impl FnOnce(&mut Vec<i16>) -> R) -> R {
