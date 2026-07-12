@@ -61,7 +61,13 @@ fn with_matmul_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
         static MATMUL_BT_SCRATCH: core::cell::RefCell<Vec<f32>> =
             const { core::cell::RefCell::new(Vec::new()) };
     }
-    MATMUL_BT_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    MATMUL_BT_SCRATCH.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut s) => f(&mut s),
+        Err(_) => f(&mut Vec::new()),
+    })
 }
 
 #[cfg(not(feature = "std"))]
@@ -81,7 +87,13 @@ fn with_conv_scratch<R>(f: impl FnOnce(&mut Vec<f32>) -> R) -> R {
         static CONV_IM2COL_SCRATCH: core::cell::RefCell<Vec<f32>> =
             const { core::cell::RefCell::new(Vec::new()) };
     }
-    CONV_IM2COL_SCRATCH.with(|cell| f(&mut cell.borrow_mut()))
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    CONV_IM2COL_SCRATCH.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut s) => f(&mut s),
+        Err(_) => f(&mut Vec::new()),
+    })
 }
 
 #[cfg(not(feature = "std"))]
@@ -101,10 +113,15 @@ fn with_widen_scratch<R>(f: impl FnOnce(&mut Vec<f32>, &mut Vec<f32>, &mut Vec<f
         static WIDEN: core::cell::RefCell<(Vec<f32>, Vec<f32>, Vec<f32>)> =
             const { core::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
     }
-    WIDEN.with(|cell| {
-        let mut g = cell.borrow_mut();
-        let (a, b, o) = &mut *g;
-        f(a, b, o)
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    WIDEN.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut g) => {
+            let (a, b, o) = &mut *g;
+            f(a, b, o)
+        }
+        Err(_) => f(&mut Vec::new(), &mut Vec::new(), &mut Vec::new()),
     })
 }
 
@@ -125,10 +142,20 @@ fn with_widen4_scratch<R>(
         static WIDEN4: core::cell::RefCell<Widen4Buf> =
             const { core::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new(), Vec::new())) };
     }
-    WIDEN4.with(|cell| {
-        let mut g = cell.borrow_mut();
-        let (a, b, c, dd) = &mut *g;
-        f(a, b, c, dd)
+    // Nested use on one thread — e.g. a pooled task helping-drained onto a
+    // publisher that already holds this scratch — falls back to a fresh
+    // buffer: identical semantics, one extra allocation, never a panic.
+    WIDEN4.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut g) => {
+            let (a, b, c, dd) = &mut *g;
+            f(a, b, c, dd)
+        }
+        Err(_) => f(
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        ),
     })
 }
 
