@@ -190,17 +190,29 @@ m=1), driven both ways — native x86-64, release, serial kernels; the byte
 column is the *optimistic lower bound* on what the addressed loop removes
 (deployed wasm32 hashes slower):
 
-| bucket L | byte loop (µs/step) | addressed loop (µs/step) | boundary removed | speedup |
-|---|--:|--:|--:|--:|
-| 2 048 | 3 852 | 589 | 3 263 µs | **6.5×** |
-| 8 192 | 23 915 | 2 378 | 21 536 µs | **10.1×** |
-| 32 768 | 165 022 | 19 487 | 145 536 µs | **8.5×** |
+| bucket L | byte loop (µs/step) | addressed loop (µs/step) | speedup |
+|---|--:|--:|--:|
+| 2 048 | 3 852–4 017 | 578–589 | **6.5–7.0×** |
+| 8 192 | 23 748–23 915 | 2 378–2 583 | **9.2–10.1×** |
+| 32 768 | 144 870–165 022 | 18 186–19 487 | **8.0–8.5×** |
+
+(Two runs on the shared CI VM; the second run includes best-fit buffer
+recycling — see below — which also trimmed the byte loop's allocator churn
+at 32K.)
 
 The addressed column is essentially the attention kernel itself; everything
 else — 2×O(bucket) re-hash, 2×O(bucket) copy-in, 2×O(bucket) copy-out, and
 the 2×O(bucket) honest-copy writes — became label binds plus two O(1)-row
 in-place moves. Reproduce with
 `cargo run --release -p hologram-exec --example addressed_decode_timing`.
+
+The confinement witness (`confinement.rs`) then found the pool's free list
+was size-blind LIFO: in a steady-state decode loop a 4-byte position request
+could shrink-realloc a cache-sized buffer and the next large request would
+grow one back — per-step malloc/free churn, and unbounded-looking allocation
+drift (+64 B/step in the witness). Recycling is now **best-fit by capacity**,
+so each request pairs with its own size class and the loop holds total pool
+allocation *exactly* constant after warmup — pinned, not observed.
 
 Falling out of the same hardening pass: a refused `execute_addressed` no
 longer rotates the transient generations — input bindability is validated

@@ -2,24 +2,7 @@ pub mod hologram_exec
 pub mod hologram_exec::buffer
 pub struct hologram_exec::buffer::BufferArena
 impl hologram_exec::buffer::BufferArena
-pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
-pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
-pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
-pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
-pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
-pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
-pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
-pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
-pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
-pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
-pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
-impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::allocated_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_view(&mut self, usize, usize, usize, usize)
 pub fn hologram_exec::buffer::BufferArena::capacity(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::new() -> Self
@@ -27,6 +10,28 @@ pub fn hologram_exec::buffer::BufferArena::read_slot(&self, usize) -> core::opti
 pub fn hologram_exec::buffer::BufferArena::slot_count(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::with_capacity(usize, alloc::vec::Vec<hologram_exec::buffer::SlotSpan>) -> Self
 pub fn hologram_exec::buffer::BufferArena::write_slot(&mut self, usize) -> core::option::Option<&mut [u8]>
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::lease(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::leased_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::leased_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
+pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::release(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl core::default::Default for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
 impl core::fmt::Debug for hologram_exec::buffer::BufferArena
@@ -415,6 +420,7 @@ pub fn hologram_exec::session::InferenceSession<B>::intern_input(&mut self, &[u8
 pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::leased_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
@@ -424,10 +430,13 @@ pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &
 pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
 pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::pool_allocated_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::release_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::residual_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::retain_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::session::InferenceSession<B>::schedule_levels(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::warm_from_store(&mut self, &dyn hologram_exec::warm::WarmStore) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::warm_lattice(&self) -> alloc::vec::Vec<(u32, hologram_archive::address::ContentLabel)>
@@ -650,24 +659,7 @@ impl !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::prism_route::At
 impl !core::panic::unwind_safe::UnwindSafe for hologram_exec::prism_route::AttestedExecution
 pub struct hologram_exec::BufferArena
 impl hologram_exec::buffer::BufferArena
-pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
-pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
-pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
-pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
-pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
-pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
-pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
-pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
-pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
-pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
-pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
-pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
-pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
-impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::allocated_bytes(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::bind_view(&mut self, usize, usize, usize, usize)
 pub fn hologram_exec::buffer::BufferArena::capacity(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::new() -> Self
@@ -675,6 +667,28 @@ pub fn hologram_exec::buffer::BufferArena::read_slot(&self, usize) -> core::opti
 pub fn hologram_exec::buffer::BufferArena::slot_count(&self) -> usize
 pub fn hologram_exec::buffer::BufferArena::with_capacity(usize, alloc::vec::Vec<hologram_exec::buffer::SlotSpan>) -> Self
 pub fn hologram_exec::buffer::BufferArena::write_slot(&mut self, usize) -> core::option::Option<&mut [u8]>
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::lease(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::leased_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::leased_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
+pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::release(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
 impl core::default::Default for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
 impl core::fmt::Debug for hologram_exec::buffer::BufferArena
@@ -741,6 +755,7 @@ pub fn hologram_exec::session::InferenceSession<B>::intern_input(&mut self, &[u8
 pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::leased_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
 pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
@@ -750,10 +765,13 @@ pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &
 pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
 pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::pool_allocated_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::release_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::residual_fused_count(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::retain_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
 pub fn hologram_exec::session::InferenceSession<B>::schedule_levels(&self) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::warm_from_store(&mut self, &dyn hologram_exec::warm::WarmStore) -> usize
 pub fn hologram_exec::session::InferenceSession<B>::warm_lattice(&self) -> alloc::vec::Vec<(u32, hologram_archive::address::ContentLabel)>
