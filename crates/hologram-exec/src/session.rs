@@ -983,6 +983,34 @@ impl<B: SessionBackend> InferenceSession<B> {
         Ok(self.compute_and_label(key)?.into_vec())
     }
 
+    /// Take host ownership of a resident value by κ-label: the value then
+    /// survives every walk until [`Self::release_label`]d — **residency by
+    /// ownership, not recency**. Refcounted. Returns `false` if the label is
+    /// not resident (or is a lazily-paged weight, whose lifecycle the pager
+    /// owns).
+    ///
+    /// The lease is a *borrow* in the κ ownership law: a `KvCacheWrite` on a
+    /// leased cache declines the in-place move and takes the honest copy, so
+    /// the leased pre-image survives bit-intact. That single rule is the
+    /// primitive for everything that must hold more state than one step's
+    /// outputs — a second conversation's KV caches parked across another
+    /// conversation's walks, beam-search branches, and speculative-decoding
+    /// rollback (lease the pre-state, step, accept ⇒ release the old label,
+    /// reject ⇒ continue from it).
+    pub fn retain_label(&mut self, label: &ContentLabel) -> bool {
+        self.pool.lease(label)
+    }
+
+    /// Release one lease taken by [`Self::retain_label`]. When the last
+    /// lease drops, the value is demoted into the current transient
+    /// generation — resident for the normal two-walk window (so it can be
+    /// consumed immediately after release), then reclaimed. With no live
+    /// lease the cache is uniquely owned again and the `KvCacheWrite` move
+    /// resumes. Returns `false` if no lease is held.
+    pub fn release_label(&mut self, label: &ContentLabel) -> bool {
+        self.pool.release(label)
+    }
+
     /// Intern raw bytes into a content address — the byte→address
     /// boundary. The σ-axis hashes the bytes *once*; thereafter the value
     /// is referred to by its κ-label and never rehashed. Use the returned
@@ -1439,6 +1467,17 @@ impl<B: SessionBackend> InferenceSession<B> {
     /// Number of distinct resident values in the pool (deduped by κ-label).
     pub fn resident_count(&self) -> usize {
         self.pool.resident_len()
+    }
+    /// Total allocated pool bytes — every live buffer, including recycled
+    /// free-list capacity. The **confinement** metric: a steady-state decode
+    /// loop must hold this constant (O(1) memory per step); the confinement
+    /// witness pins it.
+    pub fn pool_allocated_bytes(&self) -> usize {
+        self.pool.allocated_bytes()
+    }
+    /// Number of distinct host-leased values ([`Self::retain_label`]).
+    pub fn leased_count(&self) -> usize {
+        self.pool.leased_len()
     }
     pub fn schedule_levels(&self) -> usize {
         self.exec_plan.len()

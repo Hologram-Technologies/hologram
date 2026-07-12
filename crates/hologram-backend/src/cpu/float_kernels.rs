@@ -1288,6 +1288,26 @@ fn conv2d_f32_engine(xs32: &[f32], w32: &[f32], out32: &mut [f32], d: &ConvDims)
     });
 }
 
+/// Resolve a norm's declared epsilon. `0` selects the pinned default `1e-9`
+/// (the historical behavior for an absent declaration); any **positive
+/// finite** declared value is honored exactly — the declared structure is
+/// authoritative, and the kernel never second-guesses it with a floor. A
+/// negative, NaN, or infinite declaration is refused loud
+/// (refuse-not-fabricate) instead of being silently rewritten.
+fn norm_epsilon(epsilon_bits: u64) -> Result<f32, BackendError> {
+    if epsilon_bits == 0 {
+        return Ok(1e-9);
+    }
+    let e = f32::from_bits(epsilon_bits as u32);
+    if e.is_finite() && e > 0.0 {
+        Ok(e)
+    } else {
+        Err(BackendError::UnsupportedOp(
+            "norm epsilon must be a positive finite f32 (0 selects the default)",
+        ))
+    }
+}
+
 pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), BackendError> {
     if c.num_groups > 0 {
         return group_norm_float(c, ws);
@@ -1300,7 +1320,7 @@ pub fn layer_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let dt = c.dtype;
     let es = elem_size(dt)?;
     let total = bsz * f * es;
-    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
+    let eps = norm_epsilon(c.epsilon_bits)?;
 
     let (reads, out) = ws
         .split_borrow(&[c.x, c.gamma, c.beta], c.output)
@@ -1417,7 +1437,7 @@ pub fn group_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Ba
     let dt = c.dtype;
     let es = elem_size(dt)?;
     let total = n * f * es;
-    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
+    let eps = norm_epsilon(c.epsilon_bits)?;
     let spatial = f / ch; // elements per channel
     let group_size = f / g; // elements per normalization group
 
@@ -1526,7 +1546,7 @@ pub fn add_rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), 
     let dt = c.dtype;
     let es = elem_size(dt)?;
     let total = bsz * f * es;
-    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
+    let eps = norm_epsilon(c.epsilon_bits)?;
     let has_residual = c.has_residual();
 
     let (reads, out) = if has_residual {
@@ -1642,7 +1662,7 @@ pub fn rms_norm_float<W: Workspace>(c: &NormCall, ws: &mut W) -> Result<(), Back
     let dt = c.dtype;
     let es = elem_size(dt)?;
     let total = bsz * f * es;
-    let eps = f32::from_bits(c.epsilon_bits as u32).abs().max(1e-9);
+    let eps = norm_epsilon(c.epsilon_bits)?;
     let (reads, out) = ws
         .split_borrow(&[c.x, c.gamma], c.output)
         .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
@@ -1745,6 +1765,15 @@ pub fn softmax_float<W: Workspace>(
                 for bi in 0..b {
                     let row = &x32[bi * f..bi * f + f];
                     let max_v = crate::cpu::simd::simd_f32_max(row);
+                    // All-(−∞) row: pinned total semantics — softmax of an
+                    // impossible distribution is exactly zero everywhere;
+                    // log-softmax is exactly −∞ (log 0). The shift below
+                    // would otherwise make the row NaN.
+                    if max_v == f32::NEG_INFINITY {
+                        let orow = &mut o32[bi * f..bi * f + f];
+                        orow.fill(if log_form { f32::NEG_INFINITY } else { 0.0 });
+                        continue;
+                    }
                     exps.clear();
                     exps.extend(row.iter().map(|&v| v - max_v));
                     crate::cpu::simd::simd_f32_exp_inplace(exps);
@@ -1779,6 +1808,18 @@ pub fn softmax_float<W: Workspace>(
             let mut max_v = f32::NEG_INFINITY;
             for j in 0..f {
                 max_v = max_v.max(read_float(xs, row_off + j, dt));
+            }
+            // All-(−∞) row: same pinned semantics as the f32 fast path.
+            if max_v == f32::NEG_INFINITY {
+                for j in 0..f {
+                    write_float(
+                        out,
+                        row_off + j,
+                        if log_form { f32::NEG_INFINITY } else { 0.0 },
+                        dt,
+                    );
+                }
+                continue;
             }
             exps.clear();
             exps.reserve(f);
@@ -2375,6 +2416,15 @@ pub(crate) unsafe fn decode_attention_row(
         *slot = crate::cpu::simd::simd_f32_dot(q, krow) / scale + *mask_row.add(kj);
     }
     let max_s = sc.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    // A row whose mask erases *every* key has no visible context; its
+    // semantics is pinned to the exact zero vector. Without this guard the
+    // max-shift below would compute `−∞ − (−∞) = NaN` and the row would be
+    // garbage — a threshold accident, not a semantics. The mask is the single
+    // visibility authority, so "no key visible" is a legal, total input.
+    if max_s == f32::NEG_INFINITY {
+        core::slice::from_raw_parts_mut(out_row, d).fill(0.0);
+        return;
+    }
     for v in sc.iter_mut() {
         *v -= max_s;
     }

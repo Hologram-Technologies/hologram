@@ -632,3 +632,103 @@ fn two_step_decode_loop_with_attention_matches_direct_kernels_bitwise() {
         lv = out[2];
     }
 }
+
+/// Confinement across the ring boundary: a long addressed decode loop whose
+/// write position wraps the bucket (the `canon`/`emod` of the substrate's
+/// phase space) stays bit-identical to the honest-copy kernels at every step,
+/// with every write still realized as a move. The wrap is where a
+/// representative leaves the naive `[0, bucket)` box and the exact remainder
+/// brings it back — the step a drifting implementation would fumble.
+#[test]
+fn wrapping_decode_loop_matches_direct_kernels_bitwise() {
+    let (b, hkv, bucket, d) = (1u64, 2u64, 4u64, 8u64);
+    let planes = (b * hkv) as u32;
+    let steps = 6usize; // positions 2,3,0,1,2,3 — wraps twice
+
+    let g = write_graph(b, hkv, bucket, 1, d);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+
+    let mut cache = to_le(&f32s((b * hkv * bucket * d) as usize, 31));
+    let mut label = sess.intern_input(&cache);
+    for step in 0..steps {
+        let pos = (2 + step as u32) % bucket as u32 + bucket as u32 * (step as u32 % 2);
+        // pos deliberately exceeds the bucket on odd steps: the kernel (and
+        // the move) must wrap it identically.
+        let new = f32s((b * hkv * d) as usize, 60 + step);
+        let want = {
+            let cache_f: Vec<f32> = cache
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect();
+            direct_write(&cache_f, &new, pos, planes, bucket as u32, 1, d as u32)
+        };
+        let ln = sess.intern_input(&to_le(&new));
+        let lp = sess.intern_input(&pos.to_le_bytes());
+        let out = sess.execute_addressed(&[label, ln, lp]).unwrap();
+        assert_eq!(
+            sess.resolve(&out[0]).unwrap(),
+            &want[..],
+            "step {step} (pos {pos}): move != honest copy across the wrap"
+        );
+        assert_eq!(
+            sess.last_dispatched(),
+            0,
+            "step {step}: write must stay a move"
+        );
+        cache = want;
+        label = out[0];
+    }
+}
+
+/// Ring-wrap crossing under the move: a long addressed loop whose write
+/// position wraps past the bucket boundary (and past it again) stays
+/// bit-identical to the honest-copy kernel at every step, with every write
+/// still realized as a move. The bucket is the fundamental domain; the
+/// wrapped position is `pos % bucket` — canonicalization by exact remainder,
+/// and the move must respect it exactly.
+#[test]
+fn wrapping_decode_loop_stays_bitwise_and_moved() {
+    let (b, hkv, bucket, rows, d) = (1u64, 2u64, 4u64, 1u64, 8u64);
+    let planes = (b * hkv) as u32;
+    let g = write_graph(b, hkv, bucket, rows, d);
+    let compiled = compile(g, BackendKind::Cpu, WittLevel::W32).unwrap();
+    let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+        InferenceSession::load(&compiled.archive, CpuBackend::new()).unwrap();
+
+    let mut host: Vec<f32> = f32s((b * hkv * bucket * d) as usize, 11);
+    let mut label = sess.intern_input(&to_le(&host));
+    // 10 steps over a 4-row bucket: positions 3,4,5,… wrap twice.
+    for step in 0..10u32 {
+        let new = f32s((b * hkv * rows * d) as usize, 60 + step as usize);
+        let pos = 3 + step; // raw position; the kernel wraps mod bucket
+        let want = direct_write(
+            &host,
+            &new,
+            pos,
+            planes,
+            bucket as u32,
+            rows as u32,
+            d as u32,
+        );
+        let ln = sess.intern_input(&to_le(&new));
+        let lp = sess.intern_input(&pos.to_le_bytes());
+        let out = sess.execute_addressed(&[label, ln, lp]).unwrap();
+        assert_eq!(
+            sess.resolve(&out[0]).unwrap(),
+            &want[..],
+            "step {step} (pos {pos}): move != copy kernel across the wrap"
+        );
+        assert_eq!(
+            sess.last_dispatched(),
+            0,
+            "step {step}: write must stay a move"
+        );
+        host = want
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        label = out[0];
+    }
+}

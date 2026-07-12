@@ -188,6 +188,16 @@ pub struct BufferArena {
     lazy_budget: usize,
     /// Monotonic clock for LRU stamps.
     lazy_clock: u64,
+    /// Host-leased residency (label → (buffer index, refcount)): values the
+    /// embedder has taken explicit ownership of via `lease`. A leased value
+    /// survives every walk rotation until released — residency by ownership,
+    /// not by recency — and its buffer refuses the `KvCacheWrite` in-place
+    /// move (the lease is a borrow; a move requires unique ownership, so a
+    /// leased cache steps by honest copy and the pre-image survives: the
+    /// speculative-rollback / branch-decode primitive). Release demotes the
+    /// value back into the current transient generation, so it ages out
+    /// normally instead of leaking.
+    leased: HashMap<ContentLabel, (usize, u32)>,
     /// Reused scratch for `rebind_reset` so the per-walk reclaim computation
     /// allocates nothing after warmup — the `kept` reachability set (rebuilt
     /// each walk over the mostly-stable, potentially-thousands-strong pinned
@@ -226,6 +236,7 @@ impl BufferArena {
             pinned: HashMap::new(),
             current: HashMap::new(),
             previous: HashMap::new(),
+            leased: HashMap::new(),
             lazy: HashMap::new(),
             lazy_budget: 0,
             lazy_clock: 0,
@@ -238,9 +249,19 @@ impl BufferArena {
         self.slot_len.len()
     }
 
-    /// Total live buffer bytes (informational).
+    /// Total live buffer bytes (informational). Sums current *logical*
+    /// lengths, which fluctuate as free-list buffers are reset; for the
+    /// confinement metric use [`Self::allocated_bytes`].
     pub fn capacity(&self) -> usize {
         self.bufs.iter().map(|b| b.len).sum()
+    }
+
+    /// Total **allocated** pool bytes: the sum of every live buffer's backing
+    /// capacity, including free-list buffers awaiting reuse. This is the
+    /// steady-state confinement metric — a well-behaved decode loop holds it
+    /// exactly constant after warmup.
+    pub fn allocated_bytes(&self) -> usize {
+        self.bufs.iter().map(|b| b.cap).sum()
     }
 
     /// The buffer index currently bound to `slot`, if any.
@@ -351,6 +372,7 @@ impl BufferArena {
         kept.clear();
         kept.extend(self.pinned.values().copied());
         kept.extend(self.previous.values().copied());
+        kept.extend(self.leased.values().map(|&(bi, _)| bi));
         kept.extend(self.lazy.values().filter_map(|e| e.resident));
         // Gather reclaimable buffers, then sort+dedup so the free list is pushed
         // in the same (ascending) order the previous BTreeSet produced — the
@@ -403,16 +425,7 @@ impl BufferArena {
     /// it to `slot`. Used both for node outputs (a reuse/memo miss) and as
     /// the backing for a freshly-interned/pinned value.
     pub fn bind_fresh(&mut self, slot: usize, len: usize) -> usize {
-        let bi = match self.free.pop() {
-            Some(bi) => {
-                self.bufs[bi].reset_to(len);
-                bi
-            }
-            None => {
-                self.bufs.push(AlignedBytes::zeroed(len));
-                self.bufs.len() - 1
-            }
-        };
+        let bi = self.acquire_buf(len);
         self.ensure_slot(slot);
         self.slot_buf[slot] = bi;
         self.slot_len[slot] = len;
@@ -422,12 +435,18 @@ impl BufferArena {
     /// Bind `slot` to the buffer holding `label`, if resident. Returns true
     /// on a hit (the value is now readable at `slot` with **no copy**).
     pub fn bind_resident(&mut self, slot: usize, label: &ContentLabel) -> bool {
+        let leased_bi = if self.leased.is_empty() {
+            None
+        } else {
+            self.leased.get(label).map(|&(bi, _)| bi)
+        };
         let bi = self
             .pinned
             .get(label)
             .or_else(|| self.current.get(label))
             .or_else(|| self.previous.get(label))
-            .copied();
+            .copied()
+            .or(leased_bi);
         match bi {
             Some(bi) => {
                 self.ensure_slot(slot);
@@ -495,9 +514,32 @@ impl BufferArena {
 
     /// Acquire a `len`-byte backing buffer (recycled from the free list or
     /// freshly allocated), returning its index. Contents are zeroed.
+    ///
+    /// Recycling is **best-fit by capacity**, not LIFO: a free buffer is
+    /// taken only if its capacity holds the request without reallocation and
+    /// without gross waste (≤ 2× the aligned request — the window
+    /// `reset_to` preserves), preferring the tightest fit. Size-blind LIFO
+    /// recycling caused per-step realloc churn in steady-state decode loops
+    /// — a 4-byte position request would shrink-realloc a cache-sized
+    /// buffer and the next large request would grow one back. Best-fit
+    /// pairs each request with its own size class, so a cyclic workload
+    /// reaches an exact allocation fixed point (pinned by the confinement
+    /// witness).
     fn acquire_buf(&mut self, len: usize) -> usize {
-        match self.free.pop() {
-            Some(bi) => {
+        let want_cap = len.max(ARENA_ALIGN).next_multiple_of(ARENA_ALIGN);
+        let mut best: Option<(usize, usize)> = None; // (free-list idx, cap)
+        for (fi, &bi) in self.free.iter().enumerate() {
+            let cap = self.bufs[bi].cap;
+            if cap >= want_cap && cap <= want_cap.saturating_mul(2) {
+                let tighter = best.is_none_or(|(_, bc)| cap < bc);
+                if tighter {
+                    best = Some((fi, cap));
+                }
+            }
+        }
+        match best {
+            Some((fi, _)) => {
+                let bi = self.free.swap_remove(fi);
                 self.bufs[bi].reset_to(len);
                 bi
             }
@@ -639,19 +681,25 @@ impl BufferArena {
     /// without binding a slot. The byte→address boundary for inputs
     /// pre-interned ahead of `execute_addressed`.
     pub fn store_unbound(&mut self, label: ContentLabel, bytes: &[u8]) {
+        if self.current.contains_key(&label)
+            || self.pinned.contains_key(&label)
+            || (!self.leased.is_empty() && self.leased.contains_key(&label))
+        {
+            return;
+        }
+        // Resident only in the previous generation: one rotation from
+        // reclamation. Re-interning it is a liveness statement - promote the
+        // existing buffer into the current generation (no copy) so the
+        // returned label is guaranteed bindable by the next walk, instead of
+        // being refused an instant after the caller interned it.
+        if let Some(&bi) = self.previous.get(&label) {
+            self.current.insert(label, bi);
+            return;
+        }
         if self.resident(&label) {
             return;
         }
-        let bi = match self.free.pop() {
-            Some(bi) => {
-                self.bufs[bi].reset_to(bytes.len());
-                bi
-            }
-            None => {
-                self.bufs.push(AlignedBytes::zeroed(bytes.len()));
-                self.bufs.len() - 1
-            }
-        };
+        let bi = self.acquire_buf(bytes.len());
         self.bufs[bi].as_mut_slice().copy_from_slice(bytes);
         self.current.insert(label, bi);
     }
@@ -686,6 +734,7 @@ impl BufferArena {
         allowed_slots: &[usize],
     ) -> Option<usize> {
         if self.pinned.contains_key(label)
+            || (!self.leased.is_empty() && self.leased.contains_key(label))
             || (!self.lazy.is_empty() && self.lazy.contains_key(label))
         {
             return None;
@@ -709,6 +758,7 @@ impl BufferArena {
         let aliased = self.pinned.values().any(|&b| b == bi)
             || self.current.iter().any(|(l, &b)| b == bi && l != label)
             || self.previous.iter().any(|(l, &b)| b == bi && l != label)
+            || self.leased.values().any(|&(b, _)| b == bi)
             || self
                 .lazy
                 .values()
@@ -730,6 +780,80 @@ impl BufferArena {
         self.slot_len[slot] = self.bufs[bi].len;
     }
 
+    /// Take host ownership of a resident transient (or pinned) value: the
+    /// label survives every subsequent walk rotation until [`Self::release`]d
+    /// — residency by ownership rather than recency. Refcounted, so nested
+    /// leases compose. Returns `false` when the label is not resident, or is
+    /// a lazily-paged weight (the pager owns that lifecycle). Leasing a
+    /// pinned constant is a successful no-op (it is already permanent).
+    ///
+    /// A leased value's buffer refuses the `KvCacheWrite` in-place move: the
+    /// lease is a borrow, and a move requires unique ownership. A decode step
+    /// on a leased cache therefore takes the honest copy — the leased
+    /// pre-image survives bit-intact, which is exactly the rollback primitive
+    /// speculative decoding and branch search need.
+    pub fn lease(&mut self, label: &ContentLabel) -> bool {
+        if let Some(e) = self.leased.get_mut(label) {
+            e.1 += 1;
+            return true;
+        }
+        if self.pinned.contains_key(label) {
+            return true;
+        }
+        if !self.lazy.is_empty() && self.lazy.contains_key(label) {
+            return false;
+        }
+        let bi = self
+            .current
+            .get(label)
+            .or_else(|| self.previous.get(label))
+            .copied();
+        match bi {
+            Some(bi) => {
+                self.leased.insert(*label, (bi, 1));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Release one lease on `label`. When the last lease drops, the value is
+    /// demoted back into the current transient generation — it stays
+    /// resident for the normal two-walk window and then reclaims, so a
+    /// released value neither leaks nor vanishes out from under a caller
+    /// that releases immediately before consuming it. Returns `false` if the
+    /// label holds no lease (including the pinned-constant no-op case).
+    pub fn release(&mut self, label: &ContentLabel) -> bool {
+        let Some(e) = self.leased.get_mut(label) else {
+            return false;
+        };
+        e.1 -= 1;
+        if e.1 == 0 {
+            let (bi, _) = self.leased.remove(label).expect("entry exists");
+            self.current.insert(*label, bi);
+        }
+        true
+    }
+
+    /// Number of distinct host-leased values (observability).
+    pub fn leased_len(&self) -> usize {
+        self.leased.len()
+    }
+
+    /// Resident bytes held by host leases (deduped; observability). Disjoint
+    /// accounting from `transient_bytes`/`pinned_bytes` only when the leased
+    /// value has already aged out of the generation maps.
+    pub fn leased_bytes(&self) -> usize {
+        let mut seen: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
+        let mut total = 0;
+        for &(bi, _) in self.leased.values() {
+            if seen.insert(bi) {
+                total += self.bufs[bi].len;
+            }
+        }
+        total
+    }
+
     /// Whether `label` can serve as an input to a **new** walk — i.e. will
     /// still be resident after the walk's generation rotation: the pinned
     /// tier, the *current* generation, or a paged-in lazy weight. A value
@@ -739,6 +863,7 @@ impl BufferArena {
     pub fn bindable_input(&self, label: &ContentLabel) -> bool {
         self.pinned.contains_key(label)
             || self.current.contains_key(label)
+            || (!self.leased.is_empty() && self.leased.contains_key(label))
             || (!self.lazy.is_empty() && self.lazy.get(label).is_some_and(|e| e.resident.is_some()))
     }
 
@@ -750,6 +875,7 @@ impl BufferArena {
         self.pinned.contains_key(label)
             || self.current.contains_key(label)
             || self.previous.contains_key(label)
+            || (!self.leased.is_empty() && self.leased.contains_key(label))
             || (!self.lazy.is_empty() && self.lazy.get(label).is_some_and(|e| e.resident.is_some()))
     }
 
@@ -759,19 +885,28 @@ impl BufferArena {
     /// is skipped when no weights are paged (zero overhead for a non-paged
     /// session).
     pub fn resolve(&self, label: &ContentLabel) -> Option<&[u8]> {
+        let leased_bi = if self.leased.is_empty() {
+            None
+        } else {
+            self.leased.get(label).map(|&(bi, _)| bi)
+        };
         let bi = self
             .pinned
             .get(label)
             .or_else(|| self.current.get(label))
             .or_else(|| self.previous.get(label))
+            .copied()
+            .or(leased_bi)
             .or_else(|| {
                 if self.lazy.is_empty() {
                     None
                 } else {
-                    self.lazy.get(label).and_then(|e| e.resident.as_ref())
+                    self.lazy
+                        .get(label)
+                        .and_then(|e| e.resident.as_ref())
+                        .copied()
                 }
-            })
-            .copied()?;
+            })?;
         Some(self.bufs[bi].as_slice())
     }
 
@@ -784,7 +919,16 @@ impl BufferArena {
     pub fn transient_bytes(&self) -> usize {
         let mut seen: alloc::collections::BTreeSet<usize> = alloc::collections::BTreeSet::new();
         let mut total = 0;
-        for &bi in self.current.values().chain(self.previous.values()) {
+        // Host-leased values are transient-lifecycle values under explicit
+        // ownership; count them in the same deduped scan so a value that has
+        // aged out of the generations but is still leased stays visible, and
+        // one that is in both is never double-counted.
+        for &bi in self
+            .current
+            .values()
+            .chain(self.previous.values())
+            .chain(self.leased.values().map(|(bi, _)| bi))
+        {
             if seen.insert(bi) {
                 total += self.bufs[bi].len;
             }
