@@ -31,7 +31,35 @@ spaces/
 ```
 
 Dependency direction (law): `spaces/* → crates/*`, never the reverse. Within `crates/`,
-the existing kernel → bridge → user layering is preserved.
+the existing kernel → bridge → user layering is preserved. **Single sanctioned
+exception**: the `hologram` facade's optional `space-*` re-export features depend on
+`spaces/*` — legal only because the facade is the top-of-stack aggregator that no other
+workspace crate may depend on. (In-tree spaces therefore import subcrates directly, never
+the facade; external spaces may import either, per D21.)
+
+## Layering: who interacts with what
+
+Spaces do **not** go through `Client` — they sit under it. `Client` is the surface for
+*consumers* (law 6: CLI, FFI, SDKs, embedders); spaces are *implementors* of the
+contract, which `Client` accepts and drives (`Client::builder().space(…)`).
+
+```
+apps / embedders / hologram-ai / CLI / FFI / SDKs        ← consumers
+        │   only via Client (law 6)
+        ▼
+hologram::Client (facade)
+        │   accepts any `impl Space` — in-tree or external (D21)
+        ▼
+spaces/holospaces-{browser,native,bare}, third-party spaces   ← implementors
+        │   implement traits · select engines · pump transports
+        ▼
+hologram-space · hologram-runtime · hologram-net · spaces/holospaces (portable core)
+```
+
+A space's dependency set is exactly: `hologram-space` (traits), `hologram-runtime`
+(engine selection), `hologram-net` (protocol core), `holospaces` (shared emulation/boot
+machinery), `hologram-tck` (dev-dependency). Nothing else — in particular, never
+`Client`, `hologram-ffi`, or `hologram-cli`.
 
 ## Per-crate charter (one axis of change each)
 
