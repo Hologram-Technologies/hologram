@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use crate::error::CompileError;
 use hologram_backend::{
     AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DecodeAttentionCall,
-    DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, KvCacheWriteCall,
-    LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall,
-    TransposeCall, UnaryCall, WhereCall,
+    DecodeAttentionValidCall, DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall,
+    KernelCall, KvCacheWriteCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
+    RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall,
 };
 use hologram_graph::{Graph, InputSource, Node, NodeId, OpKind};
 
@@ -57,6 +57,10 @@ pub struct ShapeArgs {
     pub past_len: u32,
     /// Decode attention: appended rows per kv head.
     pub new_len: u32,
+    /// Decode attention, 6-input form: `true` when the 6th operand is the
+    /// `[1]` i32 `valid_len` scalar (κ121 — visibility law compiled in),
+    /// `false` when it is the `[q_rows, past+new]` f32 mask (κ119).
+    pub decode_valid_form: bool,
     /// Causal masking + softmax scale (`scale_bits` 0 ⇒ default 1/√d).
     pub causal: bool,
     pub scale_bits: u32,
@@ -111,6 +115,19 @@ impl ShapeArgs {
                     .get(idx as usize)
                     .and_then(|&hologram_graph::NodeId(i)| graph.nodes().get(i as usize))
                     .and_then(|n| reg.get(n.output_shape).cloned()),
+            })
+        };
+        let in_dtype = |idx: usize| -> Option<hologram_graph::registry::DTypeId> {
+            node.inputs.get(idx).and_then(|src| match *src {
+                InputSource::Node(hologram_graph::NodeId(id)) => {
+                    graph.nodes().get(id as usize).map(|n| n.output_dtype)
+                }
+                InputSource::Constant(cid) => graph.constants().get(cid).map(|e| e.dtype),
+                InputSource::GraphInput(idx) => graph
+                    .inputs()
+                    .get(idx as usize)
+                    .and_then(|&hologram_graph::NodeId(i)| graph.nodes().get(i as usize))
+                    .map(|n| n.output_dtype),
             })
         };
         let in0 = in_shape(0);
@@ -300,6 +317,40 @@ impl ShapeArgs {
                         .and_then(|k| k.dim(2))
                         .unwrap_or(0)
                         .min(u32::MAX as u64) as u32;
+                    // The 6th operand selects the form, by shape + dtype —
+                    // never by guess: a `[q_rows, past+new]` f32 mask is the
+                    // arbitrary-visibility κ119 form; a `[1]` i32 scalar is
+                    // the compiled-law κ121 form (realized-prefix over the
+                    // past + causal-within-chunk over the new). Anything
+                    // else is refused loud.
+                    let vis = in_shape(5);
+                    let vis_dt = in_dtype(5);
+                    const DT_I32: u8 = 4;
+                    const DT_F32: u8 = 8;
+                    match (&vis, vis_dt) {
+                        (Some(sh), Some(dt))
+                            if sh.rank == 1 && sh.dim(0) == Some(1) && dt.raw() == DT_I32 =>
+                        {
+                            if a.q_rows == 0 || a.q_rows != a.new_len {
+                                return Err(CompileError::GraphValidation(
+                                    "decode attention (valid_len form): q_rows must equal \
+                                     new_len and be at least 1 — the causal law pairs query \
+                                     row i with chunk key row i",
+                                ));
+                            }
+                            a.decode_valid_form = true;
+                        }
+                        (Some(sh), Some(dt)) if sh.rank == 2 && dt.raw() == DT_F32 => {
+                            a.decode_valid_form = false;
+                        }
+                        _ => {
+                            return Err(CompileError::GraphValidation(
+                                "decode attention: the 6th operand must be a \
+                                 [q_rows, past+new] f32 mask (arbitrary visibility) or a \
+                                 [1] i32 valid_len scalar (realized-prefix + causal law)",
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -762,24 +813,45 @@ pub fn lower(node: &LoweredNode) -> Result<KernelCall, CompileError> {
                      encode causal-within-chunk in the mask.",
                 ));
             }
-            KernelCall::DecodeAttention(DecodeAttentionCall {
-                q: inp0(),
-                k_past: inp1(),
-                v_past: inp2(),
-                k_new: inpn(3),
-                v_new: inpn(4),
-                mask: inpn(5),
-                output: node.output,
-                batch: s.batch,
-                heads: s.heads,
-                kv_heads: s.kv_heads,
-                q_rows: s.q_rows,
-                past_len: s.past_len,
-                new_len: s.new_len,
-                head_dim: s.head_dim,
-                scale_bits: s.scale_bits,
-                dtype: node.dtype,
-            })
+            if s.decode_valid_form {
+                KernelCall::DecodeAttentionValid(DecodeAttentionValidCall {
+                    q: inp0(),
+                    k_past: inp1(),
+                    v_past: inp2(),
+                    k_new: inpn(3),
+                    v_new: inpn(4),
+                    valid_len: inpn(5),
+                    output: node.output,
+                    batch: s.batch,
+                    heads: s.heads,
+                    kv_heads: s.kv_heads,
+                    q_rows: s.q_rows,
+                    past_len: s.past_len,
+                    new_len: s.new_len,
+                    head_dim: s.head_dim,
+                    scale_bits: s.scale_bits,
+                    dtype: node.dtype,
+                })
+            } else {
+                KernelCall::DecodeAttention(DecodeAttentionCall {
+                    q: inp0(),
+                    k_past: inp1(),
+                    v_past: inp2(),
+                    k_new: inpn(3),
+                    v_new: inpn(4),
+                    mask: inpn(5),
+                    output: node.output,
+                    batch: s.batch,
+                    heads: s.heads,
+                    kv_heads: s.kv_heads,
+                    q_rows: s.q_rows,
+                    past_len: s.past_len,
+                    new_len: s.new_len,
+                    head_dim: s.head_dim,
+                    scale_bits: s.scale_bits,
+                    dtype: node.dtype,
+                })
+            }
         }
         K::Attention => KernelCall::Attention(attn_call),
         K::FusedSwiGlu => KernelCall::FusedSwiGlu(matmul_call),
