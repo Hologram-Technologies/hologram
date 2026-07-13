@@ -15,9 +15,9 @@ let client = hologram::Client::builder()
     .space(NativeSpace::default())        // any impl of the space contract
     .build()?;
 
-let app     = client.compile(source)?;            // → .holo (v3)
-let holo    = client.provision(app, caps)?;       // ingest → κ
-let session = client.open(&holo)?;                // Session (runtime lifecycle)
+let app     = client.compile(source)?;            // → .holo (v3); pure compute, sync
+let holo    = client.provision(app, caps).await?; // ingest → κ (store I/O — async, law 4)
+let session = client.open(&holo).await?;          // resolve + Session (I/O — async)
 session.boot().await?;
 let snap    = session.suspend().await?;           // snapshot κ — migratable
 ```
@@ -37,6 +37,12 @@ let snap    = session.suspend().await?;           // snapshot κ — migratable
 Async note (law 4): Client is async where the underlying contract is async; compile/exec
 entry points are sync and internally bridge at the session boundary.
 
+**The method table above is the public API in embryo — treated as such.** At the P3
+release these names freeze into five languages' SDKs; renames after that are breaking
+changes in every binding at once. Therefore: the table gets a dedicated naming review as
+a P3 gate (before the release, after implementation experience), and until then every
+Client method added in code must appear here first — spec leads, code follows.
+
 ## CLI (D13): one binary named `hologram`
 
 Resolves today's conflict (two workspace binaries both named `hologram`:
@@ -47,10 +53,10 @@ Both merge into `crates/hologram-cli`:
 hologram
 ├─ compile   <source> [-o app.holo]        # was compute CLI
 ├─ run       <app.holo> [--space …]        # exec / boot per manifest
-├─ app       inspect|compose|verify        # .holo v3 tooling
+├─ app       inspect|compose|verify|pack   # .holo v3 tooling; pack --fat|--thin (03)
 ├─ store     put|get|pin|unpin|gc|ls|verify|manifest    # was substrate CLI
 ├─ net       fetch|announce|discover|peers
-├─ network   create|join|delegate|show     # 04-networks
+├─ network   create|join|delegate|show     # 04-networks (restricted/private tiers)
 ├─ space     list|tck                      # enumerate spaces, run conformance
 ├─ manager   roster|provision|open|configure|reconfigure
 ├─ node      serve                         # long-running peer (native space)
@@ -59,6 +65,10 @@ hologram
 
 Command logic stays store/space-generic and hermetically testable (a property today's
 substrate CLI already has — preserve it). `anyhow` is permitted here and only here.
+
+CLI defaults: the CLI runs over the **native space**; its local KappaStore lives in the
+OS-appropriate data directory, overridable by flag/env. A store path is a *location*,
+never an identity (law 2) — moving the directory changes nothing about content.
 
 ## FFI & SDKs (D6): hologram owns them, over Client
 
@@ -73,14 +83,33 @@ Target languages: **rust, c, python, typescript, swift** (kotlin later, same mac
 | TypeScript (browser) | **wasm-bindgen** build of Client (wasm32) | npm package |
 | TypeScript (node, optional) | **napi-rs** | npm package |
 
-- All live in `crates/hologram-ffi` (cdylib + rlib, per-language features), replacing the
-  current hand-rolled C ABI's direct crate composition with Client delegation.
+- The binding **surface** (types, methods, error enums exposed to foreign languages) is
+  defined exactly once, in `crates/hologram-ffi` (cdylib + rlib, per-language features),
+  replacing the current hand-rolled C ABI's direct crate composition with Client
+  delegation.
+- **SDK packaging composes surface + space, on the spaces/ side.** A shippable SDK needs
+  a concrete space compiled in, and `hologram-ffi` (crates/) must not depend on
+  `spaces/*` (dependency law — only the facade has that exception). So per-target
+  packaging crates live with their space: the browser npm package is built from a thin
+  packaging crate beside `holospaces-browser` (depends on hologram-ffi + the browser
+  space — legal direction), the python wheel / SwiftPM package bundle the native space.
+  Binding definitions never fork; packaging only selects the space.
+- **FFI exposes Client over the platform's default space** (browser SDK → browser space,
+  wheel/SwiftPM → native space). Bringing a *custom* space is a Rust-level affordance —
+  foreign-language callers get a concrete, batteries-included Client.
 - The wasm-bindgen glue inside `spaces/holospaces-browser` is **not** "the FFI" — it is
   that space's view/transport plumbing. The browser *SDK* (what an app developer imports
-  from npm) comes from hologram-ffi's wasm build.
+  from npm) is the packaging crate's wasm build described above.
 - Binding conformance: one cross-language smoke suite (compile → provision → run → exit
-  code) runs against every generated SDK in CI, so a Client change that breaks a binding
-  fails the same PR.
+  code) runs against every generated SDK **on every PR** — decided, not provisional. The
+  CI cost (wasm + wheel + SwiftPM builds per PR) is accepted as the price of "a Client
+  change that breaks a binding fails the same PR"; if minutes become a problem, the
+  answer is caching/hardware, not demoting the gate to nightly.
+- **FFI errors are typed, always.** `hologram-ffi` exposes only typed error enums
+  (uniffi enums / C error codes) derived from Client's thiserror chains — no stringly
+  errors, no anyhow anywhere in the FFI path. Consequence accepted deliberately: FFI
+  error variants are **stable API** — adding one is minor, renaming/removing one is
+  breaking in five languages. `anyhow` remains confined to `hologram-cli` alone.
 
 ## DX commitments
 

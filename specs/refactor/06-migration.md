@@ -85,7 +85,9 @@ repos remain.
   `hologram::space`), or a holospaces git dep survives and the exit criterion fails.
 
 **Exit criteria**: release published; hologram-ai CI green against it with zero git deps
-on this repo; FFI smoke suite green for c/python/swift/ts; V&V still green.
+on this repo; FFI smoke suite green for c/python/swift/ts; the Client method-table
+naming review (05 §Principle) completed and the spec table updated to match what ships;
+V&V still green.
 
 ## Phase P4 — `.holo` v3 (03-holo-format.md)
 
