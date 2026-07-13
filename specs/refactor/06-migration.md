@@ -15,6 +15,12 @@ authorize starting it.
 3. **No long-lived divergent branch.** Phases land to `main` sequentially; each is
    independently shippable.
 4. Each phase ends with its exit criteria checked and recorded (evidence, not assertion).
+5. **κ-stability is sacred.** Crate moves/renames MUST NOT change any canonical byte
+   form, realization IRI, wire frame, or `.holo` encoding — deployed stores (browser
+   OPFS packs, redb stores, published archives) must keep resolving. Before P1, capture
+   **golden vectors** (canonical bytes + κ for every realization kind, a v2 `.holo`, a
+   SPINE-4 frame); every phase re-derives them bit-identically. A κ break is a format
+   change and belongs to P4+ with explicit versioning, never to a refactor move.
 
 ## Phase P1 — In-repo restructure (this repo only)
 
@@ -69,10 +75,14 @@ repos remain.
 - Complete the CLI subcommand tree over Client.
 - Facade gains `space-browser`/`space-native`/`space-bare` features.
 - Workspace lint hardening to the law-7 baseline (`missing_docs = "deny"`, etc.).
-- **Cut the first lockstep crates.io release** (D16).
+- **Cut the first lockstep crates.io release** (D16). Precondition (verify during P1,
+  not here): all workspace crate names available/owned on crates.io, publish tokens and
+  org ownership settled (see 01 §Publishing).
 - Migrate `hologram-ai` (in its own repo) from git tags to the published facade —
   the proof the public API is sufficient. Fold what it needs but can't get through the
-  facade back as facade fixes, not as new git pins.
+  facade back as facade fixes, not as new git pins. Named explicitly: its κ-addressing
+  source moves from `holospaces::address` to the facade (`hologram::types` /
+  `hologram::space`), or a holospaces git dep survives and the exit criterion fails.
 
 **Exit criteria**: release published; hologram-ai CI green against it with zero git deps
 on this repo; FFI smoke suite green for c/python/swift/ts; V&V still green.

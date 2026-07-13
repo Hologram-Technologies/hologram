@@ -182,6 +182,17 @@ repository by swapping path deps for version deps (see `02-space-contract.md`
 - **Lockstep version** via `workspace.package.version`; one release = one version across
   all crates. `hologram-ai` and third parties depend on `hologram = "X.Y"` + features.
 - First publishable release lands at the end of migration phase P3 (see `06-migration.md`).
+- **Semver posture**: the workspace stays **0.x through P6**; 1.0 is a deliberate act
+  after the format (P4) and networks (P5) have shipped and survived external consumers.
+  Under lockstep, any breaking change anywhere bumps the shared minor (0.x semantics) —
+  accepted cost of one version number.
+- **MSRV & edition** declared in `workspace.package` (`rust-version`, `edition`) at P1;
+  MSRV bumps are release-notes-visible events, never silent.
+- **Name reservation (P1 task, P3 blocker)**: verify availability/ownership on crates.io
+  of every target crate name (`hologram`, `holospaces`, all `hologram-*` /
+  `holospaces-*`), settle publish tokens and org ownership (this repo is
+  Hologram-Technologies; UOR crates are UOR-Foundation). If a name is taken, the rename
+  decision happens in P1 — not discovered during the P3 release.
 - UOR crates (uor-foundation, uor-foundation-sdk, uor-prism, uor-prism-tensor, uor-addr)
   remain **external crates.io dependencies** (D18). hologram re-exports what its API needs
   (e.g. κ/Digest types through `hologram::types`); the long-term aim is that consumers
@@ -195,3 +206,13 @@ repository by swapping path deps for version deps (see `02-space-contract.md`
 - All error types via `thiserror` in libraries; `anyhow` only inside hologram-cli.
 - `no_std + alloc` posture preserved where it exists today (types, ops, graph, archive,
   space, net, tck core, holospaces portable core); std-only code isolated behind features.
+- **Build topology**: target-specific crates stay **workspace-excluded** and are built
+  explicitly for their targets, exactly like today (`holospaces-browser` wasm32 cdylib,
+  the EFI boot binary under `holospaces-bare`). The default `cargo build` never needs a
+  cross-toolchain.
+- **Feature-unification discipline**: all features are additive. std-only features
+  (`engine-wasmtime`, native transports, frontends) must degrade gracefully under
+  unification — a dependency graph that enables `engine-wasmtime` somewhere must not
+  poison a wasm32 build elsewhere (guard with `cfg(target_*)` inside the feature, not by
+  hoping nobody unifies). CI proves it: the wasm32 and thumbv7em check builds run against
+  the workspace with default + common feature combinations.
