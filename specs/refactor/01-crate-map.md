@@ -142,6 +142,12 @@ use hologram::space::Space;
 use hologram::spaces::native::NativeSpace;
 ```
 
+These `space-*` features are **re-export sugar only** (D21): external spaces are
+first-class without any facade feature — `Client` accepts any `impl Space`. In-tree
+spaces must consume only published API, so any of them can later be extracted to its own
+repository by swapping path deps for version deps (see `02-space-contract.md`
+§External spaces).
+
 ## Publishing & versioning (D16)
 
 - Every workspace crate publishes to crates.io.

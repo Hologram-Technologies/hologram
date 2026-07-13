@@ -111,6 +111,36 @@ Naming pattern: **`holospaces-<host>`**. `spaces/holospaces` (no suffix) is the 
 core shared by all: system emulators (RISC-V / AArch64 / x86-64), κ-disk, OCI/devcontainer
 boot provisioning, content-net glue (PacketLink/TransportEndpoint), projection machinery.
 
+## External spaces (D21): the contract is open
+
+Spaces may be created — and in-tree spaces later extracted — in **external repositories**.
+In-tree residence is a convenience for CI co-gating, never a privilege. Enforcement rules:
+
+1. **No sealed traits.** Nothing in the contract path (`Space`, `KappaStore`, `KappaSync`,
+   `ContainerRuntime`, `ContainerEngine`, HAL, surface) uses the sealed-trait pattern or
+   `pub(crate)` supertraits. If an external crate cannot write the impl, the contract is
+   broken.
+2. **Everything a space needs is published API.** A space builds against
+   `hologram = { features = ["space", "runtime", "net"] }` (or the subcrates via the
+   facade) — including the shared engines (`engine-wasmtime`, `engine-wasmi`) and the
+   portable machinery in `spaces/holospaces` (which publishes like every other crate,
+   D16). An in-tree space that reaches around the public surface is a bug the extraction
+   proof (rule 5) will catch.
+3. **TCK runs anywhere.** `hologram-tck` is consumable as a dev-dependency battery
+   (`cargo test` in the external repo) and via `hologram space tck` against a space by
+   name/path. Conformance certification must not depend on this repo's CI harness.
+4. **No in-tree registry.** `Client` accepts any `impl Space` by value/generic — there is
+   no compiled-in enumeration of blessed spaces. The facade's `space-browser`/`space-native`/
+   `space-bare` features are re-export sugar for the in-tree impls, nothing more.
+5. **Extraction proof obligation.** Moving any `spaces/holospaces-*` crate to its own
+   repository must require only replacing workspace path deps with published version
+   deps. This is checked in CI conceptually (no non-public API usage) and is the standing
+   test that rules 1–4 hold.
+
+Consequence: third parties can ship `holospaces-android`, `acme-holospaces-fpga`, etc.,
+certify them with the public TCK, and never coordinate with this repo beyond following
+lockstep releases.
+
 ## What was hoisted out of holospaces (D7)
 
 `Peer`, `Session` (the Provisioned→Running→Suspended→Terminated lifecycle machine), and
