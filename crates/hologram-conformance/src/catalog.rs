@@ -48,9 +48,12 @@ pub fn parse_catalog(md: &str) -> Vec<CatalogRow> {
         };
         // id looks like LAW-1 / KC-6 / GV-3 — split on the first '-'.
         let Some((class, _)) = id.split_once('-') else { continue };
-        // The last non-empty cell holds the status glyph.
-        let Some(glyph) = cells.iter().rev().find(|c| !c.is_empty()) else { continue };
-        let Some(status) = Status::from_legend(glyph) else { continue };
+        // Status is the rightmost cell that parses as a legend glyph. Scanning from the
+        // right (rather than assuming the last non-empty cell) tolerates any trailing
+        // columns a future ledger schema might add to the right of Status.
+        let Some(status) = cells.iter().rev().find_map(|c| Status::from_legend(c)) else {
+            continue;
+        };
         rows.push(CatalogRow {
             class: class.to_string(),
             id: id.to_string(),
@@ -85,5 +88,14 @@ mod tests {
     #[test]
     fn ignores_non_row_lines() {
         assert!(parse_catalog("just prose\n| header | only |\n").is_empty());
+    }
+
+    #[test]
+    fn finds_status_when_a_column_sits_right_of_it() {
+        let md = "| **GV-1** | traceability | BDD scenario | trace.feature | ⛔ | see note |\n";
+        let rows = parse_catalog(md);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "GV-1");
+        assert_eq!(rows[0].status, Status::Gap);
     }
 }
