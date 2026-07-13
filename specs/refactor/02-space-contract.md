@@ -119,7 +119,7 @@ ChainCompaction — plus new ones introduced by this refactor: **AppManifest** (
 | Space | Store | Engine (selected) | Transport pumps | Views |
 |-------|-------|-------------------|-----------------|-------|
 | `holospaces-browser` | OPFS pack store | wasmi (`engine-wasmi`) | WebRTC data channel, WebSocket egress | wasm-bindgen Console/Workspace |
-| `holospaces-native` | redb | wasmtime (`engine-wasmtime`) | TCP (κ-XOR DHT), **iroh** (QUIC/NAT traversal) | CLI/desktop |
+| `holospaces-native` | redb | wasmtime (`engine-wasmtime`) | TCP (κ-XOR DHT), **iroh** (QUIC/NAT traversal), WebRTC + WS listener (browser interop, 04) | CLI/desktop |
 | `holospaces-bare` | raw-sector block store | wasmi | bare `NetworkInterface` pump | serial/framebuffer |
 | future `holospaces-ios` | platform store | wasmi or platform | platform transport | Swift native |
 | future `holospaces-esp32` | flash block store | wasmi | radio/eth pump | none/headless |

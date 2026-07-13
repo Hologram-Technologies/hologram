@@ -1,4 +1,4 @@
-# 04 — Networks: Distributed Content, Private/Public Meshes
+# 04 — Networks: Distributed Content — Public, Restricted, Private
 
 Decisions: D11, D12 (see `00-overview.md`).
 
@@ -22,8 +22,15 @@ naming, no policy.
 | Space | Transports |
 |-------|-----------|
 | holospaces-browser | WebRTC data channel (p2p, out-of-band signaling), WebSocket egress relay |
-| holospaces-native | TCP (existing κ-XOR DHT wire), **iroh** (QUIC, NAT traversal, relays) |
+| holospaces-native | TCP (existing κ-XOR DHT wire), **iroh** (QUIC, NAT traversal, relays), **WebRTC endpoint + WebSocket listener** (browser interop) |
 | holospaces-bare | HAL `NetworkInterface` pump (NIC/radio) |
+
+**Interop rule: every pair of space kinds must share at least one transport.** The
+matrix above satisfies it: browser↔browser (WebRTC), browser↔native (WebRTC or WS —
+native carries a native WebRTC stack and a WS listener precisely so browser peers can
+reach it directly), native↔native (TCP/iroh), bare↔native (TCP over NIC). A future
+space's transport set is checked against this rule at spec time — a space no peer can
+reach is not a peer.
 
 **iroh's position**: strictly a transport pump for native spaces, adopted for what
 TCP-plus-manual-signaling lacks (hole punching, relays, QUIC streams). iroh NodeIds and
@@ -46,11 +53,22 @@ Network (realization)
 
 - Consistent with control-plane-as-content (holospaces ADR-018): creating or changing a
   network is publishing a new realization; peers resolve and apply it. No server, no RPC.
-- **Public network**: open policy — anyone may fetch/announce/discover.
-- **Private network**: `fetch`/`announce`/`discover` require a capability proof derived
-  from membership; non-members' requests are refused at the protocol layer. Delegation
-  uses the existing `Delegation` realization; attenuation-only (law 5) applies to network
-  capabilities exactly as to app capabilities.
+- **Terminology ladder (deliberate, honest naming)**:
+  - **Public** — open policy; anyone may fetch/announce/discover.
+  - **Restricted** (ships in P5) — capability-gated: `fetch`/`announce`/`discover`
+    require a capability proof derived from membership; non-members refused at the
+    protocol layer. Access control, **not** confidentiality.
+  - **Private** (ships in Phase B/P6) — restricted **plus** payload encryption. The word
+    "private" is reserved until encryption exists; docs, CLI, and API names use
+    "restricted" for the capability-only tier so no user assumes confidentiality that
+    isn't there.
+- Delegation uses the existing `Delegation` realization; attenuation-only (law 5)
+  applies to network capabilities exactly as to app capabilities.
+- **Nesting is reserved, not implemented**: the `parent-network κ` field stays in the
+  canonical form (so adding semantics later is not a format break — κ-invariance), but
+  P5 implements **flat networks only**. Subnet policy-composition semantics (how child
+  policy attenuates fetch/announce/membership across levels) get their own design when a
+  real use case arrives.
 - "Distributed OPFS" falls out of this: multiple holospaces on one private network share
   a κ-store view — any member resolves any member-announced κ, verify-on-receipt, dedup
   by construction. There is no separate "distributed filesystem" component to build; it
@@ -58,16 +76,18 @@ Network (realization)
 
 ## Two enforcement layers, phased
 
-### Phase A — capability gating (lands in migration P5)
+### Phase A — capability gating → **restricted** networks (lands in migration P5)
 
 Admission and routing control as described above. **Honest caveat, stated as spec**: a κ
-that leaks outside a private network still names readable bytes if any member serves it
-without checking policy, and bytes obtained out-of-band are readable. Capability gating
-is access control, not confidentiality.
+that leaks outside a restricted network still names readable bytes if any member serves
+it without checking policy, and bytes obtained out-of-band are readable. Capability
+gating is access control, not confidentiality — which is exactly why this tier is named
+"restricted," never "private."
 
-### Phase B — payload encryption (lands after P5; requirements fixed now)
+### Phase B — payload encryption → **private** networks (lands after P5; requirements fixed now)
 
-- Private networks additionally encrypt payloads; membership = capability + key access.
+- Private networks are restricted networks that additionally encrypt payloads;
+  membership = capability + key access.
 - Requirements the design must satisfy (deferred design, see also `07`):
   1. Key distribution and rotation as κ-addressed content (no key server), building on
      `Delegation`; rotation must not orphan pinned content.

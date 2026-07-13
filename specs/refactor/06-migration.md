@@ -98,15 +98,19 @@ on this repo; FFI smoke suite green for c/python/swift/ts; V&V still green.
 portable view) boots on browser, native, and bare RAM-device spaces from the same `.holo`
 bytes (same κ); v2 archives still load; release cut.
 
-## Phase P5 — Networks, capability phase (04 §Phase A)
+## Phase P5 — Networks, restricted tier (04 §Phase A)
 
-- Network realization (membership + policy + nesting); capability-gated
-  fetch/announce/discover; `hologram network` subcommands; iroh transport pump for
-  `holospaces-native`; TCK network battery.
+- Network realization (membership + policy; `parent-network κ` field reserved, flat
+  networks only); capability-gated fetch/announce/discover (**"restricted"** tier —
+  "private" is reserved for P6 encryption, per 04's terminology ladder); `hologram
+  network` subcommands; native transports for interop: iroh pump **plus WebRTC endpoint
+  + WebSocket listener** so browser peers reach native peers directly; TCK network
+  battery.
 
-**Exit criteria**: two-node private network demo (browser peer + native peer) with a
-non-member refused at protocol layer; κ-only identity audit (no iroh types in any public
-API or stored form); release cut.
+**Exit criteria**: two-node restricted network demo (browser peer + native peer,
+over a shared transport per 04's interop rule) with a non-member refused at protocol
+layer; κ-only identity audit (no iroh types in any public API or stored form); release
+cut.
 
 ## Phase P6 — Network payload encryption (04 §Phase B)
 
