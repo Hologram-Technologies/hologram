@@ -38,11 +38,24 @@ each space owns its implementation. Carried over from substrate-core unchanged i
 - `verify_kappa` (σ-axis re-derivation, SPINE-4) and `address_bytes` (κ-minting) as free
   functions — identical bytes yield identical κ on every space.
 
+`KappaStore` is deliberately **local-only** — one space, one store, no peer awareness.
+That is what keeps the trait implementable from esp32 flash to browser OPFS.
+
 ### 2. Sync — `KappaSync`
 
 `fetch`, `announce`, `discover` with verify-on-receipt at every hop. Protocol semantics
 live in `hologram-net` (see `04-networks.md`); the trait lives here because a space must
 provide (or explicitly stub) its transport pump.
+
+**Local by contract, distributed by composition.** `KappaSync` is the distribution seam:
+`Peer::resolve(κ)` tries the local store, else fetches via sync, verifies, and may
+persist; `resolve_closure(κ)` migrates whole object graphs (apps, snapshots, rosters)
+between peers. Because content is immutable, append-only, and identically addressed
+everywhere (same bytes → same κ), every local store is automatically a valid
+replica/cache of the global content space — there is no consistency protocol to design,
+only content exchange. Network-wide semantics (membership, policy, the "distributed
+OPFS") are the composition of these two traits with the Network model in
+`04-networks.md`; durability/replication policy is an explicit open item there.
 
 ### 3. Runtime — `ContainerRuntime` + `ContainerEngine`
 
@@ -88,6 +101,10 @@ ChainCompaction — plus new ones introduced by this refactor: **AppManifest** (
 
 ## Conformance — `hologram-tck` defines "space"
 
+- **TCK = Technology Compatibility Kit** (in the Java-TCK sense; the substrate crate
+  called it a "Test Conformance Kit" — same meaning): the executable test battery that
+  *is* the definition of conformance. Pass it and you are a valid space; there is no
+  other certification.
 - The TCK is the executable meaning of the contract: KappaStore battery (ST/SPINE
   invariants), sync verify-on-receipt battery, lifecycle battery (spawn/suspend/resume/
   terminate against the mock engine), HAL battery, surface battery.

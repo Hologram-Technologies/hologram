@@ -79,6 +79,18 @@ is access control, not confidentiality.
   4. Bare-metal/no_std spaces must be able to participate (cipher choices with no_std
      impls; ChaCha20 machinery already exists in the runtime's entropy class).
 
+## Open item: durability & replication policy
+
+What is designed above is **access** distribution (any member can resolve any member's
+content, verify-on-receipt). Deliberately not yet designed: **durability** — who is
+obligated to keep content alive, replication factor, what `pin` means network-wide (a
+member pinning κ on the network vs. locally), and how GC interacts with remote
+reachability. Requirements to carry into that design: policy must be expressible per
+Network (capability-based, like everything else); no silent data loss when the sole
+holder of a κ leaves; bare/edge spaces must be able to opt out of holding obligations.
+This is a post-P5 design doc alongside encryption (Phase B); nothing in P1–P5 may
+foreclose it (same rule as `07-governance-requirements.md`).
+
 ## Conformance
 
 `hologram-tck` gains a sync/network battery: verify-on-receipt (reject corrupt frames),
