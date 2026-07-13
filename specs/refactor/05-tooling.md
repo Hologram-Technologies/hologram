@@ -111,6 +111,25 @@ Target languages: **rust, c, python, typescript, swift** (kotlin later, same mac
   error variants are **stable API** — adding one is minor, renaming/removing one is
   breaking in five languages. `anyhow` remains confined to `hologram-cli` alone.
 
+## Runtime selection & platform plumbing (owners named)
+
+- **Compute-target selection** (CPU/Metal/wgpu) is a **session/Client concern**, not a
+  space concern (02 rejected spaces-subsume-compute): `Client` picks the best available
+  kernel target for the platform by default; embedders override via builder config. The
+  space never selects kernels.
+- **Browser worker topology is the packaging crate's job.** The wasm compute pool is
+  embedder-provided (worker registration, SharedArrayBuffer, COOP/COEP headers) — the
+  browser SDK packaging crate owns spawning/registering workers and documents the
+  required headers. App developers get a working pool by importing the npm package; they
+  never hand-wire workers.
+- **Observability ≠ audit.** Dev-facing diagnostics use the `tracing` ecosystem behind a
+  facade-level subscriber seam (CLI pretty-prints, browser forwards to console, bare is
+  silent by default). This is throwaway telemetry — the κ-chained audit trail
+  (07 R2) is a separate, append-only thing; neither substitutes for the other.
+- **Browser SDK size budget**: the npm package's wasm binary gets a CI-tracked size
+  budget from P3 (regressions fail loudly; the number is set when the first real build
+  exists, then defended).
+
 ## DX commitments
 
 - `cargo add hologram` + one feature flag is a working embedder; `cargo install

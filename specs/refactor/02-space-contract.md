@@ -21,6 +21,36 @@ impl Space for IosSpace {
 }
 ```
 
+## The `Space` trait shape
+
+`Space` is an **aggregate with associated types** — the one place a platform names its
+concrete parts; everything downstream is generic over it:
+
+```rust
+trait Space {
+    type Store: KappaStore;
+    type Sync:  KappaSync;
+    type Engine: ContainerEngine;
+    type Surface: Surface;
+    type Entropy: Entropy;
+    type Clock: Clock;
+    type Spawner: Spawner;
+
+    fn store(&self) -> &Self::Store;
+    // …accessor per part; construction/teardown lifecycle methods
+}
+```
+
+Fixed now: (a) associated types, not `dyn` fields — `Client` is generic over `S: Space`
+(monomorphized per platform; FFI/packaging crates instantiate concrete spaces, so no
+object-safety requirement on `Space` itself); (b) the **Send-bound policy** is decided by
+a P1 spike, because it decides whether one trait spans browser and native: wasm futures
+are `!Send`, native wants `Send + 'static`. The candidate is maybe-Send (target-cfg'd
+bounds à la `async_trait(?Send)` on wasm32) — the spike proves it against both TCK
+targets before the trait freezes; (c) individual contract traits (`KappaStore`, …)
+remain independently usable and dyn-capable where object safety allows — `Space` is
+composition, not a cage.
+
 ## Contract contents
 
 `hologram-space` unifies today's `substrate/hologram-substrate-core`,
@@ -47,6 +77,13 @@ That is what keeps the trait implementable from esp32 flash to browser OPFS.
 live in `hologram-net` (see `04-networks.md`); the trait lives here because a space must
 provide (or explicitly stub) its transport pump.
 
+**Known law-2 violation to fix, tracked here**: today's trait carries
+`add_peer(peer_addr: &str)` / `add_gateway(url: &str)` — string addresses, a second
+naming surface. P1 moves the trait verbatim (κ-stability of code moves), and **P3's API
+shaping replaces both with κ-shaped forms** (PeerEndpoint realization κ + ephemeral
+transport hints supplied by the pump, never stored). The violation may not survive into
+the first published release.
+
 **Local by contract, distributed by composition.** `KappaSync` is the distribution seam:
 `Peer::resolve(κ)` tries the local store, else fetches via sync, verifies, and may
 persist; `resolve_closure(κ)` migrates whole object graphs (apps, snapshots, rosters)
@@ -68,10 +105,28 @@ OPFS") are the composition of these two traits with the Network model in
   unless a future space genuinely needs a bespoke engine, in which case it implements
   this same seam.
 
-### 4. HAL — `BlockDevice`, `NetworkInterface`
+### 4. HAL — `BlockDevice`, `NetworkInterface`, `Entropy`, `Clock`, `Spawner`
 
-Absorbed from `hologram-bare-hal` unchanged. The κ-disk (in `spaces/holospaces`)
-implements `BlockDevice` over any `KappaStore` — Law L4: no second storage medium.
+`BlockDevice` and `NetworkInterface` absorbed from `hologram-bare-hal` unchanged. The
+κ-disk (in `spaces/holospaces`) implements `BlockDevice` over any `KappaStore` — Law L4:
+no second storage medium.
+
+**Three additions this refactor makes explicit** — today they are ambient per-platform
+accidents (OsRng in wasmtime, JS-pumped time in the browser, no story on bare metal),
+but every space needs them and hoisted space-agnostic code in `hologram-runtime` cannot
+reach ambient platform APIs:
+
+- **`Entropy`** — cryptographic randomness source (seeds the ChaCha20 machinery; key
+  generation for operators/attestation). Browser: `crypto.getRandomValues`; native: OS
+  RNG; bare: hardware RNG or explicit seed injection at provision.
+- **`Clock`** — monotonic time (lifecycle timeouts, leases) and, where the platform has
+  one, wall-clock for event payloads. Wall-clock is **never required** — a bare space
+  without an RTC is conformant; consumers of wall-time must handle absence.
+- **`Spawner`** — the executor seam: how this space polls the async contract traits
+  (browser: microtask/worker; native: tokio; bare: the space's run loop). Hoisted
+  runtime code spawns through this, never through a named executor.
+
+All three are TCK-batteried like the rest of the contract.
 
 ### 5. Surface (new in this refactor; D10)
 
@@ -81,6 +136,21 @@ channel driving it (terminal I/O, file edits, framebuffer regions). Every space 
 a surface; a portable app view targets the surface and therefore runs on all spaces.
 Spaces MAY additionally expose native view slots (see `03-holo-format.md` §views). The
 surface is deliberately small — design systems plug in above it, in future projects.
+
+Shape (P3 freezes the exact signatures; this is the binding sketch):
+
+```rust
+trait Surface {
+    async fn project(&self, session: &Session) -> Result<Kappa>; // state projection κ
+    async fn intent(&self, session: &Session, intent: Intent) -> Result<()>;
+}
+// Intent: closed enum — TerminalInput, FileEdit, FrameRegion, … (exhaustive, like ops)
+```
+
+**Headless conformance**: a space with no display (esp32) implements Surface with the
+null projection — `project` returns the canonical empty-projection κ, `intent` refuses
+with a typed error. The TCK surface battery has a headless profile; headless is a valid
+way to *pass*, not an exemption.
 
 ### 6. Realizations
 

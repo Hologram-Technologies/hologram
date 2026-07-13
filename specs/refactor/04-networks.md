@@ -99,6 +99,30 @@ gating is access control, not confidentiality — which is exactly why this tier
   4. Bare-metal/no_std spaces must be able to participate (cipher choices with no_std
      impls; ChaCha20 machinery already exists in the runtime's entropy class).
 
+## Protocol hardening (requirements, not full design)
+
+- **Wire versioning**: SPINE-4 frames carry a protocol version; peers negotiate at
+  session start and **refuse cleanly** on mismatch (typed error, no silent
+  misinterpretation). Required before P5 — browser peers auto-update via Pages while
+  native peers lag, so cross-release contact is the normal case, not the edge case.
+- **Bounded resolution**: `resolve_closure` enforces caller-supplied depth/size/count
+  budgets (capability-scoped, like all budgets — no hardcoded caps, but no unbounded
+  walks of hostile manifests either). Frame and payload sizes are bounds-checked at the
+  codec; fuzz targets for the frame codec and DHT message parser are CI-permanent from
+  P5 onward.
+- **Abuse economics (open item, pre-GA of public networks)**: PeerEndpoint identities
+  are free to mint, so κ-grinding toward a target's DHT neighborhood (eclipse) and
+  announce-spam are cheap on a public network. Restricted networks are inherently
+  protected (membership gate). For public networks, the design owed before they're
+  promoted beyond experimental: admission cost or rate discipline per peer, bucket
+  diversity policy, and announce quotas — expressed as Network policy, consistent with
+  everything else.
+- **Bootstrap & signaling ownership (P5 scope)**: the P5 demo stands on a concrete
+  story, specced with it: initial peer discovery via a published PeerEndpoint κ
+  (out-of-band exchange or well-known gateway), and browser WebRTC signaling via the
+  existing WS gateway or manual SDP exchange. "Out-of-band" is an accepted answer for
+  P5; an *unowned* answer is not.
+
 ## Open item: durability & replication policy
 
 What is designed above is **access** distribution (any member can resolve any member's
@@ -108,8 +132,12 @@ member pinning κ on the network vs. locally), and how GC interacts with remote
 reachability. Requirements to carry into that design: policy must be expressible per
 Network (capability-based, like everything else); no silent data loss when the sole
 holder of a κ leaves; bare/edge spaces must be able to opt out of holding obligations.
-This is a post-P5 design doc alongside encryption (Phase B); nothing in P1–P5 may
-foreclose it (same rule as `07-governance-requirements.md`).
+Single-peer durability is part of the same design: **browser storage is evictable** (the
+UA may reclaim OPFS under pressure) — the browser space must request persistent storage
+where available and must *detect* eviction (κs that stop resolving locally) rather than
+discover it as corruption; an evicted browser peer degrades to re-fetching from its
+networks. This is a post-P5 design doc alongside encryption (Phase B); nothing in P1–P5
+may foreclose it (same rule as `07-governance-requirements.md`).
 
 ## Conformance
 

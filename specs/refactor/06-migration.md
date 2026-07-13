@@ -22,11 +22,35 @@ authorize starting it.
    SPINE-4 frame); every phase re-derives them bit-identically. A κ break is a format
    change and belongs to P4+ with explicit versioning, never to a refactor move.
 
+## Phase P0 — Close the pin gap (in the holospaces repo; D23)
+
+The always-green rule is vacuous while holospaces pins hologram at rev `18f553d…` —
+main is ~104 commits ahead **including breaking changes** (`feat(exec)!` kappa-leases,
+`feat(backend)!` fused decode attention). P0 makes the gate real before any move:
+
+- In `../holospaces`, still git-pinned: port to current hologram HEAD; absorb the
+  breaking API changes as ordinary dependency-bump commits (this is the port P2 was
+  silently inheriting — done here, it's normal maintenance; done in P2, it poisons the
+  tree-move).
+- Full holospaces V&V green against HEAD.
+- Cut the **bridge tag** hologram-ai will pin (it currently tracks `branch = "main"`,
+  which freezes dead when P2 archives the repo).
+- Obtain **written relicense consent** (D24) from holospaces' second contributor for
+  MIT → MIT OR Apache-2.0.
+
+**Exit criteria**: holospaces V&V green against a hologram HEAD pin; bridge tag
+published and hologram-ai switched onto it; relicense consent recorded. From here, any
+hologram change that breaks holospaces is visible immediately — ground rule 1 has teeth.
+
 ## Phase P1 — In-repo restructure (this repo only)
 
 - **First commit, before any move lands (preflight)**: capture the golden vectors
   (ground rule 5); run the crates.io name/ownership preflight (01 §Publishing); declare
-  MSRV + edition in `workspace.package`; record the CI baseline being defended.
+  MSRV + edition in `workspace.package`; add LICENSE-MIT/LICENSE-APACHE + license fields
+  (D24); audit per-crate `description`/`repository` metadata; pick and wire the release
+  tool (01 §Publishing); enable cargo audit/deny in CI; record the CI baseline being
+  defended. Also: run the **Send-bound spike** for the `Space` trait (02 §trait shape)
+  so the maybe-Send question is answered before P2 imports the browser space.
 - Rename `crates/hologram-backend` → `crates/hologram-compute` (D3).
 - Merge `crates/hologram-host` into `crates/hologram-types` (D15).
 - Create `crates/hologram-space` from `substrate/hologram-substrate-core` +
@@ -40,8 +64,12 @@ authorize starting it.
   `crates/hologram-net/transports/` module pending P2 (spaces don't exist yet).
 - Merge `substrate/hologram-substrate-cli` into `crates/hologram-cli` as subcommands
   (store/net/node), resolving the duplicate binary name.
-- Delete `substrate/`; park `substrate/hologram-efi` under a build-excluded location
-  until P2 moves it to `spaces/holospaces-bare`.
+- Delete `substrate/`; park target-specific and space-destined crates that have no home
+  until P2 under a build-excluded `parked/` directory, moved verbatim: `hologram-efi`,
+  `hologram-store-native`, `hologram-store-bare`, `hologram-store-opfs` (opfs keeps its
+  workspace-excluded wasm32 build + Playwright verification running from the parked
+  path). Parking is explicitly temporary — P2's exit criteria include `parked/` being
+  empty and deleted.
 - Facade features updated to the 01 matrix (minus `space-*` impls).
 
 **Exit criteria**: `substrate/` gone; workspace builds all targets it built before
@@ -58,7 +86,8 @@ binary named `hologram`; no crate named `hologram-backend` remains.
   of the P1 parking module into their spaces.
 - Dedupe the two OPFS stores (substrate's `hologram-store-opfs` vs holospaces-web's
   `OpfsKappaStore`) into one in `holospaces-browser`.
-- Replace all git-pinned `hologram-*` deps (rev `18f553d…`) with workspace path deps.
+- Replace all git-pinned `hologram-*` deps (the P0 HEAD pin) with workspace path deps —
+  after P0 this is a pure dependency-source swap, no API port.
 - Absorb holospaces CI: vv/ suites, CC catalog, QEMU oracles, Playwright — as distinct CI
   jobs so core-crate PRs and space PRs gate appropriately.
 - Relocate holospaces docs (arc42/C4/OPM/15288) under `specs/holospaces/`; ADR numbering
@@ -67,7 +96,7 @@ binary named `hologram`; no crate named `hologram-backend` remains.
 
 **Exit criteria**: full V&V green in this repo's CI; every space crate passes the TCK on
 its target; browser Pages deployment builds from this repo; no git deps between former
-repos remain.
+repos remain; `parked/` is empty and deleted.
 
 ## Phase P3 — Hoist, unify, publish
 
@@ -76,6 +105,13 @@ repos remain.
 - Generalize holospaces `projection.rs` (Workspace/Intent) into the contract's
   **surface capability** (02 §5) + TCK surface battery — P4's view layers depend on
   this existing first.
+- **API shaping fixes the tracked law-2 violation** (02 §Sync): `KappaSync`'s
+  `add_peer(&str)`/`add_gateway(&str)` become κ-shaped (PeerEndpoint κ + ephemeral
+  transport hints) before anything publishes. Includes the Client method-table pass and
+  freezing the `Space`/`Surface` trait signatures per 02's sketches.
+- hologram-ai migration aid: publish a **mapping table** (v0.8.0 crate/feature →
+  facade feature/module) with the release notes — its port crosses the P0-absorbed
+  breaking changes plus the renames, not just a dependency-source swap.
 - Introduce `hologram::Client` (05); rebuild `hologram-ffi` over it (uniffi +
   wasm-bindgen + cbindgen); add the cross-language binding smoke suite.
 - Complete the CLI subcommand tree over Client.
@@ -114,8 +150,10 @@ bytes (same κ); v2 archives still load; release cut.
   networks only); capability-gated fetch/announce/discover (**"restricted"** tier —
   "private" is reserved for P6 encryption, per 04's terminology ladder); `hologram
   network` subcommands; native transports for interop: iroh pump **plus WebRTC endpoint
-  + WebSocket listener** so browser peers reach native peers directly; TCK network
-  battery.
+  + WebSocket listener** so browser peers reach native peers directly; wire-version
+  negotiation + bounded `resolve_closure` + codec fuzz targets (04 §Protocol
+  hardening); the concrete bootstrap/signaling story (04 §hardening — owned, even if
+  out-of-band); TCK network battery.
 
 **Exit criteria**: two-node restricted network demo (browser peer + native peer,
 over a shared transport per 04's interop rule) with a non-member refused at protocol

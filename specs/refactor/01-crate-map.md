@@ -30,12 +30,20 @@ spaces/
   holospaces-bare     # block-device store, wasmi engine selection, bare net (esp32 seed)
 ```
 
-Dependency direction (law): `spaces/* → crates/*`, never the reverse. Within `crates/`,
-the existing kernel → bridge → user layering is preserved. **Single sanctioned
-exception**: the `hologram` facade's optional `space-*` re-export features depend on
-`spaces/*` — legal only because the facade is the top-of-stack aggregator that no other
-workspace crate may depend on. (In-tree spaces therefore import subcrates directly, never
-the facade; external spaces may import either, per D21.)
+Dependency direction (law, D22) — **three tiers**:
+
+| Tier | Crates | May depend on |
+|------|--------|---------------|
+| **core** | everything in `crates/` except the leaf crates | core only (kernel → bridge → user layering preserved) |
+| **spaces** | `spaces/*` | core only |
+| **leaf** | `hologram` (facade + Client), `hologram-cli`, SDK packaging crates | anything |
+
+**Nothing may depend on a leaf crate.** This is what makes the CLI (which wires the
+default native space) and the facade's `space-*` re-exports legal without weakening the
+core/spaces boundary. `hologram-ffi` stays **core-tier** (space-generic binding surface);
+the per-target packaging crates that combine it with a concrete space are leaf. In-tree
+spaces import core subcrates directly, never a leaf crate (cycle); external spaces may
+import the facade, per D21.
 
 ## Layering: who interacts with what
 
@@ -193,6 +201,21 @@ repository by swapping path deps for version deps (see `02-space-contract.md`
   `holospaces-*`), settle publish tokens and org ownership (this repo is
   Hologram-Technologies; UOR crates are UOR-Foundation). If a name is taken, the rename
   decision happens in P1 — not discovered during the P3 release.
+- **License (D24)**: `MIT OR Apache-2.0` workspace-wide. P1 preflight adds LICENSE-MIT +
+  LICENSE-APACHE files and the `license` field to `workspace.package`; the written
+  relicense consent for holospaces' externally-contributed code is a P0 exit criterion
+  (06) — publishing blocks without it.
+- **Release automation + metadata (P1 preflight)**: pick and wire a workspace release
+  tool (release-plz or cargo-release) — ~19 crates publish in dependency order with
+  `version =` fields on path deps; hand-ordering is not a plan. Every publishable crate
+  gets `description` and `repository` fields (crates.io requirements), audited in P1.
+- **Excluded-crate publishing**: workspace-excluded target-specific crates
+  (`holospaces-browser`, EFI) don't inherit lockstep automatically and fail `cargo
+  publish`'s host-side verify. They publish from a target-aware CI job (wasm32
+  toolchain, `--no-verify` only where host-verify is impossible), version-synced to the
+  workspace by the release tool. This is release machinery, not an exemption from D16.
+- **Supply chain**: `cargo audit` + `cargo deny` (licenses, advisories, duplicate-major
+  bans) run in CI from P1 onward.
 - UOR crates (uor-foundation, uor-foundation-sdk, uor-prism, uor-prism-tensor, uor-addr)
   remain **external crates.io dependencies** (D18). hologram re-exports what its API needs
   (e.g. κ/Digest types through `hologram::types`); the long-term aim is that consumers

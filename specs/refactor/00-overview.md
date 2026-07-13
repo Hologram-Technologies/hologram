@@ -90,6 +90,9 @@ Resolved 2026-07-13. Each decision's owning spec is listed; details live there, 
 | D19 | Governance               | requirements captured now; full design deferred post-P5                                                                                         | 07         |
 | D20 | Rust practice            | best-practice Rust per law 7                                                                                                                    | all        |
 | D21 | Space extensibility      | spaces are external-repo capable: the contract + TCK + engines are fully usable from outside this workspace; in-tree spaces are a convenience, not a privilege, and remain extractable to their own repos by a path→version dep swap | 02, 01     |
+| D22 | Leaf tier                | three dependency tiers: core (crates/) → spaces (spaces/ → core only) → leaf {facade+Client, hologram-cli, SDK packaging crates} which may depend on anything; nothing depends on a leaf crate | 01         |
+| D23 | P0 sync phase            | before any refactor move: holospaces (own repo, still git-pinned) ports to hologram HEAD, full V&V green, bridge tag cut for hologram-ai — makes the always-green gate real from P1 | 06         |
+| D24 | License                  | MIT OR Apache-2.0 workspace-wide; LICENSE files added at P1 preflight; written relicense consent from holospaces' second contributor is a P0 exit criterion (publish blocks without it) | 01, 06     |
 
 
 

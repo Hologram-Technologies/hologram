@@ -103,6 +103,29 @@ Manifest fields fixed here (they were prose-only before):
 - Design-system SDKs (Material-like, SwiftUI-like) are **out of scope**: they are future
   projects that compile *down to* view layers; the format only fixes the slots.
 
+## Encoding decisions (fixed so two implementors can't diverge)
+
+- **Physical location**: the AppManifest is a new section — `SectionKind::AppManifest`,
+  appended to the v2 SectionKind enum (existing kinds 0–14 keep their discriminants;
+  κ-stability). A v3 archive without it is invalid; readers detect v2 by FORMAT_VERSION,
+  not by section absence.
+- **`primary` must index a layer with exit semantics** (wasm-codemodule or
+  rootfs-image). A manifest whose primary is a tensor-plan or view layer is rejected at
+  load — an app's exit code cannot be undefined.
+- **Per-layer-kind readiness** (what "boot completes" means in the sequential order):
+  wasm-codemodule → instantiation + init returned; tensor-plan → session loaded and
+  buffers materialized; rootfs-image → emulator signals guest readiness over the devbus
+  (the existing boot-complete signal), not merely kernel start; view → surface attach
+  acknowledged.
+- **Thin archive minimum**: manifest section + certificates + footer fingerprint.
+  Certificates travel with the manifest, never stripped by thinning — verification must
+  not require the fat profile.
+- **Parser hardening (standing requirement)**: the loader parses network-supplied
+  bytes. Fuzz targets for the section parser and manifest decoder are CI-permanent from
+  the P4 codec work onward; all lengths are bounds-checked against declared section
+  sizes; decompression (where used) enforces declared-size limits — no unbounded
+  inflation.
+
 ## Fat and thin archives
 
 Layers are κ-references, so the file form has two profiles — **the app's identity is the
