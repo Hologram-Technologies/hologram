@@ -24,6 +24,9 @@ authorize starting it.
 
 ## Phase P1 — In-repo restructure (this repo only)
 
+- **First commit, before any move lands (preflight)**: capture the golden vectors
+  (ground rule 5); run the crates.io name/ownership preflight (01 §Publishing); declare
+  MSRV + edition in `workspace.package`; record the CI baseline being defended.
 - Rename `crates/hologram-backend` → `crates/hologram-compute` (D3).
 - Merge `crates/hologram-host` into `crates/hologram-types` (D15).
 - Create `crates/hologram-space` from `substrate/hologram-substrate-core` +
@@ -70,6 +73,9 @@ repos remain.
 
 - Hoist `Peer`, `Session`, `Manager`/`Operator`/`Roster`/`Configuration` from
   `spaces/holospaces` into `crates/hologram-runtime` (D7); spaces keep views only.
+- Generalize holospaces `projection.rs` (Workspace/Intent) into the contract's
+  **surface capability** (02 §5) + TCK surface battery — P4's view layers depend on
+  this existing first.
 - Introduce `hologram::Client` (05); rebuild `hologram-ffi` over it (uniffi +
   wasm-bindgen + cbindgen); add the cross-language binding smoke suite.
 - Complete the CLI subcommand tree over Client.
@@ -87,7 +93,9 @@ repos remain.
 **Exit criteria**: release published; hologram-ai CI green against it with zero git deps
 on this repo; FFI smoke suite green for c/python/swift/ts; the Client method-table
 naming review (05 §Principle) completed and the spec table updated to match what ships;
-V&V still green.
+**extraction proof passes** — one in-tree space (e.g. `holospaces-native`) compiles and
+passes the TCK against the published release using **version deps only** (the D21 smoke
+test, kept green from here on); V&V still green.
 
 ## Phase P4 — `.holo` v3 (03-holo-format.md)
 
@@ -123,5 +131,6 @@ tested; no_std participation proven on the bare space.
 
 ## Explicitly deferred beyond P6
 
-Governance/attestation full design (07), design-system SDK projects, additional spaces
-(ios, esp32) — enabled by, not part of, this refactor.
+Governance/attestation full design (07), durability & replication policy design (04
+§Open item — drafted alongside P6, implemented after), design-system SDK projects,
+additional spaces (ios, esp32) — enabled by, not part of, this refactor.

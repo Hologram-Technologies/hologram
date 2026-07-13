@@ -21,11 +21,18 @@ network membership changes, configuration applications. **Boundary rule**: the r
 lifecycle seams (hologram-runtime) and the network's policy decisions (hologram-net +
 space transports) must emit events through one seam that can later be pointed at the
 κ-chain — no lifecycle path may bypass it.
+The audit trail's own access control needs no new mechanism: audit events are κ-content
+like everything else, governed by the network tiers of `04-networks.md`
+(public/restricted/private). No bespoke ACL system may be invented for logs.
 
 ### R3 — Attestation
 `.holo` already carries per-node certificates; v3 adds per-layer certificates (03).
 Attestation extends this to *where and how* something ran: a space must be able to sign
 "session S booted app κ under capability set κ on space-impl κ at engine κ".
+Signing introduces keys, and keys are not κs — so the design MUST bind signing keys to
+κ-addressed identities the way Operator identity already works (self-sovereign key
+material published/referenced as content), never as a second identity surface smuggled
+in through certificates (law 2 applies to attestation too).
 **Boundary rules**:
 - The space contract keeps space-impl identity expressible as a κ (a space build is
   itself content).

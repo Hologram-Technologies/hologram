@@ -69,7 +69,7 @@ Network (realization)
   P5 implements **flat networks only**. Subnet policy-composition semantics (how child
   policy attenuates fetch/announce/membership across levels) get their own design when a
   real use case arrives.
-- "Distributed OPFS" falls out of this: multiple holospaces on one private network share
+- "Distributed OPFS" falls out of this: multiple holospaces on one restricted network share
   a κ-store view — any member resolves any member-announced κ, verify-on-receipt, dedup
   by construction. There is no separate "distributed filesystem" component to build; it
   is the KappaStore + KappaSync + Network policy composition.
@@ -114,5 +114,5 @@ foreclose it (same rule as `07-governance-requirements.md`).
 ## Conformance
 
 `hologram-tck` gains a sync/network battery: verify-on-receipt (reject corrupt frames),
-κ-XOR routing correctness, capability refusal on private networks, and (Phase B)
+κ-XOR routing correctness, capability refusal on restricted networks, and (Phase B)
 ciphertext verification. Every space's transport pump must pass it, same rule as storage.
