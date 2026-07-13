@@ -1,0 +1,23 @@
+[package]
+name = "hologram-conformance"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "BDD (cucumber) conformance runner + honesty meta-gate for the hologram refactor."
+
+[lib]
+doctest = false
+
+[dependencies]
+cucumber = "0.21"
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[[test]]
+name = "bdd"
+harness = false
+
+[[test]]
+name = "meta_gate"
+harness = true

@@ -20,6 +20,7 @@ members = [
     "crates/hologram-cli",
     "crates/hologram-ffi",
     "crates/hologram-bench",
+    "crates/hologram-conformance",
     "substrate/hologram-substrate-core",
     "substrate/hologram-realizations",
     "substrate/hologram-substrate-tck",
