@@ -526,6 +526,46 @@ fn kv_cache_write_round_trip() {
 }
 
 #[test]
+fn decode_attention_valid_round_trip() {
+    use hologram_backend::DecodeAttentionValidCall;
+    let calls = vec![KernelCall::DecodeAttentionValid(DecodeAttentionValidCall {
+        q: ref_buf(0),
+        k_past: ref_buf(1),
+        v_past: ref_buf(2),
+        k_new: ref_buf(3),
+        v_new: ref_buf(4),
+        valid_len: ref_buf(5),
+        output: ref_buf(6),
+        batch: 1,
+        heads: 12,
+        kv_heads: 2,
+        q_rows: 1,
+        past_len: 32768,
+        new_len: 1,
+        head_dim: 128,
+        scale_bits: 0,
+        dtype: 8,
+    })];
+    let bytes = kernel_codec::encode_calls(&calls);
+    let decoded = decoder::decode_calls(&bytes).unwrap();
+    match &decoded[0] {
+        KernelCall::DecodeAttentionValid(d) => {
+            assert_eq!(d.q.slot, 0);
+            assert_eq!(d.valid_len.slot, 5);
+            assert_eq!(d.output.slot, 6);
+            assert_eq!(d.heads, 12);
+            assert_eq!(d.kv_heads, 2);
+            assert_eq!(d.past_len, 32768);
+            assert_eq!(d.q_rows, 1);
+            assert_eq!(d.new_len, 1);
+            assert_eq!(d.head_dim, 128);
+            assert_eq!(d.dtype, 8);
+        }
+        _ => panic!("not decode_attention_valid"),
+    }
+}
+
+#[test]
 fn cast_round_trip() {
     use hologram_backend::CastCall;
     let calls = vec![KernelCall::Cast(CastCall {

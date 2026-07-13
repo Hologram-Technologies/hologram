@@ -7407,6 +7407,19 @@ mod tests {
         };
         let attn_serial = run_attn(&aq, &akp, &avp, &akn, &avn, &amask);
         let attn_pooled_now = || run_attn(&aq, &akp, &avp, &akn, &avn, &amask);
+        // Scalar-mask (κ121) fixture: same operands, realized prefix 700 of
+        // the 1024-row bucket, serial baseline before workers register.
+        let avalid = 700usize;
+        let run_attn_valid =
+            |aq: &[f32], akp: &[f32], avp: &[f32], akn: &[f32], avn: &[f32]| -> Vec<f32> {
+                let mut out = vec![f32::NAN; ab * ah * am * ad];
+                crate::cpu::float_kernels::decode_attention_valid_engine_for_tests(
+                    aq, akp, avp, akn, avn, &mut out, ab, ah, ahkv, am, apast, anew, ad, avalid,
+                );
+                out
+            };
+        let attn_valid_serial = run_attn_valid(&aq, &akp, &avp, &akn, &avn);
+        let attn_valid_pooled_now = || run_attn_valid(&aq, &akp, &avp, &akn, &avn);
 
         let handles: Vec<_> = (0..3u32)
             .map(|i| std::thread::spawn(move || wasm_pool::hologram_worker_run(i)))
@@ -7489,6 +7502,24 @@ mod tests {
                     p.to_bits(),
                     sv.to_bits(),
                     "decode-attention cell {i}: pooled {p} vs serial {sv}"
+                );
+            }
+        }
+
+        // Scalar-mask decode attention (κ121), pooled by row: realized prefix
+        // 700 of the 1024-row bucket — rows·(vis+new)·d clears the effective-
+        // work floor, so the pool admits it. Pooled must equal the pre-
+        // registration serial baseline bit for bit.
+        {
+            for (i, (p, sv)) in attn_valid_pooled_now()
+                .iter()
+                .zip(&attn_valid_serial)
+                .enumerate()
+            {
+                assert_eq!(
+                    p.to_bits(),
+                    sv.to_bits(),
+                    "valid-form decode-attention cell {i}: pooled {p} vs serial {sv}"
                 );
             }
         }

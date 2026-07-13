@@ -105,12 +105,76 @@ fn step_graph(b: u64, h: u64, hkv: u64, bucket: u64, d: u64) -> Graph {
     g
 }
 
+/// The κ121 step graph: identical shape, but the 6th attention operand is
+/// the `[1]` i32 `valid_len` scalar — no mask tensor exists in the graph.
+fn step_graph_valid(b: u64, h: u64, hkv: u64, bucket: u64, d: u64) -> Graph {
+    let m = 1u64;
+    let new = 1u64;
+    let mut g = Graph::new();
+    let q_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(b, h, m, d));
+    let kc_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(b, hkv, bucket, d));
+    let kn_sh = g
+        .shape_registry_mut()
+        .intern(ShapeDescriptor::rank4(b, hkv, new, d));
+    let vl_sh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(1));
+    let pos_sh = g.shape_registry_mut().intern(ShapeDescriptor::rank1(1));
+    let mut input = |sh, dt: u8| {
+        let n = g.add_node(Node {
+            op: GraphOp::Input,
+            inputs: SmallVec::new(),
+            output_dtype: DTypeId(dt),
+            output_shape: sh,
+        });
+        g.add_input(n);
+        InputSource::Node(n)
+    };
+    let q = input(q_sh, DTYPE_F32);
+    let kc = input(kc_sh, DTYPE_F32);
+    let vc = input(kc_sh, DTYPE_F32);
+    let kn = input(kn_sh, DTYPE_F32);
+    let vn = input(kn_sh, DTYPE_F32);
+    let vl = input(vl_sh, DTYPE_I32);
+    let pos = input(pos_sh, DTYPE_I32);
+    let attn = g.add_node(Node {
+        op: GraphOp::Op(OpKind::Attention),
+        inputs: SmallVec::from_iter([q, kc, vc, kn, vn, vl]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: q_sh,
+    });
+    let wk = g.add_node(Node {
+        op: GraphOp::Op(OpKind::KvCacheWrite),
+        inputs: SmallVec::from_iter([kc, kn, pos]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: kc_sh,
+    });
+    let wv = g.add_node(Node {
+        op: GraphOp::Op(OpKind::KvCacheWrite),
+        inputs: SmallVec::from_iter([vc, vn, pos]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: kc_sh,
+    });
+    for (src, sh) in [(attn, q_sh), (wk, kc_sh), (wv, kc_sh)] {
+        let o = g.add_node(Node {
+            op: GraphOp::Output,
+            inputs: SmallVec::from_iter([InputSource::Node(src)]),
+            output_dtype: DTypeId(DTYPE_F32),
+            output_shape: sh,
+        });
+        g.add_output(o);
+    }
+    g
+}
+
 fn main() {
     let (b, h, hkv, d) = (1u64, 12u64, 2u64, 128u64);
     println!("decode step: DecodeAttention + 2×KvCacheWrite, h={h} kv={hkv} d={d}, m=1");
     println!(
-        "{:>8} {:>6} | {:>14} {:>14} | {:>10}",
-        "bucket", "steps", "byte µs/step", "addr µs/step", "boundary"
+        "{:>8} {:>6} | {:>14} {:>14} {:>13} {:>13} | {:>10}",
+        "bucket", "steps", "byte µs/step", "addr µs/step", "valid(3+s)", "valid(full)", "boundary"
     );
     for &bucket in &[2048u64, 8192, 32768] {
         let steps = (65536 / bucket).max(4) as usize;
@@ -184,12 +248,62 @@ fn main() {
         }
         let addr_us = t0.elapsed().as_secs_f64() * 1e6 / steps as f64;
 
+        // κ121 loop: the mask is gone — per-token inputs are q, k_new, v_new,
+        // pos, and 4 bytes of valid_len; the kernel reads only the realized
+        // prefix, so attention work is O(realized), not O(bucket).
+        let vgraph = step_graph_valid(b, h, hkv, bucket, d);
+        let vcompiled = compile(vgraph, BackendKind::Cpu, WittLevel::W32).unwrap();
+        let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+            InferenceSession::load(&vcompiled.archive, CpuBackend::new()).unwrap();
+        let mut lk = sess.intern_input(&cache0_k);
+        let mut lv = sess.intern_input(&cache0_v);
+        let t0 = Instant::now();
+        for s in 0..steps {
+            let lq = sess.intern_input(&qs[s]);
+            let lkn = sess.intern_input(&kns[s]);
+            let lvn = sess.intern_input(&vns[s]);
+            let lvl = sess.intern_input(&((3 + s) as u32).to_le_bytes());
+            let lp = sess.intern_input(&poss[s]);
+            let out = sess
+                .execute_addressed(&[lq, lk, lv, lkn, lvn, lvl, lp])
+                .unwrap();
+            lk = out[1];
+            lv = out[2];
+        }
+        let valid_us = t0.elapsed().as_secs_f64() * 1e6 / steps as f64;
+
+        // κ121 at FULL realization (valid = bucket): the kernel now reads the
+        // whole bucket — the honest compute floor at this context — while the
+        // input path stays O(1). The gap between this and `addr` is the mask
+        // hash + the mask-slot walk; the gap between this and `valid` above
+        // is the O(realized) read law.
+        let mut sess: InferenceSession<CpuBackend<BufferArena>> =
+            InferenceSession::load(&vcompiled.archive, CpuBackend::new()).unwrap();
+        let mut lk = sess.intern_input(&cache0_k);
+        let mut lv = sess.intern_input(&cache0_v);
+        let t0 = Instant::now();
+        for s in 0..steps {
+            let lq = sess.intern_input(&qs[s]);
+            let lkn = sess.intern_input(&kns[s]);
+            let lvn = sess.intern_input(&vns[s]);
+            let lvl = sess.intern_input(&(bucket as u32).to_le_bytes());
+            let lp = sess.intern_input(&poss[s]);
+            let out = sess
+                .execute_addressed(&[lq, lk, lv, lkn, lvn, lvl, lp])
+                .unwrap();
+            lk = out[1];
+            lv = out[2];
+        }
+        let validfull_us = t0.elapsed().as_secs_f64() * 1e6 / steps as f64;
+
         println!(
-            "{:>8} {:>6} | {:>14.1} {:>14.1} | {:>9.1}µs ({:.2}×)",
+            "{:>8} {:>6} | {:>14.1} {:>14.1} {:>13.1} {:>13.1} | {:>9.1}µs ({:.2}×)",
             bucket,
             steps,
             byte_us,
             addr_us,
+            valid_us,
+            validfull_us,
             byte_us - addr_us,
             byte_us / addr_us,
         );

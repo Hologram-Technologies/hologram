@@ -2905,6 +2905,502 @@ pub(crate) unsafe fn decode_attention_tile_rows(
     }
 }
 
+/// One `(batch, head, query-row)` of the **scalar-mask** decode attention
+/// (κ121): the visible keys are the realized past prefix (`vis_past` rows)
+/// followed by the causal chunk prefix (`new_vis` rows), packed into `scores`
+/// in that order — exactly the visible subsequence, in the same order, that
+/// the mask form walks. An erased slot's contribution there is an exact
+/// no-op (`+0.0` to the sum, `+±0.0` to the context, `max(−∞, ·)` to the
+/// shift), so this packed walk is **bit-identical** to the mask form over
+/// finite bytes — and strictly more total: an unrealized row is never *read*
+/// at all, so its bytes may be anything (a NaN there poisons the mask form
+/// through `0·NaN`; here it is unreachable). Per-row cost is
+/// O(vis_past + new_vis), not O(bucket).
+///
+/// Zero visible keys is the pinned exact zero vector, as in the mask form.
+///
+/// # Safety
+/// `q_row` addresses `d` f32; `k_past`/`v_past` address at least
+/// `vis_past · d` f32 from the row's kv-head base (null iff `vis_past == 0`);
+/// `k_new`/`v_new` address at least `new_vis · d` (null iff `new_vis == 0`);
+/// `out_row` addresses `d` f32; `scores` addresses `vis_past + new_vis` f32
+/// scratch exclusive to the caller.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn decode_attention_valid_row(
+    q_row: *const f32,
+    k_past: *const f32,
+    v_past: *const f32,
+    k_new: *const f32,
+    v_new: *const f32,
+    out_row: *mut f32,
+    vis_past: usize,
+    new_vis: usize,
+    d: usize,
+    scale: f32,
+    scores: *mut f32,
+) {
+    let vis = vis_past + new_vis;
+    let out = core::slice::from_raw_parts_mut(out_row, d);
+    if vis == 0 {
+        out.fill(0.0);
+        return;
+    }
+    let q = core::slice::from_raw_parts(q_row, d);
+    let sc = core::slice::from_raw_parts_mut(scores, vis);
+    for (kj, slot) in sc.iter_mut().enumerate() {
+        let krow = if kj < vis_past {
+            core::slice::from_raw_parts(k_past.add(kj * d), d)
+        } else {
+            core::slice::from_raw_parts(k_new.add((kj - vis_past) * d), d)
+        };
+        *slot = crate::cpu::simd::simd_f32_dot(q, krow) / scale;
+    }
+    let max_s = sc.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    for v in sc.iter_mut() {
+        *v -= max_s;
+    }
+    crate::cpu::simd::simd_f32_exp_inplace(sc);
+    let mut sum = 0f32;
+    for &v in sc.iter() {
+        sum += v;
+    }
+    let denom = sum.max(1e-30);
+    out.fill(0.0);
+    for (kj, &v) in sc.iter().enumerate() {
+        let p = v / denom;
+        let vrow = if kj < vis_past {
+            core::slice::from_raw_parts(v_past.add(kj * d), d)
+        } else {
+            core::slice::from_raw_parts(v_new.add((kj - vis_past) * d), d)
+        };
+        crate::cpu::simd::simd_f32_axpy(out, p, vrow);
+    }
+}
+
+/// A contiguous global-row range of the scalar-mask decode attention through
+/// [`decode_attention_valid_row`] — the shared unit of the serial engine,
+/// every native pool task, and every wasm pool participant, so any partition
+/// is bit-identical to serial. Row `r` decomposes as
+/// `(r / (h·m), (r / m) % h, r % m)`; query row `qi` sees `qi + 1` chunk
+/// columns (capped at `new`).
+///
+/// # Safety
+/// Pointers address the full tensors (`q`/`out`: `b·h·m·d`; `k/v_past`:
+/// `b·hkv·past·d`, of which only the first `vis_past` rows per plane are
+/// read; `k/v_new`: `b·hkv·new·d`); callers' row ranges are disjoint;
+/// `scores` addresses `vis_past + new` f32 exclusive to this caller;
+/// `vis_past ≤ past`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn decode_attention_valid_tile_rows(
+    q: *const f32,
+    k_past: *const f32,
+    v_past: *const f32,
+    k_new: *const f32,
+    v_new: *const f32,
+    out: *mut f32,
+    b: usize,
+    h: usize,
+    hkv: usize,
+    m: usize,
+    past: usize,
+    new: usize,
+    d: usize,
+    scale: f32,
+    vis_past: usize,
+    row0: usize,
+    rows: usize,
+    scores: *mut f32,
+) {
+    let _ = b;
+    let group = h / hkv;
+    for r in row0..row0 + rows {
+        let bi = r / (h * m);
+        let hi = (r / m) % h;
+        let qi = r % m;
+        let kvh = bi * hkv + hi / group;
+        let new_vis = (qi + 1).min(new);
+        decode_attention_valid_row(
+            q.add(r * d),
+            if past == 0 {
+                k_past
+            } else {
+                k_past.add(kvh * past * d)
+            },
+            if past == 0 {
+                v_past
+            } else {
+                v_past.add(kvh * past * d)
+            },
+            if new == 0 {
+                k_new
+            } else {
+                k_new.add(kvh * new * d)
+            },
+            if new == 0 {
+                v_new
+            } else {
+                v_new.add(kvh * new * d)
+            },
+            out.add(r * d),
+            vis_past,
+            new_vis,
+            d,
+            scale,
+            scores,
+        );
+    }
+}
+
+/// Pool executor for the scalar-mask decode attention: one participant's
+/// contiguous row range through [`decode_attention_valid_tile_rows`], with
+/// its own stripe of the publisher-allocated score scratch. Bit-identical to
+/// serial by construction.
+///
+/// # Safety
+/// Called only from the `wasm_pool` fork-join: the job's buffers outlive the
+/// join, participant row ranges are disjoint, and `scores` has
+/// `participants · (vis_past + new)` f32 capacity.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-threads",
+    target_feature = "simd128"
+))]
+pub(crate) unsafe fn pool_exec_attn_valid(
+    job: &crate::cpu::wasm_pool::AttnValidJob,
+    part: usize,
+    parts: usize,
+) {
+    let rows = job.b * job.h * job.m;
+    let start = part * rows / parts;
+    let end = (part + 1) * rows / parts;
+    if start >= end {
+        return;
+    }
+    let stripe = job.vis_past + job.new;
+    decode_attention_valid_tile_rows(
+        job.q,
+        job.k_past,
+        job.v_past,
+        job.k_new,
+        job.v_new,
+        job.out,
+        job.b,
+        job.h,
+        job.hkv,
+        job.m,
+        job.past,
+        job.new,
+        job.d,
+        f32::from_bits(job.scale_bits),
+        job.vis_past,
+        start,
+        end - start,
+        job.scores.add(part * stripe),
+    );
+}
+
+/// Serial/pooled engine for the scalar-mask decode attention. Same admission
+/// discipline as the mask form, but the work term uses the **effective**
+/// visible width `vis_past + new` — the kernel only ever reads that many
+/// columns, so admission tracks real work, not the bucket.
+#[allow(clippy::too_many_arguments)]
+fn decode_attention_valid_f32_engine(
+    q32: &[f32],
+    kp32: &[f32],
+    vp32: &[f32],
+    kn32: &[f32],
+    vn32: &[f32],
+    out32: &mut [f32],
+    b: usize,
+    h: usize,
+    hkv: usize,
+    m: usize,
+    past: usize,
+    new: usize,
+    d: usize,
+    scale: f32,
+    vis_past: usize,
+) {
+    let rows = b * h * m;
+    let l_vis = vis_past + new;
+    #[cfg(all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        feature = "wasm-threads"
+    ))]
+    {
+        let parts = crate::cpu::wasm_pool::participants();
+        if parts > 1 {
+            let pooled = with_matmul_scratch(|scores| {
+                scores.clear();
+                scores.resize(parts * l_vis, 0.0);
+                crate::cpu::wasm_pool::fork_join_attn_valid(crate::cpu::wasm_pool::AttnValidJob {
+                    q: q32.as_ptr(),
+                    k_past: kp32.as_ptr(),
+                    v_past: vp32.as_ptr(),
+                    k_new: kn32.as_ptr(),
+                    v_new: vn32.as_ptr(),
+                    out: out32.as_mut_ptr(),
+                    scores: scores.as_mut_ptr(),
+                    b,
+                    h,
+                    hkv,
+                    m,
+                    past,
+                    new,
+                    d,
+                    vis_past,
+                    scale_bits: scale.to_bits(),
+                })
+            });
+            if pooled {
+                return;
+            }
+        }
+    }
+    #[cfg(all(
+        feature = "parallel",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        use crate::cpu::parallel::{self, SendConst, SendMut};
+        let w = parallel::pool().width();
+        if w > 1
+            && rows >= 2
+            && (rows as u64) * (l_vis as u64) * (d as u64) >= crate::cpu::simd::GEMV_PAR_THRESHOLD
+        {
+            let tiles = parallel::output_tiles(1, rows, w, 1);
+            if tiles.len() > 1 {
+                let (qp, kpp, vpp, knp, vnp, op) = (
+                    SendConst(q32.as_ptr()),
+                    SendConst(kp32.as_ptr()),
+                    SendConst(vp32.as_ptr()),
+                    SendConst(kn32.as_ptr()),
+                    SendConst(vn32.as_ptr()),
+                    SendMut(out32.as_mut_ptr()),
+                );
+                let tasks: Vec<Box<dyn FnOnce() + Send>> = tiles
+                    .into_iter()
+                    .map(|(_, _, r0, nrows)| {
+                        Box::new(move || {
+                            let (qp, kpp, vpp, knp, vnp, op) = (qp, kpp, vpp, knp, vnp, op);
+                            with_matmul_scratch(|scores| {
+                                scores.clear();
+                                scores.resize(l_vis, 0.0);
+                                // SAFETY: disjoint row ranges; scratch is this
+                                // task's thread-local.
+                                unsafe {
+                                    decode_attention_valid_tile_rows(
+                                        qp.0,
+                                        kpp.0,
+                                        vpp.0,
+                                        knp.0,
+                                        vnp.0,
+                                        op.0,
+                                        b,
+                                        h,
+                                        hkv,
+                                        m,
+                                        past,
+                                        new,
+                                        d,
+                                        scale,
+                                        vis_past,
+                                        r0,
+                                        nrows,
+                                        scores.as_mut_ptr(),
+                                    );
+                                }
+                            });
+                        }) as Box<dyn FnOnce() + Send>
+                    })
+                    .collect();
+                parallel::pool().run(tasks);
+                return;
+            }
+        }
+    }
+    with_matmul_scratch(|scores| {
+        scores.clear();
+        scores.resize(l_vis, 0.0);
+        // SAFETY: slice lengths validated by the caller; the full row range is
+        // one exclusive borrow; scratch is this thread's.
+        unsafe {
+            decode_attention_valid_tile_rows(
+                q32.as_ptr(),
+                kp32.as_ptr(),
+                vp32.as_ptr(),
+                kn32.as_ptr(),
+                vn32.as_ptr(),
+                out32.as_mut_ptr(),
+                b,
+                h,
+                hkv,
+                m,
+                past,
+                new,
+                d,
+                scale,
+                vis_past,
+                0,
+                rows,
+                scores.as_mut_ptr(),
+            );
+        }
+    });
+}
+
+/// Doc-hidden bench/test re-entry into the scalar-mask decode-attention
+/// engine (default scale), mirroring [`decode_attention_engine_for_tests`].
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_attention_valid_engine_for_tests(
+    q: &[f32],
+    kp: &[f32],
+    vp: &[f32],
+    kn: &[f32],
+    vn: &[f32],
+    out: &mut [f32],
+    b: usize,
+    h: usize,
+    hkv: usize,
+    m: usize,
+    past: usize,
+    new: usize,
+    d: usize,
+    vis_past: usize,
+) {
+    let scale = libm::sqrtf(d as f32).max(1.0);
+    decode_attention_valid_f32_engine(
+        q, kp, vp, kn, vn, out, b, h, hkv, m, past, new, d, scale, vis_past,
+    );
+}
+
+/// Dispatch for the scalar-mask decode attention (κ121): the visibility law
+/// is compiled in; the realized length arrives as a 4-byte operand, read
+/// here — content, exactly like the KV write position. Requires
+/// `q_rows == new_len ≥ 1` (decode `1×1`, chunked prefill `C×C`,
+/// speculative verify `K×K`); any other pairing has no defined row↔key
+/// correspondence and is refused. The f16/bf16 path widens the declared
+/// buffers whole (the κ119 cost model); the f32 production path reads only
+/// the realized prefix.
+pub fn decode_attention_valid_float<W: Workspace>(
+    c: &DecodeAttentionValidCall,
+    ws: &mut W,
+) -> Result<(), BackendError> {
+    let b = c.batch as usize;
+    let h = c.heads as usize;
+    let m = c.q_rows as usize;
+    let past = c.past_len as usize;
+    let new = c.new_len as usize;
+    let d = c.head_dim as usize;
+    if b == 0 || h == 0 || d == 0 {
+        return Ok(());
+    }
+    if m == 0 || m != new {
+        return Err(BackendError::UnsupportedOp(
+            "decode_attention_valid: q_rows must equal new_len and be at least 1 \
+             (the causal law pairs query row i with chunk key row i)",
+        ));
+    }
+    let hkv = if c.kv_heads == 0 {
+        h
+    } else {
+        c.kv_heads as usize
+    };
+    if hkv == 0 || !h.is_multiple_of(hkv) {
+        return Err(BackendError::UnsupportedOp(
+            "decode_attention_valid: heads must be a multiple of kv_heads (grouped-query)",
+        ));
+    }
+    let dt = c.dtype;
+    let es = elem_size(dt)?;
+    let q_total = b * h * m * d;
+    let past_total = b * hkv * past * d;
+    let new_total = b * hkv * new * d;
+    let (reads, out) = ws
+        .split_borrow(
+            &[c.q, c.k_past, c.v_past, c.k_new, c.v_new, c.valid_len],
+            c.output,
+        )
+        .ok_or(BackendError::SlotOutOfRange(c.output.slot))?;
+    let q = reads[0]
+        .get(..q_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.q.slot))?;
+    let kp = reads[1]
+        .get(..past_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.k_past.slot))?;
+    let vp = reads[2]
+        .get(..past_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.v_past.slot))?;
+    let kn = reads[3]
+        .get(..new_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.k_new.slot))?;
+    let vn = reads[4]
+        .get(..new_total * es)
+        .ok_or(BackendError::SlotOutOfRange(c.v_new.slot))?;
+    let vl = reads[5]
+        .get(..4)
+        .ok_or(BackendError::SlotOutOfRange(c.valid_len.slot))?;
+    if out.len() < q_total * es {
+        return Err(BackendError::SlotOutOfRange(c.output.slot));
+    }
+    // The realized length: unsigned, clamped to the bucket — `≥ past_len`
+    // (e.g. after the ring wraps) means the whole bucket is realized.
+    let vis_past = (u32::from_le_bytes(vl[..4].try_into().unwrap()) as usize).min(past);
+    let scale = match c.scale_bits {
+        0 => libm::sqrtf(d as f32).max(1.0),
+        bits => {
+            let sm = f32::from_bits(bits);
+            if sm > 0.0 {
+                1.0 / sm
+            } else {
+                libm::sqrtf(d as f32).max(1.0)
+            }
+        }
+    };
+    if dt == DTYPE_F32 {
+        let (q32, kp32, vp32, kn32, vn32, out32) = (
+            bytemuck::cast_slice::<u8, f32>(q),
+            bytemuck::cast_slice::<u8, f32>(kp),
+            bytemuck::cast_slice::<u8, f32>(vp),
+            bytemuck::cast_slice::<u8, f32>(kn),
+            bytemuck::cast_slice::<u8, f32>(vn),
+            bytemuck::cast_slice_mut::<u8, f32>(out),
+        );
+        decode_attention_valid_f32_engine(
+            q32, kp32, vp32, kn32, vn32, out32, b, h, hkv, m, past, new, d, scale, vis_past,
+        );
+        return Ok(());
+    }
+    if dt != DTYPE_BF16 && dt != DTYPE_F16 {
+        return Err(BackendError::UnsupportedOp(
+            "decode_attention_valid: only f32/f16/bf16 are supported compute dtypes",
+        ));
+    }
+    with_widen4_scratch(|qb, kb, vb, ob| {
+        qb.clear();
+        qb.extend((0..q_total).map(|i| read_float(q, i, dt)));
+        kb.clear();
+        kb.extend((0..past_total).map(|i| read_float(kp, i, dt)));
+        kb.extend((0..new_total).map(|i| read_float(kn, i, dt)));
+        vb.clear();
+        vb.extend((0..past_total).map(|i| read_float(vp, i, dt)));
+        vb.extend((0..new_total).map(|i| read_float(vn, i, dt)));
+        ob.clear();
+        ob.resize(q_total, 0.0);
+        let (kp32, kn32) = kb.split_at(past_total);
+        let (vp32, vn32) = vb.split_at(past_total);
+        decode_attention_valid_f32_engine(
+            qb, kp32, vp32, kn32, vn32, ob, b, h, hkv, m, past, new, d, scale, vis_past,
+        );
+        for (i, &val) in ob.iter().enumerate() {
+            write_float(out, i, val, dt);
+        }
+    });
+    Ok(())
+}
+
 pub fn where_float<W: Workspace>(c: &WhereCall, ws: &mut W) -> Result<(), BackendError> {
     let n = c.element_count as usize;
     let dt = c.dtype;

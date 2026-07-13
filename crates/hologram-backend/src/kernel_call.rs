@@ -654,6 +654,67 @@ pub struct DecodeAttentionCall {
     pub dtype: u8,
 }
 
+/// Fused decode attention whose visibility law is **compiled in** — the
+/// scalar-mask form of [`DecodeAttentionCall`] (new κ discriminant 121; the
+/// κ119 mask form stays for genuinely arbitrary masks).
+///
+/// Decode visibility has exactly two parts, and both are *law*, not data:
+/// a realized-length prefix over the past bucket, and the causal triangle
+/// within the appended chunk. The κ119 form carries them pre-encoded in an
+/// `[q_rows, past+new]` f32 mask — an O(bucket) operand re-hashed every
+/// token, the last O(bucket) input on the per-token path. Here the law is
+/// structure and the single per-token datum rides a **4-byte operand**:
+///
+/// - `valid_len`: little-endian `u32` `[1]`. Past column `j` is visible iff
+///   `j < min(valid_len, past_len)` — the realized prefix; `valid_len ≥
+///   past_len` (e.g. after the ring bucket wraps) means the whole bucket.
+/// - New column `j` is visible to query row `i` iff `j ≤ i` — causal within
+///   the chunk. The call **requires `q_rows == new_len ≥ 1`** (decode `1×1`,
+///   chunked prefill `C×C`, speculative verify `K×K`); any other pairing has
+///   no defined row↔key correspondence and is refused loud.
+///
+/// Two consequences, both witnessed:
+///
+/// - **Bit-identity with the mask form** when the erased rows hold finite
+///   bytes: the kernel walks the same visible columns in the same order, and
+///   an erased slot's exact-zero contribution is an exact no-op.
+/// - **Totality beyond it**: this kernel never *reads* an unrealized row at
+///   all — scores, softmax, and the context AXPY touch only
+///   `min(valid_len, past_len) + new` columns. Unrealized K/V may hold any
+///   bytes (even NaN, which would poison the mask form through `0·NaN`),
+///   and per-row work is O(realized), not O(bucket).
+///
+/// A fully-invisible row (`valid_len == 0` with no visible chunk column —
+/// impossible under `q_rows == new_len ≥ 1`, but pinned anyway) is the exact
+/// zero vector, as in the mask form.
+#[derive(Debug, Clone, Copy)]
+pub struct DecodeAttentionValidCall {
+    pub q: BufferRef,
+    pub k_past: BufferRef,
+    pub v_past: BufferRef,
+    pub k_new: BufferRef,
+    pub v_new: BufferRef,
+    /// Realized past length: 4-byte little-endian `u32`, clamped to
+    /// `past_len`. Content, like the KV write position — one compiled
+    /// step-graph serves every step.
+    pub valid_len: BufferRef,
+    pub output: BufferRef,
+    pub batch: u32,
+    pub heads: u32,
+    /// `0` ⇒ multi-head (`kv_heads == heads`).
+    pub kv_heads: u32,
+    /// Query rows; must equal `new_len`.
+    pub q_rows: u32,
+    /// Bucket rows per kv head.
+    pub past_len: u32,
+    /// Appended rows per kv head; must equal `q_rows`.
+    pub new_len: u32,
+    pub head_dim: u32,
+    /// `f32::to_bits` of the softmax score multiplier; `0` ⇒ `1/√head_dim`.
+    pub scale_bits: u32,
+    pub dtype: u8,
+}
+
 /// Fixed-bucket KV-cache row write at a **runtime** position — the append
 /// half of the resident decode path ([`DecodeAttentionCall`] is the read
 /// half). Pure data movement: for each of `planes` (= batch · kv_heads)
@@ -1179,6 +1240,7 @@ pub enum KernelCall {
     Attention(AttentionCall),
     DecodeAttention(DecodeAttentionCall),
     KvCacheWrite(KvCacheWriteCall),
+    DecodeAttentionValid(DecodeAttentionValidCall),
     FusedSwiGlu(MatMulCall),
 
     // Utility
@@ -1357,6 +1419,20 @@ impl KernelCall {
                 .u32(c.new_rows)
                 .u32(c.row_bytes)
                 .done(120),
+            // Scalar-mask decode attention — new capability, new opcode
+            // (121). The visibility law is structure; the realized length is
+            // content in the valid_len operand's κ-label.
+            K::DecodeAttentionValid(c) => Pb::new()
+                .u32(c.batch)
+                .u32(c.heads)
+                .u32(c.kv_heads)
+                .u32(c.q_rows)
+                .u32(c.past_len)
+                .u32(c.new_len)
+                .u32(c.head_dim)
+                .u32(c.scale_bits)
+                .u8(c.dtype)
+                .done(121),
             K::FusedSwiGlu(c) => p_matmul(c).done(69),
             K::Pad(c) => p_layout(c).done(70),
             K::Expand(c) => p_expand(c).done(71),
@@ -1559,6 +1635,17 @@ pub fn buffers(call: &KernelCall) -> Vec<BufferRef> {
         K::Attention(c) => vec![c.q, c.k, c.v, c.output],
         K::DecodeAttention(c) => vec![c.q, c.k_past, c.v_past, c.k_new, c.v_new, c.mask, c.output],
         K::KvCacheWrite(c) => vec![c.cache, c.new, c.pos, c.output],
+        K::DecodeAttentionValid(c) => {
+            vec![
+                c.q,
+                c.k_past,
+                c.v_past,
+                c.k_new,
+                c.v_new,
+                c.valid_len,
+                c.output,
+            ]
+        }
 
         K::Where(c) => vec![c.cond, c.a, c.b, c.output],
 
@@ -1671,6 +1758,7 @@ pub fn call_dtype(call: &KernelCall) -> u8 {
 
         K::Attention(c) => c.dtype,
         K::DecodeAttention(c) => c.dtype,
+        K::DecodeAttentionValid(c) => c.dtype,
         // Byte-level data movement (a row is `row_bytes`, any dtype).
         K::KvCacheWrite(_) => hologram_types::DTypeId::U8.raw(),
 
