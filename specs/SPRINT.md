@@ -48,9 +48,12 @@ honesty meta-gate green.
   - [x] **2: substrate-tck → crates/hologram-tck** — battery crate renamed/relocated;
     SP-1 witness updated (stays green); 4 dependents redirected. (store-mem absorption
     into hologram-tck deferred to a sub-step.) All 7 scenarios + tests + clippy/fmt green.
-  - [ ] 3: **core (+realizations) → hologram-space** — the big one (88 refs / 16 crates +
-    a crate-merge); a focused dedicated pass · 4: net (net-http/tcp/bare → hologram-net) ·
-    5: runtime (runtime-*/engines → hologram-runtime).
+  - [x] **3: substrate-core → hologram-space** (the foundational one): trait surfaces +
+    κ-addressing folded in as the `substrate` module; 88 refs across 16 crates redirected;
+    substrate-core deleted. All 7 scenarios (GV-1/LAW-1/MG-5/SP-1 witnesses now via
+    hologram_space) + full native/wasm build + tests + clippy/fmt green. `substrate/`: 14→11.
+  - [ ] 4: realizations → hologram-space · 5: net (net-http/tcp/bare → hologram-net) ·
+    6: runtime (runtime-*/engines → hologram-runtime) · 7: store-mem → hologram-tck.
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
