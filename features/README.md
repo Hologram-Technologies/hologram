@@ -26,10 +26,19 @@ root `CONFORMANCE.md` normative ledger.
 
 ## Honesty rule
 
-The meta-gate (`crates/hologram-conformance/tests/meta_gate.rs`) enforces that every
-BDD-class catalog row has exactly one scenario, every scenario names a real row, and the
-row's status glyph matches the scenario's `@status`. **No requirement is "done" until its
-scenario is green and CI-gated.**
+The meta-gate (`crates/hologram-conformance/tests/meta_gate.rs`) statically enforces, for
+every BDD-class row: exactly one scenario with the same `@id`; the row's status glyph
+agrees with the scenario's `@status`; the row's `Witness` path + scenario name matches the
+actual feature file; and each feature file declares exactly one scenario. This keeps the
+ledger and the scenarios from drifting.
+
+What the static gate does **not** yet assert is that an `enforced` scenario actually
+*passes* — scenarios are `pending` (skipped) until a phase implements their steps. The
+run-result teeth arrive per phase: when a suite's phase lands, its steps are implemented,
+its `@status` flips to `enforced`, its row flips to ✅, and `.fail_on_skipped()` is enabled
+for that suite so an enforced-but-unimplemented scenario fails the build. **The rule — no
+requirement is "done" until its scenario is green and CI-gated — is enforced from that
+point on for each scenario as it turns `enforced`.**
 
 ## Phased rollout
 

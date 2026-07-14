@@ -1,8 +1,9 @@
 //! Parser for the `CONFORMANCE.md` normative ledger.
 //!
 //! A row is a markdown table line whose first cell is a bold row id
-//! (`| **LAW-1** | … | ✅ |`). We extract the id, its class prefix, and the
-//! trailing status glyph.
+//! (`| **LAW-1** | … | ✅ |`). We extract the id, its class prefix, the trailing
+//! status glyph, and (when present) the backtick-wrapped `Witness` path of the
+//! form `sN_.../file.feature::Scenario name`.
 
 /// Enforcement status, single-sourced from the CONFORMANCE.md legend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,12 +25,26 @@ impl Status {
     }
 }
 
-/// One catalog row: class prefix, full id, declared status.
+/// One catalog row: class prefix, full id, declared status, and the witness
+/// path (`file.feature::Scenario name`) when the row cites a BDD scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogRow {
     pub class: String,
     pub id: String,
     pub status: Status,
+    pub witness: Option<String>,
+}
+
+/// Extract a `sN_.../file.feature::Scenario name` witness from a table cell,
+/// stripping any surrounding backticks/whitespace. `None` if the cell holds no
+/// feature-scenario witness of that form.
+fn extract_witness(cell: &str) -> Option<String> {
+    let token = cell.trim().trim_matches('`').trim();
+    if token.contains(".feature::") {
+        Some(token.to_string())
+    } else {
+        None
+    }
 }
 
 /// Parse every id-bearing table row from a CONFORMANCE.md body.
@@ -61,10 +76,12 @@ pub fn parse_catalog(md: &str) -> Vec<CatalogRow> {
         let Some(status) = cells.iter().rev().find_map(|c| Status::from_legend(c)) else {
             continue;
         };
+        let witness = cells.iter().find_map(|c| extract_witness(c));
         rows.push(CatalogRow {
             class: class.to_string(),
             id: id.to_string(),
             status,
+            witness,
         });
     }
     rows
@@ -92,7 +109,8 @@ mod tests {
             CatalogRow {
                 class: "LAW".into(),
                 id: "LAW-1".into(),
-                status: Status::Gap
+                status: Status::Gap,
+                witness: None,
             }
         );
         assert_eq!(rows[1].status, Status::Partial);
@@ -101,7 +119,8 @@ mod tests {
             CatalogRow {
                 class: "KC".into(),
                 id: "KC-1".into(),
-                status: Status::Enforced
+                status: Status::Enforced,
+                witness: None,
             }
         );
     }
@@ -118,5 +137,16 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "GV-1");
         assert_eq!(rows[0].status, Status::Gap);
+    }
+
+    #[test]
+    fn extracts_backtick_wrapped_witness() {
+        let md = "| **GV-1** | traceability | BDD scenario | `s6_governance/trace.feature::references yields full provenance` | ⛔ |\n";
+        let rows = parse_catalog(md);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].witness.as_deref(),
+            Some("s6_governance/trace.feature::references yields full provenance")
+        );
     }
 }
