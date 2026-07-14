@@ -30,4 +30,10 @@ pub struct ConformanceWorld {
     /// SP-3: the output values produced by driving the spike slice's
     /// compile→store→boot (stored as primitives to keep the lib domain-type-free).
     pub sp3_output: Option<Vec<f32>>,
+    /// SP-1: set once the reference store has run the full `hologram-tck` battery
+    /// without a violation (the battery panics on the first failure).
+    pub sp1_tck_passed: bool,
+    /// LAW-1 (SPINE-1): `(authentic_verifies, tampered_verifies)` from re-deriving a
+    /// realization's identity — authentic must be `true`, tampered `false`.
+    pub law1_verify: Option<(bool, bool)>,
 }

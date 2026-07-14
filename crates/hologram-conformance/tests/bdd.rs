@@ -8,7 +8,8 @@ use hologram_conformance::ConformanceWorld;
 use cucumber::{given, then, when, World};
 use hologram_realizations::ContainerManifest;
 use hologram_spike_sp3::{Client, SpikeSpace};
-use hologram_substrate_core::{address_bytes, Realization};
+use hologram_store_mem::MemKappaStore;
+use hologram_substrate_core::{address_bytes, verify_kappa, Realization};
 
 #[given("the conformance harness is wired")]
 fn harness_wired(_w: &mut ConformanceWorld) {}
@@ -58,6 +59,47 @@ fn gv1_assert(w: &mut ConformanceWorld) {
     );
 }
 
+// ───────────────────── LAW-1 — SPINE-1: canonical bytes or nothing ─────────────────────
+// A realization's identity IS the σ-axis address of its canonical bytes — there is no
+// identity without canonical bytes. Identity is never trusted: it is verified by
+// re-derivation. Authentic bytes re-derive to the κ (true); any tampering fails (false).
+// Witnessed against `hologram-substrate-core::verify_kappa` + a `ContainerManifest`.
+
+#[given("a realization addressed only by its canonical bytes")]
+fn law1_given(w: &mut ConformanceWorld) {
+    let manifest = ContainerManifest {
+        code: address_bytes(b"law1-code"),
+        initial_state: address_bytes(b"law1-state"),
+        parameters: address_bytes(b"law1-params"),
+    };
+    w.canonical = manifest.canonicalize();
+}
+
+#[when("its identity is checked")]
+fn law1_check(w: &mut ConformanceWorld) {
+    let kappa = address_bytes(&w.canonical);
+    let authentic = verify_kappa(&w.canonical, &kappa).expect("verify authentic");
+    let mut tampered_bytes = w.canonical.clone();
+    tampered_bytes[0] ^= 0xff; // flip a byte — no longer the canonical form
+    let tampered = verify_kappa(&tampered_bytes, &kappa).expect("verify tampered");
+    w.law1_verify = Some((authentic, tampered));
+}
+
+#[then("re-derivation of the canonical bytes verifies, and any tampering is rejected")]
+fn law1_assert(w: &mut ConformanceWorld) {
+    let (authentic, tampered) = w
+        .law1_verify
+        .expect("the When step must have checked identity by re-derivation");
+    assert!(
+        authentic,
+        "authentic canonical bytes must re-derive to the κ (SPINE-1)"
+    );
+    assert!(
+        !tampered,
+        "tampered bytes must fail re-derivation — identity is never trusted, only re-derived"
+    );
+}
+
 // ─────────────────────── SP-3 — space composition (P0.5 spike) ───────────────────────
 // A `Client` over the `Space` contract drives compile→store→boot: a synchronous compile,
 // a synchronous store, and the async network/boot seam calling into synchronous compute.
@@ -92,6 +134,32 @@ fn sp3_assert(w: &mut ConformanceWorld) {
         &vec![0.0, 42.0, -7.0, 1024.0],
         "compile→store→boot must compute the i64→f32 cast — the slice composes async \
          storage/boot with sync compute end to end"
+    );
+}
+
+// ───────────────────── SP-1 — passing the TCK is conformance ─────────────────────
+// The `hologram-tck` battery is the single definition of conformance, run identically
+// against every backend (substrate-tripling). Witnessed against the reference store:
+// if the shared battery passes, the store is conformant (`store_battery` panics on the
+// first violation). Same pattern as GV-1 — the invariant witnessed against a reference.
+
+#[given("a space implementing the hologram-space traits")]
+fn sp1_given(_w: &mut ConformanceWorld) {}
+
+#[when("it runs the hologram-tck battery")]
+fn sp1_run(w: &mut ConformanceWorld) {
+    let store = MemKappaStore::new();
+    hologram_substrate_tck::store_battery(&store);
+    // Reached only if every battery assertion held.
+    w.sp1_tck_passed = true;
+}
+
+#[then("passing the TCK is the definition of conformance")]
+fn sp1_assert(w: &mut ConformanceWorld) {
+    assert!(
+        w.sp1_tck_passed,
+        "the reference store must pass the shared hologram-tck battery — passing the \
+         TCK is the definition of conformance"
     );
 }
 

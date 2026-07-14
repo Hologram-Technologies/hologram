@@ -1,4 +1,4 @@
-@class:SP @id:SP-1 @spec:02-space-contract @phase:P2 @status:pending
+@class:SP @id:SP-1 @spec:02-space-contract @phase:P2 @status:enforced
 Feature: space contract conformance
   Scenario: passing the TCK is conformance
     Given a space implementing the hologram-space traits

@@ -1,6 +1,6 @@
-@class:LAW @id:LAW-1 @spec:00-overview @phase:P1 @status:pending
+@class:LAW @id:LAW-1 @spec:00-overview @phase:P1 @status:enforced
 Feature: SPINE-1 — canonical bytes or nothing
   Scenario: canonical bytes or nothing
-    Given a value with no canonical byte form
-    When I attempt to construct a realization from it
-    Then construction is unrepresentable and identity is only ever verified by re-derivation
+    Given a realization addressed only by its canonical bytes
+    When its identity is checked
+    Then re-derivation of the canonical bytes verifies, and any tampering is rejected

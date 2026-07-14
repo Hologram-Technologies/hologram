@@ -1407,7 +1407,9 @@ dependencies = [
  "cucumber",
  "hologram-realizations",
  "hologram-spike-sp3",
+ "hologram-store-mem",
  "hologram-substrate-core",
+ "hologram-substrate-tck",
  "tokio",
 ]
 

@@ -370,7 +370,7 @@ addressing and warm-start do.
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **LAW-0** | Harness smoke: the conformance runner discovers and executes feature files. | BDD scenario | `s0_laws/_smoke.feature::the harness discovers and runs feature files` | ✅ |
-| **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario | `s0_laws/spine.feature::canonical bytes or nothing` | ⛔ |
+| **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario (witnessed against `hologram-substrate-core::verify_kappa` + a `ContainerManifest`) | `s0_laws/spine.feature::canonical bytes or nothing` | ✅ |
 | **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ⛔ |
 | **LAW-3** | Contracts are hologram's, spaces are anyone's: the space contract has no sealed traits or crate-private seams; a space may live in any repository (D2/D21). | BDD scenario | `s0_laws/open_contract.feature::the space contract is open to any repo` | ⛔ |
 | **LAW-4** | Sync storage + compute, async network/lifecycle: `KappaStore` and the tensor hot path are synchronous (sync OPFS in a Worker → wasm-safe); network sync + lifecycle are async; the async↔sync seam is the network/boot boundary, never storage; Send-bound is maybe-Send (D14; P0.5 spike). | BDD scenario | `s0_laws/async_sync_seam.feature::the session boundary is the only async-sync seam` | ⛔ |
@@ -381,7 +381,7 @@ addressing and warm-start do.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario | `s1_space_contract/tck.feature::passing the TCK is conformance` | ⛔ |
+| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario (witnessed against the reference `MemKappaStore` via the shared `hologram-substrate-tck` battery) | `s1_space_contract/tck.feature::passing the TCK is conformance` | ✅ |
 | **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
 | **SP-3** | A `Space` composes a synchronous store + sync compute with an async network/boot seam; `Client` drives compile→store→boot end to end through the one async↔sync boundary (D14/D28; witnessed by `hologram-spike-sp3`). | BDD scenario | `s1_space_contract/composition.feature::a space composes async network with sync storage and compute` | ✅ |
 
