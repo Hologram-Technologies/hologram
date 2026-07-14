@@ -28,6 +28,13 @@
 | **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
+| **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
+| **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
+| **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
+| **NW** | Network κ-realization, KappaSync/DHT, public/restricted/private tiers — spec 04 | BDD scenarios (s3_networks) |
+| **TL** | One binary, one public facade crate, FFI over Client — spec 05 | BDD scenarios (s4_tooling) |
+| **MG** | Phased always-green migration gates (P0–P6) — spec 06 | BDD scenarios (s5_migration) |
+| **GV** | Governance R1–R4 boundary rules — spec 07 | BDD scenarios (s6_governance) |
 
 ## AS — Addressing / σ-axis (external: BLAKE3 reference)
 
@@ -357,3 +364,57 @@ per-cache block constant) over a compile-time panel-packed weight layout
 (zero runtime copy), with activation and residual epilogues fused — so
 efficiency holds across scale by construction, the same way the runtime's
 addressing and warm-start do.
+
+## LAW — repo-wide laws (refactor spec 00; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario | `s0_laws/spine.feature::canonical bytes or nothing` | ⛔ |
+| **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ⛔ |
+| **LAW-5** | Capability attenuation only: a delegated capability is always a subset of the grantor's; amplification is unrepresentable. | BDD scenario | `s0_laws/attenuation.feature::delegation cannot amplify` | ⛔ |
+| **LAW-6** | One programmatic surface: CLI / FFI / SDK are thin shells over the `Client` facade; behavior lives in exactly one place. | BDD scenario | `s0_laws/one_surface.feature::entry points are thin shells` | ⛔ |
+
+## SP — space contract + TCK (refactor spec 02; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario | `s1_space_contract/tck.feature::passing the TCK is conformance` | ⛔ |
+| **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
+
+## HF — .holo v3 format (refactor spec 03; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **HF-1** | `.holo` v3 is the one application container; a tensor-only archive is the degenerate single-layer case. | BDD scenario | `s2_holo_format/container.feature::single format covers tensor-only` | ⛔ |
+| **HF-2** | App nesting is capability-attenuated: a child's κ refs + delegated CapabilitySet are a subset of the parent's. | BDD scenario | `s2_holo_format/nesting.feature::nested app cannot exceed parent` | ⛔ |
+| **HF-3** | v3 per-layer certificates verify; inspection APIs never strip them. | BDD scenario | `s2_holo_format/certificates.feature::per-layer certificates verify` | ⛔ |
+
+## NW — networks (refactor spec 04; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **NW-1** | A Network is a κ-realization embedding its membership + policy operand κs (SPINE-2/3); no side tables. | BDD scenario | `s3_networks/realization.feature::network embeds operand κs` | ⛔ |
+| **NW-2** | Network tiers (public / restricted / private) gate capability at the protocol boundary, never in business logic. | BDD scenario | `s3_networks/tiers.feature::tiers gate at the boundary` | ⛔ |
+
+## TL — tooling (refactor spec 05; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **TL-1** | Exactly one binary named `hologram` ships. | BDD scenario | `s4_tooling/one_binary.feature::exactly one binary` | ⛔ |
+| **TL-2** | Exactly one public crate (`hologram`) is imported with features; users never import subcrates. | BDD scenario | `s4_tooling/one_facade.feature::one public crate` | ⛔ |
+
+## MG — migration gates (refactor spec 06; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **MG-1** | Every phase boundary P0–P6 is always-green: the full holospaces V&V passes before the next phase starts. | BDD scenario | `s5_migration/always_green.feature::each phase boundary is green` | ⛔ |
+| **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ⛔ |
+
+## GV — governance requirements (refactor spec 07; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **GV-1** | R1 traceability: every new realization embeds its operand κs so `references()` yields the full provenance closure — no side tables. | BDD scenario | `s6_governance/traceability.feature::references yields full provenance` | ⛔ |
+| **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ⛔ |
+| **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ⛔ |
+| **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ⛔ |
