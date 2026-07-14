@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 hologram-substrate-core = { path = "../hologram-substrate-core", default-features = false }
-hologram-bare-hal       = { path = "../hologram-bare-hal" }
+hologram-space = { path = "../../crates/hologram-space", default-features = false }
 hologram-store-bare     = { path = "../hologram-store-bare", default-features = false }
 hologram-realizations   = { path = "../hologram-realizations", default-features = false }
 uefi = { version = "0.35", features = ["alloc", "global_allocator", "panic_handler", "logger"] }

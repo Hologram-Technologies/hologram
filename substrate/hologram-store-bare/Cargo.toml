@@ -8,7 +8,7 @@ description = "Bare-metal KappaStore over a BlockDevice (bare-metal spec §5): f
 
 [dependencies]
 hologram-substrate-core = { workspace = true }
-hologram-bare-hal       = { workspace = true }
+hologram-space       = { workspace = true }
 # `hologram-host` is reused for the σ-axis Hasher (architecture G-E1); the bare-metal store
 # verifies each κ-page against the same BLAKE3 path as the rest of the substrate.
 hologram-host           = { workspace = true }

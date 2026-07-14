@@ -1,25 +1,23 @@
-#![no_std]
-//! # hologram-bare-hal
+//! Hardware-abstraction seam (spec 02 §4): `BlockDevice` + `NetworkInterface`.
 //!
-//! The bare-metal substrate's hardware-abstraction seam (bare-metal spec §3.2.1). Above these
-//! traits, `BareMetalKappaStore`/`BareMetalKappaSync` are device-agnostic; below them, per-device
-//! drivers (NVMe, AHCI, e1000, virtio-net) implement the hardware specifics. Adding a device class
-//! is implementing one of these traits. `no_std + alloc`.
-//!
-//! The full UEFI boot path + real drivers live in the bare-metal binary (target-only); this crate
-//! is the seam, exercised here by an in-memory [`RamBlockDevice`].
+//! Absorbed from the former `hologram-bare-hal` crate (P1). Above these traits the
+//! device-agnostic store/net backends run; below them per-device drivers (NVMe, AHCI,
+//! e1000, virtio-net) implement the hardware specifics — adding a device class is
+//! implementing one of these traits. `no_std + alloc`. The full UEFI boot path + real
+//! drivers live in the bare space's target-only binary; this is the seam, exercised here
+//! by an in-memory [`RamBlockDevice`].
 
-extern crate alloc;
-
-use alloc::boxed::Box; // async-trait emits unqualified `Box` (no_std).
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::task::Waker;
 use spin::Mutex;
+// `async_trait` emits an unqualified `Box`; not in the `no_std` prelude (std provides it).
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
 
-/// A block device — NVMe namespace, AHCI port, virtio-blk, etc. All I/O is async; the driver wakes
-/// the caller's task on completion (bare-metal §3.2.1).
+/// A block device — NVMe namespace, AHCI port, virtio-blk, etc. All I/O is async; the
+/// driver wakes the caller's task on completion (bare-metal §3.2.1).
 #[async_trait::async_trait]
 pub trait BlockDevice: Send + Sync {
     fn sector_size(&self) -> u32;
@@ -34,8 +32,8 @@ pub trait BlockDevice: Send + Sync {
     fn device_uuid(&self) -> [u8; 16];
 }
 
-/// A network interface — e1000, virtio-net, igb, etc. Transmit/receive are buffer-oriented; smoltcp
-/// drives polling (bare-metal §3.2.1).
+/// A network interface — e1000, virtio-net, igb, etc. Transmit/receive are
+/// buffer-oriented; smoltcp drives polling (bare-metal §3.2.1).
 pub trait NetworkInterface: Send + Sync {
     fn mac_address(&self) -> [u8; 6];
     fn mtu(&self) -> u32;
@@ -62,10 +60,10 @@ pub enum NicError {
     LinkDown,
 }
 
-/// An in-memory [`BlockDevice`] — a RAM disk. Proves the seam is implementable and is the test
-/// fixture a `BareMetalKappaStore` runs against without real hardware. `Clone` shares one backing
-/// store (via `Arc`), so two `BareMetalKappaStore`s opened on a clone observe the same "disk" — the
-/// reboot/persistence test.
+/// An in-memory [`BlockDevice`] — a RAM disk. Proves the seam is implementable and is the
+/// fixture a bare `KappaStore` runs against without real hardware. `Clone` shares one
+/// backing store (via `Arc`), so two stores opened on a clone observe the same "disk" —
+/// the reboot/persistence test.
 #[derive(Clone)]
 pub struct RamBlockDevice {
     sector_size: u32,

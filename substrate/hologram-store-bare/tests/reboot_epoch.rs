@@ -5,7 +5,7 @@
 //! `reboot_epoch` bumped on every successful `open`; the `RuntimeStateRegion` realization carries
 //! the pair `(reboot_epoch, generation)`, which is a total order on persisted copies.
 
-use hologram_bare_hal::RamBlockDevice;
+use hologram_space::RamBlockDevice;
 use hologram_realizations::RuntimeStateRegion;
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{address_bytes, KappaStore, Realization};

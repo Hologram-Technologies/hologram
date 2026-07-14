@@ -32,7 +32,6 @@ members = [
     "substrate/hologram-runtime",
     "substrate/hologram-runtime-wasmtime",
     "substrate/hologram-substrate-cli",
-    "substrate/hologram-bare-hal",
     "substrate/hologram-store-bare",
     "substrate/hologram-runtime-bare",
     "substrate/hologram-net-bare",
@@ -65,7 +64,6 @@ default-members = [
     "substrate/hologram-runtime",
     "substrate/hologram-runtime-wasmtime",
     "substrate/hologram-substrate-cli",
-    "substrate/hologram-bare-hal",
     "substrate/hologram-store-bare",
     "substrate/hologram-runtime-bare",
     "substrate/hologram-net-bare",
@@ -111,7 +109,6 @@ hologram-store-native   = { path = "substrate/hologram-store-native" }
 hologram-net-http       = { path = "substrate/hologram-net-http" }
 hologram-runtime        = { path = "substrate/hologram-runtime", default-features = false }
 hologram-runtime-wasmtime = { path = "substrate/hologram-runtime-wasmtime" }
-hologram-bare-hal       = { path = "substrate/hologram-bare-hal", default-features = false }
 hologram-store-bare     = { path = "substrate/hologram-store-bare", default-features = false }
 hologram-runtime-bare   = { path = "substrate/hologram-runtime-bare", default-features = false }
 hologram-net-bare       = { path = "substrate/hologram-net-bare", default-features = false }

@@ -6,7 +6,7 @@
 //! warmer peers that didn't have it.
 
 use async_trait::async_trait;
-use hologram_bare_hal::RamBlockDevice;
+use hologram_space::RamBlockDevice;
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_store_mem::MemKappaStore;
 use hologram_substrate_core::{

@@ -30,7 +30,7 @@ use core::future::Future;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use hashbrown::{HashMap, HashSet};
-use hologram_bare_hal::BlockDevice;
+use hologram_space::BlockDevice;
 use hologram_substrate_core::{
     address_bytes, references, Bytes, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry,
     StoreError,

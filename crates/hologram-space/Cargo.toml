@@ -9,6 +9,10 @@ description = "The hologram space contract: the trait surface a host implements 
 [dependencies]
 hologram-substrate-core = { workspace = true }
 async-trait = { workspace = true }
+spin = { workspace = true }
+
+[dev-dependencies]
+pollster = { workspace = true }
 
 [features]
 default = ["std"]

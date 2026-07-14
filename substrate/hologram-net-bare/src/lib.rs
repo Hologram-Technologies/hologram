@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use core::future::poll_fn;
 use core::task::Poll;
 use hashbrown::{HashMap, HashSet};
-use hologram_bare_hal::NetworkInterface;
+use hologram_space::NetworkInterface;
 use hologram_substrate_core::{
     verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaSync, SyncError,
 };
@@ -329,7 +329,7 @@ impl fmt::Debug for BareNetSync {
 mod tests {
     use super::*;
     use core::task::Waker;
-    use hologram_bare_hal::NicError;
+    use hologram_space::NicError;
     use hologram_store_mem::MemKappaStore;
     use hologram_substrate_core::KappaStore;
 

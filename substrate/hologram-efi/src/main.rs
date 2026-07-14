@@ -19,7 +19,7 @@
 
 extern crate alloc;
 
-use hologram_bare_hal::RamBlockDevice;
+use hologram_space::RamBlockDevice;
 use hologram_realizations::{ContainerManifest, HardwareInventory, REGISTRY};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{

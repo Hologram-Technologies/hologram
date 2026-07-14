@@ -10,7 +10,7 @@ description = "Wasmtime ContainerEngine backend (spec §7.2 Option A): instantia
 hologram-runtime        = { workspace = true }
 hologram-substrate-core = { workspace = true }
 hologram-realizations   = { workspace = true }
-hologram-bare-hal       = { workspace = true }
+hologram-space       = { workspace = true }
 wasmtime                = { workspace = true }
 async-trait             = { workspace = true }
 spin                    = { workspace = true }

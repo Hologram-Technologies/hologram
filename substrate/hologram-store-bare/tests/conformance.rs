@@ -1,7 +1,7 @@
 //! The bare-metal block-device store runs the **same TCK** as mem/redb (integration), plus
 //! format/reachability/**reboot persistence** end-to-end over a RAM block device.
 
-use hologram_bare_hal::{BlockDevice, RamBlockDevice};
+use hologram_space::{BlockDevice, RamBlockDevice};
 use hologram_realizations::{ContainerManifest, REGISTRY};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{KappaStore, Realization};
@@ -67,7 +67,7 @@ fn bare_persists_across_reboot() {
 fn bt_many_entries_round_trip_across_multiple_leaf_pages() {
     // arch §11.3: leaf-page chain handles arbitrary entry counts; round-trip across reboots must
     // hold for stores spanning multiple pages.
-    use hologram_bare_hal::RamBlockDevice;
+    use hologram_space::RamBlockDevice;
     let device = RamBlockDevice::new(512, 4096);
     let store = BareMetalKappaStore::open(device.clone()).unwrap();
     let mut kappas = Vec::new();
@@ -90,7 +90,7 @@ fn bt_free_list_reclaims_evicted_extents_across_reboots() {
     // arch §11.3: GC eviction of κs releases their LBAs to a persistent free-list. Subsequent puts
     // first reuse a free extent (best-fit) before bumping the alloc cursor. The free list survives
     // reboots, so a long-running store doesn't leak LBAs.
-    use hologram_bare_hal::RamBlockDevice;
+    use hologram_space::RamBlockDevice;
     let device = RamBlockDevice::new(512, 4096);
     let store = BareMetalKappaStore::open(device.clone()).unwrap();
 
@@ -142,7 +142,7 @@ fn bt_torn_header_write_reverts_to_prior_root() {
     // arch §11.3: dual-buffered headers + alternating writes. Corrupting the most-recently-written
     // header simulates a torn write — the previous header (older `gen`, but valid) wins on reopen,
     // so the store reverts to the prior committed state atomically.
-    use hologram_bare_hal::RamBlockDevice;
+    use hologram_space::RamBlockDevice;
     let device = RamBlockDevice::new(512, 4096);
     let store = BareMetalKappaStore::open(device.clone()).unwrap();
     let k_a = store.put("blake3", b"committed-before-torn-write").unwrap();

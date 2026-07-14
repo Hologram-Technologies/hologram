@@ -13,12 +13,16 @@
 //! futures are `!Send` — mirroring the substrate's `KappaSync` / `LocalKappaSync` split.
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// `alloc` is used by the HAL module (and by `async_trait`'s `Box`ed futures) in both std
+// and no_std builds.
+extern crate alloc;
 // `async_trait` desugars to `Pin<Box<dyn Future>>`; in `no_std` builds `Box` is not in
 // the prelude, so bring it in from `alloc` (in `std` builds it already is).
 #[cfg(not(feature = "std"))]
-extern crate alloc;
-#[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
+
+pub mod hal;
+pub use hal::{BlockDevice, DeviceError, NetworkInterface, NicError, RamBlockDevice};
 
 pub use hologram_substrate_core::{Bytes, KappaLabel71, KappaStore, StoreError};
 

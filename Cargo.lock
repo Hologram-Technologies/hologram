@@ -1336,15 +1336,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-bare-hal"
-version = "0.9.0"
-dependencies = [
- "async-trait",
- "pollster",
- "spin",
-]
-
-[[package]]
 name = "hologram-bench"
 version = "0.9.0"
 dependencies = [
@@ -1469,8 +1460,8 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-bare-hal",
  "hologram-realizations",
+ "hologram-space",
  "hologram-store-mem",
  "hologram-substrate-core",
  "pollster",
@@ -1553,9 +1544,9 @@ name = "hologram-runtime-wasmtime"
 version = "0.9.0"
 dependencies = [
  "async-trait",
- "hologram-bare-hal",
  "hologram-realizations",
  "hologram-runtime",
+ "hologram-space",
  "hologram-store-bare",
  "hologram-store-mem",
  "hologram-store-native",
@@ -1574,6 +1565,8 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "hologram-substrate-core",
+ "pollster",
+ "spin",
 ]
 
 [[package]]
@@ -1597,9 +1590,9 @@ name = "hologram-store-bare"
 version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
- "hologram-bare-hal",
  "hologram-host",
  "hologram-realizations",
+ "hologram-space",
  "hologram-substrate-core",
  "hologram-substrate-tck",
  "pollster",

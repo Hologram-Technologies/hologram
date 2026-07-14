@@ -15,7 +15,7 @@
 
 use alloc::sync::Arc;
 use core::task::Waker;
-use hologram_bare_hal::{NetworkInterface, NicError};
+use hologram_space::{NetworkInterface, NicError};
 use hologram_substrate_core::RuntimeError;
 use spin::Mutex;
 use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};

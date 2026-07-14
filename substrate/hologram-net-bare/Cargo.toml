@@ -8,7 +8,7 @@ description = "Bare-metal KappaSync for the Hologram substrate (architecture §2
 
 [dependencies]
 hologram-substrate-core = { workspace = true }
-hologram-bare-hal       = { workspace = true }
+hologram-space       = { workspace = true }
 spin                    = { workspace = true }
 hashbrown               = { workspace = true }
 async-trait             = { workspace = true }

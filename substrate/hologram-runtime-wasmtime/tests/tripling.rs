@@ -16,7 +16,7 @@
 //! `scripts/opfs-browser-test.sh` Playwright harness against `address_bytes`. Together those
 //! cover all four documented substrates (TR `[track]` resolved).
 
-use hologram_bare_hal::RamBlockDevice;
+use hologram_space::RamBlockDevice;
 use hologram_realizations::ContainerManifest;
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;

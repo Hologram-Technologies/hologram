@@ -5,7 +5,7 @@
 //! driver's code. Symmetric to the DU class for block devices (`driver_backed_device.rs`).
 
 use async_trait::async_trait;
-use hologram_bare_hal::NetworkInterface;
+use hologram_space::NetworkInterface;
 use hologram_runtime_wasmtime::WasmNetworkInterface;
 use hologram_store_mem::MemKappaStore;
 use hologram_substrate_core::{
@@ -114,7 +114,7 @@ fn ni_imported_wasm_driver_routes_packets() {
         assert!(
             matches!(
                 nic.transmit(b"another"),
-                Err(hologram_bare_hal::NicError::Backpressure)
+                Err(hologram_space::NicError::Backpressure)
             ),
             "queue full → backpressure"
         );
