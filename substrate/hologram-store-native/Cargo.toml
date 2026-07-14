@@ -11,7 +11,7 @@ hologram-substrate-core = { workspace = true }
 redb = { workspace = true }
 
 [dev-dependencies]
-hologram-substrate-tck = { workspace = true }
+hologram-tck = { workspace = true }
 hologram-realizations  = { workspace = true }
 criterion              = { workspace = true }
 

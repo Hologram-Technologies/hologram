@@ -5,7 +5,7 @@ use hologram_space::{BlockDevice, RamBlockDevice};
 use hologram_realizations::{ContainerManifest, REGISTRY};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_substrate_core::{KappaStore, Realization};
-use hologram_substrate_tck::store_battery;
+use hologram_tck::store_battery;
 
 fn dev() -> RamBlockDevice {
     RamBlockDevice::new(512, 8192) // 4 MiB RAM disk

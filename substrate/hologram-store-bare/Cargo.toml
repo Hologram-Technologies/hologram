@@ -16,7 +16,7 @@ hashbrown               = { workspace = true }
 spin                    = { workspace = true }
 
 [dev-dependencies]
-hologram-substrate-tck = { workspace = true }
+hologram-tck = { workspace = true }
 hologram-realizations  = { workspace = true }
 pollster               = { workspace = true }
 

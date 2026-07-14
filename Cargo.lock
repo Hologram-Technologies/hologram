@@ -1400,7 +1400,7 @@ dependencies = [
  "hologram-spike-sp3",
  "hologram-store-mem",
  "hologram-substrate-core",
- "hologram-substrate-tck",
+ "hologram-tck",
  "tokio",
 ]
 
@@ -1594,7 +1594,7 @@ dependencies = [
  "hologram-realizations",
  "hologram-space",
  "hologram-substrate-core",
- "hologram-substrate-tck",
+ "hologram-tck",
  "pollster",
  "spin",
 ]
@@ -1609,7 +1609,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hologram-realizations",
  "hologram-substrate-core",
- "hologram-substrate-tck",
+ "hologram-tck",
  "pollster",
  "spin",
 ]
@@ -1621,7 +1621,7 @@ dependencies = [
  "criterion",
  "hologram-realizations",
  "hologram-substrate-core",
- "hologram-substrate-tck",
+ "hologram-tck",
  "redb",
 ]
 
@@ -1656,7 +1656,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-substrate-tck"
+name = "hologram-tck"
 version = "0.9.0"
 dependencies = [
  "hologram-substrate-core",

@@ -175,7 +175,7 @@ fn sp1_given(_w: &mut ConformanceWorld) {}
 #[when("it runs the hologram-tck battery")]
 fn sp1_run(w: &mut ConformanceWorld) {
     let store = MemKappaStore::new();
-    hologram_substrate_tck::store_battery(&store);
+    hologram_tck::store_battery(&store);
     // Reached only if every battery assertion held.
     w.sp1_tck_passed = true;
 }

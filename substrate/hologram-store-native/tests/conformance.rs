@@ -4,7 +4,7 @@
 use hologram_realizations::{ContainerManifest, REGISTRY};
 use hologram_store_native::NativeKappaStore;
 use hologram_substrate_core::{KappaStore, Realization};
-use hologram_substrate_tck::store_battery;
+use hologram_tck::store_battery;
 
 #[test]
 fn native_passes_the_kappastore_tck() {

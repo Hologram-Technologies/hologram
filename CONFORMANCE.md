@@ -381,7 +381,7 @@ addressing and warm-start do.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario (witnessed against the reference `MemKappaStore` via the shared `hologram-substrate-tck` battery) | `s1_space_contract/tck.feature::passing the TCK is conformance` | ✅ |
+| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario (witnessed against the reference `MemKappaStore` via the shared `hologram-tck` battery) | `s1_space_contract/tck.feature::passing the TCK is conformance` | ✅ |
 | **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
 | **SP-3** | A `Space` composes a synchronous store + sync compute with an async network/boot seam; `Client` drives compile→store→boot end to end through the one async↔sync boundary (D14/D28; witnessed by `hologram-spike-sp3`). | BDD scenario | `s1_space_contract/composition.feature::a space composes async network with sync storage and compute` | ✅ |
 

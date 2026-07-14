@@ -165,5 +165,5 @@ fn rz_references_inverse_projection_is_exact() {
 /// The in-memory reference passes the shared TCK identically to every other backend (TR).
 #[test]
 fn mem_passes_the_kappastore_tck() {
-    hologram_substrate_tck::store_battery(&MemKappaStore::new());
+    hologram_tck::store_battery(&MemKappaStore::new());
 }

@@ -25,7 +25,7 @@ members = [
     "crates/hologram-spike-sp3",
     "substrate/hologram-substrate-core",
     "substrate/hologram-realizations",
-    "substrate/hologram-substrate-tck",
+    "crates/hologram-tck",
     "substrate/hologram-store-mem",
     "substrate/hologram-store-native",
     "substrate/hologram-net-http",
@@ -57,7 +57,7 @@ default-members = [
     "crates/hologram-spike-sp3",
     "substrate/hologram-substrate-core",
     "substrate/hologram-realizations",
-    "substrate/hologram-substrate-tck",
+    "crates/hologram-tck",
     "substrate/hologram-store-mem",
     "substrate/hologram-store-native",
     "substrate/hologram-net-http",
@@ -103,7 +103,7 @@ hologram-spike-sp3 = { path = "crates/hologram-spike-sp3", default-features = fa
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
 hologram-substrate-core = { path = "substrate/hologram-substrate-core", default-features = false }
 hologram-realizations   = { path = "substrate/hologram-realizations", default-features = false }
-hologram-substrate-tck  = { path = "substrate/hologram-substrate-tck", default-features = false }
+hologram-tck            = { path = "crates/hologram-tck", default-features = false }
 hologram-store-mem      = { path = "substrate/hologram-store-mem", default-features = false }
 hologram-store-native   = { path = "substrate/hologram-store-native" }
 hologram-net-http       = { path = "substrate/hologram-net-http" }
