@@ -39,4 +39,7 @@ pub struct ConformanceWorld {
     /// LAW-3 (D21): set once a downstream crate's `Space` impl is accepted by `Client`
     /// and reaches a contract-mediated operation — proof the contract has no sealed traits.
     pub law3_accepted: bool,
+    /// MG-5 (ground rule 5): set once every frozen golden vector re-derives to its
+    /// recorded κ, bit-for-bit — the κ-stability safety net for crate moves.
+    pub mg5_stable: bool,
 }

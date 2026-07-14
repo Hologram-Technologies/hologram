@@ -6,10 +6,10 @@
 use hologram_conformance::ConformanceWorld;
 
 use cucumber::{given, then, when, World};
-use hologram_realizations::ContainerManifest;
+use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_spike_sp3::{Client, SpikeSpace};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, verify_kappa, Realization};
+use hologram_substrate_core::{address_bytes, verify_kappa, Capabilities, Realization};
 
 #[given("the conformance harness is wired")]
 fn harness_wired(_w: &mut ConformanceWorld) {}
@@ -186,6 +186,67 @@ fn sp1_assert(w: &mut ConformanceWorld) {
         w.sp1_tck_passed,
         "the reference store must pass the shared hologram-tck battery — passing the \
          TCK is the definition of conformance"
+    );
+}
+
+// ─────────────────── MG-5 — κ-stability golden vectors (P1 preflight) ───────────────────
+// Frozen reference κs captured 2026-07-14 against the current substrate. Ground rule 5:
+// crate moves/renames MUST NOT change any canonical byte form or κ — every phase re-derives
+// these and must match bit-for-bit. A mismatch is a κ break (a versioned format change,
+// never a move). Witnessed against hologram-substrate-core + hologram-realizations.
+
+const GV_SIGMA_1_KAPPA: &str =
+    "blake3:6d3fd64e3ed30b2904d0dfe85ded905fe7bcf88d4c872156ec1729ac1b741745";
+const GV_SIGMA_2_KAPPA: &str =
+    "blake3:1669bd4584b6af8519f71e9f9116a4ad6aaae70950a70787ee5718c00558e18d";
+const GV_MANIFEST_KAPPA: &str =
+    "blake3:2d4f5ff9117227d79c5cd31d6774af96246896bd80a013d69b20c714246a7224";
+const GV_CAPS_KAPPA: &str =
+    "blake3:efd7908e447824e02df07049a68f6c5018663484bf87e63d5a17e4ae43ce02b0";
+
+fn golden_manifest() -> ContainerManifest {
+    ContainerManifest {
+        code: address_bytes(b"gv-code-module"),
+        initial_state: address_bytes(b"gv-initial-state"),
+        parameters: address_bytes(b"gv-parameters"),
+    }
+}
+
+fn golden_caps() -> CapabilitySet {
+    CapabilitySet::new(Capabilities {
+        storage_roots: vec![address_bytes(b"gv-root")],
+        publish_channels: Vec::new(),
+        subscribe_channels: Vec::new(),
+        storage_quota_bytes: 1024,
+        memory_max_bytes: 4096,
+        cpu_time_per_event_ms: 10,
+        priority_weight: 1,
+        network_fetch: true,
+        network_announce: false,
+    })
+}
+
+#[given("frozen golden vectors for the σ-axis and the realization canonical forms")]
+fn mg5_given(_w: &mut ConformanceWorld) {}
+
+#[when("each is re-derived from the same inputs")]
+fn mg5_rederive(w: &mut ConformanceWorld) {
+    let sigma1 = address_bytes(b"hologram-golden-vector/sigma/1").to_string();
+    let sigma2 = address_bytes(b"hologram-golden-vector/sigma/2").to_string();
+    let manifest = address_bytes(&golden_manifest().canonicalize()).to_string();
+    let caps = address_bytes(&golden_caps().canonicalize()).to_string();
+    w.mg5_stable = sigma1 == GV_SIGMA_1_KAPPA
+        && sigma2 == GV_SIGMA_2_KAPPA
+        && manifest == GV_MANIFEST_KAPPA
+        && caps == GV_CAPS_KAPPA;
+}
+
+#[then("every vector yields its frozen κ, bit-for-bit")]
+fn mg5_assert(w: &mut ConformanceWorld) {
+    assert!(
+        w.mg5_stable,
+        "a golden vector re-derived to a different κ — canonical bytes or the σ-axis \
+         changed. This is a κ break (a versioned format change), never a crate move."
     );
 }
 

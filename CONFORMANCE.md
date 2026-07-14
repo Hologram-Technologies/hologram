@@ -417,7 +417,7 @@ addressing and warm-start do.
 | **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ⛔ |
 | **MG-3** | P0.5 de-risk spike (D28): the Space+Client vertical slice compiles and runs on native AND wasm32, resolving the Send-bound question, before any P1 move. | BDD scenario | `s5_migration/p05_spike.feature::the de-risk spike proves composition before P1` | ⛔ |
 | **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ⛔ |
-| **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ⛔ |
+| **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario (frozen σ-axis + realization κs re-derived vs `hologram-substrate-core`/`-realizations`) | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ✅ |
 | **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ⛔ |
 
 ## GV — governance requirements (refactor spec 07; BDD)
