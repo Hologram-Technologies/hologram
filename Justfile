@@ -12,7 +12,7 @@ ci: fmt-check clippy test
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance parallel perf wasm embedded
+vv: fmt-check clippy test conformance bdd parallel perf wasm embedded
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).
@@ -20,6 +20,16 @@ conformance:
     cargo test -p hologram-archive --test conformance --test model_address --features model-formats
     cargo test -p hologram-backend --test conformance --features cpu
     cargo test -p hologram-exec --test conformance
+
+# BDD conformance suite (refactor classes LAW/SP/HF/NW/TL/MG/GV). Runs the cucumber
+# runner + the honesty meta-gate (catalog ↔ scenario bijection). See features/README.md.
+bdd:
+    cargo test -p hologram-conformance --test bdd
+    cargo test -p hologram-conformance --test meta_gate
+
+# Regenerate + verify the BDD status column against actual scenario tags. Fails on drift.
+conformance-report:
+    cargo test -p hologram-conformance --test meta_gate
 
 # Parallel-execution conformance (class PA): multi-core ≡ single-thread,
 # byte-identical + deterministic. Runs the kernel suites with the in-tree
