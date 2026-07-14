@@ -38,19 +38,42 @@ main is ~104 commits ahead **including breaking changes** (`feat(exec)!` kappa-l
 - Obtain **written relicense consent** (D24) from holospaces' second contributor for
   MIT → MIT OR Apache-2.0.
 
+- **Bundle the review (D29)**: obtain the relicense consent *and* a spec review of the
+  holospaces-restructuring parts (02 §hoist, 01 mapping) from the contributor at the same
+  time — objections surface before the move, not after.
+
 **Exit criteria**: holospaces V&V green against a hologram HEAD pin; bridge tag
-published and hologram-ai switched onto it; relicense consent recorded. From here, any
-hologram change that breaks holospaces is visible immediately — ground rule 1 has teeth.
+published and hologram-ai switched onto it; relicense consent recorded; restructuring
+review acknowledged. From here, any hologram change that breaks holospaces is visible
+immediately — ground rule 1 has teeth.
+
+## Phase P0.5 — De-risk spike (throwaway; D28)
+
+Before committing to the full move, prove the one structural bet the whole plan rests on:
+that the **async contract world and the sync compute hot path compose under one
+`Space` + `Client`**. On a throwaway branch, build the thinnest vertical slice —
+`Client::builder().space(…).compile(src).open(κ).boot()` — and run it on **both** a
+native and a wasm TCK target, resolving the Send-bound question (02 §trait shape)
+empirically rather than by assertion.
+
+**Exit criteria**: the slice compiles and runs on native + wasm; the Send-bound policy is
+decided from evidence and written back into 02; the spike branch is **discarded** (it
+informs P1's real work, it does not ship). If the slice *can't* be made to work, the
+crate map (01) is revisited before any production move — this is the cheap place to learn
+that, not P1.
 
 ## Phase P1 — In-repo restructure (this repo only)
 
 - **First commit, before any move lands (preflight)**: capture the golden vectors
-  (ground rule 5); run the crates.io name/ownership preflight (01 §Publishing); declare
-  MSRV + edition in `workspace.package`; add LICENSE-MIT/LICENSE-APACHE + license fields
-  (D24); audit per-crate `description`/`repository` metadata; pick and wire the release
-  tool (01 §Publishing); enable cargo audit/deny in CI; record the CI baseline being
-  defended. Also: run the **Send-bound spike** for the `Space` trait (02 §trait shape)
-  so the maybe-Send question is answered before P2 imports the browser space.
+  (ground rule 5) **and the perf baselines** (D27 — roofline/kernel numbers from
+  `hologram-bench`, the release gate's reference); run the crates.io name/ownership
+  preflight (01 §Publishing); declare MSRV + edition in `workspace.package`; add
+  LICENSE-MIT/LICENSE-APACHE + license fields (D24); audit per-crate
+  `description`/`repository` metadata; pick and wire the release tool (01 §Publishing);
+  enable cargo audit/deny in CI; **decide CI tiering** (fast core gate per-PR, heavy V&V
+  on the merge queue — so "always green" survives QEMU + Playwright + binding builds);
+  record the CI baseline being defended. The Send-bound question is answered by the P0.5
+  spike, not re-run here.
 - Rename `crates/hologram-backend` → `crates/hologram-compute` (D3).
 - Merge `crates/hologram-host` into `crates/hologram-types` (D15).
 - Create `crates/hologram-space` from `substrate/hologram-substrate-core` +
@@ -166,6 +189,21 @@ cut.
 
 **Exit criteria**: private-network confidentiality demo; dedup semantics documented and
 tested; no_std participation proven on the bare space.
+
+## The refactor ends at P3 (D26)
+
+**P0–P3 is the refactor**: the ecosystem consolidated, `substrate/` gone, one binary,
+one facade, first lockstep release published, hologram-ai migrated onto it. At that point
+the reorganization is *done and shipped* — it must be allowed to stabilize (real use,
+bug-fix releases) before anything else begins.
+
+**P4–P6 are a distinct follow-on effort**, not a continuation: `.holo` v3, networks, and
+encryption are net-new feature development that happens to build on the reorganized tree.
+They carry the opposite risk profile from a move ("build something new" vs "prove nothing
+changed"), so they get their own go/no-go decision — and may warrant their own planning
+session — after P3 has proven itself. Nothing in P0–P3 may foreclose them (the
+format/network fields and seams are already reserved), but starting them is a separate
+choice, not the default momentum of finishing P3.
 
 ## Explicitly deferred beyond P6
 

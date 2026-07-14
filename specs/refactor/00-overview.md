@@ -94,6 +94,10 @@ Resolved 2026-07-13. Each decision's owning spec is listed; details live there, 
 | D23 | P0 sync phase            | before any refactor move: holospaces (own repo, still git-pinned) ports to hologram HEAD, full V&V green, bridge tag cut for hologram-ai — makes the always-green gate real from P1 | 06         |
 | D24 | License                  | MIT OR Apache-2.0 workspace-wide; LICENSE files added at P1 preflight; written relicense consent from holospaces' second contributor is a P0 exit criterion (publish blocks without it) | 01, 06     |
 | D25 | Front-door form factor   | the access story is a four-rung funnel (TRY-URL / RUN-binary / BUILD-embed / SHIP-app); **the URL — zero-install browser boot — is the hero**, others are progressive-disclosure rungs; browser space is a first-class permanently-green target | 08         |
+| D26 | Refactor/feature seam    | P0–P3 (reorg + first release + hologram-ai migrated) is THE refactor and ends at a hard stop; P4–P6 (.holo v3, networks, encryption) are a distinct follow-on effort, started only after P3 ships and stabilizes | 06         |
+| D27 | Perf gate                | kernel/roofline baselines captured at P1 preflight (with the golden vectors); each release re-runs `hologram-bench`; regression beyond threshold blocks the release — perf joins κ-stability as a sacred invariant | 01, 06     |
+| D28 | De-risk spike            | a throwaway P0.5 vertical-slice spike (one space + Client + compile→run on a native AND a wasm TCK target; resolves the Send-bound question) runs before P1; it informs, never ships | 06         |
+| D29 | Review gate              | before code moves: holospaces contributor's written relicense consent (already a P0 exit, D24) is bundled with a spec review of the holospaces-restructuring parts | 06         |
 
 
 

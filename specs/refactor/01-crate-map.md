@@ -216,6 +216,11 @@ repository by swapping path deps for version deps (see `02-space-contract.md`
   workspace by the release tool. This is release machinery, not an exemption from D16.
 - **Supply chain**: `cargo audit` + `cargo deny` (licenses, advisories, duplicate-major
   bans) run in CI from P1 onward.
+- **Perf as a release gate (D27)**: `hologram-bench` roofline/kernel baselines are
+  captured at P1 preflight alongside the golden vectors and re-run at every release; a
+  regression past threshold blocks the release, exactly as a κ break does. For a
+  project whose value is kernel throughput, a silent perf regression across a move is as
+  serious as a correctness break — so it is gated, not merely reported.
 - UOR crates (uor-foundation, uor-foundation-sdk, uor-prism, uor-prism-tensor, uor-addr)
   remain **external crates.io dependencies** (D18). hologram re-exports what its API needs
   (e.g. κ/Digest types through `hologram::types`); the long-term aim is that consumers
