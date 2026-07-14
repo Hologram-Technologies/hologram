@@ -52,8 +52,14 @@ honesty meta-gate green.
     κ-addressing folded in as the `substrate` module; 88 refs across 16 crates redirected;
     substrate-core deleted. All 7 scenarios (GV-1/LAW-1/MG-5/SP-1 witnesses now via
     hologram_space) + full native/wasm build + tests + clippy/fmt green. `substrate/`: 14→11.
-  - [ ] 4: realizations → hologram-space · 5: net (net-http/tcp/bare → hologram-net) ·
-    6: runtime (runtime-*/engines → hologram-runtime) · 7: store-mem → hologram-tck.
+  - [x] **4: realizations → hologram-space** — canonical forms folded in as the
+    `realizations` module (+ codemodule test); ~29 refs redirected; all 12 dependents'
+    realizations dep removed (they already had hologram-space). **`hologram-space` is now
+    the complete contract crate (core + realizations + HAL + Space/Resolver) per spec 02.**
+    All 7 scenarios + native/wasm build + tests + clippy/fmt green. `substrate/`: 11→10.
+  - [ ] 5: net (net-http/tcp/bare → hologram-net) · 6: runtime (runtime-*/engines →
+    hologram-runtime) · 7: store-mem → hologram-tck · 8: substrate-cli → hologram-cli ·
+    stores (native/bare/opfs) → spaces (P2).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
