@@ -2,7 +2,7 @@
 
 Status: **Accepted direction** (interrogation session 2026-07-13). Implementation not started.
 Supersedes: the raw notes in `specs/scratch.md`.
-Companion docs: `01-crate-map.md` … `07-governance-requirements.md`.
+Companion docs: `01-crate-map.md` … `08-form-factor.md`.
 
 ## Vision
 
@@ -93,6 +93,7 @@ Resolved 2026-07-13. Each decision's owning spec is listed; details live there, 
 | D22 | Leaf tier                | three dependency tiers: core (crates/) → spaces (spaces/ → core only) → leaf {facade+Client, hologram-cli, SDK packaging crates} which may depend on anything; nothing depends on a leaf crate | 01         |
 | D23 | P0 sync phase            | before any refactor move: holospaces (own repo, still git-pinned) ports to hologram HEAD, full V&V green, bridge tag cut for hologram-ai — makes the always-green gate real from P1 | 06         |
 | D24 | License                  | MIT OR Apache-2.0 workspace-wide; LICENSE files added at P1 preflight; written relicense consent from holospaces' second contributor is a P0 exit criterion (publish blocks without it) | 01, 06     |
+| D25 | Front-door form factor   | the access story is a four-rung funnel (TRY-URL / RUN-binary / BUILD-embed / SHIP-app); **the URL — zero-install browser boot — is the hero**, others are progressive-disclosure rungs; browser space is a first-class permanently-green target | 08         |
 
 
 

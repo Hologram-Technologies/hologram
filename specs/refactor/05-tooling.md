@@ -53,10 +53,14 @@ Both merge into `crates/hologram-cli`:
 hologram
 ├─ compile   <source> [-o app.holo]        # was compute CLI
 ├─ run       <app.holo> [--space …]        # exec / boot per manifest
-├─ app       inspect|compose|verify|pack   # .holo v3 tooling; pack --fat|--thin (03)
+├─ app       inspect|compose|verify|pack|publish   # .holo v3 tooling; pack --fat|--thin (03)
+│                                          # publish = store put + net announce (+ --page
+│                                          #   emits the browser-boot entry bundle); 08
 ├─ store     put|get|pin|unpin|gc|ls|verify|manifest    # was substrate CLI
 ├─ net       fetch|announce|discover|peers
-├─ network   create|join|delegate|show     # 04-networks (restricted/private tiers)
+├─ network   create|join|delegate|revoke|show   # 04-networks
+│                                          # create --public|--restricted|--private;
+│                                          #   join <network κ>; delegate --to <op κ>
 ├─ space     list|tck                      # enumerate spaces, run conformance
 ├─ manager   roster|provision|open|configure|reconfigure
 ├─ node      serve                         # long-running peer (native space)

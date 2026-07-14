@@ -74,6 +74,44 @@ Network (realization)
   by construction. There is no separate "distributed filesystem" component to build; it
   is the KappaStore + KappaSync + Network policy composition.
 
+## Creating & joining networks (commands)
+
+A network is created by *publishing a realization*, not by provisioning a server — so
+"create a custom network" is a local, offline act that produces a κ others resolve. CLI
+verbs live in `05-tooling.md` (`hologram network …`); the mechanism:
+
+```sh
+# PUBLIC — open policy, anyone may fetch/announce/discover
+hologram network create commons --public          # → network κ=b3:1a4f…
+hologram net announce <app κ> --network commons    # content reachable to all
+
+# RESTRICTED (P5) — capability-gated; only members resolve
+hologram network create team --restricted          # → network κ; creator is founding member
+hologram network delegate team --to <operator κ>   # grant membership (attenuated capability)
+#   the invitee joins by resolving the network κ (control-plane-as-content — no RPC):
+hologram network join <network κ>                  # adopt membership from the realization
+hologram net announce <app κ> --network team       # non-members are refused at the protocol
+hologram network show team                          # membership + policy (resolved from κ)
+
+# PRIVATE (P6) — restricted + payload encryption; membership = capability + key access
+hologram network create vault --private            # also provisions network keys (P6)
+```
+
+Notes that keep this consistent with the laws:
+
+- **No server, no account.** `create` publishes a Network realization to your store; you
+  or anyone shares its κ; joiners `resolve` that κ and adopt the policy. Membership
+  changes are new realizations (append-only), not mutations.
+- **Delegation is attenuation-only** (law 5): a member may grant a subset of their own
+  rights via the `Delegation` realization — never more. Revoking is an append-only
+  revocation event (see `07` R3 key lifecycle), not a delete.
+- **Tier availability tracks the phases**: `--public` and `--restricted` ship in P5;
+  `--private` (encryption) in P6. The CLI accepts `--private` earlier only to error
+  clearly ("encryption lands in P6"), never to silently downgrade to restricted.
+- **A network κ is shareable like any κ** — including at the URL rung: a boot link can
+  name both an app κ and a network κ, so "open this link" can mean "join this team and
+  run this app," all content-addressed (`08-form-factor.md`).
+
 ## Two enforcement layers, phased
 
 ### Phase A — capability gating → **restricted** networks (lands in migration P5)
