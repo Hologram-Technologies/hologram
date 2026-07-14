@@ -7,6 +7,7 @@ use hologram_conformance::ConformanceWorld;
 
 use cucumber::{given, then, when, World};
 use hologram_realizations::ContainerManifest;
+use hologram_spike_sp3::{Client, SpikeSpace};
 use hologram_substrate_core::{address_bytes, Realization};
 
 #[given("the conformance harness is wired")]
@@ -54,6 +55,43 @@ fn gv1_assert(w: &mut ConformanceWorld) {
     assert_eq!(
         refs, &w.operand_kappas,
         "references() must yield exactly the embedded operand κs — no more (no side tables), no fewer"
+    );
+}
+
+// ─────────────────────── SP-3 — space composition (P0.5 spike) ───────────────────────
+// A `Client` over the `Space` contract drives compile→store→boot: a synchronous compile,
+// a synchronous store, and the async network/boot seam calling into synchronous compute.
+// The async `when` awaits `boot` directly — the one async↔sync boundary (LAW-4).
+// Witnessed against `hologram-spike-sp3` (the SP-3 slice).
+
+#[given("a Client over a space with a synchronous store and an async network seam")]
+fn sp3_given(_w: &mut ConformanceWorld) {}
+
+#[when("it drives compile then store then boot")]
+async fn sp3_run(w: &mut ConformanceWorld) {
+    let client = Client::new(SpikeSpace::new());
+    let holo = client.compile();
+    let kappa = client.store_holo(&holo).expect("store the compiled .holo");
+    let vals: [i64; 4] = [0, 42, -7, 1024];
+    let mut input = Vec::new();
+    for &v in &vals {
+        input.extend_from_slice(&v.to_le_bytes());
+    }
+    // `boot` is async (the network/boot seam) and internally runs the sync compute.
+    w.sp3_output = Some(client.boot(&kappa, &input).await);
+}
+
+#[then("the workload runs end to end through the async-to-sync boundary")]
+fn sp3_assert(w: &mut ConformanceWorld) {
+    let out = w
+        .sp3_output
+        .as_ref()
+        .expect("the When step must have driven compile→store→boot");
+    assert_eq!(
+        out,
+        &vec![0.0, 42.0, -7.0, 1024.0],
+        "compile→store→boot must compute the i64→f32 cast — the slice composes async \
+         storage/boot with sync compute end to end"
     );
 }
 

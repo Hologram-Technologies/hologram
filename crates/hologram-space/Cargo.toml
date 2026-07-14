@@ -1,0 +1,15 @@
+[package]
+name = "hologram-space"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The hologram space contract: the trait surface a host implements to become a place hologram runs (specs/refactor/02)."
+
+[dependencies]
+hologram-substrate-core = { workspace = true }
+async-trait = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-substrate-core/std"]

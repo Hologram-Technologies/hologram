@@ -27,4 +27,7 @@ pub struct ConformanceWorld {
     pub canonical: Vec<u8>,
     /// GV-1: what `references()` recovered (raw 71-byte κ-label forms).
     pub references: Option<Vec<Vec<u8>>>,
+    /// SP-3: the output values produced by driving the spike slice's
+    /// compile→store→boot (stored as primitives to keep the lib domain-type-free).
+    pub sp3_output: Option<Vec<f32>>,
 }

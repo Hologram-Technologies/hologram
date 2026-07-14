@@ -73,6 +73,10 @@ wasm:
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
+    # P0.5 spike (SP-3 / MG-3): the space contract + the Client slice build no_std for
+    # wasm32 — the wasm half of the composition proof (native half is the SP-3 BDD run).
+    cargo build --target wasm32-unknown-unknown --no-default-features \
+        -p hologram-space -p hologram-spike-sp3
     cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
         -p hologram-backend
     # SIMD tiers: baseline simd128 (the witnessed browser kernel) and the

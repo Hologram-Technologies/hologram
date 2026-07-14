@@ -383,7 +383,7 @@ addressing and warm-start do.
 |---|---|---|---|---|
 | **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario | `s1_space_contract/tck.feature::passing the TCK is conformance` | ⛔ |
 | **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
-| **SP-3** | A `Space` composes async storage/sync with the synchronous compute hot path; `Client` drives compile→open→boot on both a native and a wasm target (D14/D28). | BDD scenario | `s1_space_contract/composition.feature::a space composes async storage and sync compute` | ⛔ |
+| **SP-3** | A `Space` composes a synchronous store + sync compute with an async network/boot seam; `Client` drives compile→store→boot end to end through the one async↔sync boundary (D14/D28; witnessed by `hologram-spike-sp3`). | BDD scenario | `s1_space_contract/composition.feature::a space composes async network with sync storage and compute` | ✅ |
 
 ## HF — .holo v3 format (refactor spec 03; BDD)
 

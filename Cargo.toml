@@ -21,6 +21,8 @@ members = [
     "crates/hologram-ffi",
     "crates/hologram-bench",
     "crates/hologram-conformance",
+    "crates/hologram-space",
+    "crates/hologram-spike-sp3",
     "substrate/hologram-substrate-core",
     "substrate/hologram-realizations",
     "substrate/hologram-substrate-tck",
@@ -52,6 +54,8 @@ default-members = [
     "crates/hologram-cli",
     "crates/hologram-ffi",
     "crates/hologram-bench",
+    "crates/hologram-space",
+    "crates/hologram-spike-sp3",
     "substrate/hologram-substrate-core",
     "substrate/hologram-realizations",
     "substrate/hologram-substrate-tck",
@@ -95,6 +99,8 @@ hologram-archive  = { path = "crates/hologram-archive", default-features = false
 hologram-cli      = { path = "crates/hologram-cli", default-features = false }
 hologram-ffi      = { path = "crates/hologram-ffi", default-features = false }
 hologram-bench    = { path = "crates/hologram-bench", default-features = false }
+hologram-space    = { path = "crates/hologram-space", default-features = false }
+hologram-spike-sp3 = { path = "crates/hologram-spike-sp3", default-features = false }
 
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
 hologram-substrate-core = { path = "substrate/hologram-substrate-core", default-features = false }

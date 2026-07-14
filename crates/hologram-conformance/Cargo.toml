@@ -17,6 +17,9 @@ tokio = { workspace = true }
 # a ContainerManifest embeds its operand κs and references() recovers exactly them.
 hologram-substrate-core = { path = "../../substrate/hologram-substrate-core" }
 hologram-realizations = { path = "../../substrate/hologram-realizations" }
+# SP-3 (space composition) is witnessed against the P0.5 spike slice: a Client over the
+# Space contract drives compile→store→boot through the async↔sync boundary.
+hologram-spike-sp3 = { path = "../hologram-spike-sp3" }
 
 [[test]]
 name = "bdd"
