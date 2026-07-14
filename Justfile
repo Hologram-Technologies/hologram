@@ -27,7 +27,7 @@ bdd:
     cargo test -p hologram-conformance --test bdd
     cargo test -p hologram-conformance --test meta_gate
 
-# Regenerate + verify the BDD status column against actual scenario tags. Fails on drift.
+# Verify the BDD status column against actual scenario tags (static check). Fails on drift.
 conformance-report:
     cargo test -p hologram-conformance --test meta_gate
 
