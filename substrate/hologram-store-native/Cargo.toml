@@ -12,7 +12,6 @@ redb = { workspace = true }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
-hologram-realizations  = { workspace = true }
 criterion              = { workspace = true }
 
 [[bench]]

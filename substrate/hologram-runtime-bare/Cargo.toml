@@ -15,7 +15,6 @@ hashbrown               = { workspace = true }
 wasmi = { version = "2.0.0-beta.2", default-features = false }
 
 [dev-dependencies]
-hologram-realizations = { workspace = true }
 hologram-store-mem    = { workspace = true }
 wat                   = "1"
 pollster              = { workspace = true }

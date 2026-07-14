@@ -178,7 +178,7 @@ pub async fn opfs_gc(pins: JsValue) -> Result<u32, JsValue> {
             Ok(v) if !v.is_null() => Uint8Array::new(&v).to_vec(),
             _ => continue,
         };
-        if let Ok(refs) = references(&bytes, hologram_realizations::REGISTRY) {
+        if let Ok(refs) = references(&bytes, hologram_space::REGISTRY) {
             for r in refs {
                 if !reachable.contains(r.as_array()) {
                     frontier.push(r);

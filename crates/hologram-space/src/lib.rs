@@ -30,6 +30,11 @@ pub use hal::{BlockDevice, DeviceError, NetworkInterface, NicError, RamBlockDevi
 mod substrate;
 pub use substrate::*;
 
+// The canonical realization forms (ContainerManifest, CapabilitySet, Snapshot, …),
+// absorbed from the former `hologram-realizations` crate (P1). Re-exported at the root.
+mod realizations;
+pub use realizations::*;
+
 /// The async network/boot seam. `Send + Sync` on native (multi-threaded executors want
 /// it); see the `wasm32` definition for the `?Send` variant.
 #[cfg(not(target_arch = "wasm32"))]

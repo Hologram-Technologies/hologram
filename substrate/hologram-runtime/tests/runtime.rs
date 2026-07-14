@@ -2,12 +2,12 @@
 //! capability **enforcement** at delegation (the `admits` containment wired at `spawn_child`),
 //! revocation, and cross-runtime migration — all hermetic against the mock engine.
 
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_space::{
     Capabilities, ContainerHandle, ContainerRuntime, ContainerState, KappaLabel71, KappaStore,
     Realization,
 };
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;
 
 fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
@@ -64,7 +64,7 @@ fn cr_lifecycle_spawn_suspend_resume_preserves_state() {
         // The snapshot's references resolve to the same Container ID (continuity).
         let snap_bytes = rt.store().get(&snap).unwrap().unwrap();
         assert_eq!(
-            hologram_realizations::Snapshot::references(snap_bytes.as_ref()).unwrap()[0],
+            hologram_space::Snapshot::references(snap_bytes.as_ref()).unwrap()[0],
             cid
         );
 

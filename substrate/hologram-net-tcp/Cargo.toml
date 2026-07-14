@@ -8,7 +8,6 @@ description = "uor-native TCP KappaSync — content-addressed networking without
 
 [dependencies]
 hologram-space = { workspace = true }
-hologram-realizations    = { workspace = true }
 async-trait              = { workspace = true }
 tokio                    = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "io-util", "time"] }
 

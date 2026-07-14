@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
-use hologram_realizations::{ContainerManifest, Snapshot, REGISTRY};
 use hologram_runtime::{ContainerEngine, HostContext, Runtime};
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
+use hologram_space::{ContainerManifest, Snapshot, REGISTRY};
 use hologram_store_mem::MemKappaStore;
 
 /// A minimal host context for direct-engine tests (empty store, no granted roots).
@@ -95,7 +95,7 @@ fn runtime_drives_a_real_wasm_container_through_suspend_resume() {
         let caps = store
             .put(
                 "blake3",
-                &hologram_realizations::CapabilitySet::new(Capabilities {
+                &hologram_space::CapabilitySet::new(Capabilities {
                     storage_roots: vec![],
                     storage_quota_bytes: 0,
                     network_fetch: false,
@@ -168,7 +168,7 @@ fn container_uses_capability_gated_host_storage_imports() {
         let caps = store
             .put(
                 "blake3",
-                &hologram_realizations::CapabilitySet::new(Capabilities {
+                &hologram_space::CapabilitySet::new(Capabilities {
                     storage_roots: vec![granted],
                     storage_quota_bytes: 0,
                     network_fetch: false,
@@ -243,7 +243,7 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
             let caps = store
                 .put(
                     "blake3",
-                    &hologram_realizations::CapabilitySet::new(Capabilities {
+                    &hologram_space::CapabilitySet::new(Capabilities {
                         storage_roots: vec![],
                         storage_quota_bytes: 0,
                         network_fetch: false,
@@ -277,7 +277,7 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
         rt.deliver_event(pubh, &ev).unwrap();
 
         // The publish import → runtime applied it (cap-gated) → a Route κ exists in the graph.
-        let route = hologram_realizations::Route {
+        let route = hologram_space::Route {
             endpoint: channel,
             target: payload,
         };

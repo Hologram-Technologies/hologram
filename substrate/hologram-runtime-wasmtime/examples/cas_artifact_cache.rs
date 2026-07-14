@@ -4,7 +4,7 @@
 //! everything not reachable from a pinned build. Run: `cargo run -p hologram-runtime-wasmtime
 //! --example cas_artifact_cache`.
 
-use hologram_realizations::{ContainerManifest, REGISTRY};
+use hologram_space::{ContainerManifest, REGISTRY};
 use hologram_space::{KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
 

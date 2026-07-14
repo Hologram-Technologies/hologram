@@ -8,7 +8,6 @@ description = "Wasmtime ContainerEngine backend (spec §7.2 Option A): instantia
 
 [dependencies]
 hologram-runtime        = { workspace = true }
-hologram-realizations   = { workspace = true }
 hologram-space       = { workspace = true }
 wasmtime                = { workspace = true }
 async-trait             = { workspace = true }
@@ -22,7 +21,6 @@ rand_core               = { version = "0.6", default-features = false, features 
 hologram-store-mem    = { workspace = true }
 hologram-store-bare   = { workspace = true }
 hologram-store-native = { workspace = true }
-hologram-realizations = { workspace = true }
 wat                   = "1"
 pollster              = { workspace = true }
 async-trait           = { workspace = true }

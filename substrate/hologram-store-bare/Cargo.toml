@@ -16,7 +16,6 @@ spin                    = { workspace = true }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
-hologram-realizations  = { workspace = true }
 pollster               = { workspace = true }
 
 [features]

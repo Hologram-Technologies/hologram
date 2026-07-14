@@ -6,8 +6,8 @@
 use hologram_conformance::ConformanceWorld;
 
 use cucumber::{given, then, when, World};
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_space::{address_bytes, verify_kappa, Capabilities, Realization};
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_spike_sp3::{Client, SpikeSpace};
 use hologram_store_mem::MemKappaStore;
 

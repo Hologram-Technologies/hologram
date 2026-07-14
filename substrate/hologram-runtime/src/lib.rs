@@ -17,12 +17,12 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::{HashMap, HashSet};
-use hologram_realizations::{
-    CapabilitySet, ChainCompaction, ContainerManifest, Delegation, ErrorEvent, Snapshot,
-};
 use hologram_space::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
     KappaSync, Realization, RealizationRegistry, RuntimeError,
+};
+use hologram_space::{
+    CapabilitySet, ChainCompaction, ContainerManifest, Delegation, ErrorEvent, Snapshot,
 };
 use spin::Mutex;
 
@@ -275,7 +275,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             .entry(*channel.as_array())
             .or_default()
             .push(*payload);
-        let route = hologram_realizations::Route {
+        let route = hologram_space::Route {
             endpoint: *channel,
             target: *payload,
         };
@@ -331,7 +331,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
                 hologram_space::get_with_fetch(self.store.as_ref(), sync.as_ref(), &k).await;
             let Ok(Some(bytes)) = fetched else { continue };
             // Try parsing as a Route; deliver only if its endpoint matches `channel`.
-            if let Ok(refs) = hologram_realizations::Route::references(bytes.as_ref()) {
+            if let Ok(refs) = hologram_space::Route::references(bytes.as_ref()) {
                 if refs.len() == 2 && refs[0] == *channel {
                     let target = refs[1];
                     let mut channels = self.channels.lock();
@@ -467,7 +467,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         let ctx = HostContext {
             store: self.store.clone(),
             storage_roots: caps.storage_roots.clone(),
-            registry: hologram_realizations::REGISTRY,
+            registry: hologram_space::REGISTRY,
             memory_max_bytes: caps.memory_max_bytes,
             cpu_fuel_per_event: caps.cpu_time_per_event_ms.saturating_mul(FUEL_PER_MS),
             storage_quota_bytes: caps.storage_quota_bytes,
@@ -874,7 +874,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_space::Cont
         let refs =
             Snapshot::references(snap_bytes.as_ref()).map_err(|_| RuntimeError::SnapshotInvalid)?;
         let container_id = *refs.first().ok_or(RuntimeError::SnapshotInvalid)?;
-        let payload = hologram_realizations::payload_of(Snapshot::IRI, snap_bytes.as_ref())
+        let payload = hologram_space::payload_of(Snapshot::IRI, snap_bytes.as_ref())
             .map_err(|_| RuntimeError::SnapshotInvalid)?;
         let (storage_used, mem) =
             Snapshot::parse_payload(&payload).map_err(|_| RuntimeError::SnapshotInvalid)?;

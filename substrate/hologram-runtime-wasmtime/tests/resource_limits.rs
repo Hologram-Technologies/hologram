@@ -2,10 +2,10 @@
 //! **CPU per event** (Wasmtime fuel), **linear memory** (StoreLimits), and **storage quota** (a
 //! per-container byte ledger on `storage_put`) — declared in its Capability Set. `0 = unbounded`.
 
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;
 
 fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {

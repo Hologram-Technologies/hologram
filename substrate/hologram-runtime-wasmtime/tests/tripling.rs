@@ -16,9 +16,9 @@
 //! `scripts/opfs-browser-test.sh` Playwright harness against `address_bytes`. Together those
 //! cover all four documented substrates (TR `[track]` resolved).
 
-use hologram_realizations::ContainerManifest;
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::ContainerManifest;
 use hologram_space::RamBlockDevice;
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
 use hologram_store_bare::BareMetalKappaStore;
@@ -73,7 +73,7 @@ async fn run_one<S: KappaStore + Send + Sync + 'static>(store: S) -> KappaStream
     let caps = store
         .put(
             "blake3",
-            &hologram_realizations::CapabilitySet::new(Capabilities {
+            &hologram_space::CapabilitySet::new(Capabilities {
                 storage_roots: vec![],
                 storage_quota_bytes: 0,
                 network_fetch: false,

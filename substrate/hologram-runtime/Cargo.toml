@@ -8,7 +8,6 @@ description = "Substrate-portable Container Runtime orchestration (spec §4): li
 
 [dependencies]
 hologram-space = { workspace = true }
-hologram-realizations   = { workspace = true }
 async-trait             = { workspace = true }
 spin                    = { workspace = true }
 hashbrown               = { workspace = true }
@@ -22,4 +21,4 @@ async-trait        = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["hologram-space/std", "hologram-realizations/std"]
+std = ["hologram-space/std"]

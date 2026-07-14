@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use hologram_net_tcp::TcpKappaSync;
-use hologram_realizations::PeerEndpoint;
+use hologram_space::PeerEndpoint;
 use hologram_space::{address_bytes, KappaStore, KappaSync, Realization};
 use hologram_store_mem::MemKappaStore;
 

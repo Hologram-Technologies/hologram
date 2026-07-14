@@ -5,9 +5,9 @@
 //! predecessor becomes a `ChainCompaction` κ (zero operands → reachability breaks). The old
 //! tail becomes unreachable from any pinned root and is reclaimed by the store's GC.
 
-use hologram_realizations::{ChainCompaction, ErrorEvent, REGISTRY};
 use hologram_runtime::{diag_class, MockEngine, Runtime};
 use hologram_space::{address_bytes, KappaStore, Realization};
+use hologram_space::{ChainCompaction, ErrorEvent, REGISTRY};
 use hologram_store_mem::MemKappaStore;
 
 #[test]

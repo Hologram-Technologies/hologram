@@ -20,7 +20,7 @@
 extern crate alloc;
 
 use hologram_space::RamBlockDevice;
-use hologram_realizations::{ContainerManifest, HardwareInventory, REGISTRY};
+use hologram_space::{ContainerManifest, HardwareInventory, REGISTRY};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_space::{
     address_bytes, verify_kappa, GarbageCollect, KappaLabel71, KappaStore, Realization,

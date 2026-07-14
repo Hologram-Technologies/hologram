@@ -254,8 +254,8 @@ fn stage_in_memory(memory: &mut Memory, store: &mut Store<()>, bytes: &[u8]) -> 
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
-    use hologram_realizations::REGISTRY;
     use hologram_runtime::Runtime;
+    use hologram_space::REGISTRY;
     use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
     use hologram_store_mem::MemKappaStore;
 
@@ -317,7 +317,7 @@ mod tests {
             let cid = store
                 .put(
                     "blake3",
-                    &hologram_realizations::ContainerManifest {
+                    &hologram_space::ContainerManifest {
                         code,
                         initial_state: empty,
                         parameters: empty,
@@ -328,7 +328,7 @@ mod tests {
             let caps = store
                 .put(
                     "blake3",
-                    &hologram_realizations::CapabilitySet::new(Capabilities {
+                    &hologram_space::CapabilitySet::new(Capabilities {
                         storage_roots: alloc::vec![],
                         storage_quota_bytes: 0,
                         network_fetch: false,
@@ -350,7 +350,7 @@ mod tests {
             // The snapshot's references chain back to the Container ID (graph continuity).
             let bytes = rt.store().get(&snap).unwrap().unwrap();
             assert_eq!(
-                hologram_realizations::Snapshot::references(bytes.as_ref()).unwrap()[0],
+                hologram_space::Snapshot::references(bytes.as_ref()).unwrap()[0],
                 cid
             );
         });

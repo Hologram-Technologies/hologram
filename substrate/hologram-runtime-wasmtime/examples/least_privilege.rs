@@ -5,9 +5,9 @@
 //! containment (the SubtypingLattice `admits` relation). Run: `cargo run -p hologram-runtime-wasmtime
 //! --example least_privilege`.
 
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;
 
 fn caps(roots: Vec<KappaLabel71>, quota: u64) -> Capabilities {

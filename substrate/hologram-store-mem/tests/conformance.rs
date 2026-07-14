@@ -4,8 +4,8 @@
 //! Classes: AS (σ-axis vs BLAKE3 reference), ST (KappaStore idempotency / append-only /
 //! reachability eviction), RZ (references() inverse projection), SPINE (uor-native invariants).
 
-use hologram_realizations::{ContainerManifest, REGISTRY};
 use hologram_space::{address_bytes, verify_kappa, KappaStore, Realization};
+use hologram_space::{ContainerManifest, REGISTRY};
 use hologram_store_mem::MemKappaStore;
 
 /// Format a 32-byte digest as the canonical `blake3:<64 hex>` κ-label string.

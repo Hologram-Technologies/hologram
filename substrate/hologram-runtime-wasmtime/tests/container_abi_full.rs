@@ -5,13 +5,13 @@
 //! intent, and the post-state demonstrates the spec-mandated effect.
 
 use async_trait::async_trait;
-use hologram_realizations::{CapabilitySet, ContainerManifest, ErrorEvent};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_space::{
     address_bytes, Bytes, Capabilities, ContainerRuntime, KappaLabel71, KappaStore, KappaSync,
     Realization, SyncError,
 };
+use hologram_space::{CapabilitySet, ContainerManifest, ErrorEvent};
 use hologram_store_mem::MemKappaStore;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

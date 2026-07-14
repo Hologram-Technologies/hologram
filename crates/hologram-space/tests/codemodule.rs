@@ -3,7 +3,7 @@
 //! `CodeModuleValue` AST → a blake3 κ-label → referenced by a manifest and loaded through the same
 //! store/fetch/verify path as any container code.
 
-use hologram_realizations::ContainerManifest;
+use hologram_space::ContainerManifest;
 use hologram_space::Realization;
 use uor_addr::codemodule::{address_blake3, CodeModuleValue};
 

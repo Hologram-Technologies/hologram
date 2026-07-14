@@ -14,7 +14,6 @@ async-trait             = { workspace = true }
 
 [dev-dependencies]
 hologram-store-mem    = { workspace = true }
-hologram-realizations = { workspace = true }
 pollster              = { workspace = true }
 
 [features]

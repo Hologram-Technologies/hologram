@@ -16,7 +16,6 @@ path = "src/lib.rs"
 
 [dependencies]
 hologram-space   = { workspace = true }
-hologram-realizations     = { workspace = true }
 hologram-store-native     = { workspace = true }
 hologram-runtime          = { workspace = true }
 hologram-runtime-wasmtime = { workspace = true }

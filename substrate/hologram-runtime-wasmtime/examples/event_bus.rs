@@ -4,9 +4,9 @@
 //! `hg_callback` — including readings published while the logger was **suspended** (durable
 //! subscriptions, §10.11). Run: `cargo run -p hologram-runtime-wasmtime --example event_bus`.
 
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;
 
 fn caps(publish: Vec<KappaLabel71>, subscribe: Vec<KappaLabel71>) -> Capabilities {

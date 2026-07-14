@@ -41,8 +41,8 @@ fn sp2_idempotent_put_does_not_rewrite() {
 /// is fully retained and an equally-large unreachable set is fully reclaimed in one pass.
 #[test]
 fn sp3_gc_is_bounded_by_reachable_set() {
-    use hologram_realizations::{ContainerManifest, REGISTRY};
     use hologram_space::Realization;
+    use hologram_space::{ContainerManifest, REGISTRY};
     let store = MemKappaStore::new();
 
     // 300 reachable leaves behind 100 pinned manifests; 300 unreachable orphans.

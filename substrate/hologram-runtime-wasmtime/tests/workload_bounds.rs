@@ -4,9 +4,9 @@
 //! particular, there is no native-subprocess to host it. The runtime refuses such modules at
 //! instantiation; this test pins the refusal.
 
-use hologram_realizations::ContainerManifest;
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::ContainerManifest;
 use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
 
@@ -46,7 +46,7 @@ fn b5_container_with_non_hologram_import_is_refused_at_instantiation() {
         let caps = store
             .put(
                 "blake3",
-                &hologram_realizations::CapabilitySet::new(Capabilities {
+                &hologram_space::CapabilitySet::new(Capabilities {
                     storage_roots: vec![],
                     storage_quota_bytes: 0,
                     network_fetch: false,

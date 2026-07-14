@@ -5,10 +5,10 @@
 //! all through the capability-gated host import surface, executed by Wasmtime. Run:
 //! `cargo run -p hologram-runtime-wasmtime --example wasm_inference_container`.
 
-use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
+use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;
 
 /// hg_event(input_κ): storage_get the input (granted root) → mem[100], transform, storage_put output.

@@ -36,7 +36,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hologram_realizations::PeerEndpoint;
+use hologram_space::PeerEndpoint;
 use hologram_space::{
     address_bytes, verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync,
     Realization, SyncError,

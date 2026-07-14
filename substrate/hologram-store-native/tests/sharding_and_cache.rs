@@ -6,7 +6,7 @@
 //! verify by σ-axis re-derivation, and the LRU cache respects its byte budget while still
 //! upholding the SP zero-copy floor.
 
-use hologram_realizations::REGISTRY;
+use hologram_space::REGISTRY;
 use hologram_space::{address_bytes, verify_kappa, KappaStore};
 use hologram_store_native::{CacheConfig, NativeKappaStore, SHARD_SIZE};
 use std::sync::Arc;

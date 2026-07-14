@@ -2,11 +2,11 @@
 //! `main` shell parses args and reads files, then calls [`run`] against a `NativeKappaStore`; tests
 //! call [`run`] against the in-memory reference. Every verb is a κ-label operation (SPINE-1).
 
-use hologram_realizations::{CapabilitySet, ContainerManifest, REGISTRY};
 use hologram_space::{
     references, verify_kappa, Capabilities, GarbageCollect, KappaLabel, KappaLabel71, KappaStore,
     Realization, StoreError,
 };
+use hologram_space::{CapabilitySet, ContainerManifest, REGISTRY};
 
 /// A parsed CLI command (file paths already resolved to bytes / κ-labels by the shell).
 pub enum Command {

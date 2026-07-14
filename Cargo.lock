@@ -1396,7 +1396,6 @@ name = "hologram-conformance"
 version = "0.9.0"
 dependencies = [
  "cucumber",
- "hologram-realizations",
  "hologram-space",
  "hologram-spike-sp3",
  "hologram-store-mem",
@@ -1460,7 +1459,6 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-realizations",
  "hologram-space",
  "hologram-store-mem",
  "pollster",
@@ -1482,7 +1480,6 @@ name = "hologram-net-tcp"
 version = "0.9.0"
 dependencies = [
  "async-trait",
- "hologram-realizations",
  "hologram-space",
  "hologram-store-mem",
  "pollster",
@@ -1502,20 +1499,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-realizations"
-version = "0.9.0"
-dependencies = [
- "hologram-space",
- "uor-addr",
-]
-
-[[package]]
 name = "hologram-runtime"
 version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-realizations",
  "hologram-space",
  "hologram-store-mem",
  "pollster",
@@ -1528,7 +1516,6 @@ name = "hologram-runtime-bare"
 version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
- "hologram-realizations",
  "hologram-runtime",
  "hologram-space",
  "hologram-store-mem",
@@ -1543,7 +1530,6 @@ name = "hologram-runtime-wasmtime"
 version = "0.9.0"
 dependencies = [
  "async-trait",
- "hologram-realizations",
  "hologram-runtime",
  "hologram-space",
  "hologram-store-bare",
@@ -1594,7 +1580,6 @@ version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-host",
- "hologram-realizations",
  "hologram-space",
  "hologram-tck",
  "pollster",
@@ -1609,7 +1594,6 @@ dependencies = [
  "blake3",
  "criterion",
  "hashbrown 0.15.5",
- "hologram-realizations",
  "hologram-space",
  "hologram-tck",
  "pollster",
@@ -1621,7 +1605,6 @@ name = "hologram-store-native"
 version = "0.9.0"
 dependencies = [
  "criterion",
- "hologram-realizations",
  "hologram-space",
  "hologram-tck",
  "redb",
@@ -1634,7 +1617,6 @@ dependencies = [
  "clap",
  "hologram-net-http",
  "hologram-net-tcp",
- "hologram-realizations",
  "hologram-runtime",
  "hologram-runtime-wasmtime",
  "hologram-space",

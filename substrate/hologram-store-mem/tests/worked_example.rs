@@ -9,11 +9,11 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use hologram_realizations::{CapabilitySet, ContainerManifest, Snapshot, REGISTRY};
 use hologram_space::{
     address_bytes, get_with_fetch, Bytes, Capabilities, KappaLabel71, KappaStore, KappaSync,
     Realization, SyncError,
 };
+use hologram_space::{CapabilitySet, ContainerManifest, Snapshot, REGISTRY};
 use hologram_store_mem::MemKappaStore;
 
 fn caps_with(
