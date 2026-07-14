@@ -21,3 +21,4 @@ substrate/hologram-store-opfs/web/pkg/
 sdk/python/build/
 sdk/python/*.egg-info/
 sdk/typescript/**/dist/
+.superpowers/
