@@ -13,6 +13,10 @@ cucumber = "0.21"
 
 [dev-dependencies]
 tokio = { workspace = true }
+# GV-1 (R1 traceability) is witnessed against the existing substrate realizations:
+# a ContainerManifest embeds its operand κs and references() recovers exactly them.
+hologram-substrate-core = { path = "../../substrate/hologram-substrate-core" }
+hologram-realizations = { path = "../../substrate/hologram-realizations" }
 
 [[test]]
 name = "bdd"

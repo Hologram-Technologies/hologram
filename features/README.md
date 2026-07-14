@@ -32,18 +32,21 @@ agrees with the scenario's `@status`; the row's `Witness` path + scenario name m
 actual feature file; and each feature file declares exactly one scenario. This keeps the
 ledger and the scenarios from drifting.
 
-What the static gate does **not** yet assert is that an `enforced` scenario actually
-*passes* — scenarios are `pending` (skipped) until a phase implements their steps. The
-run-result teeth arrive per phase: when a suite's phase lands, its steps are implemented,
-its `@status` flips to `enforced`, its row flips to ✅, and `.fail_on_skipped()` is enabled
-for that suite so an enforced-but-unimplemented scenario fails the build. **The rule — no
-requirement is "done" until its scenario is green and CI-gated — is enforced from that
-point on for each scenario as it turns `enforced`.**
+The static gate does not assert that an `enforced` scenario actually *passes* — that is
+the runner's job. The `bdd` runner (`tests/bdd.rs`) is wired with
+`fail_on_skipped_with(@status:enforced)`: any scenario tagged `@status:enforced` whose
+steps are undefined (or skipped) becomes a **build failure**, while `@status:pending`
+scenarios are allowed to skip. So an `enforced` row can only be green if its scenario has
+real, passing steps. **The rule — no requirement is "done" until its scenario is green and
+CI-gated — is live for every scenario the moment it turns `enforced`.**
 
 ## Phased rollout
 
 Scenarios land `pending` and turn `enforced` as the phase in their `@phase:` tag
-implements the requirement. When a phase implements a suite, add step definitions in
-`crates/hologram-conformance/tests/bdd.rs`, flip the `@status` tag to `enforced`, update
-the matching `CONFORMANCE.md` row to `✅`, and enable `.fail_on_skipped()` for that
-suite's tag so an enforced-but-unimplemented scenario fails the build.
+implements the requirement. The teeth (`fail_on_skipped_with`) are already wired centrally,
+so promoting a scenario is three steps: (1) add its step definitions in
+`crates/hologram-conformance/tests/bdd.rs`, (2) flip its `@status` tag to `enforced`, and
+(3) flip the matching `CONFORMANCE.md` row to `✅` (the meta-gate rejects any mismatch, so
+these move together). **GV-1** (R1 traceability, witnessed against
+`hologram-realizations::ContainerManifest::references()`) is the first enforced scenario
+and the worked example of this path.

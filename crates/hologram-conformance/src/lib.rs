@@ -15,9 +15,16 @@ pub const CONFORMANCE_MD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../CON
 
 /// Per-scenario async context. The only async↔sync seam (law 4): step bodies that
 /// touch tensor compute stay synchronous inside this async World.
+///
+/// State is stored as raw κ-label bytes so this crate's library stays free of
+/// domain types; the realizations are pulled in only as a dev-dependency by the
+/// step definitions in `tests/bdd.rs`.
 #[derive(Debug, Default, cucumber::World)]
 pub struct ConformanceWorld {
-    /// Set by a `When` step; asserted by a `Then` step. Placeholder until real
-    /// contract handles land per phase.
-    pub last_outcome: Option<String>,
+    /// GV-1: the operand κ-labels a realization was built from (raw 71-byte forms).
+    pub operand_kappas: Vec<Vec<u8>>,
+    /// GV-1: the realization's canonical bytes.
+    pub canonical: Vec<u8>,
+    /// GV-1: what `references()` recovered (raw 71-byte κ-label forms).
+    pub references: Option<Vec<Vec<u8>>>,
 }
