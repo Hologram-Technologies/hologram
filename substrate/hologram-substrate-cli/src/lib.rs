@@ -3,7 +3,7 @@
 //! call [`run`] against the in-memory reference. Every verb is a κ-label operation (SPINE-1).
 
 use hologram_realizations::{CapabilitySet, ContainerManifest, REGISTRY};
-use hologram_substrate_core::{
+use hologram_space::{
     references, verify_kappa, Capabilities, GarbageCollect, KappaLabel, KappaLabel71, KappaStore,
     Realization, StoreError,
 };
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn get_absent_is_not_found() {
         let s = MemKappaStore::new();
-        let k = hologram_substrate_core::address_bytes(b"absent");
+        let k = hologram_space::address_bytes(b"absent");
         assert_eq!(
             run(&s, Command::Get(k)).err(),
             Some(CliError::NotFoundLocally)

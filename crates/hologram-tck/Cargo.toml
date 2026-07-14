@@ -7,8 +7,8 @@ authors = { workspace = true }
 description = "Test Conformance Kit: the reusable KappaStore conformance battery every Hologram storage backend must pass (ST/SPINE invariants). See specs/docs/container-substrate-vv.md."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std"]
+std = ["hologram-space/std"]

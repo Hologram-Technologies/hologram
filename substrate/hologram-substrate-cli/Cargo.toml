@@ -15,7 +15,7 @@ name = "hologram_substrate_cli"
 path = "src/lib.rs"
 
 [dependencies]
-hologram-substrate-core   = { workspace = true }
+hologram-space   = { workspace = true }
 hologram-realizations     = { workspace = true }
 hologram-store-native     = { workspace = true }
 hologram-runtime          = { workspace = true }

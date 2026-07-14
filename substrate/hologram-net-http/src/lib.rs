@@ -11,7 +11,7 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::String;
-use hologram_substrate_core::{verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaStore};
+use hologram_space::{verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaStore};
 
 /// The canonical request path for a κ-label (spec §6.3 `GET /cas/{kappa}`).
 pub fn cas_path(kappa: &KappaLabel71) -> String {
@@ -84,8 +84,8 @@ pub mod live;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hologram_space::address_bytes;
     use hologram_store_mem::MemKappaStore;
-    use hologram_substrate_core::address_bytes;
 
     #[test]
     fn path_roundtrips() {

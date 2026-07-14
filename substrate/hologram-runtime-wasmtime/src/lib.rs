@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use hologram_runtime::{ContainerEngine, ContainerIntents, HostContext};
-use hologram_substrate_core::{
+use hologram_space::{
     references, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry, RuntimeError,
 };
 use rand_chacha::ChaCha20Rng;
@@ -163,7 +163,7 @@ impl WasmtimeEngine {
                     // (0 = unbounded). Idempotent re-puts of already-stored bytes don't re-charge.
                     {
                         let s = caller.data_mut();
-                        let kappa = hologram_substrate_core::address_bytes(&input);
+                        let kappa = hologram_space::address_bytes(&input);
                         let already = s.store.contains(&kappa);
                         if s.storage_quota != 0
                             && !already

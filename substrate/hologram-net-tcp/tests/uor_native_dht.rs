@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use hologram_net_tcp::TcpKappaSync;
 use hologram_realizations::PeerEndpoint;
+use hologram_space::{address_bytes, KappaStore, KappaSync, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, KappaStore, KappaSync, Realization};
 
 #[tokio::test(flavor = "current_thread")]
 async fn nw_tcp_peer_identity_is_kappa_of_peer_endpoint() {
@@ -182,10 +182,7 @@ async fn nw_tcp_add_gateway_is_not_enabled() {
         .await
         .unwrap();
     let err = sync.add_gateway("http://example.invalid").await;
-    assert!(matches!(
-        err,
-        Err(hologram_substrate_core::SyncError::NotEnabled)
-    ));
+    assert!(matches!(err, Err(hologram_space::SyncError::NotEnabled)));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -199,8 +196,8 @@ async fn nw_tcp_ipv4_and_ipv6_endpoints_have_distinct_identity_kappa() {
         4001,
     );
     assert_ne!(
-        hologram_substrate_core::address_bytes(&v4.canonicalize()),
-        hologram_substrate_core::address_bytes(&v6.canonicalize()),
+        hologram_space::address_bytes(&v4.canonicalize()),
+        hologram_space::address_bytes(&v6.canonicalize()),
         "v4 and v6 endpoints must have distinct identity κs (proto byte is part of the address)"
     );
     // Both round-trip through the realization payload codec.
@@ -251,9 +248,7 @@ async fn nw_tcp_unparseable_addr_in_add_peer_is_loud() {
     assert!(
         matches!(
             err,
-            Err(hologram_substrate_core::SyncError::BackendFailure(
-                "addr-parse"
-            ))
+            Err(hologram_space::SyncError::BackendFailure("addr-parse"))
         ),
         "Multiaddr-style strings are NOT accepted (SPINE-1: no second naming surface)"
     );

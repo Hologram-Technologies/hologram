@@ -8,7 +8,7 @@ description = "Bare-metal ContainerEngine for the Hologram substrate (architectu
 
 [dependencies]
 hologram-runtime        = { workspace = true }
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 spin                    = { workspace = true }
 hashbrown               = { workspace = true }
 # wasmi 2.x — no_std + alloc Wasm interpreter. Bare-metal substrate executes containers through it.
@@ -24,6 +24,6 @@ pollster              = { workspace = true }
 default = ["std"]
 std = [
     "hologram-runtime/std",
-    "hologram-substrate-core/std",
+    "hologram-space/std",
     "wasmi/std",
 ]

@@ -8,7 +8,6 @@ description = "Wasmtime ContainerEngine backend (spec §7.2 Option A): instantia
 
 [dependencies]
 hologram-runtime        = { workspace = true }
-hologram-substrate-core = { workspace = true }
 hologram-realizations   = { workspace = true }
 hologram-space       = { workspace = true }
 wasmtime                = { workspace = true }

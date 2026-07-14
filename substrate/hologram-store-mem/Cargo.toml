@@ -7,7 +7,7 @@ authors = { workspace = true }
 description = "In-memory reference KappaStore for the Hologram deployment substrate: zero-copy put/get, pin/unpin, reachability GC. The portable reference impl + conformance fixture. See specs/docs/container-substrate-architecture.md."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 hashbrown               = { workspace = true }
 spin                    = { workspace = true }
 
@@ -23,7 +23,7 @@ criterion = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std"]
+std = ["hologram-space/std"]
 
 [[bench]]
 name = "sp_floors"

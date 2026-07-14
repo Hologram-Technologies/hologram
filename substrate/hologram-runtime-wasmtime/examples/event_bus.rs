@@ -6,10 +6,8 @@
 
 use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
+use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
-    Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization,
-};
 
 fn caps(publish: Vec<KappaLabel71>, subscribe: Vec<KappaLabel71>) -> Capabilities {
     Capabilities {

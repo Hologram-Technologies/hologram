@@ -7,11 +7,9 @@
 
 use async_trait::async_trait;
 use hologram_space::RamBlockDevice;
+use hologram_space::{Bytes, FederatedKappaSync, KappaLabel71, KappaStore, KappaSync, SyncError};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
-    Bytes, FederatedKappaSync, KappaLabel71, KappaStore, KappaSync, SyncError,
-};
 use std::sync::Arc;
 
 /// Trivial adapter: present any local [`KappaStore`] as a [`KappaSync`] so the federation chain
@@ -66,7 +64,7 @@ fn archival_cold_tier_via_bare_metal_peer_in_federation() {
         assert_eq!(got.unwrap().as_ref(), payload);
 
         // 6. A κ the network doesn't have falls through all three peers → Ok(None).
-        let absent = hologram_substrate_core::address_bytes(b"present-nowhere");
+        let absent = hologram_space::address_bytes(b"present-nowhere");
         assert_eq!(fed.fetch(&absent).await.unwrap(), None);
 
         // 7. Sanity: neither hot nor warm picked up the archived bytes (no write-through here);

@@ -10,8 +10,8 @@
 use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use hologram_space::KappaStore;
 use hologram_store_native::{CacheConfig, NativeKappaStore, SHARD_SIZE};
-use hologram_substrate_core::KappaStore;
 
 /// SP-A — **idempotent put is a no-write hit** (architecture §4): a `put` of bytes already at
 /// their κ must not perform a second insert. Floor: a hit is ≥10× faster than the initial put.

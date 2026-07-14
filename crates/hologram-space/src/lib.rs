@@ -24,7 +24,11 @@ use alloc::boxed::Box;
 pub mod hal;
 pub use hal::{BlockDevice, DeviceError, NetworkInterface, NicError, RamBlockDevice};
 
-pub use hologram_substrate_core::{Bytes, KappaLabel71, KappaStore, StoreError};
+// The portable trait surfaces + κ-addressing, absorbed from the former
+// `hologram-substrate-core` crate (P1). Re-exported at the crate root so
+// `hologram_space::{KappaStore, address_bytes, verify_kappa, …}` resolve directly.
+mod substrate;
+pub use substrate::*;
 
 /// The async network/boot seam. `Send + Sync` on native (multi-threaded executors want
 /// it); see the `wasm32` definition for the `?Send` variant.

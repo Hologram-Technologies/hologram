@@ -1,5 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-//! # hologram-substrate-core
+//! # substrate module (formerly hologram-substrate-core)
 //!
 //! Portable trait surfaces and κ-addressing for the **Hologram deployment substrate**
 //! (Container Runtime · Storage Layer · Network Layer). This crate is the single source of
@@ -13,8 +12,6 @@
 //! - **SPINE-4** verification is re-derivation through the σ-axis ([`verify_kappa`]).
 //! - **G-E1** the σ-axis is reused from `hologram-host` (no compute-engine dependency); the
 //!   κ-format helpers are byte-identical to `hologram-archive::address_bytes`.
-
-extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;

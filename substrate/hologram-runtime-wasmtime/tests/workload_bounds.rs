@@ -7,8 +7,8 @@
 use hologram_realizations::ContainerManifest;
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaStore, Realization};
 
 /// A container declaring a WASI import — the kind of escape hatch the substrate must refuse.
 const WASI_BACKDOOR_WAT: &str = r#"

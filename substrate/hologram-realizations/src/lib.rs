@@ -3,7 +3,7 @@
 //!
 //! The Hologram deployment-substrate canonical-form realizations (spec Appendix B). Each is
 //! **IRI-tagged** (SPINE-2), **embeds its operand κ-labels** in a uniform layout, and exposes
-//! [`references`](hologram_substrate_core::Realization::references) as the *inverse projection*
+//! [`references`](hologram_space::Realization::references) as the *inverse projection*
 //! recovering exactly those operands (SPINE-3). Identity is the leaf κ-label of the
 //! operand-embedding canonical form (architecture §3.3 / G-A2: the witnessed-composition binding
 //! is a tracked upgrade — uor-addr ships only commutative `compose_g2_product_blake3`, and the
@@ -12,7 +12,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use hologram_substrate_core::{
+use hologram_space::{
     address_bytes, Capabilities, KappaLabel, KappaLabel71, RealizationError, References,
 };
 
@@ -113,8 +113,8 @@ pub fn payload_of(iri: &str, bytes: &[u8]) -> Result<alloc::vec::Vec<u8>, Realiz
 /// Macro: a realization whose `references()` is the generic inverse projection over its IRI.
 macro_rules! realization {
     ($ty:ty, $iri:literal) => {
-        impl hologram_substrate_core::Realization for $ty {
-            const IRI: hologram_substrate_core::RealizationId = $iri;
+        impl hologram_space::Realization for $ty {
+            const IRI: hologram_space::RealizationId = $iri;
             fn canonicalize(&self) -> Vec<u8> {
                 let (refs, payload) = self.parts();
                 encode($iri, &refs, &payload)
@@ -126,7 +126,7 @@ macro_rules! realization {
         impl $ty {
             /// The realization's leaf κ-label (content address of the operand-embedding form).
             pub fn kappa(&self) -> KappaLabel71 {
-                use hologram_substrate_core::Realization;
+                use hologram_space::Realization;
                 address_bytes(&self.canonicalize())
             }
         }
@@ -187,7 +187,7 @@ impl CapabilitySet {
     /// Decode a capability-set canonical form back to its [`Capabilities`] view — the inverse of
     /// `canonicalize`. The runtime decodes the spawn'd caps κ-label to enforce `admits` (CR).
     pub fn to_capabilities(bytes: &[u8]) -> Result<Capabilities, RealizationError> {
-        let refs = <Self as hologram_substrate_core::Realization>::references(bytes)?;
+        let refs = <Self as hologram_space::Realization>::references(bytes)?;
         let payload = payload_of(
             "https://hologram.foundation/realization/capability-set",
             bytes,
@@ -680,7 +680,7 @@ realization!(
 
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
-use hologram_substrate_core::{Realization, RealizationId, RefExtractor};
+use hologram_space::{Realization, RealizationId, RefExtractor};
 
 /// The IRI → reference-extractor table the storage backend borrows for reachability walks
 /// (spec §5.3). One row per realization above. Static (no_std-friendly).
@@ -737,7 +737,7 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_substrate_core::{references, Realization};
+    use hologram_space::{references, Realization};
 
     fn k(seed: &[u8]) -> KappaLabel71 {
         address_bytes(seed)

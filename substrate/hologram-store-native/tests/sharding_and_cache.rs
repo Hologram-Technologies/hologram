@@ -7,8 +7,8 @@
 //! upholding the SP zero-copy floor.
 
 use hologram_realizations::REGISTRY;
+use hologram_space::{address_bytes, verify_kappa, KappaStore};
 use hologram_store_native::{CacheConfig, NativeKappaStore, SHARD_SIZE};
-use hologram_substrate_core::{address_bytes, verify_kappa, KappaStore};
 use std::sync::Arc;
 
 /// G2-1 — round-trip a blob larger than [`SHARD_THRESHOLD`]: put returns the σ-axis address of

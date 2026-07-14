@@ -33,7 +33,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use hologram_runtime::{ContainerEngine, ContainerIntents, HostContext};
-use hologram_substrate_core::RuntimeError;
+use hologram_space::RuntimeError;
 use spin::Mutex;
 use wasmi::{Engine as WasmiEngine, Func, Instance, Linker, Memory, Module, Store, TypedFunc};
 
@@ -256,8 +256,8 @@ mod tests {
     use super::*;
     use hologram_realizations::REGISTRY;
     use hologram_runtime::Runtime;
+    use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
     use hologram_store_mem::MemKappaStore;
-    use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaStore, Realization};
 
     /// Minimal counter container — same shape as the wasmtime test. Proves the bare-metal engine
     /// runs real Wasm modules end-to-end.

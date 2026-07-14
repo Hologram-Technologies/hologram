@@ -7,7 +7,7 @@ authors = { workspace = true }
 description = "HTTP-CAS gateway protocol for the Hologram Network Layer (spec §6.3): request/response codec + verify-on-receipt, hermetically testable. Live TCP transport layered on top under the `live` feature; the uor-native peer-discovery layer (`hologram-net-tcp`, κ-XOR Kademlia) sits parallel to this crate, not above it."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 async-trait = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -16,7 +16,7 @@ pollster = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std"]
+std = ["hologram-space/std"]
 # A live HTTP/1.1 CAS client+server over std::net (no heavy deps) — the verifiable transport for the
 # §6.3 protocol. The uor-native TCP transport (`hologram-net-tcp`, κ-XOR Kademlia) handles peer
 # discovery / DHT routing in parallel — neither layer is privileged above the other.

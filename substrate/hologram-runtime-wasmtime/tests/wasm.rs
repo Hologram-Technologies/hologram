@@ -7,10 +7,8 @@ use std::sync::Arc;
 use hologram_realizations::{ContainerManifest, Snapshot, REGISTRY};
 use hologram_runtime::{ContainerEngine, HostContext, Runtime};
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
-    Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization,
-};
 
 /// A minimal host context for direct-engine tests (empty store, no granted roots).
 fn ctx() -> HostContext {
@@ -194,9 +192,9 @@ fn container_uses_capability_gated_host_storage_imports() {
         assert_eq!(rt.deliver_event(h, secret.as_array()).unwrap(), u32::MAX);
         // storage_put from inside the container: the host store gains the κ of the written bytes.
         assert_eq!(rt.deliver_event(h, b"written-by-container").unwrap(), 0);
-        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(
-            b"written-by-container"
-        )));
+        assert!(rt
+            .store()
+            .contains(&hologram_space::address_bytes(b"written-by-container")));
     });
 }
 
@@ -283,13 +281,13 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
             endpoint: channel,
             target: payload,
         };
-        assert!(rt.store().contains(&hologram_substrate_core::address_bytes(
-            &route.canonicalize()
-        )));
+        assert!(rt
+            .store()
+            .contains(&hologram_space::address_bytes(&route.canonicalize())));
 
         // Delivery reached the subscriber's hg_callback, which storage_put the received payload-κ
         // bytes → the host store now contains the κ of those 71 bytes (receipt witnessed).
-        let receipt = hologram_substrate_core::address_bytes(payload.as_array());
+        let receipt = hologram_space::address_bytes(payload.as_array());
         assert!(
             rt.store().contains(&receipt),
             "subscriber's hg_callback ran and recorded the payload"

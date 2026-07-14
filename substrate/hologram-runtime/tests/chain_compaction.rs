@@ -7,8 +7,8 @@
 
 use hologram_realizations::{ChainCompaction, ErrorEvent, REGISTRY};
 use hologram_runtime::{diag_class, MockEngine, Runtime};
+use hologram_space::{address_bytes, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, KappaStore, Realization};
 
 #[test]
 fn b2_chain_compaction_breaks_predecessor_chain_at_threshold() {
@@ -50,7 +50,7 @@ fn b2_chain_compaction_breaks_predecessor_chain_at_threshold() {
 
     // Reachability from k4 *cannot* reach k1/k2/k3 — the chain is broken.
     rt.store().pin(&k4).unwrap();
-    let evicted = hologram_substrate_core::GarbageCollect::gc(rt.store(), REGISTRY).unwrap();
+    let evicted = hologram_space::GarbageCollect::gc(rt.store(), REGISTRY).unwrap();
     assert!(
         evicted >= 3,
         "the three older events must be reclaimed (got {evicted})"

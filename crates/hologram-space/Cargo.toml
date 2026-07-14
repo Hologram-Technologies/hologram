@@ -7,13 +7,22 @@ authors.workspace = true
 description = "The hologram space contract: the trait surface a host implements to become a place hologram runs (specs/refactor/02)."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+# Absorbed from hologram-substrate-core (P1): the σ-axis (via hologram-host, no
+# compute-engine dep) + uor-addr's κ-labels; hashbrown for the no_std maps; async-trait
+# for the sync/HAL trait surfaces.
+hologram-host = { workspace = true }
+uor-addr = { workspace = true, features = ["alloc"] }
 async-trait = { workspace = true }
 spin = { workspace = true }
+hashbrown = { workspace = true }
 
 [dev-dependencies]
 pollster = { workspace = true }
+# Independent reference impls for the AS-class σ-axis differential KATs (absorbed from core).
+blake3 = "1"
+sha2 = "0.10"
+sha3 = "0.10"
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std"]
+std = ["uor-addr/std", "hologram-host/std"]

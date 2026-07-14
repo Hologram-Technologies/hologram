@@ -12,11 +12,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
-use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
+use hologram_space::{
     Bytes, Capabilities, ContainerRuntime, KappaLabel71, KappaStore, KappaSync, Realization,
     SyncError,
 };
+use hologram_store_mem::MemKappaStore;
 
 fn caps(pubs: &[KappaLabel71], subs: &[KappaLabel71]) -> Capabilities {
     Capabilities {

@@ -16,16 +16,14 @@
 //! `scripts/opfs-browser-test.sh` Playwright harness against `address_bytes`. Together those
 //! cover all four documented substrates (TR `[track]` resolved).
 
-use hologram_space::RamBlockDevice;
 use hologram_realizations::ContainerManifest;
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::RamBlockDevice;
+use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
 use hologram_store_bare::BareMetalKappaStore;
 use hologram_store_mem::MemKappaStore;
 use hologram_store_native::NativeKappaStore;
-use hologram_substrate_core::{
-    Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization,
-};
 
 /// A deterministic container exercising the full host-import surface that produces κs:
 /// `storage_put`s the event bytes at scratch[200], `publish`es nothing (no channel granted), and
@@ -106,7 +104,7 @@ async fn run_one<S: KappaStore + Send + Sync + 'static>(store: S) -> KappaStream
         .iter()
         .map(|e| {
             rt.deliver_event(h, e).unwrap();
-            hologram_substrate_core::address_bytes(e)
+            hologram_space::address_bytes(e)
         })
         .collect();
 
@@ -148,7 +146,7 @@ fn tr_same_container_emits_byte_identical_kappa_stream_on_mem_native_bare() {
             b"tr-event-1-deterministic",
             b"tr-event-2-deterministic",
         ] {
-            let k = hologram_substrate_core::address_bytes(e);
+            let k = hologram_space::address_bytes(e);
             let _ = mem_store.put("blake3", e).unwrap();
             let _ = native_store.put("blake3", e).unwrap();
             let _ = bare_store.put("blake3", e).unwrap();

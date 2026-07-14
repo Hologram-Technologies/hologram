@@ -31,7 +31,7 @@ use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use hashbrown::{HashMap, HashSet};
 use hologram_space::BlockDevice;
-use hologram_substrate_core::{
+use hologram_space::{
     address_bytes, references, Bytes, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry,
     StoreError,
 };
@@ -578,7 +578,7 @@ impl<D: BlockDevice> KappaStore for BareMetalKappaStore<D> {
     }
 }
 
-impl<D: BlockDevice> hologram_substrate_core::GarbageCollect for BareMetalKappaStore<D> {
+impl<D: BlockDevice> hologram_space::GarbageCollect for BareMetalKappaStore<D> {
     fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, StoreError> {
         BareMetalKappaStore::gc(self, registry)
     }

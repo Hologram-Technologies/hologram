@@ -5,8 +5,8 @@
 //! --example cas_artifact_cache`.
 
 use hologram_realizations::{ContainerManifest, REGISTRY};
+use hologram_space::{KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{KappaStore, Realization};
 
 fn main() {
     let cache = MemKappaStore::new();

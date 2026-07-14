@@ -2,8 +2,8 @@
 //! definition, validated identically per substrate) plus the reachability-GC witness (ST/§10.8).
 
 use hologram_realizations::{ContainerManifest, REGISTRY};
+use hologram_space::{KappaStore, Realization};
 use hologram_store_native::NativeKappaStore;
-use hologram_substrate_core::{KappaStore, Realization};
 use hologram_tck::store_battery;
 
 #[test]

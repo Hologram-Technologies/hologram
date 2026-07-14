@@ -4,11 +4,11 @@
 
 use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::{MockEngine, Runtime};
-use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
+use hologram_space::{
     Capabilities, ContainerHandle, ContainerRuntime, ContainerState, KappaLabel71, KappaStore,
     Realization,
 };
+use hologram_store_mem::MemKappaStore;
 
 fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
     Capabilities {

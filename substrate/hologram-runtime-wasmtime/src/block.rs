@@ -4,8 +4,8 @@
 //! This is how a running engine *uses* an imported driver: the device the store runs on is the
 //! driver's code, not substrate-authored.
 
+use hologram_space::RuntimeError;
 use hologram_space::{BlockDevice, DeviceError};
-use hologram_substrate_core::RuntimeError;
 use spin::Mutex;
 use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 

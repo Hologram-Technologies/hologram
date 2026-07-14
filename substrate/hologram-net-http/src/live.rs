@@ -14,7 +14,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use hologram_substrate_core::{Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync, SyncError};
+use hologram_space::{Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync, SyncError};
 
 use crate::{accept_received, cas_path, serve_get, CasResponse};
 
@@ -313,7 +313,7 @@ impl KappaSync for HttpKappaSync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_substrate_core::{address_bytes, get_with_fetch};
+    use hologram_space::{address_bytes, get_with_fetch};
 
     #[test]
     fn live_fetch_roundtrips_and_verifies_then_caches() {
@@ -330,7 +330,7 @@ mod tests {
             assert!(local.contains(&k), "verified bytes cached locally");
 
             // Absent κ → 404 → Ok(None).
-            let absent = hologram_substrate_core::address_bytes(b"absent");
+            let absent = hologram_space::address_bytes(b"absent");
             assert_eq!(sync.fetch(&absent).await.unwrap(), None);
             server.shutdown();
         });

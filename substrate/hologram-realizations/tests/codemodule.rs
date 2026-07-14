@@ -4,11 +4,11 @@
 //! store/fetch/verify path as any container code.
 
 use hologram_realizations::ContainerManifest;
-use hologram_substrate_core::Realization;
+use hologram_space::Realization;
 use uor_addr::codemodule::{address_blake3, CodeModuleValue};
 
 /// Build a tiny "block-device driver" code module AST and address it (CCMAS → blake3 κ).
-fn driver_kappa(name: &str) -> hologram_substrate_core::KappaLabel71 {
+fn driver_kappa(name: &str) -> hologram_space::KappaLabel71 {
     // fn read(...) and fn write(...) — the BlockDevice interface, expressed as code.
     let body = CodeModuleValue::atom("0");
     let ret = CodeModuleValue::atom("DeviceError");
@@ -35,8 +35,8 @@ fn a_driver_is_a_codemodule_kappa_addressed_not_authored() {
 fn driver_loads_through_the_same_manifest_machinery_as_a_container() {
     // A driver "container": its code operand is the codemodule κ; state/params are leaves.
     let code = driver_kappa("virtio-blk-driver");
-    let state = hologram_substrate_core::address_bytes(b"driver-config");
-    let params = hologram_substrate_core::address_bytes(b"{}");
+    let state = hologram_space::address_bytes(b"driver-config");
+    let params = hologram_space::address_bytes(b"{}");
     let manifest = ContainerManifest {
         code,
         initial_state: state,

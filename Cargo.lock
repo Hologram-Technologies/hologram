@@ -1397,9 +1397,9 @@ version = "0.9.0"
 dependencies = [
  "cucumber",
  "hologram-realizations",
+ "hologram-space",
  "hologram-spike-sp3",
  "hologram-store-mem",
- "hologram-substrate-core",
  "hologram-tck",
  "tokio",
 ]
@@ -1463,7 +1463,6 @@ dependencies = [
  "hologram-realizations",
  "hologram-space",
  "hologram-store-mem",
- "hologram-substrate-core",
  "pollster",
  "spin",
 ]
@@ -1473,8 +1472,8 @@ name = "hologram-net-http"
 version = "0.9.0"
 dependencies = [
  "async-trait",
+ "hologram-space",
  "hologram-store-mem",
- "hologram-substrate-core",
  "pollster",
 ]
 
@@ -1484,8 +1483,8 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "hologram-realizations",
+ "hologram-space",
  "hologram-store-mem",
- "hologram-substrate-core",
  "pollster",
  "tokio",
 ]
@@ -1506,7 +1505,7 @@ dependencies = [
 name = "hologram-realizations"
 version = "0.9.0"
 dependencies = [
- "hologram-substrate-core",
+ "hologram-space",
  "uor-addr",
 ]
 
@@ -1517,8 +1516,8 @@ dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
  "hologram-realizations",
+ "hologram-space",
  "hologram-store-mem",
- "hologram-substrate-core",
  "pollster",
  "spin",
  "uor-addr",
@@ -1531,8 +1530,8 @@ dependencies = [
  "hashbrown 0.15.5",
  "hologram-realizations",
  "hologram-runtime",
+ "hologram-space",
  "hologram-store-mem",
- "hologram-substrate-core",
  "pollster",
  "spin",
  "wasmi",
@@ -1550,7 +1549,6 @@ dependencies = [
  "hologram-store-bare",
  "hologram-store-mem",
  "hologram-store-native",
- "hologram-substrate-core",
  "pollster",
  "rand_chacha",
  "rand_core",
@@ -1564,9 +1562,14 @@ name = "hologram-space"
 version = "0.9.0"
 dependencies = [
  "async-trait",
- "hologram-substrate-core",
+ "blake3",
+ "hashbrown 0.15.5",
+ "hologram-host",
  "pollster",
+ "sha2",
+ "sha3",
  "spin",
+ "uor-addr",
 ]
 
 [[package]]
@@ -1593,7 +1596,6 @@ dependencies = [
  "hologram-host",
  "hologram-realizations",
  "hologram-space",
- "hologram-substrate-core",
  "hologram-tck",
  "pollster",
  "spin",
@@ -1608,7 +1610,7 @@ dependencies = [
  "criterion",
  "hashbrown 0.15.5",
  "hologram-realizations",
- "hologram-substrate-core",
+ "hologram-space",
  "hologram-tck",
  "pollster",
  "spin",
@@ -1620,7 +1622,7 @@ version = "0.9.0"
 dependencies = [
  "criterion",
  "hologram-realizations",
- "hologram-substrate-core",
+ "hologram-space",
  "hologram-tck",
  "redb",
 ]
@@ -1635,31 +1637,18 @@ dependencies = [
  "hologram-realizations",
  "hologram-runtime",
  "hologram-runtime-wasmtime",
+ "hologram-space",
  "hologram-store-mem",
  "hologram-store-native",
- "hologram-substrate-core",
  "pollster",
  "tokio",
-]
-
-[[package]]
-name = "hologram-substrate-core"
-version = "0.9.0"
-dependencies = [
- "async-trait",
- "blake3",
- "hashbrown 0.15.5",
- "hologram-host",
- "sha2",
- "sha3",
- "uor-addr",
 ]
 
 [[package]]
 name = "hologram-tck"
 version = "0.9.0"
 dependencies = [
- "hologram-substrate-core",
+ "hologram-space",
 ]
 
 [[package]]

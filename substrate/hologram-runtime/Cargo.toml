@@ -7,7 +7,7 @@ authors = { workspace = true }
 description = "Substrate-portable Container Runtime orchestration (spec §4): lifecycle, snapshot-as-κ, and capability enforcement (admits) over a ContainerEngine seam + KappaStore. The Wasmtime engine is a backend behind the seam."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 hologram-realizations   = { workspace = true }
 async-trait             = { workspace = true }
 spin                    = { workspace = true }
@@ -22,4 +22,4 @@ async-trait        = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std", "hologram-realizations/std"]
+std = ["hologram-space/std", "hologram-realizations/std"]

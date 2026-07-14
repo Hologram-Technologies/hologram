@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use hologram_substrate_core::{
+use hologram_space::{
     address_bytes, references, Bytes, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry,
     StoreError,
 };
@@ -682,7 +682,7 @@ impl KappaStore for NativeKappaStore {
     }
 }
 
-impl hologram_substrate_core::GarbageCollect for NativeKappaStore {
+impl hologram_space::GarbageCollect for NativeKappaStore {
     fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, StoreError> {
         NativeKappaStore::gc(self, registry)
     }

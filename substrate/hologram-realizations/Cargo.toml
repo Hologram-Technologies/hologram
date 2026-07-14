@@ -7,7 +7,7 @@ authors = { workspace = true }
 description = "Hologram deployment-substrate canonical-form realizations (container-manifest, capability-set, snapshot, runtime-state, error-event, channel) — IRI-tagged, operand-embedding, references() inverse-projection. See specs/docs/container-substrate-architecture.md §3.3."
 
 [dependencies]
-hologram-substrate-core = { workspace = true }
+hologram-space = { workspace = true }
 
 [dev-dependencies]
 # uor-addr's `codemodule` (CCMAS) realization: code — drivers, container bodies, the engine itself —
@@ -16,4 +16,4 @@ uor-addr = { workspace = true, features = ["alloc"] }
 
 [features]
 default = ["std"]
-std = ["hologram-substrate-core/std"]
+std = ["hologram-space/std"]

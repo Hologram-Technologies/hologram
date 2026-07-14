@@ -32,9 +32,7 @@ use core::future::poll_fn;
 use core::task::Poll;
 use hashbrown::{HashMap, HashSet};
 use hologram_space::NetworkInterface;
-use hologram_substrate_core::{
-    verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaSync, SyncError,
-};
+use hologram_space::{verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaSync, SyncError};
 use spin::Mutex;
 
 // ── frame codec ─────────────────────────────────────────────────────────────
@@ -329,9 +327,9 @@ impl fmt::Debug for BareNetSync {
 mod tests {
     use super::*;
     use core::task::Waker;
+    use hologram_space::KappaStore;
     use hologram_space::NicError;
     use hologram_store_mem::MemKappaStore;
-    use hologram_substrate_core::KappaStore;
 
     /// A loopback NIC: every `transmit` becomes available to the same NIC's `receive`. Backed
     /// by an internal queue — the simplest possible no_std-compatible NIC test fixture.
@@ -431,7 +429,7 @@ mod tests {
     fn bare_net_sync_rejects_forged_response() {
         pollster::block_on(async {
             let payload = b"truth";
-            let truthful_k = hologram_substrate_core::address_bytes(payload);
+            let truthful_k = hologram_space::address_bytes(payload);
             let nic = LoopbackNic::new();
             let sync = BareNetSync::new(
                 nic.clone() as Arc<dyn NetworkInterface>,

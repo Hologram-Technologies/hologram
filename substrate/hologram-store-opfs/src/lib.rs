@@ -11,7 +11,7 @@ extern crate alloc;
 
 pub mod bridge;
 
-use hologram_substrate_core::{address_bytes, references, verify_kappa, KappaLabel, KappaLabel71};
+use hologram_space::{address_bytes, references, verify_kappa, KappaLabel, KappaLabel71};
 use js_sys::{Array, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;

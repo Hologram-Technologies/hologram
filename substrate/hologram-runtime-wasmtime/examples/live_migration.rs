@@ -8,8 +8,8 @@
 use hologram_realizations::{CapabilitySet, ContainerManifest, Snapshot};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{Capabilities, ContainerRuntime, KappaStore, Realization};
 
 /// A session container: hg_event increments a counter at memory[0] (its session state).
 const SESSION_WAT: &str = r#"
@@ -24,10 +24,7 @@ const SESSION_WAT: &str = r#"
 
 fn provision(
     store: &MemKappaStore,
-) -> (
-    hologram_substrate_core::KappaLabel71,
-    hologram_substrate_core::KappaLabel71,
-) {
+) -> (hologram_space::KappaLabel71, hologram_space::KappaLabel71) {
     let code = store
         .put("blake3", &wat::parse_str(SESSION_WAT).unwrap())
         .unwrap();

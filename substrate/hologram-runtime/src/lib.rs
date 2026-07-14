@@ -20,7 +20,7 @@ use hashbrown::{HashMap, HashSet};
 use hologram_realizations::{
     CapabilitySet, ChainCompaction, ContainerManifest, Delegation, ErrorEvent, Snapshot,
 };
-use hologram_substrate_core::{
+use hologram_space::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
     KappaSync, Realization, RealizationRegistry, RuntimeError,
 };
@@ -204,7 +204,7 @@ pub enum NetworkIntent {
     Fetch(KappaLabel71),
 }
 
-fn be(_e: hologram_substrate_core::StoreError) -> RuntimeError {
+fn be(_e: hologram_space::StoreError) -> RuntimeError {
     RuntimeError::BackendFailure("store")
 }
 
@@ -328,8 +328,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         for k in candidates {
             // Fetch + verify-on-receipt + cache locally.
             let fetched =
-                hologram_substrate_core::get_with_fetch(self.store.as_ref(), sync.as_ref(), &k)
-                    .await;
+                hologram_space::get_with_fetch(self.store.as_ref(), sync.as_ref(), &k).await;
             let Ok(Some(bytes)) = fetched else { continue };
             // Try parsing as a Route; deliver only if its endpoint matches `channel`.
             if let Ok(refs) = hologram_realizations::Route::references(bytes.as_ref()) {
@@ -614,7 +613,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
                     fold_count: current_depth,
                     // The on-the-wire 71-byte κ-label form is the content-bound summary — same
                     // determinism as a raw blake3 digest, no hex-decode round-trip required.
-                    boundary: hologram_substrate_core::address_bytes(&summary_input),
+                    boundary: hologram_space::address_bytes(&summary_input),
                 };
                 let barrier_kappa = self
                     .store
@@ -661,12 +660,8 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
                 NetworkIntent::Announce(k) => sync.announce(&k).await,
                 NetworkIntent::Fetch(k) => {
                     // `get_with_fetch` performs verify-on-receipt + caches the bytes locally.
-                    let _ = hologram_substrate_core::get_with_fetch(
-                        self.store.as_ref(),
-                        sync.as_ref(),
-                        &k,
-                    )
-                    .await;
+                    let _ = hologram_space::get_with_fetch(self.store.as_ref(), sync.as_ref(), &k)
+                        .await;
                 }
             }
         }
@@ -830,8 +825,8 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
 }
 
 #[async_trait::async_trait]
-impl<E: ContainerEngine + 'static, S: KappaStore + 'static>
-    hologram_substrate_core::ContainerRuntime for Runtime<E, S>
+impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_space::ContainerRuntime
+    for Runtime<E, S>
 {
     async fn spawn(
         &self,

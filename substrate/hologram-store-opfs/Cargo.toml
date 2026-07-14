@@ -10,7 +10,7 @@ description = "Browser OPFS KappaStore (spec §5.4): κ→bytes persisted in the
 crate-type = ["cdylib"]
 
 [dependencies]
-hologram-substrate-core = { path = "../hologram-substrate-core", default-features = false }
+hologram-space = { path = "../hologram-space", default-features = false }
 hologram-realizations    = { path = "../hologram-realizations", default-features = false }
 wasm-bindgen = "=0.2.122"
 wasm-bindgen-futures = "0.4"

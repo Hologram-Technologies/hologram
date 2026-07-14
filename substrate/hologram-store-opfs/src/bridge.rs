@@ -39,7 +39,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use hologram_substrate_core::{address_bytes, verify_kappa, KappaLabel};
+use hologram_space::{address_bytes, verify_kappa, KappaLabel};
 use js_sys::{Atomics, Int32Array, SharedArrayBuffer, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;

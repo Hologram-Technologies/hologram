@@ -5,8 +5,8 @@
 //! reachability eviction), RZ (references() inverse projection), SPINE (uor-native invariants).
 
 use hologram_realizations::{ContainerManifest, REGISTRY};
+use hologram_space::{address_bytes, verify_kappa, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{address_bytes, verify_kappa, KappaStore, Realization};
 
 /// Format a 32-byte digest as the canonical `blake3:<64 hex>` κ-label string.
 fn blake3_label_str(digest: &[u8; 32]) -> String {

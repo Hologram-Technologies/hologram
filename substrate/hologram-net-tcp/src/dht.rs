@@ -10,7 +10,7 @@
 //! §11.1), not a registry lookup.
 
 use crate::{Peer, K};
-use hologram_substrate_core::KappaLabel71;
+use hologram_space::KappaLabel71;
 
 /// Decode the 32-byte blake3 digest from the on-wire κ-label form `blake3:<64 hex>`. Returns
 /// zero on parse failure (caller should not see this on valid κ-labels; the substrate only
@@ -128,7 +128,7 @@ impl RoutingTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_substrate_core::address_bytes;
+    use hologram_space::address_bytes;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn fake_peer(seed: u8) -> Peer {

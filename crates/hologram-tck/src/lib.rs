@@ -12,7 +12,7 @@
 
 extern crate alloc;
 
-use hologram_substrate_core::{address_bytes, KappaStore, StoreError};
+use hologram_space::{address_bytes, KappaStore, StoreError};
 
 /// Run the full trait-level conformance battery against `store`. Panics on the first violation
 /// (intended to be called from a `#[test]`). The store must start empty for the count assertions.
@@ -122,5 +122,5 @@ pub fn content_roundtrip(store: &dyn KappaStore) {
     let k = store.put("blake3", payload).unwrap();
     let got = store.get(&k).unwrap().expect("present after put");
     assert_eq!(got.as_ref(), payload);
-    assert!(hologram_substrate_core::verify_kappa(got.as_ref(), &k).unwrap());
+    assert!(hologram_space::verify_kappa(got.as_ref(), &k).unwrap());
 }

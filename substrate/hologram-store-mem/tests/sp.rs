@@ -2,8 +2,8 @@
 //! reference store upholds hologram's performance contract: content-addressing is the efficiency
 //! mechanism, not a tax. Mirrors the compute substrate's structural (not timing) perf proofs.
 
+use hologram_space::KappaStore;
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::KappaStore;
 
 /// SP-1 — `get` is zero-copy: two reads of the same κ share one allocation (an `Arc` clone, not a
 /// byte copy). This is the storage analog of the compute substrate's single-buffer pool.
@@ -42,7 +42,7 @@ fn sp2_idempotent_put_does_not_rewrite() {
 #[test]
 fn sp3_gc_is_bounded_by_reachable_set() {
     use hologram_realizations::{ContainerManifest, REGISTRY};
-    use hologram_substrate_core::Realization;
+    use hologram_space::Realization;
     let store = MemKappaStore::new();
 
     // 300 reachable leaves behind 100 pinned manifests; 300 unreachable orphans.

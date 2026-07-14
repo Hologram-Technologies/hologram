@@ -11,7 +11,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use hashbrown::{HashMap, HashSet};
-use hologram_substrate_core::{
+use hologram_space::{
     address_bytes_axis, references, Bytes, KappaLabel, KappaLabel71, KappaStore,
     RealizationRegistry, StoreError,
 };
@@ -189,11 +189,8 @@ impl KappaStore for MemKappaStore {
     }
 }
 
-impl hologram_substrate_core::GarbageCollect for MemKappaStore {
-    fn gc(
-        &self,
-        registry: RealizationRegistry<'_>,
-    ) -> Result<usize, hologram_substrate_core::StoreError> {
+impl hologram_space::GarbageCollect for MemKappaStore {
+    fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, hologram_space::StoreError> {
         Ok(MemKappaStore::gc(self, registry))
     }
 }

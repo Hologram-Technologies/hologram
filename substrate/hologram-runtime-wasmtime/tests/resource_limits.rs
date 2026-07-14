@@ -5,10 +5,8 @@
 use hologram_realizations::{CapabilitySet, ContainerManifest};
 use hologram_runtime::Runtime;
 use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{
-    address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization,
-};
 
 fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {
     Capabilities {
@@ -29,10 +27,7 @@ fn provision(
     tag: &[u8],
     wasm: &[u8],
     c: Capabilities,
-) -> (
-    hologram_substrate_core::KappaLabel71,
-    hologram_substrate_core::KappaLabel71,
-) {
+) -> (hologram_space::KappaLabel71, hologram_space::KappaLabel71) {
     let code = store.put("blake3", wasm).unwrap();
     let st = store.put("blake3", tag).unwrap();
     let cid = store

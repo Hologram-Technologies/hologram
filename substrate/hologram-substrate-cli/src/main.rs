@@ -141,7 +141,7 @@ fn build(verb: Verb) -> Result<Command, String> {
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(badk)
             };
-            Command::Caps(hologram_substrate_core::Capabilities {
+            Command::Caps(hologram_space::Capabilities {
                 storage_roots: ks(roots)?,
                 publish_channels: ks(publish)?,
                 subscribe_channels: ks(subscribe)?,
@@ -198,7 +198,7 @@ fn run_spawn(
 ) -> ExitCode {
     use hologram_runtime::Runtime;
     use hologram_runtime_wasmtime::WasmtimeEngine;
-    use hologram_substrate_core::ContainerRuntime;
+    use hologram_space::ContainerRuntime;
 
     let cid = match parse_kappa(container) {
         Ok(k) => k,
@@ -262,8 +262,7 @@ fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> E
         };
         // Spawn a single-threaded tokio runtime for the TCP transport (the HTTP server is on its
         // own thread already). The TCP transport's accept loop + DHT machinery live here.
-        let store_for_tcp =
-            store.clone() as std::sync::Arc<dyn hologram_substrate_core::KappaStore>;
+        let store_for_tcp = store.clone() as std::sync::Arc<dyn hologram_space::KappaStore>;
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
