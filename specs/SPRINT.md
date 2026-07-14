@@ -40,9 +40,15 @@ honesty meta-gate green.
 - [ ] **P0 exit remainder** (non-blocking for P1): bridge tag cut; hologram-ai migrated
   (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
   rustup toolchain for cross-builds).
-- [ ] **P1**: perf baselines (D27); rename `hologram-backend`→`hologram-compute`,
-  `hologram-host`→`hologram-types`; dissolve `substrate/`→`crates/{space,runtime,net,tck}`;
-  unify the two `hologram` CLIs. Keep the 7 enforced scenarios + golden vectors green.
+- [ ] **P1 — substrate dissolution** (in progress; non-colliding order chosen so it avoids
+  Sprint 39's active `hologram-backend` work; perf baselines deferred until kernels settle):
+  - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
+    absorbed as `hologram_space::hal`; 4 dependents redirected; `substrate/hologram-bare-hal`
+    deleted. All 7 scenarios + golden vectors + native/wasm builds + clippy/fmt green.
+  - [ ] 2: core (+realizations) → hologram-space · 3: tck (substrate-tck + store-mem) ·
+    4: net (net-http/tcp/bare → hologram-net) · 5: runtime (runtime-*/engines → hologram-runtime).
+  - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
+    `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
   first lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption
   (distinct follow-on).
