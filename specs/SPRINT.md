@@ -31,8 +31,15 @@ honesty meta-gate green.
 - [x] **P0 human gates cleared (2026-07-14)**: relicense consent **granted** (owner is sole
   rights holder); restructuring review **satisfied** (owner); `hologram` name **decided** —
   attempt acquisition, fallback **`uor-hologram`** (non-blocking; only bites at P3 publish).
-- [ ] **P0 exit**: holospaces full V&V (QEMU / Playwright) — running; bridge tag cut;
-  hologram-ai migrated onto it (at P3). crates.io tokens/ownership (P3).
+- [x] **holospaces V&V vs hologram HEAD — code green** (2026-07-14): every hologram-
+  dependent suite passed (addressing, security incl. attenuation, ingestion, workspace,
+  RISC-V/AArch64/x86-64 emulators, real RISC-V Linux boot to userspace). The V&V harness
+  reported FAILED only on two **environment** false-negatives, both independent of the
+  sync: CS docs validators (Java 24 vs pinned 21) and portability (homebrew `cargo` lacks
+  wasm32/thumbv7em sysroots — proven green by rebuilding with the rustup toolchain).
+- [ ] **P0 exit remainder** (non-blocking for P1): bridge tag cut; hologram-ai migrated
+  (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
+  rustup toolchain for cross-builds).
 - [ ] **P1**: perf baselines (D27); rename `hologram-backend`→`hologram-compute`,
   `hologram-host`→`hologram-types`; dissolve `substrate/`→`crates/{space,runtime,net,tck}`;
   unify the two `hologram` CLIs. Keep the 7 enforced scenarios + golden vectors green.
