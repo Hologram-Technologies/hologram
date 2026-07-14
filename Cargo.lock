@@ -1405,6 +1405,8 @@ name = "hologram-conformance"
 version = "0.9.0"
 dependencies = [
  "cucumber",
+ "hologram-realizations",
+ "hologram-substrate-core",
  "tokio",
 ]
 
