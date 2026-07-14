@@ -1,5 +1,44 @@
 # Sprint Tracking
 
+## Sprint 40: Ecosystem Refactor — Consolidation (ACTIVE)
+
+**Plan:** [specs/refactor/00-overview.md](refactor/00-overview.md) · P0 gates
+[specs/refactor/P0-PREP.md](refactor/P0-PREP.md) · branch `chore/refactor`
+(holospaces: `chore/hologram-head-sync`)
+
+Goal: consolidate the ecosystem (hologram + holospaces in one repo; hologram-ai stays an
+external consumer) with clean crate boundaries — `substrate/` dissolved into core crates,
+holospaces becomes the space contract's implementations, `.holo` becomes the application
+container, one `hologram` facade + `Client` under everything. Phased always-green
+(P0.5 spike → P0 → P1 → P2 → P3 hard stop → P4–P6 follow-on). Decisions D1–D29.
+
+Conformance: **7 / 29 BDD scenarios enforced** (LAW-0/1/3, SP-1/3, MG-5, GV-1);
+honesty meta-gate green.
+
+- [x] **Spec suite** 00–08 + P0-PREP, decisions D1–D29.
+- [x] **P0.5 spike (D28)**: `hologram-space` (Space contract) + `hologram-spike-sp3`
+  (`Client` compile→store→boot) compose on native + wasm32; Send-bound resolved =
+  maybe-Send. Corrected **LAW-4** from evidence — storage is *synchronous* (wasm-safe via
+  sync-OPFS-in-a-Worker), only network/lifecycle async. SP-3 enforced.
+- [x] **Scenarios → enforced**: SP-1 (TCK-is-conformance), LAW-1 (SPINE-1 re-derivation),
+  LAW-3 (open contract, D21), MG-5 (κ-stability golden vectors). LAW-2 / LAW-5 held
+  honestly (no witness yet — attenuation "not faked here" in the code).
+- [x] **P0 preflight**: golden vectors frozen (ground rule 5); LICENSE-MIT + LICENSE-APACHE
+  (D24); crates.io audit — `hologram` name **TAKEN**, 18 other target names free.
+- [x] **P0 holospaces HEAD-sync (D23)**: pin `18f553d`→`22b0ce1` on holospaces
+  `chore/hologram-head-sync` — clean build + 109 tests pass (the 3 breaking changes don't
+  touch holospaces; the feared 104-commit port was a clean pin-bump). Bridge tag pending.
+- [ ] **P0 human gates** (blocks P1): `hologram` name decision (acquire → fallback
+  **`uor-hologram`**); relicense consent (holospaces contributor); restructuring review.
+- [ ] **P0 exit**: holospaces full V&V (QEMU / Playwright) green; bridge tag cut;
+  hologram-ai migrated onto it.
+- [ ] **P1**: perf baselines (D27); rename `hologram-backend`→`hologram-compute`,
+  `hologram-host`→`hologram-types`; dissolve `substrate/`→`crates/{space,runtime,net,tck}`;
+  unify the two `hologram` CLIs. Keep the 7 enforced scenarios + golden vectors green.
+- [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
+  first lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption
+  (distinct follow-on).
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)

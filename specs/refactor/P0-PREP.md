@@ -52,16 +52,19 @@ heart of the "just add `hologram` with features" DX (D4). A user decision is req
 before P3 publishes. Options:
 1. **Acquire the name** — contact the `hologram` v0.1.4 owner about a transfer (it's a
    tiny, dormant niche crate; may be gettable). Best outcome — preserves D4 verbatim.
-2. **Rename the facade** — e.g. `hologram-rt`, `uor-hologram`, `holo`, `hologramd`. Keeps
-   the `hologram::` *module* paths in code, but changes the `Cargo.toml` line users write.
-   Undercuts the headline one-word import.
+2. **Rename the facade** — **`uor-hologram`** (confirmed free on crates.io; ties the
+   umbrella to the UOR-Foundation family). Keeps the `hologram::` *module* paths in code
+   (`use uor_hologram as hologram;` or re-export), but changes the `Cargo.toml` line users
+   write. Undercuts the headline one-word import slightly, but reads as intentional
+   namespacing rather than an unavailable-name workaround.
 3. **Scoped/prefixed publish** now, revisit acquisition later.
-Recommendation: pursue (1) first; fall back to (2) with `hologram-rt` if unavailable.
+Recommendation: pursue (1) first; fall back to (2) with `uor-hologram` if unavailable.
 
 **DECISION (2026-07-14):** pursue acquisition of `hologram`; if it can't be obtained,
-publish the facade as **`hologram-rt`** (module paths stay `hologram::`). Until resolved,
-in-tree the facade package name stays `hologram` (it is `publish = false`-safe to keep the
-dir name); the published `Cargo.toml` `name =` is the only thing that changes at P3.
+publish the facade as **`uor-hologram`** (crate name), preserving the `hologram::` module
+path via re-export so user code reads `use hologram::...`. Until resolved, the in-tree
+facade package name stays `hologram` (`publish = false`-safe); the published `Cargo.toml`
+`name =` is the only thing that changes at P3.
 
 **Draft acquisition message (to the `hologram` v0.1.4 owner via their crates.io/repo contact):**
 
@@ -75,7 +78,7 @@ dir name); the published `Cargo.toml` `name =` is the only thing that changes at
 > (e.g. `rbf-interp`)? Happy to help with the migration and credit you. Thank you for
 > considering it.
 
-If declined or no response in a reasonable window, proceed with `hologram-rt`.
+If declined or no response in a reasonable window, proceed with `uor-hologram`.
 
 ### Free (confirmed available)
 All other target names are FREE:
