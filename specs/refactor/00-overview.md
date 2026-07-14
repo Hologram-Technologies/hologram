@@ -48,9 +48,11 @@ These are repo-wide invariants. Any code or spec that violates one is wrong by d
    live *behind* the traits, never in them. Conformance = passing `hologram-tck`. The
    contract is open: a space may live in any repository — no sealed traits, no
    crate-private seams, no in-tree privilege. (Decisions D2, D21.)
-4. **Async contracts, sync compute.** I/O-shaped contract traits are async; the tensor
-  execution hot path is synchronous, zero-allocation, `no_std`-capable. The session
-   boundary is the only async↔sync seam. (Decision D14.)
+4. **Sync storage + compute, async network/lifecycle.** Storage (`KappaStore`) and the
+   tensor hot path are synchronous, zero-allocation, `no_std`-capable (sync OPFS in a
+   Worker makes a sync store wasm-safe); network sync and runtime lifecycle are async.
+   The async↔sync seam is the network/boot boundary, never storage. Send-bound is
+   maybe-Send. (Decision D14; corrected by the P0.5 spike — see `02-space-contract.md`.)
 5. **Capability attenuation only.** Delegated capabilities are always a subset of the
   grantor's; amplification is unrepresentable. Enforced at every spawn/import boundary.
 6. **One programmatic surface.** All human/foreign-language entry points (CLI, FFI, SDKs)

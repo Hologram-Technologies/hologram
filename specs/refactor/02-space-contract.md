@@ -43,13 +43,14 @@ trait Space {
 
 Fixed now: (a) associated types, not `dyn` fields — `Client` is generic over `S: Space`
 (monomorphized per platform; FFI/packaging crates instantiate concrete spaces, so no
-object-safety requirement on `Space` itself); (b) the **Send-bound policy** is decided by
-a P1 spike, because it decides whether one trait spans browser and native: wasm futures
-are `!Send`, native wants `Send + 'static`. The candidate is maybe-Send (target-cfg'd
-bounds à la `async_trait(?Send)` on wasm32) — the spike proves it against both TCK
-targets before the trait freezes; (c) individual contract traits (`KappaStore`, …)
-remain independently usable and dyn-capable where object safety allows — `Space` is
-composition, not a cage.
+object-safety requirement on `Space` itself); (b) the **Send-bound policy is maybe-Send**
+— *resolved by the P0.5 spike* (2026-07-14) from the existing precedent, not deferred to
+a P1 spike: the substrate already ships `KappaSync: Send + Sync` (native) and
+`LocalKappaSync` under `#[async_trait(?Send)]` (wasm/bare, where futures are `!Send`), so
+the async parts of `Space` use the same target-conditional bounds. Note the associated
+types split by posture — `Store` is a **sync** trait (§Async posture), `Sync`/`Engine`
+are async; (c) individual contract traits (`KappaStore`, …) remain independently usable
+and dyn-capable where object safety allows — `Space` is composition, not a cage.
 
 ## Contract contents
 
@@ -159,15 +160,31 @@ CapabilitySet, Snapshot, RuntimeState, ErrorEvent, Channel, PeerEndpoint, Delega
 ChainCompaction — plus new ones introduced by this refactor: **AppManifest** (03),
 **Network** (04), and the hoisted **Holospace/Roster/Configuration** forms.
 
-## Async posture (D14 — law)
+## Async posture (D14 — law; corrected by the P0.5 spike, 2026-07-14)
 
-- All I/O-shaped contract traits (`KappaStore`, `KappaSync`, `ContainerRuntime`,
-  `ContainerEngine`, HAL) are **async**: native `async fn` in traits where object safety
-  permits, `async-trait` where `dyn` dispatch is required.
-- The tensor hot path (`hologram-exec`, `hologram-compute`) stays **synchronous** and
-  allocation-free; it is reached from async code only at the session boundary.
-- Rationale: blocking is illegal on the browser main thread; futures machinery is poison
-  inside the deterministic kernel dispatch loop. The seam is explicit and singular.
+The original draft said "all I/O-shaped contract traits are async." The P0.5 de-risk
+spike (D28) checked this against the working substrate and found it **wrong for storage**
+— so the law is corrected here from evidence:
+
+- **Storage is synchronous.** `KappaStore::put/get` return `Result` directly, not
+  futures. This is correct and wasm-safe: the browser reaches persistent storage through
+  `FileSystemSyncAccessHandle`, which is *synchronous inside a Web Worker* (the holospaces
+  model) — so a sync store never blocks a forbidden thread. The reference `MemKappaStore`
+  is `Send + Sync` via `spin::Mutex`, no `std`. Wrapping it in async would add a pointless
+  layer over an already-correct sync API.
+- **The tensor hot path is synchronous** (`hologram-exec`, `hologram-compute`) and
+  allocation-free — unchanged.
+- **Network sync and runtime lifecycle are asynchronous.** `KappaSync`
+  (`fetch`/`announce`/`discover`) and `ContainerRuntime`/`ContainerEngine` wrap genuine
+  I/O and event loops, so they are `async`.
+- **The async↔sync seam is the network/boot boundary, not storage.** Async code enters
+  the synchronous store + compute at that boundary; the deterministic kernel dispatch loop
+  never sees a future.
+- **Send-bound policy (resolved by the spike, from existing precedent)**: maybe-Send.
+  The codebase already ships both `KappaSync: Send + Sync` (native/multi-thread executor)
+  and `LocalKappaSync` under `#[async_trait(?Send)]` (bare-metal/wasm single-thread, where
+  futures are `!Send`). The `Space`/`Client` async surface follows the same pattern —
+  target-conditional Send bounds — rather than forcing one bound across both worlds.
 
 ## Conformance — `hologram-tck` defines "space"
 
