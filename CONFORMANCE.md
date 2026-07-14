@@ -372,6 +372,8 @@ addressing and warm-start do.
 | **LAW-0** | Harness smoke: the conformance runner discovers and executes feature files. | BDD scenario | `s0_laws/_smoke.feature::the harness discovers and runs feature files` | ✅ |
 | **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario | `s0_laws/spine.feature::canonical bytes or nothing` | ⛔ |
 | **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ⛔ |
+| **LAW-3** | Contracts are hologram's, spaces are anyone's: the space contract has no sealed traits or crate-private seams; a space may live in any repository (D2/D21). | BDD scenario | `s0_laws/open_contract.feature::the space contract is open to any repo` | ⛔ |
+| **LAW-4** | Async contracts, sync compute: I/O-shaped contract traits are async and the tensor hot path is synchronous; the session boundary is the only async↔sync seam (D14). | BDD scenario | `s0_laws/async_sync_seam.feature::the session boundary is the only async-sync seam` | ⛔ |
 | **LAW-5** | Capability attenuation only: a delegated capability is always a subset of the grantor's; amplification is unrepresentable. | BDD scenario | `s0_laws/attenuation.feature::delegation cannot amplify` | ⛔ |
 | **LAW-6** | One programmatic surface: CLI / FFI / SDK are thin shells over the `Client` facade; behavior lives in exactly one place. | BDD scenario | `s0_laws/one_surface.feature::entry points are thin shells` | ⛔ |
 
@@ -381,6 +383,7 @@ addressing and warm-start do.
 |---|---|---|---|---|
 | **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario | `s1_space_contract/tck.feature::passing the TCK is conformance` | ⛔ |
 | **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
+| **SP-3** | A `Space` composes async storage/sync with the synchronous compute hot path; `Client` drives compile→open→boot on both a native and a wasm target (D14/D28). | BDD scenario | `s1_space_contract/composition.feature::a space composes async storage and sync compute` | ⛔ |
 
 ## HF — .holo v3 format (refactor spec 03; BDD)
 
@@ -403,6 +406,8 @@ addressing and warm-start do.
 |---|---|---|---|---|
 | **TL-1** | Exactly one binary named `hologram` ships. | BDD scenario | `s4_tooling/one_binary.feature::exactly one binary` | ⛔ |
 | **TL-2** | Exactly one public crate (`hologram`) is imported with features; users never import subcrates. | BDD scenario | `s4_tooling/one_facade.feature::one public crate` | ⛔ |
+| **TL-3** | Leaf tier (D22): dependencies flow core → spaces → leaf {facade+Client, cli, packaging}; nothing depends on a leaf crate. | BDD scenario | `s4_tooling/leaf_tier.feature::nothing depends on a leaf crate` | ⛔ |
+| **TL-4** | Deploy is `put` + `announce` (+ `--page`): `hologram app publish` makes an app reachable and the same κ resolves and runs across every access rung (D25, spec 08). | BDD scenario | `s4_tooling/deploy.feature::one app publishes to every rung by κ` | ⛔ |
 
 ## MG — migration gates (refactor spec 06; BDD)
 
@@ -410,6 +415,10 @@ addressing and warm-start do.
 |---|---|---|---|---|
 | **MG-1** | Every phase boundary P0–P6 is always-green: the full holospaces V&V passes before the next phase starts. | BDD scenario | `s5_migration/always_green.feature::each phase boundary is green` | ⛔ |
 | **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ⛔ |
+| **MG-3** | P0.5 de-risk spike (D28): the Space+Client vertical slice compiles and runs on native AND wasm32, resolving the Send-bound question, before any P1 move. | BDD scenario | `s5_migration/p05_spike.feature::the de-risk spike proves composition before P1` | ⛔ |
+| **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ⛔ |
+| **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ⛔ |
+| **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ⛔ |
 
 ## GV — governance requirements (refactor spec 07; BDD)
 
