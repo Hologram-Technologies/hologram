@@ -36,4 +36,7 @@ pub struct ConformanceWorld {
     /// LAW-1 (SPINE-1): `(authentic_verifies, tampered_verifies)` from re-deriving a
     /// realization's identity — authentic must be `true`, tampered `false`.
     pub law1_verify: Option<(bool, bool)>,
+    /// LAW-3 (D21): set once a downstream crate's `Space` impl is accepted by `Client`
+    /// and reaches a contract-mediated operation — proof the contract has no sealed traits.
+    pub law3_accepted: bool,
 }

@@ -59,6 +59,32 @@ fn gv1_assert(w: &mut ConformanceWorld) {
     );
 }
 
+// ───────────────── LAW-3 — contracts are hologram's, spaces are anyone's ─────────────────
+// The `hologram-spike-sp3` crate is a *separate* crate that implements the `hologram-space`
+// contract using only its public API — exactly what an external repo's space does. `Client`
+// (generic over `Space`) accepts it with no special-casing. Sealed traits or crate-private
+// seams would make this fail to compile, so it compiling + running is the witness (D21).
+
+#[given("the hologram-space contract with no sealed traits or crate-private seams")]
+fn law3_given(_w: &mut ConformanceWorld) {}
+
+#[when("a space is implemented in an external repository")]
+fn law3_impl(w: &mut ConformanceWorld) {
+    // Downstream type (`SpikeSpace`, from another crate) accepted by the generic `Client`.
+    let client = Client::new(SpikeSpace::new());
+    // Reaching a contract-mediated operation proves the impl satisfies the trait bounds.
+    w.law3_accepted = !client.compile().is_empty();
+}
+
+#[then("it compiles against the published crates and is accepted with no in-tree privilege")]
+fn law3_assert(w: &mut ConformanceWorld) {
+    assert!(
+        w.law3_accepted,
+        "a downstream crate must implement the space contract and be accepted by Client \
+         with no privileged access — the contract is open (D21)"
+    );
+}
+
 // ───────────────────── LAW-1 — SPINE-1: canonical bytes or nothing ─────────────────────
 // A realization's identity IS the σ-axis address of its canonical bytes — there is no
 // identity without canonical bytes. Identity is never trusted: it is verified by
