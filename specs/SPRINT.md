@@ -45,8 +45,12 @@ honesty meta-gate green.
   - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
     absorbed as `hologram_space::hal`; 4 dependents redirected; `substrate/hologram-bare-hal`
     deleted. All 7 scenarios + golden vectors + native/wasm builds + clippy/fmt green.
-  - [ ] 2: core (+realizations) → hologram-space · 3: tck (substrate-tck + store-mem) ·
-    4: net (net-http/tcp/bare → hologram-net) · 5: runtime (runtime-*/engines → hologram-runtime).
+  - [x] **2: substrate-tck → crates/hologram-tck** — battery crate renamed/relocated;
+    SP-1 witness updated (stays green); 4 dependents redirected. (store-mem absorption
+    into hologram-tck deferred to a sub-step.) All 7 scenarios + tests + clippy/fmt green.
+  - [ ] 3: **core (+realizations) → hologram-space** — the big one (88 refs / 16 crates +
+    a crate-merge); a focused dedicated pass · 4: net (net-http/tcp/bare → hologram-net) ·
+    5: runtime (runtime-*/engines → hologram-runtime).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
