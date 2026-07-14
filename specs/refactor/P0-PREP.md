@@ -58,6 +58,25 @@ before P3 publishes. Options:
 3. **Scoped/prefixed publish** now, revisit acquisition later.
 Recommendation: pursue (1) first; fall back to (2) with `hologram-rt` if unavailable.
 
+**DECISION (2026-07-14):** pursue acquisition of `hologram`; if it can't be obtained,
+publish the facade as **`hologram-rt`** (module paths stay `hologram::`). Until resolved,
+in-tree the facade package name stays `hologram` (it is `publish = false`-safe to keep the
+dir name); the published `Cargo.toml` `name =` is the only thing that changes at P3.
+
+**Draft acquisition message (to the `hologram` v0.1.4 owner via their crates.io/repo contact):**
+
+> Subject: Would you consider transferring the `hologram` crate name?
+>
+> Hi — I maintain the Hologram runtime project (github.com/Hologram-Technologies), a
+> content-addressed execution runtime we're preparing to publish. The crates.io name
+> `hologram` is the natural umbrella for our workspace. I see you hold `hologram = 0.1.4`
+> (an RBF interpolation library). Would you be open to transferring the name — or adding
+> us as an owner — perhaps with your library continuing under a more descriptive name
+> (e.g. `rbf-interp`)? Happy to help with the migration and credit you. Thank you for
+> considering it.
+
+If declined or no response in a reasonable window, proceed with `hologram-rt`.
+
 ### Free (confirmed available)
 All other target names are FREE:
 - Core: hologram-types, hologram-ops, hologram-graph, hologram-archive, **hologram-compute**,
