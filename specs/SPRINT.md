@@ -28,10 +28,11 @@ honesty meta-gate green.
 - [x] **P0 holospaces HEAD-sync (D23)**: pin `18f553d`→`22b0ce1` on holospaces
   `chore/hologram-head-sync` — clean build + 109 tests pass (the 3 breaking changes don't
   touch holospaces; the feared 104-commit port was a clean pin-bump). Bridge tag pending.
-- [ ] **P0 human gates** (blocks P1): `hologram` name decision (acquire → fallback
-  **`uor-hologram`**); relicense consent (holospaces contributor); restructuring review.
-- [ ] **P0 exit**: holospaces full V&V (QEMU / Playwright) green; bridge tag cut;
-  hologram-ai migrated onto it.
+- [x] **P0 human gates cleared (2026-07-14)**: relicense consent **granted** (owner is sole
+  rights holder); restructuring review **satisfied** (owner); `hologram` name **decided** —
+  attempt acquisition, fallback **`uor-hologram`** (non-blocking; only bites at P3 publish).
+- [ ] **P0 exit**: holospaces full V&V (QEMU / Playwright) — running; bridge tag cut;
+  hologram-ai migrated onto it (at P3). crates.io tokens/ownership (P3).
 - [ ] **P1**: perf baselines (D27); rename `hologram-backend`→`hologram-compute`,
   `hologram-host`→`hologram-types`; dissolve `substrate/`→`crates/{space,runtime,net,tck}`;
   unify the two `hologram` CLIs. Keep the 7 enforced scenarios + golden vectors green.

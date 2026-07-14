@@ -1,18 +1,26 @@
 # P0 Preparation — Human-Gated Items
 
-P1 (production code moves) is blocked until P0's human-owned gates clear (D23, D24, D29).
-This doc holds ready-to-action artifacts for each. The agent-owned P0.5 spike and the
-P1-preflight golden vectors (MG-5) + LICENSE files are already done on `chore/refactor`.
+P1 (production code moves) was blocked on P0's human-owned gates (D23, D24, D29). As of
+2026-07-14 the blocking gates are **cleared**: relicense consent granted (sole ownership),
+restructuring review satisfied (owner), holospaces HEAD-sync done, golden vectors + LICENSE
+files landed. Remaining items are **non-blocking for P1**: the `hologram` name acquisition
+outreach (fallback `uor-hologram` decided) and crates.io tokens/ownership, both needed only
+at the P3 publish.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done.
 
-## 1. Relicense consent (D24) — ☐
+## 1. Relicense consent (D24) — ☑ GRANTED 2026-07-14
+
+**RESOLVED.** The project owner confirmed they are the **sole rights holder** of the
+holospaces code (any other contributions were work-for-hire / assigned), so their consent
+is the consent. holospaces may be relicensed `MIT` → `MIT OR Apache-2.0`. This gate no
+longer blocks the merge/publish.
 
 The workspace declares `MIT OR Apache-2.0` and now carries `LICENSE-MIT` + `LICENSE-APACHE`.
-`holospaces` is currently `MIT` with an external contributor (Alex Flom). Before its code
-is merged and published under the dual license, written consent is required.
+_(Original external-contributor request kept below for the record; not needed given sole
+ownership.)_
 
-**Draft request to send:**
+**Draft request (unused — sole ownership):**
 
 > Subject: Relicense consent — holospaces → MIT OR Apache-2.0
 >
@@ -26,10 +34,14 @@ is merged and published under the dual license, written consent is required.
 
 **Exit:** consent recorded (link the reply/PR comment here). Publishing blocks without it.
 
-## 2. Restructuring review (D29) — ☐
+## 2. Restructuring review (D29) — ☑ SATISFIED 2026-07-14
 
-Bundle with the consent ask: a review of the parts of the spec suite that restructure
-holospaces' work, so objections surface before code moves, not after.
+**RESOLVED.** D29 existed to give an *external* holospaces contributor a review before the
+restructure. With the owner as sole rights holder — and having reviewed the spec suite
+00–08 doc-by-doc as it was written — the review is the owner's own, and it is given. No
+outside sign-off is outstanding.
+
+Review scope (for the record — the sections that restructure holospaces' work):
 
 Review checklist (share these sections):
 - [ ] `01-crate-map.md` §"From `../holospaces`" — the Peer/Session/Manager hoist to
@@ -60,11 +72,11 @@ before P3 publishes. Options:
 3. **Scoped/prefixed publish** now, revisit acquisition later.
 Recommendation: pursue (1) first; fall back to (2) with `uor-hologram` if unavailable.
 
-**DECISION (2026-07-14):** pursue acquisition of `hologram`; if it can't be obtained,
-publish the facade as **`uor-hologram`** (crate name), preserving the `hologram::` module
-path via re-export so user code reads `use hologram::...`. Until resolved, the in-tree
-facade package name stays `hologram` (`publish = false`-safe); the published `Cargo.toml`
-`name =` is the only thing that changes at P3.
+**DECISION (2026-07-14, confirmed):** **attempt acquisition of `hologram` first** (owner
+sends the transfer request below); if declined or no reply in a reasonable window, publish
+the facade as **`uor-hologram`**, preserving the `hologram::` module path via re-export so
+user code reads `use hologram::...`. Non-blocking for P1 — the crate name only matters at
+the P3 publish. Until resolved, the in-tree facade package name stays `hologram`.
 
 **Draft acquisition message (to the `hologram` v0.1.4 owner via their crates.io/repo contact):**
 
