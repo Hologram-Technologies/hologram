@@ -24,8 +24,7 @@ pub fn status_tag_to_glyph(tag: &str) -> Option<&'static str> {
 
 /// Extract the value of `@key:value` from a whitespace-split tag line.
 fn tag_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    line.split_whitespace()
-        .find_map(|t| t.strip_prefix(key))
+    line.split_whitespace().find_map(|t| t.strip_prefix(key))
 }
 
 /// Parse one feature file's leading tag block + Feature line into a `ScenarioRef`.

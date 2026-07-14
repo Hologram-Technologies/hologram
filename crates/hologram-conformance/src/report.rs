@@ -13,10 +13,7 @@ fn is_bdd(class: &str) -> bool {
 
 /// Check row↔scenario bijection + status agreement for the BDD classes only.
 /// Returns `Err(violations)` when anything is off; `Ok(())` when clean.
-pub fn check_bijection(
-    rows: &[CatalogRow],
-    scenarios: &[ScenarioRef],
-) -> Result<(), Vec<String>> {
+pub fn check_bijection(rows: &[CatalogRow], scenarios: &[ScenarioRef]) -> Result<(), Vec<String>> {
     let mut violations = Vec::new();
 
     // Every BDD-class catalog row has exactly one scenario, with matching status.
@@ -76,7 +73,11 @@ mod tests {
     use crate::catalog::Status;
 
     fn row(id: &str, status: Status) -> CatalogRow {
-        CatalogRow { class: id.split_once('-').unwrap().0.to_string(), id: id.into(), status }
+        CatalogRow {
+            class: id.split_once('-').unwrap().0.to_string(),
+            id: id.into(),
+            status,
+        }
     }
     fn scn(id: &str, status_tag: &str) -> ScenarioRef {
         ScenarioRef {

@@ -42,12 +42,19 @@ pub fn parse_catalog(md: &str) -> Vec<CatalogRow> {
         }
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
         // cells[0] is empty (leading pipe); cells[1] is the id cell.
-        let Some(id_cell) = cells.get(1) else { continue };
-        let Some(id) = id_cell.strip_prefix("**").and_then(|s| s.strip_suffix("**")) else {
+        let Some(id_cell) = cells.get(1) else {
+            continue;
+        };
+        let Some(id) = id_cell
+            .strip_prefix("**")
+            .and_then(|s| s.strip_suffix("**"))
+        else {
             continue;
         };
         // id looks like LAW-1 / KC-6 / GV-3 — split on the first '-'.
-        let Some((class, _)) = id.split_once('-') else { continue };
+        let Some((class, _)) = id.split_once('-') else {
+            continue;
+        };
         // Status is the rightmost cell that parses as a legend glyph. Scanning from the
         // right (rather than assuming the last non-empty cell) tolerates any trailing
         // columns a future ledger schema might add to the right of Status.
@@ -80,9 +87,23 @@ mod tests {
     fn parses_ids_classes_and_status() {
         let rows = parse_catalog(FIXTURE);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0], CatalogRow { class: "LAW".into(), id: "LAW-1".into(), status: Status::Gap });
+        assert_eq!(
+            rows[0],
+            CatalogRow {
+                class: "LAW".into(),
+                id: "LAW-1".into(),
+                status: Status::Gap
+            }
+        );
         assert_eq!(rows[1].status, Status::Partial);
-        assert_eq!(rows[2], CatalogRow { class: "KC".into(), id: "KC-1".into(), status: Status::Enforced });
+        assert_eq!(
+            rows[2],
+            CatalogRow {
+                class: "KC".into(),
+                id: "KC-1".into(),
+                status: Status::Enforced
+            }
+        );
     }
 
     #[test]
