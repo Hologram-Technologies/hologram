@@ -100,11 +100,33 @@ OPFS") are the composition of these two traits with the Network model in
 - `ContainerRuntime`: `spawn(manifest, caps)`, `suspend -> snapshot κ`, `resume(snapshot,
   caps)`, `terminate` — the lifecycle every space drives.
 - `ContainerEngine` (the seam engines implement): instantiate, init, event, suspend,
-  resume, callback, snapshot_memory, restore_memory. Engines are shared implementation
-  detail (D5): `hologram-runtime` ships `engine-wasmtime` (std) and `engine-wasmi`
-  (no_std) behind features; a space *selects* an engine, it does not implement one —
-  unless a future space genuinely needs a bespoke engine, in which case it implements
-  this same seam.
+  resume, callback, snapshot_memory, restore_memory. It is a **synchronous** trait
+  (`Send + Sync`) — the async lifecycle lives above it in `ContainerRuntime` (Send) /
+  `LocalContainerRuntime` (`?Send`, for wasm/single-core executors), the maybe-Send pair
+  matching LAW-4. Engines are shared implementation detail (D5).
+
+**Engine coverage across targets (wasm / WASI / iOS / bare — the completeness question).**
+The seam is what makes the runtime target-complete; `hologram-runtime` ships two reference
+engines behind features that between them span every target, and a space may add a bespoke
+one via the same trait:
+
+| Target | Engine | Notes |
+|--------|--------|-------|
+| native desktop / server | `engine-wasmtime` (std, Cranelift JIT) | fastest; the default host engine |
+| **browser (wasm32)** | `engine-wasmi` (no_std interpreter) | **verified to build for `wasm32-unknown-unknown`** — the interpreter runs *inside* the wasm sandbox |
+| **iOS** | `engine-wasmi` | Apple forbids JIT; the interpreter needs none |
+| bare-metal / esp32 | `engine-wasmi` | no_std, the C1 architecture path |
+
+So `engine-wasmi` is the **portable universal engine** (browser + iOS + bare), and
+`engine-wasmtime` is the native fast path. Two explicitly-noted extensions, both via the
+seam, not new contract surface:
+- **Fast browser engine**: the wasmi interpreter is correct but slow in the browser. A
+  space MAY implement `ContainerEngine` over the browser's native `WebAssembly` API
+  (JS-driven, near-native) — this lives in `holospaces-browser`, a *space-provided* engine
+  (D5), not in `hologram-runtime`.
+- **WASI**: hologram containers use hologram's own `hg_*` host-import ABI, not WASI. A WASI
+  module is an *ingest* concern (wrap it like an OCI image, `03-holo-format.md`), or a
+  future WASI-shim engine behind the same seam — not a gap in the runtime's trait surface.
 
 ### 4. HAL — `BlockDevice`, `NetworkInterface`, `Entropy`, `Clock`, `Spawner`
 
