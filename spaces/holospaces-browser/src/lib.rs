@@ -40,9 +40,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use hologram_runtime::Runtime;
-use hologram_runtime_bare::BareMetalEngine;
-use hologram_store_mem::MemKappaStore;
-use hologram_substrate_core::{Bytes, Capabilities, KappaStore, Realization};
+use hologram_runtime::engine_wasmi::BareMetalEngine;
+use hologram_space::MemKappaStore;
+use hologram_space::{Bytes, Capabilities, KappaStore, Realization};
 use holospaces::assembly::{assemble_ext4, assemble_ext4_bootable, Layer};
 use holospaces::boot::{devcontainer, provision, LifecycleError, ReadVerify, Resolver, Session};
 use holospaces::config::{Configuration, Directive, LifecycleAction};
@@ -939,7 +939,7 @@ impl Console {
     /// content is then trustworthy substrate content — no bespoke server, no
     /// trust in the gateway (`CC-20`).
     ///
-    /// [`get_with_fetch`]: hologram_substrate_core::get_with_fetch
+    /// [`get_with_fetch`]: hologram_space::get_with_fetch
     pub fn receive(&mut self, bytes: &[u8], kappa: &str) -> Result<String, JsValue> {
         let expected = parse_kappa(kappa)?;
         if !verify(bytes, &expected).map_err(js_err)? {

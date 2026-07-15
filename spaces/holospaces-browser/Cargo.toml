@@ -6,7 +6,7 @@
 [workspace]
 
 [package]
-name = "holospaces-web"
+name = "holospaces-browser"
 description = "The Hologram Platform Manager — holospaces' browser peer (wasm32), served from GitHub Pages"
 version = "0.0.0"
 edition = "2021"
@@ -20,13 +20,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 holospaces = { path = "../holospaces" }
-hologram-store-mem = { git = "https://github.com/Hologram-Technologies/hologram", rev = "18f553d8578997ce32e7b653786a0bcf9b09a2c0", package = "hologram-store-mem" }
-hologram-substrate-core = { git = "https://github.com/Hologram-Technologies/hologram", rev = "18f553d8578997ce32e7b653786a0bcf9b09a2c0", package = "hologram-substrate-core" }
-# The substrate runtime + the interpreter ContainerEngine (wasmi, no_std) — so
-# the browser peer actually boots userland containers (ADR-008; arc42 ch.7). The
-# wasmi interpreter runs in wasm32 where a JIT cannot.
-hologram-runtime = { git = "https://github.com/Hologram-Technologies/hologram", rev = "18f553d8578997ce32e7b653786a0bcf9b09a2c0", package = "hologram-runtime" }
-hologram-runtime-bare = { git = "https://github.com/Hologram-Technologies/hologram", rev = "18f553d8578997ce32e7b653786a0bcf9b09a2c0", package = "hologram-runtime-bare", features = ["std"] }
+# Post-refactor, consumed by explicit path deps (this crate keeps its own empty
+# `[workspace]` — it builds standalone for wasm32 — so it can't use workspace
+# inheritance). hologram-space carries the σ-axis contract + realizations + the
+# reference `MemKappaStore` (absorbs the former substrate-core + store-mem).
+hologram-space = { path = "../../crates/hologram-space" }
+# The runtime with the interpreter ContainerEngine (wasmi) — so the browser peer
+# actually boots userland containers (ADR-008; arc42 ch.7); the wasmi interpreter
+# runs in wasm32 where a JIT cannot (absorbs the former runtime + runtime-bare).
+hologram-runtime = { path = "../../crates/hologram-runtime", features = ["engine-wasmi", "std"] }
 # The uor-native content network ("browser as a router") is reached through
 # `holospaces::content_net` — the SAME `hologram-net-bare::BareNetSync` over a
 # portable `NetworkInterface` a bare-metal peer uses (`CC-38`), so no direct

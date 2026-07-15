@@ -126,8 +126,16 @@ honesty meta-gate green.
     `store-native → holospaces-native` rename — 01 §"From substrate/" updated). Pure path move
     (all consumers use `{ workspace = true }`); green: workspace test, clippy, fmt, deny,
     thumbv7em no_std, RZ. `spaces/` is now purely `holospaces{,-node,-web,-emulator}`.
-  - [ ] **P2 tail** (remaining): import/fetch `vv/` for full holospaces V&V; port `holospaces-web`
-    → `spaces/holospaces-browser` (still on old git-pins); absorb holospaces' V&V (CC catalog → MG-7).
+  - [x] **holospaces-web → `spaces/holospaces-browser`** (2026-07-15) — the last crate on
+    pre-refactor git-pins is ported: renamed, git-pins → explicit path deps onto the consolidated
+    crates (deduped: substrate-core + store-mem → hologram-space; runtime + runtime-bare →
+    hologram-runtime `engine-wasmi`), imports rewritten. **wasm32 builds clean** (own `[workspace]`,
+    standalone; cross-workspace `holospaces` path dep resolves). Its `opfs_store.rs` (sync
+    `FileSystemSyncAccessHandle`) is KEPT — deduping it against `hologram-store-opfs` (async
+    worker-bridge) is a real design choice, deferred (they're architecturally different).
+  - [ ] **P2 tail** (remaining): fold `holospaces-emulator` (167 LOC, still git-pinned) into
+    `holospaces` per plan; `vv/` fixtures decision for full holospaces V&V; OPFS dedup
+    (opfs_store.rs vs hologram-store-opfs); absorb holospaces' V&V (CC catalog → MG-7).
 - [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
   release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
 

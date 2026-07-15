@@ -66,11 +66,11 @@ default-members = [
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
 # target-specific — excluded from the host workspace; built explicitly (boot test / Playwright test).
-# holospaces-web (wasm32 + web-sys browser peer) and holospaces-emulator are likewise target-specific.
+# holospaces-browser (wasm32 + web-sys browser peer) and holospaces-emulator are likewise target-specific.
 exclude = [
     "crates/hologram-efi",
     "crates/hologram-store-opfs",
-    "spaces/holospaces-web",
+    "spaces/holospaces-browser",
     "spaces/holospaces-emulator",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",

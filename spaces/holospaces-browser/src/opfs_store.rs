@@ -15,7 +15,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use hologram_substrate_core::{
+use hologram_space::{
     address_bytes_axis, Bytes, KappaLabel, KappaLabel71, KappaStore, StoreError,
 };
 use web_sys::{FileSystemReadWriteOptions, FileSystemSyncAccessHandle};

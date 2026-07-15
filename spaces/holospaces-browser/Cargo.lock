@@ -214,14 +214,13 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hologram-archive"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
  "bytemuck",
  "hashbrown 0.15.5",
  "hologram-backend",
  "hologram-graph",
- "hologram-host",
+ "hologram-types",
  "memmap2",
  "smallvec",
  "thiserror",
@@ -233,11 +232,9 @@ dependencies = [
 
 [[package]]
 name = "hologram-backend"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
  "bytemuck",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "libm",
@@ -250,24 +247,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-bare-hal"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "async-trait",
- "spin",
-]
-
-[[package]]
 name = "hologram-exec"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
  "hologram-backend",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "smallvec",
@@ -278,8 +264,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -288,33 +273,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-host"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "uor-foundation",
- "uor-foundation-sdk",
- "uor-prism",
-]
-
-[[package]]
-name = "hologram-net-bare"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+name = "hologram-net"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-bare-hal",
- "hologram-substrate-core",
+ "hologram-space",
  "spin",
 ]
 
 [[package]]
 name = "hologram-ops"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
- "hologram-host",
  "hologram-types",
  "libm",
  "uor-foundation",
@@ -323,80 +294,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-realizations"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "hologram-substrate-core",
-]
-
-[[package]]
 name = "hologram-runtime"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-realizations",
- "hologram-substrate-core",
- "spin",
-]
-
-[[package]]
-name = "hologram-runtime-bare"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "hashbrown 0.15.5",
- "hologram-runtime",
- "hologram-substrate-core",
+ "hologram-space",
  "spin",
  "wasmi",
 ]
 
 [[package]]
-name = "hologram-store-mem"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "hashbrown 0.15.5",
- "hologram-substrate-core",
- "spin",
-]
-
-[[package]]
-name = "hologram-substrate-core"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+name = "hologram-space"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
- "hologram-host",
+ "hologram-types",
+ "spin",
  "uor-addr",
 ]
 
 [[package]]
 name = "hologram-types"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+version = "0.9.0"
 dependencies = [
- "hologram-host",
  "uor-foundation",
+ "uor-foundation-sdk",
  "uor-prism",
 ]
 
 [[package]]
 name = "holospaces"
-version = "0.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "hologram-backend",
- "hologram-bare-hal",
  "hologram-exec",
- "hologram-net-bare",
- "hologram-realizations",
- "hologram-store-mem",
- "hologram-substrate-core",
+ "hologram-net",
+ "hologram-space",
  "libm",
  "miniz_oxide",
  "ruzstd",
@@ -406,13 +342,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "holospaces-web"
+name = "holospaces-browser"
 version = "0.0.0"
 dependencies = [
  "hologram-runtime",
- "hologram-runtime-bare",
- "hologram-store-mem",
- "hologram-substrate-core",
+ "hologram-space",
  "holospaces",
  "js-sys",
  "serde_json",
@@ -647,16 +581,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "string-interner"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
-dependencies = [
- "hashbrown 0.15.5",
- "serde",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -878,9 +802,6 @@ name = "wasmi_collections"
 version = "2.0.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "481e5b8f8080e86546c85a29244886579af9dc59fd28fa1f6ce5cfa1cd734221"
-dependencies = [
- "string-interner",
-]
 
 [[package]]
 name = "wasmi_core"
@@ -920,7 +841,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
 dependencies = [
  "bitflags",
- "indexmap",
 ]
 
 [[package]]
