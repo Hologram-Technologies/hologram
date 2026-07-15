@@ -94,11 +94,12 @@ wasm:
     # fork-join bit-identity test runs under `wasmtime -W threads=y -S threads`.
     RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-wasip1-threads \
         --no-default-features --features cpu,std,wasm-threads -p hologram-backend
-    # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
+    # Deployment substrate (TR class): the consolidated space/tck/net/runtime crates build
+    # no_std for the browser, and the wasmi engine (browser/iOS interpreter) builds for wasm32.
     cargo build --target wasm32-unknown-unknown --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-tck \
-        -p hologram-net-http -p hologram-runtime \
-        -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
+        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime
+    cargo build --target wasm32-unknown-unknown --no-default-features --features engine-wasmi \
+        -p hologram-runtime
 
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
@@ -109,21 +110,18 @@ embedded:
         -p hologram-backend
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-tck \
-        -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
-        -p hologram-net-bare
+        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime -p hologram-store-bare
 
 # Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
 # + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
-    cargo test -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-        -p hologram-tck -p hologram-store-native -p hologram-net-http -p hologram-net-tcp \
-        -p hologram-runtime -p hologram-substrate-cli -p hologram-runtime-wasmtime \
-        -p hologram-bare-hal -p hologram-store-bare -p hologram-runtime-bare -p hologram-net-bare
-    cargo test -p hologram-net-http --features live   # live HTTP-CAS transport
+    cargo test -p hologram-space -p hologram-tck -p hologram-store-native \
+        -p hologram-net -p hologram-runtime -p hologram-substrate-cli -p hologram-store-bare
+    cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
+    cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare hologram-substrate-cli; do \
+    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net hologram-runtime hologram-substrate-cli; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done
