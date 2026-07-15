@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CRATE="$ROOT/substrate/hologram-store-opfs"
+CRATE="$ROOT/crates/hologram-store-opfs"
 
 if ! command -v wasm-bindgen >/dev/null || ! command -v node >/dev/null; then
   echo "SKIP: wasm-bindgen and/or node not available"; exit 0

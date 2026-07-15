@@ -120,9 +120,14 @@ honesty meta-gate green.
     untouched) and drops to a single dependency; holospaces/node/spike no longer take a *runtime*
     dep on the test kit. Green across workspace test, bdd, clippy, fmt, deny, wasm32 + thumbv7em
     no_std, RZ.
+  - [x] **`substrate/` ELIMINATED** (2026-07-15). The `hologram-store-*` backends + `hologram-efi`
+    are generic `hologram-*` crates → moved to **`crates/`** (user decision: `hologram-*` = core
+    infra in `crates/`; `spaces/` holds only `holospaces*` space impls; supersedes the spec's
+    `store-native → holospaces-native` rename — 01 §"From substrate/" updated). Pure path move
+    (all consumers use `{ workspace = true }`); green: workspace test, clippy, fmt, deny,
+    thumbv7em no_std, RZ. `spaces/` is now purely `holospaces{,-node,-web,-emulator}`.
   - [ ] **P2 tail** (remaining): import/fetch `vv/` for full holospaces V&V; port `holospaces-web`
-    → `spaces/holospaces-browser` (still on old git-pins); relocate `store-native`/`store-bare` →
-    `spaces/`; absorb holospaces' V&V (CC catalog → MG-7).
+    → `spaces/holospaces-browser` (still on old git-pins); absorb holospaces' V&V (CC catalog → MG-7).
 - [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
   release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
 

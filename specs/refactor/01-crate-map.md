@@ -119,9 +119,9 @@ machinery), `hologram-tck` (dev-dependency). Nothing else — in particular, nev
 | substrate/hologram-bare-hal | crates/hologram-space | BlockDevice, NetworkInterface HAL traits |
 | substrate/hologram-substrate-tck | crates/hologram-tck | plus reference mem store |
 | substrate/hologram-store-mem | crates/hologram-tck | becomes the reference/conformance store |
-| substrate/hologram-store-native | spaces/holospaces-native | redb store |
-| substrate/hologram-store-bare | spaces/holospaces-bare | block-device store |
-| substrate/hologram-store-opfs | spaces/holospaces-browser | OPFS store (merges with holospaces-web's OpfsKappaStore — dedupe the two OPFS impls during P2) |
+| substrate/hologram-store-native | **crates/hologram-store-native** | redb store — a generic `hologram-*` backend, kept in `crates/` (see decision below), not renamed to a space |
+| substrate/hologram-store-bare | **crates/hologram-store-bare** | block-device store — generic `hologram-*` backend, stays in `crates/` |
+| substrate/hologram-store-opfs | **crates/hologram-store-opfs** | OPFS store (excluded target-specific); a space's browser OPFS impl composes over it. Dedupe with holospaces-web's OpfsKappaStore during the browser port |
 | substrate/hologram-runtime | crates/hologram-runtime | orchestration core |
 | substrate/hologram-runtime-wasmtime | crates/hologram-runtime, feature `engine-wasmtime` | std-only feature |
 | substrate/hologram-runtime-bare | crates/hologram-runtime, feature `engine-wasmi` | no_std-capable feature |
@@ -129,7 +129,14 @@ machinery), `hologram-tck` (dev-dependency). Nothing else — in particular, nev
 | substrate/hologram-net-tcp | crates/hologram-net (DHT/wire) + spaces/holospaces-native (TCP transport) | protocol/transport split |
 | substrate/hologram-net-bare | crates/hologram-net (shared frames) + spaces/holospaces-bare (pump) | |
 | substrate/hologram-substrate-cli | **merged into** crates/hologram-cli | resolves the two-binaries-named-`hologram` conflict |
-| substrate/hologram-efi | spaces/holospaces-bare (excluded target-specific build) | UEFI boot binary |
+| substrate/hologram-efi | **crates/hologram-efi** (excluded target-specific build) | UEFI boot binary — a generic `hologram-*` crate, stays in `crates/` |
+
+**Decision (2026-07-15, supersedes the original `→ spaces/holospaces-*` targets above):** the
+`hologram-store-*` backends (and `hologram-efi`) are **generic `hologram-*` crates and live in
+`crates/`**, not `spaces/`. The `hologram-` prefix denotes core runtime infrastructure usable by
+*any* space; `spaces/` holds only space *implementations* (`holospaces*`). A space's native/bare/
+browser variant *composes over* these generic stores (store + transport + engine) rather than the
+store crate itself being renamed to `holospaces-native` etc. `substrate/` is now eliminated entirely.
 
 ### From `../holospaces` (merged in as `spaces/`)
 
