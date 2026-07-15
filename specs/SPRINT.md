@@ -69,8 +69,14 @@ honesty meta-gate green.
   - [x] Justfile retargeted (wasm/embedded/vv-substrate) to the consolidated crates; RZ gate
     holds (compute engine absent from store/net/runtime). `substrate/`: now **3** (store-native,
     store-bare, substrate-cli).
-  - [ ] 8: substrate-cli → hologram-cli (unify the two `hologram` binaries) · stores
-    (native/bare/opfs) → spaces (P2).
+  - [x] **8: substrate-cli → hologram-cli (D13)** — the node CLI merges into the one
+    `hologram` binary as the `node` subcommand group (verified: `hologram --help` shows
+    compile/execute/bench/inspect + node; `hologram node --help` shows put/get/serve/…).
+    The two-binaries-named-`hologram` conflict is resolved. Green.
+  - **P1 in-repo restructure essentially complete.** `substrate/` now holds only the two
+    P2-bound stores (`store-native`, `store-bare`) + excluded `efi`/`store-opfs`. Remaining:
+    stores → `spaces/` (P2, needs holospaces imported); then `backend→compute` /
+    `host→types` at a Sprint 39 lull; perf baselines; P1 preflight (crates.io names/tokens).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
