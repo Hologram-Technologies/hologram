@@ -9,19 +9,13 @@ version = 2
 # RUSTSEC advisories: fail the build on any known vulnerability or unmaintained
 # crate. Add IDs to `ignore` (with a justification comment) only when triaged.
 yanked = "deny"
-# Triaged 2026-07-15. Every entry is an `unmaintained` advisory on a mature, transitive
-# crate with NO upstream fix (an unmaintained crate gets no new release). Vulnerabilities
-# and unsound advisories are NOT ignored — the crossbeam / memmap2 ones were cleared by a
-# lockfile bump, and `yanked` stays "deny". Revisit when the Python frontend (rustpython)
-# and idna are updated; these enter only through those paths.
+# The `unic-*` unmaintained advisories are gone — they entered via `rustpython-parser`, now
+# replaced by an in-tree parser (crates/hologram-compiler/src/source/frontends/pyparse/).
+# One unmaintained advisory remains, on `paste` (a proc-macro pulled by the `metal` GPU
+# backend); it has no upstream fix and only builds under `backend-metal`. Vulnerabilities,
+# unsound, and yanked stay hard failures.
 ignore = [
-    "RUSTSEC-2024-0436", # paste — unmaintained (proc-macro, via rustpython)
-    "RUSTSEC-2025-0075", # unic-char-property — unmaintained (via idna/rustpython)
-    "RUSTSEC-2025-0080", # unic-common — unmaintained
-    "RUSTSEC-2025-0081", # unic-ucd-version — unmaintained
-    "RUSTSEC-2025-0090", # unic-char-range — unmaintained
-    "RUSTSEC-2025-0098", # unic-ucd-ident — unmaintained
-    "RUSTSEC-2025-0100", # unic-emoji-char — unmaintained
+    "RUSTSEC-2024-0436", # paste — unmaintained proc-macro, via metal (backend-metal only)
 ]
 
 [licenses]
@@ -44,18 +38,10 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
-# The optional `frontend-python` feature pulls `rustpython-parser`, whose bignum
-# backend (the `malachite*` family) is LGPL-3.0-only. The DEFAULT build is LGPL-free;
-# enabling `frontend-python` inherits LGPL obligations (static-link relink rights).
-# Scoped exceptions (not a blanket LGPL allow) so this stays explicit and reviewable.
-# GOVERNANCE FLAG (07): revisit dropping/replacing the Python frontend before P3.
-exceptions = [
-    { name = "malachite", allow = ["LGPL-3.0-only"] },
-    { name = "malachite-base", allow = ["LGPL-3.0-only"] },
-    { name = "malachite-bigint", allow = ["LGPL-3.0-only"] },
-    { name = "malachite-nz", allow = ["LGPL-3.0-only"] },
-    { name = "malachite-q", allow = ["LGPL-3.0-only"] },
-]
+# Empty by design. The only copyleft (LGPL-3.0) crates were the `malachite*` bignum family,
+# pulled transitively by `rustpython-parser`; that dependency was removed in favour of an
+# in-tree restricted-Python parser, so the whole tree is permissive again — no exceptions.
+exceptions = []
 
 [bans]
 # Duplicate versions bloat the tree but aren't fatal during an active refactor;

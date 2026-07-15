@@ -19,7 +19,6 @@ thiserror         = { workspace = true, default-features = false }
 smallvec          = { workspace = true }
 nom               = { workspace = true }
 proc-macro2       = { workspace = true, optional = true }
-rustpython-parser = { workspace = true, optional = true }
 syn               = { workspace = true, optional = true }
 swc_common        = { workspace = true, optional = true }
 swc_ecma_ast      = { workspace = true, optional = true }
@@ -33,7 +32,7 @@ hologram-archive = { workspace = true, features = ["std"] }
 # `no_std` + `alloc` by default; `std` (host default) enables `tracing`
 # diagnostics and the std error surface.
 default = ["std"]
-frontend-python = ["std", "dep:rustpython-parser"]
+frontend-python = ["std"]
 frontend-rust = ["std", "dep:proc-macro2", "dep:syn"]
 frontend-typescript = [
     "std",

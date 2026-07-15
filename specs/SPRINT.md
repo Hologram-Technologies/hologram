@@ -92,10 +92,15 @@ honesty meta-gate green.
       advisories all green. It caught + fixed a **yanked `spin 0.9.8`** (→0.9.9) and a crossbeam
       vuln + memmap2-unsound advisory (cleared by a lockfile bump). Unmaintained transitive crates
       (`paste`, `unic-*`) triaged to `ignore` with justification (no upstream fix).
-    - ⚠ **GOVERNANCE FLAG (D-review / 07):** the optional `frontend-python` feature pulls
-      `rustpython-parser` → **`malachite*` (LGPL-3.0-only)**. Default build is LGPL-free; enabling
-      it inherits LGPL obligations. Scoped license exceptions added; **user decision pending** —
-      accept opt-in LGPL vs. replace/drop the Python frontend before P3.
+    - [x] **LGPL removed (governance, resolved 2026-07-15).** cargo-deny flagged that
+      `frontend-python` pulled `rustpython-parser` → **`malachite*` (LGPL-3.0-only)**. Chosen fix:
+      **replaced `rustpython-parser` with an in-tree ~1.2k-LOC restricted-Python parser**
+      (`hologram-compiler/src/source/frontends/pyparse/`, lexer + recursive-descent, byte-accurate
+      spans). This drops the LGPL *and* every `unic-*` unmaintained advisory *and* a heavy dep in
+      one move; `frontend-python` keeps working (43 tests, exact error positions preserved). deny is
+      green with **zero license exceptions**; the only remaining advisory-ignore is `paste`
+      (unmaintained proc-macro via the `metal` GPU backend, `backend-metal` only). The whole tree is
+      permissive (`MIT OR Apache-2.0`) again.
   - **P1 in-repo restructure essentially complete.** Only `backend→compute` (genuine Sprint 39
     collision — that IS the active kernel crate) and the P2 store moves remain. Remaining:
     stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;

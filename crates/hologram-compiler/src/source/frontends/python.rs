@@ -38,6 +38,10 @@ mod enabled {
 
     use crate::error::CompileError;
     use crate::source::attrs::{apply_attr, AttrValue, ParsedAttr};
+    use crate::source::frontends::pyparse as ast;
+    use crate::source::frontends::pyparse::{
+        Constant, Expr, Parse, ParseError, Ranged, Stmt, TextRange, TextSize, UnaryOp,
+    };
     use crate::source::ir::{
         SourceAttrs, SourceBinding, SourceConst, SourceInput, SourceItem, SourceOpCall,
         SourceOutput, SourceProgram, SourceTensorLiteral, SourceType,
@@ -46,9 +50,6 @@ mod enabled {
     use crate::source::{diagnostic, SourceDiagnostic, SourceDocument, SourceGraph};
     use hologram_graph::registry::ShapeDescriptor;
     use hologram_graph::OpKind;
-    use rustpython_parser::ast::{self, Constant, Expr, Ranged, Stmt, UnaryOp};
-    use rustpython_parser::text_size::{TextRange, TextSize};
-    use rustpython_parser::{Parse, ParseError};
 
     pub(super) fn parse_document(source: &str) -> Result<SourceDocument, CompileError> {
         parse_document_diagnostic(source).map_err(SourceDiagnostic::into_compile_error)

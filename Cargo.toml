@@ -133,7 +133,6 @@ tracing     = "0.1"
 hashbrown   = "0.15"
 nom         = { version = "8.0.0", default-features = false, features = ["alloc"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-rustpython-parser = { version = "0.4.0", default-features = false, features = ["location", "malachite-bigint"] }
 syn = { version = "2", default-features = false, features = ["clone-impls", "full", "parsing", "printing"] }
 swc_common        = "23.0.0"
 swc_ecma_ast      = "25.0.0"
