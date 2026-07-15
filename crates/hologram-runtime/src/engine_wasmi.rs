@@ -29,8 +29,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{ContainerEngine, ContainerIntents, HostContext};
-use hologram_space::RuntimeError;
+use hologram_space::{ContainerEngine, ContainerIntents, HostContext, RuntimeError};
 use spin::Mutex;
 use wasmi::{Engine as WasmiEngine, Func, Instance, Linker, Memory, Module, Store, TypedFunc};
 

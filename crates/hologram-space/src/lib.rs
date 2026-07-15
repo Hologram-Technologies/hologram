@@ -35,6 +35,13 @@ pub use substrate::*;
 mod realizations;
 pub use realizations::*;
 
+// The container-engine seam (spec §4.2/§4.4): the `ContainerEngine` Wasm-instance trait
+// plus its two supporting structs, `HostContext` and `ContainerIntents`. The contract owns
+// the engine seam; `hologram-runtime` orchestration and its backends reference it. Moved
+// here so `Space` can gain a `type Engine: ContainerEngine` associated type (P1).
+pub mod engine;
+pub use engine::{ContainerEngine, ContainerIntents, HostContext};
+
 // The reference in-memory `KappaStore` (`MemKappaStore`), re-homed here from the former
 // `hologram-store-mem` crate (which move 7 had folded into the conformance TCK). It lives with
 // the `KappaStore` trait it implements so runtime consumers (holospaces' κ-disk, the wasmi

@@ -20,9 +20,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::{ContainerEngine, ContainerIntents, HostContext};
 use hologram_space::{
-    references, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry, RuntimeError,
+    references, ContainerEngine, ContainerIntents, HostContext, KappaLabel, KappaLabel71,
+    KappaStore, RealizationRegistry, RuntimeError,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
