@@ -106,12 +106,20 @@ honesty meta-gate green.
     stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
     perf baselines; crates.io tokens/org ownership (human, P3).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute` (the last library rename).
-- [ ] **P2** import holospaces → `spaces/` — concrete empirical plan in
-  [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md): 31.6k-LOC `holospaces` crate, but the port
-  surface is small (~76 source imports of the dissolved crates, all cleanly mapped to
-  space/tck/net/runtime). Import = history-preserving subtree merge + repoint git-pins → path
-  deps + rewrite imports + green its V&V. **P3** hoist Peer/Session/Manager + `Client` + first
-  lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
+- [~] **P2 core DONE** (2026-07-15, commit `094af14`) — holospaces imported into `spaces/`
+  (clean snapshot) and ported onto the consolidated crates; plan in
+  [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md). `holospaces` + `holospaces-node` are root
+  workspace members, build on default **and** `--no-default-features` (no_std core), lib tests
+  green (109 + 7), `cargo test --workspace` green, deny/clippy/fmt/bdd/RZ green. The port needed
+  **zero API-drift fixes** — every dissolved-crate symbol resolved after the path renames. Fixed
+  a stray `#![no_std]` leftover in `hologram-net/src/http/mod.rs` (from move 5). The 170M `vv/`
+  fixture tree was **not** imported; its CC integration tests skip-when-absent.
+  - [ ] **P2 tail** (follow-up): re-home `MemKappaStore` out of `hologram-tck` (holospaces now
+    takes a *runtime* dep on the conformance TCK for it — a smell); import/fetch `vv/` for full
+    holospaces V&V; port `holospaces-web` → `spaces/holospaces-browser`; relocate
+    `store-native`/`store-bare` → `spaces/`; absorb holospaces' V&V (CC catalog → MG-7).
+- [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
+  release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
