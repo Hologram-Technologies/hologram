@@ -6,7 +6,7 @@
 //! entirely by κ. Run: `cargo run -p hologram-runtime-wasmtime --example live_migration`.
 
 use hologram_runtime::Runtime;
-use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_runtime::WasmtimeEngine;
 use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest, Snapshot};
 use hologram_store_mem::MemKappaStore;

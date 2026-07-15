@@ -6,7 +6,7 @@
 //! `cargo run -p hologram-runtime-wasmtime --example wasm_inference_container`.
 
 use hologram_runtime::Runtime;
-use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_runtime::WasmtimeEngine;
 use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
 use hologram_store_mem::MemKappaStore;

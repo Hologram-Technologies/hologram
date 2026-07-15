@@ -197,7 +197,7 @@ fn run_spawn(
     event: Option<PathBuf>,
 ) -> ExitCode {
     use hologram_runtime::Runtime;
-    use hologram_runtime_wasmtime::WasmtimeEngine;
+    use hologram_runtime::WasmtimeEngine;
     use hologram_space::ContainerRuntime;
 
     let cid = match parse_kappa(container) {

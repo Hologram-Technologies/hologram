@@ -1,3 +1,4 @@
+#![cfg(feature = "engine-wasmtime")]
 #![allow(mixed_script_confusables)]
 //! Full Container ABI per spec §4.4 / §4.5 / §7.5. Each container import that this PR wires —
 //! `sync_announce`, `sync_fetch_request`, `spawn_child`, `diagnostics` — is exercised end-to-end
@@ -6,7 +7,7 @@
 
 use async_trait::async_trait;
 use hologram_runtime::Runtime;
-use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_runtime::WasmtimeEngine;
 use hologram_space::{
     address_bytes, Bytes, Capabilities, ContainerRuntime, KappaLabel71, KappaStore, KappaSync,
     Realization, SyncError,

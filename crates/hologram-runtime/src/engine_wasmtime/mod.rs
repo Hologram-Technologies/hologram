@@ -1,9 +1,9 @@
 //! # hologram-runtime-wasmtime
 //!
-//! The production [`hologram_runtime::ContainerEngine`] backend (spec §7.2
+//! The production [`crate::ContainerEngine`] backend (spec §7.2
 //! Option A): real Wasm execution via Wasmtime + Cranelift, with linear-memory snapshot/restore
 //! **and the host import surface** wired through a `Linker` (spec §4.4), **capability-gated at the
-//! import boundary** (§10.4). Plugging this into `hologram_runtime::Runtime` makes
+//! import boundary** (§10.4). Plugging this into `crate::Runtime` makes
 //! `spawn`/`suspend`/`resume` execute an actual container that can read and write the κ-graph — the
 //! same orchestration validated against the mock engine, now over real Wasm with real I/O.
 //!
@@ -20,7 +20,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use hologram_runtime::{ContainerEngine, ContainerIntents, HostContext};
+use crate::{ContainerEngine, ContainerIntents, HostContext};
 use hologram_space::{
     references, KappaLabel, KappaLabel71, KappaStore, RealizationRegistry, RuntimeError,
 };

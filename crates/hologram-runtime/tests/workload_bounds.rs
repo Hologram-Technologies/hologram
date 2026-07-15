@@ -1,3 +1,5 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! G-C3 / SPINE-6 witness — **qualified workload bounds**. A container is opaque Wasm + the
 //! spec §4.4 `hologram.*` host import surface. Any import outside `hologram.*` (a WASI import, an
 //! `env` shim, an unknown side-channel) would be an unmediated escape hatch — on bare-metal in
@@ -5,7 +7,7 @@
 //! instantiation; this test pins the refusal.
 
 use hologram_runtime::Runtime;
-use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_runtime::WasmtimeEngine;
 use hologram_space::ContainerManifest;
 use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_store_mem::MemKappaStore;

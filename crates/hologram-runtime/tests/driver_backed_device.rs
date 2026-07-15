@@ -1,10 +1,12 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! End-to-end: a driver is **imported from an authoritative source, verified, and then USED by the
 //! device**. The driver is an executable Wasm block-device module; the engine fetches it by κ
 //! (verify-on-receipt), instantiates it as a `WasmBlockDevice`, and runs `BareMetalKappaStore` over
 //! it — so every sector the store reads/writes is executed by the imported driver's code.
 
 use async_trait::async_trait;
-use hologram_runtime_wasmtime::WasmBlockDevice;
+use hologram_runtime::WasmBlockDevice;
 use hologram_space::{
     address_bytes, get_with_fetch, Bytes, KappaLabel71, KappaStore, KappaSync, SyncError,
 };

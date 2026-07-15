@@ -16,6 +16,17 @@ use alloc::boxed::Box; // async-trait emits `Box` unqualified; bring it into no_
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+// Engine backends (spec 05 / D5): each implements the `ContainerEngine` seam and is
+// selected by feature — `engine-wasmtime` (std, Wasmtime) and `engine-wasmi` (no_std,
+// wasmi interpreter), absorbed from the former runtime-wasmtime / runtime-bare crates (P1).
+#[cfg(feature = "engine-wasmtime")]
+pub mod engine_wasmtime;
+#[cfg(feature = "engine-wasmtime")]
+pub use engine_wasmtime::{WasmBlockDevice, WasmNetworkInterface, WasmtimeEngine};
+
+#[cfg(feature = "engine-wasmi")]
+pub mod engine_wasmi;
+
 use hashbrown::{HashMap, HashSet};
 use hologram_space::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,

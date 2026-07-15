@@ -1485,33 +1485,6 @@ dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
  "hologram-space",
- "hologram-store-mem",
- "pollster",
- "spin",
- "uor-addr",
-]
-
-[[package]]
-name = "hologram-runtime-bare"
-version = "0.9.0"
-dependencies = [
- "hashbrown 0.15.5",
- "hologram-runtime",
- "hologram-space",
- "hologram-store-mem",
- "pollster",
- "spin",
- "wasmi",
- "wat",
-]
-
-[[package]]
-name = "hologram-runtime-wasmtime"
-version = "0.9.0"
-dependencies = [
- "async-trait",
- "hologram-runtime",
- "hologram-space",
  "hologram-store-bare",
  "hologram-store-mem",
  "hologram-store-native",
@@ -1519,6 +1492,8 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "spin",
+ "uor-addr",
+ "wasmi",
  "wasmtime",
  "wat",
 ]
@@ -1597,7 +1572,6 @@ dependencies = [
  "clap",
  "hologram-net",
  "hologram-runtime",
- "hologram-runtime-wasmtime",
  "hologram-space",
  "hologram-store-mem",
  "hologram-store-native",
@@ -3058,16 +3032,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "string-interner"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
-dependencies = [
- "hashbrown 0.15.5",
- "serde",
-]
-
-[[package]]
 name = "string_enum"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3781,12 +3745,12 @@ dependencies = [
 
 [[package]]
 name = "wasm-encoder"
-version = "0.250.0"
+version = "0.253.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2271adb766023046af314460f1fae02cc34ea16d736d93404d3b65be44270923"
+checksum = "59972d6cd272259de647b7c1f1912e45e289c75ffd4be04e10695507cd7e1b59"
 dependencies = [
  "leb128fmt",
- "wasmparser 0.250.0",
+ "wasmparser 0.253.0",
 ]
 
 [[package]]
@@ -3807,9 +3771,6 @@ name = "wasmi_collections"
 version = "2.0.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "481e5b8f8080e86546c85a29244886579af9dc59fd28fa1f6ce5cfa1cd734221"
-dependencies = [
- "string-interner",
-]
 
 [[package]]
 name = "wasmi_core"
@@ -3836,7 +3797,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
 dependencies = [
  "bitflags 2.11.1",
- "indexmap",
 ]
 
 [[package]]
@@ -3854,9 +3814,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.250.0"
+version = "0.253.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "071d99cdfb8111603ed05500506c3298a940b58d609dd0259d3981785dd33556"
+checksum = "19db11f87d2486580e1e8b6f494c54df7e0566b87d0b599db843c24019667339"
 dependencies = [
  "bitflags 2.11.1",
  "indexmap",
@@ -4041,22 +4001,22 @@ dependencies = [
 
 [[package]]
 name = "wast"
-version = "250.0.0"
+version = "253.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e9294a1f0204aeb5c47e95165517f43ef3cc895918c4f3e939380d4c290f4a"
+checksum = "d3264542f8965c5d84fb1085d924bfba9a6314bb228eff13a2de14d7627664d0"
 dependencies = [
  "bumpalo",
  "leb128fmt",
  "memchr",
  "unicode-width 0.2.2",
- "wasm-encoder 0.250.0",
+ "wasm-encoder 0.253.0",
 ]
 
 [[package]]
 name = "wat"
-version = "1.250.0"
+version = "1.253.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a549ed329a70e444e0f7796391ab2a87d0aef30ddde9f60e16e429224fafd02"
+checksum = "4bfc5ce906144200c972ec617470aa35bd847472e170b26dde3e80541c674055"
 dependencies = [
  "wast",
 ]

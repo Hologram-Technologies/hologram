@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 //! # hologram-runtime-bare
 //!
 //! The bare-metal [`ContainerEngine`] (architecture §2 / C1). Symmetric to
@@ -28,11 +27,9 @@
 //! - JIT — bare-metal is interpreted by design; the architecture trades peak throughput for
 //!   no_std + audit-by-construction.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
-use hologram_runtime::{ContainerEngine, ContainerIntents, HostContext};
+use crate::{ContainerEngine, ContainerIntents, HostContext};
 use hologram_space::RuntimeError;
 use spin::Mutex;
 use wasmi::{Engine as WasmiEngine, Func, Instance, Linker, Memory, Module, Store, TypedFunc};
@@ -254,7 +251,7 @@ fn stage_in_memory(memory: &mut Memory, store: &mut Store<()>, bytes: &[u8]) -> 
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
-    use hologram_runtime::Runtime;
+    use crate::Runtime;
     use hologram_space::REGISTRY;
     use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
     use hologram_store_mem::MemKappaStore;

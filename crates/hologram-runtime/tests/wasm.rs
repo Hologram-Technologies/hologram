@@ -1,11 +1,13 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! CR (live engine) — real Wasm execution + linear-memory snapshot/restore via Wasmtime, then the
 //! full `Runtime` lifecycle driving an actual container module (the same orchestration proven
 //! against `MockEngine`, now over real Wasm — substrate-tripling at the runtime).
 
 use std::sync::Arc;
 
+use hologram_runtime::WasmtimeEngine;
 use hologram_runtime::{ContainerEngine, HostContext, Runtime};
-use hologram_runtime_wasmtime::WasmtimeEngine;
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
 use hologram_space::{ContainerManifest, Snapshot, REGISTRY};
 use hologram_store_mem::MemKappaStore;

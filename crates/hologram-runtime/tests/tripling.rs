@@ -1,3 +1,5 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! TR class (architecture §5, §6, conformance §10.16) — **substrate-tripling byte-identity**.
 //!
 //! The same Wasm container, the same `Runtime` orchestration, the same input event stream — run
@@ -17,7 +19,7 @@
 //! cover all four documented substrates (TR `[track]` resolved).
 
 use hologram_runtime::Runtime;
-use hologram_runtime_wasmtime::WasmtimeEngine;
+use hologram_runtime::WasmtimeEngine;
 use hologram_space::ContainerManifest;
 use hologram_space::RamBlockDevice;
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};

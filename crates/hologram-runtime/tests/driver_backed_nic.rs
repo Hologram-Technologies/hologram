@@ -1,3 +1,5 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! NI class (arch §11.9): a `NetworkInterface` driver is **imported from an authoritative source,
 //! verified, and then USED by the device**. The driver is an executable Wasm network-driver module;
 //! the engine fetches it by κ (verify-on-receipt), instantiates it as a `WasmNetworkInterface`, and
@@ -5,7 +7,7 @@
 //! driver's code. Symmetric to the DU class for block devices (`driver_backed_device.rs`).
 
 use async_trait::async_trait;
-use hologram_runtime_wasmtime::WasmNetworkInterface;
+use hologram_runtime::WasmNetworkInterface;
 use hologram_space::NetworkInterface;
 use hologram_space::{address_bytes, get_with_fetch, Bytes, KappaLabel71, KappaSync, SyncError};
 use hologram_store_mem::MemKappaStore;

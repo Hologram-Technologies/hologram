@@ -1,3 +1,5 @@
+#![cfg(feature = "engine-wasmtime")]
+
 //! AR class (arch §11.4): the **archival cold tier** is a hologram peer backed by the bare-metal
 //! substrate (`BareMetalKappaStore` over a `BlockDevice`). It participates in the federated read
 //! path via the same `KappaSync` surface every other peer uses; ordering the federation chain
