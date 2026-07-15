@@ -43,6 +43,17 @@ changes in every binding at once. Therefore: the table gets a dedicated naming r
 a P3 gate (before the release, after implementation experience), and until then every
 Client method added in code must appear here first — spec leads, code follows.
 
+**Implemented (P3, 2026-07-15) — MVP surface.** `hologram::Client<S: Space>` now lives in the
+facade behind the `client` feature (`Client::builder().space(s).build()`), realizing the kept
+form of the SP-3 spike (D28): `compile` (sync compute) → `provision` (sync store, law 4) →
+`get`/`pin`/`unpin`/`ls`/`verify`/`gc` (store passthroughs; `gc` gated on `Store: GarbageCollect`)
+→ `resolve`/`run` (the async network seam calling straight into the sync compute hot path —
+LAW-4). Tested end-to-end (`tests/client.rs`: compile→provision→run an i64→f32 cast) and builds
+no_std for wasm32. **Deferred to the P3 naming-review gate**: `open → Session` (needs the `Space`
+contract to expose a `ContainerRuntime` — the generic `Session` lifecycle already lives in
+`hologram-runtime`), and the fuller net/app/manager/network rows above, before the names freeze
+into the five SDKs.
+
 ## CLI (D13): one binary named `hologram`
 
 Resolves today's conflict (two workspace binaries both named `hologram`:

@@ -192,6 +192,12 @@ ffi = ["dep:hologram-ffi"]
 graph = ["dep:hologram-graph"]
 ops = ["dep:hologram-ops"]
 types = ["dep:hologram-types"]
+space = ["dep:hologram-space"]
+
+# `client` (D4) — the single programmatic surface `hologram::Client<S: Space>` that composes
+# compile → provision → store/resolve/run over any space contract. The CLI, C ABI, and SDKs
+# all wrap this one type (05-tooling.md §law-6). Pulls the space contract + the compute path.
+client = ["space", "compiler", "graph", "exec", "backend", "dep:uor-prism"]
 
 archive-compression = ["archive", "hologram-archive/compression"]
 archive-model-formats = ["archive", "hologram-archive/model-formats"]
@@ -218,3 +224,14 @@ hologram-ffi = { workspace = true, optional = true }
 hologram-graph = { workspace = true, optional = true }
 hologram-ops = { workspace = true, optional = true }
 hologram-types = { workspace = true, optional = true }
+hologram-space = { workspace = true, optional = true }
+# The Client facade composes the compiler/exec hot path over a space's KappaStore;
+# `uor-prism` supplies the WittLevel vocabulary the compile entry point takes.
+uor-prism = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The `client` facade test builds a minimal Space (MemKappaStore + a null Resolver) and
+# drives compile → provision → run end to end.
+pollster = { workspace = true }
+async-trait = { workspace = true }
+smallvec = { workspace = true }

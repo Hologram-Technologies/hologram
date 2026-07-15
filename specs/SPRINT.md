@@ -154,7 +154,15 @@ honesty meta-gate green.
   *platform* layer (provision Holospaces, roster sync, control-plane reconfigure), generic over `R`
   only mechanically, not generic infrastructure (01-crate-map updated). Green: workspace test (913),
   clippy, fmt, deny, RZ, wasm32 no_std.
-  - [ ] **P3 remaining**: the `Client` facade; first lockstep `uor-hologram` release (hard stop, D26).
+  - [x] **`Client` facade MVP** (2026-07-15, D4). `hologram::Client<S: Space>` in the facade
+    (`client` feature): `builder().space(s).build()` → `compile` (sync) → `provision` (sync store)
+    → `get/pin/unpin/ls/verify/gc` passthroughs → `resolve`/`run` (async seam → sync compute). The
+    kept realization of the SP-3 spike; tested end-to-end (compile→provision→run an i64→f32 cast)
+    + builds no_std for wasm32. Deferred to the P3 naming-review gate: `open → Session` (needs the
+    Space contract to expose a `ContainerRuntime`) + the fuller net/app/manager/network surface.
+    05-tooling updated.
+  - [ ] **P3 remaining**: expose `ContainerRuntime` on the `Space` contract → Client `open → Session`;
+    the naming-review gate; first lockstep `uor-hologram` release (hard stop, D26).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
