@@ -54,7 +54,6 @@ pub enum CliError {
     NotFoundLocally,
     BadKappa,
     NotARealization,
-    AxisUnsupported,
 }
 
 /// Parse a `<axis>:<hex>` κ-label string (blake3 width = 71 bytes).

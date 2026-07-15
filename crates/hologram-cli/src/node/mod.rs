@@ -1,22 +1,20 @@
-//! The `hologram` node binary (spec §9.2). Thin shell: parse args + read files, then delegate to
-//! `hologram_substrate_cli::run` against a native redb store. Container/network verbs
-//! (`spawn`/`serve`) arrive with the Wasmtime engine / uor-native TCP transport
-//! (`hologram-net-tcp`) backends.
+//! The `hologram node` subcommand group (spec §9.2, unified into the one `hologram` binary
+//! per D13). Thin shell: parse args + read files, then delegate to [`core::run`] against a
+//! native redb store. Container/network verbs (`spawn`/`serve`) arrive with the Wasmtime
+//! engine / uor-native TCP transport backends.
+
+mod core;
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use crate::node::core::{parse_kappa, run as run_command, CliError, Command, Outcome};
+use clap::{Args, Subcommand};
 use hologram_store_native::NativeKappaStore;
-use hologram_substrate_cli::{parse_kappa, run, CliError, Command, Outcome};
 
-#[derive(Parser)]
-#[command(
-    name = "hologram",
-    about = "Hologram deployment-substrate node (κ-label store/route)"
-)]
-struct Cli {
+/// `hologram node …` — the deployment-substrate node (κ-label store / route).
+#[derive(Args, Debug)]
+pub struct NodeCli {
     /// Path to the node's redb store.
     #[arg(long, default_value = "hologram-store.redb")]
     store: PathBuf,
@@ -24,8 +22,8 @@ struct Cli {
     verb: Verb,
 }
 
-#[derive(Subcommand)]
-enum Verb {
+#[derive(Subcommand, Debug)]
+pub enum Verb {
     /// Put a file's bytes under a σ-axis; print the κ-label.
     Put {
         #[arg(long, default_value = "blake3")]
@@ -153,7 +151,7 @@ fn build(verb: Verb) -> Result<Command, String> {
                 network_announce: announce,
             })
         }
-        Verb::Spawn { .. } | Verb::Serve { .. } => unreachable!("handled in main()"),
+        Verb::Spawn { .. } | Verb::Serve { .. } => unreachable!("handled in run()"),
     })
 }
 
@@ -161,8 +159,8 @@ fn badk(_: CliError) -> String {
     "malformed κ-label (expected <axis>:<hex>)".into()
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
+/// Run a parsed `hologram node` command; returns a process exit code (0 = ok).
+pub fn run(cli: NodeCli) -> u8 {
     match cli.verb {
         // Container/network verbs need the runtime/engine/server, not the store-generic `run`.
         Verb::Spawn {
@@ -181,7 +179,7 @@ fn main() -> ExitCode {
                 Ok(c) => c,
                 Err(e) => return fail(e),
             };
-            match run(&store, cmd) {
+            match run_command(&store, cmd) {
                 Ok(out) => render(out),
                 Err(e) => fail(format!("{e:?}")),
             }
@@ -195,7 +193,7 @@ fn run_spawn(
     container: &str,
     caps: &str,
     event: Option<PathBuf>,
-) -> ExitCode {
+) -> u8 {
     use hologram_runtime::Runtime;
     use hologram_runtime::WasmtimeEngine;
     use hologram_space::ContainerRuntime;
@@ -229,7 +227,7 @@ fn run_spawn(
         match rt.suspend(h).await {
             Ok(snap) => {
                 println!("{}", snap.as_str());
-                ExitCode::SUCCESS
+                0
             }
             Err(e) => fail(format!("suspend: {e:?}")),
         }
@@ -240,7 +238,7 @@ fn run_spawn(
 /// **also** binds a uor-native `TcpKappaSync` (`hologram-net-tcp`, κ-XOR Kademlia) over the
 /// same store, so the node federates via both wire protocols in parallel. Blocks until
 /// terminated.
-fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> ExitCode {
+fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> u8 {
     let store = match NativeKappaStore::open(store_path) {
         Ok(s) => std::sync::Arc::new(s),
         Err(e) => return fail(format!("open store: {e:?}")),
@@ -291,7 +289,7 @@ fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> E
     }
 }
 
-fn render(out: Outcome) -> ExitCode {
+fn render(out: Outcome) -> u8 {
     match out {
         Outcome::Kappa(k) => println!("{}", k.as_str()),
         Outcome::Data(d) => {
@@ -312,16 +310,16 @@ fn render(out: Outcome) -> ExitCode {
         Outcome::Verified(ok) => {
             println!("{ok}");
             if !ok {
-                return ExitCode::from(2);
+                return 2;
             }
         }
         Outcome::Pinned => println!("pinned"),
         Outcome::Unpinned => println!("unpinned"),
     }
-    ExitCode::SUCCESS
+    0
 }
 
-fn fail(msg: String) -> ExitCode {
+fn fail(msg: String) -> u8 {
     eprintln!("hologram: {msg}");
-    ExitCode::FAILURE
+    1
 }

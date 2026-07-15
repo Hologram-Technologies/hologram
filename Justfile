@@ -117,11 +117,11 @@ embedded:
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
     cargo test -p hologram-space -p hologram-tck -p hologram-store-native \
-        -p hologram-net -p hologram-runtime -p hologram-substrate-cli -p hologram-store-bare
+        -p hologram-net -p hologram-runtime -p hologram-store-bare
     cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
     cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net hologram-runtime hologram-substrate-cli; do \
+    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net hologram-runtime; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done

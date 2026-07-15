@@ -1363,6 +1363,13 @@ dependencies = [
  "hologram-exec",
  "hologram-graph",
  "hologram-host",
+ "hologram-net",
+ "hologram-runtime",
+ "hologram-space",
+ "hologram-store-native",
+ "hologram-tck",
+ "pollster",
+ "tokio",
  "uor-prism",
 ]
 
@@ -1548,20 +1555,6 @@ dependencies = [
  "hologram-space",
  "hologram-tck",
  "redb",
-]
-
-[[package]]
-name = "hologram-substrate-cli"
-version = "0.9.0"
-dependencies = [
- "clap",
- "hologram-net",
- "hologram-runtime",
- "hologram-space",
- "hologram-store-native",
- "hologram-tck",
- "pollster",
- "tokio",
 ]
 
 [[package]]

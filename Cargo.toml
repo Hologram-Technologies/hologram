@@ -27,7 +27,6 @@ members = [
     "crates/hologram-net",
     "substrate/hologram-store-native",
     "crates/hologram-runtime",
-    "substrate/hologram-substrate-cli",
     "substrate/hologram-store-bare",
 ]
 
@@ -52,7 +51,6 @@ default-members = [
     "crates/hologram-net",
     "substrate/hologram-store-native",
     "crates/hologram-runtime",
-    "substrate/hologram-substrate-cli",
     "substrate/hologram-store-bare",
 ]
 

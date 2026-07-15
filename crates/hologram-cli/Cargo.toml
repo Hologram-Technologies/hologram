@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Hologram CLI: compile, execute, bench, inspect."
+description = "Hologram CLI: the one `hologram` binary — compile/execute/bench/inspect plus the deployment-substrate node (store/route/serve)."
 
 [[bin]]
 name = "hologram"
@@ -23,6 +23,18 @@ clap              = { workspace = true }
 # Hologram's CLI is an application-author surface; it consumes the
 # prism façade per wiki ADR-031.
 uor-prism         = { workspace = true }
+# The `node` subcommand group (absorbed from the former hologram-substrate-cli, D13):
+# a native redb store, the Wasmtime engine, and the live HTTP-CAS + κ-XOR DHT transports.
+hologram-space        = { workspace = true }
+hologram-store-native = { workspace = true }
+hologram-runtime      = { workspace = true, features = ["engine-wasmtime"] }
+hologram-net          = { workspace = true, features = ["live", "tcp"] }
+pollster              = { workspace = true }
+tokio                 = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+# The node module's inline tests run against the reference MemKappaStore.
+hologram-tck = { workspace = true }
 
 [features]
 default = []

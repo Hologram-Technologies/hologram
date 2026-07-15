@@ -102,6 +102,9 @@ enum CommandArgs {
         #[arg(long, default_value_t = 100)]
         iterations: u32,
     },
+    /// Run a deployment-substrate node command (κ-label store / route + serve) — the node
+    /// CLI unified into the one `hologram` binary (D13).
+    Node(crate::node::NodeCli),
 }
 
 /// Parse command-line arguments from the process environment and run the CLI.
@@ -249,6 +252,9 @@ fn run_args(cli: CliArgs) -> Result<(), CompileError> {
                 iterations,
             },
         }),
+        // The node subcommand is self-contained (its own store/engine/transport + error
+        // handling); it prints and returns a process exit code, so we exit directly.
+        CommandArgs::Node(node_cli) => std::process::exit(i32::from(crate::node::run(node_cli))),
     }
 }
 
