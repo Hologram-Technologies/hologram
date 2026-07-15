@@ -143,9 +143,10 @@ store crate itself being renamed to `holospaces-native` etc. `substrate/` is now
 | Current | Target | Notes |
 |---------|--------|-------|
 | holospaces/crates/holospaces — Peer, Session (boot.rs), Manager, Operator/Roster (identity.rs), Configuration (config.rs) | **hoisted to** crates/hologram-runtime | D7: the model is space-agnostic workload-lifecycle management |
-| holospaces/crates/holospaces — emulators (emulator.rs, aarch64.rs, x64.rs, devbus.rs), κ-disk (disk.rs), content_net glue (PacketLink, TransportEndpoint), boot/OCI/devcontainer/compose/dockerfile provisioning, projection.rs (surface) | spaces/holospaces | portable core, no_std + alloc |
+| holospaces/crates/holospaces — the system emulator (emulator.rs, aarch64.rs, x64.rs, devbus.rs, net.rs) + machine.rs | **hoisted to crates/hologram-emulator** | **decision 2026-07-15**: system emulation is a first-class *hologram* capability, not holospaces-specific. Self-contained (deps only hologram-space/libm/spin). holospaces re-exports `emulator`/`machine` |
+| holospaces/crates/holospaces — κ-disk (disk.rs), content_net glue, boot/OCI/devcontainer/compose provisioning, projection.rs (surface) | spaces/holospaces | portable boot/provisioning/peer core, no_std + alloc (~10.4k LOC after the emulator hoist) |
 | holospaces/crates/holospaces-web | spaces/holospaces-browser | OPFS store, webrtc.rs/wsnet.rs pumps, wasm-bindgen Console/Workspace |
-| holospaces/crates/holospaces-emulator | spaces/holospaces (codemodule build target) | κ-addressed Wasm codemodule wrapper |
+| holospaces/crates/holospaces-emulator | **crates/hologram-emulator-codemodule** | the κ-addressed Wasm `.holo` container that packages hologram-emulator; sheds its holospaces dep |
 | holospaces vv/ (CC catalog, QEMU oracles, Playwright) | this repo's CI | absorbed in P2; must stay green (00 §success criteria) |
 | holospaces docs (arc42, C4, OPM, 15288) | specs/ (namespaced, e.g. specs/holospaces/) | history preserved; ADR numbering continues |
 

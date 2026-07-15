@@ -1564,6 +1564,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hologram-emulator"
+version = "0.9.0"
+dependencies = [
+ "hologram-space",
+ "libm",
+ "spin",
+]
+
+[[package]]
 name = "hologram-exec"
 version = "0.9.0"
 dependencies = [
@@ -1729,6 +1738,7 @@ dependencies = [
  "hologram-archive",
  "hologram-backend",
  "hologram-compiler",
+ "hologram-emulator",
  "hologram-exec",
  "hologram-graph",
  "hologram-net",

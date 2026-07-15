@@ -35,6 +35,7 @@ members = [
     "crates/hologram-store-native",
     "crates/hologram-runtime",
     "crates/hologram-store-bare",
+    "crates/hologram-emulator",
     "spaces/holospaces",
     "spaces/holospaces-node",
 ]
@@ -60,18 +61,20 @@ default-members = [
     "crates/hologram-store-native",
     "crates/hologram-runtime",
     "crates/hologram-store-bare",
+    "crates/hologram-emulator",
     "spaces/holospaces",
     "spaces/holospaces-node",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
 # target-specific — excluded from the host workspace; built explicitly (boot test / Playwright test).
-# holospaces-browser (wasm32 + web-sys browser peer) and holospaces-emulator are likewise target-specific.
+# holospaces-browser (wasm32 + web-sys browser peer) and hologram-emulator-codemodule (wasm32
+# container codemodule) are likewise target-specific.
 exclude = [
     "crates/hologram-efi",
     "crates/hologram-store-opfs",
     "spaces/holospaces-browser",
-    "spaces/holospaces-emulator",
+    "crates/hologram-emulator-codemodule",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
 ]
@@ -104,6 +107,7 @@ hologram-net            = { path = "crates/hologram-net", default-features = fal
 hologram-store-native   = { path = "crates/hologram-store-native" }
 hologram-runtime        = { path = "crates/hologram-runtime", default-features = false }
 hologram-store-bare     = { path = "crates/hologram-store-bare", default-features = false }
+hologram-emulator       = { path = "crates/hologram-emulator", default-features = false }
 
 async-trait        = "0.1"
 spin               = { version = "0.9", default-features = false, features = ["spin_mutex"] }

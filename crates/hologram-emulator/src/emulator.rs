@@ -3,7 +3,7 @@
 //!
 //! holospaces hosts *arbitrary* operating systems by running a real system
 //! emulator as a κ-addressed Wasm codemodule over the substrate host ABI: the
-//! guest's disk is the [κ-disk](crate::disk) (`CC-7`), its image is imported by κ
+//! guest's disk is the `κ-disk` (`CC-7`), its image is imported by κ
 //! (`CC-8`), its console and state are hologram channels and κ snapshots. This
 //! module is the emulator *core* — a faithful RISC-V interpreter — which the
 //! codemodule wraps. It is `no_std` + `alloc`, so it compiles into the Wasm
@@ -670,7 +670,7 @@ const DISK_SECTOR: usize = 512;
 /// an in-RAM image. The KappaStore IS the memory (Law L3): identical sectors dedup
 /// to one κ, an all-zero sector is sparse (stored as `None`, never put), and every
 /// read/write goes through the store — the substrate, not a second medium (Law
-/// L4). This is the same κ-addressed block device as [`crate::disk`], owned and
+/// L4). This is the same κ-addressed block device as the `κ-disk`, owned and
 /// sync for the emulator's hot path. The disk snapshot is the reconstructed image
 /// (content captured), so resume is faithful.
 struct KappaBacking {

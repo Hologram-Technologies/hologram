@@ -133,8 +133,17 @@ honesty meta-gate green.
     standalone; cross-workspace `holospaces` path dep resolves). Its `opfs_store.rs` (sync
     `FileSystemSyncAccessHandle`) is KEPT — deduping it against `hologram-store-opfs` (async
     worker-bridge) is a real design choice, deferred (they're architecturally different).
-  - [ ] **P2 tail** (remaining): fold `holospaces-emulator` (167 LOC, still git-pinned) into
-    `holospaces` per plan; `vv/` fixtures decision for full holospaces V&V; OPFS dedup
+  - [x] **Emulator hoisted → `crates/hologram-emulator`** (2026-07-15). System emulation is a
+    first-class *hologram* capability, not holospaces-specific (user call). The 20.6k-LOC core
+    (`emulator.rs` + RISC-V/x86-64/aarch64 cores + `machine.rs`) hoisted out of holospaces into
+    `crates/hologram-emulator` (deps only `hologram-space`/`libm`/`spin`; the couplings were
+    doc-links only). holospaces re-exports `emulator`/`machine` (zero churn for its 5 consumer
+    modules) and **shrank ~31k → 10.4k LOC** — now purely the boot/provisioning/peer layer. The
+    codemodule moved too: `spaces/holospaces-emulator` → `crates/hologram-emulator-codemodule`
+    (sheds its holospaces dep — wraps `hologram_emulator` directly). Green: hologram-emulator
+    (47 tests) + holospaces (62) + full workspace test, clippy, fmt, deny, RZ, wasm32 + thumbv7em
+    no_std, wasm32 codemodule. 01-crate-map updated.
+  - [ ] **P2 tail** (remaining): `vv/` fixtures decision for full holospaces V&V; OPFS dedup
     (opfs_store.rs vs hologram-store-opfs); absorb holospaces' V&V (CC catalog → MG-7).
 - [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
   release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).

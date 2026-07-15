@@ -113,7 +113,6 @@ pub mod disk;
 /// Container (`CC-26`); a host-side provisioning surface, `std` only.
 #[cfg(feature = "std")]
 pub mod dockerfile;
-pub mod emulator;
 /// The `.holo` Engine (the host-side execution backend; `std` only — the CPU
 /// kernels' float math needs `std`).
 #[cfg(feature = "std")]
@@ -124,9 +123,6 @@ pub mod identity;
 /// Host-only (`net` feature) — links an HTTP(S) client.
 #[cfg(feature = "net")]
 pub mod import;
-/// Boot Orchestrator (arc42 ch.5): generates the machine's device tree and boots
-/// a kernel + κ-disk on the emulator — the first-class `CC-14` boot operation.
-pub mod machine;
 pub mod manager;
 /// OCI image ingestion (the host-side provisioning surface for a devcontainer's
 /// operating-system image; `std` only). Conformance: `CC-10`.
@@ -153,7 +149,18 @@ pub mod substrate {
     };
 }
 
-pub use emulator::Arch;
+/// The *system emulator* core (with the boot Orchestrator) — hoisted into the
+/// first-class [`hologram-emulator`](hologram_emulator) crate so deterministic
+/// RISC-V / x86-64 / aarch64 emulation on the substrate (ADR-009) is a general
+/// hologram capability, not holospaces-specific. Re-exported here so
+/// `holospaces::emulator::…` / `holospaces::machine::…` keep resolving unchanged:
+///
+/// - [`emulator`] — the system-emulator core (two ISA targets, ADR-021).
+/// - [`machine`] — the Boot Orchestrator (arc42 ch.5): generates the machine's
+///   device tree and boots a kernel + κ-disk on the emulator (`CC-14`).
+pub use hologram_emulator::{emulator, machine};
+
+pub use hologram_emulator::Arch;
 pub use realizations::{address, verify, Axis, Holospace, Kappa, Source};
 pub use substrate::Capabilities;
 

@@ -155,61 +155,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-bare-hal"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
+name = "hologram-emulator"
+version = "0.9.0"
 dependencies = [
- "async-trait",
- "spin",
-]
-
-[[package]]
-name = "hologram-host"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "uor-foundation",
- "uor-foundation-sdk",
- "uor-prism",
-]
-
-[[package]]
-name = "hologram-realizations"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "hologram-substrate-core",
-]
-
-[[package]]
-name = "hologram-substrate-core"
-version = "0.6.0"
-source = "git+https://github.com/Hologram-Technologies/hologram?rev=18f553d8578997ce32e7b653786a0bcf9b09a2c0#18f553d8578997ce32e7b653786a0bcf9b09a2c0"
-dependencies = [
- "async-trait",
- "hashbrown",
- "hologram-host",
- "uor-addr",
-]
-
-[[package]]
-name = "holospaces"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "hologram-bare-hal",
- "hologram-realizations",
- "hologram-substrate-core",
+ "hologram-space",
  "libm",
  "spin",
 ]
 
 [[package]]
-name = "holospaces-emulator"
+name = "hologram-emulator-codemodule"
 version = "0.0.0"
 dependencies = [
  "dlmalloc",
- "holospaces",
+ "hologram-emulator",
+]
+
+[[package]]
+name = "hologram-space"
+version = "0.9.0"
+dependencies = [
+ "async-trait",
+ "hashbrown",
+ "hologram-types",
+ "spin",
+ "uor-addr",
+]
+
+[[package]]
+name = "hologram-types"
+version = "0.9.0"
+dependencies = [
+ "uor-foundation",
+ "uor-foundation-sdk",
+ "uor-prism",
 ]
 
 [[package]]

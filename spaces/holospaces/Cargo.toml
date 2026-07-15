@@ -23,6 +23,7 @@ std = [
     "hologram-space/std",
     "hologram-exec/std",
     "hologram-backend/std",
+    "hologram-emulator/std",
 ]
 # `net` (off by default) enables the internet *import boundary* (ADR-013): the
 # Repository Fetcher + OCI registry Image Fetcher (`CC-20`), an HTTP(S) client
@@ -33,7 +34,8 @@ net = ["std", "dep:ureq", "dep:sha2"]
 # `cc44-trace` (off by default, dev-only) streams the x86-64 guest serial console
 # live to stderr and samples `rip`/TSC periodically — boot-progress visibility
 # for the CC-44 long-mode bring-up. Never enabled in CI or the default build.
-cc44-trace = ["std"]
+# Forwards to the hoisted emulator crate where the x86-64 trace code now lives.
+cc44-trace = ["std", "hologram-emulator/cc44-trace"]
 
 [dependencies]
 # The hologram contract, consumed by reference (ADR-003, ADR-006). holospaces
@@ -46,6 +48,10 @@ cc44-trace = ["std"]
 # dev-dependency only (CC-3 battery), not a runtime dependency.
 hologram-space = { workspace = true }
 hologram-net = { workspace = true }
+# The system emulator + Boot Orchestrator, hoisted into a first-class crate
+# (ADR-009). holospaces re-exports its `emulator` / `machine` modules so the
+# provisioning surfaces (boot, import, oci, projection) drive them unchanged.
+hologram-emulator = { workspace = true }
 async-trait = { workspace = true }
 spin = { workspace = true }
 # The emulator's F/D floating-point extension (CC-9) on hologram's no_std float

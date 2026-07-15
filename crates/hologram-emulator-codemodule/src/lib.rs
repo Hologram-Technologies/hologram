@@ -1,5 +1,5 @@
 //! The **system-emulator codemodule** — the RISC-V emulator core
-//! ([`holospaces::emulator`]) compiled to a *hologram container*: a κ-addressed
+//! ([`hologram_emulator::emulator`]) compiled to a *hologram container*: a κ-addressed
 //! Wasm module that exports the container ABI (`hg_*`) and imports only the
 //! `hologram` host ABI, run by hologram's engine (Wasmtime / `wasmi`). This is
 //! the execution surface of ADR-009 — the emulator runs *on the substrate*, not
@@ -29,7 +29,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use holospaces::emulator::{Emulator, Halt};
+use hologram_emulator::emulator::{Emulator, Halt};
 
 /// The container's heap allocator (the emulator's guest RAM lives here).
 #[global_allocator]

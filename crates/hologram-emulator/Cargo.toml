@@ -1,0 +1,21 @@
+[package]
+name = "hologram-emulator"
+description = "Hologram system emulator — deterministic RISC-V/x86-64/aarch64 cores that boot an OS on the substrate (ADR-009)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+hologram-space = { workspace = true }
+libm = { workspace = true }
+spin = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-space/std"]
+# `cc44-trace` (off by default, dev-only) streams the x86-64 guest serial console
+# live to stderr and samples `rip`/TSC periodically — boot-progress visibility
+# for the CC-44 long-mode bring-up. Never enabled in CI or the default build.
+cc44-trace = ["std"]
