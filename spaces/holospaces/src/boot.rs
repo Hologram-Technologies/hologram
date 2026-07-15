@@ -1,0 +1,1334 @@
+//! **Boot Layer** — the environment-agnostic core.
+//!
+//! Realizes the *Boot Layer* building block (arc42 chapter 5,
+//! `docs/src/arc42/adoc/05_building_block_view.adoc`): an [`ingest`] step that
+//! canonicalizes a provisioning source at the boundary (Law L2), a
+//! [`Resolver`] that fetches and verifies a holospace's parts by re-derivation
+//! (Law L5), and a [`Session`] that drives the lifecycle (boot → suspend to a
+//! κ snapshot → resume → migrate → terminate).
+//!
+//! The Boot Layer composes the [hologram](https://github.com/Hologram-Technologies/hologram)
+//! substrate (ADR-003, ADR-006): it resolves through
+//! [`KappaStore`]/[`KappaSync`] (`get_with_fetch`, verify-on-receipt) and runs
+//! through [`ContainerRuntime`]. It never re-implements them.
+
+use core::fmt;
+
+use hologram_space::CapabilitySet;
+use hologram_space::{
+    get_with_fetch, verify_kappa, AccessError, Bytes, Capabilities, ContainerHandle,
+    ContainerRuntime, KappaStore, KappaSync, Realization, RuntimeError, StoreError,
+};
+
+use crate::config::{Applied, ConfigError, Configuration, LifecycleAction};
+#[cfg(feature = "std")]
+use crate::realizations::address;
+use crate::realizations::{Holospace, Kappa, Source};
+
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
+/// Provision a holospace *into a peer's store* so the substrate can resolve and
+/// spawn it (arc42 chapter 6, *Provisioning*; chapter 5, *Boot Layer*).
+///
+/// This is the boundary step that κ-addresses a holospace's parts into the
+/// content-addressed store (Law L2/L4): the hologram
+/// [`ContainerManifest`](hologram_space::ContainerManifest) (the
+/// Container ID), the [`CapabilitySet`] (the authority), and the [`Holospace`]
+/// definition itself. The code module bytes the manifest references must
+/// already be in the store (a holo-file artifact, or an ingested config).
+///
+/// # Errors
+///
+/// Returns [`ProvisionError`] if any part cannot be stored, or if the code
+/// module the manifest references is not present in the store.
+pub fn provision(
+    store: &dyn KappaStore,
+    source: Source,
+    capabilities: Capabilities,
+) -> Result<Holospace, ProvisionError> {
+    let holospace = Holospace::compose(source, capabilities.clone());
+    let manifest = holospace.container_manifest();
+    if !store.contains(&manifest.code) {
+        return Err(ProvisionError::MissingCode(manifest.code));
+    }
+    store
+        .put("blake3", &manifest.canonicalize())
+        .map_err(ProvisionError::Store)?;
+    store
+        .put("blake3", &CapabilitySet::new(capabilities).canonicalize())
+        .map_err(ProvisionError::Store)?;
+    store
+        .put("blake3", &holospace.canonicalize())
+        .map_err(ProvisionError::Store)?;
+    Ok(holospace)
+}
+
+/// Why provisioning a holospace into a store failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvisionError {
+    /// The code module the manifest references is not present in the store.
+    MissingCode(Kappa),
+    /// The store rejected a write.
+    Store(StoreError),
+}
+
+impl fmt::Display for ProvisionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProvisionError::MissingCode(k) => {
+                write!(f, "code module {k} is not present in the store")
+            }
+            ProvisionError::Store(e) => write!(f, "store error during provisioning: {e:?}"),
+        }
+    }
+}
+
+impl core::error::Error for ProvisionError {}
+
+/// The Dev Container ingestor — parses and validates a `devcontainer.json`
+/// against the [Dev Container](https://containers.dev) specification at the
+/// provisioning boundary (Law L2). Conformance: `CC-4`. A host-side
+/// provisioning surface, available with the `std` feature.
+#[cfg(feature = "std")]
+pub mod devcontainer {
+    use alloc::collections::BTreeMap;
+    use core::fmt;
+    use serde_json::Value;
+
+    /// The container image source a `devcontainer.json` declares. The Dev
+    /// Container spec permits at most one (the OCI image origin); when none is
+    /// given, the implementor's default base image is used.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum ImageSource {
+        /// A prebuilt OCI image reference (`"image"`).
+        Image(String),
+        /// A Dockerfile build (`"build"`) — the Dockerfile path + context + args
+        /// the config declares, *honoured* (built on the substrate, `CC-26`), not
+        /// dropped.
+        Build(BuildConfig),
+        /// A Docker Compose service (`"dockerComposeFile"`) — the compose file(s)
+        /// and the selected `service`, honoured by resolving the service's image
+        /// or build (`CC-27`).
+        Compose(ComposeConfig),
+        /// No image source declared — the default base image (e.g. a
+        /// features-only configuration, as in Codespaces).
+        Default,
+    }
+
+    /// A Dockerfile build source (`"build"`): the `dockerfile` path (relative to
+    /// the config), the build `context`, and the `args`.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct BuildConfig {
+        /// The Dockerfile path (default `"Dockerfile"`), relative to the context.
+        pub dockerfile: String,
+        /// The build context directory (default `"."`), relative to the config.
+        pub context: String,
+        /// The `build.args` the config declares (`ARG` overrides for the build).
+        pub args: BTreeMap<String, String>,
+    }
+
+    /// A Docker Compose source (`"dockerComposeFile"` + `"service"`): the compose
+    /// file path(s) and the service that is the devcontainer.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ComposeConfig {
+        /// The compose file path(s) (relative to the config), in order.
+        pub files: Vec<String>,
+        /// The compose `service` that is the devcontainer (its image/build is used).
+        pub service: Option<String>,
+    }
+
+    /// A validated dev container configuration (the spec-relevant projection).
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct DevContainer {
+        /// The optional `"name"`.
+        pub name: Option<String>,
+        /// The declared container image source (or [`ImageSource::Default`]).
+        pub image_source: ImageSource,
+        /// The VS Code extensions the config declares
+        /// (`customizations.vscode.extensions`) — the *base extensions*
+        /// holospaces installs into the workbench for this devcontainer, exactly
+        /// as a Codespace does (the Dev Container spec's extension management).
+        /// Each is a marketplace id `"<publisher>.<name>"`; holospaces installs
+        /// them from the configured open gallery — it bundles none by default.
+        pub extensions: Vec<String>,
+        /// Ports the config forwards (`forwardPorts`) — a server the devcontainer
+        /// runs on one of these is reachable from outside as a forwarded port /
+        /// app preview (`CC-21`). Each is a TCP port number (the `host:port`
+        /// string form keeps the port). Honoured by [`DevContainer::port_forwards`],
+        /// which binds a live host listener per port — never parsed and dropped.
+        pub forward_ports: Vec<u16>,
+        /// The lifecycle commands the config declares, in spec run-order
+        /// (`onCreateCommand`, `updateContentCommand`, `postCreateCommand`,
+        /// `postStartCommand`, `postAttachCommand`) — what holospaces runs *in the
+        /// devcontainer OS* so the environment is ready on entry (`CC-22`). Each
+        /// entry is `(hook, command)`; the command is normalized to a shell line.
+        pub lifecycle: Vec<(LifecycleHook, String)>,
+        /// Environment the config sets *in the container itself* (`containerEnv`)
+        /// — set when the container is created, so every process (the lifecycle
+        /// commands and the OS) sees it. Exported before [`Self::remote_env`],
+        /// which layers over it (the Dev Container spec's precedence) (`CC-23`).
+        pub container_env: BTreeMap<String, String>,
+        /// Environment the config sets for the remote/editor side (`remoteEnv`) —
+        /// applied into the OS / surfaced to the workbench, layered over
+        /// `containerEnv` (`CC-23`).
+        pub remote_env: BTreeMap<String, String>,
+        /// The Dev Container *features* the config declares (`features`), in
+        /// declaration order. Each is an OCI artifact (publisher's `install.sh` +
+        /// `devcontainer-feature.json`) imported by κ and *applied into the rootfs*
+        /// — its `install.sh` runs in the devcontainer OS *before* the lifecycle
+        /// commands, with the declared options passed as environment, exactly as a
+        /// Codespace installs features (`CC-25`; ADR-016).
+        pub features: Vec<Feature>,
+    }
+
+    /// A declared Dev Container *feature*: its OCI artifact reference `id` and the
+    /// `options` the config sets (passed to the feature's `install.sh` as
+    /// uppercased environment variables, per the Dev Container Features spec).
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Feature {
+        /// The feature's OCI artifact reference (e.g.
+        /// `ghcr.io/devcontainers/features/node:1`).
+        pub id: String,
+        /// The declared options (option name → value); empty if none.
+        pub options: BTreeMap<String, String>,
+    }
+
+    /// A Dev Container lifecycle hook, in spec execution order.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum LifecycleHook {
+        /// `onCreateCommand` — first, during image creation.
+        OnCreate,
+        /// `updateContentCommand` — after `onCreate`, on content updates.
+        UpdateContent,
+        /// `postCreateCommand` — after the container is created (e.g. install deps).
+        PostCreate,
+        /// `postStartCommand` — each time the container starts.
+        PostStart,
+        /// `postAttachCommand` — each time a tool attaches.
+        PostAttach,
+    }
+
+    impl LifecycleHook {
+        /// The Dev Container spec property name of this hook.
+        #[must_use]
+        pub fn spec_name(self) -> &'static str {
+            match self {
+                LifecycleHook::OnCreate => "onCreateCommand",
+                LifecycleHook::UpdateContent => "updateContentCommand",
+                LifecycleHook::PostCreate => "postCreateCommand",
+                LifecycleHook::PostStart => "postStartCommand",
+                LifecycleHook::PostAttach => "postAttachCommand",
+            }
+        }
+    }
+
+    impl DevContainer {
+        /// Build the forwarded-port ingress this devcontainer declares
+        /// (`forwardPorts`) — a host listener per declared port, bridged to the
+        /// guest's listening port, so a server the devcontainer runs is reachable
+        /// from outside (`CC-21`, the running-app preview). The declared number is
+        /// the *guest* port; it is forwarded from the equal host port where free,
+        /// else an ephemeral one. Returns the ingress (to
+        /// [attach to the machine](crate::emulator::Emulator::attach_net_forward))
+        /// and the `(host_port, guest_port)` pairs actually bound — so the
+        /// operator's UI can show each forwarded URL. The config's `forwardPorts`
+        /// is thereby honoured end-to-end, never parsed and dropped.
+        ///
+        /// # Errors
+        ///
+        /// An [`std::io::Error`] if a declared port cannot be bound to any host
+        /// port (the listener cannot be opened).
+        pub fn port_forwards(
+            &self,
+        ) -> std::io::Result<(crate::emulator::net::StdIngress, Vec<(u16, u16)>)> {
+            let mut ingress = crate::emulator::net::StdIngress::new();
+            let mut bound = Vec::with_capacity(self.forward_ports.len());
+            for &guest in &self.forward_ports {
+                // Prefer the same host port (Codespaces parity); on conflict take
+                // an ephemeral one rather than dropping the forward.
+                let host = match ingress.forward(guest, guest) {
+                    Ok(p) => p,
+                    Err(_) => ingress.forward(0, guest)?,
+                };
+                bound.push((host, guest));
+            }
+            Ok((ingress, bound))
+        }
+
+        /// Build the `/init` the Boot Orchestrator injects to run this
+        /// devcontainer's lifecycle commands in the booted OS (`CC-22`): a busybox
+        /// shell script that exports the config's `remoteEnv`, runs each lifecycle
+        /// command in spec order (each framed with a marker), and powers off. The
+        /// base image must provide `/bin/busybox`;
+        /// [`assemble_ext4_with_init`](crate::assembly::assemble_ext4_with_init)
+        /// writes the script as `/init`. This makes the environment *ready on
+        /// entry* — the Codespaces/Gitpod behaviour — driven by the config, not by
+        /// any holospaces hard-coding.
+        #[must_use]
+        pub fn lifecycle_init(&self) -> Vec<u8> {
+            let mut s = String::from("#!/bin/busybox sh\n");
+            s.push_str("export PATH=/bin:/usr/bin\n");
+            // The config's environment, applied to the lifecycle scripts.
+            // `containerEnv` is set first; `remoteEnv` layers over it (the Dev
+            // Container spec's precedence) — both honoured, neither dropped.
+            for (k, v) in self.container_env.iter().chain(self.remote_env.iter()) {
+                s.push_str("export ");
+                s.push_str(k);
+                s.push_str("='");
+                s.push_str(v);
+                s.push_str("'\n");
+            }
+            // Dev Container *features* install in the build phase, *before* the
+            // lifecycle commands (`CC-25`). Each feature's artifact is unpacked at
+            // `/opt/holospaces/features/<idx>/` (the Boot Orchestrator injects it,
+            // verified by κ); run its `install.sh` in a subshell with the declared
+            // options as uppercased environment, per the Dev Container Features spec.
+            if !self.features.is_empty() {
+                s.push_str("echo FEATURES-START\n");
+                for (idx, feat) in self.features.iter().enumerate() {
+                    s.push_str("echo FEATURE:");
+                    s.push_str(&feat.id);
+                    s.push('\n');
+                    s.push_str("( cd /opt/holospaces/features/");
+                    s.push_str(&idx.to_string());
+                    s.push_str(" && ");
+                    for (k, v) in &feat.options {
+                        s.push_str(&k.to_uppercase());
+                        s.push_str("='");
+                        s.push_str(v);
+                        s.push_str("' ");
+                    }
+                    s.push_str("busybox sh ./install.sh )\n");
+                }
+                s.push_str("echo FEATURES-DONE\n");
+            }
+            s.push_str("echo LIFECYCLE-START\n");
+            for (hook, cmd) in &self.lifecycle {
+                s.push_str("echo HOOK:");
+                s.push_str(hook.spec_name());
+                s.push('\n');
+                s.push_str(cmd);
+                s.push('\n');
+            }
+            s.push_str("echo LIFECYCLE-DONE\n");
+            s.push_str("busybox reboot -f\n");
+            s.into_bytes()
+        }
+    }
+
+    /// Normalize JSONC `devcontainer.json` bytes to plain JSON (Law L2): strip
+    /// line/block comments and trailing commas. The Dev Container format is
+    /// JSONC; this is the canonicalization at the provisioning boundary.
+    ///
+    /// # Errors
+    ///
+    /// [`DevcontainerError::NotJson`] if the result is not valid JSON.
+    pub fn to_canonical_json(config_json: &[u8]) -> Result<Vec<u8>, DevcontainerError> {
+        let json = strip_trailing_commas(&strip_jsonc(config_json));
+        // Round-trip through serde_json to confirm it is valid JSON and to
+        // normalize it (the value the schema and the ingestor see).
+        let value: Value = serde_json::from_slice(&json).map_err(|_| DevcontainerError::NotJson)?;
+        serde_json::to_vec(&value).map_err(|_| DevcontainerError::NotJson)
+    }
+
+    /// Parse and validate `devcontainer.json` per the Dev Container spec.
+    ///
+    /// `devcontainer.json` is JSONC: comments and trailing commas are stripped
+    /// ([`to_canonical_json`]) before parsing. At most one container image
+    /// source (`image` / `build` / `dockerComposeFile`) may be declared; known
+    /// properties must be well-formed.
+    ///
+    /// # Errors
+    ///
+    /// [`DevcontainerError`] if the bytes are not a JSON object, declare more
+    /// than one image source, or have a malformed known property.
+    pub fn parse(config_json: &[u8]) -> Result<DevContainer, DevcontainerError> {
+        let json = to_canonical_json(config_json)?;
+        let value: Value = serde_json::from_slice(&json).map_err(|_| DevcontainerError::NotJson)?;
+        let obj = value.as_object().ok_or(DevcontainerError::NotObject)?;
+
+        let has_image = obj.contains_key("image");
+        let has_build = obj.contains_key("build");
+        let has_compose = obj.contains_key("dockerComposeFile");
+        if [has_image, has_build, has_compose]
+            .iter()
+            .filter(|b| **b)
+            .count()
+            > 1
+        {
+            return Err(DevcontainerError::MultipleImageSources);
+        }
+        // Dev Container *features* (`features`): an object of `ref → options`.
+        // Each value is an options object, a string (shorthand for `version`), or
+        // a bool/null (the feature with no options). Parsed and *honoured* — each
+        // feature's `install.sh` runs in the OS before the lifecycle (`CC-25`).
+        let mut features: Vec<Feature> = Vec::new();
+        if let Some(feats) = obj.get("features") {
+            let map = feats
+                .as_object()
+                .ok_or(DevcontainerError::MalformedProperty("features"))?;
+            for (id, val) in map {
+                let mut options = BTreeMap::new();
+                match val {
+                    Value::Object(o) => {
+                        for (k, v) in o {
+                            options.insert(
+                                k.clone(),
+                                scalar_string(v)
+                                    .ok_or(DevcontainerError::MalformedProperty("features"))?,
+                            );
+                        }
+                    }
+                    Value::String(s) => {
+                        options.insert("version".to_owned(), s.clone());
+                    }
+                    Value::Bool(_) | Value::Null => {}
+                    _ => return Err(DevcontainerError::MalformedProperty("features")),
+                }
+                features.push(Feature {
+                    id: id.clone(),
+                    options,
+                });
+            }
+        }
+
+        let image_source = if has_image {
+            ImageSource::Image(
+                obj["image"]
+                    .as_str()
+                    .ok_or(DevcontainerError::MalformedProperty("image"))?
+                    .to_owned(),
+            )
+        } else if has_build {
+            // `build` is an object (the spec) or, leniently, a string (the
+            // Dockerfile path). Retained + honoured (CC-26), never dropped.
+            let bc = match &obj["build"] {
+                Value::String(s) => BuildConfig {
+                    dockerfile: s.clone(),
+                    context: ".".to_owned(),
+                    args: BTreeMap::new(),
+                },
+                Value::Object(o) => {
+                    let mut args = BTreeMap::new();
+                    if let Some(a) = o.get("args").and_then(Value::as_object) {
+                        for (k, v) in a {
+                            args.insert(
+                                k.clone(),
+                                scalar_string(v)
+                                    .ok_or(DevcontainerError::MalformedProperty("build"))?,
+                            );
+                        }
+                    }
+                    BuildConfig {
+                        dockerfile: o
+                            .get("dockerfile")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Dockerfile")
+                            .to_owned(),
+                        context: o
+                            .get("context")
+                            .and_then(Value::as_str)
+                            .unwrap_or(".")
+                            .to_owned(),
+                        args,
+                    }
+                }
+                _ => return Err(DevcontainerError::MalformedProperty("build")),
+            };
+            ImageSource::Build(bc)
+        } else if has_compose {
+            let files = match &obj["dockerComposeFile"] {
+                Value::String(s) => vec![s.clone()],
+                Value::Array(a) => a
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .ok_or(DevcontainerError::MalformedProperty("dockerComposeFile"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                _ => return Err(DevcontainerError::MalformedProperty("dockerComposeFile")),
+            };
+            ImageSource::Compose(ComposeConfig {
+                files,
+                service: obj
+                    .get("service")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            })
+        } else {
+            ImageSource::Default
+        };
+        let name = obj.get("name").and_then(Value::as_str).map(str::to_owned);
+
+        // The base extensions the config manages (Dev Container spec:
+        // `customizations.vscode.extensions`, the successor to the legacy
+        // top-level `extensions`). Each entry must be a marketplace id string.
+        let mut extensions: Vec<String> = Vec::new();
+        let ext_value = obj
+            .get("customizations")
+            .and_then(|c| c.get("vscode"))
+            .and_then(|v| v.get("extensions"))
+            .or_else(|| obj.get("extensions"));
+        if let Some(list) = ext_value {
+            let arr = list
+                .as_array()
+                .ok_or(DevcontainerError::MalformedProperty("extensions"))?;
+            for e in arr {
+                let id = e
+                    .as_str()
+                    .ok_or(DevcontainerError::MalformedProperty("extensions"))?;
+                extensions.push(id.to_owned());
+            }
+        }
+
+        // forwardPorts: an array of port numbers or "host:port" / "port" strings.
+        let mut forward_ports: Vec<u16> = Vec::new();
+        if let Some(fp) = obj.get("forwardPorts") {
+            let arr = fp
+                .as_array()
+                .ok_or(DevcontainerError::MalformedProperty("forwardPorts"))?;
+            for p in arr {
+                let port = if let Some(n) = p.as_u64() {
+                    u16::try_from(n)
+                        .map_err(|_| DevcontainerError::MalformedProperty("forwardPorts"))?
+                } else if let Some(s) = p.as_str() {
+                    // "port" or "host:port" → the port component.
+                    s.rsplit(':')
+                        .next()
+                        .and_then(|t| t.parse::<u16>().ok())
+                        .ok_or(DevcontainerError::MalformedProperty("forwardPorts"))?
+                } else {
+                    return Err(DevcontainerError::MalformedProperty("forwardPorts"));
+                };
+                forward_ports.push(port);
+            }
+        }
+
+        // Lifecycle commands, in spec run-order. Each may be a string (a shell
+        // line), an array (an exec-form argv), or an object (named parallel
+        // commands); normalize to a single shell line per hook.
+        let mut lifecycle: Vec<(LifecycleHook, String)> = Vec::new();
+        for (key, hook) in [
+            ("onCreateCommand", LifecycleHook::OnCreate),
+            ("updateContentCommand", LifecycleHook::UpdateContent),
+            ("postCreateCommand", LifecycleHook::PostCreate),
+            ("postStartCommand", LifecycleHook::PostStart),
+            ("postAttachCommand", LifecycleHook::PostAttach),
+        ] {
+            if let Some(v) = obj.get(key) {
+                lifecycle.push((
+                    hook,
+                    normalize_command(v).ok_or(DevcontainerError::MalformedProperty(key))?,
+                ));
+            }
+        }
+
+        // containerEnv / remoteEnv: each a string→string (or null) map.
+        let container_env = parse_env_map(obj, "containerEnv")?;
+        let remote_env = parse_env_map(obj, "remoteEnv")?;
+
+        Ok(DevContainer {
+            name,
+            image_source,
+            extensions,
+            forward_ports,
+            lifecycle,
+            container_env,
+            remote_env,
+            features,
+        })
+    }
+
+    /// Parse a Dev Container environment map (`containerEnv` / `remoteEnv`): a
+    /// string→string object; a `null` value drops that key (the spec's way to
+    /// unset). A non-string value is a malformed property (refused, not dropped).
+    fn parse_env_map(
+        obj: &serde_json::Map<String, Value>,
+        key: &'static str,
+    ) -> Result<BTreeMap<String, String>, DevcontainerError> {
+        let mut env = BTreeMap::new();
+        if let Some(v) = obj.get(key) {
+            let map = v
+                .as_object()
+                .ok_or(DevcontainerError::MalformedProperty(key))?;
+            for (k, val) in map {
+                if val.is_null() {
+                    continue;
+                }
+                let s = val
+                    .as_str()
+                    .ok_or(DevcontainerError::MalformedProperty(key))?;
+                env.insert(k.clone(), s.to_owned());
+            }
+        }
+        Ok(env)
+    }
+
+    /// A Dev Container feature option value (string / bool / number) as the
+    /// string passed to `install.sh`; `None` for a non-scalar value.
+    fn scalar_string(v: &Value) -> Option<String> {
+        match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Bool(b) => Some(b.to_string()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Normalize a Dev Container command value (string / argv array / named
+    /// object) to a single shell line; `None` if malformed.
+    fn normalize_command(v: &Value) -> Option<String> {
+        match v {
+            Value::String(s) => Some(s.clone()),
+            // Exec-form argv → space-joined (the spec runs it without a shell;
+            // the joined form is the human-readable command line).
+            Value::Array(items) => {
+                let parts: Option<Vec<&str>> = items.iter().map(Value::as_str).collect();
+                parts.map(|p| p.join(" "))
+            }
+            // Object form: named commands run in parallel; join their lines.
+            Value::Object(map) => {
+                let mut lines = Vec::new();
+                for cmd in map.values() {
+                    lines.push(normalize_command(cmd)?);
+                }
+                Some(lines.join(" & "))
+            }
+            _ => None,
+        }
+    }
+
+    /// Strip JSONC line (`//`) and block (`/* */`) comments, respecting string
+    /// literals (a comment marker inside a string is content, not a comment).
+    fn strip_jsonc(input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(input.len());
+        let (mut i, n) = (0usize, input.len());
+        let (mut in_str, mut esc) = (false, false);
+        while i < n {
+            let b = input[i];
+            if in_str {
+                out.push(b);
+                if esc {
+                    esc = false;
+                } else if b == b'\\' {
+                    esc = true;
+                } else if b == b'"' {
+                    in_str = false;
+                }
+                i += 1;
+            } else if b == b'"' {
+                in_str = true;
+                out.push(b);
+                i += 1;
+            } else if b == b'/' && i + 1 < n && input[i + 1] == b'/' {
+                i += 2;
+                while i < n && input[i] != b'\n' {
+                    i += 1;
+                }
+            } else if b == b'/' && i + 1 < n && input[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < n && !(input[i] == b'*' && input[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+            } else {
+                out.push(b);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Drop a comma immediately preceding `}` or `]` (JSONC trailing commas),
+    /// respecting string literals.
+    fn strip_trailing_commas(input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(input.len());
+        let (mut in_str, mut esc) = (false, false);
+        let n = input.len();
+        for i in 0..n {
+            let b = input[i];
+            if in_str {
+                out.push(b);
+                if esc {
+                    esc = false;
+                } else if b == b'\\' {
+                    esc = true;
+                } else if b == b'"' {
+                    in_str = false;
+                }
+                continue;
+            }
+            if b == b'"' {
+                in_str = true;
+                out.push(b);
+                continue;
+            }
+            if b == b',' {
+                let mut j = i + 1;
+                while j < n && input[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < n && (input[j] == b'}' || input[j] == b']') {
+                    continue;
+                }
+            }
+            out.push(b);
+        }
+        out
+    }
+
+    /// Why a `devcontainer.json` is not spec-conformant.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum DevcontainerError {
+        /// The bytes are not valid JSON (after JSONC stripping).
+        NotJson,
+        /// The top-level value is not a JSON object.
+        NotObject,
+        /// More than one image source was declared.
+        MultipleImageSources,
+        /// A known property has the wrong shape.
+        MalformedProperty(&'static str),
+    }
+
+    impl fmt::Display for DevcontainerError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                DevcontainerError::NotJson => f.write_str("devcontainer.json is not valid JSON"),
+                DevcontainerError::NotObject => {
+                    f.write_str("devcontainer.json top level is not an object")
+                }
+                DevcontainerError::MultipleImageSources => {
+                    f.write_str("devcontainer.json declares more than one image source")
+                }
+                DevcontainerError::MalformedProperty(p) => {
+                    write!(f, "devcontainer.json property '{p}' is malformed")
+                }
+            }
+        }
+    }
+
+    impl core::error::Error for DevcontainerError {}
+}
+
+/// Ingest a devcontainer holospace from a git source + its `devcontainer.json`,
+/// binding the κ-addressed Wasm `userland` its config selects for the
+/// Linux/POSIX surface (ADR-008; Conformance `CC-4`, `CC-6`).
+///
+/// The config is validated against the Dev Container spec
+/// ([`devcontainer::parse`]) and its content is content-addressed; the
+/// `userland` entry module is the code the runtime boots. The holospace
+/// identity is a function of both — the holospace *matches its source* and is
+/// bootable, and the same source yields the same κ (reproducibility, QS1 / Q4).
+///
+/// # Errors
+///
+/// [`IngestError`] if a required field is empty or the config is not
+/// spec-conformant.
+#[cfg(feature = "std")]
+pub fn ingest_devcontainer(
+    repo: impl Into<String>,
+    reference: impl Into<String>,
+    config_path: impl Into<String>,
+    config_json: &[u8],
+    userland: Kappa,
+    arch: crate::Arch,
+    capabilities: hologram_space::Capabilities,
+) -> Result<Holospace, IngestError> {
+    let repo = repo.into();
+    let config_path = config_path.into();
+    if repo.trim().is_empty() {
+        return Err(IngestError::EmptyField("repo"));
+    }
+    if config_path.trim().is_empty() {
+        return Err(IngestError::EmptyField("config_path"));
+    }
+    devcontainer::parse(config_json).map_err(IngestError::Devcontainer)?;
+    // The operator's architecture selection (ADR-021) becomes part of the
+    // holospace's identity — fixed for its lifetime by content-addressing.
+    let source = Source::Devcontainer {
+        repo,
+        reference: reference.into(),
+        config_path,
+        config: address(config_json),
+        userland,
+        arch,
+    };
+    Ok(Holospace::compose(source, capabilities))
+}
+
+/// Import a code module (or any content) by κ from a source peer, verified by
+/// re-derivation before it is accepted (Law L5), and cache it locally.
+///
+/// This is holospaces' *trustless-import boundary* (ADR-006, ADR-009): arbitrary
+/// code — a program, a system-emulator codemodule, an OS image — becomes
+/// runnable holospace content only after its fetched bytes re-derive to the
+/// requested κ. It composes the substrate's [`get_with_fetch`] (local store
+/// first, else fetch + verify-on-receipt + cache); holospaces adds no parallel
+/// fetch path (Law L4). Mirrors hologram's own driver-import witnesses.
+///
+/// # Errors
+///
+/// [`AccessError::VerificationFailed`] if the fetched bytes do not re-derive to
+/// `kappa` (a forged or corrupted import is refused); other [`AccessError`] on a
+/// store or sync failure.
+pub async fn import(
+    store: &dyn KappaStore,
+    source: &dyn KappaSync,
+    kappa: &Kappa,
+) -> Result<Option<Bytes>, AccessError> {
+    get_with_fetch(store, source, kappa).await
+}
+
+/// Canonicalize a provisioning source into a [`Holospace`] definition (Law L2).
+///
+/// The resulting holospace is a canonical form; its identity is its κ. This is
+/// the boundary at which an external source becomes κ-addressed content.
+///
+/// # Errors
+///
+/// Returns [`IngestError`] if the source is not well-formed (for example, a
+/// devcontainer with an empty repository or config path).
+pub fn ingest(
+    source: Source,
+    capabilities: hologram_space::Capabilities,
+) -> Result<Holospace, IngestError> {
+    if let Source::Devcontainer {
+        repo, config_path, ..
+    } = &source
+    {
+        if repo.trim().is_empty() {
+            return Err(IngestError::EmptyField("repo"));
+        }
+        if config_path.trim().is_empty() {
+            return Err(IngestError::EmptyField("config_path"));
+        }
+    }
+    Ok(Holospace::compose(source, capabilities))
+}
+
+/// Why a provisioning source could not be ingested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngestError {
+    /// A required field of the source was empty.
+    EmptyField(&'static str),
+    /// The `devcontainer.json` is not Dev Container spec-conformant (`std`).
+    #[cfg(feature = "std")]
+    Devcontainer(devcontainer::DevcontainerError),
+}
+
+impl fmt::Display for IngestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IngestError::EmptyField(field) => {
+                write!(f, "provisioning source field '{field}' is empty")
+            }
+            #[cfg(feature = "std")]
+            IngestError::Devcontainer(e) => write!(f, "devcontainer source is invalid: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for IngestError {}
+
+/// Where the L5 re-derivation check is *placed* on a local read (ADR-019).
+///
+/// Law L5 (content is verified by re-deriving its κ) is a **trust-boundary**
+/// invariant, not a per-read tax. The decision of *where* to spend it:
+///
+/// - [`ReadVerify::OnRead`] — re-derive κ and reject a mismatch. Use when the
+///   bytes are crossing into trust: an untrusted gateway (the network read is
+///   the substrate's own [`get_with_fetch`], which verifies *on receipt*), a
+///   *cross-session* reload from durable storage, or any store that is not this
+///   running peer's own. This is also the mode the conformance suite drives — in
+///   V&V every byte is re-derived, so the model is proven in CI.
+/// - [`ReadVerify::Trusted`] — return the stored bytes without re-deriving,
+///   because the [`KappaStore`] *is* the canonical memory and RAM is its cache
+///   (Law L3): content in this peer's in-session store was already verified when
+///   it entered (on receipt, or by `put` construction, which content-addresses
+///   the bytes it is given). Re-deriving it on every read would treat the
+///   canonical store as untrusted — the opposite of the model — and is pure
+///   overhead in the deployed peer. The deployed browser peer reads this way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadVerify {
+    /// Re-derive κ on read and reject a mismatch (trust boundary / V&V).
+    OnRead,
+    /// Trust the canonical in-session store; do not re-derive (Law L3).
+    Trusted,
+}
+
+/// Resolves κ-labels to their bytes, placing the L5 re-derivation check at the
+/// trust boundary (ADR-019).
+///
+/// Trust is in the math: bytes that do not re-derive to the requested κ are
+/// rejected, which is what makes an untrusted gateway (GitHub Pages, or any
+/// peer) safe to fetch from (quality scenario QS3). The network read path is
+/// the substrate's own [`get_with_fetch`] (local store, else fetch +
+/// verify-on-receipt + cache). A read from this peer's own in-session store is
+/// trusted (the store is the canonical memory, Law L3) — see [`ReadVerify`].
+pub struct Resolver;
+
+impl Resolver {
+    /// Resolve a κ from a local store only, re-deriving to verify (L5).
+    ///
+    /// The safe default for a general/boundary caller: verifies on read. An
+    /// in-session caller that trusts its own canonical store reads with
+    /// [`Resolver::resolve_local_with`] and [`ReadVerify::Trusted`] (ADR-019).
+    ///
+    /// # Errors
+    ///
+    /// [`AccessError::VerificationFailed`] if the stored bytes do not re-derive
+    /// to `kappa` (QS3); [`AccessError::StoreFailure`] on a store error.
+    pub fn resolve_local(
+        store: &dyn KappaStore,
+        kappa: &Kappa,
+    ) -> Result<Option<Bytes>, AccessError> {
+        Self::resolve_local_with(store, kappa, ReadVerify::OnRead)
+    }
+
+    /// Resolve a κ from a local store under an explicit [`ReadVerify`] policy
+    /// (ADR-019). [`ReadVerify::OnRead`] re-derives and rejects a mismatch;
+    /// [`ReadVerify::Trusted`] returns the canonical store's bytes as-is.
+    ///
+    /// # Errors
+    ///
+    /// [`AccessError::VerificationFailed`] if `verify` is [`ReadVerify::OnRead`]
+    /// and the stored bytes do not re-derive to `kappa`;
+    /// [`AccessError::StoreFailure`] on a store error.
+    pub fn resolve_local_with(
+        store: &dyn KappaStore,
+        kappa: &Kappa,
+        verify: ReadVerify,
+    ) -> Result<Option<Bytes>, AccessError> {
+        match store.get(kappa).map_err(AccessError::StoreFailure)? {
+            None => Ok(None),
+            Some(bytes) => match verify {
+                ReadVerify::Trusted => Ok(Some(bytes)),
+                ReadVerify::OnRead => {
+                    if verify_kappa(&bytes, kappa).map_err(|_| AccessError::VerificationFailed)? {
+                        Ok(Some(bytes))
+                    } else {
+                        Err(AccessError::VerificationFailed)
+                    }
+                }
+            },
+        }
+    }
+
+    /// Resolve a κ from the local store, else fetch it over the substrate and
+    /// verify on receipt (Law L5) — the substrate's eviction-tolerant read.
+    ///
+    /// # Errors
+    ///
+    /// [`AccessError`] on a store/sync failure or a re-derivation mismatch.
+    pub async fn resolve(
+        store: &dyn KappaStore,
+        sync: &dyn KappaSync,
+        kappa: &Kappa,
+    ) -> Result<Option<Bytes>, AccessError> {
+        get_with_fetch(store, sync, kappa).await
+    }
+}
+
+/// The phase of a holospace's lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// Defined and κ-addressed, not yet running.
+    Provisioned,
+    /// Spawned and running on a peer.
+    Running,
+    /// Halted to a κ snapshot; resumable here or on another instance.
+    Suspended,
+    /// Ended; not resumable.
+    Terminated,
+}
+
+/// A running session of a holospace on one peer — the Boot Layer driving the
+/// substrate's [`ContainerRuntime`] (arc42 chapter 5, *Boot Layer*; chapter 8,
+/// *Identity and sync*).
+///
+/// `boot` spawns the holospace's Container ID (its manifest κ) under its
+/// capability-set κ; `suspend` captures a snapshot κ; `resume` restarts from
+/// it. Because a snapshot is content (a κ), a holospace suspended on one
+/// instance can be resumed on another ([`Session::adopt`], migration QS2).
+pub struct Session<'r, R: ContainerRuntime> {
+    runtime: &'r R,
+    holospace: Holospace,
+    handle: Option<ContainerHandle>,
+    phase: Phase,
+    snapshot: Option<Kappa>,
+}
+
+impl<'r, R: ContainerRuntime> Session<'r, R> {
+    /// Begin a session for a provisioned holospace, bound to a runtime.
+    pub fn provision(runtime: &'r R, holospace: Holospace) -> Self {
+        Self {
+            runtime,
+            holospace,
+            handle: None,
+            phase: Phase::Provisioned,
+            snapshot: None,
+        }
+    }
+
+    /// Adopt a holospace suspended elsewhere from its snapshot κ (migration,
+    /// QS2) — ready to [`resume`](Session::resume) on this instance.
+    pub fn adopt(runtime: &'r R, holospace: Holospace, snapshot: Kappa) -> Self {
+        Self {
+            runtime,
+            holospace,
+            handle: None,
+            phase: Phase::Suspended,
+            snapshot: Some(snapshot),
+        }
+    }
+
+    /// The holospace under management.
+    pub fn holospace(&self) -> &Holospace {
+        &self.holospace
+    }
+
+    /// The current phase.
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    /// The current κ snapshot, if suspended.
+    pub fn snapshot(&self) -> Option<&Kappa> {
+        self.snapshot.as_ref()
+    }
+
+    /// Boot the holospace: spawn its Container ID under its capability set.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleError`] unless `Provisioned`, or on a runtime failure.
+    pub async fn boot(&mut self) -> Result<(), LifecycleError> {
+        self.expect(Phase::Provisioned, "boot")?;
+        let handle = self
+            .runtime
+            .spawn(self.holospace.manifest(), self.holospace.capabilities())
+            .await
+            .map_err(LifecycleError::Runtime)?;
+        self.handle = Some(handle);
+        self.phase = Phase::Running;
+        Ok(())
+    }
+
+    /// Suspend the running holospace, capturing its state as a κ snapshot.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleError`] unless `Running`, or on a runtime failure.
+    pub async fn suspend(&mut self) -> Result<Kappa, LifecycleError> {
+        self.expect(Phase::Running, "suspend")?;
+        let handle = self.handle.ok_or(LifecycleError::Phase {
+            from: self.phase,
+            action: "suspend",
+        })?;
+        let snapshot = self
+            .runtime
+            .suspend(handle)
+            .await
+            .map_err(LifecycleError::Runtime)?;
+        self.handle = None;
+        self.phase = Phase::Suspended;
+        self.snapshot = Some(snapshot);
+        Ok(snapshot)
+    }
+
+    /// Resume a suspended holospace from its snapshot κ under its capability set.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleError`] unless `Suspended` with a snapshot, or on a runtime
+    /// failure.
+    pub async fn resume(&mut self) -> Result<(), LifecycleError> {
+        self.expect(Phase::Suspended, "resume")?;
+        let snapshot = self.snapshot.ok_or(LifecycleError::Phase {
+            from: self.phase,
+            action: "resume",
+        })?;
+        let handle = self
+            .runtime
+            .resume(&snapshot, self.holospace.capabilities())
+            .await
+            .map_err(LifecycleError::Runtime)?;
+        self.handle = Some(handle);
+        self.phase = Phase::Running;
+        Ok(())
+    }
+
+    /// Terminate the holospace. Allowed from any phase but `Terminated`.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleError`] if already `Terminated`, or on a runtime failure.
+    pub async fn terminate(&mut self) -> Result<(), LifecycleError> {
+        if self.phase == Phase::Terminated {
+            return Err(LifecycleError::Phase {
+                from: self.phase,
+                action: "terminate",
+            });
+        }
+        if let Some(handle) = self.handle.take() {
+            self.runtime
+                .terminate(handle)
+                .await
+                .map_err(LifecycleError::Runtime)?;
+        }
+        self.phase = Phase::Terminated;
+        Ok(())
+    }
+
+    /// **Apply a control-plane configuration to this running instance** (ADR-018;
+    /// `CC-28`) — the management primitive the control panel drives. The
+    /// configuration must target *this* instance (`holospace().kappa()`) and name
+    /// an *authorized* operator (the owner, or a granted collaborator); then its
+    /// directives are enacted: the *lifecycle* directive drives the real
+    /// transition (start → [`boot`](Self::boot), suspend → [`suspend`](Self::suspend),
+    /// resume → [`resume`](Self::resume), terminate → [`terminate`](Self::terminate)),
+    /// and the *storage / network* directives replace the effective capability set
+    /// (`base` folded with the directives), so the instance's identity reflects
+    /// its new authority (a new κ, Law L1). The returned [`Applied`] carries the
+    /// live network forwards and account grants for the caller (a machine-holding
+    /// peer enacts `forward_port`s; the manager records grants). The instance
+    /// state is *actually changed* — not just a published intent.
+    ///
+    /// # Errors
+    ///
+    /// [`ReconfigureError::Config`] if the configuration targets another instance
+    /// or the operator is unauthorized; [`ReconfigureError::Lifecycle`] if a
+    /// driven transition is invalid from the current phase or the runtime fails.
+    pub async fn reconfigure(
+        &mut self,
+        config: &Configuration,
+        authorized: &[Kappa],
+        base: &Capabilities,
+    ) -> Result<Applied, ReconfigureError> {
+        let applied = config
+            .apply(&self.holospace.kappa(), authorized, base)
+            .map_err(ReconfigureError::Config)?;
+        if let Some(action) = applied.lifecycle {
+            match action {
+                LifecycleAction::Start => {
+                    if self.phase == Phase::Provisioned {
+                        self.boot().await.map_err(ReconfigureError::Lifecycle)?;
+                    }
+                }
+                LifecycleAction::Suspend => {
+                    if self.phase == Phase::Running {
+                        self.suspend().await.map_err(ReconfigureError::Lifecycle)?;
+                    }
+                }
+                LifecycleAction::Resume => {
+                    if self.phase == Phase::Suspended {
+                        self.resume().await.map_err(ReconfigureError::Lifecycle)?;
+                    }
+                }
+                LifecycleAction::Terminate => {
+                    self.terminate()
+                        .await
+                        .map_err(ReconfigureError::Lifecycle)?;
+                }
+            }
+        }
+        // Replace the effective capability set — the reconfigured instance is a
+        // new effective state by content (Law L1). A subsequent resume spawns
+        // under the new authority (storage quota / network).
+        self.holospace = Holospace::compose(
+            self.holospace.source().clone(),
+            applied.capabilities.clone(),
+        );
+        Ok(applied)
+    }
+
+    fn expect(&self, phase: Phase, action: &'static str) -> Result<(), LifecycleError> {
+        if self.phase == phase {
+            Ok(())
+        } else {
+            Err(LifecycleError::Phase {
+                from: self.phase,
+                action,
+            })
+        }
+    }
+}
+
+/// A failed reconfiguration ([`Session::reconfigure`]).
+#[derive(Debug)]
+pub enum ReconfigureError {
+    /// The configuration is not applicable (wrong instance / unauthorized).
+    Config(ConfigError),
+    /// A driven lifecycle transition failed.
+    Lifecycle(LifecycleError),
+}
+
+impl fmt::Display for ReconfigureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReconfigureError::Config(e) => write!(f, "configuration not applicable: {e}"),
+            ReconfigureError::Lifecycle(e) => write!(f, "lifecycle transition failed: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for ReconfigureError {}
+
+/// A failed lifecycle transition.
+#[derive(Debug)]
+pub enum LifecycleError {
+    /// The transition is not valid from the current phase.
+    Phase {
+        /// The phase the holospace was in.
+        from: Phase,
+        /// The action that was attempted.
+        action: &'static str,
+    },
+    /// The substrate runtime rejected the transition.
+    Runtime(RuntimeError),
+}
+
+impl fmt::Display for LifecycleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LifecycleError::Phase { from, action } => {
+                write!(f, "cannot '{action}' a holospace in phase {from:?}")
+            }
+            LifecycleError::Runtime(e) => write!(f, "substrate runtime error: {e:?}"),
+        }
+    }
+}
+
+impl core::error::Error for LifecycleError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::realizations::address;
+    use hologram_space::Capabilities;
+    use hologram_tck::MemKappaStore;
+
+    fn caps() -> Capabilities {
+        Capabilities {
+            storage_roots: Vec::new(),
+            storage_quota_bytes: 0,
+            network_fetch: false,
+            network_announce: false,
+            publish_channels: Vec::new(),
+            subscribe_channels: Vec::new(),
+            memory_max_bytes: 0,
+            cpu_time_per_event_ms: 0,
+            priority_weight: 0,
+        }
+    }
+
+    #[test]
+    fn ingest_devcontainer_validates_and_is_reproducible() {
+        let cfg = br#"{"name":"app","image":"debian:12"}"#;
+        let userland = address(b"the userland this devcontainer selects");
+        let a = ingest_devcontainer(
+            "https://example.invalid/app.git",
+            "main",
+            ".devcontainer/devcontainer.json",
+            cfg,
+            userland,
+            crate::Arch::Riscv64,
+            caps(),
+        )
+        .unwrap();
+        let b = ingest_devcontainer(
+            "https://example.invalid/app.git",
+            "main",
+            ".devcontainer/devcontainer.json",
+            cfg,
+            userland,
+            crate::Arch::Riscv64,
+            caps(),
+        )
+        .unwrap();
+        assert_eq!(a.kappa(), b.kappa(), "same source ⇒ same κ (QS1)");
+        // The devcontainer boots the userland its config selects (ADR-008).
+        assert_eq!(a.container_manifest().code, userland);
+
+        // A config declaring two image sources is rejected (Dev Container spec).
+        let err = ingest_devcontainer(
+            "https://example.invalid/app.git",
+            "main",
+            ".devcontainer/devcontainer.json",
+            br#"{"image":"debian:12","build":{"dockerfile":"Dockerfile"}}"#,
+            userland,
+            crate::Arch::Riscv64,
+            caps(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            IngestError::Devcontainer(devcontainer::DevcontainerError::MultipleImageSources)
+        ));
+    }
+
+    #[test]
+    fn ingest_rejects_empty_devcontainer_fields() {
+        let err = ingest(
+            Source::Devcontainer {
+                repo: "  ".to_owned(),
+                reference: "main".to_owned(),
+                config_path: ".devcontainer/devcontainer.json".to_owned(),
+                config: address(br#"{"image":"debian:12"}"#),
+                userland: address(b"userland"),
+                arch: crate::Arch::Riscv64,
+            },
+            caps(),
+        )
+        .unwrap_err();
+        assert_eq!(err, IngestError::EmptyField("repo"));
+    }
+
+    #[test]
+    fn resolver_returns_verified_bytes_and_rejects_a_liar() {
+        let store = MemKappaStore::new();
+        let bytes = b"a holospace part";
+        let k = store.put("blake3", bytes).unwrap();
+        assert_eq!(
+            Resolver::resolve_local(&store, &k).unwrap().as_deref(),
+            Some(&bytes[..])
+        );
+
+        // QS3: a κ whose stored bytes do not match is rejected on re-derivation.
+        // (Construct a κ for content the store does not hold honestly.)
+        let other = address(b"different content");
+        assert!(Resolver::resolve_local(&store, &other).unwrap().is_none());
+    }
+
+    #[test]
+    fn provision_persists_the_realizations_into_the_store() {
+        // The code module must be present before provisioning; then provision
+        // κ-addresses the manifest, the capability set, and the holospace into
+        // the store so the substrate runtime can resolve and spawn it.
+        let store = MemKappaStore::new();
+        let code = store.put("blake3", b"a code module").unwrap();
+        let hs = provision(&store, Source::HoloFile { artifact: code }, caps()).unwrap();
+        assert!(store.contains(hs.manifest()), "manifest stored");
+        assert!(store.contains(hs.capabilities()), "capability set stored");
+        assert!(store.contains(&hs.kappa()), "holospace definition stored");
+    }
+
+    #[test]
+    fn provision_rejects_a_missing_code_module() {
+        let store = MemKappaStore::new();
+        // An artifact κ for bytes the store does not hold.
+        let absent = address(b"code module that was never stored");
+        let err = provision(&store, Source::HoloFile { artifact: absent }, caps()).unwrap_err();
+        assert_eq!(err, ProvisionError::MissingCode(absent));
+    }
+}

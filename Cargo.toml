@@ -35,6 +35,8 @@ members = [
     "substrate/hologram-store-native",
     "crates/hologram-runtime",
     "substrate/hologram-store-bare",
+    "spaces/holospaces",
+    "spaces/holospaces-node",
 ]
 
 # Adding the root facade makes this a non-virtual workspace; keep root-level
@@ -58,13 +60,18 @@ default-members = [
     "substrate/hologram-store-native",
     "crates/hologram-runtime",
     "substrate/hologram-store-bare",
+    "spaces/holospaces",
+    "spaces/holospaces-node",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
 # target-specific — excluded from the host workspace; built explicitly (boot test / Playwright test).
+# holospaces-web (wasm32 + web-sys browser peer) and holospaces-emulator are likewise target-specific.
 exclude = [
     "substrate/hologram-efi",
     "substrate/hologram-store-opfs",
+    "spaces/holospaces-web",
+    "spaces/holospaces-emulator",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
 ]
@@ -115,6 +122,10 @@ uor-prism          = "0.4"
 uor-prism-tensor   = { version = "0.4", default-features = false }
 uor-addr           = { version = "0.2.0", default-features = false }
 
+# Layer-assembler codecs for the holospaces space impls (OCI tar+gzip / tar+zstd);
+# no_std + alloc so the portable peer core (wasm32 / bare-metal) links them.
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+ruzstd      = "0.7"
 rkyv        = { version = "0.8", features = ["tinyvec-1"] }
 bytemuck    = { version = "1.14", features = ["derive"] }
 smallvec    = "1.13"

@@ -1,0 +1,12 @@
+{
+  "name": "holospaces-manager-test",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.61.1"
+  },
+  "devDependencies": {
+    "@vscode/test-web": "0.0.80",
+    "vscode-web": "1.91.1"
+  }
+}

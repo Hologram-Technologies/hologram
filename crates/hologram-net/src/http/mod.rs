@@ -1,5 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-//! # hologram-net-http — HTTP-CAS gateway protocol (spec §6.3)
+//! # HTTP-CAS gateway protocol (spec §6.3) — the `http` module of `hologram-net`
 //!
 //! The **protocol layer** of the Network Layer: map `/cas/{kappa}` requests to/from a
 //! [`KappaStore`], format responses, and **verify received bytes by σ-axis re-derivation**
