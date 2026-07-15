@@ -9,7 +9,7 @@
 //! paper's metric. uor-aligned: XOR over content keys is a structural relation (architecture
 //! §11.1), not a registry lookup.
 
-use crate::{Peer, K};
+use super::{Peer, K};
 use hologram_space::KappaLabel71;
 
 /// Decode the 32-byte blake3 digest from the on-wire κ-label form `blake3:<64 hex>`. Returns

@@ -16,7 +16,7 @@ use std::thread::JoinHandle;
 
 use hologram_space::{Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync, SyncError};
 
-use crate::{accept_received, cas_path, serve_get, CasResponse};
+use super::{accept_received, cas_path, serve_get, CasResponse};
 
 /// A running CAS gateway server bound to an ephemeral localhost port. Drop or call [`shutdown`] to
 /// stop it.

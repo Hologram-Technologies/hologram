@@ -24,16 +24,14 @@ members = [
     "crates/hologram-space",
     "crates/hologram-spike-sp3",
     "crates/hologram-tck",
+    "crates/hologram-net",
     "substrate/hologram-store-mem",
     "substrate/hologram-store-native",
-    "substrate/hologram-net-http",
     "substrate/hologram-runtime",
     "substrate/hologram-runtime-wasmtime",
     "substrate/hologram-substrate-cli",
     "substrate/hologram-store-bare",
     "substrate/hologram-runtime-bare",
-    "substrate/hologram-net-bare",
-    "substrate/hologram-net-tcp",
 ]
 
 # Adding the root facade makes this a non-virtual workspace; keep root-level
@@ -54,16 +52,14 @@ default-members = [
     "crates/hologram-space",
     "crates/hologram-spike-sp3",
     "crates/hologram-tck",
+    "crates/hologram-net",
     "substrate/hologram-store-mem",
     "substrate/hologram-store-native",
-    "substrate/hologram-net-http",
     "substrate/hologram-runtime",
     "substrate/hologram-runtime-wasmtime",
     "substrate/hologram-substrate-cli",
     "substrate/hologram-store-bare",
     "substrate/hologram-runtime-bare",
-    "substrate/hologram-net-bare",
-    "substrate/hologram-net-tcp",
 ]
 
 # hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
@@ -98,15 +94,13 @@ hologram-spike-sp3 = { path = "crates/hologram-spike-sp3", default-features = fa
 
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
 hologram-tck            = { path = "crates/hologram-tck", default-features = false }
+hologram-net            = { path = "crates/hologram-net", default-features = false }
 hologram-store-mem      = { path = "substrate/hologram-store-mem", default-features = false }
 hologram-store-native   = { path = "substrate/hologram-store-native" }
-hologram-net-http       = { path = "substrate/hologram-net-http" }
 hologram-runtime        = { path = "substrate/hologram-runtime", default-features = false }
 hologram-runtime-wasmtime = { path = "substrate/hologram-runtime-wasmtime" }
 hologram-store-bare     = { path = "substrate/hologram-store-bare", default-features = false }
 hologram-runtime-bare   = { path = "substrate/hologram-runtime-bare", default-features = false }
-hologram-net-bare       = { path = "substrate/hologram-net-bare", default-features = false }
-hologram-net-tcp        = { path = "substrate/hologram-net-tcp" }
 
 async-trait        = "0.1"
 spin               = { version = "0.9", default-features = false, features = ["spin_mutex"] }

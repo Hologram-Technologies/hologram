@@ -14,7 +14,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use hologram_net_tcp::TcpKappaSync;
+use hologram_net::tcp::TcpKappaSync;
 use hologram_space::PeerEndpoint;
 use hologram_space::{address_bytes, KappaStore, KappaSync, Realization};
 use hologram_store_mem::MemKappaStore;
@@ -213,7 +213,7 @@ async fn nw_tcp_ipv4_and_ipv6_endpoints_have_distinct_identity_kappa() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn nw_tcp_rpc_timeout_is_operator_configurable_not_a_baked_constant() {
-    use hologram_net_tcp::TcpConfig;
+    use hologram_net::tcp::TcpConfig;
 
     // Default config has a finite timeout (operator-visible default; not an arbitrary baked cap).
     let default = TcpConfig::default();
@@ -226,7 +226,7 @@ async fn nw_tcp_rpc_timeout_is_operator_configurable_not_a_baked_constant() {
     // is bounded only by the network or the caller's own future-timeout).
     let unbounded = TcpConfig { rpc_timeout: None };
     let store = Arc::new(MemKappaStore::new()) as Arc<dyn KappaStore>;
-    let _sync = hologram_net_tcp::TcpKappaSync::bind_with_config(
+    let _sync = hologram_net::tcp::TcpKappaSync::bind_with_config(
         "127.0.0.1:0".parse().unwrap(),
         store,
         unbounded,

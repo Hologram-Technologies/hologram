@@ -1,0 +1,27 @@
+[package]
+name = "hologram-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The uor-native network layer (SPINE-4 KappaSync): bare-metal frame protocol, HTTP-CAS gateway, and κ-XOR Kademlia DHT over TCP. Consolidates the substrate net crates; transports move to spaces in P2 (spec 04)."
+
+[dependencies]
+hologram-space = { workspace = true }
+async-trait = { workspace = true }
+spin = { workspace = true }
+hashbrown = { workspace = true }
+# The κ-XOR DHT transport (feature `tcp`) — std hosts only.
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "io-util", "time"], optional = true }
+
+[dev-dependencies]
+hologram-store-mem = { workspace = true }
+pollster = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-space/std"]
+# Live HTTP/1.1 CAS transport over std::net (`http::live`).
+live = ["std"]
+# κ-XOR Kademlia DHT over TCP + tokio (`tcp`).
+tcp = ["std", "dep:tokio"]

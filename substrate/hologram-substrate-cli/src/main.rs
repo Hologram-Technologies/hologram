@@ -245,7 +245,7 @@ fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> E
         Ok(s) => std::sync::Arc::new(s),
         Err(e) => return fail(format!("open store: {e:?}")),
     };
-    let server = match hologram_net_http::live::serve_addr(store.clone(), listen, false) {
+    let server = match hologram_net::http::live::serve_addr(store.clone(), listen, false) {
         Ok(s) => s,
         Err(e) => return fail(format!("listen on {listen}: {e}")),
     };
@@ -269,7 +269,7 @@ fn run_serve(store_path: &std::path::Path, listen: &str, tcp: Option<&str>) -> E
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async move {
-                match hologram_net_tcp::TcpKappaSync::bind(addr, store_for_tcp).await {
+                match hologram_net::tcp::TcpKappaSync::bind(addr, store_for_tcp).await {
                     Ok(sync) => {
                         eprintln!(
                             "hologram: TCP transport on tcp://{} — peer id κ = {}",

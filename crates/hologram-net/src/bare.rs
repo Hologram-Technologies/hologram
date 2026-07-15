@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 //! # hologram-net-bare
 //!
 //! Bare-metal [`KappaSync`] (architecture §2 / C2). Symmetric to `hologram-net-http` /
@@ -19,8 +18,6 @@
 //! same shape used by `hologram-net-tcp` on std hosts. Peer identity is κ in both crates (the κ
 //! of a `PeerEndpoint` realization); there are no PeerIds or Multiaddrs in either. A bare-metal
 //! node and a std node speak the same uor-native protocol — no libp2p layer on either side.
-
-extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
