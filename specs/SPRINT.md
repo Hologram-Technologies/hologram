@@ -106,9 +106,12 @@ honesty meta-gate green.
     stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
     perf baselines; crates.io tokens/org ownership (human, P3).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute` (the last library rename).
-- [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
-  first lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption
-  (distinct follow-on).
+- [ ] **P2** import holospaces → `spaces/` — concrete empirical plan in
+  [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md): 31.6k-LOC `holospaces` crate, but the port
+  surface is small (~76 source imports of the dissolved crates, all cleanly mapped to
+  space/tck/net/runtime). Import = history-preserving subtree merge + repoint git-pins → path
+  deps + rewrite imports + green its V&V. **P3** hoist Peer/Session/Manager + `Client` + first
+  lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
