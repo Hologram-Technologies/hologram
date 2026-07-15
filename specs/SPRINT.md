@@ -145,8 +145,17 @@ honesty meta-gate green.
     no_std, wasm32 codemodule. 01-crate-map updated.
   - [ ] **P2 tail** (remaining): `vv/` fixtures decision for full holospaces V&V; OPFS dedup
     (opfs_store.rs vs hologram-store-opfs); absorb holospaces' V&V (CC catalog → MG-7).
-- [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
-  release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
+- [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
+  the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
+  + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).
+  holospaces keeps a thin `Session` wrapper (adds `holospace()`/`reconfigure()`) — **zero external
+  churn**: Peer, Manager, config, identity, the ~74 lifecycle call sites, and all CC tests unchanged.
+  Correction to the original D7: **Peer + Manager stay in holospaces** — they're the operator/peer
+  *platform* layer (provision Holospaces, roster sync, control-plane reconfigure), generic over `R`
+  only mechanically, not generic infrastructure (01-crate-map updated). Green: workspace test (913),
+  clippy, fmt, deny, RZ, wasm32 no_std.
+  - [ ] **P3 remaining**: the `Client` facade; first lockstep `uor-hologram` release (hard stop, D26).
+- [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 

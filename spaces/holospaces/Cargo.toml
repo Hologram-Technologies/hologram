@@ -24,6 +24,7 @@ std = [
     "hologram-exec/std",
     "hologram-backend/std",
     "hologram-emulator/std",
+    "hologram-runtime/std",
 ]
 # `net` (off by default) enables the internet *import boundary* (ADR-013): the
 # Repository Fetcher + OCI registry Image Fetcher (`CC-20`), an HTTP(S) client
@@ -48,6 +49,12 @@ cc44-trace = ["std", "hologram-emulator/cc44-trace"]
 # dev-dependency only (CC-3 battery), not a runtime dependency.
 hologram-space = { workspace = true }
 hologram-net = { workspace = true }
+# The generic container-lifecycle `Session` (D7): holospaces' own `Session` is a
+# thin wrapper delegating boot/suspend/resume/terminate to this. Consumed
+# feature-minimal so the no_std wasm/embedded core does not pull an engine or
+# std; the `std` feature below re-enables `hologram-runtime/std`. IMPORTANT:
+# hologram-runtime links no tensor compute engine (RZ), so this stays clean.
+hologram-runtime = { workspace = true, default-features = false }
 # The system emulator + Boot Orchestrator, hoisted into a first-class crate
 # (ADR-009). holospaces re-exports its `emulator` / `machine` modules so the
 # provisioning surfaces (boot, import, oci, projection) drive them unchanged.

@@ -16,8 +16,8 @@ use core::fmt;
 
 use hologram_space::CapabilitySet;
 use hologram_space::{
-    get_with_fetch, verify_kappa, AccessError, Bytes, Capabilities, ContainerHandle,
-    ContainerRuntime, KappaStore, KappaSync, Realization, RuntimeError, StoreError,
+    get_with_fetch, verify_kappa, AccessError, Bytes, Capabilities, ContainerRuntime, KappaStore,
+    KappaSync, Realization, StoreError,
 };
 
 use crate::config::{Applied, ConfigError, Configuration, LifecycleAction};
@@ -939,18 +939,12 @@ impl Resolver {
     }
 }
 
-/// The phase of a holospace's lifecycle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    /// Defined and κ-addressed, not yet running.
-    Provisioned,
-    /// Spawned and running on a peer.
-    Running,
-    /// Halted to a κ snapshot; resumable here or on another instance.
-    Suspended,
-    /// Ended; not resumable.
-    Terminated,
-}
+// The phase of a holospace's lifecycle and its lifecycle error are the generic,
+// space-agnostic types from `hologram-runtime` (D7). They are re-exported so
+// existing call sites (`crate::boot::Phase`, `crate::boot::LifecycleError`) and
+// the wrapper below resolve them unchanged.
+use hologram_runtime::Session as RuntimeSession;
+pub use hologram_runtime::{LifecycleError, Phase};
 
 /// A running session of a holospace on one peer — the Boot Layer driving the
 /// substrate's [`ContainerRuntime`] (arc42 chapter 5, *Boot Layer*; chapter 8,
@@ -960,36 +954,35 @@ pub enum Phase {
 /// capability-set κ; `suspend` captures a snapshot κ; `resume` restarts from
 /// it. Because a snapshot is content (a κ), a holospace suspended on one
 /// instance can be resumed on another ([`Session::adopt`], migration QS2).
+///
+/// This is a thin wrapper over the generic [`hologram_runtime::Session`]: the
+/// lifecycle (boot/suspend/resume/terminate over the [`ContainerRuntime`] seam)
+/// is space-agnostic hologram infrastructure and lives there; the
+/// holospaces-specific bits — the [`Holospace`] definition and
+/// [`reconfigure`](Session::reconfigure) — stay here.
 pub struct Session<'r, R: ContainerRuntime> {
-    runtime: &'r R,
+    inner: RuntimeSession<'r, R>,
     holospace: Holospace,
-    handle: Option<ContainerHandle>,
-    phase: Phase,
-    snapshot: Option<Kappa>,
 }
 
 impl<'r, R: ContainerRuntime> Session<'r, R> {
     /// Begin a session for a provisioned holospace, bound to a runtime.
     pub fn provision(runtime: &'r R, holospace: Holospace) -> Self {
-        Self {
-            runtime,
-            holospace,
-            handle: None,
-            phase: Phase::Provisioned,
-            snapshot: None,
-        }
+        let inner =
+            RuntimeSession::provision(runtime, *holospace.manifest(), *holospace.capabilities());
+        Self { inner, holospace }
     }
 
     /// Adopt a holospace suspended elsewhere from its snapshot κ (migration,
     /// QS2) — ready to [`resume`](Session::resume) on this instance.
     pub fn adopt(runtime: &'r R, holospace: Holospace, snapshot: Kappa) -> Self {
-        Self {
+        let inner = RuntimeSession::adopt(
             runtime,
-            holospace,
-            handle: None,
-            phase: Phase::Suspended,
-            snapshot: Some(snapshot),
-        }
+            *holospace.manifest(),
+            *holospace.capabilities(),
+            snapshot,
+        );
+        Self { inner, holospace }
     }
 
     /// The holospace under management.
@@ -999,12 +992,12 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
 
     /// The current phase.
     pub fn phase(&self) -> Phase {
-        self.phase
+        self.inner.phase()
     }
 
     /// The current κ snapshot, if suspended.
     pub fn snapshot(&self) -> Option<&Kappa> {
-        self.snapshot.as_ref()
+        self.inner.snapshot()
     }
 
     /// Boot the holospace: spawn its Container ID under its capability set.
@@ -1013,15 +1006,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
     ///
     /// [`LifecycleError`] unless `Provisioned`, or on a runtime failure.
     pub async fn boot(&mut self) -> Result<(), LifecycleError> {
-        self.expect(Phase::Provisioned, "boot")?;
-        let handle = self
-            .runtime
-            .spawn(self.holospace.manifest(), self.holospace.capabilities())
-            .await
-            .map_err(LifecycleError::Runtime)?;
-        self.handle = Some(handle);
-        self.phase = Phase::Running;
-        Ok(())
+        self.inner.boot().await
     }
 
     /// Suspend the running holospace, capturing its state as a κ snapshot.
@@ -1030,20 +1015,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
     ///
     /// [`LifecycleError`] unless `Running`, or on a runtime failure.
     pub async fn suspend(&mut self) -> Result<Kappa, LifecycleError> {
-        self.expect(Phase::Running, "suspend")?;
-        let handle = self.handle.ok_or(LifecycleError::Phase {
-            from: self.phase,
-            action: "suspend",
-        })?;
-        let snapshot = self
-            .runtime
-            .suspend(handle)
-            .await
-            .map_err(LifecycleError::Runtime)?;
-        self.handle = None;
-        self.phase = Phase::Suspended;
-        self.snapshot = Some(snapshot);
-        Ok(snapshot)
+        self.inner.suspend().await
     }
 
     /// Resume a suspended holospace from its snapshot κ under its capability set.
@@ -1053,19 +1025,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
     /// [`LifecycleError`] unless `Suspended` with a snapshot, or on a runtime
     /// failure.
     pub async fn resume(&mut self) -> Result<(), LifecycleError> {
-        self.expect(Phase::Suspended, "resume")?;
-        let snapshot = self.snapshot.ok_or(LifecycleError::Phase {
-            from: self.phase,
-            action: "resume",
-        })?;
-        let handle = self
-            .runtime
-            .resume(&snapshot, self.holospace.capabilities())
-            .await
-            .map_err(LifecycleError::Runtime)?;
-        self.handle = Some(handle);
-        self.phase = Phase::Running;
-        Ok(())
+        self.inner.resume().await
     }
 
     /// Terminate the holospace. Allowed from any phase but `Terminated`.
@@ -1074,20 +1034,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
     ///
     /// [`LifecycleError`] if already `Terminated`, or on a runtime failure.
     pub async fn terminate(&mut self) -> Result<(), LifecycleError> {
-        if self.phase == Phase::Terminated {
-            return Err(LifecycleError::Phase {
-                from: self.phase,
-                action: "terminate",
-            });
-        }
-        if let Some(handle) = self.handle.take() {
-            self.runtime
-                .terminate(handle)
-                .await
-                .map_err(LifecycleError::Runtime)?;
-        }
-        self.phase = Phase::Terminated;
-        Ok(())
+        self.inner.terminate().await
     }
 
     /// **Apply a control-plane configuration to this running instance** (ADR-018;
@@ -1121,17 +1068,17 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
         if let Some(action) = applied.lifecycle {
             match action {
                 LifecycleAction::Start => {
-                    if self.phase == Phase::Provisioned {
+                    if self.phase() == Phase::Provisioned {
                         self.boot().await.map_err(ReconfigureError::Lifecycle)?;
                     }
                 }
                 LifecycleAction::Suspend => {
-                    if self.phase == Phase::Running {
+                    if self.phase() == Phase::Running {
                         self.suspend().await.map_err(ReconfigureError::Lifecycle)?;
                     }
                 }
                 LifecycleAction::Resume => {
-                    if self.phase == Phase::Suspended {
+                    if self.phase() == Phase::Suspended {
                         self.resume().await.map_err(ReconfigureError::Lifecycle)?;
                     }
                 }
@@ -1149,18 +1096,11 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
             self.holospace.source().clone(),
             applied.capabilities.clone(),
         );
+        // Thread the new capability-set κ into the generic session so a later
+        // `resume` spawns under the reconfigured authority (D7: the inner
+        // session holds the caps κ directly, not the Holospace).
+        self.inner.set_caps(*self.holospace.capabilities());
         Ok(applied)
-    }
-
-    fn expect(&self, phase: Phase, action: &'static str) -> Result<(), LifecycleError> {
-        if self.phase == phase {
-            Ok(())
-        } else {
-            Err(LifecycleError::Phase {
-                from: self.phase,
-                action,
-            })
-        }
     }
 }
 
@@ -1183,33 +1123,6 @@ impl fmt::Display for ReconfigureError {
 }
 
 impl core::error::Error for ReconfigureError {}
-
-/// A failed lifecycle transition.
-#[derive(Debug)]
-pub enum LifecycleError {
-    /// The transition is not valid from the current phase.
-    Phase {
-        /// The phase the holospace was in.
-        from: Phase,
-        /// The action that was attempted.
-        action: &'static str,
-    },
-    /// The substrate runtime rejected the transition.
-    Runtime(RuntimeError),
-}
-
-impl fmt::Display for LifecycleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LifecycleError::Phase { from, action } => {
-                write!(f, "cannot '{action}' a holospace in phase {from:?}")
-            }
-            LifecycleError::Runtime(e) => write!(f, "substrate runtime error: {e:?}"),
-        }
-    }
-}
-
-impl core::error::Error for LifecycleError {}
 
 #[cfg(test)]
 mod tests {

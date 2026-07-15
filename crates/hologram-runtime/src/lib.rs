@@ -27,6 +27,13 @@ pub use engine_wasmtime::{WasmBlockDevice, WasmNetworkInterface, WasmtimeEngine}
 #[cfg(feature = "engine-wasmi")]
 pub mod engine_wasmi;
 
+// The generic, space-agnostic container-lifecycle session (D7): boot → suspend
+// to a κ snapshot → resume → migrate → terminate over the `ContainerRuntime`
+// seam. Space-specific layers (holospaces) wrap it; the lifecycle itself is
+// hologram infrastructure and links nothing from the tensor compute engine (RZ).
+pub mod lifecycle;
+pub use lifecycle::{LifecycleError, Phase, Session};
+
 use hashbrown::{HashMap, HashSet};
 use hologram_space::{
     Capabilities, ContainerHandle, ContainerInfo, ContainerState, KappaLabel71, KappaStore,
