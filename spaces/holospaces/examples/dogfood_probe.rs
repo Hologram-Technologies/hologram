@@ -2,7 +2,7 @@
 //! Ubuntu 24.04 + the toolchain) on the x86-64 core and run the real gcc in-guest.
 //! A feasibility probe (sliced console) before the formal witness. Usage:
 //! `cargo run --release --example dogfood_probe -- <rootfs.tar> <init.sh> <slices>`
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{stream_ext4_image_bootable, Layer};
 use holospaces::emulator::x64::{Cpu, Halt};
 use std::collections::BTreeMap;

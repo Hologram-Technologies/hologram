@@ -367,7 +367,7 @@ impl BlockDevice for KappaDisk<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_tck::MemKappaStore;
+    use hologram_space::MemKappaStore;
 
     /// The read cache is bounded and evicts a *single* oldest entry on overflow
     /// (FIFO) rather than clearing wholesale. After inserting one past capacity,

@@ -2,7 +2,7 @@
 //! declared size (arg1 bytes), in cycle slices, printing console + rip progress —
 //! to see whether a large disk boots (progresses) or hangs. Usage:
 //! `cargo run --release --example occ_diag -- <disk_bytes> <slices>`
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{stream_ext4_image_bootable, Layer};
 use holospaces::emulator::x64::{Cpu, Halt};
 use std::collections::BTreeMap;

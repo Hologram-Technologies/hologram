@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 
 use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
+use hologram_space::MemKappaStore;
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_tck::MemKappaStore;
 use holospaces::disk::{BlockDevice, KappaDisk};
 use holospaces::emulator::{Emulator, Halt};
 use holospaces::realizations::empty_kappa;

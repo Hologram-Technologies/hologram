@@ -18,7 +18,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::emulator::Emulator;
 use holospaces::projection::{Intent, Workspace};
 use holospaces::substrate::KappaStore;

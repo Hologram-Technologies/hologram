@@ -23,7 +23,6 @@ std = [
     "hologram-space/std",
     "hologram-exec/std",
     "hologram-backend/std",
-    "hologram-tck/std",
 ]
 # `net` (off by default) enables the internet *import boundary* (ADR-013): the
 # Repository Fetcher + OCI registry Image Fetcher (`CC-20`), an HTTP(S) client
@@ -41,12 +40,12 @@ cc44-trace = ["std"]
 # composes these contracts; it never re-implements them. no_std-capable (workspace
 # default-features are off; the `std` feature re-enables). Post-refactor these are
 # the consolidated crates: hologram-space absorbs substrate-core + realizations +
-# the bare HAL (the κ-disk's BlockDevice trait); hologram-net carries the no_std
-# BareNetSync content-sync (`bare` module); hologram-tck carries the reference
-# in-memory KappaStore (`mem` module) that backs the emulator's virtio-blk κ-disk.
+# the bare HAL (the κ-disk's BlockDevice trait) + the reference in-memory KappaStore
+# (`MemKappaStore`, backing the emulator's virtio-blk κ-disk); hologram-net carries
+# the no_std BareNetSync content-sync (`bare` module). The conformance TCK is a
+# dev-dependency only (CC-3 battery), not a runtime dependency.
 hologram-space = { workspace = true }
 hologram-net = { workspace = true }
-hologram-tck = { workspace = true }
 async-trait = { workspace = true }
 spin = { workspace = true }
 # The emulator's F/D floating-point extension (CC-9) on hologram's no_std float
@@ -81,8 +80,8 @@ sha2 = { version = "0.10", optional = true }
 # (a ContainerManifest with the guest image as initial state) — the same contracts
 # the lib composes, with std. hologram-space absorbs substrate-core + realizations.
 hologram-space = { workspace = true, features = ["std"] }
-# CC-3 — the conformance battery + the stores holospaces resolves through.
-# hologram-tck absorbs the former substrate-tck battery + the in-memory store.
+# CC-3 — the conformance battery (dev-only; `MemKappaStore` itself now comes from
+# hologram-space, so the test kit is not a runtime dependency).
 hologram-tck = { workspace = true, features = ["std"] }
 hologram-store-native = { workspace = true }
 # Real container runtime — the e2e tier boots a real hologram.* Wasm container

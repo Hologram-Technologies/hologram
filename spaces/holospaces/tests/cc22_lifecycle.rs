@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_bootable, assemble_ext4_with_init, Layer};
 use holospaces::boot::devcontainer::{self, LifecycleHook};
 use holospaces::machine::MachineSpec;

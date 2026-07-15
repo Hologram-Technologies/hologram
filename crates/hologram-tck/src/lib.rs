@@ -1,8 +1,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 //! # hologram-tck — Technology Compatibility Kit
 //!
-//! The reusable [`KappaStore`] conformance battery **plus the reference in-memory store**
-//! ([`MemKappaStore`], the `mem` module — absorbed from the former hologram-store-mem crate).
+//! The reusable [`KappaStore`] conformance battery. The reference in-memory store
+//! ([`MemKappaStore`]) now lives in `hologram-space` (with the trait it implements) and is
+//! re-exported here for conformance authors — runtime consumers reach it without a normal
+//! dependency on this test kit.
 //! **Every** storage backend (mem, native, OPFS, bare-metal) runs the *same* battery, so
 //! conformance is defined once and validated against each substrate identically (the TR
 //! substrate-tripling discipline at the trait level).
@@ -15,9 +17,9 @@
 extern crate alloc;
 
 /// The reference in-memory [`KappaStore`] — the conformance oracle every real backend is
-/// differentially compared against.
-pub mod mem;
-pub use mem::MemKappaStore;
+/// differentially compared against. Re-exported from `hologram-space` (its home), so
+/// `hologram_tck::MemKappaStore` keeps resolving for conformance authors.
+pub use hologram_space::MemKappaStore;
 
 use hologram_space::{address_bytes, KappaStore, StoreError};
 

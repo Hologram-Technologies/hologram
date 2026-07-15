@@ -23,8 +23,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::thread;
 
+use hologram_space::MemKappaStore;
 use hologram_space::{Bytes, KappaStore};
-use hologram_tck::MemKappaStore;
 use holospaces::assembly::{overlay_layers, Layer, Node};
 use holospaces::import::{
     import_and_assemble, parse_image_ref, pull_image, DEFAULT_DEVCONTAINER_IMAGE,

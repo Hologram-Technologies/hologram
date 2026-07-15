@@ -20,7 +20,7 @@
 use std::io::Write;
 use std::process::Command;
 
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::disk::{BlockDevice, KappaDisk};
 
 const SECTOR_SIZE: u32 = 512;

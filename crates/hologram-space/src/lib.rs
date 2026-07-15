@@ -35,6 +35,14 @@ pub use substrate::*;
 mod realizations;
 pub use realizations::*;
 
+// The reference in-memory `KappaStore` (`MemKappaStore`), re-homed here from the former
+// `hologram-store-mem` crate (which move 7 had folded into the conformance TCK). It lives with
+// the `KappaStore` trait it implements so runtime consumers (holospaces' κ-disk, the wasmi
+// engine, the CLI) reach it without a normal dependency on the test kit; `hologram-tck`
+// re-exports it for conformance authors. no_std + alloc, zero extra deps (hashbrown + spin).
+mod mem;
+pub use mem::MemKappaStore;
+
 /// The async network/boot seam. `Send + Sync` on native (multi-threaded executors want
 /// it); see the `wasm32` definition for the `?Send` variant.
 #[cfg(not(target_arch = "wasm32"))]

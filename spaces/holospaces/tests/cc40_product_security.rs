@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
+use hologram_space::MemKappaStore;
 use hologram_space::{Capabilities, KappaStore};
-use hologram_tck::MemKappaStore;
 use holospaces::content_net::{drive_fetch, peer, PacketLink};
 use holospaces::identity::{Operator, Roster};
 use holospaces::{address, verify};

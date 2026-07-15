@@ -20,7 +20,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4, Layer};
 use holospaces::emulator::net::{StdEgress, StdIngress};
 use holospaces::machine::MachineSpec;

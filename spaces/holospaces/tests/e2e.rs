@@ -12,7 +12,7 @@ use std::sync::Arc;
 use hologram_net::http::live::{serve_addr, HttpKappaSync};
 use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::boot::{provision, Phase, Resolver, Session};
 use holospaces::identity::Operator;
 use holospaces::manager::Manager;

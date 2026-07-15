@@ -15,7 +15,7 @@
 //! shell **exits** the guest stays up and a **fresh shell answers**.
 
 use flate2::read::GzDecoder;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_with_files, Layer};
 use holospaces::emulator::Emulator;
 use holospaces::machine::{MachineSpec, REAL_IMAGE_INIT};

@@ -36,8 +36,8 @@ use alloc::collections::BTreeMap;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use alloc::{boxed::Box, vec, vec::Vec};
+use hologram_space::MemKappaStore;
 use hologram_space::{KappaLabel71, KappaStore};
-use hologram_tck::MemKappaStore;
 
 pub mod net;
 

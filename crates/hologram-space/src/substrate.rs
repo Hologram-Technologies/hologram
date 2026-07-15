@@ -363,7 +363,7 @@ pub trait KappaStore: Send + Sync {
     // for foreign-axis content flowing across the substrate's boundary, never invented locally.
     //
     // Backends that don't support multi-axis storage return `UnknownAxis` from `put_axis` (the
-    // default). The reference [`hologram_tck::MemKappaStore`] opts in for all five axes,
+    // default). The reference [`crate::MemKappaStore`] opts in for all five axes,
     // verified against the upstream BLAKE3/`sha2`/`sha3` reference crates (V&V AS class).
 
     /// Multi-axis put: re-derive `bytes` through `axis` and store under the on-the-wire label.

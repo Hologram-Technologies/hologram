@@ -20,8 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
+use hologram_space::MemKappaStore;
 use hologram_space::{verify_kappa_axis, KappaStore};
-use hologram_tck::MemKappaStore;
 use holospaces::disk::{BlockDevice, KappaDisk};
 use holospaces::oci::{devcontainer_source_identity, ingest_image, IngestedImage, OciError};
 

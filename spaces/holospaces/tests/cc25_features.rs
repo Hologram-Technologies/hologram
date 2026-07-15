@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_with_files, extract_layer_files, Layer};
 use holospaces::boot::devcontainer;
 use holospaces::machine::MachineSpec;

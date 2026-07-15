@@ -36,4 +36,3 @@ hologram-space = { workspace = true, features = ["std"] }
 ureq = "2"
 
 [dev-dependencies]
-hologram-tck = { workspace = true, features = ["std"] }

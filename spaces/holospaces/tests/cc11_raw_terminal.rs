@@ -22,7 +22,7 @@
 //!     not that the command merely finished.
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_bootable, Layer};
 use holospaces::emulator::Emulator;
 use holospaces::machine::{MachineSpec, DEVCONTAINER_INIT};

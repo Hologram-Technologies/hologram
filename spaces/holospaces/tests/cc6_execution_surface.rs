@@ -23,7 +23,7 @@
 use hologram_runtime::engine_wasmi::BareMetalEngine;
 use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::boot::{provision, Phase, Session};
 use holospaces::substrate::{Capabilities, KappaStore};
 use holospaces::surface::{self, SurfaceError};

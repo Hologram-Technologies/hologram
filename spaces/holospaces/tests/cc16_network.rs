@@ -20,7 +20,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4, Layer};
 use holospaces::emulator::net::StdEgress;
 use holospaces::machine::MachineSpec;

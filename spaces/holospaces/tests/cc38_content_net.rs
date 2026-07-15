@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::address;
 use holospaces::content_net::{
     drive_fetch, drive_fetch_over_transport, forging_peer, peer, PacketLink,

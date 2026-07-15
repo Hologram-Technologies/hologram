@@ -21,7 +21,7 @@
 //!     reconstructed and `e2fsck` finds it structurally clean (the external V&V
 //!     oracle); the reconstruction also equals the dense image byte-for-byte.
 
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::ext4;
 use holospaces::assembly::{
     assemble_ext4_bootable, overlay_layers, stream_ext4_bootable_into_disk, Layer,

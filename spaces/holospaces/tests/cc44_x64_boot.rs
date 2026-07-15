@@ -20,7 +20,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::emulator::x64::{Cpu, Halt};
 
 /// Gunzip a committed `.gz` artifact.

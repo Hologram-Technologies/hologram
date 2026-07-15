@@ -6,12 +6,12 @@
 //! over the realization registry's `references()` inverse projection (spec §5.3 / §10.8) — the one
 //! uor-native graph walk, no separate edge index.
 
-use alloc::vec::Vec;
-use hashbrown::{HashMap, HashSet};
-use hologram_space::{
+use crate::{
     address_bytes_axis, references, Bytes, KappaLabel, KappaLabel71, KappaStore,
     RealizationRegistry, StoreError,
 };
+use alloc::vec::Vec;
+use hashbrown::{HashMap, HashSet};
 use spin::Mutex;
 
 type Key = [u8; 71];
@@ -186,8 +186,8 @@ impl KappaStore for MemKappaStore {
     }
 }
 
-impl hologram_space::GarbageCollect for MemKappaStore {
-    fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, hologram_space::StoreError> {
+impl crate::GarbageCollect for MemKappaStore {
+    fn gc(&self, registry: RealizationRegistry<'_>) -> Result<usize, crate::StoreError> {
         Ok(MemKappaStore::gc(self, registry))
     }
 }

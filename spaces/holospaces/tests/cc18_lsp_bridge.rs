@@ -19,7 +19,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_with_files, Layer};
 use holospaces::emulator::net::NoEgress;
 use holospaces::emulator::Halt;

@@ -114,10 +114,15 @@ honesty meta-gate green.
   **zero API-drift fixes** — every dissolved-crate symbol resolved after the path renames. Fixed
   a stray `#![no_std]` leftover in `hologram-net/src/http/mod.rs` (from move 5). The 170M `vv/`
   fixture tree was **not** imported; its CC integration tests skip-when-absent.
-  - [ ] **P2 tail** (follow-up): re-home `MemKappaStore` out of `hologram-tck` (holospaces now
-    takes a *runtime* dep on the conformance TCK for it — a smell); import/fetch `vv/` for full
-    holospaces V&V; port `holospaces-web` → `spaces/holospaces-browser`; relocate
-    `store-native`/`store-bare` → `spaces/`; absorb holospaces' V&V (CC catalog → MG-7).
+  - [x] **P2 tail — `MemKappaStore` re-homed** (2026-07-15): moved out of the conformance TCK
+    into `hologram-space` (the crate that defines `KappaStore`; zero new deps — hashbrown + spin
+    already present). `hologram-tck` re-exports it (back-compat: every dev-dep test user is
+    untouched) and drops to a single dependency; holospaces/node/spike no longer take a *runtime*
+    dep on the test kit. Green across workspace test, bdd, clippy, fmt, deny, wasm32 + thumbv7em
+    no_std, RZ.
+  - [ ] **P2 tail** (remaining): import/fetch `vv/` for full holospaces V&V; port `holospaces-web`
+    → `spaces/holospaces-browser` (still on old git-pins); relocate `store-native`/`store-bare` →
+    `spaces/`; absorb holospaces' V&V (CC catalog → MG-7).
 - [ ] **P3** hoist Peer/Session/Manager + `Client` to `hologram-runtime` + first lockstep
   release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption (follow-on).
 

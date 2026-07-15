@@ -9,8 +9,6 @@ description = "Technology Compatibility Kit: the reusable KappaStore conformance
 [dependencies]
 hologram-space = { workspace = true }
 # The reference MemKappaStore (absorbed from hologram-store-mem).
-hashbrown = { workspace = true }
-spin = { workspace = true }
 
 [dev-dependencies]
 # V&V ONLY — the upstream BLAKE3 reference impl as an INDEPENDENT external oracle for the

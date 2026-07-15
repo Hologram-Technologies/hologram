@@ -6,7 +6,7 @@
 //! against the quality scenarios of arc42 chapter 10. CI runs this tier via
 //! `cargo test --workspace --test integration`.
 
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::boot::{ingest_devcontainer, Resolver};
 use holospaces::substrate::{KappaStore, Realization};
 use holospaces::Capabilities;

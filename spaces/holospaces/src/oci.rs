@@ -796,7 +796,7 @@ impl ImagePull {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_tck::MemKappaStore;
+    use hologram_space::MemKappaStore;
     use std::collections::HashMap;
 
     // A tiny hand-built but spec-shaped OCI layout with real sha256 digests, so

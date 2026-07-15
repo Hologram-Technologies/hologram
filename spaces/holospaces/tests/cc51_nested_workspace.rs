@@ -26,7 +26,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hologram_space::KappaStore;
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{assemble_ext4_bootable, Layer};
 use holospaces::machine::MachineSpec;
 use holospaces::oci::{ingest_image, IngestedImage, OciError};

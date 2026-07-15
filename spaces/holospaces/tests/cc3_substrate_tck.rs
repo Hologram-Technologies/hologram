@@ -16,9 +16,9 @@
 //!
 //! Run by `vv/run.sh`; also `cargo test -p holospaces --test cc3_substrate_tck`.
 
+use hologram_space::MemKappaStore;
 use hologram_store_native::NativeKappaStore;
 use hologram_tck::store_battery;
-use hologram_tck::MemKappaStore;
 
 /// The in-memory store obeys the `KappaStore` contract (all conformance
 /// points: idempotency, eviction-tolerant get, fail-loud unknown axis,

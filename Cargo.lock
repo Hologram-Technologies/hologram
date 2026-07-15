@@ -1672,7 +1672,6 @@ dependencies = [
  "hologram-exec",
  "hologram-graph",
  "hologram-space",
- "hologram-tck",
  "pollster",
  "smallvec",
  "uor-prism",
@@ -1707,10 +1706,8 @@ dependencies = [
  "async-trait",
  "blake3",
  "criterion",
- "hashbrown 0.15.5",
  "hologram-space",
  "pollster",
- "spin",
 ]
 
 [[package]]
@@ -1764,7 +1761,6 @@ dependencies = [
  "hologram-net",
  "hologram-space",
  "hologram-store-native",
- "hologram-tck",
  "tungstenite",
  "ureq",
 ]

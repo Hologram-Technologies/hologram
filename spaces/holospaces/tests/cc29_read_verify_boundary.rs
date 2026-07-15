@@ -30,8 +30,8 @@
 //!   * `resolve_local`'s default is the verifying boundary policy (the safe
 //!     default for a general caller; an in-session peer opts into `Trusted`).
 
+use hologram_space::MemKappaStore;
 use hologram_space::{AccessError, Bytes, KappaLabel71, KappaStore, StoreError};
-use hologram_tck::MemKappaStore;
 use holospaces::boot::{ReadVerify, Resolver};
 use holospaces::realizations::address;
 

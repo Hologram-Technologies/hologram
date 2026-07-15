@@ -12,7 +12,7 @@
 //! suite, never bare. The static busybox (the CC-45 fixture) is overlaid only as the
 //! PID-1 bootstrap (it has no libc dependency); the WORKLOAD is the dynamic toolchain.
 
-use hologram_tck::MemKappaStore;
+use hologram_space::MemKappaStore;
 use holospaces::assembly::{stream_ext4_image_bootable, Layer};
 use holospaces::emulator::x64::{Cpu, Halt};
 use std::io::Read;

@@ -78,7 +78,7 @@ mod tests {
     use crate::storage;
     use hologram_net::http::cas_path;
     use hologram_space::KappaStore;
-    use hologram_tck::MemKappaStore;
+    use hologram_space::MemKappaStore;
     use std::sync::Arc;
 
     /// The node fetches a κ-addressed update from a (cold-start) CAS gateway,

@@ -100,7 +100,7 @@ fn an_arm64_devcontainer_runs_a_stock_linux_arm64_binary() {
 #[test]
 #[ignore = "boots a real arm64 devcontainer paged from a κ-store (~release) — CC-37 vv suite"]
 fn an_arm64_devcontainer_boots_paged_from_a_kappa_store() {
-    use hologram_tck::MemKappaStore;
+    use hologram_space::MemKappaStore;
     let kernel = gunzip(&cc37_dir().join("linux/Image.gz"));
     let rootfs = assemble_rootfs();
     let sector_count = (rootfs.len() as u64).div_ceil(512);

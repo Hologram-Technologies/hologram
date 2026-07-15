@@ -1216,7 +1216,7 @@ mod tests {
     use super::*;
     use crate::realizations::address;
     use hologram_space::Capabilities;
-    use hologram_tck::MemKappaStore;
+    use hologram_space::MemKappaStore;
 
     fn caps() -> Capabilities {
         Capabilities {
