@@ -21,7 +21,7 @@ hologram-graph    = { workspace = true }
 uor-prism         = { workspace = true }
 
 [dev-dependencies]
-hologram-host = { workspace = true }
+hologram-types = { workspace = true }
 uor-prism     = { workspace = true }
 
 [features]

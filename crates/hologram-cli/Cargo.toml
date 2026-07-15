@@ -18,7 +18,7 @@ hologram-exec     = { workspace = true, features = ["std"] }
 hologram-backend  = { workspace = true, features = ["std", "cpu"] }
 hologram-archive  = { workspace = true, features = ["std"] }
 hologram-graph    = { workspace = true }
-hologram-host     = { workspace = true, features = ["std"] }
+hologram-types     = { workspace = true, features = ["std"] }
 clap              = { workspace = true }
 # Hologram's CLI is an application-author surface; it consumes the
 # prism façade per wiki ADR-031.

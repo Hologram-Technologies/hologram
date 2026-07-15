@@ -7,7 +7,6 @@ authors.workspace = true
 description = "Hologram per-target dispatch (CPU / Metal / wgpu)."
 
 [dependencies]
-hologram-host      = { workspace = true }
 hologram-types     = { workspace = true }
 hologram-ops       = { workspace = true }
 uor-foundation     = { workspace = true }
@@ -34,7 +33,7 @@ objc  = { version = "0.2", optional = true }
 # `no_std` + `alloc` by default; `std` (host default) adds std-only
 # backends and the runtime-SIMD / thread-local-scratch amenities.
 default = ["std", "cpu"]
-std = ["thiserror/std", "hologram-host/std"]
+std = ["thiserror/std", "hologram-types/std"]
 cpu = []
 # Multi-core execution: the cache-oblivious lattice recursion's disjoint
 # sub-products are scheduled across an in-tree persistent worker pool

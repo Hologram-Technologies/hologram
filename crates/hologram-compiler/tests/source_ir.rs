@@ -10,7 +10,7 @@ use hologram_compiler::source::{
 use hologram_compiler::{compile_from_source_language, BackendKind, Compiler};
 use hologram_graph::registry::ShapeDescriptor;
 use hologram_graph::{NodeId, OpKind, ReduceAttrs};
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};

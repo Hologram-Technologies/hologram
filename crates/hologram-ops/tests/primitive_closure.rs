@@ -41,7 +41,7 @@ fn binary_iris_under_namespace() {
 
 #[test]
 fn reduction_iris_under_namespace() {
-    use hologram_host::HologramHostBoundsCpu;
+    use hologram_types::HologramHostBoundsCpu;
     use hologram_types::{DTypeF32, Dim, Shape1};
     use uor_foundation::pipeline::ConstrainedTypeShape;
     use uor_foundation::HostBounds;

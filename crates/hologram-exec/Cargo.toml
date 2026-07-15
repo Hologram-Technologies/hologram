@@ -7,7 +7,6 @@ authors.workspace = true
 description = "Hologram runtime executor: InferenceSession over a content-addressed buffer pool."
 
 [dependencies]
-hologram-host    = { workspace = true }
 hologram-types   = { workspace = true }
 hologram-ops     = { workspace = true }
 hologram-backend = { workspace = true }
@@ -38,7 +37,7 @@ std = [
     "thiserror/std",
     "uor-prism/std",
     "uor-foundation/std",
-    "hologram-host/std",
+    "hologram-types/std",
     "hologram-backend/std",
     "hologram-archive/std",
 ]

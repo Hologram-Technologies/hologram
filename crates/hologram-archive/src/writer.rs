@@ -177,7 +177,7 @@ impl HoloWriter {
         // computed through hologram's canonical `Hasher<32>` selection
         // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
         use prism::vocabulary::Hasher;
-        let footer: [u8; 32] = hologram_host::HologramHasher::initial()
+        let footer: [u8; 32] = hologram_types::HologramHasher::initial()
             .fold_bytes(&out)
             .finalize();
         out.extend_from_slice(&footer);

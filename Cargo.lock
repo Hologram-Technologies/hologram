@@ -1290,7 +1290,6 @@ dependencies = [
  "hologram-exec",
  "hologram-ffi",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
 ]
@@ -1304,7 +1303,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hologram-backend",
  "hologram-graph",
- "hologram-host",
+ "hologram-types",
  "memmap2",
  "smallvec",
  "thiserror 2.0.18",
@@ -1319,7 +1318,6 @@ name = "hologram-backend"
 version = "0.9.0"
 dependencies = [
  "bytemuck",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "libm",
@@ -1345,7 +1343,6 @@ dependencies = [
  "hologram-compiler",
  "hologram-exec",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "smallvec",
@@ -1362,12 +1359,12 @@ dependencies = [
  "hologram-compiler",
  "hologram-exec",
  "hologram-graph",
- "hologram-host",
  "hologram-net",
  "hologram-runtime",
  "hologram-space",
  "hologram-store-native",
  "hologram-tck",
+ "hologram-types",
  "pollster",
  "tokio",
  "uor-prism",
@@ -1381,7 +1378,6 @@ dependencies = [
  "hologram-archive",
  "hologram-backend",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "nom 8.0.0",
@@ -1418,7 +1414,6 @@ dependencies = [
  "hologram-backend",
  "hologram-compiler",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "smallvec",
@@ -1436,7 +1431,7 @@ dependencies = [
  "hologram-compiler",
  "hologram-exec",
  "hologram-graph",
- "hologram-host",
+ "hologram-types",
  "uor-prism",
 ]
 
@@ -1448,15 +1443,6 @@ dependencies = [
  "hologram-types",
  "libm",
  "smallvec",
-]
-
-[[package]]
-name = "hologram-host"
-version = "0.9.0"
-dependencies = [
- "uor-foundation",
- "uor-foundation-sdk",
- "uor-prism",
 ]
 
 [[package]]
@@ -1476,7 +1462,6 @@ dependencies = [
 name = "hologram-ops"
 version = "0.9.0"
 dependencies = [
- "hologram-host",
  "hologram-types",
  "libm",
  "uor-foundation",
@@ -1511,7 +1496,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "hashbrown 0.15.5",
- "hologram-host",
+ "hologram-types",
  "pollster",
  "sha2",
  "sha3",
@@ -1540,9 +1525,9 @@ name = "hologram-store-bare"
 version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
- "hologram-host",
  "hologram-space",
  "hologram-tck",
+ "hologram-types",
  "pollster",
  "spin",
 ]
@@ -1574,8 +1559,8 @@ dependencies = [
 name = "hologram-types"
 version = "0.9.0"
 dependencies = [
- "hologram-host",
  "uor-foundation",
+ "uor-foundation-sdk",
  "uor-prism",
 ]
 

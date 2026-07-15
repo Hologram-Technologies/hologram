@@ -8,13 +8,13 @@ description = "Hologram .holo archive format (kernel calls + certificates + weig
 
 [dependencies]
 # Archive footer + weight fingerprints route through prism's
-# canonical Blake3 HashAxis impl (via hologram-host's `HologramHasher`)
+# canonical Blake3 HashAxis impl (via hologram-types's `HologramHasher`)
 # rather than calling `blake3::hash` directly. Per wiki ADR-031
 # hologram consumes its content-addressing primitive from
 # prism-crypto; the archive layer holds no direct blake3 dependency.
 hologram-graph    = { workspace = true }
 hologram-backend  = { workspace = true }
-hologram-host     = { workspace = true }
+hologram-types     = { workspace = true }
 uor-prism         = { workspace = true }
 # Direct deps so the public prism SDK macros (`output_shape!`, `verb!`,
 # `prism_model!`) — used by `compose.rs` to realize the ordered BLAKE3
@@ -45,7 +45,7 @@ default = ["std"]
 std = [
     "dep:memmap2",
     "uor-addr/std",
-    "hologram-host/std",
+    "hologram-types/std",
     "hologram-backend/std",
 ]
 # Model-format addressing for hologram-ai: the gguf / onnx uor-addr

@@ -5,7 +5,7 @@
 //! surface — hologram-host re-exports `prism::crypto::Blake3Hasher`
 //! as `HologramHasher` and the `Hasher<32>` trait surface resolves.
 
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 
 #[test]

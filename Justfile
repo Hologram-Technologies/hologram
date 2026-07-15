@@ -71,7 +71,7 @@ clippy:
 # `#![no_std]` path is exercised; `hologram-backend` adds its CPU kernels.
 wasm:
     cargo build --target wasm32-unknown-unknown --no-default-features \
-        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
     # P0.5 spike (SP-3 / MG-3): the space contract + the Client slice build no_std for
     # wasm32 — the wasm half of the composition proof (native half is the SP-3 BDD run).
@@ -104,7 +104,7 @@ wasm:
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target thumbv7em-none-eabi --no-default-features --features cpu \
         -p hologram-backend

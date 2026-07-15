@@ -13,7 +13,6 @@ description = "Hologram criterion benchmarks."
 bench = false
 
 [dependencies]
-hologram-host     = { workspace = true }
 hologram-types    = { workspace = true }
 hologram-ops      = { workspace = true }
 hologram-graph    = { workspace = true }

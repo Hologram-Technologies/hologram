@@ -31,7 +31,7 @@
 //!   thread (the join may block on `memory.atomic.wait32`).
 //! - The workers never allocate; the embedder's global allocator only needs
 //!   to serve the executing thread.
-//! - no_std builds import `hologram_host_wait32` / `hologram_host_notify`
+//! - no_std builds import `hologram_types_wait32` / `hologram_types_notify`
 //!   (JS `Atomics.wait` / `Atomics.notify` over the shared memory).
 //! - [`hologram_pool_shutdown`] releases the workers (they return);
 //!   [`hologram_pool_workers`] reports the registered count.
@@ -54,9 +54,9 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 #[cfg(not(feature = "std"))]
 extern "C" {
     /// Block while `*ptr == expect`, up to `timeout_ns` (< 0 = infinite).
-    fn hologram_host_wait32(ptr: *const i32, expect: i32, timeout_ns: i64) -> i32;
+    fn hologram_types_wait32(ptr: *const i32, expect: i32, timeout_ns: i64) -> i32;
     /// Wake up to `count` waiters on `ptr`.
-    fn hologram_host_notify(ptr: *const i32, count: u32) -> u32;
+    fn hologram_types_notify(ptr: *const i32, count: u32) -> u32;
 }
 
 /// Width of the raw job slot. The slot is `usize` atomics because it lives in
@@ -326,7 +326,7 @@ fn wait_u32(a: &AtomicU32, expect: u32, timeout_ns: i64) {
     // SAFETY: the atomic lives in shared linear memory for the program's
     // lifetime; the embedder futex blocks only while `*ptr == expect`.
     unsafe {
-        hologram_host_wait32(a.as_ptr() as *const i32, expect as i32, timeout_ns);
+        hologram_types_wait32(a.as_ptr() as *const i32, expect as i32, timeout_ns);
     }
 }
 
@@ -337,7 +337,7 @@ fn notify_all(a: &AtomicU32) {
     #[cfg(not(feature = "std"))]
     // SAFETY: as above; waking more waiters than exist is a no-op.
     unsafe {
-        hologram_host_notify(a.as_ptr() as *const i32, u32::MAX);
+        hologram_types_notify(a.as_ptr() as *const i32, u32::MAX);
     }
 }
 

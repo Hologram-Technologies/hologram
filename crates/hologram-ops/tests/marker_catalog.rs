@@ -5,11 +5,11 @@
 //! `PrimitiveOp` set — the only operator type `Term::Application::operator`
 //! accepts) plus the IRI scheme from spec IV.2.
 
-use hologram_host::HologramHostBoundsCpu;
 use hologram_ops::{
     activation_reduce::*, conv::*, direct::*, elementwise_binary::*, elementwise_unary::*,
     layout::*, linalg::*, normalization::*, pooling::*, reduction::*, structured::*, utility::*,
 };
+use hologram_types::HologramHostBoundsCpu;
 use hologram_types::{DTypeF32, Dim, Shape1, Shape2};
 use uor_foundation::pipeline::ConstrainedTypeShape;
 use uor_foundation::HostBounds;

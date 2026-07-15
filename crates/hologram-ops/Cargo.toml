@@ -10,12 +10,10 @@ description = "Hologram operation markers + Term-tree emitters + reference evalu
 uor-foundation     = { workspace = true }
 uor-foundation-sdk = { workspace = true }
 uor-prism          = { workspace = true }
-hologram-host      = { workspace = true }
 hologram-types     = { workspace = true }
 libm               = { workspace = true }
 
 [dev-dependencies]
-hologram-host  = { workspace = true }
 
 [features]
 default = []

@@ -13,7 +13,7 @@ use crate::cpu::dtype::is_float;
 use crate::error::BackendError;
 use crate::kernel_call::*;
 use crate::workspace::Workspace;
-use hologram_host::HologramHostBoundsMetal;
+use hologram_types::HologramHostBoundsMetal;
 use metal::{
     Buffer, CommandQueue, ComputePipelineState, Device, Library, MTLResourceOptions, MTLSize,
 };

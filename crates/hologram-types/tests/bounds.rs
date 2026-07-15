@@ -1,6 +1,6 @@
 //! Spec XII.3: every HostBounds impl satisfies WITT_LEVEL_MAX_BITS = expected register width.
 
-use hologram_host::*;
+use hologram_types::*;
 use uor_foundation::HostBounds;
 
 #[test]

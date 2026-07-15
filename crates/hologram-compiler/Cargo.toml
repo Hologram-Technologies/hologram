@@ -10,7 +10,6 @@ description = "Hologram compiler: Graph -> Prism pipelines (per-node CompileUnit
 hologram-graph    = { workspace = true }
 hologram-archive  = { workspace = true }
 hologram-backend  = { workspace = true }
-hologram-host     = { workspace = true }
 hologram-types    = { workspace = true }
 hologram-ops      = { workspace = true }
 uor-foundation    = { workspace = true }
@@ -47,7 +46,7 @@ std = [
     "thiserror/std",
     "uor-prism/std",
     "uor-foundation/std",
-    "hologram-host/std",
+    "hologram-types/std",
     "hologram-backend/std",
     "hologram-archive/std",
 ]

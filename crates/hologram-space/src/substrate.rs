@@ -88,10 +88,10 @@ pub enum AccessError {
 pub mod kappa {
     use super::{AxisError, KappaLabel71};
     use alloc::vec::Vec;
-    use hologram_host::prism::crypto::{
+    use hologram_types::prism::crypto::{
         Blake3Hasher, Keccak256Hasher, Sha256Hasher, Sha3_256Hasher, Sha512Hasher,
     };
-    use hologram_host::prism::vocabulary::Hasher;
+    use hologram_types::prism::vocabulary::Hasher;
     use uor_addr::KappaLabel;
 
     const HEX: &[u8; 16] = b"0123456789abcdef";

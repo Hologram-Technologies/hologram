@@ -17,7 +17,7 @@ use hologram_archive::{
     format::{SectionKind, FORMAT_VERSION, MAGIC},
     warm_codec, ArchiveError, ContentLabel, HoloLoader,
 };
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 
 use crate::error::ExecError;

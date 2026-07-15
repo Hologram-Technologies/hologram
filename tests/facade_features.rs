@@ -50,12 +50,6 @@ fn graph_feature_exports_graph_items() {
     let _graph = hologram::graph::Graph::new();
 }
 
-#[cfg(feature = "host")]
-#[test]
-fn host_feature_exports_host_items() {
-    let _ = core::any::type_name::<hologram::host::HologramHostTypes>();
-}
-
 #[cfg(feature = "ops")]
 #[test]
 fn ops_feature_exports_ops_items() {

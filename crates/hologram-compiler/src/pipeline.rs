@@ -10,8 +10,8 @@
 //! `pipeline::run_tower_completeness` free function).
 
 use crate::error::CompileError;
-use hologram_host::HologramHasher;
 use hologram_ops::{HoloTerm, HOLOGRAM_INLINE_BYTES};
+use hologram_types::HologramHasher;
 use prism::pipeline::ConstrainedTypeShape;
 use prism::seal::Validated;
 use prism::uor_foundation::enforcement::{
@@ -24,7 +24,7 @@ use prism::vocabulary::{VerificationDomain, WittLevel};
 /// Single source of truth is the application's `HostBounds` selection
 /// (BLAKE3-canonical 32 bytes); every backend agrees on this width.
 const FP_MAX: usize =
-    <hologram_host::HologramHostBoundsCpu as uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES;
+    <hologram_types::HologramHostBoundsCpu as uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES;
 
 /// Per-node compile-unit construction inputs.
 pub struct PerNodeUnit<'a> {

@@ -794,8 +794,8 @@ fn parse_pins(page: &[u8]) -> Result<(Vec<Key>, u64, Digest), StoreError> {
 }
 
 fn blake3_digest(bytes: &[u8]) -> Digest {
-    use hologram_host::prism::vocabulary::Hasher;
-    use hologram_host::HologramHasher;
+    use hologram_types::prism::vocabulary::Hasher;
+    use hologram_types::HologramHasher;
     HologramHasher::initial().fold_bytes(bytes).finalize()
 }
 

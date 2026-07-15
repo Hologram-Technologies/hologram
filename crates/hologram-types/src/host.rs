@@ -14,8 +14,6 @@
 //! `WITT_LEVEL_MAX_BITS` to its natural register width and the remaining
 //! ADR-037 capacity bounds are sized for trillion-param + UHD streaming.
 
-#![no_std]
-
 // Anchor the Prism standard-library façade and SDK so the dep tree
 // records them at hologram-host (the substitution-axis layer). Per
 // wiki ADR-031, hologram is a Prism application; downstream hologram

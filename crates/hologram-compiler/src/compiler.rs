@@ -19,8 +19,8 @@ use hologram_archive::constant_codec::ConstantEntry;
 use hologram_archive::{HoloWriter, PortDescriptor, WeightStore};
 use hologram_backend::{BufferRef, KernelCall, MAX_RANK};
 use hologram_graph::{Graph, GraphOp};
-use hologram_host::HologramHasher;
 use hologram_ops::{HoloArena, HoloTerm};
+use hologram_types::HologramHasher;
 use prism::operation::Term;
 use prism::vocabulary::{Hasher, VerificationDomain, WittLevel};
 // `Binding` is foundation-only (not in prism::operation's curated

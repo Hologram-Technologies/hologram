@@ -9,7 +9,6 @@ description = "Feature-gated facade for the Hologram workspace crates."
 [workspace]
 resolver = "2"
 members = [
-    "crates/hologram-host",
     "crates/hologram-types",
     "crates/hologram-ops",
     "crates/hologram-graph",
@@ -34,7 +33,6 @@ members = [
 # cargo commands operating on the same package set as the previous virtual root.
 default-members = [
     ".",
-    "crates/hologram-host",
     "crates/hologram-types",
     "crates/hologram-ops",
     "crates/hologram-graph",
@@ -70,7 +68,6 @@ license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 
 [workspace.dependencies]
-hologram-host     = { path = "crates/hologram-host", default-features = false }
 hologram-types    = { path = "crates/hologram-types", default-features = false }
 hologram-ops      = { path = "crates/hologram-ops", default-features = false }
 hologram-graph    = { path = "crates/hologram-graph", default-features = false }
@@ -147,7 +144,6 @@ std = [
     "hologram-backend?/std",
     "hologram-compiler?/std",
     "hologram-exec?/std",
-    "hologram-host?/std",
 ]
 full = [
     "archive",
@@ -158,7 +154,6 @@ full = [
     "exec",
     "ffi",
     "graph",
-    "host",
     "ops",
     "types",
 ]
@@ -171,7 +166,6 @@ compiler = ["dep:hologram-compiler"]
 exec = ["dep:hologram-exec"]
 ffi = ["dep:hologram-ffi"]
 graph = ["dep:hologram-graph"]
-host = ["dep:hologram-host"]
 ops = ["dep:hologram-ops"]
 types = ["dep:hologram-types"]
 
@@ -198,6 +192,5 @@ hologram-compiler = { workspace = true, optional = true }
 hologram-exec = { workspace = true, optional = true }
 hologram-ffi = { workspace = true, optional = true }
 hologram-graph = { workspace = true, optional = true }
-hologram-host = { workspace = true, optional = true }
 hologram-ops = { workspace = true, optional = true }
 hologram-types = { workspace = true, optional = true }

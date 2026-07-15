@@ -2,7 +2,7 @@
 //! through the C-stable signatures.
 
 use hologram_ffi::*;
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 
 fn ffi_str(bytes: &[u8]) -> HologramString {

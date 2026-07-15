@@ -11,7 +11,7 @@ use crate::error::BackendError;
 use crate::kernel_call::KernelCall;
 use crate::workspace::Workspace;
 use core::marker::PhantomData;
-use hologram_host::ActiveCpuBounds;
+use hologram_types::ActiveCpuBounds;
 
 pub mod dtype;
 mod float_kernels;

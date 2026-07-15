@@ -68,7 +68,7 @@ fn simd_fmadd_is_correct() {
 /// statically resolved. This is more of a property check than a benchmark.
 #[test]
 fn hasher_output_bytes_is_const() {
-    use hologram_host::HologramHasher;
+    use hologram_types::HologramHasher;
     use prism::vocabulary::Hasher;
     const N: usize = <HologramHasher as Hasher<32>>::OUTPUT_BYTES;
     assert_eq!(N, 32);

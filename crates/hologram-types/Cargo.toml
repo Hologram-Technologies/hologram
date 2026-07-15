@@ -10,9 +10,14 @@ description = "Hologram domain type vocabulary as ConstrainedTypeShape declarati
 # Prism standard-library surface: re-exports `MatrixShape`,
 # `VectorShape`, `Digest` so hologram callers reach the canonical
 # shape carriers through `hologram_types::*`.
-uor-prism      = { workspace = true }
-uor-foundation = { workspace = true }
-hologram-host  = { workspace = true }
+uor-prism          = { workspace = true }
+uor-foundation     = { workspace = true }
+# Absorbed from hologram-host (D15): the σ-axis selections (`HologramHasher`,
+# `HologramHostTypes`, `ActiveCpuBounds`) and the SDK re-export live here now.
+uor-foundation-sdk = { workspace = true }
 
 [features]
 default = []
+# `std` is an empty passthrough (kept for the crates that flip the whole stack
+# to std); the σ-axis types absorbed from hologram-host are `no_std`.
+std = []

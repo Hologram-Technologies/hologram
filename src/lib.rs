@@ -72,13 +72,6 @@ pub mod graph {
     pub use hologram_graph::*;
 }
 
-#[cfg(feature = "host")]
-pub mod host {
-    //! Facade for the `hologram-host` crate.
-
-    pub use hologram_host::*;
-}
-
 #[cfg(feature = "ops")]
 pub mod ops {
     //! Facade for the `hologram-ops` crate.

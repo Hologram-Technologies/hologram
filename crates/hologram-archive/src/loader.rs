@@ -103,7 +103,7 @@ impl<'a> HoloLoader<'a> {
         // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
         use prism::vocabulary::Hasher;
         let footer_start = bytes.len() - 32;
-        let expected: [u8; 32] = hologram_host::HologramHasher::initial()
+        let expected: [u8; 32] = hologram_types::HologramHasher::initial()
             .fold_bytes(&bytes[..footer_start])
             .finalize();
         let actual: [u8; 32] =

@@ -383,7 +383,7 @@ fn validate_external_bytes(
     bytes: &[u8],
     expected: usize,
 ) -> Result<(), CompileError> {
-    use hologram_host::HologramHasher;
+    use hologram_types::HologramHasher;
     use prism::vocabulary::Hasher;
 
     if bytes.len() != expected {

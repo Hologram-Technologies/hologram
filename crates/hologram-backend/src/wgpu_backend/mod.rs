@@ -17,7 +17,7 @@ use crate::cpu::dtype::is_float;
 use crate::error::BackendError;
 use crate::kernel_call::*;
 use crate::workspace::Workspace;
-use hologram_host::HologramHostBoundsWgpu;
+use hologram_types::HologramHostBoundsWgpu;
 
 const SHADERS: &str = include_str!("shaders.wgsl");
 
