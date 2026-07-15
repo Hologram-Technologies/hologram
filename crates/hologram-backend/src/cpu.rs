@@ -20,6 +20,8 @@ mod float_kernels;
 /// deliberate opening; the kernel module itself stays crate-internal.
 #[doc(hidden)]
 pub use float_kernels::decode_attention_engine_for_tests;
+#[doc(hidden)]
+pub use float_kernels::decode_attention_valid_engine_for_tests;
 mod kernels;
 /// LUT-accelerated low-precision activations (PM_7 Q0/Q1). Needs `OnceLock`
 /// (std) for the process-lifetime table cache; under no_std the activations

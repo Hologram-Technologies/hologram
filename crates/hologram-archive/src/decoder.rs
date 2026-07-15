@@ -4,10 +4,11 @@ use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hologram_backend::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, CastCall, Conv2dCall,
-    DecodeAttentionCall, DequantActivationCall, DequantizeCall, ExpandCall, GatherCall, GemmCall,
-    Im2ColCall, KernelCall, KvCacheWriteCall, LayoutCall, LrnCall, MatMulActivationCall,
-    MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, NormCall, PoolCall,
-    ReduceCall, RoPECall, SoftmaxCall, TransposeCall, UnaryCall, WhereCall, MAX_RANK,
+    DecodeAttentionCall, DecodeAttentionValidCall, DequantActivationCall, DequantizeCall,
+    ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, KvCacheWriteCall, LayoutCall,
+    LrnCall, MatMulActivationCall, MatMulAddActivationCall, MatMulAddCall, MatMulCall,
+    MatMulDequantCall, NormCall, PoolCall, ReduceCall, RoPECall, SoftmaxCall, TransposeCall,
+    UnaryCall, WhereCall, MAX_RANK,
 };
 
 /// Cursor over a section payload.
@@ -150,6 +151,7 @@ fn decode_one(cur: &mut Cursor<'_>) -> Result<KernelCall, ArchiveError> {
         69 => K::Attention(read_attn(cur)?),
         119 => K::DecodeAttention(read_decattn(cur)?),
         120 => K::KvCacheWrite(read_kvwr(cur)?),
+        121 => K::DecodeAttentionValid(read_davl(cur)?),
         70 => K::FusedSwiGlu(read_matmul(cur)?),
         71 => K::Pad(read_layout(cur)?),
         72 => K::Expand(read_expand(cur)?),
@@ -545,6 +547,26 @@ fn read_decattn(c: &mut Cursor<'_>) -> Result<DecodeAttentionCall, ArchiveError>
         k_new: c.buf()?,
         v_new: c.buf()?,
         mask: c.buf()?,
+        output: c.buf()?,
+        batch: c.u32()?,
+        heads: c.u32()?,
+        kv_heads: c.u32()?,
+        q_rows: c.u32()?,
+        past_len: c.u32()?,
+        new_len: c.u32()?,
+        head_dim: c.u32()?,
+        scale_bits: c.u32()?,
+        dtype: c.u8()?,
+    })
+}
+fn read_davl(c: &mut Cursor<'_>) -> Result<DecodeAttentionValidCall, ArchiveError> {
+    Ok(DecodeAttentionValidCall {
+        q: c.buf()?,
+        k_past: c.buf()?,
+        v_past: c.buf()?,
+        k_new: c.buf()?,
+        v_new: c.buf()?,
+        valid_len: c.buf()?,
         output: c.buf()?,
         batch: c.u32()?,
         heads: c.u32()?,

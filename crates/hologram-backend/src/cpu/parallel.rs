@@ -18,7 +18,7 @@
 //! is off.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 
@@ -56,6 +56,60 @@ struct Shared {
 pub struct Pool {
     shared: Arc<Shared>,
     width: usize,
+    /// Admits **one batch at a time** to the shared queue. Without it, two
+    /// hosts walking concurrently interleave their batches, and the caller
+    /// help-drain in [`Pool::run`] executes *foreign* tasks — under a held
+    /// thread-local scratch borrow that a foreign task may re-enter
+    /// (`RefCell already borrowed`), with the unwind then orphaning the rest
+    /// of that batch in the queue: raw operand pointers outliving their walk
+    /// (the v0.9.0 concurrent-session unsoundness). Serializing batches makes
+    /// concurrent hosts exactly as correct as sequential ones; the pool is
+    /// width-bounded, so overlapping batches could not add throughput anyway.
+    run_lock: Mutex<()>,
+}
+
+/// Batch-scoped cleanup, run on every exit from [`Pool::run`] — normal or
+/// unwinding. Cancels whatever is still queued (with the batch lock held the
+/// queue holds only this batch's tasks) and then waits for every in-flight
+/// task to finish, so **no task ever outlives its `run` call**: the raw
+/// operand pointers a task captures must never dangle into a finished (or
+/// panicked and dropped) walk. A cancelled wrapper never constructs its
+/// `Countdown`, so the barrier target is the cancellation count.
+struct BatchDrain<'a> {
+    shared: &'a Shared,
+    remaining: &'a AtomicUsize,
+}
+
+impl Drop for BatchDrain<'_> {
+    fn drop(&mut self) {
+        let mut cancelled = 0usize;
+        loop {
+            let t = {
+                let mut q = self.shared.queue.lock().unwrap();
+                let t = q.pop_front();
+                if t.is_some() {
+                    self.shared.pending.fetch_sub(1, Ordering::Relaxed);
+                }
+                t
+            };
+            match t {
+                Some(task) => {
+                    drop(task);
+                    cancelled += 1;
+                }
+                None => break,
+            }
+        }
+        let mut spins = 0u32;
+        while self.remaining.load(Ordering::Acquire) != cancelled {
+            if spins < WORKER_SPIN {
+                std::hint::spin_loop();
+                spins += 1;
+            } else {
+                std::thread::yield_now();
+            }
+        }
+    }
 }
 
 static POOL: OnceLock<Pool> = OnceLock::new();
@@ -81,7 +135,11 @@ impl Pool {
             let sh = Arc::clone(&shared);
             thread::spawn(move || worker_loop(&sh));
         }
-        Pool { shared, width }
+        Pool {
+            shared,
+            width,
+            run_lock: Mutex::new(()),
+        }
     }
 
     /// Number of concurrent runners (cores).
@@ -110,16 +168,45 @@ impl Pool {
             }
             return;
         }
+        // One batch owns the pool at a time (see `run_lock`). Uncontended
+        // cost is one mutex acquisition per pooled kernel — nanoseconds
+        // against the tasks it fences; contended, concurrent hosts serialize
+        // their *parallel sections* (correct, and no slower than the
+        // width-bounded pool could go anyway).
+        let _batch = match self.run_lock.lock() {
+            Ok(g) => g,
+            // A poisoned lock only means an earlier batch panicked; its
+            // `BatchDrain` already left the queue empty and its tasks
+            // finished, so the pool state is clean and the lock is safe.
+            Err(poisoned) => poisoned.into_inner(),
+        };
         let remaining = Arc::new(AtomicUsize::new(count));
+        let panicked = Arc::new(AtomicBool::new(false));
+        // From here on, no batch task may outlive this call — even on an
+        // unwind — the guard cancels everything still queued and awaits
+        // everything in flight before this frame (and the operand pointers
+        // the tasks capture) goes away.
+        let drain = BatchDrain {
+            shared: &self.shared,
+            remaining: &remaining,
+        };
         {
             let mut q = self.shared.queue.lock().unwrap();
             for t in tasks {
                 let rem = Arc::clone(&remaining);
+                let pan = Arc::clone(&panicked);
                 q.push_back(Box::new(move || {
                     // Guard first: the decrement runs on normal return *and* on
                     // an unwinding `t()`, so the barrier can never deadlock.
                     let _done = Countdown(&rem);
-                    t();
+                    // Contain a panicking task: a pool worker must survive it
+                    // (the pool would otherwise shrink for the process
+                    // lifetime) and a helping caller must not unwind mid-
+                    // drain. The panic is re-raised on the publisher after
+                    // the barrier — loud, on the walk that owns the task.
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(t)).is_err() {
+                        pan.store(true, Ordering::Release);
+                    }
                 }));
             }
             // Publish the queue length under the lock, before any worker that
@@ -147,16 +234,15 @@ impl Pool {
                 None => break,
             }
         }
-        // Barrier: workers finishing the last in-flight tiles are ~µs away.
-        // Spin (PAUSE) briefly, then yield rather than burn a core outright.
-        let mut spins = 0u32;
-        while remaining.load(Ordering::Acquire) != 0 {
-            if spins < WORKER_SPIN {
-                std::hint::spin_loop();
-                spins += 1;
-            } else {
-                std::thread::yield_now();
-            }
+        // Barrier: the guard cancels anything still queued (none on this
+        // path — the help-drain above emptied the queue) and waits for the
+        // in-flight remainder. Workers finishing the last tiles are ~µs
+        // away; the guard spins (PAUSE) briefly, then yields.
+        drop(drain);
+        if panicked.load(Ordering::Acquire) {
+            panic!(
+                "a pooled task panicked; its batch was cancelled and awaited                  (pool workers survive, the queue is clean)"
+            );
         }
     }
 }

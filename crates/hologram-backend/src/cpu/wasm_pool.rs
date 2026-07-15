@@ -266,6 +266,84 @@ impl AttnJob {
     }
 }
 
+/// One fork-join **scalar-mask decode attention** job (κ121): as
+/// [`AttnJob`], but the visibility law is compiled in — no mask pointer;
+/// `vis_past` (the realized past prefix, already clamped) rides where the
+/// mask pointer sat, so the encoding still fits the fixed job slot.
+/// `scores` is publisher-allocated scratch of
+/// `participants · (vis_past + new)` f32, stripe per participant.
+#[derive(Clone, Copy)]
+pub(crate) struct AttnValidJob {
+    pub q: *const f32,
+    pub k_past: *const f32,
+    pub v_past: *const f32,
+    pub k_new: *const f32,
+    pub v_new: *const f32,
+    pub out: *mut f32,
+    pub scores: *mut f32,
+    pub b: usize,
+    pub h: usize,
+    pub hkv: usize,
+    pub m: usize,
+    pub past: usize,
+    pub new: usize,
+    pub d: usize,
+    /// Realized past prefix, `≤ past`.
+    pub vis_past: usize,
+    /// `f32::to_bits` of the score divisor (already resolved by the caller).
+    pub scale_bits: u32,
+}
+
+/// Slot tag for a scalar-mask attention job.
+pub(crate) const TAG_ATTN_VALID: usize = 4;
+
+impl AttnValidJob {
+    pub(crate) fn encode(&self) -> [usize; JOB_ARGS] {
+        [
+            self.q as usize,
+            self.k_past as usize,
+            self.v_past as usize,
+            self.k_new as usize,
+            self.v_new as usize,
+            self.vis_past,
+            self.out as usize,
+            self.scores as usize,
+            self.b,
+            self.h,
+            self.hkv,
+            self.m,
+            self.past,
+            self.new,
+            self.d,
+            self.scale_bits as usize,
+            TAG_ATTN_VALID, // JOB_ARGS - 1: the job-kind tag
+        ]
+    }
+
+    /// # Safety
+    /// `args` must be the output of [`Self::encode`] for a live job.
+    pub(crate) unsafe fn decode(args: &[usize; JOB_ARGS]) -> Self {
+        Self {
+            q: args[0] as *const f32,
+            k_past: args[1] as *const f32,
+            v_past: args[2] as *const f32,
+            k_new: args[3] as *const f32,
+            v_new: args[4] as *const f32,
+            vis_past: args[5],
+            out: args[6] as *mut f32,
+            scores: args[7] as *mut f32,
+            b: args[8],
+            h: args[9],
+            hkv: args[10],
+            m: args[11],
+            past: args[12],
+            new: args[13],
+            d: args[14],
+            scale_bits: args[15] as u32,
+        }
+    }
+}
+
 struct Job {
     /// Bumped to publish a job; workers wait on it.
     epoch: AtomicU32,
@@ -411,6 +489,9 @@ unsafe fn exec_slot(args: &[usize; JOB_ARGS], part: usize, parts: usize) {
     if args[JOB_ARGS - 1] == TAG_ATTN {
         let job = AttnJob::decode(args);
         crate::cpu::float_kernels::pool_exec_attn(&job, part, parts);
+    } else if args[JOB_ARGS - 1] == TAG_ATTN_VALID {
+        let job = AttnValidJob::decode(args);
+        crate::cpu::float_kernels::pool_exec_attn_valid(&job, part, parts);
     } else {
         let job = GemvJob::decode(args);
         crate::cpu::simd::pool_exec_gemv(&job, part, parts);
@@ -445,6 +526,20 @@ pub(crate) fn fork_join_attn(job: AttnJob) -> bool {
     let rows = job.b * job.h * job.m;
     let l = job.past + job.new;
     if w == 0 || rows < 2 || rows.saturating_mul(l).saturating_mul(job.d) < POOL_MIN_MACS {
+        return false;
+    }
+    fork_join_raw(job.encode(), w)
+}
+
+/// Fork-join one scalar-mask decode-attention job by **row**. Same
+/// admission as the mask form, but the work term is the **effective**
+/// visible width (`vis_past + new`) — the kernel only reads that many
+/// columns per row, so a barely-realized 32K bucket correctly declines.
+pub(crate) fn fork_join_attn_valid(job: AttnValidJob) -> bool {
+    let w = WORKERS.load(Ordering::Acquire);
+    let rows = job.b * job.h * job.m;
+    let l_vis = job.vis_past + job.new;
+    if w == 0 || rows < 2 || rows.saturating_mul(l_vis).saturating_mul(job.d) < POOL_MIN_MACS {
         return false;
     }
     fork_join_raw(job.encode(), w)

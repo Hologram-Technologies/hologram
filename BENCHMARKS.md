@@ -157,6 +157,45 @@ participants — the parametric no-arbitrary-ceiling shape the request asked for
 Decode (`m = 1`), chunked prefill (`m = C`, causal-within-chunk in the mask)
 and speculative verify (`m = K`) all ride the same call.
 
+### The scalar mask: the last O(bucket) per-token input becomes 4 bytes (captured at v0.10.0)
+
+With the caches riding κ-moves, hologram-ai measured the one remaining
+O(bucket) per-token input: the additive mask — `[chunk, bucket+chunk]` f32,
+128 KiB at a 32K bucket, rebuilt and BLAKE3-interned every token even though
+its information content is one scalar (the realized length; the causal
+triangle is constant for a compiled chunk).
+
+`DecodeAttentionValidCall` (κ discriminant 121; the κ119 mask form stays for
+genuinely arbitrary masks) compiles the visibility **law** into the call —
+realized-prefix over the past bucket, causal triangle within the chunk
+(`q_rows == new_len` required and refused otherwise) — and takes the realized
+length as a **4-byte operand**, the structure/content split applied once
+more. Two witnessed consequences:
+
+- **Bit-identity with the mask form** over finite bytes, at every realized
+  regime (0, mid-bucket, exactly the bucket, past it — the post-ring-wrap
+  clamp): the packed visible walk is the same serial pipeline over the same
+  values in the same order, and an erased slot was always an exact no-op.
+- **The kernel never reads an unrealized row**: per-row work is
+  O(realized + chunk), not O(bucket), and NaN/∞ bytes in unrealized rows are
+  unreachable (they would poison the mask form through `0·NaN`).
+
+One decode-step graph (attention + 2×KvCacheWrite, h=12 kv=2 d=128, m=1),
+native release, addressed loops, µs/step:
+
+| bucket L | κ119 mask form | κ121, realized ≈ 3–35 | κ121, fully realized |
+|---|--:|--:|--:|
+| 2 048 | 578 | **27.3** | 584 |
+| 8 192 | 2 438 | **27.8** | 2 366 |
+| 32 768 | 19 973 | **32.5** | 19 013 |
+
+The two κ121 columns are the whole law: per-token cost is now
+**O(realized context) kernel work + O(1) input traffic** — flat ~28–33 µs at
+any bucket size while the context is short, converging to the mask form's
+compute (minus the mask hash and the erased-slot walk) as the context fills.
+A conversation's decode cost tracks what has actually been said, not the
+bucket it was provisioned into. Reproduce with `addressed_decode_timing`.
+
 ### Resident KV: the cache write is a κ move; the byte boundary disappears (captured at v0.9.0)
 
 The third decode ceiling hologram-ai measured was invisible to kernel
