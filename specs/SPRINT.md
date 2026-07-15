@@ -73,12 +73,20 @@ honesty meta-gate green.
     `hologram` binary as the `node` subcommand group (verified: `hologram --help` shows
     compile/execute/bench/inspect + node; `hologram node --help` shows put/get/serve/…).
     The two-binaries-named-`hologram` conflict is resolved. Green.
-  - **P1 in-repo restructure essentially complete.** `substrate/` now holds only the two
-    P2-bound stores (`store-native`, `store-bare`) + excluded `efi`/`store-opfs`. Remaining:
-    stores → `spaces/` (P2, needs holospaces imported); then `backend→compute` /
-    `host→types` at a Sprint 39 lull; perf baselines; P1 preflight (crates.io names/tokens).
-  - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
-    `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
+  - [x] **9: hologram-host → hologram-types (D15)** — 137 LOC of σ-axis selections
+    (`HologramHasher`/`HologramHostTypes`/`ActiveCpuBounds`/`HologramHostBounds*` + prism/sdk
+    re-exports) fold into `hologram-types` as a root-flattened `host` module; 11 dependents
+    redirected (`hologram_host::`→`hologram_types::`, `hologram-host/std`→`hologram-types/std`),
+    facade `host` feature/module dropped (ships under `types`). host was untouched by Sprint 39
+    (verified: no divergence), so it was safe to pull forward. Green: workspace tests, bdd +
+    meta-gate (golden vectors held), clippy -D, fmt, wasm32 + thumbv7em no_std, RZ gate. `crates/`: 19.
+  - [x] Cleaned the empty leftover crate shells from moves 1–8; `substrate/` now holds exactly
+    `store-native` + `store-bare` (members) + excluded `efi`/`store-opfs` — **4 dirs, 2 members**.
+  - **P1 in-repo restructure essentially complete.** Only `backend→compute` (genuine Sprint 39
+    collision — that IS the active kernel crate) and the P2 store moves remain. Remaining:
+    stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
+    perf baselines; P1 preflight (crates.io names/tokens).
+  - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute` (the last library rename).
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
   first lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption
   (distinct follow-on).
