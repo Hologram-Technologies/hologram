@@ -1,10 +1,9 @@
 # Sprint Tracking
 
-## Sprint 40: Ecosystem Refactor — Consolidation (ACTIVE)
+## Sprint 40: Ecosystem Refactor — Consolidation (STRUCTURALLY COMPLETE — READY TO LAND)
 
 **Plan:** [specs/refactor/00-overview.md](refactor/00-overview.md) · P0 gates
 [specs/refactor/P0-PREP.md](refactor/P0-PREP.md) · branch `chore/refactor`
-(holospaces: `chore/hologram-head-sync`)
 
 Goal: consolidate the ecosystem (hologram + holospaces in one repo; hologram-ai stays an
 external consumer) with clean crate boundaries — `substrate/` dissolved into core crates,
@@ -12,8 +11,31 @@ holospaces becomes the space contract's implementations, `.holo` becomes the app
 container, one `hologram` facade + `Client` under everything. Phased always-green
 (P0.5 spike → P0 → P1 → P2 → P3 hard stop → P4–P6 follow-on). Decisions D1–D29.
 
-Conformance: **7 / 29 BDD scenarios enforced** (LAW-0/1/3, SP-1/3, MG-5, GV-1);
-honesty meta-gate green.
+### STATUS (2026-07-15) — the refactor is functionally complete on `chore/refactor`
+
+`chore/refactor` is **71 commits ahead of `main`, 0 behind** (Sprint 39's backend work merged
+in 2026-07-15). End state, every gate green at every commit:
+
+- **`crates/`** holds every `hologram-*` crate: the compute stack + `hologram-space` (the
+  contract), `hologram-net`, `hologram-runtime` (with the generic `lifecycle::Session`, D7),
+  the four `hologram-store-*` backends, `hologram-efi`, and **`hologram-emulator`** + its
+  codemodule (the 20.6k-LOC system emulator, hoisted out of holospaces).
+- **`spaces/`** holds only the space impls: `holospaces{,-browser,-node}` (~10k LOC — the
+  boot/provisioning/peer/platform layer after the emulator hoist).
+- `substrate/` **eliminated**; no git-pins; **no LGPL** (rustpython → in-tree parser);
+  **`uor-hologram` facade** with a real **`Client<S: Space>`** (D4, MVP); verified **MSRV 1.85**;
+  **`cargo deny` green with zero license exceptions**; RZ invariant holds throughout.
+- **P1** (consolidation) ✅ · **P2** (holospaces import + port) ✅ · **P3**: generic lifecycle
+  hoisted ✅, Client MVP ✅ — remaining P3 = `open→Session` (needs the Space contract to expose a
+  `ContainerRuntime`) + naming-review gate + first release (crates.io, human-gated).
+
+**Next step: land it** (merge `chore/refactor` → `main`; window is optimal at 71/0). Then, in
+order: migrate hologram-ai + re-pin the external holospaces repo → expand the Space contract for
+`open→Session` → naming review → first `uor-hologram` release. Deferred: `backend→compute`
+(Sprint 39 lull); P2 tail (vv/ fixtures, OPFS dedup, V&V absorption → MG-7).
+
+Conformance: **7 / 29 BDD scenarios enforced** (LAW-0/1/3, SP-1/3, MG-5, GV-1); honesty
+meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.)
 
 - [x] **Spec suite** 00–08 + P0-PREP, decisions D1–D29.
 - [x] **P0.5 spike (D28)**: `hologram-space` (Space contract) + `hologram-spike-sp3`
