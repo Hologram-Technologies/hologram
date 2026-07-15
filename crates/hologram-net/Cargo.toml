@@ -15,7 +15,7 @@ hashbrown = { workspace = true }
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "io-util", "time"], optional = true }
 
 [dev-dependencies]
-hologram-store-mem = { workspace = true }
+hologram-tck = { workspace = true }
 pollster = { workspace = true }
 
 [features]

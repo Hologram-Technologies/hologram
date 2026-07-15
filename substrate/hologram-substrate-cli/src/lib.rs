@@ -136,7 +136,7 @@ pub fn run<S: KappaStore + GarbageCollect>(store: &S, cmd: Command) -> Result<Ou
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hologram_store_mem::MemKappaStore;
+    use hologram_tck::MemKappaStore;
 
     #[test]
     fn put_get_roundtrip_and_ls() {

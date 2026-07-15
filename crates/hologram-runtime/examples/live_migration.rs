@@ -9,7 +9,7 @@ use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
 use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest, Snapshot};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 /// A session container: hg_event increments a counter at memory[0] (its session state).
 const SESSION_WAT: &str = r#"

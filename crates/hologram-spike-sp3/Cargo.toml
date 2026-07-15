@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 hologram-space          = { workspace = true }
-hologram-store-mem      = { workspace = true }
+hologram-tck      = { workspace = true }
 hologram-compiler       = { workspace = true }
 hologram-exec           = { workspace = true }
 hologram-backend        = { workspace = true, features = ["cpu"] }
@@ -22,7 +22,7 @@ async-trait             = { workspace = true }
 default = ["std"]
 std = [
     "hologram-space/std",
-    "hologram-store-mem/std",
+    "hologram-tck/std",
     "hologram-compiler/std",
     "hologram-exec/std",
     "hologram-backend/std",

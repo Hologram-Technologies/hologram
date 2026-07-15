@@ -14,7 +14,7 @@ use hologram_space::{
     Realization, SyncError,
 };
 use hologram_space::{CapabilitySet, ContainerManifest, Snapshot, REGISTRY};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn caps_with(
     storage_roots: Vec<KappaLabel71>,

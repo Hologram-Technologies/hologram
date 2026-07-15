@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use hologram_space::RamBlockDevice;
 use hologram_space::{Bytes, FederatedKappaSync, KappaLabel71, KappaStore, KappaSync, SyncError};
 use hologram_store_bare::BareMetalKappaStore;
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 use std::sync::Arc;
 
 /// Trivial adapter: present any local [`KappaStore`] as a [`KappaSync`] so the federation chain

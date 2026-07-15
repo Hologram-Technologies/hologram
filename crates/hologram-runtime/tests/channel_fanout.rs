@@ -16,7 +16,7 @@ use hologram_space::{
     SyncError,
 };
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn caps(pubs: &[KappaLabel71], subs: &[KappaLabel71]) -> Capabilities {
     Capabilities {

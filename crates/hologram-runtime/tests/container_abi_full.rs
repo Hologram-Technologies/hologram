@@ -13,7 +13,7 @@ use hologram_space::{
     Realization, SyncError,
 };
 use hologram_space::{CapabilitySet, ContainerManifest, ErrorEvent};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 //! # hologram-store-mem
 //!
 //! The in-memory **reference [`KappaStore`]** and the substrate's conformance fixture. A value
@@ -6,8 +5,6 @@
 //! `put` is idempotent (spec §10.2). Eviction is by **reachability from pinned roots** computed
 //! over the realization registry's `references()` inverse projection (spec §5.3 / §10.8) — the one
 //! uor-native graph walk, no separate edge index.
-
-extern crate alloc;
 
 use alloc::vec::Vec;
 use hashbrown::{HashMap, HashSet};

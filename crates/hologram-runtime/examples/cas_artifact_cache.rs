@@ -6,7 +6,7 @@
 
 use hologram_space::{ContainerManifest, REGISTRY};
 use hologram_space::{KappaStore, Realization};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn main() {
     let cache = MemKappaStore::new();

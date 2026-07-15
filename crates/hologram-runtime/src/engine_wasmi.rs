@@ -254,7 +254,7 @@ mod tests {
     use crate::Runtime;
     use hologram_space::REGISTRY;
     use hologram_space::{Capabilities, ContainerRuntime, KappaStore, Realization};
-    use hologram_store_mem::MemKappaStore;
+    use hologram_tck::MemKappaStore;
 
     /// Minimal counter container — same shape as the wasmtime test. Proves the bare-metal engine
     /// runs real Wasm modules end-to-end.

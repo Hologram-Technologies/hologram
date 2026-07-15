@@ -44,7 +44,7 @@ perf:
     cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
     cargo test --release -p hologram-exec --test performance -- --nocapture
     cargo bench -p hologram-store-native --bench sp_floors -- --quick
-    cargo bench -p hologram-store-mem --bench sp_floors -- --quick
+    cargo bench -p hologram-tck --bench sp_floors -- --quick
 
 # Run all tests
 test:
@@ -96,7 +96,7 @@ wasm:
         --no-default-features --features cpu,std,wasm-threads -p hologram-backend
     # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
     cargo build --target wasm32-unknown-unknown --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+        -p hologram-substrate-core -p hologram-realizations -p hologram-tck \
         -p hologram-net-http -p hologram-runtime \
         -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
 
@@ -109,7 +109,7 @@ embedded:
         -p hologram-backend
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
+        -p hologram-substrate-core -p hologram-realizations -p hologram-tck \
         -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
         -p hologram-net-bare
 
@@ -118,12 +118,12 @@ embedded:
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
     cargo test -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-        -p hologram-store-mem -p hologram-store-native -p hologram-net-http -p hologram-net-tcp \
+        -p hologram-tck -p hologram-store-native -p hologram-net-http -p hologram-net-tcp \
         -p hologram-runtime -p hologram-substrate-cli -p hologram-runtime-wasmtime \
         -p hologram-bare-hal -p hologram-store-bare -p hologram-runtime-bare -p hologram-net-bare
     cargo test -p hologram-net-http --features live   # live HTTP-CAS transport
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-store-mem hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare hologram-substrate-cli; do \
+    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare hologram-substrate-cli; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done

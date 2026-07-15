@@ -17,7 +17,7 @@ use std::sync::Arc;
 use hologram_net::tcp::TcpKappaSync;
 use hologram_space::PeerEndpoint;
 use hologram_space::{address_bytes, KappaStore, KappaSync, Realization};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 #[tokio::test(flavor = "current_thread")]
 async fn nw_tcp_peer_identity_is_kappa_of_peer_endpoint() {

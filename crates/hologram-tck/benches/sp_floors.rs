@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hologram_space::KappaStore;
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn sp_mem_idempotent_put_no_rewrite(c: &mut Criterion) {
     let store = MemKappaStore::new();

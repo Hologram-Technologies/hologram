@@ -112,7 +112,7 @@ impl<S: Space> Client<S> {
 /// never resolves (forcing the local-store fallback). It demonstrates the *composition*,
 /// not the network — a real network resolver arrives with `hologram-net` in a later phase.
 pub struct SpikeSpace {
-    store: hologram_store_mem::MemKappaStore,
+    store: hologram_tck::MemKappaStore,
     resolver: NullResolver,
 }
 
@@ -120,7 +120,7 @@ impl SpikeSpace {
     /// A fresh spike space with an empty in-memory store.
     pub fn new() -> Self {
         Self {
-            store: hologram_store_mem::MemKappaStore::new(),
+            store: hologram_tck::MemKappaStore::new(),
             resolver: NullResolver,
         }
     }
@@ -133,7 +133,7 @@ impl Default for SpikeSpace {
 }
 
 impl Space for SpikeSpace {
-    type Store = hologram_store_mem::MemKappaStore;
+    type Store = hologram_tck::MemKappaStore;
     type Resolver = NullResolver;
 
     fn store(&self) -> &Self::Store {

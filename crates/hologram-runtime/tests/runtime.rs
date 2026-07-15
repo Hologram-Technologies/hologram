@@ -8,7 +8,7 @@ use hologram_space::{
     Realization,
 };
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
     Capabilities {

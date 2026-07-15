@@ -22,7 +22,6 @@ hologram-spike-sp3 = { path = "../hologram-spike-sp3" }
 # SP-1 (passing the TCK is conformance) runs the shared conformance battery against the
 # reference store — the same battery every backend runs (substrate-tripling discipline).
 hologram-tck = { path = "../hologram-tck" }
-hologram-store-mem = { path = "../../substrate/hologram-store-mem" }
 
 [[test]]
 name = "bdd"

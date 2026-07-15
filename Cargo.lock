@@ -1398,7 +1398,6 @@ dependencies = [
  "cucumber",
  "hologram-space",
  "hologram-spike-sp3",
- "hologram-store-mem",
  "hologram-tck",
  "tokio",
 ]
@@ -1460,7 +1459,7 @@ dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
  "hologram-space",
- "hologram-store-mem",
+ "hologram-tck",
  "pollster",
  "spin",
  "tokio",
@@ -1486,8 +1485,8 @@ dependencies = [
  "hashbrown 0.15.5",
  "hologram-space",
  "hologram-store-bare",
- "hologram-store-mem",
  "hologram-store-native",
+ "hologram-tck",
  "pollster",
  "rand_chacha",
  "rand_core",
@@ -1523,7 +1522,7 @@ dependencies = [
  "hologram-exec",
  "hologram-graph",
  "hologram-space",
- "hologram-store-mem",
+ "hologram-tck",
  "pollster",
  "smallvec",
  "uor-prism",
@@ -1535,20 +1534,6 @@ version = "0.9.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-host",
- "hologram-space",
- "hologram-tck",
- "pollster",
- "spin",
-]
-
-[[package]]
-name = "hologram-store-mem"
-version = "0.9.0"
-dependencies = [
- "async-trait",
- "blake3",
- "criterion",
- "hashbrown 0.15.5",
  "hologram-space",
  "hologram-tck",
  "pollster",
@@ -1573,8 +1558,8 @@ dependencies = [
  "hologram-net",
  "hologram-runtime",
  "hologram-space",
- "hologram-store-mem",
  "hologram-store-native",
+ "hologram-tck",
  "pollster",
  "tokio",
 ]
@@ -1583,7 +1568,13 @@ dependencies = [
 name = "hologram-tck"
 version = "0.9.0"
 dependencies = [
+ "async-trait",
+ "blake3",
+ "criterion",
+ "hashbrown 0.15.5",
  "hologram-space",
+ "pollster",
+ "spin",
 ]
 
 [[package]]

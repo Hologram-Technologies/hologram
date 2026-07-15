@@ -24,4 +24,4 @@ pollster = { workspace = true }
 tokio    = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
-hologram-store-mem = { workspace = true }
+hologram-tck = { workspace = true }

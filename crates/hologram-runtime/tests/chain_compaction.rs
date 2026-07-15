@@ -8,7 +8,7 @@
 use hologram_runtime::{diag_class, MockEngine, Runtime};
 use hologram_space::{address_bytes, KappaStore, Realization};
 use hologram_space::{ChainCompaction, ErrorEvent, REGISTRY};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 #[test]
 fn b2_chain_compaction_breaks_predecessor_chain_at_threshold() {

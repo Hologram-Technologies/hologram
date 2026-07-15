@@ -3,7 +3,7 @@
 //! mechanism, not a tax. Mirrors the compute substrate's structural (not timing) perf proofs.
 
 use hologram_space::KappaStore;
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 /// SP-1 — `get` is zero-copy: two reads of the same κ share one allocation (an `Arc` clone, not a
 /// byte copy). This is the storage analog of the compute substrate's single-buffer pool.

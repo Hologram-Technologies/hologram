@@ -9,7 +9,7 @@ use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
 use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 /// hg_event(input_κ): storage_get the input (granted root) → mem[100], transform, storage_put output.
 const INFER_WAT: &str = r#"

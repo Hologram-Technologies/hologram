@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use hologram_runtime::WasmNetworkInterface;
 use hologram_space::NetworkInterface;
 use hologram_space::{address_bytes, get_with_fetch, Bytes, KappaLabel71, KappaSync, SyncError};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 use std::collections::HashMap;
 
 /// An executable network-driver in Wasm: a tiny loopback NIC that buffers transmitted frames into

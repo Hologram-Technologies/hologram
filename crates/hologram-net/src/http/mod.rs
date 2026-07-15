@@ -85,7 +85,7 @@ pub mod live;
 mod tests {
     use super::*;
     use hologram_space::address_bytes;
-    use hologram_store_mem::MemKappaStore;
+    use hologram_tck::MemKappaStore;
 
     #[test]
     fn path_roundtrips() {

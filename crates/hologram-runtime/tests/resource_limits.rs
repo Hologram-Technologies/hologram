@@ -8,7 +8,7 @@ use hologram_runtime::Runtime;
 use hologram_runtime::WasmtimeEngine;
 use hologram_space::{address_bytes, Capabilities, ContainerRuntime, KappaStore, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_store_mem::MemKappaStore;
+use hologram_tck::MemKappaStore;
 
 fn caps(mem_max: u64, cpu_ms: u64, quota: u64) -> Capabilities {
     Capabilities {

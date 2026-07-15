@@ -326,7 +326,7 @@ mod tests {
     use core::task::Waker;
     use hologram_space::KappaStore;
     use hologram_space::NicError;
-    use hologram_store_mem::MemKappaStore;
+    use hologram_tck::MemKappaStore;
 
     /// A loopback NIC: every `transmit` becomes available to the same NIC's `receive`. Backed
     /// by an internal queue — the simplest possible no_std-compatible NIC test fixture.

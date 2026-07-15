@@ -390,5 +390,5 @@ mod tests {
         });
     }
 
-    use hologram_store_mem::MemKappaStore;
+    use hologram_tck::MemKappaStore;
 }
