@@ -61,8 +61,16 @@ honesty meta-gate green.
     modules `bare`/`http`(+`http::live`)/`tcp`; tokio behind `tcp` so no_std/wasm stays
     clean; only substrate-cli redirected. All 7 scenarios + native/wasm + tests +
     clippy/fmt green. `substrate/`: 10→7.
-  - [ ] 6: runtime (runtime-*/engines → hologram-runtime) · 7: store-mem → hologram-tck ·
-    8: substrate-cli → hologram-cli · stores (native/bare/opfs) → spaces (P2).
+  - [x] **6: runtime/-wasmtime/-bare → crates/hologram-runtime** — core + engine backends
+    behind `engine-wasmtime`/`engine-wasmi` features; **engine-wasmi builds wasm32** (browser/
+    iOS/bare interpreter). Engine coverage for wasm/WASI/iOS documented in 02. Green.
+  - [x] **7: store-mem → hologram-tck** — the reference `MemKappaStore` becomes the TCK's
+    `mem` module (battery + oracle in one crate); tests + sp_floors bench move with it. Green.
+  - [x] Justfile retargeted (wasm/embedded/vv-substrate) to the consolidated crates; RZ gate
+    holds (compute engine absent from store/net/runtime). `substrate/`: now **3** (store-native,
+    store-bare, substrate-cli).
+  - [ ] 8: substrate-cli → hologram-cli (unify the two `hologram` binaries) · stores
+    (native/bare/opfs) → spaces (P2).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
