@@ -82,10 +82,24 @@ honesty meta-gate green.
     meta-gate (golden vectors held), clippy -D, fmt, wasm32 + thumbv7em no_std, RZ gate. `crates/`: 19.
   - [x] Cleaned the empty leftover crate shells from moves 1–8; `substrate/` now holds exactly
     `store-native` + `store-bare` (members) + excluded `efi`/`store-opfs` — **4 dirs, 2 members**.
+  - [x] **P1 preflight — crates.io readiness + supply-chain gate:**
+    - Facade published as **`uor-hologram`** (name `hologram` is taken; D16/P0-PREP §3 decision);
+      `[lib] name = "hologram"` preserves the one-word import path — user code still `use hologram::…`.
+    - Workspace `repository` field added; **`rust-version = "1.85"` declared and verified** (the
+      workspace fails on 1.82 — a dep needs `edition2024`, stabilized in 1.85 — and builds clean
+      on 1.85.1; probed against real toolchains, not guessed).
+    - **`cargo-deny` wired** (`deny.toml` + `just deny`, in `ci`/`vv`): licenses/bans/sources/
+      advisories all green. It caught + fixed a **yanked `spin 0.9.8`** (→0.9.9) and a crossbeam
+      vuln + memmap2-unsound advisory (cleared by a lockfile bump). Unmaintained transitive crates
+      (`paste`, `unic-*`) triaged to `ignore` with justification (no upstream fix).
+    - ⚠ **GOVERNANCE FLAG (D-review / 07):** the optional `frontend-python` feature pulls
+      `rustpython-parser` → **`malachite*` (LGPL-3.0-only)**. Default build is LGPL-free; enabling
+      it inherits LGPL obligations. Scoped license exceptions added; **user decision pending** —
+      accept opt-in LGPL vs. replace/drop the Python frontend before P3.
   - **P1 in-repo restructure essentially complete.** Only `backend→compute` (genuine Sprint 39
     collision — that IS the active kernel crate) and the P2 store moves remain. Remaining:
     stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
-    perf baselines; P1 preflight (crates.io names/tokens).
+    perf baselines; crates.io tokens/org ownership (human, P3).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute` (the last library rename).
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
   first lockstep release (hard stop, D26). **P4–P6** .holo v3 / networks / encryption

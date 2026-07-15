@@ -6,13 +6,19 @@ set dotenv-load := true
 default:
     @just --list
 
-# Full CI: format check, clippy, tests
-ci: fmt-check clippy test
+# Full CI: format check, clippy, tests, supply-chain gate
+ci: fmt-check clippy test deny
+
+# Supply-chain gate (class GV): licenses stay in the permissive set (MIT/Apache + the
+# reviewed exceptions), no vulnerable/unsound/yanked crates, sources are crates.io. This
+# is the RUSTSEC advisory audit *and* the license/ban/source policy in one. See deny.toml.
+deny:
+    cargo deny check
 
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance bdd parallel perf wasm embedded
+vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).

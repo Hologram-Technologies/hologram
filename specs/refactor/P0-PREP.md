@@ -72,11 +72,20 @@ before P3 publishes. Options:
 3. **Scoped/prefixed publish** now, revisit acquisition later.
 Recommendation: pursue (1) first; fall back to (2) with `uor-hologram` if unavailable.
 
-**DECISION (2026-07-14, confirmed):** **attempt acquisition of `hologram` first** (owner
-sends the transfer request below); if declined or no reply in a reasonable window, publish
-the facade as **`uor-hologram`**, preserving the `hologram::` module path via re-export so
-user code reads `use hologram::...`. Non-blocking for P1 — the crate name only matters at
-the P3 publish. Until resolved, the in-tree facade package name stays `hologram`.
+**DECISION (2026-07-15, confirmed):** **commit to `uor-hologram`** as the published facade
+name (set `[package] name = "uor-hologram"` with `[lib] name = "hologram"` so user code still
+reads `use hologram::...`). Acquiring `hologram` is pursued as an *optional upside*, not a
+blocker. Non-blocking for P1 — the crate name only matters at the P3 publish; the in-tree
+facade package name stays `hologram` until the P1-preflight rename.
+
+**Acquisition target (optional upside):** owner is **`alexlovric`** (Aleksander Lovric,
+<https://github.com/alexlovric/hologram>) — a dormant RBF-interpolation lib, `0.1.4`, ~2.3k
+downloads, last updated 2025-07-05. crates.io does **not** force-transfer names with real
+content to a reachable owner, so the only path is a voluntary `cargo owner --add
+<our-login> hologram` from him. Play: open a GitHub issue, offer to do his rename PR
+(→ `rbf-interp`) + a `hologram` deprecation-shim release, ask for co-ownership first (lower
+than a full transfer). Deadline ~2–3 weeks, else stay on `uor-hologram`. Do NOT ask him to
+*delete* the crate (a deleted name isn't cleanly reclaimable).
 
 **Draft acquisition message (to the `hologram` v0.1.4 owner via their crates.io/repo contact):**
 
