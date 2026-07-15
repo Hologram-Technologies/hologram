@@ -57,9 +57,12 @@ honesty meta-gate green.
     realizations dep removed (they already had hologram-space). **`hologram-space` is now
     the complete contract crate (core + realizations + HAL + Space/Resolver) per spec 02.**
     All 7 scenarios + native/wasm build + tests + clippy/fmt green. `substrate/`: 11→10.
-  - [ ] 5: net (net-http/tcp/bare → hologram-net) · 6: runtime (runtime-*/engines →
-    hologram-runtime) · 7: store-mem → hologram-tck · 8: substrate-cli → hologram-cli ·
-    stores (native/bare/opfs) → spaces (P2).
+  - [x] **5: net-http/tcp/bare → crates/hologram-net** — consolidated as feature-gated
+    modules `bare`/`http`(+`http::live`)/`tcp`; tokio behind `tcp` so no_std/wasm stays
+    clean; only substrate-cli redirected. All 7 scenarios + native/wasm + tests +
+    clippy/fmt green. `substrate/`: 10→7.
+  - [ ] 6: runtime (runtime-*/engines → hologram-runtime) · 7: store-mem → hologram-tck ·
+    8: substrate-cli → hologram-cli · stores (native/bare/opfs) → spaces (P2).
   - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute`,
     `hologram-host`→`hologram-types`; unify the two `hologram` CLIs.
 - [ ] **P2** import holospaces → `spaces/`. **P3** hoist Peer/Session/Manager + `Client` +
