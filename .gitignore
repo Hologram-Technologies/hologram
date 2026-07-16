@@ -29,3 +29,7 @@ sdk/python/build/
 sdk/python/*.egg-info/
 sdk/typescript/**/dist/
 .superpowers/
+
+# @vscode/test-web downloads a VS Code web build here (CC-17 fetched-by-pin); the browser
+# suites mutate it — never track it.
+spaces/holospaces-browser/web/.vscode-test-web/

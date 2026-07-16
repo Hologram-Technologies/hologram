@@ -12,11 +12,11 @@
 # runs extensions in the holospaces workbench. That is the prerequisite for real
 # extensions + their integrations (the GitHub sign-in → PRs/issues scenario) and
 # language servers (CC-18). No hand-rolled embedder, no hacks.
-# Witness: crates/holospaces-web/web/vscode-extension-test.mjs (Chromium).
+# Witness: spaces/holospaces-browser/web/vscode-extension-test.mjs (Chromium).
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 if ! command -v node >/dev/null 2>&1; then echo "cc19-extensions: SKIP — node unavailable" >&2; exit 127; fi
 cd "$WEB"
 [ -d node_modules/playwright ] || npm install playwright >/dev/null 2>&1

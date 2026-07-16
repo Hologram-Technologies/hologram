@@ -19,7 +19,7 @@
 #     engine (glob include/exclude, `.gitignore` via the vendored `ignore`, the
 #     streaming/cancelling walk, and literal/regex/case/word/multiline matching
 #     with re-deriving positions) verified deterministically under Node;
-#   • deployed  crates/holospaces-web/web/search-test.mjs — in Chromium the
+#   • deployed  spaces/holospaces-browser/web/search-test.mjs — in Chromium the
 #     providers are live, a query returns the expected matches in the real Search
 #     view, and replace-all edits the files (re-search confirms over 9p).
 #
@@ -28,7 +28,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 SEARCH="$WEB/builtin-extensions/holospace-search"
 
 # Artifact-drift gate: the vendored `ignore` (the `.gitignore` engine) must

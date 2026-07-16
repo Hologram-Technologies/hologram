@@ -11,7 +11,7 @@
 # retry succeeds. Centralizing the build here means one such hiccup never reds the
 # whole V&V gate (it previously failed whichever suite happened to build the peer
 # first). The build itself is unchanged — same command, same `-O3` flags (the
-# real production post-pass, per crates/holospaces-web/Cargo.toml).
+# real production post-pass, per spaces/holospaces-browser/Cargo.toml).
 #
 # Usage: build-wasm-peer.sh <repo-root>   (exit 0 = peer built/present; non-zero
 #        = wasm-pack failed after the retries). The caller checks `wasm-pack`
@@ -19,11 +19,11 @@
 
 set -uo pipefail
 ROOT="${1:?usage: build-wasm-peer.sh <repo-root>}"
-WASM="$ROOT/crates/holospaces-web/web/pkg/holospaces_web_bg.wasm"
+WASM="$ROOT/spaces/holospaces-browser/web/pkg/holospaces_web_bg.wasm"
 
 attempts=3
 for attempt in $(seq 1 "$attempts"); do
-    if ( cd "$ROOT/crates/holospaces-web" \
+    if ( cd "$ROOT/spaces/holospaces-browser" \
             && wasm-pack build --release --target web --out-dir web/pkg ) \
         && [ -f "$WASM" ]; then
         exit 0

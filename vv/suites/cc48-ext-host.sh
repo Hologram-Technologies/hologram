@@ -29,7 +29,7 @@
 #
 # Authority: the VS Code remote-server protocol + extension API; an arbitrary stock
 #   Node-only Open VSX extension as the unmodified subject.
-# Witness: crates/holospaces-web/web/ext-host-test.mjs — drives the real deployed
+# Witness: spaces/holospaces-browser/web/ext-host-test.mjs — drives the real deployed
 #   workbench against the substrate-native (wasm-exec) ext host; a Node-only
 #   extension installs from Open VSX and activate()s there, its contribution
 #   observable in the real workbench DOM.
@@ -45,7 +45,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 WITNESS="$WEB/ext-host-test.mjs"
 
 # Run the witness only when it encodes the substrate-native, Node-only bar — never

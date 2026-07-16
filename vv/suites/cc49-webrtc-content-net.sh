@@ -15,7 +15,7 @@
 #   a real WebRTC RTCDataChannel (holospaces-web::WebRtcLink) through the PRODUCT
 #   pump (Console::cn_pump) — not test glue; verify-on-receipt (a forging
 #   responder rejected; an unheld κ resolves to nothing).
-# Witness: crates/holospaces-web/web/webrtc-content-net-test.mjs — two browser
+# Witness: spaces/holospaces-browser/web/webrtc-content-net-test.mjs — two browser
 #   contexts connect a real RTCDataChannel (out-of-band SDP/ICE signaling, no
 #   server) and drive the FULL content-network frame set through the product API:
 #   one peer ANNOUNCES a κ it holds (cn_announce + cn_pump); the other DISCOVERS
@@ -30,7 +30,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then echo "cc49-webrtc-content-net: SKIP — node unavailable" >&2; exit 127; fi
 if ! command -v wasm-pack >/dev/null 2>&1; then echo "cc49-webrtc-content-net: SKIP — wasm-pack unavailable" >&2; exit 127; fi

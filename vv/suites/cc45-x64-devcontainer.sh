@@ -17,7 +17,7 @@
 #   • qemu-system-x86_64 as the differential oracle.
 # Witnesses: crates/holospaces/tests/cc44_x64_boot.rs (the CC-45 tests). The
 #   *deployed browser* path is witnessed by the browser job (scripts/browser-manager-
-#   test.sh → crates/holospaces-web/web/cc45-x64-boot-test.mjs): in Chromium, a stock
+#   test.sh → spaces/holospaces-browser/web/cc45-x64-boot-test.mjs): in Chromium, a stock
 #   linux/amd64 devcontainer is assembled sparse into an OPFS file and BOOTED on the
 #   x86-64 core via the shipped X64Workspace paged-κ-disk path.
 # Depends on: CC-44 (the x86-64 boot path).
@@ -167,7 +167,7 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
     # kernel once shipped here and powered every amd64 devcontainer off at boot;
     # this witness pins the deployed artifact so that drift cannot recur) — and
     # the deployed workspace surface round-trips editor→guest over 9p.
-    WEB="$ROOT/crates/holospaces-web/web"
+    WEB="$ROOT/spaces/holospaces-browser/web"
     if command -v node >/dev/null 2>&1 && command -v wasm-pack >/dev/null 2>&1; then
         if [ ! -f "$WEB/pkg/holospaces_web_bg.wasm" ]; then
             "$ROOT/vv/lib/build-wasm-peer.sh" "$ROOT" || exit 1

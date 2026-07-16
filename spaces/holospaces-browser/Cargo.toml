@@ -17,6 +17,11 @@ repository = "https://github.com/Hologram-Technologies/holospaces"
 # explicitly via `scripts/browser-manager-test.sh` and the Pages deploy.
 [lib]
 crate-type = ["cdylib"]
+# The wasm output keeps the name `holospaces_web` (the crate was renamed
+# holospaces-web → holospaces-browser during the port, but its web/ assets, the
+# Pages deploy, and the vv/ browser suites all import `holospaces_web{.js,_bg.wasm}`).
+# Pinning the lib name keeps that whole surface valid without churning 12 web files.
+name = "holospaces_web"
 
 [dependencies]
 holospaces = { path = "../holospaces" }

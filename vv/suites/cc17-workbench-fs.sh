@@ -11,11 +11,11 @@
 # embedder, no service worker, no hand-rolled extension. The editor↔workspace
 # CONTENT path (content by κ) is witnessed separately against the real OS over
 # 9p by tests/cc17_workspace_fs.rs.
-# Witness: crates/holospaces-web/web/vscode-workbench-fs-test.mjs (Chromium).
+# Witness: spaces/holospaces-browser/web/vscode-workbench-fs-test.mjs (Chromium).
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then
     echo "cc17-workbench-fs: SKIP — node not available" >&2; exit 127

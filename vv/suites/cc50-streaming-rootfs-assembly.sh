@@ -29,7 +29,7 @@
 # from_block_stream yield the same sector κ-set for the same content (Law L1).
 #
 # The *deployed browser* path is witnessed by the browser job (the CI browser job
-# / scripts/browser-manager-test.sh → crates/holospaces-web/web/cc50-streaming-
+# / scripts/browser-manager-test.sh → spaces/holospaces-browser/web/cc50-streaming-
 # boot-test.mjs): in Chromium, a dedicated worker streams the bootable rootfs
 # straight into an OPFS file (the shared stream_ext4_image_bootable serializer the
 # wasm assembleIntoOpfs uses) and BOOTS it to a userspace marker via the shipped

@@ -19,7 +19,7 @@
 #   • core     builtin-extensions/holospace-tasks/tasks-core.test.cjs — the
 #     tasks.json (JSONC) parse + command build + the file-exec request/stream/exit
 #     protocol, verified deterministically under Node;
-#   • deployed crates/holospaces-web/web/tasks-test.mjs — in Chromium Run Task
+#   • deployed spaces/holospaces-browser/web/tasks-test.mjs — in Chromium Run Task
 #     runs a declared task in the guest, its output + non-zero exit status surface,
 #     and a problem-matcher task creates a diagnostic in the Problems panel.
 #
@@ -29,7 +29,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 TASKS="$WEB/builtin-extensions/holospace-tasks"
 
 command -v node >/dev/null 2>&1 || { echo "cc53-tasks: SKIP — node absent"; exit 127; }

@@ -8,14 +8,14 @@
 # re-derivation against the committed manifest (Law L5) before loading, then the
 # authentic workbench boots to its UI in the tab. Authority + pin:
 # vscode-web@1.91.1 and vv/artifacts/cc17/{SOURCE.txt,vendor.sha256}.
-# Witness: crates/holospaces-web/web/vscode-workbench-test.mjs (Chromium).
+# Witness: spaces/holospaces-browser/web/vscode-workbench-test.mjs (Chromium).
 #
 # Phase 2 (a FileSystemProvider over the virtio-9p workspace + the terminal) and
 # Phase 3 (the remote extension host in the devcontainer OS, ADR-015) follow.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then
     echo "cc17-vscode-workbench: SKIP — node not available in this environment" >&2

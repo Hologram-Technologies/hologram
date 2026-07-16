@@ -14,11 +14,11 @@
 # does (build-workbench.mjs) and asserts it loads κ-verified + the LIVE holospace
 # workspace mounts into the editor. Authority: the real vscode-web build + its
 # FileSystemProvider/terminal APIs; the holospace primitives (CC-15/CC-11).
-# Witness: crates/holospaces-web/web/vscode-workbench-holospace-test.mjs.
+# Witness: spaces/holospaces-browser/web/vscode-workbench-holospace-test.mjs.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then echo "cc17-workbench-holospace: SKIP — node unavailable" >&2; exit 127; fi
 # The wasm peer the holospace-fs extension boots in the workbench's extension host.

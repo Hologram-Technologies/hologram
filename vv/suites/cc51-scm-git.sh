@@ -18,7 +18,7 @@
 #   • host       crates/holospaces/tests/cc51_nested_workspace.rs — the host's
 #     nested-path 9p API and a real busybox guest share one nested `.git`-shaped
 #     tree over virtio-9p, both directions (CC-15 parity with the guest tree);
-#   • deployed   crates/holospaces-web/web/scm-git-test.mjs — in Chromium the SCM
+#   • deployed   spaces/holospaces-browser/web/scm-git-test.mjs — in Chromium the SCM
 #     provider is live, reflects the real repo, a commit through the SCM input
 #     RE-DERIVES to the canonical Git object (Law L5) + HEAD points at it, and a
 #     PUSH lands in a real `git http-backend` bare repo (git log is the oracle).
@@ -28,7 +28,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WEB="$ROOT/crates/holospaces-web/web"
+WEB="$ROOT/spaces/holospaces-browser/web"
 VENDOR="$WEB/builtin-extensions/holospace-scm/vendor/isomorphic-git"
 
 # Artifact-drift gate: the vendored Git engine must re-derive to its pinned
