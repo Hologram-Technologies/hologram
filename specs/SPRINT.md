@@ -193,6 +193,20 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     verified by re-derivation, skip-when-absent locally. `.gitignore` guard added now
     (`vv/artifacts/`) so no future import can bloat the repo; 06-migration records the strategy.
     MG-7 enforcement (the CC-catalog absorption itself) is unblocked but remains a multi-session job.
+  - [~] **MG-7 ENFORCEMENT (in progress, plan approved 2026-07-16)** — full gating: MG-7 flips ✅
+    only when all 45 CC pass in CI (QEMU boots + Playwright + 170M artifacts materialized, blocking).
+    CS-\* deferred but tracked (Phase G). Phases:
+    - [x] **A — CC class in the ledger** (2026-07-16). Added a non-BDD `CC` class (Classes table) +
+      45 rows (`## CC — component conformance`) mechanically derived from the ported
+      `spaces/holospaces/tests/cc*.rs` (12 fast / 8 artifact / 25 heavy tiers), each witnessed by a
+      cargo test fn — no Gherkin, no meta-gate change (CC ignored like AS/KC). Rows 🟡 (present, not
+      yet CI-gated); MG-7 stays ⛔. Green: meta_gate bijection holds.
+    - [ ] **B** CC bijection audit (`cc.rs` + `cc_gate.rs`, artifact-free row↔witness binding).
+    - [ ] **C** import `vv/` framework at repo root (CS block gated behind `CC_ONLY`).
+    - [ ] **D** `scripts/vv-fetch.sh` artifact-materialization (fetch-pinned + reproduce + cache).
+    - [ ] **E** heavy CI jobs (QEMU/e2fsprogs/Playwright, blocking) + cheap CC gate step.
+    - [ ] **F** flip MG-7 ✅ + CC rows ✅ (feature enforced + bdd steps call the audit, atomic).
+    - [ ] **G** (deferred, tracked) CS-\* docs conformance: arc42→`specs/holospaces/`, V1–V8, docs CI job, MG-8.
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

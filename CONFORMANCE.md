@@ -28,6 +28,7 @@
 | **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
+| **CC** | Component conformance (holospaces) — each component vs its external authority (hash KATs, native-executor oracle, substrate TCK, WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright) — spec 06 §V&V (MG-7) | conformance tests (`spaces/holospaces/tests/cc*.rs`) + CC bijection audit |
 | **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
 | **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
 | **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
@@ -431,3 +432,62 @@ addressing and warm-start do.
 | **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ⛔ |
 | **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ⛔ |
 | **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ⛔ |
+
+## CC — component conformance (holospaces V&V; external: per-row authority; cargo-witnessed, non-BDD)
+
+Absorbed from holospaces' V&V (spec 06 §V&V; MG-7). Each row is a component validated against
+its own external authority (hash KATs, the native-executor oracle, the substrate TCK, the
+WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright), witnessed by a cargo test in the
+ported `holospaces` space — never by self-reference. Like the other non-BDD classes (AS/KC/…) the
+honesty meta-gate does not bind these to Gherkin; instead the **CC bijection audit**
+(`crates/hologram-conformance/tests/cc_gate.rs`) binds every row to a present witness, and **MG-7**
+witnesses the absorption. Enforcement tiers: `test` (fast, no artifact), `test (artifact: …)`, and
+`test (heavy: QEMU/browser · #[ignore])`. 🟡 = present + audit-bound; ✅ once CI gates it green.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **CC-1** | kappa kat — kappa digest equals reference implementation | test | `spaces/holospaces/tests/cc1_kappa_kat.rs::kappa_digest_equals_reference_implementation` | 🟡 |
+| **CC-2** | holo engine — identical holo yields identical kappa across independent builds | test | `spaces/holospaces/tests/cc2_holo_engine.rs::identical_holo_yields_identical_kappa_across_independent_builds` | 🟡 |
+| **CC-3** | substrate tck — in memory store obeys the substrate contract | test | `spaces/holospaces/tests/cc3_substrate_tck.rs::in_memory_store_obeys_the_substrate_contract` | 🟡 |
+| **CC-4** | devcontainer — real configs conform to the dev container schema | test (artifact: vv/artifacts/cc4) | `spaces/holospaces/tests/cc4_devcontainer.rs::real_configs_conform_to_the_dev_container_schema` | 🟡 |
+| **CC-5** | wasm — validator agrees with the webassembly spec suite | test (artifact: vv/artifacts/cc5) | `spaces/holospaces/tests/cc5_wasm.rs::validator_agrees_with_the_webassembly_spec_suite` | 🟡 |
+| **CC-6** | execution surface — surface validator enforces the contract | test | `spaces/holospaces/tests/cc6_execution_surface.rs::surface_validator_enforces_the_contract` | 🟡 |
+| **CC-7** | kdisk — the ext4 artifact matches its recorded digest | test (artifact: vv/artifacts/cc7) | `spaces/holospaces/tests/cc7_kdisk.rs::the_ext4_artifact_matches_its_recorded_digest` | 🟡 |
+| **CC-8** | import run — a forged import is refused by re derivation | test | `spaces/holospaces/tests/cc8_import_run.rs::a_forged_import_is_refused_by_re_derivation` | 🟡 |
+| **CC-9** | emulator — the emulator core conforms to the risc v isa | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc9_emulator.rs::the_emulator_core_conforms_to_the_risc_v_isa` | 🟡 |
+| **CC-10** | ingestion — a real oci image ingests as verified kappa content | test (artifact: vv/artifacts/cc10) | `spaces/holospaces/tests/cc10_ingestion.rs::a_real_oci_image_ingests_as_verified_kappa_content` | 🟡 |
+| **CC-11.term** | raw terminal — the deployed terminal echoes edits and handles ctrl c | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc11_raw_terminal.rs::the_deployed_terminal_echoes_edits_and_handles_ctrl_c` | 🟡 |
+| **CC-11** | workspace — intent edits are content addressed in the store | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc11_workspace.rs::intent_edits_are_content_addressed_in_the_store` | 🟡 |
+| **CC-12** | manager console — the console signs in a self sovereign content addressed identity | test | `spaces/holospaces/tests/cc12_manager_console.rs::the_console_signs_in_a_self_sovereign_content_addressed_identity` | 🟡 |
+| **CC-13** | vscode workspace — the vscode components re derive to their pinned kappa | test (artifact: vv/artifacts/cc13) | `spaces/holospaces/tests/cc13_vscode_workspace.rs::the_vscode_components_re_derive_to_their_pinned_kappa` | 🟡 |
+| **CC-14.asm** | assembly — the oci layers assemble into a clean mountable ext4 rootfs | test (artifact: vv/artifacts/cc14) | `spaces/holospaces/tests/cc14_assembly.rs::the_oci_layers_assemble_into_a_clean_mountable_ext4_rootfs` | 🟡 |
+| **CC-14** | virtio block — the generated device tree is valid | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc14_virtio_block.rs::the_generated_device_tree_is_valid` | 🟡 |
+| **CC-15** | workspace — the os and holospaces share the workspace over virtio 9p | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc15_workspace.rs::the_os_and_holospaces_share_the_workspace_over_virtio_9p` | 🟡 |
+| **CC-16** | network — the os reaches the internet through the userspace nat | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc16_network.rs::the_os_reaches_the_internet_through_the_userspace_nat` | 🟡 |
+| **CC-17** | workspace fs — the editor lists writes and reads the shared workspace by kappa | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc17_workspace_fs.rs::the_editor_lists_writes_and_reads_the_shared_workspace_by_kappa` | 🟡 |
+| **CC-18** | lsp — the language server and session are in the assembled rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc18_lsp.rs::the_language_server_and_session_are_in_the_assembled_rootfs` | 🟡 |
+| **CC-18.bridge** | lsp bridge — the in os language server serves the workbench over the bridge | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc18_lsp_bridge.rs::the_in_os_language_server_serves_the_workbench_over_the_bridge` | 🟡 |
+| **CC-20** | import — a devcontainer provisions from a repository url | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc20_import.rs::a_devcontainer_provisions_from_a_repository_url` | 🟡 |
+| **CC-21** | port forward — a server in the devcontainer is reachable through a forwarded port | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc21_port_forward.rs::a_server_in_the_devcontainer_is_reachable_through_a_forwarded_port` | 🟡 |
+| **CC-22** | lifecycle — the lifecycle init is built from the parsed config | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc22_lifecycle.rs::the_lifecycle_init_is_built_from_the_parsed_config` | 🟡 |
+| **CC-23** | personalization — the operators dotfiles are injected into the assembled rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc23_personalization.rs::the_operators_dotfiles_are_injected_into_the_assembled_rootfs` | 🟡 |
+| **CC-24** | auth — the devcontainer authenticates with github over the network | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc24_auth.rs::the_devcontainer_authenticates_with_github_over_the_network` | 🟡 |
+| **CC-25** | features — the feature is staged and scheduled in the rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc25_features.rs::the_feature_is_staged_and_scheduled_in_the_rootfs` | 🟡 |
+| **CC-26** | build — the dockerfile build is assembled | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc26_build.rs::the_dockerfile_build_is_assembled` | 🟡 |
+| **CC-27** | compose — the import resolves the compose service from a repo | test (artifact: vv/artifacts/cc27) | `spaces/holospaces/tests/cc27_compose.rs::the_import_resolves_the_compose_service_from_a_repo` | 🟡 |
+| **CC-28** | reconfigure — the control plane reconfigures an instance over the substrate | test | `spaces/holospaces/tests/cc28_reconfigure.rs::the_control_plane_reconfigures_an_instance_over_the_substrate` | 🟡 |
+| **CC-29** | read verify boundary — the boundary check rejects a liar but the trusted read trusts the store | test | `spaces/holospaces/tests/cc29_read_verify_boundary.rs::the_boundary_check_rejects_a_liar_but_the_trusted_read_trusts_the_store` | 🟡 |
+| **CC-30** | resume — restore is the inverse of snapshot and continues identically | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc30_resume.rs::restore_is_the_inverse_of_snapshot_and_continues_identically` | 🟡 |
+| **CC-31** | resume terminal — a resumed idle devcontainer is live and its scrollback is a terminal concern | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc31_resume_terminal.rs::a_resumed_idle_devcontainer_is_live_and_its_scrollback_is_a_terminal_concern` | 🟡 |
+| **CC-33** | guest bridge — a guest server is reachable over the in process substrate bridge | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc33_guest_bridge.rs::a_guest_server_is_reachable_over_the_in_process_substrate_bridge` | 🟡 |
+| **CC-35** | aarch64 — the a64 data processing battery passes | test (artifact: vv/artifacts/cc35) | `spaces/holospaces/tests/cc35_aarch64.rs::the_a64_data_processing_battery_passes` | 🟡 |
+| **CC-36** | aarch64 — the emulator boots real arm64 linux to userspace | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc36_aarch64.rs::the_emulator_boots_real_arm64_linux_to_userspace` | 🟡 |
+| **CC-37** | aarch64 — an arm64 devcontainer runs a stock linux arm64 binary | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc37_aarch64.rs::an_arm64_devcontainer_runs_a_stock_linux_arm64_binary` | 🟡 |
+| **CC-38** | content net — a browser peer fetches content from a bare metal peer | test | `spaces/holospaces/tests/cc38_content_net.rs::a_browser_peer_fetches_content_from_a_bare_metal_peer` | 🟡 |
+| **CC-40** | product security — sec integrity tampered content does not re derive | test | `spaces/holospaces/tests/cc40_product_security.rs::sec_integrity_tampered_content_does_not_re_derive` | 🟡 |
+| **CC-44** | x64 boot — an amd64 linux kernel boots to userspace | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc44_x64_boot.rs::an_amd64_linux_kernel_boots_to_userspace` | 🟡 |
+| **CC-45** | dogfood — holospaces builds in its own real devcontainer | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc45_dogfood.rs::holospaces_builds_in_its_own_real_devcontainer` | 🟡 |
+| **CC-46** | devbus parity — the aarch64 core mounts a 9p workspace over the shared devbus | test | `spaces/holospaces/tests/cc46_devbus_parity.rs::the_aarch64_core_mounts_a_9p_workspace_over_the_shared_devbus` | 🟡 |
+| **CC-46.boot** | realboot — the aarch64 core serves 9p net and bridge to a real arm64 boot | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc46_realboot.rs::the_aarch64_core_serves_9p_net_and_bridge_to_a_real_arm64_boot` | 🟡 |
+| **CC-50** | streaming assembly — a sparse large rootfs streams with bounded peak memory | test | `spaces/holospaces/tests/cc50_streaming_assembly.rs::a_sparse_large_rootfs_streams_with_bounded_peak_memory` | 🟡 |
+| **CC-51** | nested workspace — the host and os share a nested workspace tree over virtio 9p | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc51_nested_workspace.rs::the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p` | 🟡 |
