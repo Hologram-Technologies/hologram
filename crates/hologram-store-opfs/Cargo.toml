@@ -4,16 +4,26 @@ version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
-description = "Browser OPFS KappaStore (spec §5.4): κ→bytes persisted in the Origin Private File System, addressed by hologram's σ-axis. wasm32 + web-sys; verified in a real browser via Playwright."
+description = "Browser OPFS stores (spec §5.4): the sync `OpfsKappaStore` KappaStore backend (Worker; pack file) plus an async file-per-κ persistence + GC layer with JS bindings. κ addressed by hologram's σ-axis; wasm32 + web-sys; verified in a real browser via Playwright."
 
+# `rlib` (alongside the wasm `cdylib`) so a `Space` impl can depend on the sync `OpfsKappaStore`
+# backend as a normal library; `cdylib` keeps the Playwright wasm bundle.
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The async file-per-κ JS API (`js_api` + `bridge`) is on by default, so `wasm-pack build` and the
+# Playwright `web/` harness emit every `#[wasm_bindgen]` export unchanged. A consumer that only
+# wants the sync `OpfsKappaStore` backend takes `default-features = false`: it then pulls no
+# `wasm-bindgen` from this crate, so there is no duplicate-wasm-bindgen clash in its own bundle.
+default = ["js-api"]
+js-api = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
 
 [dependencies]
 hologram-space = { path = "../hologram-space", default-features = false }
-wasm-bindgen = "=0.2.122"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
+wasm-bindgen = { version = "=0.2.122", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [dependencies.web-sys]
 version = "0.3"
@@ -24,6 +34,10 @@ features = [
     "FileSystemFileHandle",
     "FileSystemGetFileOptions",
     "FileSystemWritableFileStream",
+    # The sync `OpfsKappaStore` backend reads/writes one OPFS pack file through a Worker-only
+    # synchronous access handle (the `KappaStore` contract is synchronous, LAW-4).
+    "FileSystemSyncAccessHandle",
+    "FileSystemReadWriteOptions",
     "File",
     "Blob",
     "Window",

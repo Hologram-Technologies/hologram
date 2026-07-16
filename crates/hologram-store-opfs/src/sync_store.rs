@@ -15,9 +15,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use hologram_space::{
-    address_bytes_axis, Bytes, KappaLabel, KappaLabel71, KappaStore, StoreError,
-};
+use hologram_space::{address_bytes_axis, Bytes, KappaLabel, KappaLabel71, KappaStore, StoreError};
 use web_sys::{FileSystemReadWriteOptions, FileSystemSyncAccessHandle};
 
 /// A content-addressed store whose blobs live in an OPFS pack file (off the wasm

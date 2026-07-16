@@ -153,8 +153,8 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     crates (deduped: substrate-core + store-mem → hologram-space; runtime + runtime-bare →
     hologram-runtime `engine-wasmi`), imports rewritten. **wasm32 builds clean** (own `[workspace]`,
     standalone; cross-workspace `holospaces` path dep resolves). Its `opfs_store.rs` (sync
-    `FileSystemSyncAccessHandle`) is KEPT — deduping it against `hologram-store-opfs` (async
-    worker-bridge) is a real design choice, deferred (they're architecturally different).
+    `FileSystemSyncAccessHandle`) was later moved into `crates/hologram-store-opfs` (the OPFS
+    backend crate) — see "P2 tail — OPFS dedup resolved" below.
   - [x] **Emulator hoisted → `crates/hologram-emulator`** (2026-07-15). System emulation is a
     first-class *hologram* capability, not holospaces-specific (user call). The 20.6k-LOC core
     (`emulator.rs` + RISC-V/x86-64/aarch64 cores + `machine.rs`) hoisted out of holospaces into
@@ -165,8 +165,21 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     (sheds its holospaces dep — wraps `hologram_emulator` directly). Green: hologram-emulator
     (47 tests) + holospaces (62) + full workspace test, clippy, fmt, deny, RZ, wasm32 + thumbv7em
     no_std, wasm32 codemodule. 01-crate-map updated.
-  - [ ] **P2 tail** (remaining): `vv/` fixtures decision for full holospaces V&V; OPFS dedup
-    (opfs_store.rs vs hologram-store-opfs); absorb holospaces' V&V (CC catalog → MG-7).
+  - [x] **P2 tail — OPFS dedup resolved** (2026-07-15). Investigation showed the two OPFS stores
+    are *not* copy-paste dup but a boundary violation: the in-product sync `OpfsKappaStore` (Worker;
+    pack file + offset index; the real `KappaStore`) lived **inside** `spaces/holospaces-browser`,
+    while `crates/hologram-store-opfs` (async file-per-κ + GC + JS bindings, Playwright-verified) was
+    consumed by nothing in Rust. Fix (on the north star — backends in `crates/`, spaces consume
+    them): **moved `OpfsKappaStore` into `crates/hologram-store-opfs`** as its `sync_store` module,
+    gated the async JS API (`js_api` + SAB `bridge`) behind a default `js-api` feature, added
+    `crate-type=+rlib`. `holospaces-browser` now depends on it with `default-features = false` (the
+    sync backend only — pulls no `wasm-bindgen`, so no duplicate-wasm-bindgen clash in the Pages
+    bundle). The crate finally holds a real `KappaStore` (matching its `-native`/`-mem` siblings) and
+    OPFS is one crate. Green: store-opfs wasm32 build **both** feature configs, holospaces-browser
+    standalone wasm32 build, fmt. (wasm32 *clippy* is unavailable in this env — clippy-driver can't
+    resolve the wasm32 std sysroot; build is the gate for wasm-only crates.)
+  - [ ] **P2 tail** (remaining): `vv/` fixtures decision for full holospaces V&V; absorb holospaces'
+    V&V (CC catalog → MG-7).
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

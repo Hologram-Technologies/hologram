@@ -28,9 +28,12 @@
 //! reads and edits environment content by κ — the documented launch experience,
 //! realized on the browser peer.
 
-mod opfs_store;
 mod webrtc;
 mod wsnet;
+
+// The OPFS κ-disk backend moved to its own backend crate (`crates/hologram-store-opfs`);
+// a space consumes backends, it does not define them.
+use hologram_store_opfs::OpfsKappaStore;
 
 pub use webrtc::WebRtcLink;
 
@@ -39,8 +42,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use hologram_runtime::Runtime;
 use hologram_runtime::engine_wasmi::BareMetalEngine;
+use hologram_runtime::Runtime;
 use hologram_space::MemKappaStore;
 use hologram_space::{Bytes, Capabilities, KappaStore, Realization};
 use holospaces::assembly::{assemble_ext4, assemble_ext4_bootable, Layer};
@@ -1423,7 +1426,7 @@ impl Workspace {
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<Workspace, JsValue> {
         let (egress, router) = net::ChannelEgress::new();
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
         let machine = MachineSpec::devcontainer_net()
             .boot_net_in(kernel, rootfs.to_vec(), Box::new(egress), store)
             .map_err(js_err)?;
@@ -1449,7 +1452,7 @@ impl Workspace {
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<Workspace, JsValue> {
         let (egress, router) = net::ChannelEgress::new();
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
         let total = rootfs_handle.get_size().map_err(js_err)? as u64;
         let sector_count = total.div_ceil(512);
         let rootfs = rootfs_handle.clone();
@@ -1919,7 +1922,7 @@ impl Aarch64Workspace {
         rootfs_handle: web_sys::FileSystemSyncAccessHandle,
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<Aarch64Workspace, JsValue> {
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
         let total = rootfs_handle.get_size().map_err(js_err)? as u64;
         let sector_count = total.div_ceil(512);
         let rootfs = rootfs_handle.clone();
@@ -1961,7 +1964,7 @@ impl Aarch64Workspace {
         rootfs_handle: web_sys::FileSystemSyncAccessHandle,
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<Aarch64Workspace, JsValue> {
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
         let total = rootfs_handle.get_size().map_err(js_err)? as u64;
         let sector_count = total.div_ceil(512);
         let rootfs = rootfs_handle.clone();
@@ -2248,7 +2251,7 @@ impl X64Workspace {
         rootfs_handle: web_sys::FileSystemSyncAccessHandle,
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<X64Workspace, JsValue> {
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
         let total = rootfs_handle.get_size().map_err(js_err)? as u64;
         let sector_count = total.div_ceil(512);
         let rootfs = rootfs_handle.clone();
@@ -2305,7 +2308,7 @@ impl X64Workspace {
         occupancy_handle: web_sys::FileSystemSyncAccessHandle,
         disk_handle: web_sys::FileSystemSyncAccessHandle,
     ) -> Result<X64Workspace, JsValue> {
-        let store = Box::new(opfs_store::OpfsKappaStore::new(disk_handle));
+        let store = Box::new(OpfsKappaStore::new(disk_handle));
 
         // The sidecar (written by assembleIntoOpfsTracked): an 8-byte little-endian
         // image_len header — the DECLARED disk the guest sees, which the rootfs file

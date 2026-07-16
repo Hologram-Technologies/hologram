@@ -418,7 +418,8 @@ impl BridgeWorker {
                 // Iterate returns an array of κ-strings. Pack as `u32 LE count | (71 bytes)*`.
                 match crate::opfs_iterate().await {
                     Ok(arr_val) => {
-                        let arr: js_sys::Array = arr_val.dyn_into().unwrap_or_else(|_| js_sys::Array::new());
+                        let arr: js_sys::Array =
+                            arr_val.dyn_into().unwrap_or_else(|_| js_sys::Array::new());
                         let n = arr.length() as usize;
                         // Cap by SAB capacity; the structural cap is the SAB size, not policy.
                         let capacity = self.sab.byte_length() as usize;
@@ -435,10 +436,7 @@ impl BridgeWorker {
                                 let bytes = s.as_bytes();
                                 if bytes.len() == 71 {
                                     for (j, &b) in bytes.iter().enumerate() {
-                                        self.u8.set_index(
-                                            OFF_PAYLOAD + 4 + (i * 71 + j) as u32,
-                                            b,
-                                        );
+                                        self.u8.set_index(OFF_PAYLOAD + 4 + (i * 71 + j) as u32, b);
                                     }
                                 }
                             }

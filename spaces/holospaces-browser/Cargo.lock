@@ -214,7 +214,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hologram-archive"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
  "hashbrown 0.15.5",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-backend"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
  "hologram-ops",
@@ -247,8 +247,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hologram-emulator"
+version = "0.10.0"
+dependencies = [
+ "hologram-space",
+ "libm",
+ "spin",
+]
+
+[[package]]
 name = "hologram-exec"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -264,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -274,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -284,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ops"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "hologram-types",
  "libm",
@@ -295,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -306,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-space"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -316,8 +325,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hologram-store-opfs"
+version = "0.5.0"
+dependencies = [
+ "hologram-space",
+ "web-sys",
+]
+
+[[package]]
 name = "hologram-types"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -326,12 +343,14 @@ dependencies = [
 
 [[package]]
 name = "holospaces"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "hologram-backend",
+ "hologram-emulator",
  "hologram-exec",
  "hologram-net",
+ "hologram-runtime",
  "hologram-space",
  "libm",
  "miniz_oxide",
@@ -347,6 +366,7 @@ version = "0.0.0"
 dependencies = [
  "hologram-runtime",
  "hologram-space",
+ "hologram-store-opfs",
  "holospaces",
  "js-sys",
  "serde_json",

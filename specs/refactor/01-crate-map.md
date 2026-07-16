@@ -121,7 +121,7 @@ machinery), `hologram-tck` (dev-dependency). Nothing else — in particular, nev
 | substrate/hologram-store-mem | crates/hologram-tck | becomes the reference/conformance store |
 | substrate/hologram-store-native | **crates/hologram-store-native** | redb store — a generic `hologram-*` backend, kept in `crates/` (see decision below), not renamed to a space |
 | substrate/hologram-store-bare | **crates/hologram-store-bare** | block-device store — generic `hologram-*` backend, stays in `crates/` |
-| substrate/hologram-store-opfs | **crates/hologram-store-opfs** | OPFS store (excluded target-specific); a space's browser OPFS impl composes over it. Dedupe with holospaces-web's OpfsKappaStore during the browser port |
+| substrate/hologram-store-opfs | **crates/hologram-store-opfs** | OPFS stores (excluded target-specific). Now houses **both** OPFS strategies: the sync `OpfsKappaStore` `KappaStore` backend (Worker; pack file — moved here from holospaces-browser 2026-07-15) always compiled, and the async file-per-κ persistence + GC JS API behind a default `js-api` feature. A space takes `default-features = false` for the backend only (no `wasm-bindgen`). Dedup with holospaces-web's OpfsKappaStore: DONE |
 | substrate/hologram-runtime | crates/hologram-runtime | orchestration core |
 | substrate/hologram-runtime-wasmtime | crates/hologram-runtime, feature `engine-wasmtime` | std-only feature |
 | substrate/hologram-runtime-bare | crates/hologram-runtime, feature `engine-wasmi` | no_std-capable feature |
