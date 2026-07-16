@@ -16,7 +16,9 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 use hologram_runtime::{MockEngine, Runtime};
-use hologram_space::{Bytes, KappaLabel71, Resolver, Space, StoreError};
+use hologram_space::{
+    Bytes, KappaLabel71, ManualClock, Resolver, SeededEntropy, Space, StoreError,
+};
 
 /// A minimal concrete [`Space`]: a mock-engine [`Runtime`] over an in-memory store, plus a
 /// resolver that never resolves (forcing the local-store fallback). It demonstrates the
@@ -26,14 +28,19 @@ use hologram_space::{Bytes, KappaLabel71, Resolver, Space, StoreError};
 pub struct SpikeSpace {
     runtime: Runtime<MockEngine, hologram_space::MemKappaStore>,
     resolver: NullResolver,
+    entropy: SeededEntropy,
+    clock: ManualClock,
 }
 
 impl SpikeSpace {
-    /// A fresh space with a mock-engine runtime over an empty in-memory store.
+    /// A fresh space with a mock-engine runtime over an empty in-memory store, and the
+    /// deterministic reference entropy/clock (hermetic V&V).
     pub fn new() -> Self {
         Self {
             runtime: Runtime::new(MockEngine, hologram_space::MemKappaStore::new()),
             resolver: NullResolver,
+            entropy: SeededEntropy::default(),
+            clock: ManualClock::default(),
         }
     }
 }
@@ -48,6 +55,8 @@ impl Space for SpikeSpace {
     type Store = hologram_space::MemKappaStore;
     type Resolver = NullResolver;
     type Runtime = Runtime<MockEngine, hologram_space::MemKappaStore>;
+    type Entropy = SeededEntropy;
+    type Clock = ManualClock;
 
     fn store(&self) -> &Self::Store {
         self.runtime.store()
@@ -57,6 +66,12 @@ impl Space for SpikeSpace {
     }
     fn runtime(&self) -> &Self::Runtime {
         &self.runtime
+    }
+    fn entropy(&self) -> &Self::Entropy {
+        &self.entropy
+    }
+    fn clock(&self) -> &Self::Clock {
+        &self.clock
     }
 }
 

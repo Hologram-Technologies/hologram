@@ -22,7 +22,10 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 pub mod hal;
-pub use hal::{BlockDevice, DeviceError, NetworkInterface, NicError, RamBlockDevice};
+pub use hal::{
+    BlockDevice, Clock, DeviceError, Entropy, ManualClock, NetworkInterface, NicError,
+    RamBlockDevice, SeededEntropy,
+};
 
 // The portable trait surfaces + κ-addressing, absorbed from the former
 // `hologram-substrate-core` crate (P1). Re-exported at the crate root so
@@ -86,6 +89,10 @@ pub trait Space {
     /// bare `Engine` associated type, because a `Runtime` owns its store — so an impl holds one
     /// `Runtime` and typically delegates [`store`](Space::store) to `runtime().store()`.
     type Runtime: ContainerRuntime;
+    /// The platform randomness seam (spec 02 §4 HAL) — key generation and nonces draw here.
+    type Entropy: Entropy;
+    /// The platform monotonic-clock seam (spec 02 §4 HAL) — timeouts / fuel budgets measure here.
+    type Clock: Clock;
 
     /// The space's local store.
     fn store(&self) -> &Self::Store;
@@ -93,4 +100,8 @@ pub trait Space {
     fn resolver(&self) -> &Self::Resolver;
     /// The space's container runtime.
     fn runtime(&self) -> &Self::Runtime;
+    /// The space's randomness source.
+    fn entropy(&self) -> &Self::Entropy;
+    /// The space's monotonic clock.
+    fn clock(&self) -> &Self::Clock;
 }

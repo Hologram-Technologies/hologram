@@ -191,8 +191,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     store; 02 §Space corrected). `hologram::Client::open(container_κ, caps_κ) → Session` drives
     boot/suspend/resume/terminate over `space.runtime()`. Tested end-to-end (open→boot→suspend via
     the MockEngine). Green: workspace test, bdd/SP-3, clippy, fmt, wasm32 no_std (spike + facade).
-  - [ ] **P3 remaining**: build out the fuller `Space` contract (`Sync`/`Surface`/`Entropy`/`Clock`/
-    `Spawner` — additive); the Client naming-review gate; first lockstep `uor-hologram` release
+  - [x] **HAL traits `Entropy` + `Clock` → the `Space` contract** (2026-07-15). `hologram-space`'s
+    `hal` gains `Entropy` (`fill(&mut [u8])`) + `Clock` (`now_millis`) — the platform randomness /
+    time seams (spec 02 §4; grounds the runtime's current direct `getrandom`) — each with a
+    deterministic reference impl for hermetic V&V (`SeededEntropy` SplitMix64 / `ManualClock`).
+    `Space` gains `type Entropy`/`type Clock` + accessors; both Space impls (SpikeSpace, TestSpace)
+    provide them. Green: workspace test, bdd (SP-3/LAW-3), clippy, fmt, wasm32 + thumbv7em no_std.
+  - [ ] **P3 remaining**: finish the `Space` contract — wire `type Sync` (`KappaSync` exists);
+    `type Spawner` (the async task-spawn seam — harder: no_std + maybe-Send); `type Surface`
+    (needs API design). Then the Client naming-review gate; first lockstep `uor-hologram` release
     (hard stop, D26).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 

@@ -126,6 +126,91 @@ impl BlockDevice for RamBlockDevice {
     }
 }
 
+/// A source of randomness — the platform's CSPRNG seam (spec 02 §4). A native space fills from
+/// the OS (`getrandom`); the browser space from `crypto.getRandomValues`; a bare-metal space
+/// from a hardware RNG. Above it, key generation and nonces draw bytes without knowing the source.
+pub trait Entropy: Send + Sync {
+    /// Fill `buf` with random bytes.
+    fn fill(&self, buf: &mut [u8]);
+}
+
+/// A monotonic millisecond clock — the platform's time seam (spec 02 §4). A native space reads
+/// the OS clock; the browser space `performance.now()`; a bare-metal space the TSC/PIT. Above it,
+/// timeouts and fuel budgets measure elapsed time without a platform clock.
+pub trait Clock: Send + Sync {
+    /// Milliseconds since an arbitrary but fixed epoch — non-decreasing (monotonic).
+    fn now_millis(&self) -> u64;
+}
+
+/// A deterministic reference [`Entropy`] for hermetic V&V: a seeded SplitMix64 PRNG — **not** a
+/// CSPRNG, but reproducible so tests are deterministic. A real space wires a secure source.
+pub struct SeededEntropy {
+    state: Mutex<u64>,
+}
+
+impl SeededEntropy {
+    /// A generator seeded with `seed`.
+    pub fn new(seed: u64) -> Self {
+        Self {
+            state: Mutex::new(seed),
+        }
+    }
+}
+
+impl Default for SeededEntropy {
+    fn default() -> Self {
+        Self::new(0x9E37_79B9_7F4A_7C15)
+    }
+}
+
+impl Entropy for SeededEntropy {
+    fn fill(&self, buf: &mut [u8]) {
+        let mut s = self.state.lock();
+        for chunk in buf.chunks_mut(8) {
+            // SplitMix64
+            *s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *s;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            let bytes = z.to_le_bytes();
+            chunk.copy_from_slice(&bytes[..chunk.len()]);
+        }
+    }
+}
+
+/// A manually-advanced reference [`Clock`] for hermetic V&V: `now_millis()` returns the current
+/// value; [`advance`](ManualClock::advance) moves it forward — deterministic time for tests.
+pub struct ManualClock {
+    millis: Mutex<u64>,
+}
+
+impl ManualClock {
+    /// A clock starting at `millis`.
+    pub fn new(millis: u64) -> Self {
+        Self {
+            millis: Mutex::new(millis),
+        }
+    }
+    /// Advance the clock by `delta` milliseconds.
+    pub fn advance(&self, delta: u64) {
+        let mut m = self.millis.lock();
+        *m = m.wrapping_add(delta);
+    }
+}
+
+impl Default for ManualClock {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl Clock for ManualClock {
+    fn now_millis(&self) -> u64 {
+        *self.millis.lock()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;

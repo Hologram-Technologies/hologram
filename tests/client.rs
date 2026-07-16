@@ -6,7 +6,9 @@
 use hologram::graph::node::Node;
 use hologram::graph::registry::{DTypeId, ShapeDescriptor};
 use hologram::graph::{Graph, GraphOp, InputSource, OpKind};
-use hologram::space::{Bytes, KappaLabel71, MemKappaStore, Resolver, Space, StoreError};
+use hologram::space::{
+    Bytes, KappaLabel71, ManualClock, MemKappaStore, Resolver, SeededEntropy, Space, StoreError,
+};
 use hologram::Client;
 use smallvec::SmallVec;
 
@@ -47,6 +49,8 @@ fn cast_graph() -> Graph {
 struct TestSpace {
     runtime: hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>,
     resolver: NullResolver,
+    entropy: SeededEntropy,
+    clock: ManualClock,
 }
 
 impl TestSpace {
@@ -57,6 +61,8 @@ impl TestSpace {
                 MemKappaStore::new(),
             ),
             resolver: NullResolver,
+            entropy: SeededEntropy::default(),
+            clock: ManualClock::default(),
         }
     }
 }
@@ -65,6 +71,8 @@ impl Space for TestSpace {
     type Store = MemKappaStore;
     type Resolver = NullResolver;
     type Runtime = hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>;
+    type Entropy = SeededEntropy;
+    type Clock = ManualClock;
 
     fn store(&self) -> &Self::Store {
         self.runtime.store()
@@ -74,6 +82,12 @@ impl Space for TestSpace {
     }
     fn runtime(&self) -> &Self::Runtime {
         &self.runtime
+    }
+    fn entropy(&self) -> &Self::Entropy {
+        &self.entropy
+    }
+    fn clock(&self) -> &Self::Clock {
+        &self.clock
     }
 }
 
