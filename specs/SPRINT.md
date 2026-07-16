@@ -201,7 +201,12 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `spaces/holospaces/tests/cc*.rs` (12 fast / 8 artifact / 25 heavy tiers), each witnessed by a
       cargo test fn — no Gherkin, no meta-gate change (CC ignored like AS/KC). Rows 🟡 (present, not
       yet CI-gated); MG-7 stays ⛔. Green: meta_gate bijection holds.
-    - [ ] **B** CC bijection audit (`cc.rs` + `cc_gate.rs`, artifact-free row↔witness binding).
+    - [x] **B — CC bijection audit** (2026-07-16). `hologram_conformance::cc` (`check_cc_bijection`
+      + `collect_cc_witnesses`) + a new `tests/cc_gate.rs` that binds every CC row to a present
+      `#[test]` fn in `spaces/holospaces/tests/cc*.rs` — text-only, **no artifacts, no cc compile**.
+      Broadened `catalog::extract_witness` to also capture `.rs::` witnesses (CC/AS/KC). All 45 rows
+      bind (validating Phase A's generation); a corrupted witness fails `cc_gate` with the exact
+      violation (teeth verified), restore → green. 18 lib tests, clippy -D, fmt clean.
     - [ ] **C** import `vv/` framework at repo root (CS block gated behind `CC_ONLY`).
     - [ ] **D** `scripts/vv-fetch.sh` artifact-materialization (fetch-pinned + reproduce + cache).
     - [ ] **E** heavy CI jobs (QEMU/e2fsprogs/Playwright, blocking) + cheap CC gate step.

@@ -4,6 +4,7 @@
 //! - static honesty meta-gate: `tests/meta_gate.rs`
 //! - catalog parser: [`catalog`]; feature parser: [`feature`]; gate: [`report`]
 pub mod catalog;
+pub mod cc;
 pub mod feature;
 pub mod report;
 
@@ -12,6 +13,11 @@ pub const SUITES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../feature
 
 /// Absolute path to the repo-root `CONFORMANCE.md`.
 pub const CONFORMANCE_MD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../CONFORMANCE.md");
+
+/// Absolute path to the ported holospaces space's `tests/` tree (the `cc*.rs` CC witnesses),
+/// resolved at compile time — the source the CC bijection audit walks (MG-7).
+pub const CC_TESTS_DIR: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../spaces/holospaces/tests");
 
 /// Per-scenario async context. The only async↔sync seam (law 4): step bodies that
 /// touch tensor compute stay synchronous inside this async World.

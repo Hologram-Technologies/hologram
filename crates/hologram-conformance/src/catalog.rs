@@ -40,7 +40,10 @@ pub struct CatalogRow {
 /// feature-scenario witness of that form.
 fn extract_witness(cell: &str) -> Option<String> {
     let token = cell.trim().trim_matches('`').trim();
-    if token.contains(".feature::") {
+    // A witness is a `file::item` path: a Gherkin scenario (`.feature::…`, the BDD classes) or a
+    // Rust test (`.rs::…`, the non-BDD classes like AS/KC/CC). Either form is a witness; the BDD
+    // meta-gate only consults it for BDD rows, the CC audit only for CC rows.
+    if token.contains(".feature::") || token.contains(".rs::") {
         Some(token.to_string())
     } else {
         None
