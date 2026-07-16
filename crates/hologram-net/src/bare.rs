@@ -241,7 +241,11 @@ impl BareNetSync {
     }
 }
 
-#[async_trait]
+// Maybe-Send follow-through (LAW-4): the [`KappaSync`] trait is `Send + Sync` on native/bare-arm
+// and `?Send` on `wasm32`. `#[async_trait]` and `#[async_trait(?Send)]` desugar to *different*
+// future types, so the impl attribute must track the trait per target (else E0053).
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl KappaSync for BareNetSync {
     async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
         // Local hit short-circuits without a network round-trip.

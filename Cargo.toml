@@ -233,7 +233,7 @@ uor-prism = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The `client` facade test builds a minimal Space (a mock-engine Runtime over a MemKappaStore
-# + a null Resolver) and drives compile → provision → run and open → boot → suspend.
+# + a null KappaSync seam) and drives compile → provision → run and open → boot → suspend.
 pollster = { workspace = true }
 async-trait = { workspace = true }
 smallvec = { workspace = true }

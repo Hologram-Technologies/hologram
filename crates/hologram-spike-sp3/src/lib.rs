@@ -17,17 +17,17 @@ use alloc::boxed::Box;
 
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_space::{
-    Bytes, KappaLabel71, ManualClock, Resolver, SeededEntropy, Space, StoreError,
+    Bytes, KappaLabel71, KappaSync, ManualClock, SeededEntropy, Space, SyncError,
 };
 
 /// A minimal concrete [`Space`]: a mock-engine [`Runtime`] over an in-memory store, plus a
-/// resolver that never resolves (forcing the local-store fallback). It demonstrates the
-/// *composition*, not the network — a real resolver arrives with `hologram-net`. The
+/// sync seam that never fetches (forcing the local-store fallback). It demonstrates the
+/// *composition*, not the network — a real sync seam arrives with `hologram-net`. The
 /// `Space::Store` is the runtime's own store, so `store()` and `runtime()` share one content
 /// store (no duplication).
 pub struct SpikeSpace {
     runtime: Runtime<MockEngine, hologram_space::MemKappaStore>,
-    resolver: NullResolver,
+    sync: NullSync,
     entropy: SeededEntropy,
     clock: ManualClock,
 }
@@ -38,7 +38,7 @@ impl SpikeSpace {
     pub fn new() -> Self {
         Self {
             runtime: Runtime::new(MockEngine, hologram_space::MemKappaStore::new()),
-            resolver: NullResolver,
+            sync: NullSync,
             entropy: SeededEntropy::default(),
             clock: ManualClock::default(),
         }
@@ -53,7 +53,7 @@ impl Default for SpikeSpace {
 
 impl Space for SpikeSpace {
     type Store = hologram_space::MemKappaStore;
-    type Resolver = NullResolver;
+    type Sync = NullSync;
     type Runtime = Runtime<MockEngine, hologram_space::MemKappaStore>;
     type Entropy = SeededEntropy;
     type Clock = ManualClock;
@@ -61,8 +61,8 @@ impl Space for SpikeSpace {
     fn store(&self) -> &Self::Store {
         self.runtime.store()
     }
-    fn resolver(&self) -> &Self::Resolver {
-        &self.resolver
+    fn sync(&self) -> &Self::Sync {
+        &self.sync
     }
     fn runtime(&self) -> &Self::Runtime {
         &self.runtime
@@ -75,22 +75,50 @@ impl Space for SpikeSpace {
     }
 }
 
-/// A [`Resolver`] that resolves nothing — the space proves composition via the local store, so
-/// the async seam simply returns `Ok(None)`.
-pub struct NullResolver;
+/// A [`KappaSync`] that fetches nothing — the space proves composition via the local store, so
+/// the async seam simply returns `Ok(None)` and the announce/discover/peering surface is inert.
+pub struct NullSync;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
-impl Resolver for NullResolver {
-    async fn resolve(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
+impl KappaSync for NullSync {
+    async fn fetch(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
         Ok(None)
+    }
+    async fn announce(&self, _kappa: &KappaLabel71) {}
+    async fn discover(
+        &self,
+        _prefix: Option<&[u8]>,
+        _limit: usize,
+    ) -> alloc::vec::Vec<KappaLabel71> {
+        alloc::vec::Vec::new()
+    }
+    async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
+        Ok(())
+    }
+    async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+        Ok(())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[async_trait::async_trait(?Send)]
-impl Resolver for NullResolver {
-    async fn resolve(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
+impl KappaSync for NullSync {
+    async fn fetch(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
         Ok(None)
+    }
+    async fn announce(&self, _kappa: &KappaLabel71) {}
+    async fn discover(
+        &self,
+        _prefix: Option<&[u8]>,
+        _limit: usize,
+    ) -> alloc::vec::Vec<KappaLabel71> {
+        alloc::vec::Vec::new()
+    }
+    async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
+        Ok(())
+    }
+    async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+        Ok(())
     }
 }

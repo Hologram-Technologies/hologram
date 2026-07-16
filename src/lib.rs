@@ -94,7 +94,7 @@ pub mod types {
 #[cfg(feature = "space")]
 pub mod space {
     //! Facade for the `hologram-space` crate — the space contract (`Space`, `KappaStore`,
-    //! `Resolver`, HAL, realizations) that a [`Client`](crate::Client) composes over.
+    //! `KappaSync`, HAL, realizations) that a [`Client`](crate::Client) composes over.
 
     pub use hologram_space::*;
 }

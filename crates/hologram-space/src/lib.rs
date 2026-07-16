@@ -10,16 +10,12 @@
 //! Storage is **synchronous** (wasm-safe: the browser reaches persistent storage via a
 //! synchronous OPFS handle inside a Worker). Only the network/boot seam is **async**, and
 //! its `Send` bound is **maybe-Send** — `Send` on native, `?Send` on `wasm32`/bare where
-//! futures are `!Send` — mirroring the substrate's `KappaSync` / `LocalKappaSync` split.
+//! futures are `!Send` — via the substrate's one cfg-gated [`KappaSync`] trait.
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// `alloc` is used by the HAL module (and by `async_trait`'s `Box`ed futures) in both std
-// and no_std builds.
+// `alloc` is used by the HAL module (and by `async_trait`'s `Box`ed futures in the `substrate`
+// submodule, which brings `Box` into its own scope) in both std and no_std builds.
 extern crate alloc;
-// `async_trait` desugars to `Pin<Box<dyn Future>>`; in `no_std` builds `Box` is not in
-// the prelude, so bring it in from `alloc` (in `std` builds it already is).
-#[cfg(not(feature = "std"))]
-use alloc::boxed::Box;
 
 pub mod hal;
 pub use hal::{
@@ -53,35 +49,18 @@ pub use engine::{ContainerEngine, ContainerIntents, HostContext};
 mod mem;
 pub use mem::MemKappaStore;
 
-/// The async network/boot seam. `Send + Sync` on native (multi-threaded executors want
-/// it); see the `wasm32` definition for the `?Send` variant.
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait::async_trait]
-pub trait Resolver: Send + Sync {
-    /// Resolve a κ from the network (or another peer); `Ok(None)` if unavailable.
-    async fn resolve(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError>;
-}
-
-/// The async network/boot seam. On `wasm32` futures are `!Send`, so the bound is dropped
-/// (`?Send`) — same trait, target-conditional bound (the maybe-Send policy, LAW-4).
-#[cfg(target_arch = "wasm32")]
-#[async_trait::async_trait(?Send)]
-pub trait Resolver {
-    /// Resolve a κ from the network (or another peer); `Ok(None)` if unavailable.
-    async fn resolve(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError>;
-}
-
 /// A **space**: a place hologram executes. Aggregates a platform's concrete parts behind
 /// associated types; everything downstream ([`crate`]'s consumers, `Client`) is generic
 /// over `Space` and monomorphized per platform.
 ///
-/// Minimal P0.5 surface: a synchronous [`KappaStore`] plus an async [`Resolver`]. P1 adds
-/// the engine, surface, HAL, entropy, clock, and spawner associated types (spec 02).
+/// Minimal P0.5 surface: a synchronous [`KappaStore`] plus an async [`KappaSync`] network/boot
+/// seam. P1 adds the engine, surface, HAL, entropy, clock, and spawner associated types (spec 02).
 pub trait Space {
     /// Local content store — **synchronous** (LAW-4).
     type Store: KappaStore;
-    /// Async network/boot seam — **maybe-Send** (LAW-4).
-    type Resolver: Resolver;
+    /// Async network/boot seam — the substrate's maybe-Send [`KappaSync`] (LAW-4); `Send + Sync`
+    /// on native, `?Send` on `wasm32`/bare (spec-02 `type Sync: KappaSync`).
+    type Sync: KappaSync;
     /// The container-lifecycle runtime — `spawn`/`suspend`/`resume`/`terminate` over the
     /// space's `ContainerEngine` + `KappaStore`. `Client::open` drives a `Session` over it.
     ///
@@ -96,8 +75,8 @@ pub trait Space {
 
     /// The space's local store.
     fn store(&self) -> &Self::Store;
-    /// The space's network/boot resolver.
-    fn resolver(&self) -> &Self::Resolver;
+    /// The space's network/boot sync seam (spec-02 `sync()`).
+    fn sync(&self) -> &Self::Sync;
     /// The space's container runtime.
     fn runtime(&self) -> &Self::Runtime;
     /// The space's randomness source.

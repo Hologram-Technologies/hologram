@@ -1,5 +1,5 @@
 //! `hologram::Client` (D4) end-to-end: the single programmatic surface drives
-//! compile → provision → run over a minimal space (MemKappaStore + a null resolver),
+//! compile → provision → run over a minimal space (MemKappaStore + a null sync seam),
 //! computing an i64→f32 cast. This is the SP-3 composition proof through the kept `Client`.
 #![cfg(feature = "client")]
 
@@ -7,7 +7,7 @@ use hologram::graph::node::Node;
 use hologram::graph::registry::{DTypeId, ShapeDescriptor};
 use hologram::graph::{Graph, GraphOp, InputSource, OpKind};
 use hologram::space::{
-    Bytes, KappaLabel71, ManualClock, MemKappaStore, Resolver, SeededEntropy, Space, StoreError,
+    Bytes, KappaLabel71, KappaSync, ManualClock, MemKappaStore, SeededEntropy, Space, SyncError,
 };
 use hologram::Client;
 use smallvec::SmallVec;
@@ -42,13 +42,13 @@ fn cast_graph() -> Graph {
     graph
 }
 
-/// A minimal space: a mock-engine `Runtime` over an in-memory store, plus a resolver that
-/// never resolves (forcing the local-store fallback) — enough to prove the Client
+/// A minimal space: a mock-engine `Runtime` over an in-memory store, plus a sync seam that
+/// never fetches (forcing the local-store fallback) — enough to prove the Client
 /// composition, not the network. `store()` delegates to the runtime's store, so `store()`
 /// and `runtime()` share one content store.
 struct TestSpace {
     runtime: hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>,
-    resolver: NullResolver,
+    sync: NullSync,
     entropy: SeededEntropy,
     clock: ManualClock,
 }
@@ -60,7 +60,7 @@ impl TestSpace {
                 hologram_runtime::MockEngine,
                 MemKappaStore::new(),
             ),
-            resolver: NullResolver,
+            sync: NullSync,
             entropy: SeededEntropy::default(),
             clock: ManualClock::default(),
         }
@@ -69,7 +69,7 @@ impl TestSpace {
 
 impl Space for TestSpace {
     type Store = MemKappaStore;
-    type Resolver = NullResolver;
+    type Sync = NullSync;
     type Runtime = hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>;
     type Entropy = SeededEntropy;
     type Clock = ManualClock;
@@ -77,8 +77,8 @@ impl Space for TestSpace {
     fn store(&self) -> &Self::Store {
         self.runtime.store()
     }
-    fn resolver(&self) -> &Self::Resolver {
-        &self.resolver
+    fn sync(&self) -> &Self::Sync {
+        &self.sync
     }
     fn runtime(&self) -> &Self::Runtime {
         &self.runtime
@@ -91,13 +91,23 @@ impl Space for TestSpace {
     }
 }
 
-struct NullResolver;
+struct NullSync;
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-impl Resolver for NullResolver {
-    async fn resolve(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
+impl KappaSync for NullSync {
+    async fn fetch(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
         Ok(None)
+    }
+    async fn announce(&self, _kappa: &KappaLabel71) {}
+    async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
+        Vec::new()
+    }
+    async fn add_peer(&self, _peer_addr: &str) -> Result<(), SyncError> {
+        Ok(())
+    }
+    async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+        Ok(())
     }
 }
 

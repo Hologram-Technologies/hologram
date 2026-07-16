@@ -1,8 +1,8 @@
 //! **`Client` (D4)** — the single programmatic surface (05-tooling.md §law-6).
 //!
 //! `Client<S: Space>` composes the compiler + exec hot path over any space's `KappaStore`
-//! and network `Resolver`. The CLI, C ABI, and SDKs all wrap this one type — behavior lives
-//! in exactly one place, so bindings cannot drift.
+//! and network `KappaSync` seam. The CLI, C ABI, and SDKs all wrap this one type — behavior
+//! lives in exactly one place, so bindings cannot drift.
 //!
 //! This is the kept realization of the P0.5 SP-3 spike (D28): **compile** (sync compute) →
 //! **provision** (sync storage, law 4) → **resolve / run** (the async network seam calling
@@ -18,8 +18,8 @@ use hologram_exec::{BufferArena, ExecError, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
 use hologram_runtime::Session;
 use hologram_space::{
-    verify_kappa, Bytes, GarbageCollect, KappaLabel71, KappaStore, Resolver, Space, StoreError,
-    REGISTRY,
+    verify_kappa, Bytes, GarbageCollect, KappaLabel71, KappaStore, KappaSync, Space, StoreError,
+    SyncError, REGISTRY,
 };
 use prism::vocabulary::WittLevel;
 
@@ -197,16 +197,21 @@ impl<S: Space> Client<S> {
         verify_kappa(bytes, kappa).unwrap_or(false)
     }
 
-    /// **Resolve** a κ: the space's network `Resolver` first (verify-on-receipt, Law L5),
+    /// **Resolve** a κ: the space's network [`KappaSync`] seam first (verify-on-receipt, Law L5),
     /// else the local store — the **async** network seam (law 4).
     ///
     /// # Errors
     ///
-    /// [`StoreError`] on a resolver or store failure.
-    pub async fn resolve(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, StoreError> {
-        match self.space.resolver().resolve(kappa).await? {
+    /// [`SyncError`] on a network-sync failure, or on a local-store failure (surfaced as
+    /// [`SyncError::BackendFailure`] so the async seam carries one unified error).
+    pub async fn resolve(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+        match self.space.sync().fetch(kappa).await? {
             Some(bytes) => Ok(Some(bytes)),
-            None => self.space.store().get(kappa),
+            None => self
+                .space
+                .store()
+                .get(kappa)
+                .map_err(|_| SyncError::BackendFailure("local-store get")),
         }
     }
 
@@ -269,8 +274,8 @@ impl core::fmt::Display for BuildError {
 /// Why [`Client::run`] failed.
 #[derive(Debug)]
 pub enum RunError {
-    /// Resolving the κ over the store / network failed.
-    Resolve(StoreError),
+    /// Resolving the κ over the network seam / local store failed.
+    Resolve(SyncError),
     /// The κ resolved to nothing locally or over the network.
     NotFound,
     /// Loading or executing the compiled workload failed.

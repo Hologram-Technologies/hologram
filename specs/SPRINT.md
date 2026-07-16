@@ -197,10 +197,19 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     deterministic reference impl for hermetic V&V (`SeededEntropy` SplitMix64 / `ManualClock`).
     `Space` gains `type Entropy`/`type Clock` + accessors; both Space impls (SpikeSpace, TestSpace)
     provide them. Green: workspace test, bdd (SP-3/LAW-3), clippy, fmt, wasm32 + thumbv7em no_std.
-  - [ ] **P3 remaining**: finish the `Space` contract — wire `type Sync` (`KappaSync` exists);
-    `type Spawner` (the async task-spawn seam — harder: no_std + maybe-Send); `type Surface`
-    (needs API design). Then the Client naming-review gate; first lockstep `uor-hologram` release
-    (hard stop, D26).
+  - [x] **`Space::Sync` — network seam unified** (2026-07-15). Reconciled the two overlapping
+    network traits into **one cfg-gated maybe-Send `KappaSync`** (fetch/announce/discover/add_peer/
+    add_gateway): retired the minimal `Resolver` and the `?Send`-twin `LocalKappaSync`. `Space` now
+    has `type Sync: KappaSync` + `sync()`; `Client::resolve`/`run` use `sync().fetch()` (error type
+    → `SyncError`). **Cascade**: making `KappaSync` `?Send` on wasm makes `Runtime` (holds an
+    `Arc<dyn KappaSync>`) `!Send`, breaking `ContainerRuntime: Send+Sync` — so `ContainerRuntime`
+    got the identical cfg-gated maybe-Send treatment + `LocalContainerRuntime` (dead twin, 0 impls)
+    retired. The whole async surface is now one maybe-Send trait per seam. Green: workspace test
+    (923), bdd (SP-3/LAW-3), clippy, fmt, deny, RZ, **wasm32 + thumbv7em no_std** (runtime, spike,
+    holospaces, facade `client`).
+  - [ ] **P3 remaining**: `type Spawner` (async task-spawn seam — no_std + maybe-Send, needs
+    design) + `type Surface` (needs API design) complete the fuller contract. Then the Client
+    naming-review gate; first lockstep `uor-hologram` release (hard stop, D26).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)

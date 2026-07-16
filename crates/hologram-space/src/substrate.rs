@@ -395,6 +395,15 @@ pub trait GarbageCollect {
 
 /// κ-label propagation between peers/gateways. Async (network is fundamentally async). Every
 /// fetched byte sequence MUST be re-derived ([`verify_kappa`]) before acceptance (SPINE-4).
+///
+/// **Maybe-Send (LAW-4).** One trait, one method set — the `Send` bound is target-conditional.
+/// On native (multi-core executors) it is `Send + Sync`. On `wasm32` / bare-metal single-core
+/// executors like embassy, futures are typically `!Send`, so the bound is dropped (`?Send`):
+/// implementors may hold non-`Send` state and produce non-`Send` futures. A `#[async_trait]`
+/// (Send-form) impl satisfies the `?Send` trait on those targets — it merely promises *more*
+/// than the trait requires, so std transports (`BareNetSync`, `HttpKappaSync`, `TcpKappaSync`)
+/// compile unchanged everywhere.
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 pub trait KappaSync: Send + Sync {
     /// Fetch a κ's canonical bytes from any peer/gateway. `Ok(None)` ⇒ nobody has it.
@@ -407,43 +416,20 @@ pub trait KappaSync: Send + Sync {
     async fn add_gateway(&self, url: &str) -> Result<(), SyncError>;
 }
 
-/// **Local (`?Send`) variant** of [`KappaSync`] for **single-core async executors** like embassy
-/// on bare-metal (arch §9 G-D1). Embassy's futures are typically `!Send`; the standard
-/// [`KappaSync`] trait's `Send + Sync` bound rules them out. `LocalKappaSync` drops both bounds
-/// — implementors may hold non-`Send` state and produce non-`Send` futures.
-///
-/// Std hosts use [`KappaSync`]; bare-metal embassy hosts use [`LocalKappaSync`]. A blanket impl
-/// (`impl<T: KappaSync> LocalKappaSync for T`) is intentionally *not* provided — keeping the two
-/// traits disjoint forces each call site to pick the executor model explicitly (no silent
-/// degradation of the multi-core Send guarantee on std hosts).
+/// The `?Send` variant of [`KappaSync`] on `wasm32` (and single-core `!Send` executors like
+/// embassy). Same method set; the `Send + Sync` bound is dropped so `!Send` implementors and
+/// futures are accepted (the maybe-Send policy, LAW-4).
+#[cfg(target_arch = "wasm32")]
 #[async_trait::async_trait(?Send)]
-pub trait LocalKappaSync {
+pub trait KappaSync {
+    /// Fetch a κ's canonical bytes from any peer/gateway. `Ok(None)` ⇒ nobody has it.
     async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError>;
+    /// Announce that we hold a κ (best-effort).
     async fn announce(&self, kappa: &KappaLabel71);
+    /// Discover κ-labels other peers hold (prefix-filtered, up to `limit`).
     async fn discover(&self, prefix: Option<&[u8]>, limit: usize) -> Vec<KappaLabel71>;
     async fn add_peer(&self, peer_addr: &str) -> Result<(), SyncError>;
     async fn add_gateway(&self, url: &str) -> Result<(), SyncError>;
-}
-
-/// `?Send` analog of [`get_with_fetch`] for embassy / single-core executors. Same SPINE-4
-/// re-derivation discipline (verify-on-receipt + cache under κ's σ-axis).
-pub async fn local_get_with_fetch(
-    store: &dyn KappaStore,
-    sync: &dyn LocalKappaSync,
-    kappa: &KappaLabel71,
-) -> Result<Option<Bytes>, AccessError> {
-    if let Some(bytes) = store.get(kappa).map_err(AccessError::StoreFailure)? {
-        return Ok(Some(bytes));
-    }
-    let fetched = sync.fetch(kappa).await.map_err(AccessError::SyncFailure)?;
-    if let Some(bytes) = &fetched {
-        if !verify_kappa(bytes, kappa).map_err(|_| AccessError::VerificationFailed)? {
-            return Err(AccessError::VerificationFailed);
-        }
-        let axis = kappa.sigma_axis().ok_or(AccessError::VerificationFailed)?;
-        store.put(axis, bytes).map_err(AccessError::StoreFailure)?;
-    }
-    Ok(fetched)
 }
 
 /// Eviction-tolerant read (spec §5.2): local store first, else fetch + **verify on receipt**
@@ -496,6 +482,12 @@ pub struct ContainerInfo {
 /// Loads container code by Container ID, mediates capabilities, manages lifecycle. Async
 /// (load/spawn/snapshot span time). **`caps` is a Capability Set κ-label**, not a struct — the
 /// authority must live in the graph to be auditable/revocable (SPINE-1, correcting spec §8.3 / B3).
+///
+/// **Maybe-Send** (LAW-4), the same cfg-gated posture as [`KappaSync`]: `Send + Sync` on native,
+/// `?Send` on `wasm32`/bare where a `Runtime` holds a `?Send` `KappaSync` and its futures are
+/// `!Send`. A single trait per target (not a disjoint `Local*` twin), so `Session`/`Peer`/`Manager`
+/// stay generic over one `R: ContainerRuntime` on every platform.
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 pub trait ContainerRuntime: Send + Sync {
     async fn spawn(
@@ -515,17 +507,16 @@ pub trait ContainerRuntime: Send + Sync {
     fn info(&self, handle: ContainerHandle) -> Option<ContainerInfo>;
 }
 
-/// **Local (`?Send`) variant** of [`ContainerRuntime`] for **embassy / single-core async**
-/// executors on bare-metal (arch §9 G-D1). Implementors may hold non-`Send` state and produce
-/// non-`Send` futures. Disjoint from [`ContainerRuntime`] by design — std hosts use the multi-
-/// core surface; bare-metal embassy hosts opt into the local one explicitly.
+/// `?Send` `wasm32`/bare variant — see the native definition above.
+#[cfg(target_arch = "wasm32")]
 #[async_trait::async_trait(?Send)]
-pub trait LocalContainerRuntime {
+pub trait ContainerRuntime {
     async fn spawn(
         &self,
         container_id: &KappaLabel71,
         capabilities: &KappaLabel71,
     ) -> Result<ContainerHandle, RuntimeError>;
+    /// Suspend to a snapshot κ-label.
     async fn suspend(&self, handle: ContainerHandle) -> Result<KappaLabel71, RuntimeError>;
     async fn resume(
         &self,
@@ -562,17 +553,20 @@ mod tests {
         assert_ne!(derive_label(b"op", &[a, b]), derive_label(b"op", &[b, a]));
     }
 
-    /// B4 / G-D1 — `LocalKappaSync` exists and accepts `!Send` implementors. The bound here is
-    /// structural: this test is "compiles" — if `LocalKappaSync` retained `Send + Sync` bounds it
-    /// would fail to compile against a `Rc`-bearing impl (Rc is `!Send`).
+    /// B4 / G-D1 — on `wasm32` the maybe-Send [`KappaSync`] is `?Send` and accepts `!Send`
+    /// implementors. The bound here is structural: this test is "compiles" — if the `wasm32`
+    /// [`KappaSync`] retained `Send + Sync` bounds it would fail to compile against a `Rc`-bearing
+    /// impl (`Rc` is `!Send`). It is `wasm32`-gated because that is the target the `?Send` bound
+    /// selects; on native the trait is `Send + Sync` and this `Rc` impl is intentionally rejected.
+    #[cfg(target_arch = "wasm32")]
     #[test]
-    fn local_kappa_sync_accepts_non_send_implementors() {
+    fn kappa_sync_accepts_non_send_implementors_on_wasm() {
         use alloc::rc::Rc;
         struct NotSend {
             _state: Rc<u32>,
         }
         #[async_trait::async_trait(?Send)]
-        impl LocalKappaSync for NotSend {
+        impl KappaSync for NotSend {
             async fn fetch(&self, _kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
                 Ok(None)
             }
@@ -923,7 +917,11 @@ impl FederatedKappaSync {
     }
 }
 
-#[async_trait::async_trait]
+// Maybe-Send follow-through: the impl awaits `Arc<dyn KappaSync>` methods, so its future is
+// `Send` only where the trait is `Send`. Gate the `?Send` desugaring to `wasm32`, matching the
+// [`KappaSync`] trait definition (native = Send futures, wasm32 = `?Send`).
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl KappaSync for FederatedKappaSync {
     async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
         if self.backends.is_empty() {

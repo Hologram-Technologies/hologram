@@ -761,7 +761,10 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
     }
 }
 
-#[async_trait::async_trait]
+// Maybe-Send: the `async_trait` attr must track the cfg-gated `ContainerRuntime` trait per
+// target (`?Send` on wasm32, where the held `Arc<dyn KappaSync>` is `!Send`).
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl<E: ContainerEngine + 'static, S: KappaStore + 'static> hologram_space::ContainerRuntime
     for Runtime<E, S>
 {
