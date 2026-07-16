@@ -1560,7 +1560,9 @@ dependencies = [
  "hologram-space",
  "hologram-spike-sp3",
  "hologram-tck",
+ "smallvec",
  "tokio",
+ "uor-hologram",
 ]
 
 [[package]]
@@ -1676,15 +1678,8 @@ name = "hologram-spike-sp3"
 version = "0.10.0"
 dependencies = [
  "async-trait",
- "hologram-backend",
- "hologram-compiler",
- "hologram-exec",
- "hologram-graph",
  "hologram-runtime",
  "hologram-space",
- "pollster",
- "smallvec",
- "uor-prism",
 ]
 
 [[package]]

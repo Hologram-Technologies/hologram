@@ -6,10 +6,46 @@
 use hologram_conformance::ConformanceWorld;
 
 use cucumber::{given, then, when, World};
+// The **real** facade `Client`, driven over `SpikeSpace` — an external-crate `Space` impl —
+// so LAW-3 (open contract) and SP-3 (composition) witness the shipping surface, not a spike.
+use hologram::Client;
 use hologram_space::{address_bytes, verify_kappa, Capabilities, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
-use hologram_spike_sp3::{Client, SpikeSpace};
+use hologram_spike_sp3::SpikeSpace;
 use hologram_tck::MemKappaStore;
+
+/// The smallest graph that computes: an i64→f32 cast of a rank-1 tensor — the SP-3 workload.
+fn cast_graph() -> hologram::graph::Graph {
+    use hologram::graph::node::Node;
+    use hologram::graph::registry::{DTypeId, ShapeDescriptor};
+    use hologram::graph::{Graph, GraphOp, InputSource, OpKind};
+    use smallvec::SmallVec;
+    const DTYPE_F32: u8 = 8;
+    const DTYPE_I64: u8 = 5;
+    let mut graph = Graph::new();
+    let sh = graph.shape_registry_mut().intern(ShapeDescriptor::rank1(4));
+    let inp = graph.add_node(Node {
+        op: GraphOp::Input,
+        inputs: SmallVec::new(),
+        output_dtype: DTypeId(DTYPE_I64),
+        output_shape: sh,
+    });
+    graph.add_input(inp);
+    let cast = graph.add_node(Node {
+        op: GraphOp::Op(OpKind::Cast),
+        inputs: SmallVec::from_iter([InputSource::Node(inp)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sh,
+    });
+    let out = graph.add_node(Node {
+        op: GraphOp::Output,
+        inputs: SmallVec::from_iter([InputSource::Node(cast)]),
+        output_dtype: DTypeId(DTYPE_F32),
+        output_shape: sh,
+    });
+    graph.add_output(out);
+    graph
+}
 
 #[given("the conformance harness is wired")]
 fn harness_wired(_w: &mut ConformanceWorld) {}
@@ -73,7 +109,7 @@ fn law3_impl(w: &mut ConformanceWorld) {
     // Downstream type (`SpikeSpace`, from another crate) accepted by the generic `Client`.
     let client = Client::new(SpikeSpace::new());
     // Reaching a contract-mediated operation proves the impl satisfies the trait bounds.
-    w.law3_accepted = !client.compile().is_empty();
+    w.law3_accepted = client.compile(cast_graph()).is_ok();
 }
 
 #[then("it compiles against the published crates and is accepted with no in-tree privilege")]
@@ -138,15 +174,25 @@ fn sp3_given(_w: &mut ConformanceWorld) {}
 #[when("it drives compile then store then boot")]
 async fn sp3_run(w: &mut ConformanceWorld) {
     let client = Client::new(SpikeSpace::new());
-    let holo = client.compile();
-    let kappa = client.store_holo(&holo).expect("store the compiled .holo");
+    let holo = client.compile(cast_graph()).expect("compile the workload");
+    let kappa = client
+        .provision(&holo)
+        .expect("provision the compiled .holo");
     let vals: [i64; 4] = [0, 42, -7, 1024];
     let mut input = Vec::new();
     for &v in &vals {
         input.extend_from_slice(&v.to_le_bytes());
     }
-    // `boot` is async (the network/boot seam) and internally runs the sync compute.
-    w.sp3_output = Some(client.boot(&kappa, &input).await);
+    // `run` is async (resolve, the network/boot seam) and internally runs the sync compute.
+    let outputs = client
+        .run(&kappa, &[input.as_slice()])
+        .await
+        .expect("run the workload");
+    let cast: Vec<f32> = outputs[0]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    w.sp3_output = Some(cast);
 }
 
 #[then("the workload runs end to end through the async-to-sync boundary")]

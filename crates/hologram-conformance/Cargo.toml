@@ -16,9 +16,13 @@ tokio = { workspace = true }
 # GV-1 (R1 traceability) is witnessed against the existing substrate realizations:
 # a ContainerManifest embeds its operand κs and references() recovers exactly them.
 hologram-space = { path = "../hologram-space", default-features = false }
-# SP-3 (space composition) is witnessed against the P0.5 spike slice: a Client over the
-# Space contract drives compile→store→boot through the async↔sync boundary.
+# SP-3 / LAW-3 are witnessed by driving the **real** `hologram::Client` over `SpikeSpace` — an
+# external-crate `Space` impl (D21/D28): the spike crate now provides only that reference space,
+# and the Client comes from the facade. Client accepting an outside space with no in-tree
+# privilege is the LAW-3 witness; compile→provision→run through it is the SP-3 witness.
+hologram = { package = "uor-hologram", path = "../..", features = ["client"] }
 hologram-spike-sp3 = { path = "../hologram-spike-sp3" }
+smallvec = { workspace = true }
 # SP-1 (passing the TCK is conformance) runs the shared conformance battery against the
 # reference store — the same battery every backend runs (substrate-tripling discipline).
 hologram-tck = { path = "../hologram-tck" }
