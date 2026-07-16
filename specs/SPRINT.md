@@ -207,9 +207,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     retired. The whole async surface is now one maybe-Send trait per seam. Green: workspace test
     (923), bdd (SP-3/LAW-3), clippy, fmt, deny, RZ, **wasm32 + thumbv7em no_std** (runtime, spike,
     holospaces, facade `client`).
-  - [ ] **P3 remaining**: `type Spawner` (async task-spawn seam — no_std + maybe-Send, needs
-    design) + `type Surface` (needs API design) complete the fuller contract. Then the Client
-    naming-review gate; first lockstep `uor-hologram` release (hard stop, D26).
+  - [x] **`Space::Spawner` — background-task spawn seam** (2026-07-15). `hologram-space` `hal`
+    gains `Spawner` — one cfg-gated maybe-Send trait `fn spawn(Pin<Box<dyn Future<Output=()>
+    [+ Send] + 'static>>)` (Send native / ?Send wasm, same posture as KappaSync) — the seam where
+    the net pump's `tokio::spawn`/`spawn_local` background work runs. Reference impl `NoopSpawner`
+    (drops the future; for spaces with no background tasks + hermetic tests). `Space` gains
+    `type Spawner` + `spawner()`; both impls provide `NoopSpawner`. **The Space contract now has
+    6/7 spec-02 parts** (Store/Sync/Runtime/Entropy/Clock/Spawner). Green: workspace test, bdd,
+    clippy, fmt, wasm32 + thumbv7em no_std.
+  - [ ] **P3 remaining**: `type Surface` (the UI-projection seam — no trait to hoist, needs
+    genuine API design; the last spec-02 Space part). Then the Client naming-review gate; first
+    lockstep `uor-hologram` release (hard stop, D26).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)

@@ -10,9 +10,12 @@
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::future::Future;
+use core::pin::Pin;
 use core::task::Waker;
 use spin::Mutex;
 // `async_trait` emits an unqualified `Box`; not in the `no_std` prelude (std provides it).
+// Also used unconditionally by `Spawner`'s boxed-future parameter.
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
 
@@ -209,6 +212,38 @@ impl Clock for ManualClock {
     fn now_millis(&self) -> u64 {
         *self.millis.lock()
     }
+}
+
+/// A background-task spawn seam (spec 02 §4 HAL) — where the net pump's accept loop and other
+/// fire-and-forget work run. A native space wires `tokio::spawn`; the browser space
+/// `wasm_bindgen_futures::spawn_local`; a bare-metal space its executor. **Maybe-Send** (LAW-4),
+/// the same cfg-gated posture as [`KappaSync`]: the spawned future is `Send` on native
+/// (multi-threaded executors) and `?Send` on `wasm32`/bare.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait Spawner: Send + Sync {
+    /// Spawn a `'static` future to run in the background (fire-and-forget).
+    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send + 'static>>);
+}
+
+/// `?Send` `wasm32`/bare variant — see the native definition above.
+#[cfg(target_arch = "wasm32")]
+pub trait Spawner {
+    /// Spawn a `'static` future to run in the background (fire-and-forget).
+    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + 'static>>);
+}
+
+/// The null [`Spawner`] — **drops** the future without running it. For spaces with no background
+/// tasks and hermetic tests that don't depend on spawned work; a real space wires a live executor.
+pub struct NoopSpawner;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Spawner for NoopSpawner {
+    fn spawn(&self, _future: Pin<Box<dyn Future<Output = ()> + Send + 'static>>) {}
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Spawner for NoopSpawner {
+    fn spawn(&self, _future: Pin<Box<dyn Future<Output = ()> + 'static>>) {}
 }
 
 #[cfg(test)]

@@ -7,7 +7,8 @@ use hologram::graph::node::Node;
 use hologram::graph::registry::{DTypeId, ShapeDescriptor};
 use hologram::graph::{Graph, GraphOp, InputSource, OpKind};
 use hologram::space::{
-    Bytes, KappaLabel71, KappaSync, ManualClock, MemKappaStore, SeededEntropy, Space, SyncError,
+    Bytes, KappaLabel71, KappaSync, ManualClock, MemKappaStore, NoopSpawner, SeededEntropy, Space,
+    SyncError,
 };
 use hologram::Client;
 use smallvec::SmallVec;
@@ -51,6 +52,7 @@ struct TestSpace {
     sync: NullSync,
     entropy: SeededEntropy,
     clock: ManualClock,
+    spawner: NoopSpawner,
 }
 
 impl TestSpace {
@@ -63,6 +65,7 @@ impl TestSpace {
             sync: NullSync,
             entropy: SeededEntropy::default(),
             clock: ManualClock::default(),
+            spawner: NoopSpawner,
         }
     }
 }
@@ -73,6 +76,7 @@ impl Space for TestSpace {
     type Runtime = hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>;
     type Entropy = SeededEntropy;
     type Clock = ManualClock;
+    type Spawner = NoopSpawner;
 
     fn store(&self) -> &Self::Store {
         self.runtime.store()
@@ -88,6 +92,9 @@ impl Space for TestSpace {
     }
     fn clock(&self) -> &Self::Clock {
         &self.clock
+    }
+    fn spawner(&self) -> &Self::Spawner {
+        &self.spawner
     }
 }
 

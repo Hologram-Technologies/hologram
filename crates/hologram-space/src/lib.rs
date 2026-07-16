@@ -1,10 +1,10 @@
 //! The hologram **space contract** (`specs/refactor/02-space-contract.md`): the trait
 //! surface a host implements to become a place hologram executes.
 //!
-//! This is the minimal **P0.5** slice of the contract — enough to prove the composition
-//! bet (SP-3 / D28): a *synchronous* store plus an *async* network/boot seam under one
-//! [`Space`], driving the synchronous compute hot path. It grows in P1 to the full
-//! surface (engine, surface, HAL, entropy, clock, spawner — see spec 02).
+//! The [`Space`] aggregate names a platform's concrete parts behind associated types: a
+//! synchronous [`KappaStore`], the maybe-Send [`KappaSync`] network seam, the composed
+//! [`ContainerRuntime`], and the HAL seams [`Entropy`] / [`Clock`] / [`Spawner`]. Only the
+//! `Surface` (UI projection) part of spec 02 is still to be designed.
 //!
 //! ## Async posture (LAW-4, corrected by the P0.5 spike)
 //! Storage is **synchronous** (wasm-safe: the browser reaches persistent storage via a
@@ -19,8 +19,8 @@ extern crate alloc;
 
 pub mod hal;
 pub use hal::{
-    BlockDevice, Clock, DeviceError, Entropy, ManualClock, NetworkInterface, NicError,
-    RamBlockDevice, SeededEntropy,
+    BlockDevice, Clock, DeviceError, Entropy, ManualClock, NetworkInterface, NicError, NoopSpawner,
+    RamBlockDevice, SeededEntropy, Spawner,
 };
 
 // The portable trait surfaces + κ-addressing, absorbed from the former
@@ -53,8 +53,9 @@ pub use mem::MemKappaStore;
 /// associated types; everything downstream ([`crate`]'s consumers, `Client`) is generic
 /// over `Space` and monomorphized per platform.
 ///
-/// Minimal P0.5 surface: a synchronous [`KappaStore`] plus an async [`KappaSync`] network/boot
-/// seam. P1 adds the engine, surface, HAL, entropy, clock, and spawner associated types (spec 02).
+/// Parts: a synchronous [`KappaStore`], the maybe-Send [`KappaSync`] network seam, the composed
+/// [`ContainerRuntime`], and the [`Entropy`] / [`Clock`] / [`Spawner`] HAL seams (spec 02 §4).
+/// The `Surface` (UI projection) part is still to be designed.
 pub trait Space {
     /// Local content store — **synchronous** (LAW-4).
     type Store: KappaStore;
@@ -72,6 +73,8 @@ pub trait Space {
     type Entropy: Entropy;
     /// The platform monotonic-clock seam (spec 02 §4 HAL) — timeouts / fuel budgets measure here.
     type Clock: Clock;
+    /// The platform background-task spawn seam (spec 02 §4 HAL) — the net pump / async work run here.
+    type Spawner: Spawner;
 
     /// The space's local store.
     fn store(&self) -> &Self::Store;
@@ -83,4 +86,6 @@ pub trait Space {
     fn entropy(&self) -> &Self::Entropy;
     /// The space's monotonic clock.
     fn clock(&self) -> &Self::Clock;
+    /// The space's background-task spawner.
+    fn spawner(&self) -> &Self::Spawner;
 }
