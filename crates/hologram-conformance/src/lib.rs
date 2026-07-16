@@ -55,4 +55,7 @@ pub struct ConformanceWorld {
     /// SP-5: `(project_is_empty_kappa, intent_refused_headless)` from driving `NullSurface` —
     /// projection must yield the empty-projection κ and intent must be refused with `Headless`.
     pub sp5_surface: Option<(bool, bool)>,
+    /// MG-7: `true` once the CC bijection audit binds every `CC` catalog row to a present witness
+    /// test in the ported holospaces space — the honesty check that the V&V is really absorbed.
+    pub mg7_cc_bound: Option<bool>,
 }

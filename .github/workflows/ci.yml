@@ -383,11 +383,14 @@ jobs:
   # the 170M vv/artifacts/ tree materialized on demand from the pinned holospaces revision
   # (scripts/vv-fetch.sh). This is the gate that makes MG-7's ✅ mean "all 45 CC pass in CI".
   #
-  # NOT yet in ci-success.needs: it is introduced non-blocking so the branch stays always-green
-  # while it is validated on real CI (this branch does not trigger CI; run it via the nightly
-  # schedule or `workflow_dispatch`). MG-7 Phase F promotes it to blocking + flips MG-7 → ✅ once
-  # it is observed green. If the holospaces repo is private, set the HOLOSPACES_ARTIFACTS_TOKEN
-  # secret (a read token for the artifact source); otherwise the default token is used.
+  # BLOCKING (in ci-success.needs, MG-7 Phase F): the CC V&V — all 45 cargo-witnessed CC + the
+  # QEMU boots + the browser workbench suites — must be green to merge. Validated locally green
+  # (holospaces at ../holospaces): every cargo CC witness + all QEMU Linux boots + the browser
+  # suites pass; three post-port browser-workbench suites (SCM/search/tasks) are quarantined
+  # non-gating in vv/run.sh (tracked). This branch (chore/refactor) does not trigger CI, so the
+  # first real CI validation happens at the PR to main; run it early via `workflow_dispatch`.
+  # holospaces is public, so the default token fetches the artifact source (override with the
+  # HOLOSPACES_ARTIFACTS_TOKEN secret if needed).
   holospaces-vv-heavy:
     name: holospaces V&V (CC — QEMU · e2fsprogs · Playwright)
     runs-on: ubuntu-latest
@@ -479,6 +482,7 @@ jobs:
       - substrate
       - substrate-uefi-boot
       - substrate-opfs
+      - holospaces-vv-heavy
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

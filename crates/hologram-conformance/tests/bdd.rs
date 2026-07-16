@@ -404,6 +404,38 @@ fn sp5_assert(w: &mut ConformanceWorld) {
     );
 }
 
+// ───────────────── MG-7 — holospaces CC V&V absorbed into the unified ledger ─────────────────
+// The holospaces component-conformance catalog is absorbed as hologram's non-BDD `CC` class,
+// each row witnessed by a cargo test in the ported space. This scenario runs the artifact-free
+// CC bijection audit (the same `cc::check_cc_bijection` the standalone `cc_gate` test runs) over
+// the real ledger + witness tree: it proves the absorption is honest — no CC row claims a
+// component conforms without a present, named witness test. The actual CC passes (fast/artifact
+// via `cargo test`, QEMU boots + browser via the `holospaces-vv-heavy` CI job) are gated
+// separately; this witnesses the *catalog integrity* that makes those gates meaningful.
+
+#[given("the holospaces CC catalog in the unified conformance ledger")]
+fn mg7_given(_w: &mut ConformanceWorld) {}
+
+#[when("the CC bijection audit binds every row to its witness test")]
+fn mg7_audit(w: &mut ConformanceWorld) {
+    use hologram_conformance::{catalog, cc, CC_TESTS_DIR, CONFORMANCE_MD};
+    let md = std::fs::read_to_string(CONFORMANCE_MD).expect("read CONFORMANCE.md");
+    let rows = catalog::parse_catalog(&md);
+    let witnesses = cc::collect_cc_witnesses(std::path::Path::new(CC_TESTS_DIR))
+        .expect("walk the holospaces cc tests");
+    w.mg7_cc_bound = Some(cc::check_cc_bijection(&rows, &witnesses).is_ok());
+}
+
+#[then("every CC row binds to a present, named witness — none by self-reference")]
+fn mg7_assert(w: &mut ConformanceWorld) {
+    assert!(
+        w.mg7_cc_bound
+            .expect("the When step must have run the CC bijection audit"),
+        "every CC catalog row must bind to a present, named witness test — the holospaces V&V is \
+         absorbed honestly (MG-7)"
+    );
+}
+
 #[tokio::main]
 async fn main() {
     ConformanceWorld::cucumber()
