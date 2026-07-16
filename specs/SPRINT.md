@@ -178,8 +178,16 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     OPFS is one crate. Green: store-opfs wasm32 build **both** feature configs, holospaces-browser
     standalone wasm32 build, fmt. (wasm32 *clippy* is unavailable in this env — clippy-driver can't
     resolve the wasm32 std sysroot; build is the gate for wasm-only crates.)
-  - [ ] **P2 tail** (remaining): `vv/` fixtures decision for full holospaces V&V; absorb holospaces'
-    V&V (CC catalog → MG-7).
+  - [~] **P2 tail — MG-7 shaped (pending)** (2026-07-15). Investigated holospaces' V&V: it has its
+    own mature framework — 45 `cc*.rs` component-conformance tests (the **CC catalog**) + CS-* spec
+    conformance, witnessed against external authorities (hash KATs, native-executor oracle, substrate
+    TCK, QEMU, Playwright), plus a **170M `vv/`** tree (almost entirely `vv/artifacts` external
+    oracles/images; the framework itself is ~250K). Per the method, **shaped `MG-7` as a `@status:pending`
+    scenario + CONFORMANCE.md row** cataloguing the absorption acceptance criteria (CC/CS run under
+    the one meta-gate, external-authority-witnessed, `vv/` artifacts content-addressed on import).
+    bdd 32 scenarios / 9 enforced; meta-gate bijective + green. **Enforcement is a multi-session
+    effort gated on a human infra decision** — the 170M `vv/` tree (git bloat vs git-lfs vs submodule
+    vs external skip-when-absent). `vv/` fixtures decision → still open (surfaced to the user).
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

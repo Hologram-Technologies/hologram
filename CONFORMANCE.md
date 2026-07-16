@@ -421,6 +421,7 @@ addressing and warm-start do.
 | **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ⛔ |
 | **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario (frozen σ-axis + realization κs re-derived vs `hologram-substrate-core`/`-realizations`) | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ✅ |
 | **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ⛔ |
+| **MG-7** | holospaces' V&V is absorbed into hologram's unified conformance ledger (spec 06): its component-conformance (CC) catalog + spec-conformance (CS) suites run under the one meta-gate, each witnessed against its external authority (hash KATs, the native-executor oracle, the substrate TCK, QEMU, Playwright) and never by self-reference; the `vv/` artifacts are content-addressed and verified on import. | BDD scenario | `s5_migration/vv_absorption.feature::the holospaces CC catalog is absorbed into the unified conformance ledger` | ⛔ |
 
 ## GV — governance requirements (refactor spec 07; BDD)
 
