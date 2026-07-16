@@ -207,7 +207,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       Broadened `catalog::extract_witness` to also capture `.rs::` witnesses (CC/AS/KC). All 45 rows
       bind (validating Phase A's generation); a corrupted witness fails `cc_gate` with the exact
       violation (teeth verified), restore → green. 18 lib tests, clippy -D, fmt clean.
-    - [ ] **C** import `vv/` framework at repo root (CS block gated behind `CC_ONLY`).
+    - [x] **C — import `vv/` framework at repo root** (2026-07-16). Copied holospaces'
+      `vv/{run.sh,README,PROVENANCE.md,lib,heavy,suites,targets}` (52 suites) → `hologram/vv/`;
+      **`vv/artifacts/` NOT imported** (gitignore guard confirmed active). Gated `run.sh`'s CS-\*
+      block behind `CC_ONLY` (default `1` in-tree — docs V&V absorbed in Phase G). Suite `-p
+      holospaces --test ccN` resolves unchanged (workspace member). Verified: run.sh syntax ok;
+      cc1 (fast) → 5 passed exit 0; cc7 (artifact absent) → skip-guards fire, exit 0. Full-green run
+      (browser/QEMU + portability) is the Phase-E CI tier.
     - [ ] **D** `scripts/vv-fetch.sh` artifact-materialization (fetch-pinned + reproduce + cache).
     - [ ] **E** heavy CI jobs (QEMU/e2fsprogs/Playwright, blocking) + cheap CC gate step.
     - [ ] **F** flip MG-7 ✅ + CC rows ✅ (feature enforced + bdd steps call the audit, atomic).
