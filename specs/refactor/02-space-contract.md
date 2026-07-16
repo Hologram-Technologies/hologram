@@ -52,6 +52,31 @@ types split by posture — `Store` is a **sync** trait (§Async posture), `Sync`
 are async; (c) individual contract traits (`KappaStore`, …) remain independently usable
 and dyn-capable where object safety allows — `Space` is composition, not a cage.
 
+**Implemented shape (2026-07-15) — `Runtime`, not a bare `Engine`.** The trait above lists a
+`type Engine: ContainerEngine` with the `ContainerRuntime` "composed above." Implementation
+experience corrected this: a `Runtime<E, S>` **owns its store**, so composing it from a separate
+`Engine` + `Store` would force Arc-sharing the store and the `Client` owning the composed runtime
+(the lifecycle `Session` borrows the runtime). The clean shape the code prefers is for the space
+to expose the **composed runtime** directly:
+
+```rust
+trait Space {
+    type Store: KappaStore;      // sync (LAW-4)
+    type Resolver: Resolver;     // async, maybe-Send — the resolve/boot seam
+    type Runtime: ContainerRuntime; // the composed engine+store; Client::open drives a Session over it
+    fn store(&self) -> &Self::Store;      // an impl typically delegates this to runtime().store()
+    fn resolver(&self) -> &Self::Resolver;
+    fn runtime(&self) -> &Self::Runtime;
+}
+```
+
+The engine is named *inside* the `Runtime` (`Runtime<Engine, Store>`), so `type Engine` is an
+implementation detail rather than a top-level associated type; `store()` delegates to
+`runtime().store()` so there is one content store. `Sync`/`Surface`/`Entropy`/`Clock`/`Spawner`
+remain the fuller contract to build out (each a space part a platform names); they are additive
+and do not change this core. `Client::open(container_κ, caps_κ) -> Session` is wired over
+`space.runtime()` (05-tooling.md).
+
 ## Contract contents
 
 `hologram-space` unifies today's `substrate/hologram-substrate-core`,

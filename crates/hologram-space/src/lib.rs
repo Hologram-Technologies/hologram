@@ -79,9 +79,18 @@ pub trait Space {
     type Store: KappaStore;
     /// Async network/boot seam — **maybe-Send** (LAW-4).
     type Resolver: Resolver;
+    /// The container-lifecycle runtime — `spawn`/`suspend`/`resume`/`terminate` over the
+    /// space's `ContainerEngine` + `KappaStore`. `Client::open` drives a `Session` over it.
+    ///
+    /// Pragmatic shape (spec 02): the space exposes the **composed** runtime rather than a
+    /// bare `Engine` associated type, because a `Runtime` owns its store — so an impl holds one
+    /// `Runtime` and typically delegates [`store`](Space::store) to `runtime().store()`.
+    type Runtime: ContainerRuntime;
 
     /// The space's local store.
     fn store(&self) -> &Self::Store;
     /// The space's network/boot resolver.
     fn resolver(&self) -> &Self::Resolver;
+    /// The space's container runtime.
+    fn runtime(&self) -> &Self::Runtime;
 }

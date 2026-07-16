@@ -13,6 +13,9 @@ hologram-compiler       = { workspace = true }
 hologram-exec           = { workspace = true }
 hologram-backend        = { workspace = true, features = ["cpu"] }
 hologram-graph          = { workspace = true }
+# The container runtime (`Runtime<MockEngine, MemKappaStore>`) the SpikeSpace exposes as its
+# `Space::Runtime`, so the Client can drive an open→boot→suspend Session over it.
+hologram-runtime        = { workspace = true }
 uor-prism               = { workspace = true }
 smallvec                = { workspace = true }
 async-trait             = { workspace = true }
@@ -24,6 +27,7 @@ std = [
     "hologram-compiler/std",
     "hologram-exec/std",
     "hologram-backend/std",
+    "hologram-runtime/std",
 ]
 
 [dev-dependencies]

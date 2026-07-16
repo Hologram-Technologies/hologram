@@ -108,19 +108,24 @@ impl<S: Space> Client<S> {
     }
 }
 
-/// A trivial concrete [`Space`] for the spike: an in-memory store plus a resolver that
-/// never resolves (forcing the local-store fallback). It demonstrates the *composition*,
-/// not the network — a real network resolver arrives with `hologram-net` in a later phase.
+/// A trivial concrete [`Space`] for the spike: a mock-engine [`Runtime`] over an in-memory
+/// store, plus a resolver that never resolves (forcing the local-store fallback). It
+/// demonstrates the *composition*, not the network — a real resolver arrives with
+/// `hologram-net` in a later phase. The `Space::Store` is the runtime's own store, so
+/// `store()` and `runtime()` share one content store (no duplication).
 pub struct SpikeSpace {
-    store: hologram_space::MemKappaStore,
+    runtime: hologram_runtime::Runtime<hologram_runtime::MockEngine, hologram_space::MemKappaStore>,
     resolver: NullResolver,
 }
 
 impl SpikeSpace {
-    /// A fresh spike space with an empty in-memory store.
+    /// A fresh spike space with a mock-engine runtime over an empty in-memory store.
     pub fn new() -> Self {
         Self {
-            store: hologram_space::MemKappaStore::new(),
+            runtime: hologram_runtime::Runtime::new(
+                hologram_runtime::MockEngine,
+                hologram_space::MemKappaStore::new(),
+            ),
             resolver: NullResolver,
         }
     }
@@ -135,12 +140,17 @@ impl Default for SpikeSpace {
 impl Space for SpikeSpace {
     type Store = hologram_space::MemKappaStore;
     type Resolver = NullResolver;
+    type Runtime =
+        hologram_runtime::Runtime<hologram_runtime::MockEngine, hologram_space::MemKappaStore>;
 
     fn store(&self) -> &Self::Store {
-        &self.store
+        self.runtime.store()
     }
     fn resolver(&self) -> &Self::Resolver {
         &self.resolver
+    }
+    fn runtime(&self) -> &Self::Runtime {
+        &self.runtime
     }
 }
 

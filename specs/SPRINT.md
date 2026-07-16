@@ -183,8 +183,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     + builds no_std for wasm32. Deferred to the P3 naming-review gate: `open → Session` (needs the
     Space contract to expose a `ContainerRuntime`) + the fuller net/app/manager/network surface.
     05-tooling updated.
-  - [ ] **P3 remaining**: expose `ContainerRuntime` on the `Space` contract → Client `open → Session`;
-    the naming-review gate; first lockstep `uor-hologram` release (hard stop, D26).
+  - [x] **Space contract expanded → `Client::open → Session`** (2026-07-15). Two steps:
+    (1) `ContainerEngine` (+ `HostContext`/`ContainerIntents`) moved into the contract crate
+    `hologram-space` (commit `42630d6`); (2) the `Space` trait gained `type Runtime: ContainerRuntime`
+    + `runtime()` — the **pragmatic shape** (Space exposes the *composed* runtime, `store()` delegates
+    to `runtime().store()`; chosen over spec-02's literal `type Engine` because a `Runtime` owns its
+    store; 02 §Space corrected). `hologram::Client::open(container_κ, caps_κ) → Session` drives
+    boot/suspend/resume/terminate over `space.runtime()`. Tested end-to-end (open→boot→suspend via
+    the MockEngine). Green: workspace test, bdd/SP-3, clippy, fmt, wasm32 no_std (spike + facade).
+  - [ ] **P3 remaining**: build out the fuller `Space` contract (`Sync`/`Surface`/`Entropy`/`Clock`/
+    `Spawner` — additive); the Client naming-review gate; first lockstep `uor-hologram` release
+    (hard stop, D26).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)

@@ -40,22 +40,40 @@ fn cast_graph() -> Graph {
     graph
 }
 
-/// A minimal space: an in-memory store plus a resolver that never resolves (forcing the
-/// local-store fallback) — enough to prove the Client composition, not the network.
+/// A minimal space: a mock-engine `Runtime` over an in-memory store, plus a resolver that
+/// never resolves (forcing the local-store fallback) — enough to prove the Client
+/// composition, not the network. `store()` delegates to the runtime's store, so `store()`
+/// and `runtime()` share one content store.
 struct TestSpace {
-    store: MemKappaStore,
+    runtime: hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>,
     resolver: NullResolver,
+}
+
+impl TestSpace {
+    fn new() -> Self {
+        Self {
+            runtime: hologram_runtime::Runtime::new(
+                hologram_runtime::MockEngine,
+                MemKappaStore::new(),
+            ),
+            resolver: NullResolver,
+        }
+    }
 }
 
 impl Space for TestSpace {
     type Store = MemKappaStore;
     type Resolver = NullResolver;
+    type Runtime = hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>;
 
     fn store(&self) -> &Self::Store {
-        &self.store
+        self.runtime.store()
     }
     fn resolver(&self) -> &Self::Resolver {
         &self.resolver
+    }
+    fn runtime(&self) -> &Self::Runtime {
+        &self.runtime
     }
 }
 
@@ -71,12 +89,8 @@ impl Resolver for NullResolver {
 
 #[test]
 fn client_compiles_provisions_and_runs_a_cast() {
-    let space = TestSpace {
-        store: MemKappaStore::new(),
-        resolver: NullResolver,
-    };
     let client = Client::builder()
-        .space(space)
+        .space(TestSpace::new())
         .build()
         .expect("build client");
 
@@ -101,4 +115,58 @@ fn client_compiles_provisions_and_runs_a_cast() {
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     assert_eq!(got, vec![0.0, 42.0, -7.0, 1024.0]);
+}
+
+#[test]
+fn client_opens_boots_and_suspends_a_session() {
+    use hologram::space::{
+        Capabilities, CapabilitySet, ContainerManifest, KappaStore, Realization,
+    };
+    use hologram_runtime::Phase;
+
+    let client = Client::builder()
+        .space(TestSpace::new())
+        .build()
+        .expect("build client");
+
+    // Provision a container into the space's store: code + state + params → manifest κ (the
+    // container id); a capability set → caps κ. (The mock engine accepts arbitrary code bytes.)
+    let store = client.store();
+    let code = store.put("blake3", b"<mock-code>").expect("code");
+    let state = store.put("blake3", b"INIT").expect("state");
+    let params = store.put("blake3", b"params").expect("params");
+    let cid = store
+        .put(
+            "blake3",
+            &ContainerManifest {
+                code,
+                initial_state: state,
+                parameters: params,
+            }
+            .canonicalize(),
+        )
+        .expect("manifest");
+    let caps = Capabilities {
+        storage_roots: vec![],
+        publish_channels: vec![],
+        subscribe_channels: vec![],
+        storage_quota_bytes: 1 << 16,
+        memory_max_bytes: 1 << 20,
+        cpu_time_per_event_ms: 100,
+        priority_weight: 0,
+        network_fetch: false,
+        network_announce: false,
+    };
+    let caps_k = store
+        .put("blake3", &CapabilitySet::new(caps).canonicalize())
+        .expect("caps");
+
+    // open → boot → suspend, driven over the space's runtime (MockEngine).
+    let mut session = client.open(&cid, &caps_k);
+    assert_eq!(session.phase(), Phase::Provisioned);
+    pollster::block_on(session.boot()).expect("boot");
+    assert_eq!(session.phase(), Phase::Running);
+    let snapshot = pollster::block_on(session.suspend()).expect("suspend");
+    assert_eq!(session.phase(), Phase::Suspended);
+    assert_eq!(session.snapshot(), Some(&snapshot));
 }

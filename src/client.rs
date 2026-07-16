@@ -6,9 +6,9 @@
 //!
 //! This is the kept realization of the P0.5 SP-3 spike (D28): **compile** (sync compute) →
 //! **provision** (sync storage, law 4) → **resolve / run** (the async network seam calling
-//! straight into the sync compute hot path — the only async↔sync transition, LAW-4). The
-//! `open → Session` surface (05-tooling.md method table) arrives once the `Space` contract
-//! exposes a `ContainerRuntime`; until then the Client covers compile/provision/store/run.
+//! straight into the sync compute hot path — the only async↔sync transition, LAW-4). It also
+//! drives the container lifecycle: **`open`** returns a [`Session`] over the space's
+//! [`runtime`](hologram_space::Space::runtime) (`boot`/`suspend`/`resume`/`terminate`).
 
 use alloc::vec::Vec;
 
@@ -16,6 +16,7 @@ use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind, CompileError};
 use hologram_exec::{BufferArena, ExecError, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
+use hologram_runtime::Session;
 use hologram_space::{
     verify_kappa, Bytes, GarbageCollect, KappaLabel71, KappaStore, Resolver, Space, StoreError,
     REGISTRY,
@@ -148,6 +149,15 @@ impl<S: Space> Client<S> {
     /// [`StoreError`] if the store rejects the write.
     pub fn provision(&self, holo: &Holo) -> Result<KappaLabel71, StoreError> {
         self.space.store().put("blake3", holo.as_bytes())
+    }
+
+    /// **Open** a lifecycle [`Session`] for a provisioned container: its container-manifest κ
+    /// under a capability-set κ, driven over the space's [`runtime`](hologram_space::Space::runtime).
+    /// The returned session is in the `Provisioned` phase; the caller drives
+    /// `boot`/`suspend`/`resume`/`terminate` (05-tooling.md). Because a snapshot is content
+    /// (a κ), a session suspended on one space can be resumed on another.
+    pub fn open(&self, container: &KappaLabel71, caps: &KappaLabel71) -> Session<'_, S::Runtime> {
+        Session::provision(self.space.runtime(), *container, *caps)
     }
 
     /// Fetch a κ's bytes from the local store.
