@@ -17,7 +17,14 @@ opencode.jsonc
 .opencode
 __pycache__/
 **/node_modules/
-substrate/hologram-store-opfs/web/pkg/
+crates/hologram-store-opfs/web/pkg/
+
+# holospaces V&V absorption (MG-7): the vv/ framework (~250K: suites/lib/heavy/run.sh/
+# PROVENANCE.md) is versioned, but the 170M vv/artifacts/ tree is carried EXTERNALLY —
+# reproduced/fetched from each artifact's pinned SOURCE.txt by vv/run.sh, verified by
+# re-derivation on import, skip-when-absent locally. Never commit the artifacts (repo bloat).
+vv/artifacts/
+
 sdk/python/build/
 sdk/python/*.egg-info/
 sdk/typescript/**/dist/

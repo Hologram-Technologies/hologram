@@ -186,8 +186,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     scenario + CONFORMANCE.md row** cataloguing the absorption acceptance criteria (CC/CS run under
     the one meta-gate, external-authority-witnessed, `vv/` artifacts content-addressed on import).
     bdd 32 scenarios / 9 enforced; meta-gate bijective + green. **Enforcement is a multi-session
-    effort gated on a human infra decision** — the 170M `vv/` tree (git bloat vs git-lfs vs submodule
-    vs external skip-when-absent). `vv/` fixtures decision → still open (surfaced to the user).
+    effort. **`vv/` fixtures decision → CLOSED (2026-07-16, user call): external, never committed.**
+    Import only the ~250K vv/ framework (`suites`/`lib`/`heavy`/`run.sh`/`PROVENANCE.md`); the 170M
+    `vv/artifacts/` stays out of git — `run.sh` reproduces/fetches each from its pinned `SOURCE.txt`
+    (mke2fs images, reproducible kernels, BuildKit OCI, fetched-by-pin vscode-web/Structurizr),
+    verified by re-derivation, skip-when-absent locally. `.gitignore` guard added now
+    (`vv/artifacts/`) so no future import can bloat the repo; 06-migration records the strategy.
+    MG-7 enforcement (the CC-catalog absorption itself) is unblocked but remains a multi-session job.
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

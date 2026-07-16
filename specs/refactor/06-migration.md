@@ -107,12 +107,21 @@ binary named `hologram`; no crate named `hologram-backend` remains.
 - Create `spaces/holospaces-native` and `spaces/holospaces-bare` from the relocated
   substrate stores/transports (redb, bare) + engine selections; move net transports out
   of the P1 parking module into their spaces.
-- Dedupe the two OPFS stores (substrate's `hologram-store-opfs` vs holospaces-web's
-  `OpfsKappaStore`) into one in `holospaces-browser`.
+- Dedupe the two OPFS stores. **DONE (2026-07-15)**, but the *other* direction from this
+  sketch: the sync `OpfsKappaStore` `KappaStore` backend moved **into `crates/hologram-store-opfs`**
+  (a backend belongs in a crate, not in the `holospaces-browser` space), joining the async
+  file-per-κ + GC JS layer behind a default `js-api` feature; the space consumes it with
+  `default-features = false`.
 - Replace all git-pinned `hologram-*` deps (the P0 HEAD pin) with workspace path deps —
   after P0 this is a pure dependency-source swap, no API port.
 - Absorb holospaces CI: vv/ suites, CC catalog, QEMU oracles, Playwright — as distinct CI
-  jobs so core-crate PRs and space PRs gate appropriately.
+  jobs so core-crate PRs and space PRs gate appropriately (witnessed by `MG-7`). **vv/ artifact
+  carriage decided (2026-07-16): external, never committed.** Import only the ~250K vv/ framework
+  (`suites/`, `lib/`, `heavy/`, `run.sh`, `PROVENANCE.md`); the 170M `vv/artifacts/` tree stays
+  out of git — `run.sh` reproduces/fetches each artifact from its pinned `SOURCE.txt` (mke2fs
+  images, reproducible kernels, BuildKit OCI, fetched-by-pin vscode-web/Structurizr), verified by
+  re-derivation on import; local runs skip-when-absent, CI materializes them. A `.gitignore` guard
+  blocks `vv/artifacts/` from ever being committed.
 - Relocate holospaces docs (arc42/C4/OPM/15288) under `specs/holospaces/`; ADR numbering
   continues unbroken.
 - Archive the `../holospaces` repo (read-only pointer to this repo).
