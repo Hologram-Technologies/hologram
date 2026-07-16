@@ -3,8 +3,8 @@
 //!
 //! The [`Space`] aggregate names a platform's concrete parts behind associated types: a
 //! synchronous [`KappaStore`], the maybe-Send [`KappaSync`] network seam, the composed
-//! [`ContainerRuntime`], and the HAL seams [`Entropy`] / [`Clock`] / [`Spawner`]. Only the
-//! `Surface` (UI projection) part of spec 02 is still to be designed.
+//! [`ContainerRuntime`], the HAL seams [`Entropy`] / [`Clock`] / [`Spawner`], and the maybe-Send
+//! [`Surface`] presentation seam — all 7 spec-02 parts.
 //!
 //! ## Async posture (LAW-4, corrected by the P0.5 spike)
 //! Storage is **synchronous** (wasm-safe: the browser reaches persistent storage via a
@@ -49,13 +49,18 @@ pub use engine::{ContainerEngine, ContainerIntents, HostContext};
 mod mem;
 pub use mem::MemKappaStore;
 
+// The presentation / interaction seam (spec 02 §5, D10): a κ-addressed projection of a running
+// workload + an intent channel, generalizing holospaces' Workspace/Intent. Maybe-Send async.
+mod surface;
+pub use surface::{Intent, NullSurface, Surface, SurfaceError};
+
 /// A **space**: a place hologram executes. Aggregates a platform's concrete parts behind
 /// associated types; everything downstream ([`crate`]'s consumers, `Client`) is generic
 /// over `Space` and monomorphized per platform.
 ///
 /// Parts: a synchronous [`KappaStore`], the maybe-Send [`KappaSync`] network seam, the composed
-/// [`ContainerRuntime`], and the [`Entropy`] / [`Clock`] / [`Spawner`] HAL seams (spec 02 §4).
-/// The `Surface` (UI projection) part is still to be designed.
+/// [`ContainerRuntime`], the [`Entropy`] / [`Clock`] / [`Spawner`] HAL seams (spec 02 §4), and the
+/// maybe-Send [`Surface`] presentation seam (spec 02 §5) — all 7 spec-02 parts.
 pub trait Space {
     /// Local content store — **synchronous** (LAW-4).
     type Store: KappaStore;
@@ -75,6 +80,8 @@ pub trait Space {
     type Clock: Clock;
     /// The platform background-task spawn seam (spec 02 §4 HAL) — the net pump / async work run here.
     type Spawner: Spawner;
+    /// The presentation / interaction seam (spec 02 §5) — a portable app view targets this.
+    type Surface: Surface;
 
     /// The space's local store.
     fn store(&self) -> &Self::Store;
@@ -88,4 +95,6 @@ pub trait Space {
     fn clock(&self) -> &Self::Clock;
     /// The space's background-task spawner.
     fn spawner(&self) -> &Self::Spawner;
+    /// The space's presentation / interaction surface.
+    fn surface(&self) -> &Self::Surface;
 }

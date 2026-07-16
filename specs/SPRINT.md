@@ -215,9 +215,20 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     `type Spawner` + `spawner()`; both impls provide `NoopSpawner`. **The Space contract now has
     6/7 spec-02 parts** (Store/Sync/Runtime/Entropy/Clock/Spawner). Green: workspace test, bdd,
     clippy, fmt, wasm32 + thumbv7em no_std.
-  - [ ] **P3 remaining**: `type Surface` (the UI-projection seam — no trait to hoist, needs
-    genuine API design; the last spec-02 Space part). Then the Client naming-review gate; first
-    lockstep `uor-hologram` release (hard stop, D26).
+  - [x] **`Space::Surface` — presentation / interaction seam** (2026-07-15). The last spec-02
+    Space part, designed fresh (no trait to hoist — generalizes holospaces' `projection.rs`
+    Workspace/Intent). `hologram-space` gains a `surface` module: one cfg-gated maybe-Send async
+    `Surface` (`project(workload_κ) → κ` renders state; `intent(workload_κ, Intent) → κ` publishes
+    an operator event, Law L1) + a closed `Intent` enum (TerminalInput / FileEdit / FrameRegion) +
+    typed `SurfaceError`. Takes the running workload's **κ**, not a runtime `Session` — the contract
+    crate must not depend on `hologram-runtime` (RZ). **Headless is a first-class profile**: the
+    reference `NullSurface` projects the empty-projection κ and refuses `intent` with
+    `SurfaceError::Headless`. `Space` gains `type Surface` + `surface()`; both impls (SpikeSpace,
+    TestSpace) provide `NullSurface`. **The Space contract now has all 7/7 spec-02 parts**
+    (Store/Sync/Runtime/Entropy/Clock/Spawner/Surface). Green: workspace test, bdd (SP-3/LAW-3) +
+    meta-gate, clippy -D, fmt, deny, RZ, **wasm32 + thumbv7em no_std**. 02 §5 marked implemented.
+  - [ ] **P3 remaining**: the Client naming-review gate (D29); first lockstep `uor-hologram`
+    release (hard stop, D26). The spec-02 `Space` contract is complete (7/7).
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)

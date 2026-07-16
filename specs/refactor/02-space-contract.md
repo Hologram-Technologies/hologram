@@ -185,20 +185,30 @@ a surface; a portable app view targets the surface and therefore runs on all spa
 Spaces MAY additionally expose native view slots (see `03-holo-format.md` §views). The
 surface is deliberately small — design systems plug in above it, in future projects.
 
-Shape (P3 freezes the exact signatures; this is the binding sketch):
+**Implemented shape (2026-07-15) — κ in, κ out; no `Session` in the contract.** The seam
+takes the running workload's **κ**, not a runtime `Session`: the contract crate `hologram-space`
+must not depend on `hologram-runtime` (the RZ invariant), and `intent` returns the published
+event's **κ** (not `()`), because an intent is content-addressed (Law L1 — identical intents
+address to the same κ). The trait is **maybe-Send**, the same cfg-gated posture as `KappaSync`
+(`Send + Sync` native / `?Send` on `wasm32`/bare, where a browser surface holds `!Send` DOM
+handles). Lives in `hologram-space::surface`:
 
 ```rust
-trait Surface {
-    async fn project(&self, session: &Session) -> Result<Kappa>; // state projection κ
-    async fn intent(&self, session: &Session, intent: Intent) -> Result<()>;
-}
-// Intent: closed enum — TerminalInput, FileEdit, FrameRegion, … (exhaustive, like ops)
+#[cfg(not(target_arch = "wasm32"))] #[async_trait] pub trait Surface: Send + Sync {
+    async fn project(&self, workload: &KappaLabel71) -> Result<KappaLabel71, SurfaceError>;
+    async fn intent(&self, workload: &KappaLabel71, intent: Intent)
+        -> Result<KappaLabel71, SurfaceError>;
+} // + a #[cfg(target_arch = "wasm32")] #[async_trait(?Send)] twin
+pub enum Intent { TerminalInput(Vec<u8>), FileEdit { path, content }, FrameRegion { … } } // closed
+pub enum SurfaceError { Headless, NotProjectable, Backend(&'static str) }
 ```
 
 **Headless conformance**: a space with no display (esp32) implements Surface with the
 null projection — `project` returns the canonical empty-projection κ, `intent` refuses
-with a typed error. The TCK surface battery has a headless profile; headless is a valid
-way to *pass*, not an exemption.
+with a typed error. Realized as the reference `NullSurface` (`project` → `address_bytes(&[])`,
+`intent` → `Err(SurfaceError::Headless)`); both reference spaces (SpikeSpace, TestSpace) use it.
+The TCK surface battery has a headless profile; headless is a valid way to *pass*, not an
+exemption. **This completes the 7/7 spec-02 `Space` parts.**
 
 ### 6. Realizations
 

@@ -17,7 +17,8 @@ use alloc::boxed::Box;
 
 use hologram_runtime::{MockEngine, Runtime};
 use hologram_space::{
-    Bytes, KappaLabel71, KappaSync, ManualClock, NoopSpawner, SeededEntropy, Space, SyncError,
+    Bytes, KappaLabel71, KappaSync, ManualClock, NoopSpawner, NullSurface, SeededEntropy, Space,
+    SyncError,
 };
 
 /// A minimal concrete [`Space`]: a mock-engine [`Runtime`] over an in-memory store, plus a
@@ -31,6 +32,7 @@ pub struct SpikeSpace {
     entropy: SeededEntropy,
     clock: ManualClock,
     spawner: NoopSpawner,
+    surface: NullSurface,
 }
 
 impl SpikeSpace {
@@ -43,6 +45,7 @@ impl SpikeSpace {
             entropy: SeededEntropy::default(),
             clock: ManualClock::default(),
             spawner: NoopSpawner,
+            surface: NullSurface,
         }
     }
 }
@@ -60,6 +63,7 @@ impl Space for SpikeSpace {
     type Entropy = SeededEntropy;
     type Clock = ManualClock;
     type Spawner = NoopSpawner;
+    type Surface = NullSurface;
 
     fn store(&self) -> &Self::Store {
         self.runtime.store()
@@ -78,6 +82,9 @@ impl Space for SpikeSpace {
     }
     fn spawner(&self) -> &Self::Spawner {
         &self.spawner
+    }
+    fn surface(&self) -> &Self::Surface {
+        &self.surface
     }
 }
 
