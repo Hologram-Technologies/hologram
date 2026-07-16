@@ -214,7 +214,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       holospaces --test ccN` resolves unchanged (workspace member). Verified: run.sh syntax ok;
       cc1 (fast) → 5 passed exit 0; cc7 (artifact absent) → skip-guards fire, exit 0. Full-green run
       (browser/QEMU + portability) is the Phase-E CI tier.
-    - [ ] **D** `scripts/vv-fetch.sh` artifact-materialization (fetch-pinned + reproduce + cache).
+    - [x] **D — artifact-materialization pipeline** (2026-07-16). **Hosting sub-decision resolved:**
+      holospaces' 170M `vv/artifacts/` is *git-committed* (351 files), so `scripts/vv-fetch.sh`
+      fetches the `vv/artifacts/` subtree at a provenance pin (`vv/ARTIFACTS_PIN` =
+      holospaces@142caa0, archived-but-accessible) via `git archive` — no kernel-reproduction, no
+      separate release-asset upload — then verifies the 14 sha256 sidecars. Idempotent (skip if
+      present+verified); handles mixed sidecar path conventions (root- vs dir-relative) and
+      distinguishes *fetched-by-pin* artifacts (cc17 vscode-web, intel-sdm — not committed,
+      materialized by their own suites → skip) from *corruption* (present+wrong-hash → fail).
+      Verified end-to-end: materialize → verify exit 0 → idempotent skip → **cc7 ext4 round-trip +
+      cc35 AArch64 ISA battery PASS against the real artifacts** (SKIP→PASS) → shellcheck clean.
+      Fallback if holospaces ever becomes unfetchable: mirror the pinned tree to a hologram release asset.
     - [ ] **E** heavy CI jobs (QEMU/e2fsprogs/Playwright, blocking) + cheap CC gate step.
     - [ ] **F** flip MG-7 ✅ + CC rows ✅ (feature enforced + bdd steps call the audit, atomic).
     - [ ] **G** (deferred, tracked) CS-\* docs conformance: arc42→`specs/holospaces/`, V1–V8, docs CI job, MG-8.
