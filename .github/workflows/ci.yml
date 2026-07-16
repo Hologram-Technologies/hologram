@@ -5,6 +5,10 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  schedule:
+    # Nightly: re-run the heavy holospaces V&V (CC tier) and catch artifact-pin rot.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -206,6 +210,9 @@ jobs:
           cache-on-failure: true
           key: vv
 
+      - name: CC bijection audit + honesty meta-gate + BDD (MG-7, artifact-free)
+        run: cargo test -p hologram-conformance --test cc_gate --test meta_gate --test bdd
+
       - name: External-authority + scaling conformance (model-formats)
         run: |
           cargo test -p hologram-archive --test conformance --test model_address --features model-formats
@@ -329,7 +336,7 @@ jobs:
         with:
           cache-on-failure: true
           key: substrate-uefi
-          workspaces: substrate/hologram-efi
+          workspaces: crates/hologram-efi
 
       - name: Boot hologram.efi and assert PASS
         run: ./scripts/uefi-boot-test.sh
@@ -363,14 +370,100 @@ jobs:
 
       - name: Install Playwright Chromium
         run: |
-          cd substrate/hologram-store-opfs/web
+          cd crates/hologram-store-opfs/web
           npm install
           npx --yes playwright install --with-deps chromium
 
       - name: Run OPFS test in Chromium
         run: ./scripts/opfs-browser-test.sh
 
-  # Job 14: Verify all quality gates passed
+  # Job 14: holospaces V&V — the full component-conformance (CC) tier (MG-7). Boots real
+  # OSes on the emulator under a QEMU differential (RISC-V / AArch64 / x86-64), assembles
+  # ext4/OCI rootfs (e2fsprogs), and drives the browser workbench via Playwright — all against
+  # the 170M vv/artifacts/ tree materialized on demand from the pinned holospaces revision
+  # (scripts/vv-fetch.sh). This is the gate that makes MG-7's ✅ mean "all 45 CC pass in CI".
+  #
+  # NOT yet in ci-success.needs: it is introduced non-blocking so the branch stays always-green
+  # while it is validated on real CI (this branch does not trigger CI; run it via the nightly
+  # schedule or `workflow_dispatch`). MG-7 Phase F promotes it to blocking + flips MG-7 → ✅ once
+  # it is observed green. If the holospaces repo is private, set the HOLOSPACES_ARTIFACTS_TOKEN
+  # secret (a read token for the artifact source); otherwise the default token is used.
+  holospaces-vv-heavy:
+    name: holospaces V&V (CC — QEMU · e2fsprogs · Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read + validate the V&V artifact pin
+        id: pin
+        run: |
+          sha="$(tr -d '[:space:]' < vv/ARTIFACTS_PIN)"
+          case "$sha" in
+            [0-9a-f]*) [ "${#sha}" -eq 40 ] || { echo "pin is not a 40-hex sha: $sha" >&2; exit 1; } ;;
+            *) echo "pin is not a lowercase hex sha: $sha" >&2; exit 1 ;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout holospaces (V&V artifact source, pinned + validated)
+        uses: actions/checkout@v6
+        with:
+          repository: Hologram-Technologies/holospaces
+          ref: ${{ steps.pin.outputs.sha }}
+          path: holospaces-src
+          token: ${{ secrets.HOLOSPACES_ARTIFACTS_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, thumbv7em-none-eabi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install QEMU (riscv64 · aarch64 · x86-64 · user) + e2fsprogs + OVMF
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources || true
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-misc qemu-system-arm qemu-system-x86 qemu-user \
+            e2fsprogs ovmf gcc-aarch64-linux-gnu
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: holospaces-vv-heavy
+
+      - name: Install wasm-pack + wasm-bindgen-cli (browser CC suites)
+        run: |
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          cargo install wasm-bindgen-cli --version 0.2.122 --locked
+
+      - name: Cache V&V artifacts (170M, keyed on the pin)
+        uses: actions/cache@v4
+        with:
+          path: vv/artifacts
+          key: vv-artifacts-${{ steps.pin.outputs.sha }}
+
+      - name: Materialize + verify V&V artifacts (from the pinned holospaces checkout)
+        env:
+          HOLOSPACES_DIR: ${{ github.workspace }}/holospaces-src
+        run: bash scripts/vv-fetch.sh
+
+      - name: Install Playwright Chromium
+        run: npx --yes playwright install --with-deps chromium
+
+      - name: Run the CC V&V (all 45 — fast · artifact · QEMU boots · browser)
+        env:
+          CC_ONLY: "1"
+          HOLOSPACES_SKIP_PERF: "1"
+        run: bash vv/run.sh
+
+  # Job 15: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()

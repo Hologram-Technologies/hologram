@@ -225,7 +225,18 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       Verified end-to-end: materialize → verify exit 0 → idempotent skip → **cc7 ext4 round-trip +
       cc35 AArch64 ISA battery PASS against the real artifacts** (SKIP→PASS) → shellcheck clean.
       Fallback if holospaces ever becomes unfetchable: mirror the pinned tree to a hologram release asset.
-    - [ ] **E** heavy CI jobs (QEMU/e2fsprogs/Playwright, blocking) + cheap CC gate step.
+    - [~] **E — heavy CI job authored** (2026-07-16). `.github/workflows/ci.yml`: (1) a cheap
+      **CC audit step** in the existing `vv` job (`cc_gate` + `meta_gate` + `bdd`, artifact-free);
+      (2) a new **`holospaces-vv-heavy`** job — QEMU (riscv64/aarch64/x86-64/user) + e2fsprogs + OVMF
+      + Node/Playwright/wasm-pack; a second pinned holospaces checkout as the artifact source →
+      `vv-fetch.sh` (170M cached on the pin) → `CC_ONLY=1 bash vv/run.sh` (all 45 CC). Pin validated
+      as a 40-hex sha before use in `ref:` (injection-safe). Also fixed two stale `substrate/…` CI
+      paths left by the refactor (`hologram-efi`, `hologram-store-opfs/web` → `crates/…`). actionlint
+      clean (the one SC2086 info is pre-existing); YAML valid. **Introduced NON-blocking** (not in
+      `ci-success.needs`) to keep the branch always-green while unvalidated — `chore/refactor` doesn't
+      trigger CI, so the job must be observed green via the nightly `schedule` / `workflow_dispatch`
+      / a PR before Phase F promotes it to blocking + flips MG-7. **Human note:** if the holospaces
+      repo is private, set the `HOLOSPACES_ARTIFACTS_TOKEN` CI secret (a read token).
     - [ ] **F** flip MG-7 ✅ + CC rows ✅ (feature enforced + bdd steps call the audit, atomic).
     - [ ] **G** (deferred, tracked) CS-\* docs conformance: arc42→`specs/holospaces/`, V1–V8, docs CI job, MG-8.
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
