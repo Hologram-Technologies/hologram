@@ -42,4 +42,11 @@ pub struct ConformanceWorld {
     /// MG-5 (ground rule 5): set once every frozen golden vector re-derives to its
     /// recorded κ, bit-for-bit — the κ-stability safety net for crate moves.
     pub mg5_stable: bool,
+    /// SP-4: `(entropy_identical, clock_explicit_only, spawn_inert)` from exercising the
+    /// reference HAL seams — equally-seeded entropy must match, the clock must move only on
+    /// `advance`, and `NoopSpawner` must drop (never run) the spawned future.
+    pub sp4_hal: Option<(bool, bool, bool)>,
+    /// SP-5: `(project_is_empty_kappa, intent_refused_headless)` from driving `NullSurface` —
+    /// projection must yield the empty-projection κ and intent must be refused with `Headless`.
+    pub sp5_surface: Option<(bool, bool)>,
 }

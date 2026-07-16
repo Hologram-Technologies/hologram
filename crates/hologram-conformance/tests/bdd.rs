@@ -11,6 +11,12 @@ use cucumber::{given, then, when, World};
 use hologram::Client;
 use hologram_space::{address_bytes, verify_kappa, Capabilities, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
+// SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
+// public API (external witness: the shipping reference impls in `hologram-space`).
+use hologram_space::{
+    Clock, Entropy, Intent, ManualClock, NoopSpawner, NullSurface, SeededEntropy, Spawner, Surface,
+    SurfaceError,
+};
 use hologram_spike_sp3::SpikeSpace;
 use hologram_tck::MemKappaStore;
 
@@ -293,6 +299,108 @@ fn mg5_assert(w: &mut ConformanceWorld) {
         w.mg5_stable,
         "a golden vector re-derived to a different κ — canonical bytes or the σ-axis \
          changed. This is a κ break (a versioned format change), never a crate move."
+    );
+}
+
+// ───────────────────── SP-4 — deterministic HAL seams (spec 02 §4) ─────────────────────
+// The reference Entropy/Clock/Spawner are the hermetic-V&V seams: equally-seeded entropy
+// reproduces the same stream, `ManualClock` advances only when told, and `NoopSpawner` drops
+// the future it is handed. All three are what make conformance runs reproducible. Witnessed
+// against `hologram-space`'s reference impls through their public API.
+
+#[given("the reference Entropy, Clock, and Spawner seams")]
+fn sp4_given(_w: &mut ConformanceWorld) {}
+
+#[when(
+    "entropy is drawn from two equally-seeded sources, the clock is advanced, and a background task is spawned"
+)]
+fn sp4_exercise(w: &mut ConformanceWorld) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    // Entropy: two sources with the same seed must produce byte-identical, non-trivial streams.
+    const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+    let (mut a, mut b) = ([0u8; 32], [0u8; 32]);
+    SeededEntropy::new(SEED).fill(&mut a);
+    SeededEntropy::new(SEED).fill(&mut b);
+    let entropy_identical = a == b && a != [0u8; 32];
+
+    // Clock: starts where set, moves forward only on `advance`, and holds between reads.
+    let clock = ManualClock::new(1_000);
+    let t0 = clock.now_millis();
+    clock.advance(500);
+    let t1 = clock.now_millis();
+    let t2 = clock.now_millis(); // no advance between these two reads
+    let clock_explicit_only = t0 == 1_000 && t1 == 1_500 && t2 == t1;
+
+    // Spawner: `NoopSpawner` drops the future — its side effect must never run.
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&ran);
+    NoopSpawner.spawn(Box::pin(async move {
+        flag.store(true, Ordering::SeqCst);
+    }));
+    let spawn_inert = !ran.load(Ordering::SeqCst);
+
+    w.sp4_hal = Some((entropy_identical, clock_explicit_only, spawn_inert));
+}
+
+#[then(
+    "the two entropy streams are identical, the clock reflects only explicit advances, and the spawned task is inert"
+)]
+fn sp4_assert(w: &mut ConformanceWorld) {
+    let (entropy, clock, spawn) = w
+        .sp4_hal
+        .expect("the When step must have exercised the HAL seams");
+    assert!(
+        entropy,
+        "equally-seeded SeededEntropy must reproduce the same non-trivial stream — V&V reproducible"
+    );
+    assert!(
+        clock,
+        "ManualClock must reflect only explicit advances — hermetic, controllable time"
+    );
+    assert!(
+        spawn,
+        "NoopSpawner must drop the spawned future — background work is inert in a hermetic space"
+    );
+}
+
+// ─────────────────── SP-5 — headless surface conformance (spec 02 §5) ───────────────────
+// Headless is a first-class profile, not an exemption: `NullSurface` projects the canonical
+// empty-projection κ (the κ of no bytes) and refuses `intent` with a typed `Headless` error.
+// A space with no display still satisfies the contract. Witnessed against `NullSurface`.
+
+#[given("a headless space's Surface")]
+fn sp5_given(_w: &mut ConformanceWorld) {}
+
+#[when("a workload is projected and an operator intent is submitted")]
+async fn sp5_drive(w: &mut ConformanceWorld) {
+    let surface = NullSurface;
+    let workload = address_bytes(b"sp5-headless-workload");
+    let projected = surface.project(&workload).await;
+    let project_is_empty_kappa =
+        matches!(&projected, Ok(k) if k.as_bytes() == address_bytes(&[]).as_bytes());
+    let refused = surface
+        .intent(&workload, Intent::TerminalInput(b"ls\n".to_vec()))
+        .await;
+    let intent_refused_headless = matches!(refused, Err(SurfaceError::Headless));
+    w.sp5_surface = Some((project_is_empty_kappa, intent_refused_headless));
+}
+
+#[then(
+    "projection yields the canonical empty-projection κ and intent is refused with a typed headless error"
+)]
+fn sp5_assert(w: &mut ConformanceWorld) {
+    let (empty, refused) = w
+        .sp5_surface
+        .expect("the When step must have driven the headless surface");
+    assert!(
+        empty,
+        "a headless project() must yield the canonical empty-projection κ (the κ of no bytes)"
+    );
+    assert!(
+        refused,
+        "a headless intent() must be refused with SurfaceError::Headless — a typed error, not a panic"
     );
 }
 

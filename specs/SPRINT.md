@@ -227,8 +227,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     TestSpace) provide `NullSurface`. **The Space contract now has all 7/7 spec-02 parts**
     (Store/Sync/Runtime/Entropy/Clock/Spawner/Surface). Green: workspace test, bdd (SP-3/LAW-3) +
     meta-gate, clippy -D, fmt, deny, RZ, **wasm32 + thumbv7em no_std**. 02 §5 marked implemented.
+  - [x] **Witness the new contract parts — SP-4 + SP-5 enforced** (2026-07-15). Per the method
+    (every contract part earns a scenario), the four parts added this phase are now witnessed in
+    `s1_space_contract`: **SP-4** (deterministic HAL seams — equally-seeded `SeededEntropy`
+    reproduces its stream, `ManualClock` advances only when told, `NoopSpawner` drops the future)
+    and **SP-5** (headless `Surface` — `NullSurface.project` → empty-projection κ, `intent` →
+    `SurfaceError::Headless`), both driven through the reference impls' public API and flipped
+    `@status:enforced` with matching CONFORMANCE.md rows (✅). bdd now 31 scenarios / **9 enforced**;
+    meta-gate bijection green; clippy -D, fmt clean. (Entropy/Clock/Spawner + Surface are all
+    exercised; the runtime seam SP-3 already covered Sync + Runtime.)
   - [ ] **P3 remaining**: the Client naming-review gate (D29); first lockstep `uor-hologram`
-    release (hard stop, D26). The spec-02 `Space` contract is complete (7/7).
+    release (hard stop, D26). The spec-02 `Space` contract is complete (7/7), all witnessed.
 - [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
