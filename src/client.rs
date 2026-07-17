@@ -12,15 +12,16 @@
 
 use alloc::vec::Vec;
 
-use hologram_archive::HoloLoader;
+use hologram_archive::{HoloLoader, HoloWriter, SectionKind};
 use hologram_compiler::{compile, BackendKind, CompileError};
 use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, ExecError, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
 use hologram_runtime::Session;
 use hologram_space::{
-    verify_kappa, AppManifest, Bytes, GarbageCollect, KappaLabel71, KappaStore, KappaSync,
-    LayerKind, Realization, Space, StoreError, SyncError, REGISTRY,
+    resolve_closure, verify_kappa, AppManifest, Bytes, Closure, GarbageCollect, KappaLabel71,
+    KappaStore, KappaSync, LayerKind, MemKappaStore, Realization, Space, StoreError, SyncError,
+    REGISTRY,
 };
 use prism::vocabulary::WittLevel;
 
@@ -236,6 +237,95 @@ impl<S: Space> Client<S> {
             app: manifest.kappa(),
             layers,
         })
+    }
+
+    /// Whether `holo` is a **fat** archive (spec 03 §Fat and thin): its manifest's closure resolves
+    /// entirely from the archive's own embedded content blobs — no store, no network. A **thin**
+    /// archive returns `false`; its layers resolve through the store/sync at load.
+    pub fn is_fat(&self, holo: &Holo) -> bool {
+        Self::archive_closure(holo).is_some_and(|c| c.is_complete())
+    }
+
+    /// Resolve the manifest's closure over a scratch store seeded **only** from the archive's own
+    /// content blobs — the basis for [`is_fat`](Self::is_fat). `None` if there is no manifest.
+    fn archive_closure(holo: &Holo) -> Option<Closure> {
+        let plan = HoloLoader::from_bytes(holo.as_bytes())
+            .ok()?
+            .into_plan()
+            .ok()?;
+        let manifest_bytes = plan.app_manifest()?;
+        let scratch = MemKappaStore::new();
+        let manifest_kappa = scratch.put("blake3", manifest_bytes).ok()?;
+        // Each blob's content re-addresses to its own κ (content-addressed), so the layer κs the
+        // manifest names resolve iff their bytes were embedded.
+        for (_kappa, content) in plan.content_blobs().ok()? {
+            let _ = scratch.put("blake3", content);
+        }
+        resolve_closure(manifest_kappa, &scratch, REGISTRY).ok()
+    }
+
+    /// Convert `holo` to a **thin** archive (spec 03 §Fat and thin): manifest + certificates only,
+    /// dropping embedded content — layers resolve through the store/sync at load. The manifest κ (the
+    /// app's identity) is **unchanged** — fat↔thin is packaging, never identity. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// [`InspectError`] if `holo` is not a loadable `.holo` or carries no manifest.
+    pub fn thin(&self, holo: &Holo) -> Result<Holo, InspectError> {
+        let plan = HoloLoader::from_bytes(holo.as_bytes())
+            .map_err(|_| InspectError::NotLoadable)?
+            .into_plan()
+            .map_err(|_| InspectError::NotLoadable)?;
+        let manifest = plan
+            .app_manifest()
+            .ok_or(InspectError::NotAnApplication)?
+            .to_vec();
+        let mut sections: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+        sections.push((SectionKind::AppManifest, manifest));
+        if let Ok(certs) = plan.section(SectionKind::Certificates) {
+            sections.push((SectionKind::Certificates, certs.to_vec()));
+        }
+        Ok(Holo::from_bytes(HoloWriter::assemble(sections)))
+    }
+
+    /// Convert `holo` to a **fat** archive (spec 03 §Fat and thin): manifest + certificates + a
+    /// content blob for every layer/closure κ resolvable from the store, so the file is
+    /// self-contained. The manifest κ is **unchanged**. κs absent from the store stay unresolved (the
+    /// result is as fat as the store allows — re-run once missing content is synced).
+    ///
+    /// # Errors
+    ///
+    /// [`InspectError`] if `holo` is not a loadable `.holo`, carries no manifest, or the store fails.
+    pub fn fat(&self, holo: &Holo) -> Result<Holo, InspectError> {
+        let plan = HoloLoader::from_bytes(holo.as_bytes())
+            .map_err(|_| InspectError::NotLoadable)?
+            .into_plan()
+            .map_err(|_| InspectError::NotLoadable)?;
+        let manifest = plan
+            .app_manifest()
+            .ok_or(InspectError::NotAnApplication)?
+            .to_vec();
+        // Seed the manifest so the closure walk can start from its κ, then resolve over the store.
+        let manifest_kappa = self
+            .space
+            .store()
+            .put("blake3", &manifest)
+            .map_err(|_| InspectError::NotLoadable)?;
+        let closure = resolve_closure(manifest_kappa, self.space.store(), REGISTRY)
+            .map_err(|_| InspectError::NotLoadable)?;
+        let mut sections: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+        sections.push((SectionKind::AppManifest, manifest));
+        if let Ok(certs) = plan.section(SectionKind::Certificates) {
+            sections.push((SectionKind::Certificates, certs.to_vec()));
+        }
+        for kappa in &closure.reachable {
+            if let Ok(Some(content)) = self.space.store().get(kappa) {
+                let mut blob = kappa.as_array().to_vec();
+                blob.extend_from_slice(content.as_ref());
+                sections.push((SectionKind::ContentBlob, blob));
+            }
+        }
+        Ok(Holo::from_bytes(HoloWriter::assemble(sections)))
     }
 
     /// **Resolve** a κ: the space's network [`KappaSync`] seam first (verify-on-receipt, Law L5),

@@ -33,6 +33,7 @@ fn drive(bytes: &[u8]) {
     let _ = plan.sections();
     let _ = plan.app_manifest();
     let _ = plan.extensions();
+    let _ = plan.content_blobs();
     for kind in [
         SectionKind::KernelCalls,
         SectionKind::Weights,

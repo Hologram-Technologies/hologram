@@ -57,6 +57,12 @@ pub enum SectionKind {
     /// the app loader resolves its closure. At most one per archive. Its
     /// discriminant is appended (kinds 0–14 keep theirs, κ-stability).
     AppManifest = 15,
+    /// A κ-addressed content blob embedded in a **fat** `.holo` (spec 03 §Fat and thin):
+    /// `κ71 ‖ content_bytes`. **Repeatable** — one per embedded layer/closure κ. A *thin* archive
+    /// omits these and resolves its manifest's closure through the store/sync; a *fat* archive
+    /// carries them so it is self-contained. Fat↔thin is a packaging choice — the manifest κ (the
+    /// app's identity) is unchanged either way. Opaque to the archive layer.
+    ContentBlob = 16,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -33,7 +33,7 @@ pub use address::{
 };
 pub use error::ArchiveError;
 pub use format::{HoloHeader, SectionKind, FORMAT_VERSION, MAGIC};
-pub use loader::{HoloLoader, LoadedPlan};
+pub use loader::{ContentBlobs, HoloLoader, LoadedPlan};
 pub use warm_codec::{derive_cone_lattice, WarmEntry};
 pub use weight::{WeightFingerprint, WeightProvider, WeightStore};
 pub use writer::{decode_exec_plan, decode_ports, decode_weights, HoloWriter, PortDescriptor};

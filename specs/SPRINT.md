@@ -408,7 +408,16 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       deterministic mutation suites (`hologram-space` + `hologram-archive` `tests/parser_hardening.rs`)
       prove every P4–P6 decoder + the section parser + the generic `references()` dispatch never panic
       over truncations / byte-mutations / noise + forged oversized counts.
-    - [ ] fat/thin conversion tooling (`hologram app --fat/--thin`) + out-of-tree cargo-fuzz targets.
+    - [x] **fat/thin conversion** (2026-07-17, spec 03 §Fat and thin). `SectionKind::ContentBlob`
+      (κ71 ‖ content, repeatable) lets a **fat** archive embed its layer/closure content;
+      `HoloWriter::assemble` frames raw sections + `content_blobs()` reads them back (zero-copy).
+      `Client::fat` resolves the manifest closure over the store and embeds every reachable κ;
+      `Client::thin` drops blobs (manifest + certificates only); `is_fat` checks self-containment via
+      `resolve_closure` over the archive's own blobs. **The manifest κ — the app's identity — is
+      invariant across fat↔thin** (packaging, not identity; tested). ContentBlob added to the archive
+      parser-hardening fuzz. Native + wasm32 green. (The `hologram app --fat/--thin` CLI is thin
+      plumbing over these Client methods.)
+    - [ ] out-of-tree cargo-fuzz targets (the deterministic in-tree mutation suites are live).
   - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
     ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive

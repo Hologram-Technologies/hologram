@@ -4,6 +4,10 @@ use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 use alloc::vec::Vec;
 
+/// A `.holo` fat archive's embedded content, as `(κ bytes, content)` pairs borrowing the archive —
+/// the return of [`LoadedPlan::content_blobs`] (spec 03 §Fat and thin).
+pub type ContentBlobs<'a> = Vec<(&'a [u8], &'a [u8])>;
+
 /// Parsed plan view backed by a byte slice. Zero-copy where possible.
 pub struct LoadedPlan<'a> {
     bytes: &'a [u8],
@@ -44,6 +48,37 @@ impl<'a> LoadedPlan<'a> {
     /// tensor container). Zero-copy: the slice borrows the archive.
     pub fn app_manifest(&self) -> Option<&'a [u8]> {
         self.section(SectionKind::AppManifest).ok()
+    }
+
+    /// Every `ContentBlob` section, parsed to `(κ bytes, content)` in archive order (spec 03 §Fat
+    /// and thin) — the payloads a **fat** `.holo` embeds so it resolves its manifest closure without
+    /// the store. Each blob is `κ71 ‖ content`; a malformed (short) blob errors. Zero-copy: both
+    /// slices borrow the archive. The κ is returned as raw bytes — the archive layer stays free of
+    /// `hologram-space`'s `KappaLabel71`; the app loader interprets it.
+    pub fn content_blobs(&self) -> Result<ContentBlobs<'a>, ArchiveError> {
+        let mut out = alloc::vec::Vec::new();
+        for s in &self.sections {
+            if s.kind != SectionKind::ContentBlob {
+                continue;
+            }
+            let start = s.offset as usize;
+            let end = start
+                .checked_add(s.length as usize)
+                .ok_or(ArchiveError::Truncated {
+                    needed: usize::MAX,
+                    actual: self.bytes.len(),
+                })?;
+            let payload = self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
+                needed: end,
+                actual: self.bytes.len(),
+            })?;
+            let kappa = payload.get(..71).ok_or(ArchiveError::Truncated {
+                needed: 71,
+                actual: payload.len(),
+            })?;
+            out.push((kappa, &payload[71..]));
+        }
+        Ok(out)
     }
 
     /// Every `Extension` section, parsed to `(key, bytes)` in archive order
@@ -211,6 +246,7 @@ impl<'a> HoloLoader<'a> {
                 13 => SectionKind::WarmStart,
                 14 => SectionKind::Extension,
                 15 => SectionKind::AppManifest,
+                16 => SectionKind::ContentBlob,
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)
