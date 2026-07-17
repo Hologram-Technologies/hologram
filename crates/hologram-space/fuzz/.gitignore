@@ -1,0 +1,6 @@
+# cargo-fuzz generated artifacts — the harness + seed are source; these are not.
+/target
+/corpus
+/artifacts
+/coverage
+Cargo.lock
