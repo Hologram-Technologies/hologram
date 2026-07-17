@@ -9,7 +9,8 @@
 
 use hologram_space::{
     address_bytes, references, AppManifest, AttestationKey, AuditEvent, CapabilitySet,
-    KappaLabel71, Layer, LifecycleTransition, Network, NetworkTier, Realization, REGISTRY,
+    KappaLabel71, Layer, LifecycleTransition, Network, NetworkTier, Realization, RevocationEvent,
+    REGISTRY,
 };
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -120,6 +121,22 @@ fn audit_event_decoder_never_panics() {
         AuditEvent::record(LifecycleTransition::Spawn, k(b"subj"), Some(k(b"prev"))).canonicalize();
     assert_panic_free("AuditEvent::transition_of", &seed, |b| {
         let _ = AuditEvent::transition_of(b);
+    });
+}
+
+#[test]
+fn revocation_decoder_never_panics() {
+    // `decode` is network-facing (the `is_revoked` walk decodes store bytes that may be foreign).
+    let seed = RevocationEvent {
+        revoked_key: k(b"revoked"),
+        revoker_key: k(b"revoker"),
+        predecessor: Some(k(b"prev")),
+        reason: 3,
+        signature: vec![0xAB; 64],
+    }
+    .canonicalize();
+    assert_panic_free("RevocationEvent::decode", &seed, |b| {
+        let _ = RevocationEvent::decode(b);
     });
 }
 

@@ -7,7 +7,10 @@
 //! key's κ-identity is exactly its published `AttestationKey` content (GV-3 single surface).
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hologram_space::{address_bytes, AttestationKey, SessionAttestation, SignatureVerifier};
+use hologram_space::{
+    address_bytes, AttestationKey, KappaLabel71, KappaStore, MemKappaStore, Realization,
+    RevocationEvent, SessionAttestation, SignatureVerifier,
+};
 
 /// The reference ed25519 verifier — a space's platform crypto behind the portable seam.
 struct Ed25519;
@@ -89,6 +92,45 @@ fn verifying_under_the_wrong_key_fails() {
         !att.verify(&Ed25519, &other),
         "an attestation must not verify under a key that did not sign it"
     );
+}
+
+#[test]
+fn signed_revocation_is_honored_only_from_a_trusted_signer() {
+    // R3 authorization: a revocation must be signed by an authorized revoker. Naming a trusted
+    // revoker is not enough — the signature must verify under that revoker's key. This closes the
+    // "anyone revokes anyone" gap the structural walk alone leaves open.
+    let store = MemKappaStore::new();
+    let v = Ed25519;
+
+    let operator = SigningKey::from_bytes(&[3u8; 32]);
+    let operator_pub = operator.verifying_key().to_bytes().to_vec();
+    let operator_kappa = AttestationKey::new(0, operator_pub.clone()).kappa();
+
+    let attacker = SigningKey::from_bytes(&[4u8; 32]);
+    let victim = address_bytes(b"victim-attestation-key");
+
+    // (1) The operator properly signs a revocation of the victim key.
+    let mut good = RevocationEvent::new(victim, operator_kappa, None, 0);
+    good.signature = operator.sign(&good.signable_bytes()).to_bytes().to_vec();
+    let head_good = store.put("blake3", &good.canonicalize()).unwrap();
+
+    // (2) The attacker forges a revocation that *names* the operator as revoker but signs it with
+    //     their own key.
+    let mut forged = RevocationEvent::new(victim, operator_kappa, None, 0);
+    forged.signature = attacker.sign(&forged.signable_bytes()).to_bytes().to_vec();
+    let head_forged = store.put("blake3", &forged.canonicalize()).unwrap();
+
+    // Trust policy: only the operator κ is authorized to revoke (yields its public key).
+    let trust = |revoker: &KappaLabel71| (*revoker == operator_kappa).then(|| operator_pub.clone());
+
+    // The operator-signed revocation is honored; the forged one is NOT (its signature does not
+    // verify under the operator's key).
+    assert!(RevocationEvent::is_revoked_signed(&victim, &head_good, &store, &v, trust).unwrap());
+    assert!(!RevocationEvent::is_revoked_signed(&victim, &head_forged, &store, &v, trust).unwrap());
+
+    // The purely-structural walk would wrongly honor the forged revocation — which is exactly why
+    // the authenticated variant exists.
+    assert!(RevocationEvent::is_revoked(&victim, &head_forged, &store).unwrap());
 }
 
 #[test]

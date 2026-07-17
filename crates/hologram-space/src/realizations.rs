@@ -1218,33 +1218,89 @@ realization!(
 pub struct RevocationEvent {
     /// The key κ being revoked.
     pub revoked_key: KappaLabel71,
+    /// The `AttestationKey` κ of the authority that signed this revocation — its public key verifies
+    /// the signature (bound as content, never a second identity surface, R3/GV-3).
+    pub revoker_key: KappaLabel71,
     /// The prior revocation-event κ (the append-only chain link); `None` at the head.
     pub predecessor: Option<KappaLabel71>,
     /// A revocation reason code (opaque to the format; `0` = unspecified).
     pub reason: u8,
+    /// The detached signature by `revoker_key` over this revocation's facts.
+    pub signature: Vec<u8>,
 }
 
 impl RevocationEvent {
+    /// A new (unsigned) revocation; set [`signature`](Self::signature) after signing
+    /// [`signable_bytes`](Self::signable_bytes).
     #[must_use]
-    pub fn new(revoked_key: KappaLabel71, predecessor: Option<KappaLabel71>, reason: u8) -> Self {
+    pub fn new(
+        revoked_key: KappaLabel71,
+        revoker_key: KappaLabel71,
+        predecessor: Option<KappaLabel71>,
+        reason: u8,
+    ) -> Self {
         Self {
             revoked_key,
+            revoker_key,
             predecessor,
             reason,
+            signature: Vec::new(),
         }
     }
     fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
-        let mut refs = alloc::vec![self.revoked_key];
+        let mut refs = alloc::vec![self.revoked_key, self.revoker_key];
         if let Some(p) = self.predecessor {
             refs.push(p);
         }
-        (refs, alloc::vec![self.reason])
+        let mut payload = Vec::with_capacity(1 + self.signature.len());
+        payload.push(self.reason);
+        payload.extend_from_slice(&self.signature);
+        (refs, payload)
+    }
+    /// Decode a canonical revocation-event form back into its structured view.
+    pub fn decode(bytes: &[u8]) -> Result<RevocationEvent, RealizationError> {
+        let refs = <Self as crate::Realization>::references(bytes)?;
+        let payload = payload_of(
+            "https://hologram.foundation/realization/revocation-event",
+            bytes,
+        )?;
+        let revoked_key = *refs.first().ok_or(RealizationError::Malformed)?;
+        let revoker_key = *refs.get(1).ok_or(RealizationError::Malformed)?;
+        let predecessor = refs.get(2).copied();
+        let reason = *payload.first().ok_or(RealizationError::Truncated)?;
+        Ok(RevocationEvent {
+            revoked_key,
+            revoker_key,
+            predecessor,
+            reason,
+            signature: payload[1..].to_vec(),
+        })
+    }
+    /// The bytes the signature covers — the revocation's facts (revoked key, revoker key,
+    /// predecessor, reason) with an empty signature, so it commits to what is revoked and by whom
+    /// but not to itself.
+    pub fn signable_bytes(&self) -> Vec<u8> {
+        let mut refs = alloc::vec![self.revoked_key, self.revoker_key];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        encode(
+            "https://hologram.foundation/realization/revocation-event",
+            &refs,
+            &[self.reason],
+        )
+    }
+    /// Verify this revocation's signature under the revoker's `public_key` through a
+    /// [`SignatureVerifier`](crate::SignatureVerifier) seam.
+    pub fn verify<V: crate::SignatureVerifier>(&self, verifier: &V, public_key: &[u8]) -> bool {
+        verifier.verify(public_key, &self.signable_bytes(), &self.signature)
     }
 
-    /// Walk the append-only revocation chain from `chain_head` over `store`, returning whether
-    /// `key` has been revoked (spec 07 R3: "require verifiers to check the chain"). Bounded by the
-    /// chain length; stops at the head, at absent bytes (a broken/foreign link), or at the first
-    /// non-revocation node. A revoker cannot un-revoke — the chain only grows.
+    /// Walk the append-only revocation chain from `chain_head` over `store`, returning whether `key`
+    /// has been revoked (spec 07 R3: "require verifiers to check the chain"). **Structural** — does
+    /// not verify signatures; use it with a trusted store, or [`is_revoked_signed`](Self::is_revoked_signed)
+    /// across a trust boundary. Bounded by the chain length; stops at the head or a broken/foreign
+    /// link. A revoker cannot un-revoke — the chain only grows.
     pub fn is_revoked(
         key: &KappaLabel71,
         chain_head: &KappaLabel71,
@@ -1253,13 +1309,49 @@ impl RevocationEvent {
         let mut cursor = Some(*chain_head);
         while let Some(k) = cursor {
             let Some(bytes) = store.get(&k)? else { break };
-            let Ok(refs) = <Self as crate::Realization>::references(bytes.as_ref()) else {
+            let Ok(ev) = Self::decode(bytes.as_ref()) else {
                 break;
             };
-            if refs.first() == Some(key) {
+            if &ev.revoked_key == key {
                 return Ok(true);
             }
-            cursor = refs.get(1).copied(); // predecessor
+            cursor = ev.predecessor;
+        }
+        Ok(false)
+    }
+
+    /// Like [`is_revoked`](Self::is_revoked) but **authenticated** (spec 07 R3 authorization): honor
+    /// only revocations whose signature verifies under a *trusted* revoker. `trusted_revoker(revoker
+    /// κ)` returns that authority's public key if it is authorized to revoke, else `None`. An
+    /// unsigned, forged, or untrusted-revoker event is skipped — so a hostile party cannot revoke
+    /// another's key (closing the "anyone revokes anyone" gap).
+    pub fn is_revoked_signed<V, F>(
+        key: &KappaLabel71,
+        chain_head: &KappaLabel71,
+        store: &dyn crate::KappaStore,
+        verifier: &V,
+        trusted_revoker: F,
+    ) -> Result<bool, crate::StoreError>
+    where
+        V: crate::SignatureVerifier,
+        F: Fn(&KappaLabel71) -> Option<Vec<u8>>,
+    {
+        let mut cursor = Some(*chain_head);
+        while let Some(k) = cursor {
+            let Some(bytes) = store.get(&k)? else { break };
+            let Ok(ev) = Self::decode(bytes.as_ref()) else {
+                break;
+            };
+            if &ev.revoked_key == key {
+                if let Some(public_key) = trusted_revoker(&ev.revoker_key) {
+                    if ev.verify(verifier, &public_key) {
+                        return Ok(true);
+                    }
+                }
+                // Unsigned / forged / untrusted revoker — ignore this event; a later valid
+                // revocation of the same key may still count.
+            }
+            cursor = ev.predecessor;
         }
         Ok(false)
     }
@@ -1950,11 +2042,12 @@ mod tests {
         let key_a = k(b"attestation-key-a");
         let key_b = k(b"attestation-key-b");
         let key_c = k(b"never-revoked-key");
+        let revoker = k(b"operator-key");
 
         // Chain: revoke A (head0) ← revoke B (head1).
-        let e0 = RevocationEvent::new(key_a, None, 0);
+        let e0 = RevocationEvent::new(key_a, revoker, None, 0);
         let head0 = put(&e0);
-        let e1 = RevocationEvent::new(key_b, Some(head0), 7);
+        let e1 = RevocationEvent::new(key_b, revoker, Some(head0), 7);
         let head1 = put(&e1);
 
         // A verifier checking `head1` sees both A and B revoked, but not C.
@@ -1966,11 +2059,17 @@ mod tests {
         assert!(RevocationEvent::is_revoked(&key_a, &head0, &store).unwrap());
         assert!(!RevocationEvent::is_revoked(&key_b, &head0, &store).unwrap());
 
-        // references() recovers exactly [revoked_key, predecessor] — no side tables.
+        // references() recovers exactly [revoked_key, revoker_key, predecessor] — no side tables.
         assert_eq!(
             RevocationEvent::references(&e1.canonicalize()).unwrap(),
-            alloc::vec![key_b, head0]
+            alloc::vec![key_b, revoker, head0]
         );
+        // decode() round-trips the structured view.
+        let decoded = RevocationEvent::decode(&e1.canonicalize()).unwrap();
+        assert_eq!(decoded.revoked_key, key_b);
+        assert_eq!(decoded.revoker_key, revoker);
+        assert_eq!(decoded.predecessor, Some(head0));
+        assert_eq!(decoded.reason, 7);
     }
 
     #[test]

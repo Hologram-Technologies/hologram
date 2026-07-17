@@ -472,8 +472,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       builds never pull curve25519 — verified. `tests/attestation_ed25519.rs`: a real attestation
       signs+verifies end-to-end, tampering any bound fact breaks it, wrong key fails, and malformed
       key/signature bytes are a clean `false` (never panic).
-    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier) + network
-      keys; signed `RevocationEvent`s (who-may-revoke authorization).
+    - [x] **signed revocations** (2026-07-17, spec 07 R3) — `RevocationEvent` now carries a
+      `revoker_key` κ + signature; `verify(verifier, revoker_pubkey)` + `is_revoked_signed(…,
+      trusted_revoker)` honor a revocation only when its signature verifies under a *trusted*
+      revoker, closing the "anyone revokes anyone" gap (a forged event naming a trusted revoker but
+      signed by an attacker is rejected — ed25519-witnessed). **R3 is now fully implemented**: keys
+      bind to κ (GV-3) · rotation (new content/new κ) · signed session attestation · authenticated
+      append-only revocation. Decoder added to the parser-hardening fuzz.
+    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier) + network keys.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
