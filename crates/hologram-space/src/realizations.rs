@@ -1475,6 +1475,100 @@ realization!(
     "https://hologram.foundation/realization/session-attestation"
 );
 
+// ─────────────────── key rotation (P6, spec 07 R3) ───────────────────
+
+/// `https://hologram.foundation/realization/key-rotation` — a **signed supersession** of a key by a
+/// successor (spec 07 R3 key rotation). The old-key holder publishes this as new content, signing
+/// "this key is superseded by `successor_key`" — an append-only rotation chain. Old attestations
+/// stay verifiable against the key that made them (they name its κ); a verifier follows the chain to
+/// find the **current** key. The complement of [`RevocationEvent`] (which *invalidates*): rotation
+/// *supersedes*. Operands: the superseded key κ, the successor key κ, and the predecessor rotation κ
+/// (the chain link; `None` at the head). Payload: the signature by the **superseded** key — only its
+/// holder can rotate it (no one else can hijack the succession).
+pub struct KeyRotation {
+    /// The key κ being superseded.
+    pub superseded_key: KappaLabel71,
+    /// The successor key κ (the new current key after this rotation).
+    pub successor_key: KappaLabel71,
+    /// The prior rotation-event κ (append-only chain link); `None` at the head.
+    pub predecessor: Option<KappaLabel71>,
+    /// The detached signature by `superseded_key` over this rotation's facts.
+    pub signature: Vec<u8>,
+}
+
+impl KeyRotation {
+    /// A new (unsigned) rotation; set [`signature`](Self::signature) after signing
+    /// [`signable_bytes`](Self::signable_bytes) with the superseded key.
+    #[must_use]
+    pub fn new(
+        superseded_key: KappaLabel71,
+        successor_key: KappaLabel71,
+        predecessor: Option<KappaLabel71>,
+    ) -> Self {
+        Self {
+            superseded_key,
+            successor_key,
+            predecessor,
+            signature: Vec::new(),
+        }
+    }
+    fn refs(&self) -> Vec<KappaLabel71> {
+        let mut refs = alloc::vec![self.superseded_key, self.successor_key];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        refs
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (self.refs(), self.signature.clone())
+    }
+    /// Decode a canonical key-rotation form back into its structured view.
+    pub fn decode(bytes: &[u8]) -> Result<KeyRotation, RealizationError> {
+        let refs = <Self as crate::Realization>::references(bytes)?;
+        let signature = payload_of(
+            "https://hologram.foundation/realization/key-rotation",
+            bytes,
+        )?;
+        Ok(KeyRotation {
+            superseded_key: *refs.first().ok_or(RealizationError::Malformed)?,
+            successor_key: *refs.get(1).ok_or(RealizationError::Malformed)?,
+            predecessor: refs.get(2).copied(),
+            signature,
+        })
+    }
+    /// The bytes the signature covers — the rotation's facts (superseded / successor / predecessor
+    /// κs) with an empty signature.
+    pub fn signable_bytes(&self) -> Vec<u8> {
+        encode(
+            "https://hologram.foundation/realization/key-rotation",
+            &self.refs(),
+            &[],
+        )
+    }
+    /// Verify this rotation's signature under the **superseded** key's `public_key` — proof the old
+    /// key holder authorized the succession (spec 07 R3).
+    pub fn verify<V: crate::SignatureVerifier>(&self, verifier: &V, public_key: &[u8]) -> bool {
+        verifier.verify(public_key, &self.signable_bytes(), &self.signature)
+    }
+
+    /// The **current** key after a rotation chain whose latest event is `chain_head`: the successor
+    /// named by the head rotation (spec 07 R3). `None` if the head is absent or malformed. (The head
+    /// is the most recent rotation; the chain grows by prepending a new head that supersedes it.)
+    pub fn current_key(
+        chain_head: &KappaLabel71,
+        store: &dyn crate::KappaStore,
+    ) -> Result<Option<KappaLabel71>, crate::StoreError> {
+        match store.get(chain_head)? {
+            Some(bytes) => Ok(Self::decode(bytes.as_ref()).ok().map(|r| r.successor_key)),
+            None => Ok(None),
+        }
+    }
+}
+realization!(
+    KeyRotation,
+    "https://hologram.foundation/realization/key-rotation"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1550,6 +1644,8 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
         SessionAttestation::IRI,
         <SessionAttestation as Realization>::references,
     ),
+    // Key rotation (P6, spec 07 R3).
+    (KeyRotation::IRI, <KeyRotation as Realization>::references),
 ];
 
 #[cfg(test)]
@@ -2094,6 +2190,32 @@ mod tests {
             ..att
         };
         assert_ne!(other.kappa(), att_kappa);
+    }
+
+    #[test]
+    fn key_rotation_chain_tracks_the_current_key() {
+        // R3 rotation: an append-only supersession chain; the current key is the latest successor.
+        let store = crate::MemKappaStore::new();
+        let put = |r: &KeyRotation| store.put("blake3", &r.canonicalize()).unwrap();
+        let (k0, k1, k2) = (k(b"key-v0"), k(b"key-v1"), k(b"key-v2"));
+
+        let head0 = put(&KeyRotation::new(k0, k1, None)); // K0 → K1
+        let r1 = KeyRotation::new(k1, k2, Some(head0)); // K1 → K2 (latest)
+        let head1 = put(&r1);
+
+        // The current key is the successor named by the latest rotation.
+        assert_eq!(KeyRotation::current_key(&head1, &store).unwrap(), Some(k2));
+        assert_eq!(KeyRotation::current_key(&head0, &store).unwrap(), Some(k1));
+        // references() recovers [superseded, successor, predecessor] — no side tables.
+        assert_eq!(
+            KeyRotation::references(&r1.canonicalize()).unwrap(),
+            alloc::vec![k1, k2, head0]
+        );
+        // decode round-trips the structured view.
+        let decoded = KeyRotation::decode(&r1.canonicalize()).unwrap();
+        assert_eq!(decoded.superseded_key, k1);
+        assert_eq!(decoded.successor_key, k2);
+        assert_eq!(decoded.predecessor, Some(head0));
     }
 
     #[test]

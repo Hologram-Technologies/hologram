@@ -8,8 +8,8 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hologram_space::{
-    address_bytes, AttestationKey, KappaLabel71, KappaStore, MemKappaStore, Realization,
-    RevocationEvent, SessionAttestation, SignatureVerifier,
+    address_bytes, AttestationKey, KappaLabel71, KappaStore, KeyRotation, MemKappaStore,
+    Realization, RevocationEvent, SessionAttestation, SignatureVerifier,
 };
 
 /// The reference ed25519 verifier — a space's platform crypto behind the portable seam.
@@ -131,6 +131,34 @@ fn signed_revocation_is_honored_only_from_a_trusted_signer() {
     // The purely-structural walk would wrongly honor the forged revocation — which is exactly why
     // the authenticated variant exists.
     assert!(RevocationEvent::is_revoked(&victim, &head_forged, &store).unwrap());
+}
+
+#[test]
+fn key_rotation_must_be_signed_by_the_superseded_key() {
+    // R3 rotation: only the old-key holder may rotate — the succession is signed by the *superseded*
+    // key, so nobody else can hijack a key's replacement.
+    let old = SigningKey::from_bytes(&[5u8; 32]);
+    let old_pub = old.verifying_key().to_bytes().to_vec();
+    let old_kappa = AttestationKey::new(0, old_pub.clone()).kappa();
+    let new_pub = SigningKey::from_bytes(&[6u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .to_vec();
+    let new_kappa = AttestationKey::new(0, new_pub).kappa();
+
+    let mut rot = KeyRotation::new(old_kappa, new_kappa, None);
+    rot.signature = old.sign(&rot.signable_bytes()).to_bytes().to_vec();
+
+    assert!(
+        rot.verify(&Ed25519, &old_pub),
+        "a rotation must verify under the superseded key"
+    );
+    // A different key cannot authorize the succession.
+    let attacker_pub = SigningKey::from_bytes(&[7u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .to_vec();
+    assert!(!rot.verify(&Ed25519, &attacker_pub));
 }
 
 #[test]

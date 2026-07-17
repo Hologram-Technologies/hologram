@@ -537,9 +537,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `revoker_key` κ + signature; `verify(verifier, revoker_pubkey)` + `is_revoked_signed(…,
       trusted_revoker)` honor a revocation only when its signature verifies under a *trusted*
       revoker, closing the "anyone revokes anyone" gap (a forged event naming a trusted revoker but
-      signed by an attacker is rejected — ed25519-witnessed). **R3 is now fully implemented**: keys
-      bind to κ (GV-3) · rotation (new content/new κ) · signed session attestation · authenticated
-      append-only revocation. Decoder added to the parser-hardening fuzz.
+      signed by an attacker is rejected — ed25519-witnessed). Decoder added to the parser-hardening fuzz.
+    - [x] **signed key rotation** (2026-07-17, spec 07 R3) — a `KeyRotation` realization: a **signed
+      supersession chain** (superseded key κ → successor κ, signed by the *superseded* key so only its
+      holder can rotate it, ed25519-witnessed). `current_key(chain_head, store)` returns the latest
+      successor; old attestations stay verifiable against the key that made them. The complement of
+      `RevocationEvent` (supersede vs invalidate). **R3 fully implemented**: κ-identity (GV-3) · signed
+      rotation · authenticated revocation · signed session attestation — all four key-lifecycle events.
     - [x] **ChaCha20-Poly1305 Private-tier encryption** (2026-07-17, spec 04 §Private / P6 Phase B).
       Portable, dep-free `PayloadCipher` AEAD seam in the no_std core + `convergent_nonce(key,
       plaintext)` = `blake3(key ‖ plaintext)[..12]` + `seal_private`. **Convergent nonces need no
