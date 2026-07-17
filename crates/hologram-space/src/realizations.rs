@@ -1039,49 +1039,86 @@ pub struct Network {
     pub parent: Option<KappaLabel71>,
     /// The capability tier gating the protocol boundary.
     pub tier: NetworkTier,
+    /// The network's **symmetric-key κ** for the `Private` tier (spec 04 §Private): the key material
+    /// is content at this κ, so access to it is gated by the restricted-tier membership (a member's
+    /// capability grants the fetch). `None` for Public/Restricted networks. Payload published on a
+    /// Private network is sealed with this key ([`crate::seal_private`]).
+    pub key_ref: Option<KappaLabel71>,
 }
 
 impl Network {
     fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
-        let mut refs = Vec::with_capacity(self.membership.len() + 2);
+        let mut refs = Vec::with_capacity(self.membership.len() + 3);
         refs.extend_from_slice(&self.membership);
         refs.push(self.policy);
+        // Two tail optionals — record presence in a flags byte (avoids positional ambiguity).
+        let mut flags = 0u8;
+        if let Some(kr) = self.key_ref {
+            refs.push(kr);
+            flags |= 0b01;
+        }
         if let Some(p) = self.parent {
             refs.push(p);
+            flags |= 0b10;
         }
-        // Payload: membership count (so `references()` splits back into membership / policy /
-        // parent) + the tier byte.
-        let mut p = Vec::with_capacity(5);
+        // Payload: membership count (so `references()` splits back), tier byte, optional-flags byte.
+        let mut p = Vec::with_capacity(6);
         p.extend_from_slice(&(self.membership.len() as u32).to_le_bytes());
         p.push(self.tier as u8);
+        p.push(flags);
         (refs, p)
     }
 
     /// Decode a canonical network form back into its structured view — the inverse of
-    /// `canonicalize`. Recovers the membership set, policy κ, optional parent κ, and tier.
+    /// `canonicalize`. Recovers the membership set, policy κ, tier, key κ, and optional parent κ.
     pub fn decode(bytes: &[u8]) -> Result<Network, RealizationError> {
         let refs = <Self as crate::Realization>::references(bytes)?;
         let payload = payload_of("https://hologram.foundation/realization/network", bytes)?;
         let mut cur = 0usize;
         let n_membership = read_u32(&payload, &mut cur)? as usize;
         let tier = NetworkTier::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
-        // refs = [membership × n, policy, parent?].
+        cur += 1;
+        let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
+        // refs = [membership × n, policy, key_ref?, parent?] — tail presence per `flags`.
         let membership = refs
             .get(..n_membership)
             .ok_or(RealizationError::Malformed)?
             .to_vec();
         let policy = *refs.get(n_membership).ok_or(RealizationError::Malformed)?;
-        // Overflow-safe (attacker-controlled n_membership; 32-bit usize on wasm/bare-metal).
-        let parent = n_membership
+        // Overflow-safe indexing (attacker-controlled n_membership; 32-bit usize on wasm/bare-metal).
+        let mut tail = n_membership
             .checked_add(1)
-            .and_then(|i| refs.get(i))
-            .copied();
+            .ok_or(RealizationError::Malformed)?;
+        let key_ref = if flags & 0b01 != 0 {
+            let kr = *refs.get(tail).ok_or(RealizationError::Malformed)?;
+            tail = tail.checked_add(1).ok_or(RealizationError::Malformed)?;
+            Some(kr)
+        } else {
+            None
+        };
+        let parent = if flags & 0b10 != 0 {
+            Some(*refs.get(tail).ok_or(RealizationError::Malformed)?)
+        } else {
+            None
+        };
         Ok(Network {
             membership,
             policy,
             parent,
             tier,
+            key_ref,
         })
+    }
+
+    /// Whether this network's tier ↔ key binding is well-formed (spec 04 §Private): the `Private`
+    /// tier MUST bind a symmetric-key κ (`key_ref`); `Public`/`Restricted` MUST NOT — encryption is
+    /// Private-only, and a key on an unencrypted tier would be a false promise of confidentiality.
+    #[must_use]
+    pub fn key_binding_ok(&self) -> bool {
+        match self.tier {
+            NetworkTier::Private => self.key_ref.is_some(),
+            NetworkTier::Public | NetworkTier::Restricted => self.key_ref.is_none(),
+        }
     }
 }
 realization!(Network, "https://hologram.foundation/realization/network");
@@ -1872,6 +1909,7 @@ mod tests {
             policy: k(b"policy"),
             parent: None,
             tier: NetworkTier::Restricted,
+            key_ref: None,
         };
         // NW-1: references() yields exactly [membership..., policy] — no side tables.
         let refs = Network::references(&net.canonicalize()).unwrap();
@@ -1879,21 +1917,47 @@ mod tests {
     }
 
     #[test]
-    fn network_round_trips_through_decode_including_parent_and_tier() {
+    fn network_round_trips_through_decode_with_key_and_parent() {
+        // A Private network binds a key κ; both tail optionals present exercise the flags encoding.
         let net = Network {
             membership: alloc::vec![k(b"m0")],
             policy: k(b"pol"),
             parent: Some(k(b"parent-net")),
             tier: NetworkTier::Private,
+            key_ref: Some(k(b"net-key")),
         };
         let decoded = Network::decode(&net.canonicalize()).unwrap();
         assert_eq!(decoded.membership, alloc::vec![k(b"m0")]);
         assert_eq!(decoded.policy, k(b"pol"));
+        assert_eq!(decoded.key_ref, Some(k(b"net-key")));
         assert_eq!(decoded.parent, Some(k(b"parent-net")));
         assert_eq!(decoded.tier, NetworkTier::Private);
-        // Dispatches through the registry like every other realization.
+        assert!(
+            decoded.key_binding_ok(),
+            "Private tier with a key is well-formed"
+        );
+        // Dispatches through the registry: refs = [m0, pol, net-key, parent-net].
         let refs = references(&net.canonicalize(), REGISTRY).unwrap();
-        assert_eq!(refs.len(), 3); // m0, pol, parent-net
+        assert_eq!(refs.len(), 4);
+    }
+
+    #[test]
+    fn private_tier_requires_a_bound_key_others_forbid_it() {
+        // spec 04 §Private: encryption is Private-only — the Private tier MUST bind a key κ; a key on
+        // Public/Restricted would be a false promise of confidentiality.
+        let net = |tier, key_ref| Network {
+            membership: alloc::vec![k(b"m")],
+            policy: k(b"pol"),
+            parent: None,
+            tier,
+            key_ref,
+        };
+        assert!(net(NetworkTier::Private, Some(k(b"key"))).key_binding_ok());
+        assert!(!net(NetworkTier::Private, None).key_binding_ok());
+        assert!(net(NetworkTier::Restricted, None).key_binding_ok());
+        assert!(!net(NetworkTier::Restricted, Some(k(b"key"))).key_binding_ok());
+        assert!(net(NetworkTier::Public, None).key_binding_ok());
+        assert!(!net(NetworkTier::Public, Some(k(b"key"))).key_binding_ok());
     }
 
     #[test]

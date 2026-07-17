@@ -9,7 +9,9 @@
 
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
-use hologram_space::{convergent_nonce, seal_private, PayloadCipher};
+use hologram_space::{
+    convergent_nonce, seal_private, KappaStore, MemKappaStore, Network, NetworkTier, PayloadCipher,
+};
 
 /// The reference AEAD cipher — a space's platform crypto behind the portable seam. Guards ill-sized
 /// key/nonce so it never panics on network-supplied bytes.
@@ -92,6 +94,55 @@ fn distinct_keys_yield_distinct_ciphertext_no_cross_key_reuse() {
     // The convergent nonce mixes the key, so different networks never reuse a (key, nonce) pair.
     assert_ne!(n1, n2);
     assert_ne!(c1, c2);
+}
+
+#[test]
+fn private_network_end_to_end_key_gated_seal_and_open() {
+    // The Private tier, wired end-to-end: a network binds a symmetric-key κ; the key material is
+    // content in the store (access gated by restricted-tier membership); a member resolves it and
+    // seals/opens payloads; a non-member without the key cannot open the ciphertext.
+    let store = MemKappaStore::new();
+    let cipher = ChaCha;
+
+    // The network creator publishes the symmetric key as content → its κ.
+    let key_kappa = store.put("blake3", &KEY).unwrap();
+    let network = Network {
+        membership: vec![hologram_space::address_bytes(b"member-operator")],
+        policy: hologram_space::address_bytes(b"restricted-policy-capset"),
+        parent: None,
+        tier: NetworkTier::Private,
+        key_ref: Some(key_kappa),
+    };
+    assert!(
+        network.key_binding_ok(),
+        "a Private network binds its key κ"
+    );
+
+    // A member resolves the key from the network's key_ref (membership grants the fetch).
+    let member_key = store
+        .get(network.key_ref.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    let (nonce, ciphertext) = seal_private(&cipher, member_key.as_ref(), PLAINTEXT);
+    assert_eq!(
+        cipher
+            .open(member_key.as_ref(), &nonce, &ciphertext)
+            .as_deref(),
+        Some(PLAINTEXT),
+        "a member with the resolved network key opens the payload"
+    );
+
+    // A non-member who never obtained the key (only the ciphertext + nonce) cannot open it.
+    let outsider_guess = [0x00u8; 32];
+    assert!(cipher.open(&outsider_guess, &nonce, &ciphertext).is_none());
+
+    // The ciphertext is content-addressed like anything else — two members sealing the same payload
+    // under the same network key converge on one κ (Law L3 dedup on the private network).
+    let (_, ciphertext2) = seal_private(&cipher, member_key.as_ref(), PLAINTEXT);
+    assert_eq!(
+        store.put("blake3", &ciphertext).unwrap(),
+        store.put("blake3", &ciphertext2).unwrap()
+    );
 }
 
 #[test]

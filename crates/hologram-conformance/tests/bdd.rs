@@ -678,6 +678,7 @@ fn nw1_build(w: &mut ConformanceWorld) {
         policy,
         parent: None,
         tier: NetworkTier::Restricted,
+        key_ref: None,
     };
     w.canonical = network.canonicalize();
 }

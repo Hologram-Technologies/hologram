@@ -83,7 +83,8 @@ fn network_seed() -> Vec<u8> {
         membership: vec![k(b"a"), k(b"b")],
         policy: k(b"p"),
         parent: Some(k(b"parent")),
-        tier: NetworkTier::Restricted,
+        tier: NetworkTier::Private,
+        key_ref: Some(k(b"net-key")), // both tail optionals present exercises the flags decode
     }
     .canonicalize()
 }

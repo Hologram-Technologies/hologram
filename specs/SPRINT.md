@@ -488,8 +488,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       a **dev-dependency only** — wasm32/thumbv7em builds never pull the cipher (verified).
       `tests/private_tier_chacha20.rs`: round-trip, convergent dedup, wrong-key/tamper fail-loud
       (AEAD), distinct-key non-reuse, ill-sized-input never-panics.
-    - [ ] non-conformance P6 follow-on: network-key management (per-network symmetric key
-      derivation/distribution for the Private tier); a `PrivateNetwork` realization.
+    - [x] **network-key binding — Private tier end-to-end** (2026-07-17, spec 04 §Private). The
+      `Network` realization now carries `key_ref: Option<κ>` — the Private tier binds its
+      symmetric-key κ (the key material is content, so access is gated by the restricted-tier
+      membership; no new asymmetric protocol). Two tail optionals (key_ref, parent) encode via a
+      flags byte; decode is overflow-safe. `key_binding_ok()` enforces Private ⟺ key (a key on an
+      unencrypted tier is a false confidentiality promise). End-to-end test: a Private network binds
+      a key, a member resolves it from `key_ref` and seals/opens a payload, a non-member cannot open
+      it, and two members sealing the same payload converge on one κ (L3 dedup on the private
+      network). NW-1/NW-2 conformance unchanged; native + thumbv7em green.
+    - [ ] non-conformance P6 follow-on: key rotation on membership change (forward secrecy);
+      per-member key wrapping (asymmetric enrollment) if convergent shared-key is insufficient.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
