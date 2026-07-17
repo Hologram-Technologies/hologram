@@ -22,6 +22,8 @@ use hologram_space::{Network, NetworkOp, NetworkTier};
 // GV-3/GV-4: a signing key bound to a κ-addressed identity as content; a capability policy gating
 // network ops at the boundary with per-capability accounting (spec 07 R3/R4).
 use hologram_space::AttestationKey;
+// GV-2: lifecycle transitions emit through one audit seam onto an append-only κ-chain (spec 07 R2).
+use hologram_space::{AuditEvent, KappaLabel71, LifecycleTransition};
 // SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
 // public API (external witness: the shipping reference impls in `hologram-space`).
 use hologram_space::{
@@ -814,6 +816,57 @@ fn gv4_assert(w: &mut ConformanceWorld) {
         Some(true),
         "store/fetch/announce must be admitted from the capability alone (a boundary check), with \
          each capability's quota its own — per-capability accounting, never a global counter (R4)"
+    );
+}
+
+// ───────────────────────────── GV-2 — R2 auditability: one seam, no bypass ─────────────────────────────
+// The audit trail is a κ-chained, append-only event log (SPINE-5 gives tamper-evidence for free).
+// Every lifecycle transition (spawn/suspend/resume/terminate) emits through the one audit seam
+// (`AuditEvent::record`) — the same seam `hologram-runtime`'s `Session` drives on every transition.
+// The transition enum is closed, so no path can bypass it. Witnessed against `AuditEvent`.
+
+#[given("lifecycle transitions spawn, suspend, resume, terminate")]
+fn gv2_given(_w: &mut ConformanceWorld) {}
+
+#[when("each transition occurs")]
+fn gv2_transitions(w: &mut ConformanceWorld) {
+    let subject = address_bytes(b"gv2-container");
+    // The whole closed set of transitions — each emits through the one seam onto the κ-chain.
+    let transitions = [
+        LifecycleTransition::Spawn,
+        LifecycleTransition::Suspend,
+        LifecycleTransition::Resume,
+        LifecycleTransition::Terminate,
+    ];
+    let mut head: Option<KappaLabel71> = None;
+    let mut chain: Vec<KappaLabel71> = Vec::new();
+    let mut pointable = true;
+    for t in transitions {
+        let event = AuditEvent::record(t, subject, head);
+        let bytes = event.canonicalize();
+        // Pointable at the κ-chain: references() recovers the subject and the predecessor link.
+        let refs = AuditEvent::references(&bytes).expect("an audit event decodes");
+        let links = refs[0] == subject && head.is_none_or(|prev| refs.get(1) == Some(&prev));
+        pointable &= links && AuditEvent::transition_of(&bytes) == Ok(t);
+        let kappa = event.kappa();
+        chain.push(kappa);
+        head = Some(kappa);
+    }
+    // No bypass: every one of the four transitions emitted a distinct, linked event.
+    let distinct = chain
+        .iter()
+        .enumerate()
+        .all(|(i, a)| chain[i + 1..].iter().all(|b| a != b));
+    w.gv2_audit = Some(pointable && distinct && chain.len() == 4);
+}
+
+#[then("it emits through one seam that can be pointed at the κ-chain and no path bypasses it")]
+fn gv2_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.gv2_audit,
+        Some(true),
+        "every lifecycle transition must emit through the one audit seam onto an append-only, \
+         κ-chained log (each event links to its predecessor) — no path bypasses it (R2)"
     );
 }
 

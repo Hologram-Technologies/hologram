@@ -1,4 +1,4 @@
-@class:GV @id:GV-2 @spec:07-governance @phase:P5 @status:pending
+@class:GV @id:GV-2 @spec:07-governance @phase:P6 @status:enforced
 Feature: R2 auditability
   Scenario: one audit seam, no bypass
     Given lifecycle transitions spawn, suspend, resume, terminate

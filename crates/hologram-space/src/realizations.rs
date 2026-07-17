@@ -1123,6 +1123,82 @@ realization!(
     "https://hologram.foundation/realization/attestation-key"
 );
 
+// ─────────────────── audit trail (P6, spec 07 R2) ───────────────────
+
+/// A container lifecycle transition (spec 07 R2) — the events the audit seam records. A closed
+/// enum (exhaustive matching, no catch-all): `boot` spawns; `suspend`/`resume`/`terminate` follow.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum LifecycleTransition {
+    /// `boot` — the container spawned and is running.
+    Spawn = 0,
+    /// `suspend` — captured to a κ snapshot.
+    Suspend = 1,
+    /// `resume` — restarted from a snapshot.
+    Resume = 2,
+    /// `terminate` — ended, not resumable.
+    Terminate = 3,
+}
+
+impl LifecycleTransition {
+    fn from_u8(b: u8) -> Result<Self, RealizationError> {
+        match b {
+            0 => Ok(LifecycleTransition::Spawn),
+            1 => Ok(LifecycleTransition::Suspend),
+            2 => Ok(LifecycleTransition::Resume),
+            3 => Ok(LifecycleTransition::Terminate),
+            _ => Err(RealizationError::Malformed),
+        }
+    }
+}
+
+/// `https://hologram.foundation/realization/audit-event` — one lifecycle-transition record in the
+/// append-only **audit κ-chain** (spec 07 R2). Operands: the subject container κ + the predecessor
+/// audit-event κ (the chain link; absent at the head). Payload: the transition byte. This is the
+/// **one seam** every lifecycle transition emits through — SPINE-5 makes the chain tamper-evident
+/// for free, and because it is κ-content the audit trail needs no separate access-control mechanism.
+pub struct AuditEvent {
+    /// The container whose lifecycle this records.
+    pub subject: KappaLabel71,
+    /// The prior audit-event κ (the append-only chain link); `None` at the chain head.
+    pub predecessor: Option<KappaLabel71>,
+    /// Which transition occurred.
+    pub transition: LifecycleTransition,
+}
+
+impl AuditEvent {
+    /// The audit seam: mint the event recording `transition` on `subject`, linked to the prior
+    /// audit-event κ (`predecessor`). Every lifecycle transition passes through here — no bypass.
+    #[must_use]
+    pub fn record(
+        transition: LifecycleTransition,
+        subject: KappaLabel71,
+        predecessor: Option<KappaLabel71>,
+    ) -> Self {
+        Self {
+            subject,
+            predecessor,
+            transition,
+        }
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.subject];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        (refs, alloc::vec![self.transition as u8])
+    }
+    /// Recover the recorded transition from a canonical audit-event form.
+    pub fn transition_of(bytes: &[u8]) -> Result<LifecycleTransition, RealizationError> {
+        let p = payload_of("https://hologram.foundation/realization/audit-event", bytes)?;
+        LifecycleTransition::from_u8(*p.first().ok_or(RealizationError::Truncated)?)
+    }
+}
+realization!(
+    AuditEvent,
+    "https://hologram.foundation/realization/audit-event"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1186,6 +1262,8 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
         AttestationKey::IRI,
         <AttestationKey as Realization>::references,
     ),
+    // Audit trail (P6, spec 07 R2).
+    (AuditEvent::IRI, <AuditEvent as Realization>::references),
 ];
 
 #[cfg(test)]
@@ -1664,6 +1742,47 @@ mod tests {
             other.admits_network_op(NetworkOp::Store, 2000),
             "the other cap has its own budget"
         );
+    }
+
+    #[test]
+    fn audit_events_form_a_kappa_chain_over_every_transition() {
+        // GV-2: every lifecycle transition emits through the one seam (AuditEvent::record), threading
+        // an append-only κ-chain. All four variants map through it — no path bypasses it.
+        let subject = k(b"gv2-container");
+        let transitions = [
+            LifecycleTransition::Spawn,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Terminate,
+        ];
+        let mut head: Option<KappaLabel71> = None;
+        let mut chain = alloc::vec![];
+        for t in transitions {
+            let event = AuditEvent::record(t, subject, head);
+            let bytes = event.canonicalize();
+            // Pointable at the κ-chain: references() recovers the subject (+ predecessor link).
+            let refs = AuditEvent::references(&bytes).unwrap();
+            assert_eq!(refs[0], subject);
+            if let Some(prev) = head {
+                assert_eq!(refs[1], prev, "each event links to its predecessor");
+            } else {
+                assert_eq!(refs.len(), 1, "the head has no predecessor");
+            }
+            assert_eq!(AuditEvent::transition_of(&bytes).unwrap(), t);
+            let kappa = event.kappa();
+            chain.push(kappa);
+            head = Some(kappa);
+        }
+        // Four transitions ⇒ four distinct linked events (total coverage, no bypass).
+        assert_eq!(chain.len(), 4);
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                assert_ne!(
+                    chain[i], chain[j],
+                    "each transition mints a distinct audit κ"
+                );
+            }
+        }
     }
 
     #[test]

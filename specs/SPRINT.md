@@ -432,8 +432,24 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop),
       wire-version negotiation, bounded `resolve_closure` over the network seam, `hologram network`
       CLI, TCK network battery.
-  - [ ] **P6** — encryption/governance (AttestationKey / RevocationEvent / NetworkPolicy /
-    AuditEvent, key lifecycle, session-signing, ChaCha20); drive GV-2/3/4 (+GV-5/6) ⛔→✅.
+  - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
+    phase drove **GV-2/3/4** ⛔→✅:
+    - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
+      published content (identity IS its κ; leaf identity; deterministic single surface), never a
+      second identity surface. Rotation = new content/new κ; revocation = append-only event.
+    - **GV-4** — `Capabilities::admits_network_op`: store/fetch/announce gated from the capability
+      alone (import/protocol boundary) with per-capability quota accounting, never global.
+    - **GV-2** — `AuditEvent` realization + `LifecycleTransition`; `hologram-runtime`'s `Session`
+      now emits through **one** `record` seam on every transition (spawn/suspend/resume/terminate),
+      threading an append-only audit κ-chain — runtime-tested that all four advance a distinct linked
+      head (no bypass). BDD witnesses the same seam's κ-chain.
+    - bdd **19 passed**; meta-gate bijection + status agreement green; native + wasm32 + thumbv7em.
+    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier), network
+      keys, `RevocationEvent` chain + verifier, snapshot-attestation extension section.
+
+**All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
+non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
+wire-version + TCK battery (P5), payload encryption + key lifecycle chain (P6).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 

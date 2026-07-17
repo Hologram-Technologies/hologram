@@ -431,7 +431,7 @@ addressing and warm-start do.
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **GV-1** | R1 traceability: every new realization embeds its operand κs so `references()` yields the full provenance closure — no side tables. | BDD scenario (witnessed against `hologram-realizations::ContainerManifest`) | `s6_governance/traceability.feature::references yields full provenance` | ✅ |
-| **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ⛔ |
+| **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ✅ |
 | **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ✅ |
 | **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ✅ |
 

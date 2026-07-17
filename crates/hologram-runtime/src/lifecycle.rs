@@ -10,7 +10,9 @@
 
 use core::fmt;
 
-use hologram_space::{ContainerHandle, ContainerRuntime, KappaLabel71, RuntimeError};
+use hologram_space::{
+    AuditEvent, ContainerHandle, ContainerRuntime, KappaLabel71, LifecycleTransition, RuntimeError,
+};
 
 /// The phase of a container's lifecycle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +46,10 @@ pub struct Session<'r, R: ContainerRuntime> {
     handle: Option<ContainerHandle>,
     phase: Phase,
     snapshot: Option<KappaLabel71>,
+    /// Head of the append-only audit κ-chain (spec 07 R2) — the most-recent lifecycle
+    /// [`AuditEvent`] κ, or `None` before the first transition. Every transition emits through the
+    /// one [`record`](Session::record) seam; no lifecycle path bypasses it.
+    audit_head: Option<KappaLabel71>,
 }
 
 impl<'r, R: ContainerRuntime> Session<'r, R> {
@@ -56,6 +62,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
             handle: None,
             phase: Phase::Provisioned,
             snapshot: None,
+            audit_head: None,
         }
     }
 
@@ -74,6 +81,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
             handle: None,
             phase: Phase::Suspended,
             snapshot: Some(snapshot),
+            audit_head: None,
         }
     }
 
@@ -104,6 +112,21 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
         self.caps = caps;
     }
 
+    /// The head of this session's append-only audit κ-chain (spec 07 R2) — the κ of the most-recent
+    /// lifecycle [`AuditEvent`], or `None` before the first transition. A wrapping layer pins/persists
+    /// this κ to point the audit trail at the κ-chain.
+    pub fn audit_head(&self) -> Option<&KappaLabel71> {
+        self.audit_head.as_ref()
+    }
+
+    /// The **audit seam** (spec 07 R2): record a lifecycle `transition` as an [`AuditEvent`] on this
+    /// session's container, threaded onto the append-only audit κ-chain. Every transition emits
+    /// through here — this is the single seam, so no lifecycle path bypasses the audit trail.
+    fn record(&mut self, transition: LifecycleTransition) {
+        let event = AuditEvent::record(transition, self.container, self.audit_head);
+        self.audit_head = Some(event.kappa());
+    }
+
     /// Boot the container: spawn its Container ID under its capability set.
     ///
     /// # Errors
@@ -118,6 +141,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
             .map_err(LifecycleError::Runtime)?;
         self.handle = Some(handle);
         self.phase = Phase::Running;
+        self.record(LifecycleTransition::Spawn);
         Ok(())
     }
 
@@ -140,6 +164,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
         self.handle = None;
         self.phase = Phase::Suspended;
         self.snapshot = Some(snapshot);
+        self.record(LifecycleTransition::Suspend);
         Ok(snapshot)
     }
 
@@ -162,6 +187,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
             .map_err(LifecycleError::Runtime)?;
         self.handle = Some(handle);
         self.phase = Phase::Running;
+        self.record(LifecycleTransition::Resume);
         Ok(())
     }
 
@@ -184,6 +210,7 @@ impl<'r, R: ContainerRuntime> Session<'r, R> {
                 .map_err(LifecycleError::Runtime)?;
         }
         self.phase = Phase::Terminated;
+        self.record(LifecycleTransition::Terminate);
         Ok(())
     }
 
@@ -278,18 +305,38 @@ mod tests {
             assert_eq!(session.caps(), &caps_k);
             assert!(session.snapshot().is_none());
 
+            // GV-2: every transition emits through the one audit seam — the chain advances by a
+            // distinct linked event on each, and no lifecycle path bypasses it.
+            assert!(session.audit_head().is_none(), "no audit event before boot");
+            let mut audit = alloc::vec::Vec::new();
+
             session.boot().await.unwrap();
             assert_eq!(session.phase(), Phase::Running);
+            audit.push(*session.audit_head().expect("boot emits an audit event"));
 
             let snap = session.suspend().await.unwrap();
             assert_eq!(session.phase(), Phase::Suspended);
             assert_eq!(session.snapshot(), Some(&snap));
+            audit.push(*session.audit_head().expect("suspend emits an audit event"));
 
             session.resume().await.unwrap();
             assert_eq!(session.phase(), Phase::Running);
+            audit.push(*session.audit_head().expect("resume emits an audit event"));
 
             session.terminate().await.unwrap();
             assert_eq!(session.phase(), Phase::Terminated);
+            audit.push(
+                *session
+                    .audit_head()
+                    .expect("terminate emits an audit event"),
+            );
+
+            // Four transitions ⇒ four distinct audit-chain heads (append-only; no bypass).
+            for i in 0..audit.len() {
+                for j in (i + 1)..audit.len() {
+                    assert_ne!(audit[i], audit[j], "each transition threads a new audit κ");
+                }
+            }
         });
     }
 

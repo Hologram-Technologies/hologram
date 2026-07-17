@@ -90,4 +90,7 @@ pub struct ConformanceWorld {
     /// GV-4: `true` once a capability policy with quotas is shown to gate store/fetch/announce at
     /// the boundary with per-capability (not global) accounting.
     pub gv4_boundary: Option<bool>,
+    /// GV-2: `true` once every lifecycle transition (spawn/suspend/resume/terminate) is shown to
+    /// emit through the one audit seam onto an append-only κ-chain — no path bypasses it.
+    pub gv2_audit: Option<bool>,
 }
