@@ -421,8 +421,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       --input --output` re-frames to manifest + certificates only (app κ unchanged). Both wrap the
       same archive/space primitives as `Client::inspect`/`thin`. `app fat` needs the node's content
       store — a follow-on. `thin_archive_bytes` unit-tested (manifest preserved, payload dropped).
-    - [ ] `hologram app fat` (needs the node content store) + out-of-tree cargo-fuzz targets (the
-      deterministic in-tree mutation suites are live).
+    - [x] **out-of-tree cargo-fuzz targets** (2026-07-17, spec 03 §Parser hardening — CI-permanent).
+      `crates/hologram-space/fuzz/` (own `[workspace]`, host-workspace-excluded): coverage-guided
+      libfuzzer targets `manifest_decode` (`AppManifest::decode`/`references`) and
+      `references_dispatch` (the generic registry dispatch — the network entry point). Both **build**
+      under nightly+ASAN; `manifest_decode` ran **200k iterations with no crash**, independently
+      confirming the parser-hardening fixes. Generated corpus/artifacts gitignored. (A nightly CI job
+      runs them; the deterministic in-tree mutation suites remain the always-green gate.)
+    - [ ] `hologram app fat` (needs the node content store).
   - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
     ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive

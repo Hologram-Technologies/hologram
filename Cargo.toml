@@ -77,6 +77,8 @@ exclude = [
     "crates/hologram-emulator-codemodule",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
+    # Out-of-tree cargo-fuzz targets (nightly + libfuzzer; run explicitly, spec 03 §Parser hardening).
+    "crates/hologram-space/fuzz",
 ]
 
 [workspace.package]

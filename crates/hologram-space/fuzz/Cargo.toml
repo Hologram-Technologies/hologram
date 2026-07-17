@@ -1,0 +1,32 @@
+# Out-of-tree cargo-fuzz targets for the network-facing parsers (spec `refactor/03` §Parser
+# hardening — CI-permanent from the P4 codec work onward). Its own `[workspace]` detaches it from
+# the host workspace; run with `cargo +nightly fuzz run <target>` from `crates/hologram-space`.
+[package]
+name = "hologram-space-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+hologram-space = { path = ".." }
+
+[[bin]]
+name = "manifest_decode"
+path = "fuzz_targets/manifest_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "references_dispatch"
+path = "fuzz_targets/references_dispatch.rs"
+test = false
+doc = false
+bench = false
+
+# Detach from the host workspace (cargo-fuzz convention).
+[workspace]
