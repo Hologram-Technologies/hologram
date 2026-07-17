@@ -426,6 +426,53 @@ pub trait SignatureVerifier {
     fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool;
 }
 
+// ───────────────────────────── payload encryption seam (spec 04 §Private / P6) ─────────────────────────────
+
+/// The **private-network payload cipher seam** (spec 04 §Private tier). An AEAD (authenticated
+/// encryption): `seal` encrypts + authenticates, `open` returns the plaintext only if the tag
+/// authenticates (else `None`, fail-loud SPINE-6). Portable and dependency-free — a space supplies
+/// the concrete cipher for its platform (native ChaCha20-Poly1305, browser WebCrypto, a bare-metal
+/// crypto accelerator), like the `SignatureVerifier` / HAL seams. The `no_std` core carries no
+/// cipher dependency; only this trait + the nonce derivation.
+pub trait PayloadCipher {
+    /// AEAD-seal `plaintext` under `key` (32 bytes) + `nonce` (12 bytes); returns `ciphertext ‖
+    /// tag`. Must never panic on ill-sized inputs (return an empty/again-unopenable buffer instead).
+    fn seal(&self, key: &[u8], nonce: &[u8], plaintext: &[u8]) -> Vec<u8>;
+    /// AEAD-open; returns the plaintext iff the tag authenticates under `key` + `nonce`, else `None`.
+    fn open(&self, key: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>>;
+}
+
+/// A **convergent** 12-byte nonce for a private-network payload (spec 04 §Private): derived from the
+/// network `key` + `plaintext` so identical content under one key yields an identical nonce — and
+/// hence identical ciphertext, so **Law L3 dedup survives encryption** (the store holds one copy of
+/// shared private content). Distinct keys give distinct nonces (no cross-key nonce reuse), and a
+/// given nonce only ever seals one plaintext (no catastrophic AEAD reuse). The equality-leak
+/// inherent to *any* dedup-preserving encryption is the documented tradeoff (04 §Private).
+#[must_use]
+pub fn convergent_nonce(key: &[u8], plaintext: &[u8]) -> [u8; 12] {
+    use hologram_types::prism::crypto::Blake3Hasher;
+    use hologram_types::prism::vocabulary::Hasher;
+    let digest: [u8; 32] = Blake3Hasher::initial()
+        .fold_bytes(key)
+        .fold_bytes(plaintext)
+        .finalize();
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&digest[..12]);
+    nonce
+}
+
+/// Seal `plaintext` for a private network under `key` with a convergent (dedup-preserving) nonce
+/// (spec 04 §Private). Returns `(nonce, ciphertext)`; open with [`PayloadCipher::open`].
+pub fn seal_private<C: PayloadCipher>(
+    cipher: &C,
+    key: &[u8],
+    plaintext: &[u8],
+) -> ([u8; 12], Vec<u8>) {
+    let nonce = convergent_nonce(key, plaintext);
+    let ciphertext = cipher.seal(key, &nonce, plaintext);
+    (nonce, ciphertext)
+}
+
 // ───────────────────────────── KappaStore (sync, spec §8.1) ─────────────────────────────
 
 /// Content-addressed byte storage. Sync (bounded local work; matches the OPFS sync handle and

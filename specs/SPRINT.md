@@ -479,7 +479,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       signed by an attacker is rejected — ed25519-witnessed). **R3 is now fully implemented**: keys
       bind to κ (GV-3) · rotation (new content/new κ) · signed session attestation · authenticated
       append-only revocation. Decoder added to the parser-hardening fuzz.
-    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier) + network keys.
+    - [x] **ChaCha20-Poly1305 Private-tier encryption** (2026-07-17, spec 04 §Private / P6 Phase B).
+      Portable, dep-free `PayloadCipher` AEAD seam in the no_std core + `convergent_nonce(key,
+      plaintext)` = `blake3(key ‖ plaintext)[..12]` + `seal_private`. **Convergent nonces need no
+      RNG** (solving the bare-metal/wasm RNG wrinkle) *and* preserve **Law L3 dedup under
+      encryption** — identical content under one key → identical ciphertext (the exact tension 04
+      §Private flags; equality-leak is the documented tradeoff). Reference ChaCha20-Poly1305 impl is
+      a **dev-dependency only** — wasm32/thumbv7em builds never pull the cipher (verified).
+      `tests/private_tier_chacha20.rs`: round-trip, convergent dedup, wrong-key/tamper fail-loud
+      (AEAD), distinct-key non-reuse, ill-sized-input never-panics.
+    - [ ] non-conformance P6 follow-on: network-key management (per-network symmetric key
+      derivation/distribution for the Private tier); a `PrivateNetwork` realization.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
