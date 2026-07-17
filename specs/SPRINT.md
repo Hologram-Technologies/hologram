@@ -287,12 +287,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `install-tools.sh` (Structurizr/cmark-gfm/pandoc/playwright), then `build.sh` (V1–V8). Added
       the **arc42-generator submodule** as a pointer only (`.gitmodules` + a gitlink at pin
       `46bd7cea` via `update-index --cacheinfo` — no 153M clone; CI fetches it). Introduced
-      **non-blocking** (toolchain not locally verifiable — java 24≠21, ruby 4≠3, cmark/pandoc
-      absent); promote to blocking + flip MG-8 ✅ once observed green (workflow_dispatch / the PR).
-      (A dedicated CS job runs the docs V&V directly, so `vv/run.sh`'s `CC_ONLY` stays on — CS and
-      CC gate in separate jobs.)
-    - [x] **G5** shaped **MG-8** (`@status:pending`) + CONFORMANCE row (⛔) witnessing CS absorption;
-      enforces when G4 is green. bdd bijective (MG-8 skipped, non-gating).
+      Fixed the install-tools nested-submodule fetch (fetch the exact arc42-template pin SHA).
+      **CI-GREEN (2026-07-17, 2m34s)** — the toolchain installs + V1–V8 all pass; **promoted to
+      blocking** (`ci-success.needs`).
+    - [x] **G5 — MG-8 ENFORCED** (2026-07-17). Once `docs-conformance` went green in CI, flipped
+      MG-8 `@status:enforced` + row ✅ + **CS-1..6 rows ✅**. Added a **CS bijection audit**
+      (`cc::check_cs_bijection` + `tests/cs_gate.rs`) binding every CS row to a present V1–V8
+      validator script (artifact-free); MG-8's bdd step calls it. `catalog::extract_witness`
+      broadened to capture `.sh` validator witnesses. Green: meta_gate + cc_gate + cs_gate, bdd (11
+      enforced — MG-8 runs+passes), clippy -D. **Phase G complete; both MG-7 + MG-8 enforced.**
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

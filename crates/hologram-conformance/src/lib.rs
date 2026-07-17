@@ -19,6 +19,13 @@ pub const CONFORMANCE_MD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../CON
 pub const CC_TESTS_DIR: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../spaces/holospaces/tests");
 
+/// Absolute path to the ported holospaces docs V&V validator scripts (the V1–V8 CS witnesses),
+/// resolved at compile time — the source the CS bijection audit binds against (MG-8).
+pub const CS_SCRIPTS_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/holospaces/scripts"
+);
+
 /// Per-scenario async context. The only async↔sync seam (law 4): step bodies that
 /// touch tensor compute stay synchronous inside this async World.
 ///
@@ -58,4 +65,7 @@ pub struct ConformanceWorld {
     /// MG-7: `true` once the CC bijection audit binds every `CC` catalog row to a present witness
     /// test in the ported holospaces space — the honesty check that the V&V is really absorbed.
     pub mg7_cc_bound: Option<bool>,
+    /// MG-8: `true` once the CS bijection audit binds every `CS` catalog row to a present V1–V8
+    /// validator script — the honesty check that the docs V&V is really absorbed.
+    pub mg8_cs_bound: Option<bool>,
 }

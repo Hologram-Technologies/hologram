@@ -118,6 +118,37 @@ fn fn_name(line: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Check that every `CS` (specification-conformance) row cites a validator script that exists in
+/// `scripts_dir` (`specs/holospaces/scripts/`). CS witnesses are the V1–V8 shell validators, not
+/// Rust tests, so this binds by file presence — the honesty check that the docs V&V is really
+/// absorbed (MG-8), independent of the docs toolchain. `Err(violations)` on drift.
+pub fn check_cs_bijection(rows: &[CatalogRow], scripts_dir: &Path) -> Result<(), Vec<String>> {
+    let mut violations = Vec::new();
+    let mut cited = 0usize;
+    for row in rows.iter().filter(|r| r.class == "CS") {
+        cited += 1;
+        let Some(w) = &row.witness else {
+            violations.push(format!("CS row {} cites no validator script", row.id));
+            continue;
+        };
+        let file = w.rsplit('/').next().unwrap_or(w);
+        if !scripts_dir.join(file).exists() {
+            violations.push(format!(
+                "CS row {} witness `{w}` — validator script {file} not found in the docs scripts",
+                row.id
+            ));
+        }
+    }
+    if cited == 0 {
+        violations.push("no CS rows found in the ledger — the CS catalog is missing".to_string());
+    }
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

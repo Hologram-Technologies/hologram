@@ -436,6 +436,35 @@ fn mg7_assert(w: &mut ConformanceWorld) {
     );
 }
 
+// ───────────────── MG-8 — holospaces CS docs-conformance absorbed into the ledger ─────────────────
+// holospaces' specification conformance is absorbed as hologram's non-BDD `CS` class (CS-1..6),
+// each witnessed by a V1–V8 validator script. This scenario runs the artifact-free CS bijection
+// audit over the ledger + the docs scripts tree — proving the absorption is honest (no CS row
+// claims the docs conform without a present validator). The actual V1–V8 runs are gated by the
+// `docs-conformance` CI job (the docs toolchain); this witnesses the catalog integrity.
+
+#[given("holospaces' specification-conformance (CS) validators and their external standards")]
+fn mg8_given(_w: &mut ConformanceWorld) {}
+
+#[when("the docs V&V is absorbed into hologram's conformance framework")]
+fn mg8_audit(w: &mut ConformanceWorld) {
+    use hologram_conformance::{catalog, cc, CONFORMANCE_MD, CS_SCRIPTS_DIR};
+    let md = std::fs::read_to_string(CONFORMANCE_MD).expect("read CONFORMANCE.md");
+    let rows = catalog::parse_catalog(&md);
+    w.mg8_cs_bound =
+        Some(cc::check_cs_bijection(&rows, std::path::Path::new(CS_SCRIPTS_DIR)).is_ok());
+}
+
+#[then("every CS row runs V1-V8 against its external standard, never self-reference")]
+fn mg8_assert(w: &mut ConformanceWorld) {
+    assert!(
+        w.mg8_cs_bound
+            .expect("the When step must have run the CS bijection audit"),
+        "every CS catalog row must bind to a present V1–V8 validator script — the holospaces docs \
+         V&V is absorbed honestly (MG-8)"
+    );
+}
+
 #[tokio::main]
 async fn main() {
     ConformanceWorld::cucumber()

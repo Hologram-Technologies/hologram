@@ -1,4 +1,4 @@
-@class:MG @id:MG-8 @spec:06-migration @phase:P3 @status:pending
+@class:MG @id:MG-8 @spec:06-migration @phase:P3 @status:enforced
 Feature: MG-8 — holospaces CS docs-conformance absorption
   Scenario: the holospaces CS catalog is absorbed into the unified conformance ledger
     Given holospaces' specification-conformance (CS) validators and their external standards

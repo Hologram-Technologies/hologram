@@ -541,6 +541,7 @@ jobs:
       - substrate-uefi-boot
       - substrate-opfs
       - holospaces-vv-heavy
+      - docs-conformance
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded
