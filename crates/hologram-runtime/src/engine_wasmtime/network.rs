@@ -1,7 +1,7 @@
 //! [`WasmNetworkInterface`] — a [`NetworkInterface`] whose packet I/O is executed by an
 //! **imported, verified Wasm driver** (arch §11.9). The driver module exports `mac_address`,
 //! `mtu`, `transmit`, `receive`, and holds RX queue state in its own linear memory; the host moves
-//! frame bytes through a fixed scratch region (the same pattern as [`WasmBlockDevice`]).
+//! frame bytes through a fixed scratch region (the same pattern as `WasmBlockDevice`).
 //!
 //! **RX waker bridge**: production NICs are IRQ-driven, not poll-driven. The driver imports
 //! `hologram.notify_rx()` from the host; when its IRQ fires (or the loopback RX queue becomes

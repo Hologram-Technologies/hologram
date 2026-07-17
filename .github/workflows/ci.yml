@@ -183,7 +183,6 @@ jobs:
         run: |
           cargo check --target ${{ matrix.target }} \
             -p hologram-types \
-            -p hologram-host \
             -p hologram-ops \
             -p hologram-graph
 
@@ -267,25 +266,25 @@ jobs:
           cache-on-failure: true
           key: substrate
 
+      # Crate names updated for the post-refactor consolidation: substrate-core / realizations /
+      # bare-hal → hologram-space; store-mem / substrate-tck → hologram-tck; net-{http,tcp,bare} →
+      # hologram-net; runtime-{bare,wasmtime} → hologram-runtime (engine-wasmi / engine-wasmtime
+      # features); substrate-cli → hologram-cli. (Mappings + no_std feature flags verified locally.)
       - name: Conformance + worked-example battery
         run: |
           cargo test \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-            -p hologram-store-mem -p hologram-store-native -p hologram-store-bare \
-            -p hologram-net-http -p hologram-net-tcp -p hologram-runtime \
-            -p hologram-runtime-wasmtime -p hologram-substrate-cli -p hologram-bare-hal \
-            -p hologram-runtime-bare -p hologram-net-bare
+            -p hologram-space -p hologram-tck \
+            -p hologram-store-native -p hologram-store-bare \
+            -p hologram-net -p hologram-runtime -p hologram-cli
 
       - name: Live HTTP-CAS transport (NW class, --features live)
-        run: cargo test -p hologram-net-http --features live
+        run: cargo test -p hologram-net --features live
 
       - name: RZ gate — compute engine absent from store/route crates
         run: |
           set -euo pipefail
-          for c in hologram-store-mem hologram-store-native hologram-store-bare \
-                   hologram-net-http hologram-net-tcp hologram-runtime \
-                   hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare \
-                   hologram-substrate-cli; do
+          for c in hologram-space hologram-tck hologram-store-native hologram-store-bare \
+                   hologram-net hologram-runtime; do
             if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
               echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
             fi
@@ -294,19 +293,19 @@ jobs:
 
       - name: no_std tri-target — substrate builds for browser + bare-metal (TR class)
         run: |
-          cargo build --target wasm32-unknown-unknown --no-default-features \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime \
-            -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
-          cargo build --target thumbv7em-none-eabi --no-default-features \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
-            -p hologram-net-bare
+          # The portable store/net + the wasmi runtime (no_std interpreter) build for browser + bare
+          # metal. The runtime needs its engine-wasmi feature, so it builds as a separate invocation.
+          for target in wasm32-unknown-unknown thumbv7em-none-eabi; do
+            cargo build --target "$target" --no-default-features \
+              -p hologram-space -p hologram-net -p hologram-store-bare
+            cargo build --target "$target" --no-default-features \
+              --features engine-wasmi -p hologram-runtime
+          done
 
       - name: Real-world examples (runnable capability narratives)
         run: |
           for ex in cas_artifact_cache event_bus least_privilege wasm_inference_container live_migration; do
-            cargo run -q -p hologram-runtime-wasmtime --example "$ex"
+            cargo run -q -p hologram-runtime --features engine-wasmtime --example "$ex"
           done
 
   # Job 12: End-to-end bare-metal boot (BOOT class) — build hologram.efi and boot

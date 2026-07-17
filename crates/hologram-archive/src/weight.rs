@@ -49,7 +49,7 @@ impl WeightFingerprint {
 /// Residency is orthogonal to identity: a range served here hashes to the
 /// same κ it was addressed by, so derivation keys and kernels are unchanged.
 /// A missing weight is **page-in-and-retry**, never recompute — a leaf
-/// constant has no cone (contrast [`crate::warm`]'s recompute-on-miss).
+/// constant has no cone (contrast warm-start's recompute-on-miss).
 pub trait WeightProvider {
     /// Full body length for a fingerprint, or `None` if the provider does
     /// not have it.

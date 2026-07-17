@@ -1,5 +1,5 @@
 //! The `hologram node` subcommand group (spec §9.2, unified into the one `hologram` binary
-//! per D13). Thin shell: parse args + read files, then delegate to [`core::run`] against a
+//! per D13). Thin shell: parse args + read files, then delegate to `core::run` against a
 //! native redb store. Container/network verbs (`spawn`/`serve`) arrive with the Wasmtime
 //! engine / uor-native TCP transport backends.
 

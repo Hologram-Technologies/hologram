@@ -217,7 +217,7 @@ impl Clock for ManualClock {
 /// A background-task spawn seam (spec 02 §4 HAL) — where the net pump's accept loop and other
 /// fire-and-forget work run. A native space wires `tokio::spawn`; the browser space
 /// `wasm_bindgen_futures::spawn_local`; a bare-metal space its executor. **Maybe-Send** (LAW-4),
-/// the same cfg-gated posture as [`KappaSync`]: the spawned future is `Send` on native
+/// the same cfg-gated posture as [`crate::KappaSync`]: the spawned future is `Send` on native
 /// (multi-threaded executors) and `?Send` on `wasm32`/bare.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait Spawner: Send + Sync {

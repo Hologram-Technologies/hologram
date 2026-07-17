@@ -18,7 +18,7 @@ use hologram_space::{Bytes, KappaLabel, KappaLabel71, KappaStore, KappaSync, Syn
 
 use super::{accept_received, cas_path, serve_get, CasResponse};
 
-/// A running CAS gateway server bound to an ephemeral localhost port. Drop or call [`shutdown`] to
+/// A running CAS gateway server bound to an ephemeral localhost port. Drop or call `shutdown` to
 /// stop it.
 pub struct CasServer {
     addr: SocketAddr,

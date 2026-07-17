@@ -245,7 +245,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
             .await
     }
 
-    /// Same as [`poll_channel_fanout`] with an explicit `limit` on the number of candidate κs
+    /// Same as `poll_channel_fanout` with an explicit `limit` on the number of candidate κs
     /// to consider in one pass. `usize::MAX` ⇒ no cap (the structural cap is whatever the
     /// underlying `KappaSync::discover` returns). The caller picks the bound; this method
     /// imposes none of its own (SPINE-6).
@@ -581,7 +581,7 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
 
     /// Drive one tick of the network event loop: apply every queued `sync_announce` and
     /// `sync_fetch_request` intent (spec §6 / arch §11.1). Idempotent — pending stay queued until a
-    /// `sync` is wired via [`with_sync`]; once wired, every intent is applied. The next event a
+    /// `sync` is wired via `with_sync`; once wired, every intent is applied. The next event a
     /// container processes can `storage_get` newly-fetched κs from the local store.
     pub async fn process_pending_network(&self) -> usize {
         let Some(sync) = &self.sync else {
@@ -678,8 +678,8 @@ impl<E: ContainerEngine + 'static, S: KappaStore + 'static> Runtime<E, S> {
         cone
     }
 
-    /// Enqueue an event for fair DRR delivery via [`pump_round`] (arch §11.7) — the multi-tenant
-    /// scheduling path. The direct [`deliver_event`] still works for single-container immediate
+    /// Enqueue an event for fair DRR delivery via `pump_round` (arch §11.7) — the multi-tenant
+    /// scheduling path. The direct `deliver_event` still works for single-container immediate
     /// delivery; this is the entry point when many containers compete for cycles.
     pub fn enqueue_event(&self, h: ContainerHandle, payload: Vec<u8>) -> Result<(), RuntimeError> {
         let table = self.table.lock();
