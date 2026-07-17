@@ -464,8 +464,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `negotiate_from_hello` (the connect handshake — highest common version, or a `HandshakeError`;
       a non-HELLO/garbage first frame is a clean `BadHello`, never a panic). Deterministic in-process
       test; native + thumbv7em green.
-    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) that drive
-      the `bare`/`tcp` handshake over real sockets, `hologram network` CLI, TCK network battery.
+    - [x] **`hologram network` CLI** (2026-07-17, spec 04) — `network create --member <file>…
+      --policy <file> --tier <t> [--key <file>] --output <file>` builds a `Network` realization whose
+      membership/policy/key are the **κs of the content files** (a member/policy/key is content, named
+      by its κ — SPINE-1); enforces Private ⟺ `--key`. `network show <file>` decodes + displays the κ,
+      tier, membership, policy, and key binding. End-to-end create→decode test (temp files).
+    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) driving the
+      `bare`/`tcp` handshake over real sockets; `network join`/`delegate` (need the node store); TCK
+      network battery.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as

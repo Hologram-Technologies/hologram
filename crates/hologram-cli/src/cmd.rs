@@ -108,6 +108,46 @@ enum CommandArgs {
     /// `.holo` v3 application tooling (spec `refactor/03`): inspect an app's layers + certificates,
     /// or convert between fat and thin packaging without changing the app κ.
     App(AppCli),
+    /// Network tooling (spec `refactor/04`): create a Network realization (the VPC analogue) or show
+    /// one. Membership/policy/key are κ-addressed — a member/policy/key is content, named by its κ.
+    Network(NetworkCli),
+}
+
+/// `hologram network <subcommand>` — network (VPC-analogue) tooling.
+#[derive(clap::Args, Debug)]
+pub struct NetworkCli {
+    #[command(subcommand)]
+    command: NetworkCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum NetworkCommand {
+    /// Create a Network realization: its membership is the κ of each `--member` content file, its
+    /// policy the κ of the `--policy` file, and its tier `--tier`. `--key` (the κ of a symmetric-key
+    /// file) is required for `private` and rejected otherwise. Writes the realization to `--output`.
+    Create {
+        /// Founding-member content file (e.g. an operator's attestation key); repeatable — its κ is
+        /// the member. At least one.
+        #[arg(long = "member", required = true)]
+        members: Vec<std::path::PathBuf>,
+        /// Policy CapabilitySet content file — its κ is the network policy.
+        #[arg(long)]
+        policy: std::path::PathBuf,
+        /// Tier: `public`, `restricted`, or `private`.
+        #[arg(long, default_value = "restricted")]
+        tier: String,
+        /// Symmetric-key content file (Private tier only) — its κ is the network key.
+        #[arg(long)]
+        key: Option<std::path::PathBuf>,
+        /// Output path for the Network realization's canonical bytes.
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
+    /// Show a Network realization: its κ, tier, membership κs, policy κ, and key binding.
+    Show {
+        #[arg(long)]
+        network: std::path::PathBuf,
+    },
 }
 
 /// `hologram app <subcommand>` — `.holo` v3 application tooling.
@@ -286,7 +326,108 @@ fn run_args(cli: CliArgs) -> Result<(), CompileError> {
         // handling); it prints and returns a process exit code, so we exit directly.
         CommandArgs::Node(node_cli) => std::process::exit(i32::from(crate::node::run(node_cli))),
         CommandArgs::App(app_cli) => run_app(app_cli),
+        CommandArgs::Network(net_cli) => run_network(net_cli),
     }
+}
+
+fn run_network(net_cli: NetworkCli) -> Result<(), CompileError> {
+    match net_cli.command {
+        NetworkCommand::Create {
+            members,
+            policy,
+            tier,
+            key,
+            output,
+        } => net_create(&members, &policy, &tier, key.as_deref(), &output),
+        NetworkCommand::Show { network } => net_show(&network),
+    }
+}
+
+fn parse_tier(s: &str) -> Result<hologram_space::NetworkTier, CompileError> {
+    use hologram_space::NetworkTier;
+    match s {
+        "public" => Ok(NetworkTier::Public),
+        "restricted" => Ok(NetworkTier::Restricted),
+        "private" => Ok(NetworkTier::Private),
+        _ => Err(CompileError::SourceParse(
+            "unknown tier (expected: public, restricted, private)",
+        )),
+    }
+}
+
+/// The κ of a content file — a member / policy / key is content, named by its κ (SPINE-1).
+fn kappa_of_file(path: &Path) -> Result<hologram_space::KappaLabel71, CompileError> {
+    let bytes = std::fs::read(path).map_err(|_| CompileError::SourceParse("read content file"))?;
+    Ok(hologram_space::address_bytes(&bytes))
+}
+
+fn net_create(
+    members: &[std::path::PathBuf],
+    policy: &Path,
+    tier: &str,
+    key: Option<&Path>,
+    output: &Path,
+) -> Result<(), CompileError> {
+    use hologram_space::{NetworkTier, Realization};
+    let tier = parse_tier(tier)?;
+    let membership = members
+        .iter()
+        .map(|p| kappa_of_file(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let policy_kappa = kappa_of_file(policy)?;
+    let key_ref = match key {
+        Some(p) => Some(kappa_of_file(p)?),
+        None => None,
+    };
+    let network = hologram_space::Network {
+        membership,
+        policy: policy_kappa,
+        parent: None,
+        tier,
+        key_ref,
+    };
+    // Private ⟺ a bound key — reject a key on an unencrypted tier (false confidentiality) or a
+    // Private network with no key.
+    if !network.key_binding_ok() {
+        return Err(CompileError::SourceParse(match tier {
+            NetworkTier::Private => "private tier requires --key",
+            _ => "--key is only valid for the private tier",
+        }));
+    }
+    let bytes = network.canonicalize();
+    std::fs::write(output, &bytes).map_err(|_| CompileError::SourceParse("write network"))?;
+    println!(
+        "created {tier:?} network κ={} ({} member(s)) → {}",
+        String::from_utf8_lossy(network.kappa().as_array()),
+        network.membership.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+fn net_show(network: &Path) -> Result<(), CompileError> {
+    use hologram_space::Network;
+    let bytes = std::fs::read(network).map_err(|_| CompileError::SourceParse("read network"))?;
+    let net = Network::decode(&bytes)
+        .map_err(|_| CompileError::SourceParse("malformed network realization"))?;
+    println!(
+        "network κ: {}",
+        String::from_utf8_lossy(hologram_space::address_bytes(&bytes).as_array())
+    );
+    println!("tier: {:?}", net.tier);
+    println!("members: {}", net.membership.len());
+    for m in &net.membership {
+        println!("  {}", String::from_utf8_lossy(m.as_array()));
+    }
+    println!(
+        "policy κ: {}",
+        String::from_utf8_lossy(net.policy.as_array())
+    );
+    match &net.key_ref {
+        Some(k) => println!("key κ: {}", String::from_utf8_lossy(k.as_array())),
+        None => println!("key κ: none (unencrypted tier)"),
+    }
+    Ok(())
 }
 
 fn run_app(app_cli: AppCli) -> Result<(), CompileError> {
@@ -572,5 +713,50 @@ mod tests {
         // The manifest (the app κ) is preserved byte-for-byte; the payload is gone.
         assert_eq!(plan.app_manifest(), Some(manifest_bytes.as_slice()));
         assert!(plan.section(SectionKind::Extension).is_err());
+    }
+
+    #[test]
+    fn network_create_writes_a_realization_from_content_kappas() {
+        use hologram_space::{address_bytes, Network, NetworkTier};
+
+        let dir = std::env::temp_dir().join(format!("holo-net-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let member = dir.join("member.key");
+        let policy = dir.join("team.caps");
+        let out = dir.join("team.net");
+        std::fs::write(&member, b"operator-attestation-key").unwrap();
+        std::fs::write(&policy, b"restricted-policy-capset").unwrap();
+
+        net_create(
+            std::slice::from_ref(&member),
+            &policy,
+            "restricted",
+            None,
+            &out,
+        )
+        .unwrap();
+
+        // The written file decodes to a Network whose membership/policy are the κs of the inputs.
+        let net = Network::decode(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(net.tier, NetworkTier::Restricted);
+        assert_eq!(
+            net.membership,
+            vec![address_bytes(b"operator-attestation-key")]
+        );
+        assert_eq!(net.policy, address_bytes(b"restricted-policy-capset"));
+        assert!(net.key_ref.is_none());
+
+        // The Private tier requires a key; without `--key` it is refused.
+        let bad = dir.join("bad.net");
+        assert!(net_create(
+            std::slice::from_ref(&member),
+            &policy,
+            "private",
+            None,
+            &bad
+        )
+        .is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
