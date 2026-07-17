@@ -248,9 +248,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       (commits `e3c1877`, `680c8a5`; `[lib] name = "holospaces_web"` keeps the wasm/web assets valid;
       `.vscode-test-web` untracked+gitignored). Flip: feature `@status:enforced` + MG-7 step defs
       calling `cc::check_cc_bijection` (the audit is authored once, run by both `cc_gate` and the BDD
-      step); MG-7 row ⛔→✅; **42/45 CC rows 🟡→✅** (CC-31/45/51 stay 🟡 — their `#[ignore]`d heavy
-      witnesses weren't confirmed to run locally). `holospaces-vv-heavy` promoted to **blocking**
+      step); MG-7 row ⛔→✅; **44/45 CC rows 🟡→✅**. `holospaces-vv-heavy` promoted to **blocking**
       (`ci-success.needs`). Green: meta_gate, cc_gate, bdd (**10 enforced**, MG-7 runs+passes), fmt.
+      CC-31 + CC-51 confirmed green by running their `#[ignore]`d witnesses directly
+      (cc31_resume_terminal 74s real devcontainer resume; cc51_nested_workspace 23s real QEMU-9p
+      boot) — they have no vv/ suite, so an explicit step was added to `holospaces-vv-heavy` to gate
+      them. **CC-45 stays 🟡** — its dogfood witness needs ~24 GB + a real Dev Container build
+      (`vv/heavy/`, manual), not automatically gatable.
     - [ ] **F-followup (tracked): browser workbench V&V gaps** — three browser-only suites
       (`cc51-scm-git`, `cc52-search`, `cc53-tasks`; VS Code workbench SCM/search/tasks) fail
       consistently on vscode-cdn / welcome-media asset loads + command-palette timing (post-port

@@ -466,6 +466,16 @@ jobs:
           HOLOSPACES_SKIP_PERF: "1"
         run: bash vv/run.sh
 
+      - name: Ledger heavy witnesses without a dedicated vv/ suite (CC-31, CC-51)
+        # These `#[ignore]`d witnesses have no vv/suites/ entry, so vv/run.sh doesn't reach them;
+        # run them explicitly so the CC-31/CC-51 ledger rows are CI-gated. (CC-45's dogfood needs
+        # ~24 GB + a real Dev Container build — vv/heavy/, not gated here; its row stays 🟡.)
+        run: |
+          cargo test -p holospaces --release --test cc31_resume_terminal -- --ignored \
+            --exact a_resumed_idle_devcontainer_is_live_and_its_scrollback_is_a_terminal_concern
+          cargo test -p holospaces --release --test cc51_nested_workspace -- --ignored \
+            --exact the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p
+
   # Job 15: Verify all quality gates passed
   ci-success:
     name: CI Success
