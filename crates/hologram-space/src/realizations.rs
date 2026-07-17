@@ -1022,7 +1022,7 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{references, Realization};
+    use crate::{references, KappaStore, Realization};
 
     fn k(seed: &[u8]) -> KappaLabel71 {
         address_bytes(seed)
@@ -1330,5 +1330,64 @@ mod tests {
             ..full_app()
         };
         assert_ne!(base.kappa(), reattenuated.kappa());
+    }
+
+    // ── resolve_closure — the app-loader reachability primitive (P4.3) ──
+
+    #[test]
+    fn resolve_closure_walks_the_whole_app_from_its_kappa() {
+        let store = crate::MemKappaStore::new();
+        let put = |b: &[u8]| store.put("blake3", b).unwrap();
+        // Opaque layer contents + caps + child edges (leaves — not realizations).
+        let wasm = put(b"rc-wasm-content");
+        let plan = put(b"rc-plan-content");
+        let caps = put(b"rc-caps-content");
+        let child_app = put(b"rc-child-app");
+        let child_caps = put(b"rc-child-caps");
+        let manifest = AppManifest {
+            primary: Some(0),
+            requires: caps,
+            layers: alloc::vec![Layer::wasm(wasm, "_start"), Layer::tensor(plan, "sess")],
+            children: alloc::vec![(child_app, child_caps)],
+        };
+        let app = put(&manifest.canonicalize());
+        let closure = crate::resolve_closure(app, &store, REGISTRY).unwrap();
+        // A fat store resolves the whole app locally — no missing edges.
+        assert!(closure.is_complete());
+        for k in [app, caps, wasm, plan, child_app, child_caps] {
+            assert!(
+                closure.reachable.contains(&k),
+                "closure must reach every operand κ"
+            );
+        }
+        assert_eq!(
+            closure.reachable.len(),
+            6,
+            "exactly the app + its 5 operand edges"
+        );
+    }
+
+    #[test]
+    fn thin_closure_reports_the_missing_layer_edge() {
+        let store = crate::MemKappaStore::new();
+        let put = |b: &[u8]| store.put("blake3", b).unwrap();
+        let caps = put(b"rc-thin-caps");
+        // The layer κ is named by the manifest but its bytes are never stored (a thin archive).
+        let absent_layer = address_bytes(b"rc-absent-layer");
+        let manifest = AppManifest {
+            primary: None,
+            requires: caps,
+            layers: alloc::vec![Layer::tensor(absent_layer, "sess")],
+            children: Vec::new(),
+        };
+        let app = put(&manifest.canonicalize());
+        let closure = crate::resolve_closure(app, &store, REGISTRY).unwrap();
+        assert!(
+            !closure.is_complete(),
+            "a thin closure has an unresolved edge"
+        );
+        assert_eq!(closure.missing, alloc::vec![absent_layer]);
+        // The edge is still *reachable* (named in the manifest) — just not present locally.
+        assert!(closure.reachable.contains(&absent_layer));
     }
 }

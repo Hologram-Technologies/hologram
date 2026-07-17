@@ -268,6 +268,68 @@ pub fn references(
     Err(RealizationError::WrongIri)
 }
 
+/// The transitive reachability closure of a κ over a [`KappaStore`] — the app-loader primitive
+/// (spec 03 §Fat and thin: "load = resolve the manifest's closure"). Walks the κ-graph from `root`
+/// via each realization's `references()` inverse projection (breadth-first, first-seen order),
+/// fetching each node's bytes from `store`. Opaque leaf content (a wasm module, a weight blob — no
+/// registered IRI) contributes no edges. A κ whose bytes are **absent** from the store is recorded
+/// in [`Closure::missing`] rather than failing: that is the thin-archive signal — the edge exists
+/// in the manifest but its payload resolves elsewhere (the KappaStore/KappaSync path, LAW-4).
+///
+/// Bounded by `O(reachable · refs)` (the SP bounded-walk floor). `resolve_closure(app κ)` is what
+/// migrates a whole application between peers — the same operation as migrating any content.
+pub fn resolve_closure(
+    root: KappaLabel71,
+    store: &dyn KappaStore,
+    registry: RealizationRegistry<'_>,
+) -> Result<Closure, StoreError> {
+    use hashbrown::HashSet;
+    let mut visited: HashSet<[u8; 71]> = HashSet::new();
+    let mut reachable = Vec::new();
+    let mut missing = Vec::new();
+    let mut queue = Vec::new();
+    queue.push(root);
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let k = queue[cursor];
+        cursor += 1;
+        if !visited.insert(*k.as_array()) {
+            continue; // a κ may be enqueued by several parents; process it once (first-seen wins)
+        }
+        reachable.push(k);
+        match store.get(&k)? {
+            None => missing.push(k),
+            // Realization ⇒ enqueue its operand edges; opaque leaf ⇒ no edges (references() errs).
+            Some(bytes) => {
+                if let Ok(refs) = references(bytes.as_ref(), registry) {
+                    queue.extend(refs);
+                }
+            }
+        }
+    }
+    Ok(Closure { reachable, missing })
+}
+
+/// The result of [`resolve_closure`]: every κ reachable from the root (breadth-first, first-seen
+/// order, including the root), split into those present locally and those still to fetch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Closure {
+    /// Every reachable κ (present or missing), in breadth-first first-seen order.
+    pub reachable: Vec<KappaLabel71>,
+    /// Reachable κs whose bytes are **absent** locally — thin-archive edges to resolve via
+    /// network/sync (LAW-4). Empty ⇒ a fully-materialized (fat) closure.
+    pub missing: Vec<KappaLabel71>,
+}
+
+impl Closure {
+    /// Whether the closure is fully materialized locally — every reachable κ's bytes are present
+    /// (a **fat** archive/store). A **thin** closure has one or more [`Closure::missing`] edges.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.missing.is_empty()
+    }
+}
+
 // ───────────────────────────── capability view (decoded; authority is a κ-label) ─────────────
 
 /// Decoded *view* of a Capability Set's canonical form (spec §8.4). The authority itself is a

@@ -391,7 +391,16 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     (`MIN_READ_VERSION..=FORMAT_VERSION`). 4 new tests; exec/ffi/runtime round-trip v3 unchanged;
     clippy -D, fmt clean. Manifest-*presence* enforcement is the app loader's (P4.3); `into_plan`
     stays the bare tensor-container reader.
-  - [ ] **P4.3** — fat/thin profiles + loader `resolve_closure`; parser fuzz targets (CI-permanent).
+  - [~] **P4.3** — app loader (`resolve_closure` + fat/thin) + parser fuzz targets.
+    - [x] **`resolve_closure` core** (2026-07-17) — the app-loader reachability primitive in
+      `hologram-space`: `resolve_closure(root, &dyn KappaStore, registry) -> Closure` walks the
+      κ-graph breadth-first from an app κ via each realization's `references()` (opaque leaf content
+      contributes no edges), fetching bytes from the store. `Closure { reachable, missing }`:
+      `missing` records κs named-but-absent (the **thin**-archive signal, resolved via KappaSync,
+      LAW-4); `is_complete()` ⇒ a **fat** closure. This is "load = resolve the manifest's closure"
+      (03 §Fat and thin) and `resolve_closure(app κ)` migration. 2 tests (fat + thin); native +
+      wasm32 + thumbv7em green. Unblocks HF-3 (inspection resolves + verifies layers).
+    - [ ] fat/thin conversion tooling (`hologram app --fat/--thin`) + parser fuzz targets (CI-permanent).
   - [~] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
       (a real v3 archive whose AppManifest section carries `single_tensor_plan`) yields the
