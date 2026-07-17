@@ -79,4 +79,8 @@ pub struct ConformanceWorld {
     /// `Client` surface — every per-layer certificate must verify and every layer be returned
     /// (none stripped), so this is `(true, expected_layer_count)`.
     pub hf3_inspection: Option<(bool, usize)>,
+    /// NW-2: `true` once the tier gate has been shown to decide store/fetch/announce from
+    /// `(tier, is_member)` alone — a protocol-boundary check (public admits all; restricted/private
+    /// require membership), never business logic.
+    pub nw2_boundary: Option<bool>,
 }

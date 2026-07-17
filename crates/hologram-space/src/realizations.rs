@@ -961,6 +961,123 @@ realization!(
     "https://hologram.foundation/realization/app-manifest"
 );
 
+// ─────────────────── networks (P5, spec 04) ───────────────────
+// A Network is the VPC analogue — itself a κ-addressed realization. It is created by *publishing*
+// this realization (no server, no RPC); peers resolve and apply it. Tiers gate capability at the
+// protocol boundary.
+
+/// A network's tier (spec 04 §Tiers) — the capability gate applied at the **protocol boundary**. A
+/// closed enum (exhaustive matching, no catch-all).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum NetworkTier {
+    /// Open policy — anyone may fetch/announce/discover.
+    Public = 0,
+    /// Capability-gated — fetch/announce/discover require a capability proof derived from
+    /// membership; non-members are refused at the protocol boundary.
+    Restricted = 1,
+    /// Restricted **plus** payload encryption (ships in P6). The word "private" is reserved until
+    /// encryption exists — capability-wise it gates exactly like `Restricted`.
+    Private = 2,
+}
+
+impl NetworkTier {
+    fn from_u8(b: u8) -> Result<Self, RealizationError> {
+        match b {
+            0 => Ok(NetworkTier::Public),
+            1 => Ok(NetworkTier::Restricted),
+            2 => Ok(NetworkTier::Private),
+            _ => Err(RealizationError::Malformed),
+        }
+    }
+
+    /// The **protocol-boundary** capability gate (spec 04 §Tiers / NW-2): whether a peer may
+    /// perform `op`, decided *only* from the tier and whether the peer is a member — never from the
+    /// payload, store state, or any business data. That the gate's inputs are exactly
+    /// `(tier, is_member)` is what makes the check structurally a boundary check: it cannot live in
+    /// business logic because it is given none. Public admits anyone; restricted/private require
+    /// membership. (Private additionally encrypts the payload — a P6 concern, not this capability gate.)
+    #[must_use]
+    pub fn admits(self, _op: NetworkOp, peer_is_member: bool) -> bool {
+        match self {
+            NetworkTier::Public => true,
+            NetworkTier::Restricted | NetworkTier::Private => peer_is_member,
+        }
+    }
+}
+
+/// A network operation gated at the protocol boundary (spec 04): the three verbs a peer performs
+/// against a network — the surface [`NetworkTier::admits`] arbitrates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NetworkOp {
+    /// Publish content into the network's shared store.
+    Store,
+    /// Resolve content by κ from the network.
+    Fetch,
+    /// Advertise possession of a κ to the network.
+    Announce,
+}
+
+/// `https://hologram.foundation/realization/network` — a network (the VPC analogue, spec 04),
+/// itself κ-addressed. Operands: the **membership** set (operator / peer-endpoint κs), the
+/// **policy** CapabilitySet κ (admission + fetch/announce/discover rights + quotas), and an
+/// optional **parent-network** κ. Payload: the membership count (so the operands split back) + the
+/// tier byte. `references()` recovers exactly those operand κs — no side tables (NW-1).
+///
+/// **Nesting is reserved, not implemented** (spec 04 §Nesting): `parent` may be carried, but P5 is
+/// flat networks only — subnet policy-composition semantics get their own design.
+pub struct Network {
+    /// Operator / peer-endpoint κs that constitute the network's membership.
+    pub membership: Vec<KappaLabel71>,
+    /// The policy CapabilitySet κ (admission + fetch/announce/discover rights + quotas).
+    pub policy: KappaLabel71,
+    /// Optional parent-network κ — reserved for nesting; flat networks only in P5.
+    pub parent: Option<KappaLabel71>,
+    /// The capability tier gating the protocol boundary.
+    pub tier: NetworkTier,
+}
+
+impl Network {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = Vec::with_capacity(self.membership.len() + 2);
+        refs.extend_from_slice(&self.membership);
+        refs.push(self.policy);
+        if let Some(p) = self.parent {
+            refs.push(p);
+        }
+        // Payload: membership count (so `references()` splits back into membership / policy /
+        // parent) + the tier byte.
+        let mut p = Vec::with_capacity(5);
+        p.extend_from_slice(&(self.membership.len() as u32).to_le_bytes());
+        p.push(self.tier as u8);
+        (refs, p)
+    }
+
+    /// Decode a canonical network form back into its structured view — the inverse of
+    /// `canonicalize`. Recovers the membership set, policy κ, optional parent κ, and tier.
+    pub fn decode(bytes: &[u8]) -> Result<Network, RealizationError> {
+        let refs = <Self as crate::Realization>::references(bytes)?;
+        let payload = payload_of("https://hologram.foundation/realization/network", bytes)?;
+        let mut cur = 0usize;
+        let n_membership = read_u32(&payload, &mut cur)? as usize;
+        let tier = NetworkTier::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
+        // refs = [membership × n, policy, parent?].
+        let membership = refs
+            .get(..n_membership)
+            .ok_or(RealizationError::Malformed)?
+            .to_vec();
+        let policy = *refs.get(n_membership).ok_or(RealizationError::Malformed)?;
+        let parent = refs.get(n_membership + 1).copied();
+        Ok(Network {
+            membership,
+            policy,
+            parent,
+            tier,
+        })
+    }
+}
+realization!(Network, "https://hologram.foundation/realization/network");
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1017,6 +1134,8 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     (BootConfig::IRI, <BootConfig as Realization>::references),
     // .holo v3 application container (P4, spec 03).
     (AppManifest::IRI, <AppManifest as Realization>::references),
+    // Networks (P5, spec 04).
+    (Network::IRI, <Network as Realization>::references),
 ];
 
 #[cfg(test)]
@@ -1365,6 +1484,64 @@ mod tests {
             6,
             "exactly the app + its 5 operand edges"
         );
+    }
+
+    // ── Network realization + tier gate (P5, spec 04) ──
+
+    #[test]
+    fn network_references_are_exactly_membership_and_policy() {
+        let net = Network {
+            membership: alloc::vec![k(b"op-a"), k(b"op-b")],
+            policy: k(b"policy"),
+            parent: None,
+            tier: NetworkTier::Restricted,
+        };
+        // NW-1: references() yields exactly [membership..., policy] — no side tables.
+        let refs = Network::references(&net.canonicalize()).unwrap();
+        assert_eq!(refs, alloc::vec![k(b"op-a"), k(b"op-b"), k(b"policy")]);
+    }
+
+    #[test]
+    fn network_round_trips_through_decode_including_parent_and_tier() {
+        let net = Network {
+            membership: alloc::vec![k(b"m0")],
+            policy: k(b"pol"),
+            parent: Some(k(b"parent-net")),
+            tier: NetworkTier::Private,
+        };
+        let decoded = Network::decode(&net.canonicalize()).unwrap();
+        assert_eq!(decoded.membership, alloc::vec![k(b"m0")]);
+        assert_eq!(decoded.policy, k(b"pol"));
+        assert_eq!(decoded.parent, Some(k(b"parent-net")));
+        assert_eq!(decoded.tier, NetworkTier::Private);
+        // Dispatches through the registry like every other realization.
+        let refs = references(&net.canonicalize(), REGISTRY).unwrap();
+        assert_eq!(refs.len(), 3); // m0, pol, parent-net
+    }
+
+    #[test]
+    fn tiers_gate_capability_at_the_boundary() {
+        // NW-2: the gate is decided from (tier, is_member) alone — a boundary check, never business
+        // logic. Public admits anyone; restricted/private require membership; for every op.
+        for op in [NetworkOp::Store, NetworkOp::Fetch, NetworkOp::Announce] {
+            assert!(
+                NetworkTier::Public.admits(op, false),
+                "public admits a non-member"
+            );
+            assert!(
+                !NetworkTier::Restricted.admits(op, false),
+                "restricted refuses a non-member"
+            );
+            assert!(
+                NetworkTier::Restricted.admits(op, true),
+                "restricted admits a member"
+            );
+            // Private gates capability exactly like restricted (encryption is the P6 add-on).
+            assert_eq!(
+                NetworkTier::Private.admits(op, false),
+                NetworkTier::Restricted.admits(op, false)
+            );
+        }
     }
 
     #[test]

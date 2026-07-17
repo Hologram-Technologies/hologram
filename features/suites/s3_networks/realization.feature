@@ -1,4 +1,4 @@
-@class:NW @id:NW-1 @spec:04-networks @phase:P4 @status:pending
+@class:NW @id:NW-1 @spec:04-networks @phase:P5 @status:enforced
 Feature: Network is a κ-realization
   Scenario: network embeds operand κs
     Given a Network built from a membership set and a policy

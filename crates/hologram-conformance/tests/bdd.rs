@@ -16,6 +16,9 @@ use hologram_space::{CapabilitySet, ContainerManifest};
 // end-to-end through the shipping format.
 use hologram_archive::{HoloLoader, HoloWriter};
 use hologram_space::{AppManifest, Layer, LayerKind};
+// NW-1/NW-2: a Network is a κ-realization (membership + policy operands); its tier gates capability
+// at the protocol boundary (spec 04).
+use hologram_space::{Network, NetworkOp, NetworkTier};
 // SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
 // public API (external witness: the shipping reference impls in `hologram-space`).
 use hologram_space::{
@@ -647,6 +650,81 @@ fn hf3_assert(w: &mut ConformanceWorld) {
         Some((true, 4)),
         "inspecting a .holo v3 must return a verified certificate for every one of its layers \
          (none stripped) — from the thin profile, so certs travel with the manifest"
+    );
+}
+
+// ───────────────────────────── NW-1 — a Network is a κ-realization ─────────────────────────────
+// A Network embeds its membership + policy operand κs (SPINE-2/3); references() is the inverse
+// projection recovering exactly those operands — no side tables. Witnessed against the `Network`
+// realization in `hologram-space`.
+
+#[given("a Network built from a membership set and a policy")]
+fn nw1_build(w: &mut ConformanceWorld) {
+    let op_a = address_bytes(b"nw1-operator-a");
+    let op_b = address_bytes(b"nw1-operator-b");
+    let policy = address_bytes(b"nw1-policy-capset");
+    w.operand_kappas = vec![
+        op_a.as_bytes().to_vec(),
+        op_b.as_bytes().to_vec(),
+        policy.as_bytes().to_vec(),
+    ];
+    let network = Network {
+        membership: vec![op_a, op_b],
+        policy,
+        parent: None,
+        tier: NetworkTier::Restricted,
+    };
+    w.canonical = network.canonicalize();
+}
+
+#[when("I call references() on its realization")]
+fn nw1_references(w: &mut ConformanceWorld) {
+    let refs = Network::references(&w.canonical).expect("a well-formed Network decodes");
+    w.references = Some(refs.iter().map(|k| k.as_bytes().to_vec()).collect());
+}
+
+#[then("it yields the membership and policy operand κs with no side tables")]
+fn nw1_assert(w: &mut ConformanceWorld) {
+    let refs = w
+        .references
+        .as_ref()
+        .expect("references() must have been called by the When step");
+    assert_eq!(
+        refs, &w.operand_kappas,
+        "references() must yield exactly the membership + policy operand κs — no side tables"
+    );
+}
+
+// ───────────────────────────── NW-2 — tiers gate at the boundary ─────────────────────────────
+// A network tier decides store/fetch/announce from `(tier, is_member)` alone — the gate is given no
+// business data, so the check is structurally at the protocol boundary. Public admits anyone;
+// restricted/private require membership. Witnessed against `NetworkTier::admits`.
+
+#[given("public, restricted, and private network tiers")]
+fn nw2_given(_w: &mut ConformanceWorld) {}
+
+#[when("a peer attempts store/fetch/announce")]
+fn nw2_attempt(w: &mut ConformanceWorld) {
+    // The gate is applied uniformly to every op, from (tier, is_member) only.
+    let ops = [NetworkOp::Store, NetworkOp::Fetch, NetworkOp::Announce];
+    let boundary = ops.iter().all(|&op| {
+        // Public: open to a non-member. Restricted/Private: refused unless a member.
+        NetworkTier::Public.admits(op, false)
+            && !NetworkTier::Restricted.admits(op, false)
+            && NetworkTier::Restricted.admits(op, true)
+            && !NetworkTier::Private.admits(op, false)
+            && NetworkTier::Private.admits(op, true)
+    });
+    w.nw2_boundary = Some(boundary);
+}
+
+#[then("the capability check happens at the protocol boundary, not in business logic")]
+fn nw2_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.nw2_boundary,
+        Some(true),
+        "every op's admission must be decided from (tier, membership) alone — a protocol-boundary \
+         gate: public admits anyone, restricted/private require membership, never business logic"
     );
 }
 

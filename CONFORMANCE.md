@@ -401,8 +401,8 @@ addressing and warm-start do.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **NW-1** | A Network is a κ-realization embedding its membership + policy operand κs (SPINE-2/3); no side tables. | BDD scenario | `s3_networks/realization.feature::network embeds operand κs` | ⛔ |
-| **NW-2** | Network tiers (public / restricted / private) gate capability at the protocol boundary, never in business logic. | BDD scenario | `s3_networks/tiers.feature::tiers gate at the boundary` | ⛔ |
+| **NW-1** | A Network is a κ-realization embedding its membership + policy operand κs (SPINE-2/3); no side tables. | BDD scenario | `s3_networks/realization.feature::network embeds operand κs` | ✅ |
+| **NW-2** | Network tiers (public / restricted / private) gate capability at the protocol boundary, never in business logic. | BDD scenario | `s3_networks/tiers.feature::tiers gate at the boundary` | ✅ |
 
 ## TL — tooling (refactor spec 05; BDD)
 

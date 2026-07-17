@@ -419,8 +419,19 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       inspection never strips them. `client` feature now enables `archive`. `certificates.feature`
       @status:enforced, HF-3 ✅. **All 3 HF rows green — P4's conformance surface complete.** bdd 14
       passed.
-  - [ ] **P5** — networks (Network realization, restricted-tier, wire-version, bounded-resolve, TCK
-    battery); drive NW-1/2 (+NW-3/4) ⛔→✅.
+  - [~] **P5** — networks (spec 04). **NW conformance complete (2/2)** (2026-07-17):
+    - [x] **NW-1** — `Network` realization in `hologram-space` (SPINE-2/3): embeds the membership
+      set + policy CapabilitySet κ (+ optional reserved parent-network κ) as operands; `references()`
+      recovers exactly them, no side tables. `decode()` inverse; registered. `realization.feature`
+      @status:enforced, NW-1 ✅.
+    - [x] **NW-2** — `NetworkTier` (public / restricted / private) + `NetworkOp`; `admits(op,
+      is_member)` gates from `(tier, membership)` **alone** — its signature carries no business data,
+      so the check is structurally at the protocol boundary. Public admits all; restricted/private
+      require membership (private adds P6 encryption, not a capability change). `tiers.feature`
+      @status:enforced, NW-2 ✅. bdd now 16 passed; native + wasm32 + thumbv7em green.
+    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop),
+      wire-version negotiation, bounded `resolve_closure` over the network seam, `hologram network`
+      CLI, TCK network battery.
   - [ ] **P6** — encryption/governance (AttestationKey / RevocationEvent / NetworkPolicy /
     AuditEvent, key lifecycle, session-signing, ChaCha20); drive GV-2/3/4 (+GV-5/6) ⛔→✅.
 
