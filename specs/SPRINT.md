@@ -474,15 +474,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       link with **no sockets**: peer B fetches content only peer A holds — the full FETCH_REQ → resolve
       → FETCH_RES_OK → verify-on-receipt path — plus the FETCH_RES_404 miss path. Deterministic; the
       two-node protocol test the TCK battery would otherwise need a live harness for.
-    - [x] **wire-version handshake over real TCP** (2026-07-17) — a `#[cfg(feature="tcp")]`-gated
-      integration test (`tests/wire_handshake_tcp.rs`) runs the `bare` connect handshake over an
-      actual localhost TCP connection (`127.0.0.1:0`, `current_thread` tokio): overlapping ranges
-      negotiate the highest common version on both sides; disjoint ranges refuse (no silent
-      downgrade). The `bare`/`tcp` transports share the frame format, so `hello_frame` is
-      wire-compatible with both. Real sockets, deterministic. (Cleanly gated — a no-op without `tcp`.)
-    - [ ] non-conformance P5 follow-on: wiring the handshake into `TcpKappaSync::handle_connection`
-      itself (refuse incompatible peers on connect); iroh/WebRTC transports; `network join`/`delegate`
-      (need the node store); the live multi-node TCK battery on the heavy CI runner.
+    - [x] **wire-version handshake wired into the live TCP transport** (2026-07-17). `KIND_HELLO` is
+      now public (shared by `bare`/`tcp`), and `TcpKappaSync::handle_connection` answers a HELLO with
+      its own HELLO + negotiates — **additive and backward-compatible**: a peer that opens with a
+      HELLO negotiates; a peer that starts straight into a DHT/fetch frame is unaffected (the DHT
+      suite still passes, 8/8); an incompatible/malformed HELLO closes the connection (refuse, no
+      silent downgrade). Integration tests (`#[cfg(feature="tcp")]`, `127.0.0.1:0`, `current_thread`
+      tokio): the raw handshake negotiates/refuses over a real socket, **and a real `TcpKappaSync`
+      answers the handshake at its current wire version**. Cleanly gated — a no-op without `tcp`.
+    - [ ] non-conformance P5 follow-on: outbound dialer sends HELLO first (full negotiate before a
+      fetch); iroh/WebRTC transports; `network join`/`delegate` (need the node store); the live
+      multi-node TCK battery on the heavy CI runner.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as

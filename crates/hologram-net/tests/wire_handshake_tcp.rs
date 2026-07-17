@@ -8,7 +8,11 @@
 //! so `hello_frame` (KIND_HELLO) is wire-compatible with both.
 
 use hologram_net::bare::{hello_frame, negotiate_from_hello, HandshakeError};
-use hologram_net::protocol::WireVersionRange;
+use hologram_net::protocol::{WireVersionRange, WIRE_VERSION};
+use hologram_net::tcp::TcpKappaSync;
+use hologram_space::KappaStore;
+use hologram_tck::MemKappaStore;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -61,6 +65,29 @@ async fn wire_version_handshake_negotiates_over_tcp() {
     .await;
     assert_eq!(client, Ok(3));
     assert_eq!(server, Ok(3));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn tcp_kappa_sync_answers_the_handshake() {
+    // The real transport, not a raw socket: a client that opens a `TcpKappaSync` connection with a
+    // HELLO must get the server's HELLO back and negotiate its current wire version — the handshake
+    // wired into `handle_connection` (additive; a peer that skips HELLO is unaffected — see the DHT
+    // suite).
+    let store = Arc::new(MemKappaStore::new()) as Arc<dyn KappaStore>;
+    let server = TcpKappaSync::bind("127.0.0.1:0".parse().unwrap(), store)
+        .await
+        .unwrap();
+    let addr = server.local_addr();
+
+    let mut client = TcpStream::connect(addr).await.unwrap();
+    let client_range = WireVersionRange { min: 1, max: 5 };
+    client.write_all(&hello_frame(client_range)).await.unwrap();
+    let server_hello = read_frame(&mut client).await;
+    assert_eq!(
+        negotiate_from_hello(client_range, &server_hello),
+        Ok(WIRE_VERSION),
+        "the transport answers the handshake at its current wire version"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

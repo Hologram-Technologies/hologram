@@ -37,8 +37,9 @@ use crate::protocol::WireVersionRange;
 // ── frame codec ─────────────────────────────────────────────────────────────
 
 /// Frame kinds on the wire. Append-only — never renumber an existing kind (SPINE-5).
-/// The connect-handshake HELLO carrying a `WireVersionRange` (spec 04 §Protocol hardening).
-const KIND_HELLO: u8 = 0x00;
+/// The connect-handshake HELLO carrying a `WireVersionRange` (spec 04 §Protocol hardening). Public
+/// so std transports (`tcp`) share the one kind byte for the handshake.
+pub const KIND_HELLO: u8 = 0x00;
 const KIND_FETCH_REQ: u8 = 0x01;
 const KIND_FETCH_RES_OK: u8 = 0x02;
 const KIND_FETCH_RES_404: u8 = 0x03;

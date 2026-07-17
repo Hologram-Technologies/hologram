@@ -258,6 +258,23 @@ impl TcpKappaSync {
         kind: u8,
         payload: Vec<u8>,
     ) -> Result<(), SyncError> {
+        // Wire-version handshake (spec 04 §Protocol hardening). Additive + backward-compatible: a
+        // peer that opens with a HELLO gets our HELLO back and a negotiated version; a peer that
+        // starts straight into a DHT/fetch frame (no HELLO) is unaffected. An incompatible or
+        // malformed HELLO closes the connection — refuse, never a silent downgrade.
+        if kind == crate::bare::KIND_HELLO {
+            use crate::protocol::WireVersionRange;
+            match WireVersionRange::decode(&payload) {
+                Some(peer) if WireVersionRange::CURRENT.negotiate(peer).is_some() => {
+                    stream
+                        .write_all(&crate::bare::hello_frame(WireVersionRange::CURRENT))
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                _ => return Err(SyncError::BackendFailure("incompatible wire version")),
+            }
+        }
         match Kind::from_u8(kind) {
             Some(Kind::FetchReq) => {
                 if payload.len() != 71 {
